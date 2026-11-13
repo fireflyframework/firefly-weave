@@ -32,6 +32,8 @@ journey's stage (up for J0, run for the others) exits 1 even when every stage ex
 from __future__ import annotations
 
 import argparse
+import base64
+import contextlib
 import functools
 import hashlib
 import ipaddress
@@ -113,6 +115,32 @@ CLUSTER_RUN_ID_REFUSAL = "Cluster profiles need a run ID of at most 22 character
 CLUSTER_OBJECTS = "all,networkpolicy,configmap,endpointslice"
 WEAVE_NAMESPACES = "app.kubernetes.io/managed-by=weave-platform"
 RUNNERS = "app.kubernetes.io/name=weave-runner"
+WEAVE_NAMESPACE_NAMES = [
+    "get",
+    "namespaces",
+    "--selector",
+    WEAVE_NAMESPACES,
+    "--output",
+    "jsonpath={.items[*].metadata.name}",
+]
+# The Secrets that hold the cluster journeys' client secrets: each target's runner's in weave-system, and its
+# workers' in their own namespace.
+RUNNER_IDENTITY = "weave-runner-identity-"
+WORKER_IDENTITY = "weave-worker-identity"
+SECRET_KEY = "client-secret"
+# At most half of down, so the platform's teardown and the audit always keep time after a hung delete.
+CLUSTER_DELETE_SECONDS = 300
+# Runs in a container: exits 0 when it connects to the address and port, and PROBE_BLOCKED when it can't (refused,
+# unreachable or timed out), which is how a blocked address looks. Any other exit means the probe never ran.
+EGRESS_PROBE = (
+    "import socket, sys\n"
+    "try:\n"
+    "    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5).close()\n"
+    "except OSError:\n"
+    "    sys.exit(3)\n"
+)
+PROBE_BLOCKED = 3
+PUBLIC_ADDRESSES = {"IPv4": "1.1.1.1", "IPv6": "2606:4700:4700::1111"}
 SUBNET_POOL = ipaddress.IPv4Network("10.231.0.0/16")
 PRIVATE_BLOCKS = tuple(ipaddress.IPv4Network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 RUN_ID = re.compile(r"[a-z0-9][a-z0-9-]{5,62}")
@@ -190,8 +218,21 @@ def egress_rules(cluster_subnet: str | None = None) -> list[list[str]]:
     return rules
 
 
-def egress_release_rules() -> list[list[str]]:
-    iptables = ["sudo", "-n", "iptables", "-w"]
+def egress_rules6(cluster_subnet6: str) -> list[list[str]]:
+    """ip6tables rules that let a cluster's nodes reach only their own IPv6 subnet, in the order egress_rules uses:
+    kind's network has an IPv6 subnet too, which Docker masquerades out like the IPv4 one."""
+    ip6tables = ["sudo", "-n", "ip6tables", "-w"]
+    return [
+        [*ip6tables, "-N", EGRESS_CHAIN],
+        [*ip6tables, "-A", EGRESS_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "RETURN"],
+        [*ip6tables, "-A", EGRESS_CHAIN, "-s", cluster_subnet6, "-d", cluster_subnet6, "-j", "RETURN"],
+        [*ip6tables, "-A", EGRESS_CHAIN, "-s", cluster_subnet6, "-j", "REJECT"],
+        [*ip6tables, "-I", "DOCKER-USER", "1", "-j", EGRESS_CHAIN],
+    ]
+
+
+def egress_release_rules(tool: str = "iptables") -> list[list[str]]:
+    iptables = ["sudo", "-n", tool, "-w"]
     return [
         [*iptables, "-D", "DOCKER-USER", "-j", EGRESS_CHAIN],
         [*iptables, "-F", EGRESS_CHAIN],
@@ -277,7 +318,7 @@ class Plan:
     @property
     def kubeconfig(self) -> Path:
         """Where kind and k3d write the cluster's context: the run's own file, never the developer's."""
-        return self.private / "kubeconfig"
+        return self.private / acceptance_evidence.KUBECONFIG
 
     def docker(self) -> list[str]:
         return ["docker", "--context", self.context]
@@ -422,18 +463,17 @@ def _tool_version(output: str) -> str:
     return match[0]
 
 
-def _network_subnet(recorder: Recorder, docker: list[str], network: str) -> str:
-    """A Docker network's IPv4 subnet; kind's network has an IPv6 one too."""
+def _network_subnets(recorder: Recorder, docker: list[str], network: str) -> tuple[str, str | None]:
+    """A Docker network's IPv4 subnet, and its IPv6 one when it has one, as kind's network does."""
     records = json.loads(recorder.run([*docker, "network", "inspect", network]).stdout)
     subnets = [
-        config["Subnet"]
-        for record in records
-        for config in (record.get("IPAM", {}).get("Config") or [])
-        if "." in config.get("Subnet", "")
+        str(config.get("Subnet", "")) for record in records for config in (record.get("IPAM", {}).get("Config") or [])
     ]
-    if not subnets:
+    ipv4 = [subnet for subnet in subnets if "." in subnet]
+    ipv6 = [subnet for subnet in subnets if ":" in subnet]
+    if not ipv4:
         raise StageFailed(f"Docker network {network} has no IPv4 subnet")
-    return str(subnets[0])
+    return ipv4[0], ipv6[0] if ipv6 else None
 
 
 def prepare_cluster(plan: Plan, recorder: Recorder, provider: str) -> dict[str, str]:
@@ -445,7 +485,7 @@ def prepare_cluster(plan: Plan, recorder: Recorder, provider: str) -> dict[str, 
     """
     pins = acceptance_journeys.load_versions(VERSIONS)["cluster"]
     name = cluster_name(plan.run_id)
-    cluster = {"provider": provider, "name": name, "context": f"{provider}-{name}"}
+    cluster: dict[str, Any] = {"provider": provider, "name": name, "context": f"{provider}-{name}"}
     cluster["node_image"] = pins["images"][NODE_IMAGES[provider]]
     plan.cluster_dir.mkdir(mode=0o700)
     # Owner-only before the tools write the cluster's credentials into it.
@@ -458,7 +498,7 @@ def prepare_cluster(plan: Plan, recorder: Recorder, provider: str) -> dict[str, 
     if created.returncode != 0:
         raise StageFailed(f"weave platform cluster create exited {created.returncode}: {_refusal(created.stdout)}")
     cluster["network"] = str(json.loads(created.stdout)["network"])
-    cluster["subnet"] = _network_subnet(recorder, plan.docker(), cluster["network"])
+    cluster["subnet"], cluster["ipv6_subnet"] = _network_subnets(recorder, plan.docker(), cluster["network"])
     kubectl = [str(_cluster_tool(plan, "kubectl")), "--context", cluster["context"]]
     # k3s pulls its system pods' images from the internet, so they must run before up can block egress.
     wait = ["--namespace", "kube-system", "wait", "--for=condition=Available", "deployment/coredns", "--timeout=180s"]
@@ -468,6 +508,32 @@ def prepare_cluster(plan: Plan, recorder: Recorder, provider: str) -> dict[str, 
     versions = json.loads(recorder.run([*kubectl, "version", "--output", "json"], env=env, timeout=60).stdout)
     cluster["kubernetes_version"] = str(versions["serverVersion"]["gitVersion"])
     return _image(recorder, plan.docker(), cluster["node_image"])
+
+
+def _cluster_secrets(plan: Plan, recorder: Recorder) -> list[str]:
+    """The runner and worker client secrets the cluster journeys made, read from the run's cluster into memory only,
+    each as used and as Kubernetes keeps it (base64). None before the cluster exists; a cluster that can't be read
+    fails the stage, so redaction and the leak check never go without them."""
+    cluster = plan.state.get("cluster") or {}
+    tool = _cluster_tool(plan, "kubectl")
+    if "network" not in cluster or not tool.is_file():
+        return []
+    kubectl, env = [str(tool), "--context", cluster["context"]], _cluster_env(plan)
+    unread = "The run's cluster didn't list {what}, so the cluster journeys' client secrets can't be checked"
+    listed = recorder.run([*kubectl, *WEAVE_NAMESPACE_NAMES], env=env, check=False, timeout=60)
+    if listed.returncode != 0:
+        raise StageFailed(unread.format(what="Weave's namespaces"))
+    found: list[str] = []
+    for namespace in listed.stdout.split():
+        argv = [*kubectl, "--namespace", namespace, "get", "secrets", "--output", "json"]
+        result = recorder.run(argv, env=env, check=False, timeout=60)
+        if result.returncode != 0:
+            raise StageFailed(unread.format(what=f"the Secrets in {namespace}"))
+        for item in json.loads(result.stdout)["items"]:
+            name, value = item["metadata"]["name"], (item.get("data") or {}).get(SECRET_KEY)
+            if value and (name == WORKER_IDENTITY or name.startswith(RUNNER_IDENTITY)):
+                found += [value, base64.b64decode(value).decode("utf-8", "replace")]
+    return found
 
 
 def prepare(plan: Plan, recorder: Recorder) -> None:
@@ -543,7 +609,8 @@ def _journeys(plan: Plan, recorder: Recorder, targets: Sequence[str], *, allow_e
     result = recorder.run(
         [sys.executable, "-m", "pytest", *targets, "-m", "acceptance", "-p", "no:cacheprovider", "-q", "--tb=short"],
         cwd=ROOT,
-        env={**os.environ, "WEAVE_ACC_RUN_DIR": str(plan.root)},
+        # The journeys reach a cluster only through the run's own kubeconfig, never the developer's.
+        env={**os.environ, "WEAVE_ACC_RUN_DIR": str(plan.root), "KUBECONFIG": str(plan.kubeconfig)},
         timeout=6000,
         check=False,
         capture=False,
@@ -561,32 +628,37 @@ def up(plan: Plan, recorder: Recorder) -> None:
             raise StageFailed("--block-egress needs Linux iptables; omit it on other systems")
         cluster = plan.state.get("cluster")
         rules = egress_rules(cluster["subnet"] if cluster else None)
+        subnet6 = cluster.get("ipv6_subnet") if cluster else None
+        rules6 = egress_rules6(subnet6) if subnet6 else []
         plan.state["egress_rules"] = True
+        if rules6:
+            plan.state["egress_rules6"] = True
         plan.save()
-        for argv in rules:
+        for argv in [*rules, *rules6]:
             recorder.run(argv)
-        # From Docker's default network, and from the cluster's, which its nodes use.
-        for network in [None, cluster["network"]] if cluster else [None]:
-            probe = recorder.run(
-                [
-                    *plan.docker(),
-                    "run",
-                    "--rm",
-                    *(["--network", network] if network else []),
-                    plan.state["images"]["python"],
-                    "python",
-                    "-c",
-                    "import socket; socket.create_connection(('1.1.1.1', 443), timeout=5)",
-                ],
-                check=False,
-                timeout=120,
-            )
-            if probe.returncode == 0:
-                where = f" from network {network}" if network else ""
-                raise StageFailed("Containers can still reach public addresses" + where)
+        # From Docker's default network, and from the cluster's, which its nodes use, over each family it has.
+        probes = [(None, "IPv4")]
+        if cluster:
+            probes += [(cluster["network"], "IPv4"), *([(cluster["network"], "IPv6")] if subnet6 else [])]
+        for network, family in probes:
+            _probe(plan, recorder, network, family)
         plan.state["egress_blocked"] = True
     plan.save()
     _journeys(plan, recorder, [J0_TESTS], allow_empty=False)
+
+
+def _probe(plan: Plan, recorder: Recorder, network: str | None, family: str) -> None:
+    """Fail unless a container on ``network`` (Docker's default network without one) can't reach a public address of
+    ``family``; a probe that never ran fails too, so it is never read as blocked."""
+    where = f" from network {network}" if network else " from Docker's default network"
+    argv = [*plan.docker(), "run", "--rm", *(["--network", network] if network else [])]
+    argv += [plan.state["images"]["python"], "python", "-c", EGRESS_PROBE, PUBLIC_ADDRESSES[family], "443"]
+    result = recorder.run(argv, check=False, timeout=120)
+    if result.returncode == 0:
+        addresses = "addresses" if family == "IPv4" else "IPv6 addresses"
+        raise StageFailed(f"Containers can still reach public {addresses}{where}")
+    if result.returncode != PROBE_BLOCKED:
+        raise StageFailed(f"The {family} egress probe{where} did not run (exit {result.returncode})")
 
 
 def _studio_env(plan: Plan, name: str) -> dict[str, str]:
@@ -595,6 +667,7 @@ def _studio_env(plan: Plan, name: str) -> dict[str, str]:
     return {
         **os.environ,
         "WEAVE_ACC_RUN_DIR": str(plan.root),
+        "KUBECONFIG": str(plan.kubeconfig),
         "WEAVE_E2E_PLATFORM_DIR": str(plan.platform_dir),
         "WEAVE_E2E_PERSON_FILE": str(people / "builder.json"),
         "WEAVE_E2E_VIEWER_FILE": str(people / "viewer.json"),
@@ -721,7 +794,7 @@ def _collect_cluster(plan: Plan, recorder: Recorder) -> None:
     folder = plan.evidence / "cluster"
     folder.mkdir(exist_ok=True)
     kubectl = [str(tool), "--context", cluster["context"]]
-    env, known = _cluster_env(plan), acceptance_evidence.run_secrets(plan.private)
+    env, known = _cluster_env(plan), acceptance_evidence.run_secrets(plan.private, _cluster_secrets(plan, recorder))
     leaked: list[str] = []
 
     def keep(name: str, argv: list[str]) -> None:
@@ -735,8 +808,7 @@ def _collect_cluster(plan: Plan, recorder: Recorder) -> None:
         result = recorder.run(argv, env=env, check=False, timeout=60)
         return result.stdout.split() if result.returncode == 0 else []
 
-    selected = ["get", "namespaces", "--selector", WEAVE_NAMESPACES, "--output", "jsonpath={.items[*].metadata.name}"]
-    for namespace in names([*kubectl, *selected]):
+    for namespace in names([*kubectl, *WEAVE_NAMESPACE_NAMES]):
         keep(f"{namespace}.get.txt", [*kubectl, "--namespace", namespace, "get", CLUSTER_OBJECTS, "--output", "wide"])
         keep(f"{namespace}.describe.txt", [*kubectl, "--namespace", namespace, "describe", CLUSTER_OBJECTS])
     system = [*kubectl, "--namespace", "weave-system"]
@@ -805,14 +877,15 @@ def _scan_step(plan: Plan, hits: int, storage_error: str | None, seconds: float)
 
 def scan(plan: Plan, recorder: Recorder) -> None:
     started = time.monotonic()
-    # The identity provider's admin secret among them belongs only in its own file.
-    canaries = acceptance_evidence.run_secrets(plan.private)
+    # The identity provider's admin secret and the cluster admin's key among them belong only in their own files.
+    canaries = acceptance_evidence.run_secrets(plan.private, _cluster_secrets(plan, recorder))
     platform = plan.platform_dir
     found = acceptance_evidence.scan_tree(
         [plan.evidence, plan.private],
         canaries,
         exclude=[
             platform / acceptance_evidence.IDENTITY_ENV,
+            plan.kubeconfig,
             plan.private / "canaries.json",
             plan.private / "people",
             plan.private / "playwright",
@@ -849,6 +922,8 @@ def _audit(plan: Plan, recorder: Recorder, prefixes: Sequence[str]) -> list[str]
             left += [f"{kind}:{name}" for name in recorder.run([*plan.docker(), *command], check=False).stdout.split()]
     if plan.state.get("egress_rules"):
         left.append(f"iptables:{EGRESS_CHAIN}")
+    if plan.state.get("egress_rules6"):
+        left.append(f"ip6tables:{EGRESS_CHAIN}")
     return sorted(set(left))
 
 
@@ -864,12 +939,14 @@ def _released(recorder: Recorder, commands: Sequence[Sequence[str]]) -> bool:
 
 
 def _delete_cluster(plan: Plan, recorder: Recorder) -> None:
-    """Delete the run's cluster with its nodes, network and context. A failure leaves its nodes for the audit."""
+    """Delete the run's cluster with its nodes, network and context. A delete that fails or hangs never skips the
+    platform's teardown: the audit names the nodes it left."""
     cluster = plan.state.get("cluster")
     if cluster:
         delete = ["delete", "--provider", cluster["provider"], "--name", cluster["name"], "--context", plan.context]
         argv = _weave_cluster(plan, *delete, "--output", "json")
-        recorder.run(argv, env=_cluster_env(plan), timeout=420, check=False)
+        with contextlib.suppress(StageFailed):
+            recorder.run(argv, env=_cluster_env(plan), timeout=CLUSTER_DELETE_SECONDS, check=False)
 
 
 def down(plan: Plan, recorder: Recorder) -> None:
@@ -899,6 +976,8 @@ def down(plan: Plan, recorder: Recorder) -> None:
         recorder.run([*docker, "image", "rm", "--force", *images], check=False, timeout=180)
     if plan.state.get("egress_rules") and _released(recorder, egress_release_rules()):
         plan.state["egress_rules"] = False  # while set, the audit lists the egress block as a leftover
+    if plan.state.get("egress_rules6") and _released(recorder, egress_release_rules("ip6tables")):
+        plan.state["egress_rules6"] = False
     left = _audit(plan, recorder, prefixes)
     plan.state["resources_left"] = left
     if left:

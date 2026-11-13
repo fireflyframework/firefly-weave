@@ -45,7 +45,7 @@ The first run builds the server image and takes about 25 minutes.
 | Stage | What it does | Timeout |
 | --- | --- | --- |
 | prepare | Checks tools, pulls the images in [versions.toml](versions.toml) by digest, builds the Acme fixture and the server image from the inputs `weave platform up` uses, builds Studio; in the cluster profiles, creates the run's cluster | 30 min |
-| up | On Linux CI with `--block-egress`, drops container traffic to public addresses and lets the cluster's nodes reach only their own network; then journey J0 | 25 min |
+| up | On Linux CI with `--block-egress`, drops container traffic to public addresses and lets the cluster's nodes reach only their own network, over IPv4 and IPv6; then journey J0 | 25 min |
 | run | The other pytest journeys, the Playwright suites of the profile, then the Studio journeys (`studio/playwright.acceptance.config.ts`) | 35 min (pr) |
 | collect | `weave platform status`, container logs and, in the cluster profiles, the cluster's objects and runner logs | 5 min |
 | scan | Fails when any generated secret appears in evidence, private files or any Studio browser storage; records step J9.4 | 5 min |
@@ -74,15 +74,18 @@ KUBECONFIG=build/acceptance/RUN_ID/private/kubeconfig \
 ```
 
 The `k3d` profile uses `--provider k3d`. kind or k3d write the cluster's context
-into the run's own kubeconfig, never into yours, and `private/cluster/` keeps the
-pinned kind, k3d and kubectl with their logs. Each cluster journey connects its own
+into the run's own kubeconfig, never into yours, and `private/cluster/` keeps
+kubectl and the provider's tool (kind or k3d), pinned, with their logs. Every
+journey runs with that kubeconfig. Each cluster journey connects its own
 namespace. `run.json` records the cluster under `cluster`, and the evidence names
 the tool's version (`kind` or `k3d`) and the Kubernetes version.
 
 `collect` writes `get` and `describe` of each namespace Weave manages on the
 cluster, and each runner's log, to `evidence/cluster/` with the run's secrets
-redacted; a secret found there fails the stage. `down` runs
-`weave platform cluster delete` for the cluster before it removes the platform.
+redacted, including the cluster journeys' client secrets and the cluster
+administrator's key. A secret found there fails the stage, and the scan looks
+for them too. `down` runs `weave platform cluster delete` for the cluster before
+it removes the platform.
 
 ## Enable a journey step
 
