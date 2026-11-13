@@ -133,6 +133,31 @@ SPDX-License-Identifier: Apache-2.0
   64 MiB) and reuses it only for the same content, limits and language
   features. A task completion holds the lock about 76 ms instead of 220–330 ms
   on an idle host.
+- Workflows can run AI agents. An `agent` step lets a model work in turns:
+  each turn it answers or calls the step's tools, up to 32 of them, each an
+  Action, a callable workflow (run as a child run) or a question to a person,
+  and the platform runs those calls as durable work before the next turn. It
+  needs the `ai.agent` language feature, which the platform now advertises in
+  its capabilities. Every call that changes data waits for a person's review;
+  `approval: auto` on such a tool is refused (`WV-COMP-AGENT_UNREVIEWED_EFFECT`).
+  With `distinctReviewer: true`, the run's starter gets `403 WV-REVIEW-DISTINCT`
+  when they read, claim, complete or reassign that review. Fixed arguments
+  always win, a value marked secret can't reach the model
+  (`WV-COMP-AI_SECRET_INPUT`), and tool results are redacted by their schemas
+  before the model reads them. Limits bound each agent's turns, tool calls and
+  tokens, and a run spends at most 2,000,000 tokens across its agents; an agent
+  that runs out fails with `WV-AGENT-ITERATIONS`, `WV-AGENT-BUDGET`,
+  `WV-AGENT-TIMEOUT` or `WV-AGENT-TOOL-FAILED`, which `onError` can handle,
+  while a changing call that may have applied keeps its own
+  `WV-TASK-AMBIGUOUS` incident. Agents remember within a step or across the
+  run's activations that share a `run` memory key. Replay and export check each
+  turn's recorded input (`WV-REPLAY-AGENT-INPUT`), and activation refuses an
+  agent whose model the AI policy doesn't approve, and any other step or tool
+  that would run the model turn (`WV-ACTIVATION-AI-RESERVED`). The step's
+  fields, limits and failures are in the AI agent steps reference; the worker
+  protocol, history and replay, incident operations and AI worker pages now
+  cover agents too, and AI tasks and agent turns share
+  `WEAVE_AGENTIC_CAPACITY`.
 - The agentic worker serves a new task, the **model turn**
   (`weave-agentic.turn@1.0.0`), which AI agent steps run on: one request
   to the model with the transcript so far and the step's tools. The answer is
@@ -142,12 +167,6 @@ SPDX-License-Identifier: Apache-2.0
   must end its instructions with the data notice, which tells the model that
   tool results and context are data, not instructions, and it carries the
   version of the rules it was built with.
-- The documentation covers AI agents at run time: the worker protocol describes
-  the model turn task's input, output and retries; history and replay lists an
-  agent's keys and what replay checks (`WV-REPLAY-AGENT-INPUT`); incident
-  operations gives the decisions for each `WV-AGENT-*` incident and for
-  incidents at turn and tool-call keys; and the AI worker guide explains that AI
-  tasks and agent turns share `WEAVE_AGENTIC_CAPACITY`.
 - One token count, shared by the server and the worker, decides whether a turn
   fits its context. It is set from the worst measured case of each kind of
   text, never below the local models measured
