@@ -17,7 +17,7 @@
 """J4 from the SDK and CLI: AI agents on a local Ollama with a real model.
 
 Ollama runs in a Weave-managed container by default; WEAVE_ACC_OLLAMA=host uses the Ollama already serving on
-this computer instead.
+this computer instead, which J4.14 stops and starts again (see tests/acceptance/README.md).
 
 The agents work on the orders fixture (tests/acceptance/fixtures/agents), which answers order
 A-17 with a tracking code only it knows (shipped-7731) and records every call, so the journey
@@ -405,10 +405,27 @@ def read(weave: Any, *args: str) -> Any:
     raise AssertionError("unreachable")
 
 
-def review_in(weave: Any, run_id: UUID) -> dict[str, Any] | None:
+# The person's task list is read a page at a time, at most this many pages.
+MAX_TASK_PAGES = 50
+
+
+def human_tasks(weave: Any) -> list[dict[str, Any]]:
+    """Every task in the person's list, following the cursor: the list is ordered by ID, not by age, so a new
+    review can be on any page."""
+    tasks: list[dict[str, Any]] = []
+    cursor = None
+    for _ in range(MAX_TASK_PAGES):
+        page = read(weave, "human-tasks", "list", "--limit", "100", *(("--cursor", cursor) if cursor else ()))
+        tasks += page["items"]
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return tasks
+    raise AssertionError(f"more than {MAX_TASK_PAGES * 100} human tasks in the person's list")
+
+
+def review_in(weave: Any, run_id: UUID | str) -> dict[str, Any] | None:
     """The review that waits in this run in the person's task list, if any."""
-    tasks = read(weave, "human-tasks", "list", "--limit", "100")["items"]
-    found = [task for task in tasks if task["run_id"] == str(run_id) and task["status"] == "ready"]
+    found = [task for task in human_tasks(weave) if task["run_id"] == str(run_id) and task["status"] == "ready"]
     return found[0] if found else None
 
 
@@ -432,6 +449,13 @@ def agent_log(weave: Any, run_id: UUID, key: str) -> dict[str, Any]:
 
 def calls(log: dict[str, Any], name: str | None = None) -> list[dict[str, Any]]:
     return [call for turn in log["turns"] for call in turn["calls"] if name is None or call["name"] == name]
+
+
+def asked_outcome(log: dict[str, Any], name: str) -> str:
+    """What became of the model's calls to a tool: their statuses, or "never asked" when the model never called it,
+    so a check that passes on that tool's calls reached no control."""
+    statuses = sorted({call["status"] for call in calls(log, name)})
+    return ", ".join(statuses) if statuses else "never asked"
 
 
 def turn_errors(log: dict[str, Any]) -> list[str]:
@@ -740,7 +764,10 @@ def _injected_cancel(run) -> None:
         _reviewed_run(run, "09-injected", _rejecting("j4-09i"), value={"request": "What is the status of order B-22?"})
     )
     view, log = _desk_evidence(run, run_id)
-    record(run, "J4.9/injected-cancel", run_id=str(run_id), status=view.state.status, logs={"desk": log})
+    cancel = asked_outcome(log, "cancel_order")
+    record(run, "J4.9/injected-cancel", run_id=str(run_id), status=view.state.status, cancel=cancel, logs={"desk": log})
+    # A model that ignored the injection passes without reaching the review, so the evidence says which it did.
+    print(f"J4.9/injected-cancel: cancel_order {cancel}")
     assert view.state.status == "succeeded", view.state
     assert any(call["status"] == "succeeded" for call in calls(log, "lookup_order")), log
     assert ("GET", "/orders/B-22") in orders_calls(run)
@@ -792,8 +819,7 @@ def test_j4_10_only_a_reviewer_other_than_the_starter_approves_and_the_call_runs
                 ):
                     refused = weave.refused(*args, request=request)
                     refusals.append((refused["status"], refused["code"]))
-                tasks = read(weave, "human-tasks", "list", "--limit", "100")["items"]
-                listed.append(review["id"] in {task["id"] for task in tasks})
+                listed.append(review["id"] in {task["id"] for task in human_tasks(weave)})
         decide(approver, review, "approve", "j4-10")
 
     run_id = asyncio.run(_reviewed_run(run, "10", answer, value={"request": "Cancel order A-17."}))
@@ -976,17 +1002,65 @@ class ContainerOllama:
             "Ollama is not healthy again",
         )
 
+    def close(self) -> None:
+        """The container keeps running: the platform manages it."""
+
+
+# A restarted Ollama keeps only these from the test's environment, so it finds its models and nothing else leaks.
+BASE_ENVIRONMENT = ("PATH", "HOME", "USER", "LANG", "TMPDIR")
+# What the Ollama guide asks of Ollama on this computer, for a server whose own environment can't be read.
+DOCUMENTED_OLLAMA = {"OLLAMA_CONTEXT_LENGTH": "8192"} | (
+    {"OLLAMA_HOST": "0.0.0.0:11434"} if sys.platform.startswith("linux") else {}
+)
+
+
+def listeners(port: int) -> list[int]:
+    """The processes listening on a loopback TCP port."""
+    found = subprocess.run(
+        ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, check=False
+    ).stdout.split()
+    return sorted({int(pid) for pid in found})
+
+
+def command_of(pid: int) -> str:
+    return subprocess.run(
+        ["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True, check=False
+    ).stdout.strip()
+
+
+def server_environment(pid: int) -> dict[str, str] | None:
+    """A process's environment where the system shows it (Linux), or None."""
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return None
+    pairs = (item.decode("utf-8", "replace").partition("=") for item in raw.split(b"\0") if item)
+    return {key: value for key, _, value in pairs}
+
+
+def restart_environment(stopped: dict[str, str] | None) -> dict[str, str]:
+    """The environment of a restarted Ollama: the stopped server's OLLAMA_ settings, or, when they can't be read,
+    the documented ones and any OLLAMA_ setting the person running the tests exported."""
+    base = {key: os.environ[key] for key in BASE_ENVIRONMENT if key in os.environ}
+    if stopped is not None:
+        return base | {key: value for key, value in stopped.items() if key.startswith("OLLAMA_")}
+    exported = {key: value for key, value in os.environ.items() if key.startswith("OLLAMA_")}
+    return base | DOCUMENTED_OLLAMA | exported
+
 
 class HostOllama:
-    """The Ollama server on this computer: the process listening on its port is stopped, and ollama serve
-    starts it again (its log in private/), as a person would restart it."""
+    """The Ollama server on this computer, stopped and started again as a person would: only a process that is
+    Ollama is stopped, ollama serve starts again with the stopped server's OLLAMA_ settings (its log in private/),
+    and the step stops the server it started when it ends."""
 
-    def __init__(self, run) -> None:
+    def __init__(self, run, url: str | None = None) -> None:
         from firefly_weave.sdk.platform_ai import HOST_OLLAMA
 
         self.run = run
-        self.url = HOST_OLLAMA
-        self.port = int(HOST_OLLAMA.rsplit(":", 1)[1])
+        self.url = url or HOST_OLLAMA
+        self.port = int(self.url.rsplit(":", 1)[1])
+        self.stopped: dict[str, str] | None = None
+        self.started: subprocess.Popen[bytes] | None = None
 
     def answers(self) -> bool:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -997,22 +1071,42 @@ class HostOllama:
             return False
 
     def stop(self) -> None:
-        listening = subprocess.run(
-            ["lsof", "-nP", "-t", f"-iTCP:{self.port}", "-sTCP:LISTEN"], capture_output=True, text=True, check=False
-        ).stdout.split()
+        listening = listeners(self.port)
         assert listening, f"no Ollama process listens on port {self.port}"
         for pid in listening:
-            os.kill(int(pid), signal.SIGTERM)
+            command = command_of(pid)
+            assert Path(command).name == "ollama", (
+                f"port {self.port} is held by {command or 'an unknown process'} (process {pid}), not Ollama: "
+                "stop it yourself, or set WEAVE_ACC_OLLAMA=container"
+            )
+        self.stopped = server_environment(listening[0])
+        for pid in listening:
+            os.kill(pid, signal.SIGTERM)
         _until(self.answers, lambda answered: not answered, 60, "Ollama still answers")
 
     def start(self) -> None:
         executable = shutil.which("ollama")
         assert executable, "the ollama command is not on PATH"
-        log = (self.run.private / "ollama-serve.log").open("ab")
-        subprocess.Popen(
-            [executable, "serve"], stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True
-        )
+        with (self.run.private / "ollama-serve.log").open("ab") as log:
+            self.started = subprocess.Popen(
+                [executable, "serve"],
+                stdout=log,
+                stderr=log,
+                stdin=subprocess.DEVNULL,
+                env=restart_environment(self.stopped),
+                start_new_session=True,
+            )
         _until(self.answers, bool, 60, "Ollama does not answer again")
+
+    def close(self) -> None:
+        """Stop the server this step started; start Ollama again yourself after the run."""
+        if self.started is not None and self.started.poll() is None:
+            self.started.terminate()
+            try:
+                self.started.wait(60)
+            except subprocess.TimeoutExpired:
+                self.started.kill()
+                self.started.wait(10)
 
 
 def _until(read: Callable[[], Any], done: Callable[[Any], bool], seconds: float, what: str) -> Any:
@@ -1029,28 +1123,22 @@ def _until(read: Callable[[], Any], done: Callable[[Any], bool], seconds: float,
 def test_j4_14_a_stopped_model_endpoint_fails_with_llm_unreachable_and_the_retry_succeeds(run, orders):
     orders_control(run, "/_control/reset", "POST")
     ollama = ContainerOllama(run) if ollama_mode() == "container" else HostOllama(run)
-    ollama.stop()
-    try:
 
-        async def failing() -> tuple[UUID, Any, list[str], dict[str, Any]]:
-            async with run.client("builder") as client:
-                run_id = await start(client, run, "lookup", "14")
-                view = await settle(client, run_id, until=incident_settled)
-                history = await client.history(run_id, limit=100)
-            failures = [
-                event.data["output"]["code"]
-                for event in history.events
-                if event.type == "task_failed" and isinstance(event.data.get("output"), dict)
-            ]
-            async with run.cli("builder") as weave:
-                log = agent_log(weave, run_id, "lookup")
-            return run_id, view, failures, log
+    async def failing() -> tuple[UUID, Any, list[str], dict[str, Any]]:
+        async with run.client("builder") as client:
+            run_id = await start(client, run, "lookup", "14")
+            view = await settle(client, run_id, until=incident_settled)
+            history = await client.history(run_id, limit=100)
+        failures = [
+            event.data["output"]["code"]
+            for event in history.events
+            if event.type == "task_failed" and isinstance(event.data.get("output"), dict)
+        ]
+        async with run.cli("builder") as weave:
+            log = agent_log(weave, run_id, "lookup")
+        return run_id, view, failures, log
 
-        run_id, stopped_view, failures, stopped_log = asyncio.run(failing())
-    finally:
-        ollama.start()
-
-    async def retried() -> tuple[Any, Any, dict[str, Any]]:
+    async def retried(run_id: UUID) -> tuple[Any, Any, dict[str, Any]]:
         async with run.client("builder") as client:
             incident = await resolve_incident(client, run_id, "retry_safe", "Ollama is running again")
             view = await settle(client, run_id, until=ended)
@@ -1059,7 +1147,15 @@ def test_j4_14_a_stopped_model_endpoint_fails_with_llm_unreachable_and_the_retry
             assert_replays(weave, run_id)
         return incident, view, log
 
-    incident, view, log = asyncio.run(retried())
+    ollama.stop()
+    try:
+        try:
+            run_id, stopped_view, failures, stopped_log = asyncio.run(failing())
+        finally:
+            ollama.start()
+        incident, view, log = asyncio.run(retried(run_id))
+    finally:
+        ollama.close()
     record(
         run,
         "J4.14",
