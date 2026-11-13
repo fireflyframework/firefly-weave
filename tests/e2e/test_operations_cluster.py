@@ -58,6 +58,7 @@ from firefly_weave.contracts.deployments import (
 )
 from firefly_weave.contracts.workers import WorkerControlRequest
 from firefly_weave.sdk.errors import WeaveError
+from firefly_weave.sdk.platform_clusters import NO_TARGET
 
 pytestmark = pytest.mark.real_operations
 
@@ -150,10 +151,18 @@ def connect(run: Any, namespace: str) -> dict[str, Any]:
     return dict(json.loads(run.require(weave_cluster(run, *argv)).stdout))
 
 
-def disconnect(run: Any, namespace: str) -> dict[str, Any]:
+def disconnect(run: Any, namespace: str, *, connect_failed: bool = False) -> dict[str, Any]:
+    """``cluster disconnect`` of `namespace`, also after a connect that failed: that connect's pending target, with
+    only its principals and identities, is freed as a connected one is. A connect that failed before it reserved the
+    namespace's identities left no target, so disconnect refuses and changes nothing; that refusal returns nothing
+    here, so the connect's own error is the one the test reports."""
     provider, name = cluster(run)["provider"], cluster(run)["name"]
     argv = ["disconnect", "--provider", provider, "--name", name, "--namespace", namespace]
-    return dict(json.loads(run.require(weave_cluster(run, *argv)).stdout))
+    result = weave_cluster(run, *argv)
+    nothing = NO_TARGET.format(key=cluster(run)["context"], namespace=namespace)
+    if connect_failed and result.returncode != 0 and nothing in result.stdout:
+        return {}
+    return dict(json.loads(run.require(result).stdout))
 
 
 def receipt(run: Any) -> dict[str, Any]:
@@ -494,11 +503,13 @@ def keycloak_clients(run: Any, client_id: str) -> list[dict[str, Any]]:
 @pytest.fixture(scope="module")
 def connected(run: Any) -> Iterator[dict[str, Any]]:
     started = time.monotonic()
-    value = connect(run, NAMESPACE)
+    value: dict[str, Any] = {}
     try:
+        value = connect(run, NAMESPACE)
         yield {**value, "seconds": time.monotonic() - started}
     finally:
-        disconnect(run, NAMESPACE)
+        # Also after a connect that failed, which can leave a pending target behind.
+        disconnect(run, NAMESPACE, connect_failed=not value)
 
 
 @pytest.fixture(autouse=True)
@@ -731,8 +742,7 @@ async def test_two_namespaces_on_one_cluster_work_side_by_side(run: Any, connect
             assert await runner_online(operator, UUID(second["target_id"]))
         assert run.require(kubectl(run, *listed)).stdout.split() == first_runner
     finally:
-        if second:
-            removed = disconnect(run, SECOND_NAMESPACE)
+        removed = disconnect(run, SECOND_NAMESPACE, connect_failed=not second)
     assert removed["target_id"] == second["target_id"] and removed["disabled"] is True
     assert f"Deployment/weave-runner-{SECOND_NAMESPACE}" in removed["removed"]
     from firefly_weave.sdk.platform_operations import cluster_clients
@@ -749,15 +759,17 @@ async def test_two_namespaces_on_one_cluster_work_side_by_side(run: Any, connect
         found = await call(operator, "deployment_targets.read", identifier=UUID(second["target_id"]))
         assert found.disabled is True
     assert run.require(kubectl(run, *listed)).stdout.split() == first_runner
-    # Connected again, the namespace gets its own target back, enabled for a new runner.
+    # Connected again, the namespace gets its own target back, enabled for a new runner, and the result names it.
+    again: dict[str, Any] = {}
     try:
         again = connect(run, SECOND_NAMESPACE)
         assert (again["target_id"], again["runner"]) == (second["target_id"], "online")
+        assert again["enabled_again"] == {"target_id": second["target_id"], "target_name": second["target_name"]}
         async with run.client("operator") as operator:
             found = await call(operator, "deployment_targets.read", identifier=UUID(second["target_id"]))
             assert found.disabled is False and await runner_online(operator, found.id)
     finally:
-        disconnect(run, SECOND_NAMESPACE)
+        disconnect(run, SECOND_NAMESPACE, connect_failed=not again)
 
 
 async def test_a_reconnect_after_scaling_keeps_the_workers(run: Any, connected: dict[str, Any]) -> None:
