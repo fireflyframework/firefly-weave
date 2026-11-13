@@ -16,10 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import {
-  parseRunsLink,
-  runsLink,
-} from "../src/app/editor/runs-tab/run-links";
+import { parseRunsLink, runsLink } from "../src/app/editor/runs-tab/run-links";
 
 const RUN = "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12";
 
