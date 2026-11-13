@@ -147,6 +147,32 @@ test("the Runs tab's code stays out of the first page", () => {
   expect(first).not.toContain(holding[0]);
 });
 
+/** The Runs tab's list chunk, at most (gzip). */
+const RUNS_BUDGET = 40_960;
+
+test("the Runs tab's chunk stays under its budget, out of the first page", () => {
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(
+    (match) => match[1],
+  );
+  const total = first.reduce(
+    (sum, file) => sum + statSync(join(BUILD, file)).size,
+    0,
+  );
+  expect(total).toBeLessThanOrEqual(FIRST_PAGE_BUDGET);
+  // The list's own element name lives only in its chunk.
+  const runs = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes("weave-runs-list"),
+  );
+  expect(runs).toHaveLength(1);
+  expect(first).not.toContain(runs[0]);
+  const size = gzipped(runs[0]);
+  console.log(JSON.stringify({ firstPage: total, runsChunkGzip: size }));
+  expect(size).toBeLessThanOrEqual(RUNS_BUDGET);
+});
+
 test("the designer opens once the test data service loads, and step details read it", async ({
   page,
 }) => {

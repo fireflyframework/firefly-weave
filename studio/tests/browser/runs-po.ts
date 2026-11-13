@@ -692,6 +692,8 @@ export async function openRunsTab(
     account?: { tenantId: string; projectId: string };
     /** The platform's actions, when not the default ones. */
     catalog?: CatalogEntry[];
+    /** The draft's workflow, when not the runs' own version. */
+    workflow?: unknown;
   } = {},
 ): Promise<{ runs: RunsPage; platform: RunsPlatform }> {
   await page.clock.install({ time: new Date(NOW) });
@@ -710,7 +712,9 @@ export async function openRunsTab(
   );
   await options.before?.(platform);
   await newWorkflow(page);
-  await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow, null, 2));
+  await new DesignerPage(page).setSource(
+    JSON.stringify(options.workflow ?? runsWorkflow, null, 2),
+  );
   const tabs = page.getByRole("tablist", { name: "Workflow views" });
   await tabs.getByRole("tab", { name: "Runs" }).click();
   await expect(tabs.getByRole("tab", { name: "Runs" })).toHaveAttribute(
