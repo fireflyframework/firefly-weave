@@ -668,7 +668,8 @@ the Action's output and its connector action's or worker task's. A mock of one
 call must fit one of the agent's tools, and it's checked for secrets by every
 schema of every tool, whether it fits that tool or not, because the saved turns
 decide which tool the call runs: a value any of them marks secret is refused.
-Anything else is refused with
+So when one of the agent's tools marks its whole result secret, mock the other
+tools by their `tool:` keys rather than by call. Anything else is refused with
 `WV-DEBUG-MOCK-OUTPUT`. A key that names no agent, no tool of it, a turn, a
 review, or a call the agent can't make (past its `maxIterations`, or past 16
 calls in a turn) is refused with `WV-DEBUG-MOCK-KEY`. An agent with no saved

@@ -137,11 +137,11 @@ SPDX-License-Identifier: Apache-2.0
   order; `node:` keys still win, for one call or as the agent's pinned output.
   Tool mocks are checked against every schema a live run checks the tool's
   result with, the connector's or worker's included, and a mock of one call is
-  refused when any of the agent's tools marks a value in it secret. Turns that call a tool the agent doesn't
-  declare, or with arguments that don't fit, and call keys past the agent's
-  limits, are refused before the simulation starts (`WV-DEBUG-MOCK-OUTPUT`,
-  `WV-DEBUG-MOCK-KEY`), and
-  turns that run out stop it on that turn (`WV-DEBUG-MISSING_MOCK`). A call that
+  refused when any of the agent's tools marks a value in it secret. Turns that
+  call a tool the agent doesn't declare, or with arguments that don't fit, and
+  call keys past the agent's limits, are refused before the simulation starts
+  (`WV-DEBUG-MOCK-OUTPUT`, `WV-DEBUG-MOCK-KEY`), and turns that run out stop it
+  on that turn (`WV-DEBUG-MISSING_MOCK`). A call that
   needs a review waits until `human_decision` answers its review key, such as
   `support#1.1.review`, unless the saved turns say `autoApprove`. Studio's
   Execute ships the agent's turn action, asks for each unanswered review or
