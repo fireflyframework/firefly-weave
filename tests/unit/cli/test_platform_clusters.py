@@ -683,6 +683,21 @@ def test_the_registered_worker_component_fits_the_runners_binding_and_the_pods_l
     assert container["resources"]["limits"] == {"cpu": "1000m", "memory": "512Mi"}
 
 
+def listed_target(*, identifier=None, name="kind-weave-test", uid=UID, disabled=True, revision=3):
+    """A target the API already holds for a weave-workers namespace, by default disabled as disconnect leaves it,
+    with a runner that isn't this connect's."""
+    return SimpleNamespace(
+        id=identifier or uuid4(),
+        name=name,
+        adapter="kubernetes",
+        external_identity=uid,
+        boundary="weave-workers",
+        disabled=disabled,
+        revision=revision,
+        runner_principal_id=uuid4(),
+    )
+
+
 def request_id(cluster):
     """The target ID connect recorded: the runner grant names it as its only resource."""
     grants = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "members.grant"]
@@ -718,19 +733,10 @@ def test_connecting_a_disconnected_namespace_again_enables_the_target_it_kept(wo
     policy. A disabled target of another namespace with the same name stays as it is."""
     directory, _, _, cluster = world
     kept, deployment = uuid4(), uuid4()
-
-    def target(identifier, uid, revision):
-        return SimpleNamespace(
-            id=identifier,
-            adapter="kubernetes",
-            external_identity=uid,
-            boundary="weave-workers",
-            disabled=True,
-            revision=revision,
-            runner_principal_id=uuid4(),
-        )
-
-    cluster.targets = [target(uuid4(), "another-cluster-namespace-uid", 2), target(kept, UID, 3)]
+    cluster.targets = [
+        listed_target(uid="another-cluster-namespace-uid", revision=2),
+        listed_target(identifier=kept, revision=3),
+    ]
     cluster.deployments = [
         SimpleNamespace(id=uuid4(), target_id=cluster.targets[0].id, name="weave-workers"),
         SimpleNamespace(id=deployment, target_id=kept, name="weave-workers"),
@@ -751,15 +757,7 @@ def test_a_connect_that_stopped_after_enabling_the_kept_target_adopts_it_on_the_
     """The API enabled the kept target for this pair's runner, then connect stopped before recording it: the rerun
     takes that target as it is instead of registering the namespace a second time."""
     directory, _, _, cluster = world
-    kept = SimpleNamespace(
-        id=uuid4(),
-        adapter="kubernetes",
-        external_identity=UID,
-        boundary="weave-workers",
-        disabled=True,
-        revision=3,
-        runner_principal_id=uuid4(),
-    )
+    kept = listed_target()
     cluster.targets = [kept]
     invoke = cluster.invoke
 
@@ -779,6 +777,23 @@ def test_a_connect_that_stopped_after_enabling_the_kept_target_adopts_it_on_the_
     result = connect(world)
     assert result["target_id"] == str(kept.id) and request_id(cluster) == str(kept.id)
     assert cluster.count("deployment_targets.update") == 1 and cluster.count("deployment_targets.create") == 0
+
+
+def test_connect_never_adopts_an_enabled_target_another_runner_holds(world):
+    """An enabled target for the namespace that names another runner belongs to a live connection: connect takes
+    nothing from it (no update, no runner grant on it, no target recorded) and the API's refusal stands."""
+    directory, _, _, cluster = world
+    held = listed_target(disabled=False, revision=4)
+    cluster.targets = [held]
+    cluster.deployments = [SimpleNamespace(id=uuid4(), target_id=held.id, name="weave-workers")]
+    with pytest.raises(WeaveError) as refused:
+        connect(world)
+    assert refused.value.code == "WV-TARGET-EXISTS"
+    assert cluster.count("deployment_targets.update") == 0
+    grants = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "members.grant"]
+    assert not [grant for grant in grants if str(held.id) in [str(item) for item in grant.resources]]
+    entry = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert "target_id" not in entry and "deployment_id" not in entry
 
 
 @pytest.mark.parametrize(
@@ -1477,10 +1492,13 @@ def test_disconnect_keeps_every_object_of_a_weave_system_another_installation_ow
     assert clusters.receipt(directory)["clusters"] == {}
 
 
-def busy(cluster, monkeypatch, operation, times):
-    """The API answers `operation` with its 429 capacity refusal `times` times, then as usual."""
+CAPACITY_REFUSAL = Problem(status=429, code="WV-OPERATION-CAPACITY", message="Operation capacity unavailable")
+
+
+def busy(cluster, monkeypatch, operation, times, refusal=CAPACITY_REFUSAL):
+    """The API answers `operation` with `refusal`, by default its 429 capacity refusal, `times` times, then as
+    usual."""
     invoke, left = cluster.invoke, [times]
-    refusal = Problem(status=429, code="WV-OPERATION-CAPACITY", message="Operation capacity unavailable")
 
     async def refusing(name, **kwargs):
         if name == operation and left[0] > 0:
@@ -1515,6 +1533,18 @@ def test_a_capacity_refusal_that_outlasts_the_wait_stops_disconnect(world, monke
         disconnect(world)
     assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
     assert 1 < cluster.count("deployment_targets.update") < 100
+
+
+def test_a_429_that_is_not_a_capacity_refusal_is_never_sent_again(world, monkeypatch):
+    """Only the capacity codes mean the API rolled the request back. Another 429, such as the runtime limit, can come
+    after the API committed the request, so it reaches the caller at once and the request is never sent again."""
+    _, _, _, cluster = world
+    limit = Problem(status=429, code="WV-RUNTIME-LIMIT", message="Runtime allocation limit")
+    busy(cluster, monkeypatch, "deployments.create", 1, limit)
+    with pytest.raises(WeaveError) as refused:
+        connect(world)
+    assert (refused.value.status, refused.value.code) == (429, "WV-RUNTIME-LIMIT")
+    assert cluster.count("deployments.create") == 1
 
 
 def test_disconnecting_a_cluster_whose_nodes_are_gone_frees_the_target_without_reaching_it(world):
