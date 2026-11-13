@@ -61,6 +61,8 @@ USER = 65532
 # the runner refuses a plan whose component asks for more than the binding allows.
 WORKER_CPU_MILLIS = 1000
 WORKER_MEMORY_MIB = 512
+# The most workers a change request may scale the namespace's worker Deployment to; the runner refuses more.
+MAX_WORKER_REPLICAS = 5
 WORKER_GRACE_SECONDS = 240
 RUNNER_GRACE_SECONDS = 30
 HEARTBEAT_SECONDS = 90
@@ -301,7 +303,7 @@ def destination_policy(target: ClusterTarget) -> DestinationPolicy:
                 kind="worker",
                 configuration=CONFIGURATION,
                 container=WORKER_CONTAINER,
-                max_replicas=5,
+                max_replicas=MAX_WORKER_REPLICAS,
                 max_cpu_millis=WORKER_CPU_MILLIS,
                 max_memory_mib=WORKER_MEMORY_MIB,
             )

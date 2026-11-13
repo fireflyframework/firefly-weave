@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from firefly_weave.sdk.client import WeaveClient
 
 PROVIDERS = ("kind", "k3d")
-DEFAULT_NAMESPACE = "weave-workers"
+DEFAULT_NAMESPACE = local.DEFAULT_CLUSTER_NAMESPACE
 PAIRS = platform_operations.CLUSTER_PAIRS
 RECEIPT = "clusters.json"
 FORMAT = "weave/local-clusters-v1"
@@ -807,31 +807,44 @@ def _mirror(connection: _Connection) -> None:
         _wait_nodes(connection)
 
 
-def _wait_nodes(connection: _Connection) -> None:
+def _nodes_ready(state: dict[str, Any], name: str, kube: list[str], env: dict[str, str] | None = None) -> bool:
+    """Wait until every node of the cluster that `kube` reaches is Ready, for at most READY_SECONDS; whether they
+    were. A failed wait is tried again until then, since the cluster's API may not answer yet."""
     deadline = clock() + READY_SECONDS
     while True:
         wait = max(1, min(60, int(deadline - clock())))
         try:
             local._run(
-                connection.state,
-                "cluster-mirror-ready",
-                [*connection.kube, "wait", "--for=condition=Ready", "node", "--all", f"--timeout={wait}s"],
+                state,
+                name,
+                [*kube, "wait", "--for=condition=Ready", "node", "--all", f"--timeout={wait}s"],
+                env=env,
                 timeout=wait + 30,
             )
-            return
+            return True
         except local.PlatformError:
             if clock() >= deadline:
-                raise local.PlatformError(
-                    f"The cluster's nodes weren't Ready within {READY_SECONDS} s after the registry mirror was "
-                    "added. Nothing was registered."
-                ) from None
+                return False
         sleep(5)
+
+
+def _wait_nodes(connection: _Connection) -> None:
+    if not _nodes_ready(connection.state, "cluster-mirror-ready", connection.kube):
+        raise local.PlatformError(
+            f"The cluster's nodes weren't Ready within {READY_SECONDS} s after the registry mirror was added. "
+            "Nothing was registered."
+        )
+
+
+def _runner_repository(connection: _Connection) -> tuple[str, str]:
+    """The runner image the platform built (its local ID) and its repository in the platform registry."""
+    port = int(connection.operations["registry_port"])
+    return connection.operations["runner_image"], f"127.0.0.1:{port}/{RUNNER_REPOSITORY}"
 
 
 def _runner_image(connection: _Connection) -> str:
     """Push the runner image the platform built to its registry; adapters accept images by digest only."""
-    image, port = connection.operations["runner_image"], int(connection.operations["registry_port"])
-    repository = f"127.0.0.1:{port}/{RUNNER_REPOSITORY}"
+    image, repository = _runner_repository(connection)
     tag = f"{repository}:{image.removeprefix('sha256:')[:12]}"
     docker = _docker(connection)
     local._run(connection.state, "cluster-runner-tag", [*docker, "tag", image, tag])
@@ -841,8 +854,7 @@ def _runner_image(connection: _Connection) -> str:
 
 def _runner_digest(connection: _Connection) -> str:
     """The runner image's reference by digest in the platform registry, as the last push recorded it; read-only."""
-    image, port = connection.operations["runner_image"], int(connection.operations["registry_port"])
-    repository = f"127.0.0.1:{port}/{RUNNER_REPOSITORY}"
+    image, repository = _runner_repository(connection)
     inspected = strict_json(
         local._run(connection.state, "cluster-runner-inspect", [*_docker(connection), "image", "inspect", image])
     )
@@ -900,16 +912,9 @@ def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str, ref
 
 
 def _uid(connection: _Connection, namespace: str) -> str:
-    uid = (
-        local._run(
-            connection.state,
-            "cluster-namespace-uid",
-            [*connection.kube, "get", "namespace", namespace, "-o", "jsonpath={.metadata.uid}"],
-        )
-        .decode(errors="replace")
-        .strip()
-    )
-    if not _UID.fullmatch(uid):
+    """The UID of the namespace connect just applied, which its target is registered under."""
+    uid = _live_uid(connection, namespace, "nothing was registered")
+    if uid is None:
         raise local.PlatformError("kubectl didn't report the namespace's UID; nothing was registered.")
     return uid
 
@@ -1696,8 +1701,9 @@ def _worker_drifted(connection: _Connection, target: objects.ClusterTarget) -> l
     return [f"Deployment/{objects.WORKER}"]
 
 
-def _live_uid(connection: _Connection, namespace: str) -> str | None:
-    """The namespace's UID, None when it no longer exists; read-only."""
+def _live_uid(connection: _Connection, namespace: str, unchanged: str = "nothing was changed") -> str | None:
+    """The namespace's UID, None when it no longer exists; read-only. `unchanged` ends the refusal of an answer that
+    isn't a UID, saying what the caller didn't do."""
     uid = (
         local._run(
             connection.state,
@@ -1710,7 +1716,7 @@ def _live_uid(connection: _Connection, namespace: str) -> str | None:
     if not uid:
         return None
     if not _UID.fullmatch(uid):
-        raise local.PlatformError("kubectl didn't report the namespace's UID; nothing was changed.")
+        raise local.PlatformError(f"kubectl didn't report the namespace's UID; {unchanged}.")
     return uid
 
 
@@ -2044,24 +2050,9 @@ def _create(state: dict[str, Any], directory: Path, tool: Path, provider: str, c
 
 def _wait_ready(state: dict[str, Any], kubectl: Path, provider: str, cluster: str, context: str) -> None:
     """Wait from this computer, through the context the tool wrote, until every node is Ready, with a deadline."""
-    deadline = clock() + READY_SECONDS
-    while True:
-        wait = max(1, min(60, int(deadline - clock())))
-        try:
-            local._run(
-                state,
-                "cluster-ready",
-                [str(kubectl), "--context", f"{provider}-{cluster}", "wait", "--for=condition=Ready", "node", "--all"]
-                + [f"--timeout={wait}s"],
-                env=_tool_environment(context),
-                timeout=wait + 30,
-            )
-            return
-        except local.PlatformError:
-            # The API may not answer yet; try again until the deadline.
-            if clock() >= deadline:
-                raise _NotReady() from None
-        sleep(5)
+    kube = [str(kubectl), "--context", f"{provider}-{cluster}"]
+    if not _nodes_ready(state, "cluster-ready", kube, _tool_environment(context)):
+        raise _NotReady()
 
 
 def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:

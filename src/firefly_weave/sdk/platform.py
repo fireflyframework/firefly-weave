@@ -85,6 +85,9 @@ _DISPLAY_NAME = "Local Weave platform"
 # Development people get the smallest set that authors, publishes, activates, runs, inspects
 # runs, and works on human tasks in the demo workspace; administrators choose others explicitly.
 DEFAULT_PERSON_ROLES = ("developer", "deployer", "operator", "viewer", "task_participant")
+# The workers namespace that cluster connect and disconnect use when none is given. It lives here, not with the
+# cluster code, so that the CLI reads it without loading that code.
+DEFAULT_CLUSTER_NAMESPACE = "weave-workers"
 PERSON_ROLES = (
     "deployment_reader",
     "deployment_planner",

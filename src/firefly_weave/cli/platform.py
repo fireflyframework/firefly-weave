@@ -203,7 +203,12 @@ def cluster_delete(directory: Path, provider: str, name: str, context: str | Non
 @cluster.command("connect")
 @click.option("--provider", required=True, help="kind or k3d.")
 @click.option("--name", "name", required=True, help="The cluster's name.")
-@click.option("--namespace", default="weave-workers", show_default=True, help="The workers namespace to connect.")
+@click.option(
+    "--namespace",
+    default=lifecycle.DEFAULT_CLUSTER_NAMESPACE,
+    show_default=True,
+    help="The workers namespace to connect.",
+)
 @click.option("--kubeconfig", type=click.Path(path_type=Path), help="Kubeconfig file; default: where kubectl looks.")
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
@@ -263,7 +268,12 @@ def cluster_list(directory: Path, check: bool, kubeconfig: Path | None, output: 
 @cluster.command("disconnect")
 @click.option("--provider", required=True, help="kind or k3d.")
 @click.option("--name", "name", required=True, help="The cluster's name.")
-@click.option("--namespace", default="weave-workers", show_default=True, help="The connected workers namespace.")
+@click.option(
+    "--namespace",
+    default=lifecycle.DEFAULT_CLUSTER_NAMESPACE,
+    show_default=True,
+    help="The connected workers namespace.",
+)
 @click.option("--kubeconfig", type=click.Path(path_type=Path), help="Kubeconfig file; default: where kubectl looks.")
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
