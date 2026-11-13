@@ -612,6 +612,37 @@ def test_swapping_names_while_upgrading_the_action_and_its_connector_keeps_the_c
     )
 
 
+NOTIFY = {
+    "name": "notify_customer",
+    "description": "Tell the customer.",
+    "workflow": "notify-customer@1.0.0",
+    "approval": "required",
+    "review": REVIEW,
+    "fixed": {"object": {"message": {"literal": "Fixed text."}}},
+}
+
+
+def test_swapping_names_with_a_workflow_tool_whose_workflow_upgrades_keeps_its_safeguards():
+    draft = json.loads(json.dumps(workflow(agent(tools=[{**LOOKUP, "approval": "auto"}, NOTIFY]))))
+    edited = copy.deepcopy(draft)
+    lookup, notify = edited["spec"]["steps"][0]["tools"]
+    lookup["name"], notify["name"] = notify["name"], lookup["name"]
+    notify["workflow"] = "notify-customer@1.1.0"
+    for tool in (lookup, notify):
+        for name in ("fixed", "approval", "review"):
+            tool.pop(name, None)
+
+    [tool] = [tool for tool in step_of(proposed(edited, drafts=[draft]))["tools"] if "workflow" in tool]
+
+    # The read tool's fixed region comes along with its name; fixing one more argument only narrows the model.
+    assert (tool["name"], tool["approval"], tool["fixed"]["object"]["message"], tool["review"]) == (
+        "lookup_order",
+        "required",
+        NOTIFY["fixed"]["object"]["message"],
+        REVIEW,
+    )
+
+
 def test_a_name_match_with_two_differently_guarded_tools_of_its_new_target_takes_the_strictest():
     draft = guarded()
     tools = draft["spec"]["steps"][0]["tools"]
