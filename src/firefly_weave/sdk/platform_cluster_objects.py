@@ -83,11 +83,12 @@ ORIGINS = "weave-private-origins"
 WORKER_CONFIG = "weave-worker-config"
 WORKER_IDENTITY = "weave-worker-identity"
 
-# The adapter's kubectl calls, as rules: get and patch the worker Deployment, list and patch its pods. No watch, no
-# Secrets or ConfigMaps, nothing in weave-system, no autoscalers (a cluster target has only a worker component).
+# The adapter's kubectl calls, as rules: get and patch the worker Deployment, list, get and patch its pods (kubectl
+# patch reads an object before it patches it). No watch, no Secrets or ConfigMaps, nothing in weave-system, no
+# autoscalers (a cluster target has only a worker component).
 RUNNER_RULES: tuple[dict[str, Any], ...] = (
     {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "patch"]},
-    {"apiGroups": [""], "resources": ["pods"], "verbs": ["list", "patch"]},
+    {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list", "patch"]},
 )
 
 # Copies each key of the mounted Secret (kubelet's links are skipped) to a memory-backed folder, owner read-only:

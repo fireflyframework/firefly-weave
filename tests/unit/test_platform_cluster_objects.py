@@ -237,7 +237,10 @@ def test_the_runner_rules_are_exactly_what_its_commands_need():
         # `get` with a selector lists; kubectl's short singular names the plural resource.
         if verb == "get" and any(item.startswith("--selector=") for item in argv):
             verb = "list"
-        needed.add((group, {"namespace": "namespaces"}.get(resource, resource), verb))
+        # kubectl patch reads the object before it sends the patch, so it needs get as well: on a real cluster a
+        # runner without get on pods was forbidden to patch one.
+        for each in ("get", "patch") if verb == "patch" else (verb,):
+            needed.add((group, {"namespace": "namespaces"}.get(resource, resource), each))
     granted = {
         (group, resource, verb)
         for rule in objects.RUNNER_RULES
