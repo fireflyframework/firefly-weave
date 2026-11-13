@@ -137,6 +137,16 @@ def test_no_secret_is_an_environment_variable_or_a_rendered_object():
     assert not [doc for doc in rendered() if doc["kind"] == "Secret"]
 
 
+def test_every_probe_runs_the_worker_program_with_the_worker_containers_memory():
+    """Both probes run the worker's program, whose imports alone take about 95 MiB: below the worker container's
+    limit a probe is OOM-killed before it checks anything, and connect stops with a probe that never ran."""
+    (worker,) = objects.worker_deployment(target())["spec"]["template"]["spec"]["containers"]
+    for name in ("weave-probe-True", "weave-probe-False"):
+        (container,) = pods()[name]["containers"]
+        assert container["resources"] == worker["resources"], name
+        assert container["resources"]["limits"]["memory"] == "512Mi", name
+
+
 def test_the_main_containers_see_only_0400_copies():
     for name, pod in pods().items():
         secret_volumes = {volume["name"] for volume in pod.get("volumes", []) if "secret" in volume}

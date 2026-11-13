@@ -381,6 +381,11 @@ def _resources(cpu: str, memory: str, cpu_limit: str, memory_limit: str) -> dict
     return {"requests": {"cpu": cpu, "memory": memory}, "limits": {"cpu": cpu_limit, "memory": memory_limit}}
 
 
+def _worker_resources() -> dict[str, Any]:
+    # Also every probe's: a probe runs the worker's program, whose imports alone take about 95 MiB.
+    return _resources("100m", "128Mi", "1", "512Mi")
+
+
 def _file(volume: str, path: str, key: str) -> dict[str, Any]:
     # A file of its own, not kubelet's link: private-origin files must be regular files.
     return {"name": volume, "mountPath": path, "subPath": key, "readOnly": True}
@@ -441,7 +446,7 @@ def _worker_container(target: ClusterTarget, image: str, *, command: list[str] |
             _field("WEAVE_POD_NAMESPACE", "metadata.namespace"),
             _field("WEAVE_NODE_NAME", "spec.nodeName"),
         ],
-        "resources": _resources("100m", "128Mi", "1", "512Mi"),
+        "resources": _worker_resources(),
         "securityContext": _security(),
         "volumeMounts": [
             {"name": "secrets", "mountPath": SECRETS_DIR, "readOnly": True},
@@ -515,7 +520,7 @@ def probe_pod(target: ClusterTarget, *, name: str, labeled: bool, command: list[
                     "image": target.worker_image,
                     "imagePullPolicy": "IfNotPresent",
                     "command": command,
-                    "resources": _resources("10m", "32Mi", "100m", "64Mi"),
+                    "resources": _worker_resources(),
                     "securityContext": _security(),
                     "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
                 }
