@@ -59,7 +59,7 @@ import {
   addCommonStep,
   fitCanvas,
   openStepFixture,
-  type StepDetailsPage,
+  StepDetailsPage,
   settingsGear,
   stepFixture,
   withLanguageFeatures,
@@ -136,6 +136,16 @@ import {
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
+  keepDrafts,
+  listedKinds,
+  openRunsTab,
+  RUN_IDS,
+  RUNS_ACCOUNT,
+  runsWorkflow,
+  WORKER_CATALOG,
+  type RunsPage,
+} from "./runs-po";
+import {
   EXECUTE_ASKING,
   EXECUTE_CHAIN,
   EXECUTE_ROUTED,
@@ -180,7 +190,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log, .runs-view, .run-header';
 
 /** A workflow whose decision table step fills the table's inputs field by field. */
 const decisionFormWorkflow = yamlFile(
@@ -1698,6 +1708,37 @@ async function tourPanel(page: Page, id: string) {
   const panel = new AddStepPanel(page);
   await expect(panel.title).toHaveText("What happens next?");
   return panel;
+}
+
+/** The run `id` on the Runs tab, from the list (on a narrow window it comes to the front). */
+async function chooseRun(page: Page, runs: RunsPage, id: string) {
+  const back = page.getByRole("button", { name: "Back to runs" });
+  if (await back.isVisible()) await back.click();
+  await runs.row(id).click();
+  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
+    `Run ${id.slice(0, 8)}`,
+  );
+  await expect(runs.canvas.locator(".run-header .run-caption")).toBeVisible();
+}
+/** Shows a pane of step details where they show one at a time. */
+async function showRunPane(details: StepDetailsPage, name: string) {
+  const tab = details.dialog.getByRole("tab", { name, exact: true });
+  if (await tab.isVisible()) await tab.click();
+}
+/** The runs' workflow as a platform draft Studio keeps test data for, on its Runs tab. */
+async function openDebugRuns(page: Page) {
+  const { runs } = await openRunsTab(page, {
+    account: RUNS_ACCOUNT,
+    catalog: WORKER_CATALOG,
+  });
+  const id = /\/workflows\/([^/]+)\/designer/.exec(
+    new URL(page.url()).pathname,
+  )![1];
+  await keepDrafts(page, [{ id, document: runsWorkflow }]);
+  await localAuthoring(page);
+  await page.goto(`/workflows/${id}/designer?tab=runs`);
+  await expect(runs.rows).toHaveCount(listedKinds.length + 1);
+  return runs;
 }
 
 type Scene = (tour: Tour) => Promise<void>;
@@ -4913,6 +4954,65 @@ spec:
     ).toHaveCount(2);
     await expect(page.getByText(`Scale workers · ${deployment}`)).toBeVisible();
     await shot("90-clusters-approvals");
+  },
+  async "runs-tab"({ page, shot }) {
+    const { runs } = await openRunsTab(page);
+    await chooseRun(page, runs, RUN_IDS.failed);
+    await shot("184-runs-failed");
+    await chooseRun(page, runs, RUN_IDS.older);
+    await expect(runs.canvas.locator(".run-banner")).toBeVisible();
+    await shot("185-runs-older-banner");
+    await chooseRun(page, runs, RUN_IDS.failed);
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("fetch");
+    await showRunPane(details, "Output");
+    await shot("186-runs-step-output", { tabs: 0 });
+    await details.dialog
+      .locator('[data-region="output"]')
+      .getByRole("button", { name: "Step logs" })
+      .click();
+    await expect(details.dialog).toContainText(
+      "Logs aren't available from this platform yet.",
+    );
+    await shot("188-runs-step-logs", { tabs: 0 });
+    await details.close();
+    await details.openWithKeyboard("send");
+    await showRunPane(details, "Input");
+    await expect(
+      details.dialog.locator('[data-region="input"] .pane-received'),
+    ).toBeVisible();
+    await shot("187-runs-step-received", { tabs: 0 });
+  },
+  async "runs-debug"({ page, shot }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    const runs = await openDebugRuns(page);
+    await chooseRun(page, runs, RUN_IDS.failed);
+    await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
+    const details = new StepDetailsPage(page);
+    await expect(details.dialogFor("send")).toBeVisible();
+    await showRunPane(details, "Output");
+    await expect(details.dialog.locator(".pane-run-stopped")).toBeVisible();
+    await shot("190-runs-debug-stopped", { tabs: 0 });
+    await page.locator(".toast-dismiss").click();
+    await details.close();
+    await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+    await chooseRun(page, runs, RUN_IDS.failed);
+    await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
+    await expect(
+      page.getByRole("dialog", {
+        name: "Use run 1c0d7f8a's data as test data?",
+      }),
+    ).toBeVisible();
+    await shot("189-runs-merge-question", { tabs: 2 });
+  },
+  async "operate-debug"({ page, shot }) {
+    await openRunsTab(page);
+    await page.goto(`/operate/runs/${RUN_IDS.failed}`);
+    const detail = page.locator(".record-detail");
+    await expect(
+      detail.getByRole("button", { name: "Debug in editor" }),
+    ).toBeVisible();
+    await shot("191-operate-debug-button");
   },
 };
 
