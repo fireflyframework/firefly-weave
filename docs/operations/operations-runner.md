@@ -65,9 +65,10 @@ observe jobs fail and its applies end in reconciliation. Grant the read after
 the server upgrade and before the runner upgrade.
 
 To remove exactly the reviewed pods in a scale-down, a Kubernetes runner also
-patches the worker pods (`patch` on `pods`) to set their deletion cost. Grant
-it before you upgrade a Kubernetes runner to a release that registers adapter
-version 2, together with the `list` read. Without it, every scale-down that
+patches the worker pods (`get` and `patch` on `pods`, since `kubectl patch`
+reads a pod first) to set their deletion cost. Grant them before you upgrade a
+Kubernetes runner to a release that registers adapter version 2, together with
+the `list` read. Without it, every scale-down that
 runner takes fails before any change, because the runner checks each pod patch
 with a server-side dry run first; the change request can be planned again once
 the grant is in place.
