@@ -20,6 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Studio's editor has a Runs tab: a workflow's runs in the environment you work
+  in, the chosen run drawn on its canvas, and each step's recorded data in
+  read-only step details.
+- Debug in editor and Copy to editor turn a run's data into the draft's test
+  data and execute the workflow with it, stopping where the run failed; values
+  marked secret are left out and named. Operate's run detail opens a run in its
+  workflow's newest draft, and offers to create one when there is none.
 - An operator's command, such as resuming a drained worker, no longer answers
   429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
   both of the API's slots for changes. A request that finds every slot of its

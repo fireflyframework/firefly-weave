@@ -112,6 +112,16 @@ To remove a filter, empty its field, choose its status again, or clear the
 check box; **Clear filters** removes them all. Business and correlation keys
 never appear in the page's address.
 
+**Open a run in the editor.** A run's detail in **Runs** offers **Debug in
+editor** when the run failed and **Copy to editor** otherwise, when you can
+read the catalog (`catalog.read`). Studio opens the run on the **Runs** tab of
+its workflow's newest draft: the workflow open in the editor when it is that
+workflow's draft, otherwise the draft with the highest version, then the
+latest revision. Studio then copies the run's data into the draft's test data
+and executes it there, as described in the Studio guide. When the workflow has
+no draft, Studio asks "Create a draft from 1.2.0?": **Create draft** starts a
+draft as a copy of the version the run used; published versions don't change.
+
 ### With the CLI
 
 Save `start.json` with your activation's ID and input that matches the
