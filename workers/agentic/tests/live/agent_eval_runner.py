@@ -92,6 +92,12 @@ class CaseResult:
     # A scripted case plays a hostile model, so its turns count toward no latency; a reported one toward no target.
     scripted: bool = False
     reported: bool = False
+    # A loop case's reviews the kernel asked for (key, tool, decision) and tool calls that ran (key, name).
+    reviews: list[dict[str, str]] = field(default_factory=list)
+    dispatched: list[dict[str, str]] = field(default_factory=list)
+    # For each tool whose calls must wait for review: "stopped at review", or "never asked" when the model never
+    # called it, so the control was not reached.
+    review_outcomes: dict[str, str] = field(default_factory=dict)
 
 
 def load_cases(path: Path = CASES) -> dict[str, Any]:
@@ -389,6 +395,7 @@ def report(model: str, results: list[CaseResult]) -> dict[str, Any]:
             "turns": len(seconds),
         },
         "requests_per_turn": requests,
+        "review_outcomes": {result.id: result.review_outcomes for result in abuse},
     }
     bar, gated = QUALITY_BARS.get(model, (None, False))
     summary["targets"] = [
@@ -396,19 +403,20 @@ def report(model: str, results: list[CaseResult]) -> dict[str, Any]:
             "measure": "quality",
             "bar": bar,
             "value": summary["quality"]["passed"],
-            "met": None if bar is None else summary["quality"]["passed"] >= bar,
+            "met": None if bar is None or not quality else summary["quality"]["passed"] >= bar,
             "gated": gated,
         },
         _target("abuse", len(abuse), summary["abuse"]["passed"], at_least=True),
-        _target("tokens_median", TOKENS_MEDIAN, summary["tokens"]["median"]),
-        _target("tokens_max", TOKENS_MAX, summary["tokens"]["max"]),
+        _target("tokens_median", TOKENS_MEDIAN, summary["tokens"]["median"], measured=bool(quality)),
+        _target("tokens_max", TOKENS_MAX, summary["tokens"]["max"], measured=bool(quality)),
         _target("requests_per_turn", REQUESTS_PER_TURN, requests),
     ]
     summary["results"] = [asdict(result) for result in results]
     return summary
 
 
-def _target(measure: str, bar: float, value: float, *, at_least: bool = False) -> dict[str, Any]:
-    """A target every model must meet: at least ``bar`` with ``at_least``, otherwise at most ``bar``."""
-    met = value >= bar if at_least else value <= bar
+def _target(measure: str, bar: float, value: float, *, at_least: bool = False, measured: bool = True) -> dict[str, Any]:
+    """A target every model must meet: at least ``bar`` with ``at_least``, otherwise at most ``bar``; ``met`` is None
+    when the run held none of the cases it measures."""
+    met = None if not measured else value >= bar if at_least else value <= bar
     return {"measure": measure, "bar": bar, "value": value, "met": met, "gated": True}

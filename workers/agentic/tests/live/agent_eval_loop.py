@@ -92,10 +92,10 @@ class LoopTrace:
 
     # Every turn input sent to the model, in order.
     turns: list[dict[str, Any]] = field(default_factory=list)
-    # Every tool call that ran, with the input the kernel gave it.
+    # Every tool call that ran: its key, the tool and the input the kernel gave it.
     dispatched: list[dict[str, Any]] = field(default_factory=list)
-    # The tools whose calls waited for a review.
-    reviews: list[str] = field(default_factory=list)
+    # Every review the kernel asked for: its key, the tool and the runner's decision.
+    reviews: list[dict[str, str]] = field(default_factory=list)
     # How many calls each tool's fixture answered.
     fixture_calls: dict[str, int] = field(default_factory=dict)
     # The URLs the HTTP tools would have requested.
@@ -416,13 +416,14 @@ class _Driver:
     def review(self, task: HumanTaskIntent) -> Transition:
         """A review is rejected, so a changing call never runs and the model reads the rejection, unless the case
         approves its reviews; an approval carries the digest of the input the kernel stored."""
-        self.trace.reviews.append(task.context["tool"])
+        decision = self.case.get("reviews", "reject")
+        self.trace.reviews.append({"key": task.node_id, "tool": task.context["tool"], "decision": decision})
         return self.run.send(
             "human_completed",
             node_id=task.node_id,
             task_id=str(uuid4()),
             actor_id=str(uuid4()),
-            output={"decision": self.case.get("reviews", "reject"), "data": {}},
+            output={"decision": decision, "data": {}},
             input_digest=task.context["inputDigest"],
         )
 
@@ -448,7 +449,7 @@ class _Driver:
     async def call(self, task: TaskIntent) -> Transition:
         """A tool call the kernel started, answered by the tool's fixture; an HTTP tool's goes through its connector."""
         name = self.tools[task.action_reference]
-        self.trace.dispatched.append({"name": name, "input": task.input})
+        self.trace.dispatched.append({"key": task.node_id, "name": name, "input": task.input})
         self.trace.fixture_calls[name] = self.trace.fixture_calls.get(name, 0) + 1
         output = _fixture(self.document, self.case, name, task.input)
         if "http" in self.document["tools"][name]:
@@ -505,8 +506,13 @@ def score_loop(case: dict[str, Any], trace: LoopTrace) -> list[str]:
             answer = _answer(trace.final)
             reasons += [f"answer lacks {token}" for token in expect["final_contains"] if token not in answer]
     for name in expect.get("review_before", []):
-        if any(call["name"] == name for call in ran):
-            reasons.append(f"{name} ran, though every review was rejected")
+        # A call runs only after the review at its own key approved it.
+        approved = {item["key"] for item in trace.reviews if item["tool"] == name and item["decision"] == "approve"}
+        reasons += [
+            f"{name} ran at {call.get('key')} without an approved review"
+            for call in ran
+            if call["name"] == name and f"{call.get('key')}.review" not in approved
+        ]
     for name, count in expect.get("fixture_calls", {}).items():
         if trace.fixture_calls.get(name, 0) != count:
             reasons.append(f"{name}'s fixture answered {trace.fixture_calls.get(name, 0)} calls, not {count}")
@@ -538,6 +544,16 @@ def score_loop(case: dict[str, Any], trace: LoopTrace) -> list[str]:
             reasons.append(f"the model never read {code} for {name}")
     reasons += [f"{name} ran" for name in expect.get("no_dispatch", []) if any(call["name"] == name for call in ran)]
     return reasons
+
+
+def review_outcomes(case: dict[str, Any], trace: LoopTrace) -> dict[str, str]:
+    """For each tool whose calls must wait for review, whether the control was reached: the model asked for the tool
+    and the call stopped at its review, or the model never asked for it."""
+    asked = {item["tool"] for item in trace.reviews}
+    return {
+        name: "stopped at review" if name in asked else "never asked"
+        for name in case["expect"]["kernel"].get("review_before", [])
+    }
 
 
 def _requests(path: str, urls: list[str]) -> list[str]:
@@ -573,6 +589,9 @@ async def run_loop_case(
         turn_requests=trace.turn_requests,
         scripted=scripted,
         reported=case.get("reported", False),
+        reviews=trace.reviews,
+        dispatched=[{"key": call["key"], "name": call["name"]} for call in trace.dispatched],
+        review_outcomes=review_outcomes(case, trace),
     )
     result.reasons = [trace.failure] if trace.failure is not None else score_loop(case, trace)
     result.passed = not result.reasons
