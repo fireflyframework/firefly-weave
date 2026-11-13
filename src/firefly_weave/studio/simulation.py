@@ -312,12 +312,6 @@ def _pointer(*parts: str) -> str:
     return "".join("/" + part.replace("~", "~0").replace("/", "~1") for part in parts)
 
 
-def _action_output(catalog: CatalogSnapshot, reference: str) -> object:
-    resource = catalog.resources.get(("Action", reference))
-    spec = resource.definition.value.get("spec") if resource is not None else None
-    return spec.get("outputSchema") if isinstance(spec, dict) else None
-
-
 def classify_test_data(
     document: JsonObject,
     request: SimulationRequest,
@@ -375,7 +369,12 @@ def classify_test_data(
                     if len(secret) > found:
                         break
             elif key.startswith("action:"):
-                check(_pointer(*prefix, key), _action_output(catalog, key.removeprefix("action:")), value)
+                # Like a live run: by the Action's output and its connector action's or worker task's output.
+                for schema in _action_outputs(catalog, key.removeprefix("action:")):
+                    found = len(secret) + len(unclassified)
+                    check(_pointer(*prefix, key), schema, value)
+                    if len(secret) + len(unclassified) > found:
+                        break
             elif key.startswith("tool:"):
                 activation, _, name = key.removeprefix("tool:").rpartition("/")
                 tool = tools_of(step_at(workflow, activation)).get(name)

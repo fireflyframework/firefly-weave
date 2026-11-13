@@ -624,7 +624,7 @@ def test_a_tool_mock_secret_for_the_actions_connector_is_refused(key):
     assert "tok-live-8" not in repr(refused.value)
 
 
-@pytest.mark.parametrize("key", ["tool:support/vault_lookup", "node:support#1.1"])
+@pytest.mark.parametrize("key", ["tool:support/vault_lookup", "node:support#1.1", "action:vault-get@1.0.0"])
 def test_studio_refuses_a_tool_mock_secret_for_the_actions_connector(key):
     connector = studio_connector()
     connector["metadata"]["name"] = "vault"
