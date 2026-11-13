@@ -520,6 +520,41 @@ def test_up_refreshes_the_connected_clusters_after_operations_and_reports_them(o
     assert called == ["enable", "clusters"] and result["clusters"] == missing
 
 
+def test_up_prints_each_clusters_state_and_why_one_could_not_be_refreshed(owned, monkeypatch):
+    """Progress lines are cut to the terminal's width and JSON output has none, so up's own output names each
+    cluster's state and the whole reason a cluster reads unreachable."""
+    from click.testing import CliRunner
+
+    from firefly_weave.cli.main import cli
+    from firefly_weave.sdk import platform_clusters
+
+    directory, _, _ = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
+    reason = "No kind-weave-b context in your default kubeconfig. Run weave platform cluster connect again."
+    found = [
+        {"name": "kind-weave-a", "state": "connected"},
+        {"name": "kind-weave-b", "state": "unreachable", "reason": reason},
+        {"name": "k3d-weave-c", "state": "missing"},
+    ]
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: None)
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: {})
+    monkeypatch.setattr(platform_clusters, "refresh", lambda directory, notice: found)
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
+    result = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "up"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "Clusters: kind-weave-a connected; kind-weave-b unreachable (No kind-weave-b context in your default "
+        "kubeconfig. Run weave platform cluster connect again.); k3d-weave-c missing"
+    ) in result.stdout.splitlines()
+    found[:] = [{"name": "kind-weave-a", "state": "missing"}]
+    missing = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "up"])
+    assert "Clusters: kind-weave-a missing" in missing.stdout.splitlines()
+
+
 @pytest.mark.parametrize(("flags", "expected"), [([], True), (["--no-operations"], False)])
 def test_the_cli_passes_no_operations_to_up(tmp_path, monkeypatch, flags, expected):
     from click.testing import CliRunner

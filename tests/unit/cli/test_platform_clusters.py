@@ -981,6 +981,13 @@ def test_a_container_that_cant_leave_the_network_is_named_with_the_command_that_
     assert cluster.joined == {KEYCLOAK}
 
 
+def unreachable(lines):
+    """refresh's entry for kind-weave-test when it couldn't refresh it: the whole reason its last notice gives."""
+    prefix = "kind-weave-test: not refreshed. "
+    assert lines[-1].startswith(prefix)
+    return {"name": "kind-weave-test", "state": "unreachable", "reason": lines[-1].removeprefix(prefix)}
+
+
 def test_a_refresh_that_finds_another_container_takes_the_platform_off_the_network(world):
     """A container that joined the cluster network after connect makes refresh refuse, and the platform's keycloak
     (whose network namespace the API shares) and registry, which that earlier connect joined, leave the network."""
@@ -990,7 +997,8 @@ def test_a_refresh_that_finds_another_container_takes_the_platform_off_the_netwo
     cluster.extra = ["someone-else"]
     lines = []
     before = len(commands.calls)
-    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    (found,) = clusters.refresh(directory, lines.append)
+    assert found == unreachable(lines)
     assert lines[-1] == f"kind-weave-test: not refreshed. {clusters.OTHER_CONTAINERS}"
     assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
     assert cluster.joined == set()
@@ -1197,18 +1205,22 @@ def test_a_deleted_cluster_reads_missing_and_changes_nothing(world):
     assert [call.name for call in commands.calls[before:]] == ["cluster-nodes"]
 
 
+NO_CONTEXT = (
+    "No kind-weave-test context in your default kubeconfig. Run weave platform cluster connect again with the "
+    "--kubeconfig you connected it with."
+)
+
+
 def test_a_cluster_that_cant_be_refreshed_reads_unreachable_and_says_why(world, monkeypatch):
     directory, _, _, cluster = world
     connect(world)
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
     lines = []
-    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    (found,) = clusters.refresh(directory, lines.append)
+    assert found == unreachable(lines)
     # The cluster's nodes exist, so creating it, as connect's refusal says, isn't the answer.
-    assert lines[-1] == (
-        "kind-weave-test: not refreshed. No kind-weave-test context in your default kubeconfig. Run weave platform "
-        "cluster connect again with the --kubeconfig you connected it with."
-    )
+    assert lines[-1] == f"kind-weave-test: not refreshed. {NO_CONTEXT}"
 
 
 def endpoint_addresses(commands, since=0):
@@ -1226,7 +1238,9 @@ def test_a_refresh_after_an_unreachable_one_still_repoints_the_cluster(world, mo
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
     before = len(commands.calls)
-    assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert clusters.refresh(directory, lambda line: None) == [
+        {"name": "kind-weave-test", "state": "unreachable", "reason": NO_CONTEXT}
+    ]
     left = [(call.name, call.argv[-1]) for call in commands.calls[before:] if "disconnect" in call.argv]
     assert left == [("cluster-network-leave", KEYCLOAK), ("cluster-network-leave", REGISTRY)]
     assert cluster.joined == set()
@@ -1300,7 +1314,8 @@ def test_refresh_applies_only_to_the_cluster_that_publishes_the_contexts_port(wo
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     lines = []
     before = len(commands.calls)
-    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    (found,) = clusters.refresh(directory, lines.append)
+    assert found == unreachable(lines)
     assert applied(commands, before) == []
     assert lines[-1] == (
         "kind-weave-test: not refreshed. kind-weave-test points at port 9999, but the kind cluster weave-test on "
@@ -1317,7 +1332,7 @@ def test_a_busy_cluster_lock_reads_unreachable_and_never_fails_up(world):
     before = len(commands.calls)
     with clusters.local._exclusive(directory, clusters.LOCK, clusters.BUSY):
         result = clusters.refresh(directory, lines.append)
-    assert result == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert result == [{"name": "kind-weave-test", "state": "unreachable", "reason": clusters.BUSY}]
     assert lines == [f"clusters: not refreshed. {clusters.BUSY}"]
     assert commands.calls[before:] == []
 
@@ -1341,7 +1356,8 @@ def test_refresh_never_applies_over_another_installations_weave_system(world, mo
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     lines = []
     before = len(commands.calls)
-    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    (found,) = clusters.refresh(directory, lines.append)
+    assert found == unreachable(lines)
     assert applied(commands, before) == []
     assert lines[-1].startswith("kind-weave-test: not refreshed. Namespace weave-system belongs to another Weave")
 
@@ -1355,7 +1371,8 @@ def test_refresh_that_finds_a_target_namespace_taken_says_to_disconnect_it(world
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     lines = []
     before = len(commands.calls)
-    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    (found,) = clusters.refresh(directory, lines.append)
+    assert found == unreachable(lines)
     assert applied(commands, before) == []
     assert lines[-1] == (
         "kind-weave-test: not refreshed. Namespace weave-workers belongs to another Weave installation. "

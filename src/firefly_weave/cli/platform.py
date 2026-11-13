@@ -988,6 +988,13 @@ def up(
                 + operations["registry"]
                 + " (development only; the runner mounts the Docker socket)"
             )
+        if value.get("clusters"):
+            # Progress lines are cut to the terminal's width: the reason a cluster reads unreachable is printed whole.
+            states = [
+                f"{item['name']} {item['state']}" + (f" ({item['reason']})" if item.get("reason") else "")
+                for item in value["clusters"]
+            ]
+            click.echo("Clusters: " + "; ".join(states))
         click.echo("Connect: weave auth setup " + value["api_url"])
         click.echo("Open Studio: weave studio")
         click.echo("Logs: weave platform --directory " + shlex.quote(str(directory)) + " logs")
