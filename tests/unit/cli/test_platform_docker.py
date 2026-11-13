@@ -165,8 +165,10 @@ def test_up_reuses_complete_installation_demo_and_saved_account(owned, monkeypat
     calls = []
     monkeypatch.setattr(platform_docker, "start", lambda s, n: calls.append("start"))
     monkeypatch.setattr(platform, "demo", lambda d: {"existing": True, "receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(directory, Path("."), None, username="developer")
     assert calls == ["start"]
+    assert result["test_calls"] == "enabled"
     assert result["account"] == {
         "username": "developer",
         "existing": True,
@@ -222,6 +224,7 @@ def test_new_up_sets_mode_before_setup_and_creates_account_only_once(tmp_path, m
     monkeypatch.setattr(platform, "_load", lambda p: state)
     monkeypatch.setattr(platform, "start", lambda *a: calls.append("start"))
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(
         platform, "user", lambda *a: calls.append("user") or {"username": "developer", "password": "once"}
     )
@@ -251,6 +254,7 @@ def test_up_gives_its_new_account_the_local_owner_roles(tmp_path, monkeypatch):
     monkeypatch.setattr(platform, "_load", lambda p: state)
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda d, u, roles: seen.append(tuple(roles)) or {"username": u})
     platform.up(directory, tmp_path, "owned", username="owner")
     assert seen == [platform.LOCAL_OWNER_ROLES]
@@ -263,6 +267,7 @@ def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
     platform._write(directory / "up-user.json", {"stage": "attempted", "username": "developer"})
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("repeated unknown account operation"))
     with pytest.raises(platform.PlatformError, match="incomplete"):
         platform.up(directory, Path("."), None, username="developer")
@@ -274,6 +279,7 @@ def test_up_refuses_an_unreadable_people_record_before_marking_an_account_attemp
     (directory / "people.json").chmod(0o600)
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("created an account"))
     with pytest.raises(platform.PlatformError, match="not readable"):
         platform.up(directory, Path("."), None, username="developer")
@@ -284,6 +290,7 @@ def test_up_returns_the_new_password_when_its_receipt_cannot_be_completed(owned,
     directory, state = owned
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: {"username": "developer", "password": "once"})
     write = platform._write
 
@@ -476,6 +483,7 @@ def test_repeated_up_refuses_changed_roles_instead_of_claiming_new_access(owned,
     platform._write(directory / "up-user.json", {"stage": "ready", "username": "developer", "roles": ["viewer"]})
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("reset existing account"))
     with pytest.raises(platform.PlatformError, match="roles"):
         platform.up(directory, Path("."), None, username="developer", roles=["tenant_admin"])

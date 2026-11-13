@@ -38,21 +38,24 @@ class DefinitionRepository:
     async def execute(self, sql: str, **values: Any) -> None:
         await self.tx.session.execute(text(sql), {**self.scope, **values})
 
-    async def version(self, identifier: UUID) -> dict[str, Any]:
+    async def version(self, identifier: UUID, *, include_test: bool = False) -> dict[str, Any]:
+        """A version by ID; a step test's synthetic version is found only when ``include_test`` asks for it."""
         size = await self.tx.session.scalar(
             text(
                 "SELECT octet_length(to_jsonb(v)::text) FROM definition_versions v "
-                "WHERE tenant_id=:tenant AND project_id=:project AND id=:id"
+                "WHERE tenant_id=:tenant AND project_id=:project AND id=:id AND (NOT v.test OR :include_test)"
             ),
-            {**self.scope, "id": identifier},
+            {**self.scope, "id": identifier, "include_test": include_test},
         )
         if size is not None and size > 72 * 1024 * 1024:
             raise CatalogError(429, "WV-PAGE-LIMIT", "Retained definition exceeds the bounded fetch budget")
         rows = await self.rows(
             "SELECT v.*, EXISTS(SELECT 1 FROM definition_retirements r WHERE "
             "r.tenant_id=v.tenant_id AND r.project_id=v.project_id AND r.version_id=v.id) AS retired "
-            "FROM definition_versions v WHERE v.tenant_id=:tenant AND v.project_id=:project AND v.id=:id",
+            "FROM definition_versions v WHERE v.tenant_id=:tenant AND v.project_id=:project AND v.id=:id "
+            "AND (NOT v.test OR :include_test)",
             id=identifier,
+            include_test=include_test,
         )
         if not rows:
             raise CatalogError(404, "WV-NOT-FOUND", "Catalog resource not found")
@@ -63,7 +66,7 @@ class DefinitionRepository:
             await self.tx.session.execute(
                 text(
                     "SELECT count(*),coalesce(sum(octet_length(document::text)),0) FROM definition_versions "
-                    "WHERE tenant_id=:tenant AND project_id=:project"
+                    "WHERE tenant_id=:tenant AND project_id=:project AND NOT test"
                 ),
                 self.scope,
             )
@@ -72,7 +75,8 @@ class DefinitionRepository:
             raise CatalogError(429, "WV-PAGE-LIMIT", "Compilation catalog exceeds the bounded fetch budget")
         resources = dict(capabilities.resources)
         for row in await self.rows(
-            "SELECT kind,name,version,document FROM definition_versions WHERE tenant_id=:tenant AND project_id=:project"
+            "SELECT kind,name,version,document FROM definition_versions WHERE tenant_id=:tenant "
+            "AND project_id=:project AND NOT test"
         ):
             resource = CatalogResource(
                 row["kind"], f"{row['name']}@{row['version']}", FrozenDocument.from_value(row["document"])

@@ -81,6 +81,9 @@ class ConnectionRevision(ConnectionRequest):
     adapter: str
 
 
+type ConnectionTestReason = Literal["unreachable", "destination", "unauthorized", "status"]
+
+
 class ConnectionTestResult(ContractModel):
     ok: bool
     code: Literal["ok", "failed"] = "ok"
@@ -88,6 +91,9 @@ class ConnectionTestResult(ContractModel):
     # False when the connection's baseUrl is plain http://, which is allowed but flagged "Not encrypted";
     # True for https://; absent for connections without an HTTP base URL.
     encrypted: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Why a test that sent a request failed: the server couldn't be reached, the egress policy refused the
+    # destination (nothing was sent), the server refused the sign-in (401, 403, 407), or it answered 5xx.
+    reason: ConnectionTestReason | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 def transport_encrypted(config: Mapping[str, object]) -> bool | None:

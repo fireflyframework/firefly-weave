@@ -101,6 +101,30 @@ SPDX-License-Identifier: Apache-2.0
   table; a workflow that uses one waits for it.
 - Published actions offer Change in a new version for retry, timeout and the
   request.
+- Steps can run for real in an environment. `POST {environment}/step-tests`
+  runs one step of a saved draft, an action or an AI task, as a test run of the
+  normal runtime. Only its creator can read or cancel it with the step test API;
+  its run is a test run that `run.read` and `run.cancel` reach like any other.
+  The server checks, before anything is written, the new `step_tester` role
+  (`step.test`), catalog read on the project, the environment's test policy,
+  `connection.bind` on each connection, the step's side effect (steps that
+  change data need `acknowledged_side_effect`, every time), the input and the
+  releases; a person runs at most 4 at once and starts 30 a minute per
+  environment. Test versions and activations never appear in a list, lookup or
+  compile catalog, expire with their run's timeout, and are purged once no run
+  uses them. Each environment's test policy (`GET`/`PUT
+  {environment}/test-policy`) is off until an administrator turns it on;
+  `weave platform up` turns it on in the local demo environment and gives the
+  local owner the role there. Migration `0040_editor_step_tests`.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin. In Studio, the button is now **Test connection**,
+  names the host it calls, and says whether the host was unreachable, not
+  allowed, refused the sign-in or answered with an error.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
 - Two changes to the same project at once, such as a failing parallel branch
   and its sibling completing together, no longer answer 429
   `WV-OPERATION-CAPACITY`. A change used to check its run's stored workflow

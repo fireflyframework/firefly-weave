@@ -311,6 +311,7 @@ def test_up_keeps_private_origins_fixed_after_creation(owned, docker, monkeypatc
     platform_origins.prepare(state, (ACME,))
     monkeypatch.setattr(platform_docker, "start", lambda s, n: None)
     monkeypatch.setattr(platform, "demo", lambda d: {"existing": True, "receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(
         directory, Path("."), None, subnet="10.231.0.0/24", private_origins=("HTTP://ACME.acceptance.test:8080/",)
     )

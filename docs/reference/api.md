@@ -266,6 +266,11 @@ change.
   or an "unavailable" result, `result` keeps it.
 - Errors never contain a framework traceback, a token, or a resolved
   connection credential.
+- Any request may carry `X-Weave-Principal` with the principal ID of the person
+  it is made for, as Studio sends for every change. When the access token now
+  belongs to someone else (for example after a sign-in elsewhere), the request
+  answers HTTP 409 `WV-PRINCIPAL-CHANGED` before anything runs. Requests
+  without the header are unchanged.
 - Worker credential leasing is the one deliberate secret boundary: it answers
   with `Cache-Control: no-store` and `Pragma: no-cache`, and its schema declares
   the secret `value` field. See the [worker protocol](worker-protocol.md).
@@ -501,6 +506,51 @@ Replaying a committed activation key returns that activation without a new
 check (it still needs current `release.activate`). Runs of earlier activations
 are unchanged: the worker keeps refusing a model that is no longer approved with
 `LLM_POLICY`, and a missing model with `LLM_MODEL_NOT_FOUND`.
+
+### Step tests and the test policy
+
+A step test runs one step of a saved draft for real, as a test run of the
+normal runtime. Each environment's **test policy** decides whether that is
+allowed: `GET {environment}/test-policy` reads `{"test_calls": "disabled",
+"revision": 0}` until an administrator with `environment.manage` saves one with
+`PUT`. The first save sends no `If-Match`; later saves send the revision they
+read, and a stale one answers HTTP 409 `WV-REVISION`. Every change is audited
+with the old and new values. `weave platform up` turns test calls on in the
+local demo environment only.
+
+`POST {environment}/step-tests` needs an `Idempotency-Key`, the `step.test`
+capability (the `step_tester` role, which grants nothing else), `catalog.read`
+on the project, and `connection.bind` on every connection revision it names. It
+answers HTTP 202 with the step test's ID, its run, its side effect and when it
+expires. The server checks, in this order, and refuses before writing anything:
+
+| Answer | When |
+| --- | --- |
+| 403 `WV-FORBIDDEN` | `step.test` or `catalog.read` is missing |
+| 403 `WV-STEPTEST-DISABLED` | The environment's test calls are off; nothing about the draft is read |
+| 404 `WV-NOT-FOUND` | The draft, its revision or the step isn't there |
+| 422 `WV-STEPTEST-KIND` | The saved step doesn't match the request, or its kind can't run for real |
+| 404 `WV-NOT-FOUND` | The step's action isn't in the catalog |
+| 403 `WV-FORBIDDEN` | `connection.bind` is missing on a connection revision the request names |
+| 422 `WV-STEPTEST-CONNECTION` | A slot the step needs has no connection; `result.slots` says which |
+| 409 `WV-STEPTEST-CONFIRM` | The step changes data and `acknowledged_side_effect` isn't exactly its effect; `result` names the effect, the action and the environment |
+| 422 `WV-SCHEMA-SECRET_VALUE` | The input holds a secret value; `result.paths` says where |
+| 422 `WV-STEPTEST-INPUT` | The input breaks the action's input schema; `result.diagnostics` holds paths and codes, never values |
+| 422 `WV-STEPTEST-CONNECTION` | A chosen connection can't be used here; `result.slots` says which and why |
+| 422 `WV-STEPTEST-KIND` | The step can't run on its own as saved |
+| 422 `WV-STEPTEST-RELEASE` | Several releases, or none, can run a dependency; `result.choices` lists them to send back in `releases` |
+| 429 `WV-STEPTEST-BUSY` | The person already runs 4 step tests here or started 30 in the last minute; `Retry-After` says when to try again |
+
+Only the person who started a step test can read
+(`GET {environment}/step-tests/{id}`) or cancel it through these routes;
+anyone else gets 404. Its run is a test run like any other: `run.read` lists it
+when you send `include_test=true`, and `run.cancel` can cancel it. The
+view carries the run's status, the step's attempts and timing, its error as
+`{code, message}`, and its output as the run views classify it: an output left
+out reads `output: null` with `omitted` naming why, such as
+`classified_secret`. Canceling a step test that already ended answers it as it
+ended. `POST {environment}/step-tests/{id}/answers` is published for AI agent
+steps and answers HTTP 501 `WV-UNAVAILABLE` until their runtime is served.
 
 ### Health probes
 
@@ -1112,6 +1162,12 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `connections.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections` | connection.manage |
 | `connections.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections/{identifier}` | connection.manage |
 | `connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections/{identifier}/test` | connection.manage |
+| `test_policy.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-policy` | status.read |
+| `test_policy.save` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-policy` | environment.manage |
+| `step_tests.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/step-tests` | step.test |
+| `step_tests.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/step-tests/{identifier}` | step.test |
+| `step_tests.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/step-tests/{identifier}/cancel` | step.test |
+| `step_tests.answer` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/step-tests/{identifier}/answers` | step.test |
 | `ai_endpoints.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/endpoints` | catalog.read |
 | `ai_models.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/models` | catalog.read |
 | `ai_readiness.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/readiness` | catalog.read |
