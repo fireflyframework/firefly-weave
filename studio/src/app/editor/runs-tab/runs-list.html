@@ -27,9 +27,15 @@ SPDX-License-Identifier: Apache-2.0
         : "in " + environment()
   }}</span>
   @if (st !== "access" && st !== "unavailable" && updated()) {
-    <span class="runs-updated" [class.stale]="st === 'error'">{{
-      updated()
-    }}</span>
+    <span
+      class="runs-updated"
+      [class.stale]="st === 'error'"
+      [attr.title]="updated()"
+      ><span class="runs-updated-long">{{ updated() }}</span
+      ><span class="runs-updated-short" aria-hidden="true">{{
+        updatedShort()
+      }}</span></span
+    >
   }
   <button
     type="button"
@@ -76,6 +82,7 @@ SPDX-License-Identifier: Apache-2.0
       role="dialog"
       aria-label="Filters"
       (keydown)="popoverKey($event)"
+      (focusout)="popoverBlur($event)"
     >
       <fieldset class="runs-filter-group">
         <legend>Status</legend>

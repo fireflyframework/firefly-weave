@@ -118,6 +118,11 @@ for (const size of sizes)
       await popover.getByRole("button", { name: "Done" }).click();
       await expect(popover).toBeHidden();
       await expect(runs.filters).toBeFocused();
+      // A click outside closes it too.
+      await runs.filters.click();
+      await expect(popover).toBeVisible();
+      await runs.panel.getByRole("heading", { name: "Runs" }).click();
+      await expect(popover).toBeHidden();
       await expect(runs.filters).toContainText("3");
       // No run is a failed 1.2.0 webhook run.
       await expect(runs.panel).toContainText("No runs match these filters.");

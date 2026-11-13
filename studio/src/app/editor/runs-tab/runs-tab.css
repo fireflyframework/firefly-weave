@@ -72,6 +72,18 @@ SPDX-License-Identifier: Apache-2.0
 .runs-updated.stale {
   color: var(--warning-ink);
 }
+/* At 280 px the environment keeps its room: the time alone, "Updated" in the tooltip. */
+.runs-updated-short {
+  display: none;
+}
+@media (min-width: 768px) and (max-width: 1099px) {
+  .runs-updated-long {
+    display: none;
+  }
+  .runs-updated-short {
+    display: inline;
+  }
+}
 .runs-refresh {
   flex: none;
   margin-left: auto;

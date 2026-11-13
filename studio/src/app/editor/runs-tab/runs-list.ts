@@ -100,7 +100,10 @@ interface Chip {
   imports: [Icon, Modal],
   templateUrl: "./runs-list.html",
   styleUrl: "./runs-tab.css",
-  host: { class: "runs-list" },
+  host: {
+    class: "runs-list",
+    "(document:pointerdown)": "outside($event)",
+  },
 })
 export class RunsList {
   readonly tab = input.required<RunsView>();
@@ -118,6 +121,12 @@ export class RunsList {
   readonly sheet = signal<SheetSection[] | null>(null);
   /** Ticks every second: "Updated 3 s ago" and a running run's duration count. */
   readonly now = signal(Date.now());
+  /**
+   * The time the rows are drawn at: every second while a run in the list is
+   * still going (its duration counts), otherwise every 30 seconds for the
+   * start times, so a list of finished runs isn't drawn again each second.
+   */
+  readonly rowsNow = signal(Date.now());
   private readonly listbox = viewChild<ElementRef<HTMLElement>>("listbox");
   private readonly filtersButton =
     viewChild<ElementRef<HTMLElement>>("filtersButton");
@@ -139,7 +148,7 @@ export class RunsList {
   });
   readonly rows = computed<ShownRow[]>(() => {
     const items = this.state()?.items() ?? [];
-    const now = new Date(this.now());
+    const now = new Date(this.rowsNow());
     const draft = this.workflow().version;
     return items.map((item) => {
       const row = runRow(item, now);
@@ -216,13 +225,24 @@ export class RunsList {
   readonly updated = computed(() =>
     updatedText(this.state()?.updatedAt() ?? null, this.now()),
   );
+  /** "just now", "3 s ago": the time alone, where the list is narrower. */
+  readonly updatedShort = computed(() =>
+    this.updated().replace(/^Updated /, ""),
+  );
   readonly environment = computed(() => {
     this.tab().mode();
     return untracked(() => environmentName(this.app()));
   });
 
   constructor() {
-    const ticker = setInterval(() => this.now.set(Date.now()), 1000);
+    const ticker = setInterval(() => {
+      const now = Date.now();
+      this.now.set(now);
+      const going = (this.state()?.items() ?? []).some(
+        (item) => !isUnavailableRun(item) && !item.ended_at,
+      );
+      if (going || now - this.rowsNow() >= 30_000) this.rowsNow.set(now);
+    }, 1000);
     inject(DestroyRef).onDestroy(() => clearInterval(ticker));
     // Back to runs on a narrow screen: focus returns to the chosen row.
     // After the list is drawn again: it may have been hidden until now.
@@ -283,9 +303,32 @@ export class RunsList {
         ?.focus(),
     );
   }
-  closeFilters(): void {
+  closeFilters(refocus = true): void {
     this.filtersOpen.set(false);
-    setTimeout(() => this.filtersButton()?.nativeElement.focus());
+    if (refocus) setTimeout(() => this.filtersButton()?.nativeElement.focus());
+  }
+  /** A press outside the popover and its button closes it, focus left where it went. */
+  outside(event: Event): void {
+    if (!this.filtersOpen()) return;
+    const target = event.target as Node | null;
+    if (
+      target &&
+      (this.popover()?.nativeElement.contains(target) ||
+        this.filtersButton()?.nativeElement.contains(target))
+    )
+      return;
+    this.closeFilters(false);
+  }
+  /** Focus left the popover for something outside it (Tab past its end). */
+  popoverBlur(event: FocusEvent): void {
+    const next = event.relatedTarget as Node | null;
+    if (
+      !next ||
+      this.popover()?.nativeElement.contains(next) ||
+      this.filtersButton()?.nativeElement.contains(next)
+    )
+      return;
+    this.closeFilters(false);
   }
   /** The popover keeps focus inside while open; Escape closes it. */
   popoverKey(event: KeyboardEvent): void {
