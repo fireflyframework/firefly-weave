@@ -144,6 +144,14 @@ test("on a phone, the Runs tab gives the view tabs their own row and offers no E
   await expect(
     page.getByRole("menuitem", { name: /^Execute workflow/ }),
   ).toHaveCount(0);
+  // The workflow's name uses the row: it isn't cut short.
+  await expect
+    .poll(() =>
+      page
+        .locator(".editor-identity h1")
+        .evaluate((name) => name.scrollWidth <= name.clientWidth),
+    )
+    .toBe(true);
   // Four 44 px tabs on a row of their own, as wide as the bar.
   const bar = await page.locator(".editor-bar").boundingBox();
   const list = await tabs.boundingBox();

@@ -496,6 +496,8 @@ export interface RunsPlatform {
   listFailure: { status: number; code: string; message: string } | null;
   /** Answers runs.read with this status while set. */
   readFailure: { status: number; code: string; message: string } | null;
+  /** Holds runs.read answers until released; returns the release. */
+  holdRead(): () => void;
   /** The logs runs.logs answers, or 501 (the platform doesn't serve them yet). */
   logs: 501 | RunLogEntry[];
   /** Answers every read of outputs (include=output) with this status while set. */
@@ -515,6 +517,7 @@ export async function routeRuns(
   options: { logs?: 501 | RunLogEntry[]; unavailable?: boolean } = {},
 ): Promise<RunsPlatform> {
   let hold: Promise<void> | null = null;
+  let readHold: Promise<void> | null = null;
   const platform: RunsPlatform = {
     runs,
     requests: [],
@@ -527,6 +530,14 @@ export async function routeRuns(
       hold = new Promise((resolve) => (release = resolve));
       return () => {
         hold = null;
+        release();
+      };
+    },
+    holdRead() {
+      let release = () => {};
+      readHold = new Promise((resolve) => (release = resolve));
+      return () => {
+        readHold = null;
         release();
       };
     },
@@ -588,6 +599,7 @@ export async function routeRuns(
     platform.requests.push(url);
     const read = /\/runs\/([^/]+)$/.exec(url.pathname);
     if (read) {
+      if (readHold) await readHold;
       const failure = platform.readFailure;
       if (failure)
         return route.fulfill(

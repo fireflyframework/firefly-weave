@@ -75,6 +75,10 @@ export interface RunViewPort {
   readonly data: RunDataPort | null;
   /** The list has runs to choose from. */
   readonly listed: boolean;
+  /** The chosen run's ID, while it loads too; null when none is chosen. */
+  readonly chosen: string | null;
+  /** The chosen run is being read: its data isn't here yet. */
+  readonly loading: boolean;
   /** Forgets the run and stops following it. */
   close(): void;
 }

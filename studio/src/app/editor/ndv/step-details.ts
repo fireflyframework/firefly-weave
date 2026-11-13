@@ -793,15 +793,9 @@ export class StepDetails {
     const where = this.pseudo()
       ? ""
       : breadcrumb(this.host().model.definition, this.target());
-    // On a phone in run mode the run's chip takes the room: "Step 5 of 5".
-    if (
-      where &&
-      this.host().windowWidth < 480 &&
-      this.controller().viewingRuns()
-    ) {
-      const position = where.split(" · ").at(-1) ?? where;
-      return position.charAt(0).toUpperCase() + position.slice(1);
-    }
+    // On a phone the run's chip stands in for it; the step's name in
+    // Parameters says which step this is.
+    if (this.host().windowWidth < 480 && this.runChip()) return "";
     return where;
   }
   docs(): string {

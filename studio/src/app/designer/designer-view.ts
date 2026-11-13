@@ -117,6 +117,10 @@ import type { App } from "../app";
         .runs-on .editor-views button {
           padding: 0 4px;
         }
+        /* With the tabs on their own row the name has the whole first row. */
+        .runs-on .editor-identity h1 {
+          max-width: none;
+        }
       }
     `,
   ],

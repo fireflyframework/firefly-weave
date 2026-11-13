@@ -152,18 +152,29 @@ export class RunsView implements DoCheck {
     // canvas keeps the draft without a run on it.
     effect(() => {
       const state = this.state();
-      const data = state?.chosen()?.data ?? null;
+      const chosenRun = state?.chosen() ?? null;
+      const data = chosenRun?.data ?? null;
       const listed = !!state?.rows().some((row) => !row.unavailable);
+      const chosen = chosenRun?.id ?? null;
+      const loading = !!chosenRun && !data && !chosenRun.error;
       untracked(() => {
         const app = this.host();
         if (!state) return this.release();
         const shown = app.runView();
-        if (shown?.data === data && shown.listed === listed) return;
+        if (
+          shown?.data === data &&
+          shown.listed === listed &&
+          shown.chosen === chosen &&
+          shown.loading === loading
+        )
+          return;
         app.runView.set({
           canvas: () =>
             data ? (state.chosen()?.overlay?.canvas ?? null) : null,
           data,
           listed,
+          chosen,
+          loading,
           close: () => state.leave(),
         });
       });

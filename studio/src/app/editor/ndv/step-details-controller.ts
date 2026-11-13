@@ -115,6 +115,7 @@ import {
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
 import type { LastResult } from "../state/last-results";
+import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
 import type {
   RecordedOutput,
@@ -836,8 +837,12 @@ export class StepDetailsController {
     const run = this.run();
     if (run)
       return `You're looking at ${run.label()}. Go back to editing to change this step.`;
+    const shown = this.host.runView?.();
+    // A chosen run still loading reads as the run it will show.
+    if (this.host.viewingRuns && shown?.loading && shown.chosen)
+      return `You're looking at run ${shortId(shown.chosen)}. Go back to editing to change this step.`;
     if (this.host.viewingRuns)
-      return this.host.runView?.()?.listed
+      return shown?.listed
         ? "Choose a run to see what this step did in it. Go back to editing to change this step."
         : "Steps are read-only on the Runs tab. Go back to editing to change this step.";
     if (this.host.model.readonly)

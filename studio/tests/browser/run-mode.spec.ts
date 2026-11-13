@@ -307,6 +307,30 @@ test.describe("step details in run mode", () => {
     expect(saves).toEqual([]);
   });
 
+  test("while a chosen run loads, step details say which run they're loading", async ({
+    page,
+  }) => {
+    const { runs, platform } = await openRunsTab(page);
+    await expect(runs.rows).toHaveCount(listedKinds.length + 1);
+    // The newest run opened with the tab; wait for it, then hold the next read.
+    await expect(runs.canvas.locator(".run-header .run-caption")).toBeVisible();
+    const release = platform.holdRead();
+    await runs.row(RUN_IDS.failed).click();
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("fetch");
+    const output = outputRegion(details);
+    await expect(output.getByRole("status")).toHaveText(
+      "Loading run 1c0d7f8a…",
+    );
+    await expect(details.dialog.locator(".sd-run-note")).toContainText(
+      "You're looking at run 1c0d7f8a. Go back to editing to change this step.",
+    );
+    release();
+    await expect(output.locator(".pane-source-tag")).toHaveText(
+      "From run 1c0d7f8a",
+    );
+  });
+
   test("a refused read of step logs forgets the run", async ({ page }) => {
     const { runs, platform } = await openRunsTab(page);
     const details = await choose(page, runs, RUN_IDS.failed);
@@ -321,7 +345,6 @@ test.describe("step details in run mode", () => {
         body: JSON.stringify({ code: "WV-FORBIDDEN", message: "Not allowed." }),
       }),
     );
-    void platform;
     await output.getByRole("button", { name: "Step logs" }).click();
     await expect(runs.panel).toContainText("You need run.read in development.");
     await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
@@ -491,13 +514,11 @@ test.describe("step details in run mode", () => {
 test.describe("step details in run mode on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("the breadcrumb keeps the step's place in one short line", async ({
-    page,
-  }) => {
+  test("the run's chip stands in for the breadcrumb", async ({ page }) => {
     const { runs } = await openRunsTab(page);
     const details = await choose(page, runs, RUN_IDS.failed);
     await details.openWithKeyboard("send");
-    await expect(details.dialog.locator(".sd-crumb")).toHaveText("Step 5 of 5");
     await expect(details.dialog.locator(".sd-run-chip")).toBeVisible();
+    await expect(details.dialog.locator(".sd-crumb")).toHaveCount(0);
   });
 });

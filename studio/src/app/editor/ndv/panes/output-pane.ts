@@ -60,6 +60,7 @@ import type { FormSession } from "../params/form-session";
 import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import { OMISSION_WORDS } from "../../../operate/run-contracts";
+import { shortId } from "../../../format";
 import { isRecordedRun } from "../../canvas/run-state";
 import { RunStepLogs } from "./run-step-logs";
 
@@ -281,7 +282,12 @@ import { RunStepLogs } from "./run-step-logs";
               </p>
             }
           }
-          @if (noRunShown(); as why) {
+          @if (loadingRun(); as run) {
+            <p class="pane-empty-text pane-loading-run" role="status">
+              <span class="loading-spinner small" aria-hidden="true"></span
+              >Loading run {{ run }}…
+            </p>
+          } @else if (noRunShown(); as why) {
             <p class="pane-empty-text">{{ why }}</p>
           } @else if (recorded && recorded.output.kind !== "value") {
             <!-- What the run recorded says it all. -->
@@ -574,9 +580,21 @@ export class OutputPane {
   noRunShown(): string | null {
     const { controller, host } = this.session();
     if (!controller.viewingRuns() || controller.run()) return null;
+    if (this.loadingRun()) return null;
     return host.runView?.()?.listed
       ? "Choose a run to see what this step returned."
       : "There's no run to show here.";
+  }
+  /** The chosen run's short ID while it loads; null otherwise. */
+  loadingRun(): string | null {
+    const { controller, host } = this.session();
+    const shown = host.runView?.();
+    return controller.viewingRuns() &&
+      !controller.run() &&
+      shown?.loading &&
+      shown.chosen
+      ? shortId(shown.chosen)
+      : null;
   }
   pinnable(): boolean {
     const { controller, target } = this.session();
