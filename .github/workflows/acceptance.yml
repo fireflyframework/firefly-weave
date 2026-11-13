@@ -98,9 +98,10 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           # The runner, deployments, workers and operations code, the migrations, the platform
-          # SDK and CLI that make and connect clusters, the Studio operations pages and the
-          # cluster journeys.
-          CLUSTER_PATHS: '^(src/firefly_weave/(deployment_runner|deployments|workers|operations)/|migrations/|src/firefly_weave/sdk/platform[^/]*\.py$|src/firefly_weave/cli/platform\.py$|studio/src/app/operate/|tests/e2e/test_operations_cluster\.py$)'
+          # SDK and CLI that make and connect clusters, the Studio operations pages, the
+          # cluster journeys, and the tooling that makes the cluster: the image with kubectl
+          # and the pinned cluster tools.
+          CLUSTER_PATHS: '^(src/firefly_weave/(deployment_runner|deployments|workers|operations)/|migrations/|src/firefly_weave/sdk/platform[^/]*\.py$|src/firefly_weave/cli/platform\.py$|studio/src/app/operate/|tests/e2e/test_operations_cluster\.py$|Dockerfile$|tests/acceptance/versions\.toml$)'
         run: |
           # --no-renames lists both the old and the new path of a moved file.
           changed="$(git diff --name-only --no-renames "$BASE...$HEAD")"
@@ -116,7 +117,9 @@ jobs:
     # condition checks the run's status itself.
     if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.cluster == 'true') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 110
+    # The cluster profile's stage budgets in scripts/acceptance.py (prepare 30, up 25, run 45,
+    # collect 5, scan 5 and down 10 minutes) plus 30 minutes for the cluster journeys.
+    timeout-minutes: 150
     permissions:
       contents: read
     env:

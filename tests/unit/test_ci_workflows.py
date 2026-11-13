@@ -141,7 +141,8 @@ def test_each_cross_platform_area_has_tagged_tests():
         assert 'tag: "@xplat"' in (ROOT / "studio/tests/browser" / name).read_text(encoding="utf-8"), name
 
 
-def test_the_acceptance_pr_job_runs_on_ubuntu_24_04_with_egress_blocked_and_the_stage_budget():
+def acceptance_harness():
+    """scripts/acceptance.py, loaded by path: its stage budgets set the acceptance jobs' timeouts."""
     import importlib.util
     import sys
 
@@ -149,6 +150,11 @@ def test_the_acceptance_pr_job_runs_on_ubuntu_24_04_with_egress_blocked_and_the_
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def test_the_acceptance_pr_job_runs_on_ubuntu_24_04_with_egress_blocked_and_the_stage_budget():
+    module = acceptance_harness()
     job = jobs("acceptance.yml")["pr"]
     assert job["runs-on"] == "ubuntu-24.04"
     assert job["timeout-minutes"] == sum(module.stage_minutes("pr").values())
@@ -177,8 +183,137 @@ def test_the_acceptance_workflow_reads_only_and_never_keeps_or_names_credentials
     document = workflow("acceptance.yml")
     assert document["permissions"] == {"contents": "read"}
     assert "pull_request_target" not in document["on"]
-    (checkout,) = [
-        step for step in document["jobs"]["pr"]["steps"] if step.get("uses", "").startswith("actions/checkout")
-    ]
-    assert checkout["with"]["persist-credentials"] is False
+    checkouts = {
+        name: [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout")]
+        for name, job in document["jobs"].items()
+    }
+    assert set(checkouts) == {"pr", "changes", "cluster"}
+    for name, steps in checkouts.items():
+        (checkout,) = steps
+        assert checkout["with"]["persist-credentials"] is False, name
     assert "secrets." not in text
+
+
+# Changes that must run the cluster job: the code it proves and the tooling that makes its cluster.
+CLUSTER_CHANGES = (
+    "src/firefly_weave/deployment_runner/__init__.py",
+    "src/firefly_weave/deployments/__init__.py",
+    "src/firefly_weave/workers/__init__.py",
+    "src/firefly_weave/operations/__init__.py",
+    "migrations/env.py",
+    "src/firefly_weave/sdk/platform.py",
+    "src/firefly_weave/sdk/platform_clusters.py",
+    "src/firefly_weave/cli/platform.py",
+    "studio/src/app/operate/clusters/approvals-inbox.ts",
+    "tests/e2e/test_operations_cluster.py",
+    "Dockerfile",
+    "tests/acceptance/versions.toml",
+)
+# Changes that must not: the harness changes on most pull requests, and look-alike paths.
+OTHER_CHANGES = (
+    "scripts/acceptance.py",
+    "docs/operations/kubernetes.md",
+    "tests/e2e/test_operations_compose.py",
+    "workers/files/Dockerfile",
+    "tests/acceptance/fixtures/acme_api/Dockerfile",
+    "src/firefly_weave/workers_extra/pool.py",
+    "src/firefly_weave/sdk/platform/nested.py",
+    "src/firefly_weave/cli/platform_extra.py",
+    "studio/src/app/operations/page.ts",
+    "tests/unit/migrations/test_example.py",
+)
+
+
+def changes_step():
+    (step,) = [step for step in jobs("acceptance.yml")["changes"]["steps"] if step.get("id") == "paths"]
+    return step
+
+
+def test_the_changes_job_reads_only_and_diffs_the_pull_request_commits_through_the_environment():
+    job = jobs("acceptance.yml")["changes"]
+    assert job["if"] == "github.event_name == 'pull_request'"
+    assert job["permissions"] == {"contents": "read"}
+    (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout")]
+    # The whole history, so the merge base of both commits is there.
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    step = changes_step()
+    assert step["env"]["BASE"] == "${{ github.event.pull_request.base.sha }}"
+    assert step["env"]["HEAD"] == "${{ github.event.pull_request.head.sha }}"
+    # Nothing from the event is pasted into the script; a moved file counts on both sides.
+    assert "${{" not in step["run"]
+    assert 'git diff --name-only --no-renames "$BASE...$HEAD"' in step["run"]
+
+
+def test_the_changes_job_tells_the_cluster_job_whether_to_run():
+    job = jobs("acceptance.yml")["changes"]
+    assert job["outputs"] == {"cluster": "${{ steps.paths.outputs.cluster }}"}
+    script = changes_step()["run"]
+    assert "then cluster=true; else cluster=false; fi" in script
+    assert 'echo "cluster=$cluster" >> "$GITHUB_OUTPUT"' in script
+
+
+def test_the_cluster_path_covers_the_code_and_tooling_the_cluster_job_proves():
+    pattern = re.compile(changes_step()["env"]["CLUSTER_PATHS"])
+    assert [path for path in CLUSTER_CHANGES if not (ROOT / path).is_file()] == []
+    assert [path for path in CLUSTER_CHANGES if not pattern.search(path)] == []
+    assert [path for path in OTHER_CHANGES if pattern.search(path)] == []
+
+
+def test_the_cluster_job_runs_for_cluster_changes_and_manual_runs_unless_cancelled():
+    document = workflow("acceptance.yml")
+    job = document["jobs"]["cluster"]
+    assert job["needs"] == "changes"
+    # Manual runs skip the changes job, and a skipped need skips this job unless its condition checks the run's
+    # status itself.
+    assert job["if"] == (
+        "${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.cluster == 'true') }}"
+    )
+    assert job["runs-on"] == "ubuntu-24.04"
+    profile = document["on"]["workflow_dispatch"]["inputs"]["profile"]
+    assert (profile["type"], profile["options"], profile["default"]) == ("choice", ["cluster", "k3d"], "cluster")
+
+
+def test_the_cluster_job_has_the_cluster_stage_budget_plus_the_journeys():
+    job = jobs("acceptance.yml")["cluster"]
+    journeys = 30
+    assert job["timeout-minutes"] == sum(acceptance_harness().stage_minutes("cluster").values()) + journeys
+
+
+def test_the_cluster_job_reads_only_and_takes_the_profile_and_run_from_the_environment():
+    job = jobs("acceptance.yml")["cluster"]
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["ACCEPTANCE_PROFILE"] == "${{ inputs.profile || 'cluster' }}"
+    harness = [command for command in runs(job) if "scripts/acceptance.py" in command]
+    assert len(harness) == 2
+    for command in harness:
+        assert '--profile "$ACCEPTANCE_PROFILE" --run-id "$ACCEPTANCE_RUN_ID" --docker-context default' in command
+    assert [command for command in runs(job) if "${{" in command] == []
+
+
+def test_the_cluster_job_keeps_the_run_for_the_journeys_then_always_tears_it_down():
+    steps = jobs("acceptance.yml")["cluster"]["steps"]
+
+    def find(text):
+        (index,) = [index for index, item in enumerate(steps) if text in item.get("run", "")]
+        return index
+
+    first = find("--stages prepare,up,run")
+    journeys = find("-m real_operations")
+    last = find("--stages collect,scan,down")
+    assert first < journeys < last
+    assert "--block-egress --keep" in steps[first]["run"] and "dbus-run-session" in steps[first]["run"]
+    assert 'WEAVE_ACC_RUN_DIR="$GITHUB_WORKSPACE/build/acceptance/$ACCEPTANCE_RUN_ID"' in steps[journeys]["run"]
+    assert "tests/e2e/test_operations_cluster.py" in steps[journeys]["run"]
+    # down removes everything only without --keep, and runs after any failure.
+    assert steps[last]["if"] == "always()" and "--keep" not in steps[last]["run"]
+    assert steps[last]["id"] == "acceptance"
+    (upload,) = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact")]
+    assert upload["if"] == "always() && steps.acceptance.outputs.scan == 'passed'"
+
+
+def test_the_changes_and_cluster_jobs_use_only_the_actions_the_pr_job_pins():
+    acceptance = jobs("acceptance.yml")
+    pinned = {step["uses"] for step in acceptance["pr"]["steps"] if "uses" in step}
+    for name in ("changes", "cluster"):
+        used = {step["uses"] for step in acceptance[name]["steps"] if "uses" in step}
+        assert used and used <= pinned, name
