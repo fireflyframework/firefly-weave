@@ -19,9 +19,7 @@
 import importlib.util
 import json
 import re
-import shutil
 import socket
-import subprocess
 import sys
 import time
 import urllib.request
@@ -439,23 +437,18 @@ def wait_for(condition, what):
         time.sleep(0.1)
 
 
-@pytest.mark.skipif(shutil.which("lsof") is None, reason="finding the process on a port needs lsof")
-def test_host_mode_refuses_to_stop_a_listener_that_is_not_ollama(tmp_path):
-    port = free_port()
-    server = (
-        "import http.server, sys; "
-        "http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), http.server.BaseHTTPRequestHandler).serve_forever()"
-    )
-    listener = subprocess.Popen([sys.executable, "-c", server, str(port)])
-    try:
-        wait_for(lambda: AGENT.listeners(port), "the listener never listened")
-        ollama = AGENT.HostOllama(SimpleNamespace(private=tmp_path), url=f"http://127.0.0.1:{port}")
-        with pytest.raises(AssertionError, match="not Ollama"):
-            ollama.stop()
-        assert listener.poll() is None
-    finally:
-        listener.kill()
-        listener.wait()
+def test_host_mode_refuses_to_stop_a_listener_that_is_not_ollama(tmp_path, monkeypatch):
+    # What lsof and ps report is faked: the rule under test is which process stop() may signal, not the tools.
+    signalled = []
+    monkeypatch.setattr(AGENT, "listeners", lambda port: [4242])
+    monkeypatch.setattr(AGENT, "command_of", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(AGENT.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
+    ollama = AGENT.HostOllama(SimpleNamespace(private=tmp_path), url="http://127.0.0.1:11434")
+
+    with pytest.raises(AssertionError, match="not Ollama"):
+        ollama.stop()
+
+    assert signalled == []
 
 
 FAKE_OLLAMA = """#!{python}
@@ -479,6 +472,9 @@ http.server.HTTPServer((host, int(port)), Version).serve_forever()
 """
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="host mode is for macOS and Linux: it starts a script and sends SIGTERM"
+)
 def test_host_mode_restarts_ollama_with_its_own_environment_and_stops_it_at_the_end(tmp_path, monkeypatch):
     port, record = free_port(), tmp_path / "environment.json"
     binary = tmp_path / "bin" / "ollama"
