@@ -122,6 +122,7 @@ A run spends at most 2,000,000 tokens across all its agents.
 `onError` takes the agent's failure, like any step's. A call that changes data and is never retried, still running when
 the agent fails, is different: it may have applied. It keeps its own key and task under `WV-TASK-AMBIGUOUS`, whatever
 `onToolError` and `onError` say. Once a person reconciles it in Operate, the agent's failure goes to `onError`.
+[AI agent incidents](incident-operations.md#ai-agent-incidents) lists the decisions for each code and key.
 
 ## Activation
 

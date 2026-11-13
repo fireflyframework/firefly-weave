@@ -229,6 +229,7 @@ safe `message`, a `request_id`, and `diagnostics`. Quote the `request_id`
 | --- | --- | --- |
 | HTTP 401, `WV-UNAUTHENTICATED` | The token is missing, malformed, or expired, was issued for another API, or its sign-in is not linked to a Weave person or application | Get a new token. If it still fails, ask an administrator to link your identity ([People and access](../guides/people-and-access.md)) |
 | HTTP 403, `WV-FORBIDDEN` | You are known but hold no current grant with the required capability in that scope | Check the IDs in the path, then ask for the role you need |
+| HTTP 403, `WV-REVIEW-DISTINCT` | The human task reviews an AI agent's tool call, and its step asks for a reviewer other than the person who started the run: you | Ask another person assigned to the review; see [AI agent reviews](ai-agents.md#reviews) |
 | HTTP 404, `WV-NOT-FOUND` | No resource with that ID exists in the scope of the path | Check every ID in the path, including the environment |
 | HTTP 409, `WV-IDEMPOTENCY-CONFLICT` | You reused an `Idempotency-Key` with a different request body | Use a new key for a new request; reuse a key only for an exact retry |
 | HTTP 412, `WV-ETAG` | Your `If-Match` revision is no longer the current one | Read the resource again, merge your change, and resend with the new revision |
