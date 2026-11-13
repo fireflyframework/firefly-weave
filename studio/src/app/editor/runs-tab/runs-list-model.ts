@@ -99,7 +99,7 @@ export interface RunRow {
   id: string;
   /** "1c0d7f8a" */
   short: string;
-  /** "Failed", "Succeeded with errors", or "Can't be shown". */
+  /** "Failed", "Succeeded with errors", or "Unavailable". */
   label: string;
   tone: Tone;
   /** "2 hours ago" */
@@ -114,6 +114,8 @@ export interface RunRow {
   link: string | null;
   /** "Failed at send" */
   failedAt: string | null;
+  /** The step the run stopped at ("send"); null when it didn't stop at one. */
+  at: string | null;
   /** The platform can't show this run: only its ID is known. */
   unavailable: boolean;
 }
@@ -123,7 +125,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
     return {
       id: item.id,
       short: shortId(item.id),
-      label: "Can't be shown",
+      label: "Unavailable",
       tone: "neutral",
       started: "",
       startedTitle: "",
@@ -133,6 +135,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
       origin: null,
       link: null,
       failedAt: null,
+      at: null,
       unavailable: true,
     };
   const outcome = runOutcome(item);
@@ -155,6 +158,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
         ? `Retry of ${shortId(item.retried_from_run_id)}`
         : null,
     failedAt: item.failed_step ? `Failed at ${item.failed_step.node_id}` : null,
+    at: item.failed_step?.node_id ?? null,
     unavailable: false,
   };
 }
@@ -183,11 +187,12 @@ export function refreshed(
 export function emptyText(
   workflow: string,
   filters: RunsTabFilters,
-): { text: string; clear: boolean } {
+): { title: string; detail: string; clear: boolean } {
   return filterCount(filters)
-    ? { text: "No runs match these filters.", clear: true }
+    ? { title: "No runs match these filters.", detail: "", clear: true }
     : {
-        text: `No runs of ${workflow} yet. Runs appear here once it's activated and started.`,
+        title: `No runs of ${workflow} yet.`,
+        detail: "Runs appear here once it's activated and started.",
         clear: false,
       };
 }

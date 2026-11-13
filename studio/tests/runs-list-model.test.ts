@@ -98,6 +98,7 @@ describe("a run as a list row", () => {
       label: "Failed",
       tone: "danger",
       failedAt: "Failed at send",
+      at: "send",
       version: "1.3.0",
       duration: "1 min 5 s",
       started: "2 hours ago",
@@ -113,6 +114,7 @@ describe("a run as a list row", () => {
     expect(retry.label).toBe("Succeeded with errors");
     expect(retry.origin).toEqual({ label: "Retry", icon: "refresh" });
     expect(retry.failedAt).toBeNull();
+    expect(retry.at).toBeNull();
 
     const child = runRow(summary(fixtureIds.child), now);
     expect(child.link).toBe("Called by run 1c0d7f8a");
@@ -156,7 +158,7 @@ describe("a run as a list row", () => {
     expect(row).toStrictEqual({
       id: fixtureIds.unavailable,
       short: "8d7e4afb",
-      label: "Can't be shown",
+      label: "Unavailable",
       tone: "neutral",
       started: "",
       startedTitle: "",
@@ -166,6 +168,7 @@ describe("a run as a list row", () => {
       origin: null,
       link: null,
       failedAt: null,
+      at: null,
       unavailable: true,
     });
   });
@@ -204,7 +207,8 @@ describe("an empty list", () => {
     expect(filterCount(defaultRunsTabFilters())).toBe(0);
     expect(filterCount(narrowed)).toBe(4);
     expect(emptyText("invoice-approval", defaultRunsTabFilters())).toEqual({
-      text: "No runs of invoice-approval yet. Runs appear here once it's activated and started.",
+      title: "No runs of invoice-approval yet.",
+      detail: "Runs appear here once it's activated and started.",
       clear: false,
     });
     expect(
@@ -212,6 +216,10 @@ describe("an empty list", () => {
         ...defaultRunsTabFilters(),
         includeTest: false,
       }),
-    ).toEqual({ text: "No runs match these filters.", clear: true });
+    ).toEqual({
+      title: "No runs match these filters.",
+      detail: "",
+      clear: true,
+    });
   });
 });

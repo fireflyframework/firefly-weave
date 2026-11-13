@@ -95,10 +95,8 @@ test("nothing edits the workflow on the Runs tab", async ({ page }) => {
   await page.keyboard.press("ArrowRight");
   const runs = tabs.getByRole("tab", { name: "Runs" });
   await expect(runs).toHaveAttribute("aria-selected", "true");
-  await expect(undo).toBeDisabled();
-  await expect(
-    toolbar.getByRole("button", { name: "Redo", exact: true }),
-  ).toBeDisabled();
+  // The Runs tab draws none of the draft's commands.
+  await expect(toolbar).toHaveCount(0);
   // Undo's key works anywhere on the page, so it meets the lock from the
   // tab itself; the canvas's own keys meet it on the run's read-only canvas.
   await page.keyboard.press("ControlOrMeta+z");
@@ -127,7 +125,7 @@ test("Execute workflow isn't offered on the Runs tab", async ({ page }) => {
   await expect(execute).toBeVisible();
 });
 
-test("on a phone, More offers no Execute workflow on the Runs tab", async ({
+test("on a phone, the view tabs take their own row and More offers no Execute workflow on the Runs tab", async ({
   page,
 }) => {
   const tabs = await openWorkflow(page, {
@@ -136,13 +134,20 @@ test("on a phone, More offers no Execute workflow on the Runs tab", async ({
     height: 844,
   });
   const toolbar = page.getByRole("toolbar", { name: "Workflow commands" });
-  const more = toolbar.getByRole("button", { name: "More", exact: true });
-  const item = page.getByRole("menuitem", { name: /^Execute workflow/ });
-  await more.click();
-  await expect(item).toBeVisible();
+  await toolbar.getByRole("button", { name: "More", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: /^Execute workflow/ }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
+  // Four 44 px tabs on a row of their own, as wide as the bar.
+  const bar = await page.locator(".editor-bar").boundingBox();
+  const list = await tabs.boundingBox();
+  expect(list!.width).toBeGreaterThan(bar!.width - 40);
+  for (const tab of await tabs.getByRole("tab").all())
+    expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await tabs.getByRole("tab", { name: "Runs" }).click();
-  await more.click();
-  await expect(page.getByRole("menuitem").first()).toBeVisible();
-  await expect(item).toHaveCount(0);
+  await expect(toolbar).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: /^Execute workflow/ }),
+  ).toHaveCount(0);
 });

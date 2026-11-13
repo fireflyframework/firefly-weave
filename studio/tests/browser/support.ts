@@ -151,6 +151,10 @@ export interface ConnectedOptions {
   // Workspace IDs; UUIDs let Studio keep this account's data on this computer.
   tenantId?: string;
   projectId?: string;
+  /** The session's environment ID; "development" by default. */
+  environmentId?: string;
+  /** The environment's name, which the identity then lists with the workspace. */
+  environmentName?: string;
 }
 export interface Recorder {
   catalogPages: number;
@@ -166,6 +170,7 @@ export async function connected(
   const catalog = options.catalog ?? defaultCatalog;
   const tenant = options.tenantId ?? profile.tenantId;
   const project = options.projectId ?? profile.projectId;
+  const environment = options.environmentId ?? profile.environmentId;
   await page.route("**/studio/session", (r) =>
     r.fulfill({
       json: {
@@ -173,7 +178,12 @@ export async function connected(
         csrfToken: "test-csrf",
         version: "1",
         mode: "connected",
-        profile: { ...profile, tenantId: tenant, projectId: project },
+        profile: {
+          ...profile,
+          tenantId: tenant,
+          projectId: project,
+          environmentId: environment,
+        },
       },
     }),
   );
@@ -196,13 +206,29 @@ export async function connected(
             scope: {
               tenant_id: tenant,
               project_id: project,
-              environment_id: "development",
+              environment_id: environment,
             },
             resources: [],
             capabilities,
           },
         ],
-        workspaces: [],
+        workspaces: options.environmentName
+          ? [
+              {
+                id: tenant,
+                name: "Acme",
+                projects: [
+                  {
+                    id: project,
+                    name: "Billing",
+                    environments: [
+                      { id: environment, name: options.environmentName },
+                    ],
+                  },
+                ],
+              },
+            ]
+          : [],
         truncated: false,
       },
     });

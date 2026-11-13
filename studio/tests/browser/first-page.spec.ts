@@ -131,6 +131,22 @@ test("the editor's shortcut table loads with the editor, not with the first page
   expect(first).not.toContain(holding[0]);
 });
 
+test("the Runs tab's code stays out of the first page", () => {
+  // Copy only the Runs tab's list holds.
+  const marker = "Runs live on a platform.";
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  const holding = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+  );
+  expect(holding).toHaveLength(1);
+  expect(first).not.toContain(holding[0]);
+});
+
 test("the designer opens once the test data service loads, and step details read it", async ({
   page,
 }) => {

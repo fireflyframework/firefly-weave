@@ -1,0 +1,361 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let st = status();
+@let ready = tab().mode() === "ready";
+<div class="runs-list-head">
+  <h2>Runs</h2>
+  <span class="runs-env">{{
+    tab().mode() === "offline"
+      ? "on this computer"
+      : tab().mode() === "no-environment"
+        ? ""
+        : "in " + environment()
+  }}</span>
+  @if (st !== "access" && st !== "unavailable" && updated()) {
+    <span class="runs-updated" [class.stale]="st === 'error'">{{
+      updated()
+    }}</span>
+  }
+  <button
+    type="button"
+    class="icon-button runs-refresh"
+    aria-label="Refresh runs"
+    title="Refresh runs"
+    [attr.aria-disabled]="ready ? null : 'true'"
+    (click)="ready && refresh()"
+  >
+    <weave-icon name="refresh" [size]="16" />
+  </button>
+</div>
+<div class="runs-filter-bar">
+  <button
+    #filtersButton
+    type="button"
+    class="runs-filters-button"
+    [class.on]="chips().length"
+    aria-haspopup="dialog"
+    [attr.aria-expanded]="filtersOpen()"
+    [attr.aria-disabled]="ready ? null : 'true'"
+    (click)="ready && openFilters()"
+  >
+    Filters
+    @if (chips().length) {
+      <span class="runs-count">{{ chips().length }}</span>
+    }
+    <weave-icon name="chevronDown" [size]="16" />
+  </button>
+  <button
+    type="button"
+    role="switch"
+    class="runs-switch"
+    [attr.aria-checked]="filters().includeTest"
+    [attr.aria-disabled]="ready ? null : 'true'"
+    (click)="ready && toggleTest()"
+  >
+    <span class="runs-track" aria-hidden="true"></span>Include test runs
+  </button>
+  @if (filtersOpen()) {
+    <div
+      #popover
+      class="runs-filters"
+      role="dialog"
+      aria-label="Filters"
+      (keydown)="popoverKey($event)"
+    >
+      <fieldset class="runs-filter-group">
+        <legend>Status</legend>
+        <div class="runs-status-grid">
+          @for (s of statuses; track s.value) {
+            <label class="runs-check">
+              <input
+                type="checkbox"
+                [checked]="filters().status.includes(s.value)"
+                (change)="toggleStatus(s.value, $any($event.target).checked)"
+              />{{ s.label }}
+            </label>
+          }
+        </div>
+      </fieldset>
+      <label class="runs-filter-group">
+        <span class="runs-filter-label">Version</span>
+        <select
+          [value]="filters().version ?? ''"
+          (change)="setVersion($any($event.target).value)"
+        >
+          <option value="">All versions</option>
+          @for (v of versions(); track v) {
+            <option [value]="v" [selected]="v === filters().version">
+              {{ v }}
+            </option>
+          }
+        </select>
+      </label>
+      <label class="runs-filter-group">
+        <span class="runs-filter-label">How it started</span>
+        <select
+          [value]="filters().origin ?? ''"
+          (change)="setOrigin($any($event.target).value)"
+        >
+          <option value="">Any way</option>
+          @for (o of origins; track o.value) {
+            <option [value]="o.value" [selected]="o.value === filters().origin">
+              {{ o.label }}
+            </option>
+          }
+        </select>
+      </label>
+      <div class="runs-filters-foot">
+        <button type="button" class="text-link" (click)="clearFilters()">
+          Clear filters
+        </button>
+        <button type="button" class="sm" (click)="closeFilters()">Done</button>
+      </div>
+    </div>
+  }
+</div>
+@if (chips().length && ready) {
+  <div class="runs-chips">
+    @for (chip of chips(); track chip.label) {
+      <span class="runs-chip"
+        >{{ chip.label
+        }}<button
+          type="button"
+          class="runs-chip-remove"
+          [attr.aria-label]="'Remove ' + chip.label"
+          [attr.title]="'Remove ' + chip.label"
+          (click)="removeChip(chip)"
+        >
+          <weave-icon name="close" [size]="16" /></button
+      ></span>
+    }
+    <button type="button" class="text-link" (click)="clearFilters()">
+      Clear filters
+    </button>
+  </div>
+}
+<div class="runs-body">
+  @switch (st) {
+    @case ("offline") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="cloud" [size]="16" /></span>
+        <strong>Runs live on a platform.</strong>
+        <p>Connect to see this workflow's runs.</p>
+        <button type="button" class="primary" (click)="connect()">
+          Connect
+        </button>
+      </div>
+    }
+    @case ("no-environment") {
+      <div class="runs-message">
+        <span class="runs-ring"
+          ><weave-icon name="workspace" [size]="16"
+        /></span>
+        <strong>Choose an environment to see its runs.</strong>
+        <button type="button" (click)="chooseEnvironment()">
+          Choose environment
+        </button>
+      </div>
+    }
+    @case ("access") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="lock" [size]="16" /></span>
+        <strong>You need run.read in {{ environment() }}.</strong>
+        <p>Ask an administrator in Settings › People and access.</p>
+      </div>
+    }
+    @case ("unavailable") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="info" [size]="16" /></span>
+        <strong>This platform can't list runs yet.</strong>
+        <p>Runs show here once the platform is updated.</p>
+      </div>
+    }
+    @case ("empty") {
+      <div class="runs-message">
+        <span class="runs-ring"
+          ><weave-icon
+            [name]="empty().clear ? 'search' : 'runHistory'"
+            [size]="16"
+        /></span>
+        <strong>{{ empty().title }}</strong>
+        @if (empty().detail) {
+          <p>{{ empty().detail }}</p>
+        }
+        @if (empty().clear) {
+          <button type="button" (click)="clearFilters()">Clear filters</button>
+        }
+      </div>
+    }
+    @default {
+      @if (st === "error") {
+        @let error = state()?.error();
+        <div class="notice runs-error" data-tone="warning" role="alert">
+          <weave-icon name="warning" [size]="16" />
+          <div>
+            <strong>Studio couldn't refresh the runs.</strong>
+            @if (error) {
+              <p>{{ error.code }}: {{ error.message }}</p>
+            }
+            <button type="button" class="sm" (click)="refresh()">
+              Try again
+            </button>
+          </div>
+        </div>
+      }
+      @if (st === "loading" || st === "idle" || st === "pending") {
+        <p class="sr-only" role="status">Loading runs…</p>
+        <div class="runs-rows" aria-hidden="true">
+          @for (i of skeleton; track i) {
+            <div class="run-row run-skeleton">
+              <span class="sk sk-dot"></span>
+              <span class="run-line"
+                ><span class="sk" [style.width.%]="40 + (i % 3) * 10"></span
+                ><span class="sk sk-when"></span
+              ></span>
+              <span class="run-line"
+                ><span class="sk" [style.width.%]="18"></span
+              ></span>
+            </div>
+          }
+        </div>
+      } @else if (rows().length) {
+        <div class="runs-scroll">
+          <div
+            #listbox
+            class="runs-rows"
+            role="listbox"
+            [attr.aria-label]="'Runs of ' + workflow().name"
+            (keydown)="listKey($event)"
+          >
+            @for (row of rows(); track row.id) {
+              <div
+                class="run-row"
+                role="option"
+                [attr.data-run]="row.id"
+                [attr.aria-selected]="row.id === tab().selected()"
+                [attr.aria-disabled]="row.unavailable || null"
+                [attr.tabindex]="row.id === active() ? 0 : -1"
+                [class.shown]="row.id === chosen()"
+                [attr.title]="'Run ' + row.short"
+                (click)="!row.unavailable && choose(row)"
+              >
+                <weave-icon
+                  class="run-icon"
+                  [attr.data-tone]="row.tone"
+                  [name]="row.icon"
+                  [size]="16"
+                />
+                <span class="run-line">
+                  <span class="run-status" [attr.data-tone]="row.tone">{{
+                    row.label
+                  }}</span>
+                  @if (row.at) {
+                    <span class="run-at">at {{ row.at }}</span>
+                  }
+                  <span class="run-when" [attr.title]="row.startedTitle">{{
+                    row.started
+                  }}</span>
+                </span>
+                <span class="run-line run-facts">
+                  @if (!row.unavailable) {
+                    <span class="run-duration">{{ row.duration }}</span>
+                    <span
+                      class="run-version"
+                      [attr.data-older]="row.older ? '' : null"
+                      [attr.title]="
+                        row.older
+                          ? 'Version ' + row.version + ', not the draft\'s'
+                          : 'Version ' + row.version
+                      "
+                      >{{ row.version }}</span
+                    >
+                    @if (row.origin; as origin) {
+                      <span
+                        class="run-origin"
+                        role="img"
+                        [attr.aria-label]="origin.label"
+                        [attr.title]="origin.label"
+                        ><weave-icon [name]="origin.icon" [size]="16"
+                      /></span>
+                    }
+                    @if (row.test) {
+                      <span class="run-test">Test</span>
+                    }
+                  }
+                  <span
+                    class="run-detail"
+                    [attr.aria-hidden]="
+                      !row.unavailable && !row.link ? 'true' : null
+                    "
+                    >{{ row.detail }}</span
+                  >
+                </span>
+              </div>
+            }
+          </div>
+          @if (state()?.older() === "more") {
+            <div class="runs-more">
+              <button type="button" (click)="more()">Show older runs</button>
+            </div>
+          } @else if (state()?.older() === "limit") {
+            <p class="runs-cap">
+              Showing the newest 500 runs. Use the filters, or
+              <button type="button" class="text-link" (click)="openOperate()">
+                Operate › Runs</button
+              >, to find older ones.
+            </p>
+          }
+        </div>
+      }
+    }
+  }
+</div>
+@if (sheet(); as sections) {
+  <weave-modal
+    heading="Keyboard shortcuts"
+    closeLabel="Close keyboard shortcuts"
+    describedBy="runs-shortcuts-note"
+    (dismiss)="sheet.set(null)"
+  >
+    <p id="runs-shortcuts-note" class="dialog-message">In the list of runs.</p>
+    @for (section of sections; track section.title) {
+      <h3
+        class="shortcut-section"
+        [attr.tabindex]="$first ? -1 : null"
+        [attr.data-initial-focus]="$first ? '' : null"
+      >
+        {{ section.title }}
+      </h3>
+      <dl class="shortcut-list">
+        @for (entry of section.entries; track $index) {
+          <dt>
+            @for (key of entry.keys; track $index) {
+              <kbd>{{ key }}</kbd>
+            }
+          </dt>
+          <dd>{{ entry.label }}</dd>
+        }
+      </dl>
+    }
+    <div class="dialog-actions">
+      <button type="button" class="primary" (click)="sheet.set(null)">
+        Done
+      </button>
+    </div>
+  </weave-modal>
+}

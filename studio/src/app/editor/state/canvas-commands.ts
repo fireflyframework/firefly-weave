@@ -182,3 +182,16 @@ export function canvasSheet(platform: KeyPlatform): SheetSection[] {
     ]),
   });
 }
+
+/** Every key the Runs tab's list handles. */
+export const RUNS_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
+  ["previousRun", "nextRun", "firstRun", "lastRun", "showRun", "showShortcuts"],
+);
+
+/** The "?" sheet in the Runs tab's list. */
+export function runsSheet(platform: KeyPlatform): SheetSection[] {
+  return shortcutSheet(platform, {
+    surfaces: ["runs"],
+    available: RUNS_COMMANDS,
+  });
+}

@@ -45,6 +45,7 @@ import { RunLogPanel } from "../editor/debugger/run-log-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
 import { AddStepFailed } from "../editor/add-step/add-step-failed";
 import { AddStepPanel } from "../editor/add-step/add-step-panel";
+import { RunsView } from "../editor/runs-tab/runs-view";
 import type { App } from "../app";
 
 @Component({
@@ -72,10 +73,51 @@ import type { App } from "../app";
     CanvasView,
     AddStepFailed,
     AddStepPanel,
+    RunsView,
   ],
   // No box of its own: the bar, the grid and the strip lay out in the
   // shell's main column.
-  styles: [":host { display: contents; }"],
+  styles: [
+    `
+      :host {
+        display: contents;
+      }
+      .editor-views button weave-icon {
+        margin-right: 6px;
+      }
+      /* The Runs tab: the list and the run edge to edge, nothing to edit
+         beside them. */
+      .editor-grid.runs-mode {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+        padding: 0;
+      }
+      .editor-grid.runs-mode .inspector {
+        display: none !important;
+      }
+      .editor-grid.runs-mode .canvas-panel {
+        border: 0;
+        border-radius: 0;
+      }
+      /* Four views: 44 px tabs on touch and below 768 px, and their own
+         full-width row below 480 px, so the workflow's name keeps its room. */
+      @media (max-width: 767px), (pointer: coarse) {
+        .editor-views button {
+          min-height: var(--control-touch);
+        }
+      }
+      @media (max-width: 480px) {
+        .editor-views {
+          grid-column: 1 / -1;
+          display: grid;
+          grid-template-columns: repeat(var(--views, 4), minmax(0, 1fr));
+        }
+        .editor-views button {
+          padding: 0 4px;
+        }
+      }
+    `,
+  ],
   template: `@let h = host();
     <!-- Identity and views above an aligned command row. -->
     <div class="editor-bar">
@@ -148,6 +190,7 @@ import type { App } from "../app";
         class="editor-views"
         role="tablist"
         aria-label="Workflow views"
+        [style.--views]="h.editorViews.length"
         (keydown)="h.viewKey($event)"
       >
         @for (t of h.editorViews; track t) {
@@ -160,181 +203,196 @@ import type { App } from "../app";
             [attr.tabindex]="h.tab === t ? 0 : -1"
             (click)="h.selectTab(t)"
           >
+            @if (t === "Runs") {
+              <weave-icon name="runHistory" [size]="16" />
+            }
             {{ t }}
           </button>
         }
       </div>
-      <div class="editor-toolbar" role="toolbar" aria-label="Workflow commands">
-        <div class="toolbar-group" role="group" aria-label="Edit workflow">
-          @if (h.editorNext) {
-            <button
-              type="button"
-              class="insert-popover-button add-step-button"
-              aria-label="Add a step"
-              aria-haspopup="dialog"
-              [attr.aria-expanded]="!!h.addStep"
-              [attr.aria-disabled]="h.editingLocked || h.model.readonly || null"
-              (click)="h.openAddStepFromToolbar($event)"
-            >
-              <weave-icon name="plus" /><span class="insert-label"
-                >Add a step</span
-              >
-            </button>
-          } @else {
-            <button
-              type="button"
-              class="insert-popover-button"
-              aria-label="Insert step"
-              [attr.aria-expanded]="h.showPalette"
-              [attr.aria-disabled]="h.editingLocked || null"
-              (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
-            >
-              <weave-icon name="plus" /><span class="insert-label"
-                >Insert step</span
-              >
-            </button>
-          }
-          <button
-            type="button"
-            class="icon-button wide-only"
-            aria-label="Undo"
-            title="Undo (⌘/Ctrl Z)"
-            [disabled]="!h.model.canUndo || h.editingLocked"
-            (click)="h.undo()"
-          >
-            <weave-icon name="undo" /></button
-          ><button
-            type="button"
-            class="icon-button wide-only"
-            aria-label="Redo"
-            title="Redo (⌘/Ctrl Shift Z)"
-            [disabled]="!h.model.canRedo || h.editingLocked"
-            (click)="h.redo()"
-          >
-            <weave-icon name="redo" />
-          </button>
-        </div>
-        <div class="toolbar-group" role="group" aria-label="Check workflow">
-          <button
-            type="button"
-            [attr.aria-disabled]="h.busy !== '' || null"
-            [attr.aria-label]="
-              h.busy === 'validate' ? 'Validating…' : 'Validate'
-            "
-            title="Validate"
-            (click)="h.runCommand('validate')"
-          >
-            <weave-icon name="check" /><span class="validate-label">{{
-              h.busy === "validate" ? "Validating…" : "Validate"
-            }}</span>
-          </button>
-          @if (h.editorNext && h.execution) {
-            <!-- The Runs tab reads runs that happened: nothing executes there. -->
-            @if (h.tab !== "Runs") {
+      <!-- Every command edits, checks or executes the draft: the Runs tab,
+           which reads runs that happened, draws none of them. -->
+      @if (h.tab !== "Runs") {
+        <div
+          class="editor-toolbar"
+          role="toolbar"
+          aria-label="Workflow commands"
+        >
+          <div class="toolbar-group" role="group" aria-label="Edit workflow">
+            @if (h.editorNext) {
               <button
                 type="button"
-                class="primary execute-workflow"
-                aria-label="Execute workflow"
-                title="Execute workflow (Ctrl/Cmd+Enter)"
-                (click)="h.executeWorkflow()"
+                class="insert-popover-button add-step-button"
+                aria-label="Add a step"
+                aria-haspopup="dialog"
+                [attr.aria-expanded]="!!h.addStep"
+                [attr.aria-disabled]="
+                  h.editingLocked || h.model.readonly || null
+                "
+                (click)="h.openAddStepFromToolbar($event)"
               >
-                <weave-icon name="execute" /><span class="execute-label"
-                  >Execute<span class="execute-label-rest">
-                    workflow</span
-                  ></span
+                <weave-icon name="plus" /><span class="insert-label"
+                  >Add a step</span
+                >
+              </button>
+            } @else {
+              <button
+                type="button"
+                class="insert-popover-button"
+                aria-label="Insert step"
+                [attr.aria-expanded]="h.showPalette"
+                [attr.aria-disabled]="h.editingLocked || null"
+                (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
+              >
+                <weave-icon name="plus" /><span class="insert-label"
+                  >Insert step</span
                 >
               </button>
             }
-          } @else {
             <button
               type="button"
-              class="wide-only"
-              [attr.aria-disabled]="!!h.blocker('simulate') || null"
-              [attr.aria-describedby]="
-                h.blocker('simulate') ? 'simulate-blocked' : null
-              "
-              (click)="h.runCommand('simulate')"
+              class="icon-button wide-only"
+              aria-label="Undo"
+              title="Undo (⌘/Ctrl Z)"
+              [disabled]="!h.model.canUndo || h.editingLocked"
+              (click)="h.undo()"
             >
-              {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
+              <weave-icon name="undo" /></button
+            ><button
+              type="button"
+              class="icon-button wide-only"
+              aria-label="Redo"
+              title="Redo (⌘/Ctrl Shift Z)"
+              [disabled]="!h.model.canRedo || h.editingLocked"
+              (click)="h.redo()"
+            >
+              <weave-icon name="redo" />
             </button>
-          }
-        </div>
-        @if (!h.profile) {
-          <details
-            #localHelp
-            class="toolbar-help"
-            (keydown.escape)="closeHelp(localHelp, $event)"
-          >
-            <summary
-              aria-label="About local authoring"
-              title="About local authoring"
+          </div>
+          <div class="toolbar-group" role="group" aria-label="Check workflow">
+            <button
+              type="button"
+              [attr.aria-disabled]="h.busy !== '' || null"
+              [attr.aria-label]="
+                h.busy === 'validate' ? 'Validating…' : 'Validate'
+              "
+              title="Validate"
+              (click)="h.runCommand('validate')"
             >
-              i
-            </summary>
-            <div class="toolbar-help-content">
-              <p>
-                Your draft is kept on this computer. Save to file downloads a
-                copy. Connect to a platform to publish, activate and run it.
-              </p>
+              <weave-icon name="check" /><span class="validate-label">{{
+                h.busy === "validate" ? "Validating…" : "Validate"
+              }}</span>
+            </button>
+            @if (h.editorNext && h.execution) {
+              <!-- The Runs tab reads runs that happened: nothing executes there. -->
+              @if (h.tab !== "Runs") {
+                <button
+                  type="button"
+                  class="primary execute-workflow"
+                  aria-label="Execute workflow"
+                  title="Execute workflow (Ctrl/Cmd+Enter)"
+                  (click)="h.executeWorkflow()"
+                >
+                  <weave-icon name="execute" /><span class="execute-label"
+                    >Execute<span class="execute-label-rest">
+                      workflow</span
+                    ></span
+                  >
+                </button>
+              }
+            } @else {
               <button
                 type="button"
-                class="text-link"
-                (click)="h.menuChoice('connect')"
+                class="wide-only"
+                [attr.aria-disabled]="!!h.blocker('simulate') || null"
+                [attr.aria-describedby]="
+                  h.blocker('simulate') ? 'simulate-blocked' : null
+                "
+                (click)="h.runCommand('simulate')"
               >
-                Connect to a platform
+                {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
               </button>
-            </div>
-          </details>
-        }
-        <div
-          class="toolbar-group toolbar-lifecycle"
-          role="group"
-          aria-label="Save and run"
-        >
-          @if (h.profile) {
-            <button
-              type="button"
-              class="primary"
-              [attr.aria-disabled]="h.primaryBlocker ? true : null"
-              [attr.aria-describedby]="
-                h.primaryBlocker ? 'primary-blocked' : null
-              "
-              (click)="h.runCommand(h.primaryCommand)"
+            }
+          </div>
+          @if (!h.profile) {
+            <details
+              #localHelp
+              class="toolbar-help"
+              (keydown.escape)="closeHelp(localHelp, $event)"
             >
-              {{ h.primaryLabel }}
-            </button>
-          } @else {
-            <button
-              type="button"
-              class="primary"
-              title="Save to file (⌘/Ctrl S)"
-              aria-label="Save to file"
-              (click)="h.runCommand('export')"
-            >
-              <weave-icon name="download" /><span class="save-label"
-                >Save to file</span
-              ><span class="compact-save-label">Save</span>
-            </button>
+              <summary
+                aria-label="About local authoring"
+                title="About local authoring"
+              >
+                i
+              </summary>
+              <div class="toolbar-help-content">
+                <p>
+                  Your draft is kept on this computer. Save to file downloads a
+                  copy. Connect to a platform to publish, activate and run it.
+                </p>
+                <button
+                  type="button"
+                  class="text-link"
+                  (click)="h.menuChoice('connect')"
+                >
+                  Connect to a platform
+                </button>
+              </div>
+            </details>
           }
-          @if (h.moreItems.length) {
-            <weave-row-menu label="More" text="More" [items]="h.moreItems" />
-          }
-          <button
-            type="button"
-            class="icon-button inspector-toggle wide-only"
-            aria-controls="inspector"
-            [attr.aria-label]="
-              h.showInspector ? 'Hide inspector' : 'Show inspector'
-            "
-            [attr.title]="h.showInspector ? 'Hide inspector' : 'Show inspector'"
-            [attr.aria-pressed]="h.showInspector"
-            [attr.aria-expanded]="h.showInspector"
-            (click)="h.toggleInspector()"
+          <div
+            class="toolbar-group toolbar-lifecycle"
+            role="group"
+            aria-label="Save and run"
           >
-            <weave-icon name="panel" />
-          </button>
+            @if (h.profile) {
+              <button
+                type="button"
+                class="primary"
+                [attr.aria-disabled]="h.primaryBlocker ? true : null"
+                [attr.aria-describedby]="
+                  h.primaryBlocker ? 'primary-blocked' : null
+                "
+                (click)="h.runCommand(h.primaryCommand)"
+              >
+                {{ h.primaryLabel }}
+              </button>
+            } @else {
+              <button
+                type="button"
+                class="primary"
+                title="Save to file (⌘/Ctrl S)"
+                aria-label="Save to file"
+                (click)="h.runCommand('export')"
+              >
+                <weave-icon name="download" /><span class="save-label"
+                  >Save to file</span
+                ><span class="compact-save-label">Save</span>
+              </button>
+            }
+            @if (h.moreItems.length) {
+              <weave-row-menu label="More" text="More" [items]="h.moreItems" />
+            }
+            <button
+              type="button"
+              class="icon-button inspector-toggle wide-only"
+              aria-controls="inspector"
+              [attr.aria-label]="
+                h.showInspector ? 'Hide inspector' : 'Show inspector'
+              "
+              [attr.title]="
+                h.showInspector ? 'Hide inspector' : 'Show inspector'
+              "
+              [attr.aria-pressed]="h.showInspector"
+              [attr.aria-expanded]="h.showInspector"
+              (click)="h.toggleInspector()"
+            >
+              <weave-icon name="panel" />
+            </button>
+          </div>
         </div>
-      </div>
+      }
     </div>
 
     <!-- Why a command the person pressed can't run. -->
@@ -367,9 +425,12 @@ import type { App } from "../app";
     <div
       class="editor-grid"
       [class.side-open]="
-        (h.showInspector || !!h.simulationSession) && h.tab !== 'Source'
+        (h.showInspector || !!h.simulationSession) &&
+        h.tab !== 'Source' &&
+        h.tab !== 'Runs'
       "
       [class.source-mode]="h.tab === 'Source'"
+      [class.runs-mode]="h.tab === 'Runs'"
       [class.simulating]="!!h.simulationSession"
       [class.no-palette]="h.editorNext"
       [style.--palette-w.px]="h.paletteWidth"
@@ -570,6 +631,13 @@ import type { App } from "../app";
           </div>
         } @else if (h.tab === "Runs") {
           <!-- The workflow's runs: the list, and the chosen run on a read-only canvas. -->
+          @defer (on immediate) {
+            <weave-runs-view [host]="h" />
+          } @placeholder {
+            <p class="connecting-status designer-loading" role="status">
+              <span class="loading-spinner small"></span>Opening the runs…
+            </p>
+          }
         } @else if (h.editorNext) {
           @defer (on immediate) {
             <weave-canvas-view [host]="h" />
@@ -1273,6 +1341,7 @@ import type { App } from "../app";
     <section
       class="diagnostics"
       aria-label="Compiler diagnostics"
+      [hidden]="h.tab === 'Runs'"
       [class.open]="
         h.diagnosticsOpen &&
         (!!h.diagnostics?.diagnostics?.length || !!h.contractIssues.length)
