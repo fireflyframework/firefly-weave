@@ -660,7 +660,11 @@ explicit safe placeholder; a list never widens access.
 
 **Debug sessions** belong to a project and to the person who created them.
 They expire in real time, use revisions, run Actions only against mocks, and
-support breakpoints and virtual time. The response is a `DebugSession` envelope
+support breakpoints and virtual time. The `resolve` and `cancel` commands of a
+session with transactions change only the session. They never change a run or
+an incident of the project (see
+[Simulate transactions](simulation.md#simulate-transactions)).
+The response is a `DebugSession` envelope
 that contains a `view`. Source-map file names are labels only. No connector or
 secret provider runs during a simulation.
 
