@@ -817,6 +817,59 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
 }
 
 /**
+ * What a run on the Runs tab draws, in canvas units: each tile with its
+ * corner badge and its label block (End's too), path labels, joins and
+ * sub-steps, but no "+" (nothing is added there). The Runs tab frames this.
+ */
+export function runOutline(layout: LtrLayout): LtrBounds {
+  const boxes: LtrBounds[] = [];
+  for (const tile of layout.tiles) {
+    // From 60% to 100%, a label block is at its widest below 100%.
+    const width =
+      tile.shape === "end"
+        ? 80
+        : Math.max(labelWidth(0.6, tile.shape), labelWidth(1, tile.shape));
+    const labelLeft = tile.x + tile.width / 2 - width / 2;
+    boxes.push({
+      // The corner badge sits 10 units beyond the tile's top and right.
+      minX: Math.min(tile.x, labelLeft),
+      minY: tile.y - 10,
+      maxX: Math.max(tile.x + tile.width + 10, labelLeft + width),
+      maxY: tile.labelY + LTR.labelHeight,
+    });
+  }
+  for (const label of layout.labels)
+    boxes.push({
+      minX: label.x,
+      minY: label.y,
+      maxX: label.x + label.width,
+      maxY: label.y + 16,
+    });
+  for (const join of layout.joins)
+    boxes.push({
+      minX: join.x + join.width / 2 - LTR.label / 2,
+      minY: join.y,
+      maxX: join.x + join.width / 2 + LTR.label / 2,
+      maxY: join.y + join.height + LTR.labelGap + 16,
+    });
+  for (const row of layout.subNodes)
+    for (const chip of row.chips)
+      boxes.push({
+        minX: chip.x,
+        minY: chip.y,
+        maxX: chip.x + LTR.chipWidth,
+        maxY: chip.y + LTR.chipHeight,
+      });
+  if (!boxes.length) return layout.bounds;
+  return {
+    minX: Math.min(...boxes.map((box) => box.minX)),
+    minY: Math.min(...boxes.map((box) => box.minY)),
+    maxX: Math.max(...boxes.map((box) => box.maxX)),
+    maxY: Math.max(...boxes.map((box) => box.maxY)),
+  };
+}
+
+/**
  * An edge's SVG path: a smooth curve, or right angles for a group's fan and
  * for a path that joins from another row. Those run along their own row,
  * turn at one x shared by every path into that join, and enter it level.

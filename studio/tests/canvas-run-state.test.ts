@@ -221,12 +221,25 @@ describe("how the Runs tab frames a run", () => {
     expect(frameRun(workflow, send, { width: 2000, height: 700 }).zoom).toBe(1);
   });
 
-  it("centers one step at 60% when the workflow doesn't fit", () => {
-    // At 60% the workflow is 600 px wide: more than a 424 px column.
-    expect(frameRun(workflow, send, { width: 424, height: 900 })).toEqual({
-      zoom: 0.6,
-      pan: { x: -304, y: 420 },
-    });
+  it("centers one step at 60% when the workflow doesn't fit, its outline filling the width", () => {
+    // At 60% the workflow is 600 px wide: more than a 424 px column. Centered
+    // on send (pan -304), its right edge would sit 128 px inside the column;
+    // the pan stops where that edge meets the column's (424 - 600 = -176).
+    // Down, the 120 px outline fits the 900 px column: it is centered.
+    const framed = frameRun(workflow, send, { width: 424, height: 900 });
+    expect(framed).toEqual({ zoom: 0.6, pan: { x: -176, y: 390 } });
+    // send stays in view: 800 × 0.6 - 176 = 304, its right side at 376.
+    expect(800 * 0.6 + framed.pan.x).toBeGreaterThanOrEqual(0);
+    expect(920 * 0.6 + framed.pan.x).toBeLessThanOrEqual(424);
+  });
+
+  it("centers a step in the middle of a long workflow, both outline edges outside", () => {
+    const long = { x: 0, y: 0, width: 3000, height: 200 };
+    const middle = { x: 1440, y: 0, width: 120, height: 100 };
+    // (424 - 72) / 2 - 1440 × 0.6 = -688: the outline spans -688 to 1112.
+    expect(frameRun(long, middle, { width: 424, height: 900 }).pan.x).toBe(
+      -688,
+    );
   });
 
   it("frames the failed step, else the running one, else the last finished", () => {

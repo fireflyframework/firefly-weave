@@ -119,6 +119,7 @@ import {
   type LtrLayout,
   type LtrTile,
   type Point,
+  runOutline,
 } from "./layout-ltr";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
@@ -339,6 +340,15 @@ export class CanvasView implements OnInit, DoCheck {
           });
       });
     });
+    afterNextRender(
+      () => {
+        if (typeof ResizeObserver === "undefined") return;
+        const resized = new ResizeObserver(() => this.reframeOnResize());
+        resized.observe(this.root().nativeElement);
+        this.lifetime.onDestroy(() => resized.disconnect());
+      },
+      { injector: this.injector },
+    );
     // The Runs tab frames the run it draws: when it is chosen, and when a
     // followed run moves to another step.
     effect(() => {
@@ -1619,13 +1629,13 @@ export class CanvasView implements OnInit, DoCheck {
     if (key === this.framed) return;
     this.framed = key;
     const tile = layout.tiles.find((item) => item.id === focus);
-    const bounds = this.fitBounds();
+    const bounds = runOutline(layout);
     const tools = [
       ...root.querySelectorAll<HTMLElement>(
         ".canvas-v2-tools, .canvas-v2-tools-menu, .canvas-read-only",
       ),
     ].reduce((most, item) => Math.max(most, item.offsetHeight), 0);
-    this.setView(
+    this.framedView = this.frameView(
       frameRun(
         {
           x: bounds.minX,
@@ -1648,6 +1658,21 @@ export class CanvasView implements OnInit, DoCheck {
         },
       ),
     );
+  }
+  /** The view the run was last framed with; any pan or zoom since replaces it. */
+  private framedView: View | null = null;
+  private frameView(view: View): View {
+    this.setView(view);
+    return this.view;
+  }
+  /**
+   * The canvas column changed size: a run still framed as Studio left it is
+   * framed again; one the person panned or zoomed since stays as they left it.
+   */
+  private reframeOnResize() {
+    if (!this.framedView || this.view !== this.framedView) return;
+    this.framed = "";
+    this.frameRecorded();
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   /**

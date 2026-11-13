@@ -291,3 +291,80 @@ test.describe("a run followed while it runs", () => {
     await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
   });
 });
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 1920, height: 1080 },
+])
+  test.describe(`the run's framing at ${size.width}x${size.height}`, () => {
+    test.use({
+      viewport: size,
+      contextOptions: { reducedMotion: "reduce" },
+    });
+
+    test("the run is framed on what is drawn, with the failed step in view", async ({
+      page,
+    }) => {
+      const { runs } = await openRunsTab(page);
+      const canvas = await chooseRun(page, runs, RUN_IDS.failed);
+      await expect(canvas.tile("send").locator(".tile-badge")).toHaveAttribute(
+        "data-badge",
+        "failed",
+      );
+      // The frame settles after the run is drawn.
+      await expect
+        .poll(async () =>
+          canvas.root.evaluate((root) => {
+            const frame = root.getBoundingClientRect();
+            const drawn = [
+              ...root.querySelectorAll(
+                ".tile-node .tile-body, .tile-node .tile-label, .tile-node .tile-badge",
+              ),
+            ].map((element) => element.getBoundingClientRect());
+            const left = Math.min(...drawn.map((rect) => rect.left));
+            const right = Math.max(...drawn.map((rect) => rect.right));
+            const send = root
+              .querySelector('.tile-node[data-tile="send"] .tile-body')!
+              .getBoundingClientRect();
+            return {
+              sendInView: send.left >= frame.left && send.right <= frame.right,
+              // Room left empty on either side while the path goes on past
+              // the other edge, or how far off center a path that fits sits.
+              emptyRight: Math.round(frame.right - right),
+              emptyLeft: Math.round(left - frame.left),
+              cutLeft: Math.round(Math.max(0, frame.left - left)),
+            };
+          }),
+        )
+        .toMatchObject({ sendInView: true });
+      const measured = await canvas.root.evaluate((root) => {
+        const frame = root.getBoundingClientRect();
+        const drawn = [
+          ...root.querySelectorAll(
+            ".tile-node .tile-body, .tile-node .tile-label, .tile-node .tile-badge",
+          ),
+        ].map((element) => element.getBoundingClientRect());
+        const tiles = [...root.querySelectorAll(".tile-node .tile-body")].map(
+          (element) => element.getBoundingClientRect(),
+        );
+        return {
+          left: Math.min(...drawn.map((rect) => rect.left)) - frame.left,
+          right: frame.right - Math.max(...drawn.map((rect) => rect.right)),
+          // How much of the first tile is past the left edge.
+          tileCut: frame.left - Math.min(...tiles.map((rect) => rect.left)),
+        };
+      });
+      if (size.width === 1440) {
+        // Wider than the column at 60%: nothing left empty on the right,
+        // and only a little of the path's start is cut off.
+        expect(measured.right).toBeLessThanOrEqual(24);
+        expect(measured.tileCut).toBeLessThanOrEqual(60);
+      } else {
+        // It fits: centered across.
+        expect(Math.abs(measured.left - measured.right)).toBeLessThanOrEqual(
+          24,
+        );
+        expect(measured.left).toBeGreaterThan(0);
+      }
+    });
+  });

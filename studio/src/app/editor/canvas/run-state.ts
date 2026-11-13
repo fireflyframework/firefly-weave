@@ -130,32 +130,57 @@ export interface FrameBox {
 }
 /**
  * How the Runs tab frames a run in the visible canvas area: the largest zoom
- * from 100% down to 60%, in 2% steps, at which the workflow fits with 8 px to
- * spare on each side, centered across and down; when it doesn't fit at 60%,
- * `step` (its tile and label) centered at 60%. Below 60% tiles are too small
- * to read.
+ * from 100% down to 60%, in 2% steps, at which the workflow's outline (all
+ * that is drawn: tiles, badges, labels) fits with 8 px to spare on each side,
+ * centered across and down. When it doesn't fit at 60%, each direction
+ * where the outline fits is centered; in a direction where it is larger,
+ * `step` is centered and the pan then stops before either edge of the
+ * outline comes inside the area, so no room is left empty while the
+ * workflow goes on beyond the other edge. Below 60% tiles are too small to read.
  */
 export function frameRun(
   workflow: FrameBox,
   step: FrameBox | null,
   area: { width: number; height: number },
 ): { zoom: number; pan: { x: number; y: number } } {
-  const center = (box: FrameBox, zoom: number) => ({
-    zoom,
-    pan: {
-      x: (area.width - box.width * zoom) / 2 - box.x * zoom,
-      y: (area.height - box.height * zoom) / 2 - box.y * zoom,
-    },
-  });
   for (let percent = 100; percent >= 60; percent -= 2) {
     const zoom = percent / 100;
     if (
       workflow.width * zoom + 16 <= area.width &&
       workflow.height * zoom + 16 <= area.height
     )
-      return center(workflow, zoom);
+      return {
+        zoom,
+        pan: {
+          x: (area.width - workflow.width * zoom) / 2 - workflow.x * zoom,
+          y: (area.height - workflow.height * zoom) / 2 - workflow.y * zoom,
+        },
+      };
   }
-  return center(step ?? workflow, 0.6);
+  const zoom = 0.6;
+  const axis = (
+    start: number,
+    size: number,
+    focusStart: number,
+    focusSize: number,
+    room: number,
+  ) => {
+    if (size * zoom <= room) return (room - size * zoom) / 2 - start * zoom;
+    const centered = (room - focusSize * zoom) / 2 - focusStart * zoom;
+    // The outline's near edge stays at or before the area's, its far edge at or after.
+    return Math.min(
+      -start * zoom,
+      Math.max(room - (start + size) * zoom, centered),
+    );
+  };
+  const focus = step ?? workflow;
+  return {
+    zoom,
+    pan: {
+      x: axis(workflow.x, workflow.width, focus.x, focus.width, area.width),
+      y: axis(workflow.y, workflow.height, focus.y, focus.height, area.height),
+    },
+  };
 }
 
 /**
