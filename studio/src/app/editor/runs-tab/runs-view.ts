@@ -115,7 +115,9 @@ const NARROW = "(max-width: 767px)";
   template: `<weave-runs-list [tab]="this" />
     <section class="runs-canvas" aria-label="The chosen run">
       <weave-run-header [tab]="this" />
-      <div class="runs-canvas-area"><ng-content /></div>
+      <div class="runs-canvas-area" (keydown)="canvasKey($event)">
+        <ng-content />
+      </div>
     </section>`,
 })
 export class RunsView implements DoCheck {
@@ -202,6 +204,15 @@ export class RunsView implements DoCheck {
     this.selected.set(id);
     if (state.chosen()?.id !== id) void state.choose(id);
     if (this.narrow()) this.front.set("canvas");
+  }
+  /**
+   * Escape on the canvas that the canvas didn't use (nothing selected, no
+   * gesture under way) goes back to the chosen run's row.
+   */
+  canvasKey(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    event.preventDefault();
+    this.backToRuns();
   }
   /** Back to the list on a narrow screen, focus on the chosen row. */
   backToRuns(): void {

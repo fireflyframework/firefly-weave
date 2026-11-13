@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   edgeRun,
+  frameRun,
+  framedStep,
   groupsEntered,
   pulses,
   tileRun,
@@ -202,5 +204,59 @@ describe("the groups a run is inside", () => {
         groupsEntered(run({ done: ["deep", "inner"] }), parentOf),
       ),
     ).toBe("taken");
+  });
+});
+
+describe("how the Runs tab frames a run", () => {
+  const workflow = { x: 0, y: 0, width: 1000, height: 200 };
+  const send = { x: 800, y: 0, width: 120, height: 100 };
+
+  it("fits the workflow at the largest zoom from 100% to 60%, centered", () => {
+    // 1000 px wide with 8 px on each side fits a 896 px area at 88%.
+    expect(frameRun(workflow, send, { width: 896, height: 700 })).toEqual({
+      zoom: 0.88,
+      pan: { x: 8, y: 262 },
+    });
+    // Room to spare: never above 100%.
+    expect(frameRun(workflow, send, { width: 2000, height: 700 }).zoom).toBe(1);
+  });
+
+  it("centers one step at 60% when the workflow doesn't fit", () => {
+    // At 60% the workflow is 600 px wide: more than a 424 px column.
+    expect(frameRun(workflow, send, { width: 424, height: 900 })).toEqual({
+      zoom: 0.6,
+      pan: { x: -304, y: 420 },
+    });
+  });
+
+  it("frames the failed step, else the running one, else the last finished", () => {
+    const tiles = ["$trigger:manual", "fetch", "check", "send"];
+    const recorded = (extra: Partial<CanvasRun>) => ({
+      ...run({ mode: "real", ...extra }),
+      changed: [],
+      added: [],
+      failures: {},
+    });
+    expect(
+      framedStep(
+        recorded({ status: "failed", current: ["send"], done: ["fetch"] }),
+        tiles,
+      ),
+    ).toBe("send");
+    expect(
+      framedStep(
+        recorded({ status: "running", current: ["check"], done: ["fetch"] }),
+        tiles,
+      ),
+    ).toBe("check");
+    expect(
+      framedStep(
+        recorded({ status: "succeeded", done: ["send", "fetch", "check"] }),
+        tiles,
+      ),
+    ).toBe("send");
+    expect(framedStep(recorded({ status: "queued" }), tiles)).toBe(
+      "$trigger:manual",
+    );
   });
 });

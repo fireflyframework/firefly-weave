@@ -396,6 +396,8 @@ describe("what changed since the run", () => {
       added: ["check"],
     });
     expect(overlay.canvas.changed).toEqual(["send"]);
+    // A step new in the draft isn't one the run skipped.
+    expect(overlay.canvas.added).toEqual(["check"]);
     expect(overlay.banner).toBe(
       "This run used 1.2.0; you're editing the draft of 1.3.0.",
     );

@@ -24,7 +24,7 @@ import {
   type StepFact,
   type StepStatus,
 } from "../../operate/run-contracts";
-import type { CanvasRun } from "../canvas/run-state";
+import type { RecordedRun } from "../canvas/run-state";
 import { allSteps, withChildIds } from "../ndv/step-walk";
 import { fingerprint } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
@@ -132,12 +132,7 @@ export function versionBanner(
 }
 
 export interface RunOverlay {
-  canvas: CanvasRun & {
-    /** Steps changed since the run's version. */
-    changed: readonly string[];
-    /** Step ID to the error code it failed with. */
-    failures: Readonly<Record<string, string>>;
-  };
+  canvas: RecordedRun;
   /** Every step of the draft, and every step the run reached. */
   states: ReadonlyMap<string, RunStepState>;
   /** Null when the run's version couldn't be read. */
@@ -179,6 +174,7 @@ export function overlayOf(
       active: inState("waiting"),
       done: inState("completed"),
       changed: diff?.changed ?? [],
+      added: diff?.added ?? [],
       failures,
     },
     states,

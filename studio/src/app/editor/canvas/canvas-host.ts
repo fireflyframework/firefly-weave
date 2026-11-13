@@ -38,6 +38,11 @@ export interface CanvasHost {
   readonly tick: Signal<number>;
   /** True while a simulation runs: the workflow can't change. */
   readonly editingLocked: boolean;
+  /**
+   * The Runs tab: the canvas draws runs that happened, read-only, without
+   * the draft's handles, editing tools or setup badges.
+   */
+  readonly viewingRuns?: boolean;
   /** The step "Move to…" is placing, or "". */
   readonly connectingNode: string;
   showTemplates: boolean;

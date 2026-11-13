@@ -130,6 +130,10 @@ import {
   tileRun,
   type CanvasRun,
   type TileRun,
+  frameRun,
+  framedStep,
+  isRecordedRun,
+  type RecordedRun,
 } from "./run-state";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
@@ -164,6 +168,8 @@ import {
 } from "./tile-facts";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
+const NO_STEP_FACTS: ReadonlyMap<string, StepFacts> = new Map();
+const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 const NO_BORDERS: TileBorders = {
   selected: false,
   live: false,
@@ -333,6 +339,17 @@ export class CanvasView implements OnInit, DoCheck {
           });
       });
     });
+    // The Runs tab frames the run it draws: when it is chosen, and when a
+    // followed run moves to another step.
+    effect(() => {
+      const run = this.host().canvasRun();
+      untracked(() => {
+        if (!isRecordedRun(run)) return void (this.framed = "");
+        afterNextRender(() => this.frameRecorded(), {
+          injector: this.injector,
+        });
+      });
+    });
     inject(FControlSchemeController).setScheme({
       nodeMove: () => false,
       createConnection: () => false,
@@ -466,6 +483,10 @@ export class CanvasView implements OnInit, DoCheck {
   places(): Map<string, StepPlace> {
     return this.placesMemo(this.layout());
   }
+  /** The Runs tab: runs that happened, drawn read-only. */
+  viewingRuns(): boolean {
+    return !!this.host().viewingRuns;
+  }
   /** Nothing can change: a simulation runs, or the source doesn't parse. */
   locked(): boolean {
     const h = this.host();
@@ -541,6 +562,7 @@ export class CanvasView implements OnInit, DoCheck {
                 : "",
             pin: tile.step ? pins.get(tile.id) : undefined,
             simulated: run?.mode === "simulated",
+            recorded: isRecordedRun(run) ? run : null,
           },
         );
       });
@@ -548,15 +570,17 @@ export class CanvasView implements OnInit, DoCheck {
   );
   tiles(): TileView[] {
     const h = this.host();
+    // The Runs tab shows runs, not the draft's errors, setup or pins.
+    const viewing = this.viewingRuns();
     return this.tilesMemo(
       this.layout(),
-      h.canvasFacts(),
+      viewing ? NO_STEP_FACTS : h.canvasFacts(),
       this.selection,
       this.active(),
       h.canvasRun(),
       h.model.canvas,
       this.pasteGapsVersion,
-      h.pinStates(),
+      viewing ? NO_PINS : h.pinStates(),
       h.runStamp?.() ?? null,
     );
   }
@@ -583,6 +607,8 @@ export class CanvasView implements OnInit, DoCheck {
       pin?: { stale: string | null };
       /** The run drawn is a simulation Studio played back. */
       simulated?: boolean;
+      /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
+      recorded?: RecordedRun | null;
     },
   ): TileView {
     const h = this.host();
@@ -625,25 +651,44 @@ export class CanvasView implements OnInit, DoCheck {
     const descriptor = ndvRegistry.kind(tile.kind);
     const kindLabel = descriptor?.label ?? h.label(tile.kind);
     const summary = descriptor?.summary(tile.step, ctx) ?? "";
-    const shown = {
-      ...facts,
-      run: state.run,
-      failure: state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
-      stale: state.pin?.stale ?? null,
-      pinned: !!state.pin,
-      selected: state.selected,
-      simulated: !!state.simulated,
-    };
+    const recorded = state.recorded;
+    // A run that happened shows what it did, not the draft's errors, setup or pins.
+    const shown = recorded
+      ? {
+          ...NO_FACTS,
+          run: state.run,
+          failure:
+            state.run === "failed"
+              ? { code: recorded.failures[tile.id] }
+              : null,
+          stale: null,
+          pinned: false,
+          selected: state.selected,
+          changed: recorded.changed.includes(tile.id),
+          added: recorded.added.includes(tile.id),
+        }
+      : {
+          ...facts,
+          run: state.run,
+          failure:
+            state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
+          stale: state.pin?.stale ?? null,
+          pinned: !!state.pin,
+          selected: state.selected,
+          simulated: !!state.simulated,
+        };
     const badge = tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
-    const note = state.run ? (h.runNote?.(tile.id) ?? "") : "";
+    const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
+    const fact = recorded ? recordedFact(shown, tile.kind) : null;
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      output: h.summaryOf?.(tile.id) ?? "",
+      output: fact ? fact.text : (h.summaryOf?.(tile.id) ?? ""),
+      outputTone: fact?.tone ?? null,
       name: tileName({
         id: tile.id,
         kindLabel,
@@ -1068,6 +1113,8 @@ export class CanvasView implements OnInit, DoCheck {
    */
   toolbars() {
     if (this.dragging() || this.box || this.viewDragging) return [];
+    // Every command on a tile's toolbar edits or executes the draft.
+    if (this.viewingRuns()) return [];
     return this.toolbarsMemo(
       this.layout(),
       this.focusTile,
@@ -1547,8 +1594,60 @@ export class CanvasView implements OnInit, DoCheck {
   /** Opens a workflow the canvas hasn't shown yet with Fit view. */
   fitIfNew() {
     const opened = this.host().model.opened;
-    if (this.ready && this.fitted !== opened && this.fit())
+    if (this.ready && this.fitted !== opened && this.fit()) {
       this.fitted = opened;
+      this.frameRecorded();
+    }
+  }
+  /** The step the drawn run was last framed on, and the run. */
+  private framed = "";
+  /**
+   * Frames a run that happened (the Runs tab) in the area the canvas tools
+   * leave: the whole workflow from 100% to 60%, else the step that failed,
+   * runs or finished last, centered at 60%. Again only once the run moves on.
+   */
+  private frameRecorded() {
+    const run = this.host().canvasRun();
+    const root = this.root().nativeElement;
+    if (!isRecordedRun(run) || !this.ready || !root.clientWidth) return;
+    const layout = this.layout();
+    const focus = framedStep(
+      run,
+      layout.tiles.map((tile) => tile.id),
+    );
+    const key = `${focus}|${run.status}`;
+    if (key === this.framed) return;
+    this.framed = key;
+    const tile = layout.tiles.find((item) => item.id === focus);
+    const bounds = this.fitBounds();
+    const tools = [
+      ...root.querySelectorAll<HTMLElement>(
+        ".canvas-v2-tools, .canvas-v2-tools-menu, .canvas-read-only",
+      ),
+    ].reduce((most, item) => Math.max(most, item.offsetHeight), 0);
+    this.setView(
+      frameRun(
+        {
+          x: bounds.minX,
+          y: bounds.minY,
+          width: bounds.maxX - bounds.minX,
+          height: bounds.maxY - bounds.minY,
+        },
+        tile
+          ? {
+              x: tile.x,
+              y: tile.y,
+              width: tile.width,
+              height: tile.labelY + LTR.labelHeight - tile.y,
+            }
+          : null,
+        {
+          width: root.clientWidth,
+          // The band at the bottom that holds the canvas tools.
+          height: Math.max(1, root.clientHeight - (16 + tools + 8)),
+        },
+      ),
+    );
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   /**
@@ -1777,6 +1876,8 @@ export class CanvasView implements OnInit, DoCheck {
   /** Why nothing can change now, or null. */
   lockedReason(): string | null {
     const h = this.host();
+    if (h.viewingRuns)
+      return "This is a run that happened. Go back to editing to change the workflow.";
     if (h.editingLocked) return "Editing is paused while the simulation runs.";
     if (h.model.readonly) return "Fix the source before changing steps.";
     return null;
@@ -2530,4 +2631,26 @@ export class CanvasView implements OnInit, DoCheck {
     this.view = view;
     this.cdr.markForCheck();
   }
+}
+
+/**
+ * The line under a tile on the Runs tab: what a badge only hints at, so
+ * nobody needs its tooltip (touch has none). Failed steps name the code.
+ */
+function recordedFact(
+  facts: {
+    run: TileRun;
+    failure: { code?: string } | null;
+    changed?: boolean;
+    added?: boolean;
+  },
+  kind: string,
+): { text: string; tone: "danger" | "info" | null } | null {
+  if (facts.run === "failed")
+    return { text: facts.failure?.code || "Failed", tone: "danger" };
+  if (facts.run === "live" || facts.run === "waiting")
+    return { text: runText(facts.run, kind), tone: null };
+  if (facts.changed) return { text: "Changed since this run", tone: "info" };
+  if (facts.added) return { text: "New in this draft", tone: "info" };
+  return null;
 }

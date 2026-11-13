@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // list can be in. A listbox with one tab stop: ↑ and ↓ choose a run, Home
 // and End the first and last, Enter shows it on the canvas.
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -27,6 +28,7 @@ import {
   effect,
   ElementRef,
   inject,
+  Injector,
   input,
   signal,
   untracked,
@@ -223,9 +225,11 @@ export class RunsList {
     const ticker = setInterval(() => this.now.set(Date.now()), 1000);
     inject(DestroyRef).onDestroy(() => clearInterval(ticker));
     // Back to runs on a narrow screen: focus returns to the chosen row.
+    // After the list is drawn again: it may have been hidden until now.
+    const injector = inject(Injector);
     effect(() => {
       if (!this.tab().focusRow()) return;
-      untracked(() => setTimeout(() => this.focusActive()));
+      untracked(() => afterNextRender(() => this.focusActive(), { injector }));
     });
   }
 

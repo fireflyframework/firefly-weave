@@ -219,12 +219,19 @@ for (const size of sizes)
         )
         .toBe(true);
       if (wide) await expect(third).toBeFocused();
-      await page.keyboard.press("End");
-      if (!wide) {
-        await page.getByRole("button", { name: "Back to runs" }).click();
-        await expect(third).toBeFocused();
+      else {
+        // The run comes to the front: focus goes with it, not to the hidden list.
+        const back = page.getByRole("button", { name: "Back to runs" });
+        await expect(back).toBeFocused();
         await page.keyboard.press("End");
+        // The hidden list took no key: the run shown stays the chosen one.
+        await expect(
+          runs.panel.locator(`[data-run="${RUN_IDS.test}"]`),
+        ).toHaveAttribute("aria-selected", "true");
+        await back.click();
+        await expect(third).toBeFocused();
       }
+      await page.keyboard.press("End");
       await expect(runs.rows.last()).toHaveAttribute("aria-selected", "true");
       await page.keyboard.press("Home");
       await expect(runs.rows.first()).toBeFocused();

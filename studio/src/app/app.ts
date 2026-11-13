@@ -3044,6 +3044,9 @@ export class App implements CanvasHost {
   get editingLocked() {
     return !!this.simulationSession || this.tab === "Runs";
   }
+  get viewingRuns() {
+    return this.tab === "Runs";
+  }
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers

@@ -1,0 +1,157 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@if (tab().narrow() && tab().front() === "canvas") {
+  <div class="run-back">
+    <button type="button" class="tertiary" (click)="tab().backToRuns()">
+      <weave-icon name="chevronLeft" [size]="16" />Back to runs
+    </button>
+  </div>
+}
+@if (view(); as v) {
+  @if (problem(); as p) {
+    <div class="run-problem" role="status">
+      <span class="run-ring" [attr.data-tone]="p.operate ? 'warning' : null"
+        ><weave-icon [name]="p.operate ? 'warning' : 'workspace'" [size]="16"
+      /></span>
+      <strong>{{ p.title }}</strong>
+      <p>{{ p.detail }}</p>
+      @if (p.operate) {
+        <button type="button" (click)="openOperate()">
+          <weave-icon name="external" [size]="16" />Open in Operate
+        </button>
+      }
+    </div>
+  } @else {
+    <header class="run-header">
+      <div class="run-who">
+        <div class="run-title">
+          <h2>Run {{ v.short }}</h2>
+          <button
+            type="button"
+            class="icon-button run-copy"
+            aria-label="Copy run ID"
+            title="Copy run ID"
+            (click)="copyId()"
+          >
+            <weave-icon name="copy" [size]="16" />
+          </button>
+          @if (v.outcome; as outcome) {
+            <span class="pill run-pill" [attr.data-tone]="outcome.tone">{{
+              outcome.label
+            }}</span>
+          } @else {
+            <span class="run-sk run-sk-pill"></span>
+          }
+          @if (chosen()?.following) {
+            <span class="run-follow"
+              ><span class="run-live-dot" aria-hidden="true"></span>Following
+              this run</span
+            >
+          }
+        </div>
+        @if (v.loading) {
+          <span class="run-sk run-sk-line" aria-hidden="true"></span>
+          <span class="sr-only" role="status">Loading run {{ v.short }}…</span>
+        } @else {
+          <p class="run-caption">
+            @if (v.failedAt) {
+              <span class="run-failed-at">{{ v.failedAt }}</span>
+            }
+            @if (v.version) {
+              <span
+                class="run-version"
+                [attr.data-older]="v.older ? '' : null"
+                >{{ v.version }}</span
+              >
+            }
+            @if (v.test) {
+              <span class="run-test">Test</span>
+            }
+            @if (v.started) {
+              <span>{{ v.started }}</span>
+            }
+            @if (v.took) {
+              <span>{{ v.took }}</span>
+            }
+          </p>
+        }
+      </div>
+      <div class="run-actions">
+        <!-- Debug in editor and Copy to editor turn the run into test data. -->
+        @if (v.failed) {
+          <button type="button" class="primary run-main" aria-disabled="true">
+            <weave-icon name="execute" [size]="16" />Debug in editor
+          </button>
+        } @else {
+          <button type="button" class="run-main" aria-disabled="true">
+            <weave-icon name="copy" [size]="16" />Copy to editor
+          </button>
+        }
+        <button type="button" class="run-wide" (click)="openOperate()">
+          <weave-icon name="external" [size]="16" />Open in Operate
+        </button>
+        <button
+          type="button"
+          class="tertiary run-widest"
+          (click)="backToEditing()"
+        >
+          Back to editing
+        </button>
+        <weave-row-menu class="run-more" label="More" [items]="more()" />
+      </div>
+    </header>
+    @if (chosen()?.stopped) {
+      <div class="run-note-row" role="status">
+        <weave-icon name="schedule" [size]="16" />
+        <span>Stopped following this run after 30 minutes.</span>
+        <button type="button" class="sm" (click)="refresh()">
+          <weave-icon name="refresh" [size]="16" />Refresh
+        </button>
+      </div>
+    }
+    @if (chosen()?.limited) {
+      <div class="run-banner" data-tone="warning">
+        <weave-icon name="warning" [size]="16" />
+        <span class="run-banner-lines"
+          ><span
+            >This run has more than 2,000 step instances; Studio shows the first
+            2,000.</span
+          ></span
+        >
+        <button type="button" class="sm" (click)="openOperate()">
+          Open in Operate
+        </button>
+      </div>
+    }
+    @if (banner().length) {
+      <div class="run-banner" data-tone="info">
+        <weave-icon name="info" [size]="16" />
+        <span class="run-banner-lines">
+          @for (line of banner(); track line) {
+            <span>{{ line }}</span>
+          }
+        </span>
+      </div>
+    }
+  }
+} @else if (tab().mode() === "ready" && listed()) {
+  <div class="run-note" role="note">
+    <strong>Choose a run to see it on the canvas.</strong>
+    <span>Use the list, or ↑ and ↓ then Enter.</span>
+  </div>
+}

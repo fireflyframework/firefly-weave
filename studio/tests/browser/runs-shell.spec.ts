@@ -75,8 +75,8 @@ test("the workflow views include Runs", async ({ page }) => {
     "aria-labelledby",
     "view-tab-runs",
   );
-  // The Runs view draws no editable canvas of its own.
-  await expect(page.locator(".canvas-v2")).toHaveCount(0);
+  // The Runs view draws the workflow read-only.
+  await expect(page.locator(".canvas-v2")).toHaveClass(/\bviewing-runs\b/);
   await page.keyboard.press("Home");
   await expect(designer).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".canvas-v2")).toBeVisible();
@@ -125,7 +125,7 @@ test("Execute workflow isn't offered on the Runs tab", async ({ page }) => {
   await expect(execute).toBeVisible();
 });
 
-test("on a phone, the view tabs take their own row and More offers no Execute workflow on the Runs tab", async ({
+test("on a phone, the Runs tab gives the view tabs their own row and offers no Execute workflow", async ({
   page,
 }) => {
   const tabs = await openWorkflow(page, {
@@ -139,15 +139,15 @@ test("on a phone, the view tabs take their own row and More offers no Execute wo
     page.getByRole("menuitem", { name: /^Execute workflow/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  await tabs.getByRole("tab", { name: "Runs" }).click();
+  await expect(toolbar).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: /^Execute workflow/ }),
+  ).toHaveCount(0);
   // Four 44 px tabs on a row of their own, as wide as the bar.
   const bar = await page.locator(".editor-bar").boundingBox();
   const list = await tabs.boundingBox();
   expect(list!.width).toBeGreaterThan(bar!.width - 40);
   for (const tab of await tabs.getByRole("tab").all())
     expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await tabs.getByRole("tab", { name: "Runs" }).click();
-  await expect(toolbar).toHaveCount(0);
-  await expect(
-    page.getByRole("menuitem", { name: /^Execute workflow/ }),
-  ).toHaveCount(0);
 });

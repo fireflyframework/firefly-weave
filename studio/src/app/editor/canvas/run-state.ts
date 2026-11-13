@@ -28,6 +28,21 @@ export interface CanvasRun {
   /** Steps it finished. */
   done: readonly string[];
 }
+/**
+ * A run that happened, drawn on the Runs tab over the open draft: the steps
+ * that differ from the version it used, and why steps failed.
+ */
+export interface RecordedRun extends CanvasRun {
+  mode: "real";
+  /** Steps changed since the run's version. */
+  changed: readonly string[];
+  /** Steps the run's version didn't have. */
+  added: readonly string[];
+  /** Step ID to the error code it failed with. */
+  failures: Readonly<Record<string, string>>;
+}
+export const isRecordedRun = (run: CanvasRun | null): run is RecordedRun =>
+  !!run && "failures" in run;
 export type TileRun = "live" | "waiting" | "done" | "failed" | null;
 export type EdgeRun = "idle" | "live" | "taken" | "skipped";
 export const ENDED_STATUSES: readonly string[] = [
@@ -105,4 +120,63 @@ export function edgeRun(
 /** The live pulse plays only while a real run is followed. */
 export function pulses(state: TileRun, run: CanvasRun | null): boolean {
   return run?.mode === "real" && (state === "live" || state === "waiting");
+}
+
+export interface FrameBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/**
+ * How the Runs tab frames a run in the visible canvas area: the largest zoom
+ * from 100% down to 60%, in 2% steps, at which the workflow fits with 8 px to
+ * spare on each side, centered across and down; when it doesn't fit at 60%,
+ * `step` (its tile and label) centered at 60%. Below 60% tiles are too small
+ * to read.
+ */
+export function frameRun(
+  workflow: FrameBox,
+  step: FrameBox | null,
+  area: { width: number; height: number },
+): { zoom: number; pan: { x: number; y: number } } {
+  const center = (box: FrameBox, zoom: number) => ({
+    zoom,
+    pan: {
+      x: (area.width - box.width * zoom) / 2 - box.x * zoom,
+      y: (area.height - box.height * zoom) / 2 - box.y * zoom,
+    },
+  });
+  for (let percent = 100; percent >= 60; percent -= 2) {
+    const zoom = percent / 100;
+    if (
+      workflow.width * zoom + 16 <= area.width &&
+      workflow.height * zoom + 16 <= area.height
+    )
+      return center(workflow, zoom);
+  }
+  return center(step ?? workflow, 0.6);
+}
+
+/**
+ * The step a run is framed on: where it failed, else where it is, else the
+ * last step it finished, else the trigger. `tiles` are in the canvas's order.
+ */
+export function framedStep(
+  run: RecordedRun,
+  tiles: readonly string[],
+): string | null {
+  const states = tiles.map((id) => tileRun(id, run));
+  const at = (wanted: (state: TileRun) => boolean) => {
+    const index = states.findIndex(wanted);
+    return index < 0 ? null : tiles[index];
+  };
+  const lastDone = states.lastIndexOf("done");
+  return (
+    at((state) => state === "failed") ??
+    at((state) => state === "live" || state === "waiting") ??
+    (lastDone >= 0 ? tiles[lastDone] : null) ??
+    tiles.find((id) => id.startsWith("$trigger")) ??
+    null
+  );
 }

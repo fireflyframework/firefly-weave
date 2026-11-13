@@ -99,20 +99,22 @@ import type { App } from "../app";
         border: 0;
         border-radius: 0;
       }
-      /* Four views: 44 px tabs on touch and below 768 px, and their own
-         full-width row below 480 px, so the workflow's name keeps its room. */
+      /* Four views: 44 px tabs on touch and below 768 px. Below 480 px the
+         Runs tab, which has no command row, gives them a full-width row of
+         their own, so the workflow's name keeps its room; the other tabs keep
+         their height for the canvas. */
       @media (max-width: 767px), (pointer: coarse) {
         .editor-views button {
           min-height: var(--control-touch);
         }
       }
       @media (max-width: 480px) {
-        .editor-views {
+        .runs-on .editor-views {
           grid-column: 1 / -1;
           display: grid;
           grid-template-columns: repeat(var(--views, 4), minmax(0, 1fr));
         }
-        .editor-views button {
+        .runs-on .editor-views button {
           padding: 0 4px;
         }
       }
@@ -120,7 +122,7 @@ import type { App } from "../app";
   ],
   template: `@let h = host();
     <!-- Identity and views above an aligned command row. -->
-    <div class="editor-bar">
+    <div class="editor-bar" [class.runs-on]="h.tab === 'Runs'">
       <div class="editor-heading">
         <div class="editor-identity">
           <button
@@ -631,8 +633,11 @@ import type { App } from "../app";
           </div>
         } @else if (h.tab === "Runs") {
           <!-- The workflow's runs: the list, and the chosen run on a read-only canvas. -->
+          <!-- The canvas is the designer's own, so step details find it. -->
           @defer (on immediate) {
-            <weave-runs-view [host]="h" />
+            <weave-runs-view [host]="h">
+              <weave-canvas-view [host]="h" />
+            </weave-runs-view>
           } @placeholder {
             <p class="connecting-status designer-loading" role="status">
               <span class="loading-spinner small"></span>Opening the runs…
