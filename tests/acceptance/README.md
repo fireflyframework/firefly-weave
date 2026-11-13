@@ -147,3 +147,9 @@ The [Acme API fixture](fixtures/acme_api/server.py) answers as
 `weave platform up --allow-private-origin` creates. Its control API (faults,
 request journal, reset) is published on loopback only, and its journal keeps the
 SHA-256 of `X-Api-Key`, never the key.
+
+The [orders fixture](fixtures/agents/orders_server.py) answers as
+`http://orders.acceptance.test:8080` for the AI agent journeys (J4.7 to J4.14),
+and records every call on a loopback control API. Those journeys run Ollama in
+a Weave-managed container by default; set `WEAVE_ACC_OLLAMA=host` to use the
+Ollama already serving on this computer.

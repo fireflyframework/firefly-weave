@@ -119,7 +119,9 @@ SPDX-License-Identifier: Apache-2.0
   discarded whole, including a cut that kept half the context. Output that
   can't be carried (nested too deep, or outside JSON) fails as `LLM_OUTPUT`, and
   model requests are never instrumented. Platform AI setup grants the agentic
-  worker both tasks and refuses a catalog without the turn task.
+  worker both tasks and refuses a catalog without the turn task, and
+  `weave platform ai enable` publishes the turn action, so AI agent workflows
+  compile and run on a platform set up from the CLI.
 - Before you upgrade, note that AI readiness and AI setup's **Publish** now need
   the agentic worker's model turn task (`weave-agentic.turn`). A site whose AI
   worker runs only the generate task (`weave-agentic.generate`) sees AI as not
