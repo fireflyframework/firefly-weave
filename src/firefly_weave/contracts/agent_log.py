@@ -46,9 +46,6 @@ from firefly_weave.operations.redaction import SafeProjection
 MAX_AGENT_LOG_PAGE: Final = 20
 # A model-written tool name is shown in at most this many characters, escapes included.
 SHOWN_NAME_LENGTH: Final = 256
-# The tool targets the platform knows today. ``target.kind`` is published as text, so a new kind of tool reaches
-# clients without a contract change; a client shows an unknown kind by its reference only.
-KNOWN_TARGET_KINDS: Final = ("action", "workflow", "human")
 _INDEX = r"(?:0|[1-9][0-9]{0,15})"
 # An agent step's ID, or one of its activations: the step ID and its loop iterations, outer loop first.
 AGENT_LOG_KEY_PATTERN: Final = rf"{NAME_PATTERN}(?:\[{_INDEX}\])*"
@@ -124,6 +121,8 @@ class AgentToolTarget(ContractModel):
     """What a tool runs: its kind (``action``, ``workflow`` or ``human`` today) and the pinned action's or workflow's
     reference, or null for a person."""
 
+    # Published as text, so a new kind of tool reaches clients without a contract change; a client shows an unknown
+    # kind by its reference only.
     kind: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")]
     reference: Annotated[str, Field(min_length=1, max_length=512)] | None
 
