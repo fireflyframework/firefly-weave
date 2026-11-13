@@ -152,6 +152,60 @@ SPDX-License-Identifier: Apache-2.0
   can't be carried (nested too deep, or outside JSON) fails as `LLM_OUTPUT`, and
   model requests are never instrumented. Platform AI setup grants the agentic
   worker both tasks and refuses a catalog without the turn task.
+- A local platform connects a kind or k3d cluster on this computer as a
+  Kubernetes target. `weave platform cluster create --provider kind|k3d --name
+  NAME` makes a single-node cluster on a Docker network of its own, from the
+  pinned kind, k3d and kubectl it downloads into the installation directory and
+  checks by SHA-256, and connects its `weave-workers` namespace (`--no-connect`
+  skips that). `weave platform cluster connect` connects any namespace of such a
+  cluster, up to eight targets per installation: it joins the platform to the
+  cluster's network, points the nodes at the platform registry, applies objects
+  rendered from code (Pod Security `restricted`, NetworkPolicies that let only
+  Weave's runner and workers reach the platform and no pod reach the registry,
+  a runner account limited to what its commands need, client secrets in
+  owner-read-only files), proves the network rules with test pods before it
+  registers anything, and starts a runner in the cluster. The worker Deployment
+  starts at 0 replicas and then changes only through reviewed change requests.
+  `cluster list` shows each cluster, target and runner, and `--check` names
+  drifted objects by kind and name without their values; `cluster disconnect`
+  revokes and removes a target, `cluster delete` deletes a test cluster,
+  `doctor --cluster` reports the pinned tools, and `up` points connected
+  clusters at the platform's current addresses. Connecting a namespace again
+  after `cluster disconnect` enables the target it had, with its approval
+  policy, and names that target in a progress line and as `enabled_again` in
+  JSON output. Connect, disconnect and list resend a request for up to 60 s when
+  the platform answers that it is busy. See
+  [Connect a kind or k3d cluster on this computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
+- Kubernetes runners restart workers and take scale-downs, which remove exactly
+  the reviewed pods. Before it lowers the replicas, the runner gives each
+  reviewed pod the lowest `controller.kubernetes.io/pod-deletion-cost` and
+  clears it from the pods it keeps; the receipt warns with `WV-DRAIN-VICTIMS`
+  when a reviewed pod is still there. A restart (`restart_workers`) sets
+  `firefly.weave/restarted-at` on the pod template and succeeds when every pod
+  is new and ready with the same image. Kubernetes runners now register adapter
+  version 2, and a cluster runner may read, list, and patch the worker pods it
+  marks for removal: grant `get`, `list`, and `patch` on pods before you upgrade
+  one. The runner image includes kubectl v1.37.2, pinned by checksum. A runner
+  may reach the API over plain HTTP outside loopback when the private-origin
+  policy allows its `runner` purpose for that address, and signs in through a
+  loopback token relay (`WEAVE_TOKEN_RELAY`). `deploy/kubernetes/worker.yaml`
+  gains the `__WEAVE_WORKER_CONFIGURATION__` annotation placeholder and reports
+  its pod's namespace and node. See the upgrade notes.
+- Acceptance runs in the `cluster` and `k3d` profiles make their own
+  single-node kind or k3d cluster, `weave-acc-RUN_ID`, with `weave platform
+  cluster create --no-connect` and a private kubeconfig, and delete it before
+  the platform; these profiles need a run ID of at most 22 characters. The
+  bring-up journey checks the pinned kubectl and cluster tool, collect keeps the
+  cluster's objects and runner logs (redacted), `--block-egress` limits the
+  nodes to their own network, and the evidence records the tool and Kubernetes
+  versions (k3d joins kind). `pytest -m real_operations
+  tests/e2e/test_operations_cluster.py` on a kept `cluster` or `k3d` run proves
+  connect, scale with drain, restart, network reach, the runner's permissions,
+  two namespaces, reconnect and the client-secret scan. A new `cluster` CI job
+  runs them on pull requests that change the operations, deployment, worker or
+  runner code, migrations, the platform SDK or CLI, the Studio operations pages,
+  the cluster journeys, the Dockerfile or the pinned tool versions, and on a
+  manual run with the `cluster` or `k3d` profile.
 
 ## 0.1.0a17
 

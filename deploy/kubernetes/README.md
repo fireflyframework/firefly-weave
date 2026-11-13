@@ -41,6 +41,13 @@ The image placeholders require actual registry digest references. Do not apply
 the unrendered directory. Apply the migration, API and optional worker separately
 in the documented order; do not bulk-apply all three files as a startup script.
 The worker stays at zero replicas until explicitly scaled after admission checks.
+Kubernetes fills in the worker's `WEAVE_POD_NAMESPACE` and `WEAVE_NODE_NAME`, so
+each worker reports its namespace and node next to its pod name.
+
+To try Kubernetes targets on a kind or k3d cluster on your own computer, you
+don't render these templates: a local platform creates the cluster and applies
+its own objects; see
+[Connect a kind or k3d cluster on this computer](../../docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 All containers run as UID/GID 65532 with a read-only root filesystem, bounded
 writable `/tmp`, dropped capabilities and no mounted Kubernetes API token.

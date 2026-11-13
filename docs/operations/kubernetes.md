@@ -22,8 +22,9 @@ This walkthrough installs the Weave API on a cluster your organization already
 runs. You render the manifests with an exact server image, migrate the database
 with an explicit Job, start the API, run one workflow, and let people connect.
 Adding a remote worker is optional and comes last. To try Kubernetes targets on
-a cluster on this computer instead, see
-[Create a local test cluster](cluster-management.md#create-a-local-test-cluster).
+a kind or k3d cluster on this computer instead, which a local platform creates
+and connects for you, see
+[Connect a kind or k3d cluster on this computer](cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 **Who this is for:** administrators and operators with access to the cluster,
 the database administrator (DBA), and the identity provider's administrator.

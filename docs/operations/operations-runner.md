@@ -199,6 +199,10 @@ not wildcards; plans must use immutable `@sha256:` images. A component's
 The runner does not accept shell commands, arbitrary Kubernetes manifests, or
 credential values from a plan.
 
+`capabilities` must include `observe`, and every adapter accepts `update` and
+`scale_workers`. A Kubernetes policy may also list `restart_workers`, and a
+Compose policy `deploy` and `restart_workers`; the runner refuses any other.
+
 The default local ceilings are ten replicas, 4,000 CPU millicores, and 8,192 MiB
 per component. Lower them for smaller destinations. Raising desired capacity in
 Studio cannot bypass these ceilings. They are separate from workflow quotas,

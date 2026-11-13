@@ -22,7 +22,9 @@ Operations connects an existing container destination to Weave, records what
 is there, and sends reviewed changes to a runner beside that destination.
 It does not create a cloud subscription, Kubernetes cluster, network, or
 identity provider. Provision those foundations with your existing infrastructure
-tools before registering a target.
+tools before registering a target. To try a Kubernetes target on your own
+computer instead, a local platform creates and connects a test cluster for you;
+see [Connect a kind or k3d cluster on this computer](#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 ![How people, the API, and the destination runner work together](../diagrams/operations-control-plane.svg)
 
@@ -81,8 +83,8 @@ can select active application accounts by their available display label. Other
 planners can expand the administrator-provided application ID option. Use
 **Settings → People and access** to create/link the application and assign roles;
 provider credentials stay outside Studio. Kubernetes supports observation,
-updates and worker scaling; only Compose offers deployment of its trusted local
-template. For Azure Container Apps, start with observation only. After the
+updates, worker scaling and worker restarts; only Compose offers deployment of
+its trusted local template. For Azure Container Apps, start with observation only. After the
 specific environment passes acceptance, limit its target and runner policy to
 `observe` and `update`; keep `scale_workers` disabled. The
 [Azure capacity boundary](operations-runner.md#azure-container-apps) explains why.
@@ -410,22 +412,46 @@ weave operations change-requests apply "$CHANGE_ID" --request reviewed-digest.js
 values, `drain` (`mode` and `timeout_seconds`, 60–600), `title` and `reason`.
 `decline` and `cancel` take a `reason`.
 
-## Create a local test cluster
+## Connect a kind or k3d cluster on this computer
 
-To try a Kubernetes target on this computer, create a single-node kind or k3d
-cluster with the local platform's own tools. Run the command in the folder where
-you ran `weave platform up`, with operations on:
+To try a Kubernetes target without a cluster in the cloud, create a single-node
+kind or k3d cluster on this computer and connect one of its namespaces. The
+namespace becomes a `kubernetes` deployment target with its own runner inside
+the cluster. From then on, you observe, scale, drain, and restart its workers
+through reviewed change requests, as on `local-docker`, and nothing in the
+cluster is changed by hand. These commands are for development only.
+
+You need a local platform started with `weave platform up`, with operations on
+(the default), and Docker on this computer. You don't install kind, k3d, or
+kubectl: the commands download the pinned versions into the installation
+directory on first use and check each file's SHA-256. Run the commands in the
+folder where you ran `weave platform up`, or name its installation directory
+with `weave platform --directory`.
+
+![A connected local cluster: the platform joins the cluster's own Docker network, and only Weave's runner and workers reach it](../diagrams/local-cluster-connect.svg)
+
+**How to read this diagram:** The platform's API and registry, on the left, join
+the cluster's own Docker network. Follow the arrows from the right: the runner
+and the workers reach the API and sign-in, other pods are refused, and the node
+pulls images from the platform registry.
+
+[Open diagram at full size](../diagrams/local-cluster-connect.svg)
+
+### Create a cluster
 
 ```sh
-# Create a kind cluster on the platform's Docker context and connect its weave-workers namespace.
-weave platform cluster create --provider kind --name weave-test
+# Create a kind cluster on the platform's Docker context without connecting it.
+weave platform cluster create --provider kind --name weave-test --no-connect
 ```
 
 Expected: `Created kind cluster weave-test: kubeconfig context kind-weave-test,
-Docker network weave-kind-weave-test.`, then `Target: kind-weave-test`. Add
-`--no-connect` to create the cluster only, and `--output json` for one JSON
-line with `cluster`, `context`, and `network`, plus `target_id` and
-`target_name` once it's connected.
+Docker network weave-kind-weave-test.` With `--output json`, the command prints
+one line: `{"cluster":"weave-test","context":"kind-weave-test","network":"weave-kind-weave-test"}`.
+Use `--provider k3d` for a k3s cluster; its network is `k3d-weave-test`.
+
+Without `--no-connect`, `create` also connects the `weave-workers` namespace, as
+the next section describes, and adds `Target: kind-weave-test` (in JSON,
+`target_id` and `target_name`).
 
 The command:
 
@@ -450,105 +476,131 @@ The command:
 - keeps a cluster that fails to connect and gives the `weave platform cluster
   connect` command that retries.
 
-Use `--provider k3d` for a k3s cluster. kind and k3d add the cluster's context
-to your kubeconfig and make it current, as they always do. Delete the cluster
-when you're done:
+kind and k3d add the cluster's context to your kubeconfig and make it current,
+as they always do.
+
+### Connect a namespace
 
 ```sh
-# Disconnect the cluster's targets, then delete the cluster and the Docker network it got.
-weave platform cluster delete --provider kind --name weave-test
+# Connect the weave-workers namespace of the weave-test kind cluster as a deployment target.
+weave platform cluster connect --provider kind --name weave-test --namespace weave-workers
 ```
 
-`delete` first disconnects each of the cluster's targets, as `weave platform
-cluster disconnect` does, but only on the platform's side: the cluster's objects
-go with the cluster, so `delete` never reaches it, and a stopped cluster or one
-whose API doesn't answer is still deleted. It keeps the cluster when a target
-can't be disconnected, for example when the platform's API isn't running. For a
-connected cluster, `delete --context` must name the Docker context the cluster
-is connected on; a cluster of the same name on another context isn't the
-connected one, so `delete` refuses and changes nothing.
-`delete --name` deletes any kind or k3d cluster with that name on the Docker
-context, even one that Weave didn't create, so check the name before you run it.
-It also removes the cluster's own network when no other container uses it,
-including one an interrupted create left behind.
+Expected: one progress line per stage on standard error, then
+`Target: kind-weave-test`, `Runner: online`, and `Observed:` with the time of
+the runner's first observation. The namespace defaults to `weave-workers`,
+whose target is named `kind-weave-test`; another namespace adds `.NAMESPACE`,
+such as `kind-weave-test.team-b`. A namespace has 1 to 63 lowercase letters,
+digits, and hyphens, and can't be `weave-system`, `default`, or a `kube-` name.
 
-## Connect a local cluster
+Connect reads your kubeconfig as kubectl does: `--kubeconfig`, else each file
+in `KUBECONFIG`, else `~/.kube/config`. It accepts only the context
+`kind-weave-test` (or `k3d-weave-test`) whose API server is this computer,
+whose nodes run on the platform's Docker context, and whose Docker network
+holds nothing but its nodes and the platform. It passes `--kubeconfig` and
+`--context` on every kubectl call, never changes your kubeconfig, and saves
+only the context's name.
 
-`connect` registers one namespace of a local kind or k3d cluster as a
-`kubernetes` deployment target with its own runner. Use it for a cluster you
-created with `--no-connect`, for another namespace of a connected cluster, or to
-repair a target:
+Like `local-docker`, the target needs no second approver, so one person can try
+changes on their own computer; see [A second approver](#a-second-approver) to
+turn the rule on. A rerun repairs what it finds and rotates the runner's
+secret once the probes pass. One installation connects up to eight cluster
+targets.
+
+### What connect changes
+
+Connect runs these stages in order and names each one in its progress line.
+Every object in the cluster comes from the platform's code, carries the label
+`app.kubernetes.io/managed-by: weave-platform`, and is applied with
+server-side apply, so a rerun puts back what someone changed by hand.
+
+| Progress line | What it changes |
+| --- | --- |
+| `preflight: checking the cluster and your kubeconfig` | Nothing: it checks the names, the context and its server, the nodes' Docker context and network, and who owns `weave-system` and the namespace |
+| `network: joining the platform to weave-kind-weave-test` | The platform's API and Keycloak join the cluster's network as `weave-platform`, and its registry as `weave-registry`. If another container is on that network, every platform container leaves it and connect stops |
+| `mirror: pointing the nodes at the platform registry` | Each node pulls the platform registry's images from `weave-registry:5000`. A k3d server restarts once when its registry settings change |
+| `images: pushing the runner image to the platform registry` | The runner image the platform built, which the runner's Deployment names by digest |
+| `shared: applying the objects in weave-system` | The `weave-system` namespace, its `default` service account without a token, the Service `weave-api` and its EndpointSlice at the platform's address, three NetworkPolicies, and the ConfigMap `weave-private-origins`. Every target of the cluster shares them |
+| `namespace: applying weave-workers` | The namespace, its `default` service account without a token, the same three NetworkPolicies, and its own `weave-private-origins` ConfigMap |
+| `identities: the runner's and the workers' sign-in` | A free pair of Keycloak clients, the runner's and the workers' principals on the platform, the Secrets `weave-runner-identity-weave-workers` in `weave-system` and `weave-worker-identity` in the namespace, and the ConfigMap `weave-worker-config`. Client secrets reach kubectl only on standard input |
+| `probe: checking what pods in the namespace can reach` | Three test pods, deleted afterward. A labeled pod signs in at the platform, an unlabeled pod reaches none of the API, sign-in, or the registry, and a labeled pod doesn't reach the registry. Nothing is registered before they pass |
+| `target: registering kind-weave-test` | The target with `observe`, `update`, `scale_workers`, and `restart_workers`, its deployment `weave-workers`, the runner's grant on the target, and the workers' grant on the fixture worker's release |
+| `runner: starting weave-runner-weave-workers` | The runner's service account, its Role and RoleBinding in the namespace, its ClusterRole and ClusterRoleBinding, the ConfigMaps `weave-runner-kubeconfig-weave-workers` and `weave-runner-config-weave-workers`, and the Deployment `weave-runner-weave-workers` in `weave-system`. The Deployment `weave-worker` is created at 0 replicas, once |
+| `ready: waiting for the runner's first observation` | One observation of the target, which the runner must finish within 120 s |
+| `receipt: recording the connected target` | The private `clusters.json` in the installation directory, which keeps the context's name and never the kubeconfig |
+
+The runner may do only what its commands need. Its Role allows `get` and
+`patch` on Deployments and `get`, `list`, and `patch` on pods in the workers
+namespace, and its ClusterRole allows `get` on that namespace alone: no
+Secrets, no ConfigMaps, and nothing in `weave-system`. Only the runner's pod
+mounts a service account token. Both namespaces enforce the Pod Security
+`restricted` profile, every container runs as user 65532 with a read-only root
+filesystem, and the runner and the workers read their client secret from a
+file only they can read (mode `400`).
+
+Connect creates the worker Deployment once. Its replicas, image, resources, and
+restarts then belong to reviewed change requests, so running connect again
+never changes them; see [Request a change](#request-a-change). Each target's
+worker component may run up to 5 replicas, each limited to 1 CPU and 512 MiB.
+
+### Connect more namespaces
+
+Connect another namespace of the same cluster to get a second target with its
+own runner, identities, and workers:
 
 ```sh
 # Connect the team-b namespace of the weave-test kind cluster as a second target.
 weave platform cluster connect --provider kind --name weave-test --namespace team-b
 ```
 
-Expected: `Target: kind-weave-test.team-b`, `Runner: online`, and the time of
-the runner's first observation. Progress lines go to standard error. The
-namespace defaults to `weave-workers`, whose target is named
-`kind-weave-test`; another namespace adds `.NAMESPACE`. Pass `--kubeconfig`
-when the context isn't where kubectl looks.
+Expected: `Target: kind-weave-test.team-b` and `Runner: online`. The objects in
+`weave-system` are shared, and a second connect applies them unchanged: the
+first target's runner keeps running. Its runner is `weave-runner-team-b`, and
+disconnecting either target leaves the other one's runner online.
 
-Connect accepts only a cluster whose API server is this computer, whose nodes
-run on the platform's Docker context, and whose Docker network holds nothing
-but its nodes and the platform. It then:
-
-1. Joins the platform's API and registry to the cluster's network. If another
-   container is on that network, every platform container leaves it and
-   connect stops.
-2. Points the nodes at the platform registry, pushes the runner image, and
-   applies the shared objects in `weave-system` and the namespace's objects.
-3. Creates the target's sign-in identities, then proves with three test pods
-   that a labeled pod signs in at the platform and that unlabeled pods reach
-   nothing. Nothing is registered before these probes pass.
-4. Registers the target and starts its runner, then waits up to 120 s for the
-   runner's first complete observation.
-
-A rerun repairs what it finds and rotates the runner's secret once the probes
-pass. A namespace that belongs to another Weave installation is refused; if one
-this installation connected was taken since, the refusal says which namespace
-and gives the `disconnect` command that frees it. One installation connects up
-to eight cluster targets.
-
-A disconnect can only disable a target, and the platform never registers one
-namespace twice, so connect enables the namespace's disabled target again for
-the new runner, with its deployment and approval policy. It enables any
-disabled target of the namespace, also one that someone disabled on purpose,
-so it names that target in a progress line: `target: enabled the disabled
-target NAME (ID) again`. With `--output json`, which prints no progress lines,
-the result names it in `enabled_again`, with `target_id` and `target_name`.
-
-## List and check connected clusters
+### List and check connected clusters
 
 ```sh
 # List the connected clusters, their targets and each target's runner.
 weave platform cluster list
 ```
 
-A cluster reads `connected`, or `missing` when its nodes are gone. Each target's
-runner reads `online`, `offline`, or `unknown` when the platform can't be
-asked. `list` reads only the platform and Docker, never the cluster.
+Expected: `Cluster: kind-weave-test (connected)`, then one line per target, such
+as `Target: kind-weave-test, runner online`. A cluster reads `connected`, or
+`missing` when its nodes are gone. Each target's runner reads `online`,
+`offline`, or `unknown` when the platform can't be asked. `list` reads only the
+platform and Docker, never the cluster.
 
-Add `--check` to compare each target's objects with what connect applies. It
-names each drifted object as `Kind/name`, such as `NetworkPolicy/weave-egress`,
-and never prints a value: kubectl hands both versions to `diff -q`, which
-reports file names only. Connect creates the worker Deployment once, and its
-replicas, image, resources, and restart time then belong to reviewed change
+Add `--check` to compare each target's objects with what connect applies:
+
+```sh
+# Name each target's objects that differ from what connect applies.
+weave platform cluster list --check
+```
+
+It names each drifted object as `Kind/name` and never prints a value: kubectl
+hands both versions to `diff -q`, which reports file names only. For example,
+after someone edits the ports of the `weave-platform-access` NetworkPolicy, the
+target's line ends with `drift: NetworkPolicy/weave-platform-access`, and
+`connect` puts the policy back. Connect creates the worker Deployment once, and
+its replicas, image, resources, and restart time then belong to reviewed change
 requests, so `--check` names `Deployment/weave-worker` only when it's gone or
 its security settings changed: what its containers run, mount, or read, how its
 pods resolve host names, or its security context, such as a writable root
-filesystem or a mounted service account token. A deleted workers namespace reads
-as `Namespace/NAMESPACE`, since everything in it went with it. `--check` changes
-nothing; run `connect` again to repair what it names, and for
-`Deployment/weave-worker`, see the repair below. It needs the runner image
-the platform built, which `connect` pushes to the platform registry; when Docker
-no longer holds that image, `--check` says so, and `list` without `--check`
-still works.
+filesystem or a mounted service account token. A deleted workers namespace
+reads as `Namespace/NAMESPACE`, since everything in it went with it. `--check`
+changes nothing; run `connect` again to repair what it names, and for
+`Deployment/weave-worker`, see the repair below. It needs the runner image the
+platform built, which `connect` pushes to the platform registry; when Docker no
+longer holds that image, `--check` says so, and `list` without `--check` still
+works.
+
+### Repair a drifted worker
 
 Connect creates the worker Deployment and its sign-in secret only when they're
-missing, so a changed worker stays drifted after `connect`. To repair it, delete
-both, connect again, and check:
+missing, so a changed worker stays drifted after `connect`. To repair it,
+delete both, connect again, and check. If kubectl isn't installed, use the one
+Weave fetched, `.local/platform/tools/kubectl-v1.37.2` (with `.exe` on Windows):
 
 ```sh
 # Delete the drifted worker and its sign-in secret in weave-workers, connect again, then check.
@@ -565,7 +617,7 @@ reviewed change request scales them again; see
 [Request a change](#request-a-change). Connect skips the Deployment when someone
 recreated it in the meantime, so only `list --check` confirms the repair.
 
-## After weave platform up
+### After weave platform up
 
 Each `weave platform up` with operations on points every connected cluster at
 the platform's current addresses. It joins the platform to each cluster's
@@ -575,13 +627,14 @@ cluster's objects through your default kubeconfig. `up` reports each cluster as
 makes `up` fail. A cluster you connected with `--kubeconfig` elsewhere reads
 `unreachable` here; run `connect` again with that file.
 
-## Disconnect a target
+### Disconnect a target
 
 ```sh
 # Disconnect the team-b target of the weave-test cluster.
 weave platform cluster disconnect --provider kind --name weave-test --namespace team-b
 ```
 
+Expected: `Disconnected team-b from kind-weave-test; removed N objects.`
 Disconnect revokes the target's runner, disables the target, deactivates its
 sign-in principals, deletes its objects in the cluster and its Keycloak
 clients, and frees its identity pair for the next connect. It also frees a
@@ -610,6 +663,69 @@ kubectl --context kind-weave-test label namespace team-b firefly.weave/installat
 
 Each step is safe to repeat, so running disconnect again finishes one that
 stopped.
+
+A disconnect only disables a target, and the platform never registers one
+namespace twice, so connecting the namespace again enables its disabled target
+for the new runner, with its deployment and approval policy. It enables any
+disabled target of the namespace, also one that someone disabled on purpose,
+so it names that target in a progress line: `target: enabled the disabled
+target NAME (ID) again`. With `--output json`, which prints no progress lines,
+the result names it in `enabled_again`, with `target_id` and `target_name`.
+
+### Delete the cluster
+
+```sh
+# Disconnect the cluster's targets, then delete the cluster and the Docker network it got.
+weave platform cluster delete --provider kind --name weave-test
+```
+
+Expected: `Disconnected kind-weave-test.` for each connected target, then
+`Deleted cluster weave-test.` `delete` first disconnects each of the cluster's
+targets, as `weave platform cluster disconnect` does, but only on the
+platform's side: the cluster's objects go with the cluster, so `delete` never
+reaches it, and a stopped cluster or one whose API doesn't answer is still
+deleted. It keeps the cluster when a target can't be disconnected, for example
+when the platform's API isn't running. For a connected cluster, `delete
+--context` must name the Docker context the cluster is connected on; a cluster
+of the same name on another context isn't the connected one, so `delete`
+refuses and changes nothing. `delete --name` deletes any kind or k3d cluster
+with that name on the Docker context, even one that Weave didn't create, so
+check the name before you run it. It also removes the cluster's own network
+when no other container uses it, including one an interrupted create left
+behind.
+
+### Troubleshoot a refused command
+
+A refused command exits 2 and prints `error WV-CLI-PLATFORM:` and one sentence
+that says what to change; with `--output json`, the sentence is the
+diagnostic's `message`. Unless the sentence says otherwise, nothing was
+changed. Connect, disconnect, and list resend a request for up to 60 s when the
+platform answers that it's busy, so a busy platform alone doesn't stop them.
+The sentences below use the cluster `weave-test` and the namespace
+`weave-workers`; yours name your own.
+
+| The command says | What to do |
+| --- | --- |
+| `Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.` | Correct `--provider` or `--name` |
+| `Use a namespace of 1 to 63 lowercase letters, digits and hyphens.`, `weave-system is used by Weave's runners. Choose another namespace.`, or `NAME is used by Kubernetes. Choose another namespace.` | Choose another `--namespace`; `default` and every `kube-` name belong to Kubernetes |
+| `Operations are off in this installation. Run weave platform up without --no-operations, then connect again.` | Run `weave platform up` without `--no-operations`. `create` ends the sentence with `or create with --no-connect.` |
+| `No kind-weave-test context in your kubeconfig. Create the cluster with weave platform cluster create --provider kind --name weave-test, or pass --kubeconfig.` | Create the cluster, or pass `--kubeconfig` with the file kind or k3d wrote |
+| `kind-weave-test points at a server that isn't this computer. Weave connects only local kind and k3d clusters.` | Connect a cluster on this computer. For any other cluster, follow [Install an Operations runner](operations-runner.md) |
+| `The cluster's nodes don't run on Docker context CONTEXT, which this platform uses. Create the cluster on that context.` | Create the cluster again without `--context`, so it uses the platform's context |
+| `The cluster's Docker network also holds another cluster's nodes. Create the cluster with weave platform cluster create, which gives each cluster its own network.` | Create the cluster with `weave platform cluster create`. The same advice follows `The cluster's nodes are on more than one Docker network.` and `The cluster's Docker network holds containers that are neither its nodes nor the platform's.` |
+| `This installation already connects 8 cluster targets. Disconnect one with weave platform cluster disconnect, then connect again.` | [Disconnect a target](#disconnect-a-target) you no longer use |
+| `Namespace weave-workers belongs to another Weave installation. Choose another namespace.` | Choose another namespace, or disconnect it in the other installation and remove its label |
+| `Namespace weave-workers, which this installation connected, now belongs to another Weave installation. Disconnect it with weave platform cluster disconnect --provider kind --name weave-test --namespace weave-workers, then connect again.` | Run that disconnect, then connect again |
+| `Namespace weave-system belongs to another Weave installation, which connects this cluster. Create another cluster with weave platform cluster create.` | Create another cluster for this installation |
+| `A test pod couldn't pull the worker image through the platform registry. Create the cluster with weave platform cluster create, which sets up the registry mirror. Nothing was registered.` | Create the cluster with `weave platform cluster create` |
+| `This cluster doesn't enforce NetworkPolicy, so any pod could reach the platform. Create the cluster with weave platform cluster create. Nothing was registered.` | Create the cluster with `weave platform cluster create`, whose kind and k3s versions enforce NetworkPolicy |
+| `A test pod signed in, but the token came from another issuer. Run weave platform up again, then connect. Nothing was registered.` | Run `weave platform up`, then connect again |
+| `A test pod stopped before it could check what it reaches. Run connect again; if it stops again, check the cluster's events with kubectl get events. Nothing was registered.` | Connect again; if it stops again, read the events of the workers namespace with `kubectl get events` |
+| `The runner didn't make contact within 120 s. Read its log with kubectl --context kind-weave-test --namespace weave-system logs deployment/weave-runner-weave-workers. The target is registered; run connect again to retry.` | Read the runner's log with that command, fix what it reports, then connect again. `The runner's first observation job ended in state STATE.` takes the same steps |
+| `Docker has N GiB free; a cluster needs 6 GiB. Free space without pruning other projects' images, or use another context.` | Free space on the Docker context, or create the cluster on another one with `--no-connect` |
+| `A cluster named weave-test already exists on context CONTEXT; nothing was changed.` | Choose another `--name`, or delete the existing cluster first |
+| `The platform's keycloak container isn't running. Run weave platform up, then connect again.` | Run `weave platform up`, then connect again; the same holds for the `registry` container |
+| `Another cluster command is active; retry after it ends.` | Wait for the other `weave platform cluster` command to end, then run yours again |
 
 ## Current bounds
 

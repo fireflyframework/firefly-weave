@@ -1,0 +1,86 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="948" viewBox="0 0 1120 948" role="img" aria-labelledby="title desc">
+<title id="title">What connecting a local cluster sets up</title><desc id="desc">What weave platform cluster connect sets up for the kind cluster weave-test and its namespace weave-workers. The platform's API and Keycloak join the cluster's own Docker network, weave-kind-weave-test, under the alias weave-platform on ports 8000 and 8080, and the platform registry joins under the alias weave-registry on port 5000. Nothing else may be on that network but the cluster's nodes. The Service weave-api in the namespace weave-system points at the platform's address. In the cluster, the runner in weave-system, labeled role: runner, and the workers in weave-workers, labeled role: worker, reach the platform's API and sign-in on ports 8000 and 8080. The workers start at 0 replicas. Other pods, without a role label, are refused. NetworkPolicies in both namespaces let only labeled pods reach the API and sign-in, and no pod reaches the registry; connect proves both with test pods before it registers the target. The node pulls images through a registry mirror that sends pulls of 127.0.0.1:PORT to weave-registry:5000, set in containerd's hosts.toml for kind or registries.yaml for k3d. Takeaway: only Weave's runner and workers reach the platform, and connect proves it before it registers the target.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="1120" height="948" rx="24" fill="#F3F1EB"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#272820">
+<text x="48" y="52" font-size="17" fill="#855414">FIREFLY WEAVE · OPERATIONS</text>
+<text x="48" y="96" font-size="30" font-weight="700">What connecting a local cluster sets up</text>
+<text x="48" y="132" font-size="17" fill="#62645B" font-family="Menlo,Consolas,monospace">weave platform cluster connect --provider kind --name weave-test --namespace weave-workers</text>
+<rect x="32" y="160" width="1056" height="648" rx="18" fill="none" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="56" y="192" font-size="17" fill="#855414" font-weight="700">Docker network weave-kind-weave-test: only the cluster's nodes and the platform</text>
+<rect x="56" y="216" width="240" height="400" rx="14" fill="white" stroke="#BFB8AB"/>
+<text x="76" y="258" font-size="22" font-weight="700">Platform API</text>
+<text x="76" y="286" font-size="22" font-weight="700">and Keycloak</text>
+<text x="76" y="326" font-size="16" fill="#62645B">Alias weave-platform</text>
+<text x="76" y="350" font-size="16" fill="#62645B">Ports 8000 and 8080</text>
+<text x="76" y="390" font-size="16" fill="#62645B">Service weave-api in</text>
+<text x="76" y="414" font-size="16" fill="#62645B">weave-system points here</text>
+<text x="76" y="454" font-size="16" fill="#62645B">Reached only by pods</text>
+<text x="76" y="478" font-size="16" fill="#62645B">labeled runner or worker</text>
+<rect x="56" y="644" width="240" height="140" rx="14" fill="white" stroke="#BFB8AB"/>
+<text x="76" y="682" font-size="22" font-weight="700">Platform registry</text>
+<text x="76" y="716" font-size="16" fill="#62645B">Alias weave-registry</text>
+<text x="76" y="740" font-size="16" fill="#62645B">Port 5000</text>
+<text x="76" y="764" font-size="16" fill="#62645B">Only nodes pull from it</text>
+<rect x="400" y="216" width="664" height="568" rx="14" fill="#EAE7DF" stroke="#D8D4CA"/>
+<text x="424" y="250" font-size="20" font-weight="700">kind cluster weave-test</text>
+<rect x="424" y="268" width="320" height="124" rx="12" fill="#F3F1EB" stroke="#BFB8AB"/>
+<text x="444" y="296" font-size="17" font-weight="700">Namespace <tspan font-family="Menlo,Consolas,monospace" font-weight="400">weave-system</tspan></text>
+<rect x="444" y="310" width="280" height="66" rx="10" fill="white" stroke="#D8D4CA"/>
+<text x="464" y="338" font-size="19" font-weight="700">Runner</text>
+<text x="464" y="364" font-size="16" fill="#62645B">label role: runner</text>
+<rect x="424" y="408" width="320" height="222" rx="12" fill="#F3F1EB" stroke="#BFB8AB"/>
+<text x="444" y="436" font-size="17" font-weight="700">Namespace <tspan font-family="Menlo,Consolas,monospace" font-weight="400">weave-workers</tspan></text>
+<rect x="444" y="450" width="280" height="86" rx="10" fill="white" stroke="#D8D4CA"/>
+<text x="464" y="478" font-size="19" font-weight="700">Workers</text>
+<text x="464" y="502" font-size="16" fill="#62645B">label role: worker</text>
+<text x="464" y="524" font-size="16" fill="#62645B">start at 0 replicas</text>
+<rect x="444" y="548" width="280" height="66" rx="10" fill="white" stroke="#D8D4CA"/>
+<text x="464" y="574" font-size="19" font-weight="700">Other pods</text>
+<text x="464" y="600" font-size="16" fill="#62645B">no role label</text>
+<rect x="768" y="268" width="272" height="362" rx="12" fill="#FFF0D8" stroke="#855414" stroke-width="1.5"/>
+<text x="788" y="300" font-size="18" fill="#855414" font-weight="700">NetworkPolicies</text>
+<text x="788" y="326" font-size="16" fill="#855414">in both namespaces</text>
+<text x="788" y="362" font-size="16" fill="#855414">Only pods labeled runner</text>
+<text x="788" y="386" font-size="16" fill="#855414">or worker reach the API</text>
+<text x="788" y="410" font-size="16" fill="#855414">and sign-in, on ports 8000</text>
+<text x="788" y="434" font-size="16" fill="#855414">and 8080.</text>
+<text x="788" y="470" font-size="16" fill="#855414">No pod reaches the</text>
+<text x="788" y="494" font-size="16" fill="#855414">registry.</text>
+<text x="788" y="530" font-size="16" fill="#855414">Connect proves both with</text>
+<text x="788" y="554" font-size="16" fill="#855414">test pods before it</text>
+<text x="788" y="578" font-size="16" fill="#855414">registers the target.</text>
+<rect x="424" y="648" width="616" height="116" rx="10" fill="white" stroke="#D8D4CA"/>
+<text x="444" y="680" font-size="19" font-weight="700">Node</text>
+<text x="444" y="708" font-size="16" fill="#62645B">Registry mirror: pulls of 127.0.0.1:PORT go to weave-registry:5000</text>
+<text x="444" y="736" font-size="16" fill="#62645B">Set in containerd's hosts.toml (kind) or registries.yaml (k3d)</text>
+<path d="M444 343H300" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="348" y="333" font-size="16" fill="#62645B" text-anchor="middle">8000, 8080</text>
+<path d="M444 493H300" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="348" y="483" font-size="16" fill="#62645B" text-anchor="middle">8000, 8080</text>
+<path d="M444 581H340" fill="none" stroke="#62645B" stroke-width="2.5" stroke-dasharray="7 5"/>
+<path d="M336 567V595" fill="none" stroke="#62645B" stroke-width="3"/>
+<text x="376" y="571" font-size="16" fill="#62645B" text-anchor="middle">refused</text>
+<path d="M424 706H300" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="348" y="696" font-size="16" fill="#62645B" text-anchor="middle">image pulls</text>
+<rect x="32" y="828" width="1056" height="92" rx="14" fill="#EAE7DF"/>
+<text x="56" y="862" font-size="18" fill="#855414" font-weight="700">Takeaway</text>
+<text x="56" y="894" font-size="18">Only Weave's runner and workers reach the platform, and connect proves it before it registers the target.</text>
+</g></svg>
