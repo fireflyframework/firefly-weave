@@ -45,6 +45,8 @@ export interface RunDataPort {
   version(): number;
   /** Reads a step's recorded outputs, once per step while the run is open. */
   read(stepId: string): void;
+  /** The platform refused a read of the run: the Runs tab forgets what it read. */
+  refused(): void;
   /** The run's input. */
   input(): Json;
   /** The recorded output of a step instance (its instance key). */
@@ -65,11 +67,14 @@ export interface RunDataPort {
   definitionVersion(): string | null;
 }
 
-/** The run open in the Runs tab, as the shell draws it. */
+/** The Runs tab and the run open in it, as the shell draws them. */
 export interface RunViewPort {
   /** The run as the canvas draws it; null until it has loaded. */
   canvas(): CanvasRun | null;
-  readonly data: RunDataPort;
+  /** The chosen run's data; null while none is chosen or it loads. */
+  readonly data: RunDataPort | null;
+  /** The list has runs to choose from. */
+  readonly listed: boolean;
   /** Forgets the run and stops following it. */
   close(): void;
 }

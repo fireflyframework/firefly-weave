@@ -25,6 +25,7 @@ import {
   computed,
   effect,
   input,
+  output,
   signal,
   untracked,
 } from "@angular/core";
@@ -218,6 +219,8 @@ export class RunStepLogs {
   readonly api = input.required<RunViewsApi>();
   /** The account and environment the logs are read for. */
   readonly scope = input.required<string>();
+  /** The platform refused: the run's data must go. */
+  readonly refused = output<void>();
   readonly state = signal<LogsState>({ kind: "folded" });
   private asked: { run: string; step: string; scope: string } | null = null;
   readonly shown = computed(() => {
@@ -269,7 +272,11 @@ export class RunStepLogs {
         unserved.add(ticket.scope);
         return this.state.set({ kind: "unserved" });
       }
-      if (status === 403) return this.state.set({ kind: "refused" });
+      // A refusal counts for the whole run: the Runs tab forgets what it read.
+      if (status === 403) {
+        this.state.set({ kind: "refused" });
+        return this.refused.emit();
+      }
       this.state.set({ kind: "error", message: describeError(error).message });
     }
   }

@@ -228,6 +228,68 @@ for (const size of sizes)
 test.describe("step details in run mode", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("the draft's pin stays out of run mode, and nothing there changes test data", async ({
+    page,
+  }) => {
+    const { runs } = await openRunsTab(page);
+    await expect(runs.rows.first()).toBeVisible();
+    // Pin a sample of fetch in the draft first.
+    await runs.tabs.getByRole("tab", { name: "Designer" }).click();
+    // The editable canvas, not the Runs tab's, is on screen.
+    await expect(page.locator(".canvas-v2")).not.toHaveClass(/viewing-runs/);
+    await expect(page.locator(".canvas-v2")).toHaveAttribute("data-ready", "");
+    const designer = new StepDetailsPage(page);
+    await designer.open("fetch");
+    const pane = designer.dialog.locator('[data-region="output"]');
+    await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(pane.locator(".pinned-banner, .pill")).toContainText([
+      "Pinned",
+    ]);
+    await designer.close();
+    const saves: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() !== "GET" && /test-?data/i.test(request.url()))
+        saves.push(`${request.method()} ${request.url()}`);
+    });
+    await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+    const details = await choose(page, runs, RUN_IDS.failed);
+    await details.openWithKeyboard("fetch");
+    const output = outputRegion(details);
+    await expect(output.locator(".pane-source-tag")).toHaveText(
+      "From run 1c0d7f8a",
+    );
+    await expect(output.locator(".pinned-banner")).toHaveCount(0);
+    await expect(
+      output.getByRole("button", { name: /^(Unpin|Keep pinned)/ }),
+    ).toHaveCount(0);
+    await expect(output).not.toContainText(/pinned/i);
+    await details.dialog.locator(".sd-head").focus();
+    await page.keyboard.press("p");
+    await details.close();
+    expect(saves).toEqual([]);
+  });
+
+  test("a refused read of step logs forgets the run", async ({ page }) => {
+    const { runs, platform } = await openRunsTab(page);
+    const details = await choose(page, runs, RUN_IDS.failed);
+    await details.openWithKeyboard("fetch");
+    const output = outputRegion(details);
+    await output.getByRole("radio", { name: "JSON" }).click();
+    await expect(output.locator(".pane-json")).toContainText('"Ada"');
+    await page.route("**/runs/*/logs**", (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ code: "WV-FORBIDDEN", message: "Not allowed." }),
+      }),
+    );
+    void platform;
+    await output.getByRole("button", { name: "Step logs" }).click();
+    await expect(runs.panel).toContainText("You need run.read in development.");
+    await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
+    await expect(details.dialog).not.toContainText("Ada");
+  });
+
   test("a step that ran several times offers its iterations, the failed one first", async ({
     page,
   }) => {

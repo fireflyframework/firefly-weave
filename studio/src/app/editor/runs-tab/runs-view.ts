@@ -133,7 +133,7 @@ export class RunsView implements DoCheck {
   /** Bumped to move focus back to the chosen row. */
   readonly focusRow = signal(0);
   private key = "";
-  /** The newest run was chosen for this list once (Ruling: open on the newest run). */
+  /** The newest run was shown for this list once: opening the tab shows it. */
   private opened = false;
 
   constructor() {
@@ -147,18 +147,23 @@ export class RunsView implements DoCheck {
       this.state()?.destroy();
       this.release();
     });
-    // The shell draws the chosen run once its data has loaded; until then
-    // the canvas keeps the draft without a run on it.
+    // The shell knows the tab is open and whether its list has runs; it
+    // draws the chosen run once its data has loaded, and until then the
+    // canvas keeps the draft without a run on it.
     effect(() => {
       const state = this.state();
       const data = state?.chosen()?.data ?? null;
+      const listed = !!state?.rows().some((row) => !row.unavailable);
       untracked(() => {
         const app = this.host();
-        if (!state || !data) return this.release();
-        if (app.runView()?.data === data) return;
+        if (!state) return this.release();
+        const shown = app.runView();
+        if (shown?.data === data && shown.listed === listed) return;
         app.runView.set({
-          canvas: () => state.chosen()?.overlay?.canvas ?? null,
+          canvas: () =>
+            data ? (state.chosen()?.overlay?.canvas ?? null) : null,
           data,
+          listed,
           close: () => state.leave(),
         });
       });

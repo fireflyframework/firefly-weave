@@ -360,7 +360,7 @@ SPDX-License-Identifier: Apache-2.0
           ><weave-icon name="docs" [size]="16" />Docs</a
         >
       </div>
-      @if (runChip()) {
+      @if (controller().viewingRuns()) {
         <div class="sd-run-note" role="note">
           <weave-icon name="lock" [size]="16" />
           <span>{{ controller().readOnlyReason() }}</span>

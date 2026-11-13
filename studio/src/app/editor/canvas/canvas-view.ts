@@ -1876,8 +1876,12 @@ export class CanvasView implements OnInit, DoCheck {
   /** Why nothing can change now, or null. */
   lockedReason(): string | null {
     const h = this.host();
-    if (h.viewingRuns)
-      return "This is a run that happened. Go back to editing to change the workflow.";
+    if (h.viewingRuns) {
+      const run = h.runData?.label();
+      return run
+        ? `You're looking at ${run}. Go back to editing to change the workflow.`
+        : "The workflow is read-only on the Runs tab. Go back to editing to change it.";
+    }
     if (h.editingLocked) return "Editing is paused while the simulation runs.";
     if (h.model.readonly) return "Fix the source before changing steps.";
     return null;

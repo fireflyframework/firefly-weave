@@ -79,10 +79,15 @@ export class RunData implements RunDataPort {
     private readonly definition: Workflow | null,
     /** Reads one step's outputs (include=output) into this run's data. */
     private readonly reader: (stepId: string) => void = () => {},
+    /** The platform refused a read of this run. */
+    private readonly onRefused: () => void = () => {},
   ) {
     this.runId = record.id;
   }
 
+  refused(): void {
+    this.onRefused();
+  }
   /** Reads a step's outputs the first time step details shows it, or again after a failed read. */
   read(stepId: string): void {
     const mark = this.marks.get(stepId);

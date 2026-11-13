@@ -426,6 +426,9 @@ export class InputPane implements OnInit {
       const received = controller.runReceived(this.session().target);
       return received.ok ? (received.value as Json) : undefined;
     }
+    // On the Runs tab only a run's data shows, never the draft's sample.
+    if (source === "input" && controller.viewingRuns())
+      return controller.testEvent();
     if (source === "input")
       return (
         controller.testEvent() ??

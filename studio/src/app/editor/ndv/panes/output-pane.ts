@@ -283,7 +283,9 @@ import { RunStepLogs } from "./run-step-logs";
               </p>
             }
           }
-          @if (recorded && recorded.output.kind !== "value") {
+          @if (noRunShown(); as why) {
+            <p class="pane-empty-text">{{ why }}</p>
+          } @else if (recorded && recorded.output.kind !== "value") {
             <!-- What the run recorded says it all. -->
           } @else if (none) {
             <p class="pane-empty-text">{{ none }}</p>
@@ -380,6 +382,7 @@ import { RunStepLogs } from "./run-step-logs";
             [iterationKey]="recorded.iteration"
             [api]="session().host.api"
             [scope]="recorded.scope"
+            (refused)="session().controller.run()?.refused()"
           />
         }
       </div>
@@ -436,6 +439,8 @@ export class OutputPane {
    */
   paths(): { rows: PathRow[]; took: string; result: Json | undefined } | null {
     const { controller, target, host } = this.session();
+    // The last local execution's path isn't the run's.
+    if (controller.viewingRuns()) return null;
     const step = controller.step(target);
     if (step?.kind !== "switch" || this.pinned()) return null;
     // The path it took, as kept with its last result (also after a reload).
@@ -555,6 +560,7 @@ export class OutputPane {
   /** What the last execution said about this step (it needs test data, a path it didn't take…). */
   notice() {
     const { controller, target } = this.session();
+    if (controller.viewingRuns()) return null;
     const notice = controller.executeNotice();
     return notice?.target === target ? notice : null;
   }
@@ -562,7 +568,17 @@ export class OutputPane {
   readonly problem = signal("");
   pinned() {
     const { controller, target } = this.session();
+    // The draft's pin isn't what the run returned.
+    if (controller.viewingRuns()) return null;
     return target.startsWith("$") ? null : controller.pinOfTarget(target);
+  }
+  /** On the Runs tab with no run's data: why Output shows nothing; null otherwise. */
+  noRunShown(): string | null {
+    const { controller, host } = this.session();
+    if (!controller.viewingRuns() || controller.run()) return null;
+    return host.runView?.()?.listed
+      ? "Choose a run to see what this step returned."
+      : "There's no run to show here.";
   }
   pinnable(): boolean {
     const { controller, target } = this.session();

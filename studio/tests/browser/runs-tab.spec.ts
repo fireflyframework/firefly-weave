@@ -30,7 +30,7 @@ import {
   runsPage,
   runsWorkflow,
 } from "./runs-po";
-import { sizes } from "./step-details-po";
+import { sizes, StepDetailsPage } from "./step-details-po";
 import { allCapabilities, connected, newWorkflow, offline } from "./support";
 
 for (const size of sizes)
@@ -264,6 +264,30 @@ test.describe("the Runs list's states", () => {
     await expect(runs.panel.locator(".runs-list-head")).toContainText(
       "on this computer",
     );
+  });
+
+  test("without a platform, a step opened from the Runs canvas is read-only and says why", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    await offline(page);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("check");
+    await expect(details.dialog).not.toContainText("A simulation is running");
+    await expect(details.dialog.locator(".sd-run-note")).toContainText(
+      "Steps are read-only on the Runs tab. Go back to editing to change this step.",
+    );
+    await expect(
+      details.dialog.getByRole("button", {
+        name: /^(Pin output|Edit output)$/,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      details.dialog.getByRole("button", { name: "Execute step" }),
+    ).toHaveCount(0);
   });
 
   test("without an environment, the Runs tab asks for one", async ({
