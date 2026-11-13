@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 import {
   ChangeDetectionStrategy,
   Component,
+  type DoCheck,
   input,
   viewChild,
 } from "@angular/core";
@@ -45,6 +46,7 @@ import { RunLogPanel } from "../editor/debugger/run-log-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
 import { AddStepFailed } from "../editor/add-step/add-step-failed";
 import { AddStepPanel } from "../editor/add-step/add-step-panel";
+import { handOverLinkedRun, parseRunsLink } from "../editor/runs-tab/run-links";
 import { RunsView } from "../editor/runs-tab/runs-view";
 import type { App } from "../app";
 
@@ -1425,9 +1427,23 @@ import type { App } from "../app";
       <weave-step-details-mount [host]="h" [canvas]="canvas()" />
     }`,
 })
-export class DesignerView {
+export class DesignerView implements DoCheck {
   /** The editor shell. */
   host = input.required<App>();
+  /**
+   * A link to the workflow's Runs tab (?tab=runs, from a reload, a link or
+   * Back) is taken once the workflow is open: the tab shows, and it reads
+   * its run from the address.
+   */
+  ngDoCheck(): void {
+    const h = this.host();
+    if (!h.designerLink) return;
+    const link = parseRunsLink(h.designerLink);
+    h.designerLink = "";
+    if (!link || !h.editorNext) return;
+    handOverLinkedRun(h.draftId, link.run);
+    if (h.tab !== "Runs") void h.selectTab("Runs");
+  }
   readonly canvas = viewChild(CanvasView);
   closeHelp(details: HTMLDetailsElement, event: Event) {
     details.open = false;

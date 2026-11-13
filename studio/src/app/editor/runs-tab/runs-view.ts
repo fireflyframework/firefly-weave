@@ -34,6 +34,12 @@ import {
 import type { App } from "../../app";
 import type { RunViewsApi } from "../../operate/run-contracts";
 import { RunHeader } from "./run-header";
+import {
+  parseRunsLink,
+  replaceAddress,
+  runsLink,
+  takeLinkedRun,
+} from "./run-links";
 import { RunsList } from "./runs-list";
 import { RunsTabState, type RunsTabHost } from "./runs-tab-state";
 
@@ -133,6 +139,10 @@ export class RunsView implements DoCheck {
   /** Bumped to move focus back to the chosen row. */
   readonly focusRow = signal(0);
   private key = "";
+  /** The run a link to this tab names, chosen once the tab can read runs. */
+  private linked: string | null = null;
+  /** The link was read: only when the tab opens, never again. */
+  private linkRead = false;
   /** The newest run was shown for this list once: opening the tab shows it. */
   private opened = false;
 
@@ -146,6 +156,16 @@ export class RunsView implements DoCheck {
       media?.removeEventListener("change", changed);
       this.state()?.destroy();
       this.release();
+      // Leaving the tab drops it and its run from the address.
+      replaceAddress(this.path(), this.path());
+    });
+    // The address names the tab and the chosen run, in place of the entry
+    // the workflow opened with: choosing runs adds no history.
+    effect(() => {
+      const run = this.state()?.chosen()?.id ?? null;
+      untracked(() =>
+        replaceAddress(this.path(), runsLink(this.host().draftId, run)),
+      );
     });
     // The shell knows the tab is open and whether its list has runs; it
     // draws the chosen run once its data has loaded, and until then the
@@ -194,6 +214,13 @@ export class RunsView implements DoCheck {
 
   ngDoCheck(): void {
     const app = this.host();
+    if (!this.linkRead) {
+      this.linkRead = true;
+      this.linked =
+        takeLinkedRun(app.draftId) ??
+        parseRunsLink(location.search)?.run ??
+        null;
+    }
     const p = app.profile;
     const mode: RunsTabMode = !p
       ? "offline"
@@ -248,7 +275,18 @@ export class RunsView implements DoCheck {
       const state = new RunsTabState(tabHost(this.host()));
       this.state.set(state);
       state.start();
+      // A link's run, once: it is shown rather than the newest.
+      const linked = this.linked;
+      if (linked) {
+        this.linked = null;
+        this.opened = true;
+        this.show(linked);
+      }
     });
+  }
+  /** The open workflow's address, without a query. */
+  private path(): string {
+    return `/workflows/${encodeURIComponent(this.host().draftId)}/designer`;
   }
   /** The shell forgets the run it drew. */
   private release() {
