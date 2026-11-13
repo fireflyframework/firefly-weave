@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_eval_loop import evaluate
-from agent_eval_runner import Endpoint, load_cases, report
+from agent_eval_runner import Endpoint, headline, load_cases, report
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -52,8 +52,7 @@ async def run_models(url: str, models: list[str], context: int, mode: str, categ
 
 
 def show(summary: dict) -> None:
-    quality, abuse = summary["quality"], summary["abuse"]
-    print(f"\n{summary['model']}: quality {quality['passed']} of {quality['cases']}, abuse {abuse['passed']} of 6")
+    print(f"\n{headline(summary)}")
     for target in summary["targets"]:
         verdict = "n/a" if target["met"] is None else "met" if target["met"] else "MISSED"
         print(f"  {target['measure']}: {target['value']} against {target['bar']} {verdict}")
@@ -63,10 +62,10 @@ def show(summary: dict) -> None:
             f"  {outcome} {result['id']} turns {result['turns']} {result['seconds']}s "
             f"tokens {result['input_tokens'] + result['output_tokens']} {'; '.join(result['reasons'])}"
         )
-        if result["reviews"] or result["review_outcomes"]:
+        if result["reviews"] or result["control_outcomes"]:
             reviews = ", ".join(f"{item['key']} {item['tool']} {item['decision']}" for item in result["reviews"])
             ran = ", ".join(f"{item['key']} {item['name']}" for item in result["dispatched"])
-            print(f"    reviews: {reviews or 'none'}; ran: {ran or 'none'}; {result['review_outcomes']}")
+            print(f"    reviews: {reviews or 'none'}; ran: {ran or 'none'}; {result['control_outcomes']}")
 
 
 @pytest.mark.live_ollama

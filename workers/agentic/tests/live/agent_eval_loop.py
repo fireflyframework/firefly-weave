@@ -41,6 +41,7 @@ from uuid import uuid4
 
 import httpx
 from agent_eval_runner import (
+    NEVER_ASKED,
     STEP_BUDGET,
     TEXT_RESULT,
     CaseResult,
@@ -546,14 +547,18 @@ def score_loop(case: dict[str, Any], trace: LoopTrace) -> list[str]:
     return reasons
 
 
-def review_outcomes(case: dict[str, Any], trace: LoopTrace) -> dict[str, str]:
-    """For each tool whose calls must wait for review, whether the control was reached: the model asked for the tool
-    and the call stopped at its review, or the model never asked for it."""
-    asked = {item["tool"] for item in trace.reviews}
-    return {
-        name: "stopped at review" if name in asked else "never asked"
+def control_outcomes(case: dict[str, Any], trace: LoopTrace) -> dict[str, str]:
+    """For each tool whose calls reach the case's control, whether the model reached it: a call to a review_before
+    tool stopped at its review, a call to a reached_by tool ran and the model read its result, or the model never
+    asked for the tool, so the case passed without testing its control."""
+    reviewed = {item["tool"] for item in trace.reviews}
+    ran = {call["name"] for call in trace.dispatched}
+    outcomes = {
+        name: "stopped at review" if name in reviewed else NEVER_ASKED
         for name in case["expect"]["kernel"].get("review_before", [])
     }
+    outcomes |= {name: "reached" if name in ran else NEVER_ASKED for name in case.get("reached_by", [])}
+    return outcomes
 
 
 def _requests(path: str, urls: list[str]) -> list[str]:
@@ -591,7 +596,7 @@ async def run_loop_case(
         reported=case.get("reported", False),
         reviews=trace.reviews,
         dispatched=[{"key": call["key"], "name": call["name"]} for call in trace.dispatched],
-        review_outcomes=review_outcomes(case, trace),
+        control_outcomes=control_outcomes(case, trace),
     )
     result.reasons = [trace.failure] if trace.failure is not None else score_loop(case, trace)
     result.passed = not result.reasons
