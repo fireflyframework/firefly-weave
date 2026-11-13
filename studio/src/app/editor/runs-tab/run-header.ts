@@ -128,6 +128,18 @@ export class RunHeader {
       diff?.missing.length ? `Not in this draft: ${list(diff.missing)}.` : null,
     ].filter((line): line is string => !!line);
   });
+  /** On a phone: the banner in one line, its lines behind Details. */
+  readonly bannerSummary = computed(() => {
+    const overlay = this.chosen()?.overlay;
+    const diff = overlay?.diff;
+    const differ =
+      (diff?.changed.length ?? 0) +
+      (diff?.added.length ?? 0) +
+      (diff?.missing.length ?? 0);
+    const version = this.view()?.version;
+    if (!overlay?.banner || !differ || !version) return null;
+    return `This run used ${version}. ${differ} ${differ === 1 ? "step differs" : "steps differ"}.`;
+  });
   /** Why the run can't be drawn: not here, or its data withheld. */
   readonly problem = computed(() => {
     const error = this.chosen()?.error;
@@ -166,8 +178,12 @@ export class RunHeader {
         { injector },
       );
     });
+    // Each second while followed (the run's time counts), otherwise every
+    // 30 seconds for "Started 2 min ago".
     const ticker = setInterval(() => {
-      if (this.chosen()?.following) this.now.set(Date.now());
+      const now = Date.now();
+      if (this.chosen()?.following || now - this.now() >= 30_000)
+        this.now.set(now);
     }, 1000);
     inject(DestroyRef).onDestroy(() => clearInterval(ticker));
   }

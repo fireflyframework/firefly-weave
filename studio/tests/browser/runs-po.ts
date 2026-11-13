@@ -262,7 +262,10 @@ export function runFixture(kind: RunKind): RunFixture {
       return {
         summary: run,
         view: view(run, { steps: bindings(["fetch"]), active: ["check"] }),
-        facts: [...done(["fetch"]), fact("check", "transform", "running")],
+        facts: [
+          ...done(["fetch"]),
+          fact("check", "transform", "running", { started_at: at(10) }),
+        ],
         versionId: VERSIONS.current,
       };
     }

@@ -57,6 +57,7 @@ import {
   type View,
 } from "../../designer/viewport";
 import { Modal } from "../../dialog";
+import { durationText } from "../../format";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import type { Workflow } from "../../model";
@@ -690,7 +691,9 @@ export class CanvasView implements OnInit, DoCheck {
     const badge = tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
-    const fact = recorded ? recordedFact(shown, tile.kind) : null;
+    const fact = recorded
+      ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+      : null;
     return {
       ...common,
       step: true,
@@ -2674,9 +2677,12 @@ function recordedFact(
     added?: boolean;
   },
   kind: string,
+  runningFor?: number,
 ): { text: string; tone: "danger" | "info" | null } | null {
   if (facts.run === "failed")
     return { text: facts.failure?.code || "Failed", tone: "danger" };
+  if (facts.run === "live" && runningFor !== undefined)
+    return { text: `Running for ${durationText(runningFor)}`, tone: null };
   if (facts.run === "live" || facts.run === "waiting")
     return { text: runText(facts.run, kind), tone: null };
   if (facts.changed) return { text: "Changed since this run", tone: "info" };

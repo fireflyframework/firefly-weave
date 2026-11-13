@@ -416,6 +416,12 @@ test.describe("step details in run mode", () => {
     const marker = "MARKER-7f3c9e";
     const messages: string[] = [];
     page.on("console", (message) => messages.push(message.text()));
+    // Whatever Studio sends anywhere (test data saves included).
+    const sent: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() !== "GET")
+        sent.push(`${request.url()} ${request.postData() ?? ""}`);
+    });
     const marked = (run: RunFixture): RunFixture => ({
       ...run,
       facts: run.facts.map((fact) =>
@@ -468,6 +474,7 @@ test.describe("step details in run mode", () => {
     });
     expect(kept).not.toContain(marker);
     expect(messages.join("\n")).not.toContain(marker);
+    expect(sent.filter((request) => request.includes(marker))).toEqual([]);
   });
 
   test("? shows the shortcuts in run-mode step details", async ({ page }) => {

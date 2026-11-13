@@ -28,7 +28,7 @@ import {
   runFixture,
   type RunsPage,
 } from "./runs-po";
-import { sizes } from "./step-details-po";
+import { sizes, StepDetailsPage } from "./step-details-po";
 import { tokenColor } from "./support";
 
 /** The Runs tab with `id` chosen and drawn. */
@@ -134,6 +134,11 @@ for (const size of sizes)
       await expect(banner).toContainText("Changed since this run: send.");
       await expect(banner).toContainText("New in this draft: check.");
       await expect(banner).toContainText("Not in this draft: log.");
+      // On a phone the banner first reads in one line.
+      if (size.width < 768)
+        await expect(banner.locator("summary")).toHaveText(
+          "This run used 1.2.0. 3 steps differ.Details",
+        );
       await expect(canvas.tile("send").locator(".tile-badge")).toHaveAttribute(
         "data-badge",
         "changed",
@@ -195,6 +200,15 @@ for (const size of sizes)
         page.getByRole("button", { name: "Open workflow settings" }),
       ).toHaveCount(0);
       await expect(canvas.root.locator("[data-toolbar-for]")).toHaveCount(0);
+      // Nor step details: no pin, unpin or output to edit.
+      const details = new StepDetailsPage(page);
+      await details.openWithKeyboard("fetch");
+      await expect(
+        details.dialog.getByRole("button", {
+          name: /^(Pin output|Unpin output|Edit output|Keep pinned|Unpin)$/,
+        }),
+      ).toHaveCount(0);
+      await details.close();
       await runs.tabs.getByRole("tab", { name: "Source" }).click();
       expect(await sourceOf(page)).toBe(before);
       expect(executions).toEqual([]);
@@ -245,6 +259,10 @@ test.describe("a run followed while it runs", () => {
     // Without reduced motion the running step pulses.
     await expect(canvas.tile("check").locator(".tile-shape")).toHaveClass(
       /\bpulse\b/,
+    );
+    // How long it has been at work reads under it.
+    await expect(canvas.tile("check").locator(".tile-output")).toHaveText(
+      /^Running for \d+ s$/,
     );
     const reads = () =>
       platform.requests.filter((url) =>

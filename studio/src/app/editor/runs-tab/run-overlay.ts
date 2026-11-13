@@ -149,6 +149,8 @@ export function overlayOf(
     runVersion: string;
     test: boolean;
   },
+  /** When the run was read (epoch ms), for how long its steps have been at work. */
+  now?: number,
 ): RunOverlay {
   const reached = stepStates(run, facts);
   const states = new Map(reached);
@@ -165,6 +167,16 @@ export function overlayOf(
   for (const fact of facts ?? [])
     if (fact.error_code && FACT_STATES[fact.status] === "failed")
       failures[fact.node_id] ??= fact.error_code;
+  const runningFor: Record<string, number> = {};
+  if (now !== undefined && !terminalRunStatuses.includes(run.status))
+    for (const fact of facts ?? []) {
+      const started = fact.started_at ? Date.parse(fact.started_at) : NaN;
+      if (fact.status !== "running" || !Number.isFinite(started)) continue;
+      runningFor[fact.node_id] = Math.max(
+        runningFor[fact.node_id] ?? 0,
+        now - started,
+      );
+    }
   const diff = versions.run ? versionDiff(versions.run, versions.draft) : null;
   return {
     canvas: {
@@ -176,6 +188,7 @@ export function overlayOf(
       changed: diff?.changed ?? [],
       added: diff?.added ?? [],
       failures,
+      ...(Object.keys(runningFor).length ? { runningFor } : {}),
     },
     states,
     diff,

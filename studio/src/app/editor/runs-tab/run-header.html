@@ -141,11 +141,25 @@ SPDX-License-Identifier: Apache-2.0
     @if (banner().length) {
       <div class="run-banner" data-tone="info">
         <weave-icon name="info" [size]="16" />
-        <span class="run-banner-lines">
-          @for (line of banner(); track line) {
-            <span>{{ line }}</span>
-          }
-        </span>
+        @if (tab().narrow() && bannerSummary(); as summary) {
+          <details class="run-banner-details">
+            <summary>
+              <span>{{ summary }}</span
+              ><span class="run-banner-more">Details</span>
+            </summary>
+            <span class="run-banner-lines">
+              @for (line of banner(); track line) {
+                <span>{{ line }}</span>
+              }
+            </span>
+          </details>
+        } @else {
+          <span class="run-banner-lines">
+            @for (line of banner(); track line) {
+              <span>{{ line }}</span>
+            }
+          </span>
+        }
       </div>
     }
   }

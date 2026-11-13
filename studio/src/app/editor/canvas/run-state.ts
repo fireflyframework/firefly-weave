@@ -40,6 +40,8 @@ export interface RecordedRun extends CanvasRun {
   added: readonly string[];
   /** Step ID to the error code it failed with. */
   failures: Readonly<Record<string, string>>;
+  /** Step ID to how long it had been at work when the run was read (ms). */
+  runningFor?: Readonly<Record<string, number>>;
 }
 export const isRecordedRun = (run: CanvasRun | null): run is RecordedRun =>
   !!run && "failures" in run;

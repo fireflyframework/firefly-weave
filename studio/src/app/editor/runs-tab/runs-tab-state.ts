@@ -513,15 +513,20 @@ export class RunsTabState {
     definition: Workflow | null,
   ): RunOverlay {
     const draft = this.host.draft();
-    return overlayOf(read.record, read.facts, {
-      run: definition,
-      draft,
-      runVersion:
-        summary?.workflow.version ??
-        definition?.metadata.version ??
-        draft.metadata.version,
-      test: summary?.test ?? false,
-    });
+    return overlayOf(
+      read.record,
+      read.facts,
+      {
+        run: definition,
+        draft,
+        runVersion:
+          summary?.workflow.version ??
+          definition?.metadata.version ??
+          draft.metadata.version,
+        test: summary?.test ?? false,
+      },
+      this.env.now(),
+    );
   }
   /** Reads the run every 2 s until it ends, for 30 minutes at most. */
   private follow(id: string, now = true): Promise<void> {

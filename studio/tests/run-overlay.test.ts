@@ -231,6 +231,35 @@ describe("the run over the draft", () => {
     );
   });
 
+  it("says how long a running step has been at work when the run was read", () => {
+    const started = "2026-10-07T11:59:46Z";
+    const running = overlayOf(
+      record({ status: "running", steps: { fetch: {} }, active: ["send"] }),
+      [
+        {
+          node_id: "send",
+          instance_key: "",
+          iteration: [],
+          kind: "action",
+          status: "running",
+          scheduled_at: started,
+          started_at: started,
+          ended_at: null,
+          duration_ms: null,
+          queue_wait_ms: 0,
+          attempts: 1,
+          worker_id: null,
+          error_code: null,
+          child_run_id: null,
+          log_entries: 0,
+        },
+      ],
+      versions,
+      Date.parse("2026-10-07T12:00:00Z"),
+    );
+    expect(running.canvas.runningFor).toEqual({ send: 14_000 });
+  });
+
   it("draws a running run and a waiting one", () => {
     const running = overlayOf(
       record({ status: "running", steps: { fetch: {} }, active: ["send"] }),
