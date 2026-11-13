@@ -135,8 +135,9 @@ SPDX-License-Identifier: Apache-2.0
   `aiTurns`) answer the agent's turns one by one, and `tool:AGENT/TOOL` mocks
   answer its tool calls, one value for every call or a `sequence` taken in
   order; `node:` keys still win, for one call or as the agent's pinned output.
-  A mock of one call is checked against every tool it fits and refused when any
-  of them marks a value in it secret. Turns that call a tool the agent doesn't
+  Tool mocks are checked against every schema a live run checks the tool's
+  result with, the connector's or worker's included, and a mock of one call is
+  refused when any of the agent's tools marks a value in it secret. Turns that call a tool the agent doesn't
   declare, or with arguments that don't fit, and call keys past the agent's
   limits, are refused before the simulation starts (`WV-DEBUG-MOCK-OUTPUT`,
   `WV-DEBUG-MOCK-KEY`), and

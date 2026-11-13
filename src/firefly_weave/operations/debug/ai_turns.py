@@ -26,18 +26,20 @@ from typing import Literal, cast
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.ir import ActionNode, AgentNode, AgentToolIR, IRNode, WorkflowIR
-from firefly_weave.compiler.schemas import payload_issues
+from firefly_weave.compiler.schemas import _Failure, payload_issues
 from firefly_weave.contracts.agent_turns import MAX_TURN_TOOL_CALLS, TurnOutput, call_id
+from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import InstanceKey, InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.studio_documents import ai_turns_problems
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import DebugError
 from firefly_weave.operations.debug.transactions import step_instance
+from firefly_weave.operations.redaction import classify
 from firefly_weave.runtime import agent_tools
 from firefly_weave.runtime.agent_tools import AgentKeyRef, tool_schema
 from firefly_weave.runtime.agents import parse_agent_key
 from firefly_weave.runtime.control import enclosing_loops
-from firefly_weave.runtime.kernel import PreparedWorkflow, validate, workflow
+from firefly_weave.runtime.kernel import PreparedWorkflow, action_schemas, validate, workflow
 
 # Nothing was sent to a model, so a replayed turn reports no usage.
 NO_USAGE: dict[str, JsonValue] = {"requests": 0, "inputTokens": 0, "outputTokens": 0}
@@ -181,10 +183,10 @@ def check_agent_mock(ir: WorkflowIR, mock: AgentMock, value: JsonValue) -> None:
     """Check an agent mock as the kernel would check what it stands for; ``WV-DEBUG-MOCK-OUTPUT`` when it doesn't fit.
 
     Saved turns may call only the agent's tools, with arguments that fit each tool's parameters, and every turn must
-    pass the agent's turn guard. A tool mock's values fit the tool's output; a pin fits the agent's output and answers
-    its first turn. A call's value fits the output of one of the agent's tools at least, and is classified by every
-    tool output it fits: a value that one of them marks secret is refused, since any of those tools may be the one
-    the call runs.
+    pass the agent's turn guard. A tool mock's values fit every schema a live run checks the tool's result with
+    (``_output_schemas``); a pin fits the agent's output and answers its first turn. A call's value fits one of the
+    agent's tools at least, and is classified by every schema of every tool, whether it fits that tool or not: a
+    value that any of them marks secret is refused, since the saved turns decide which tool the call runs.
     """
     try:
         if mock.kind == "turns":
@@ -199,16 +201,18 @@ def check_agent_mock(ir: WorkflowIR, mock: AgentMock, value: JsonValue) -> None:
             if not values:
                 raise ValueError("A sequence needs a value")
             for item in values:
-                validate(ir, _output_schema(ir, tool), item)
+                for schema in _output_schemas(ir, tool):
+                    validate(ir, schema, item)
         elif mock.kind == "pin":
             validate(ir, _guard(ir, mock.node, "agent_output"), value)
             _check_turn(ir, mock.node, pinned_turn(mock.node, value))
         else:
-            fitting = [schema for tool in mock.node.tools if _shaped(ir, schema := _output_schema(ir, tool), value)]
-            if not fitting:
+            outputs = [_output_schemas(ir, tool) for tool in mock.node.tools]
+            if not any(all(_shaped(ir, schema, value) for schema in schemas) for schemas in outputs):
                 raise ValueError("The call's value fits none of the agent's tools")
-            for schema in fitting:
-                validate(ir, schema, value)
+            for schemas in outputs:
+                for schema in schemas:
+                    _unmarked(ir, schema, value)
     except ValueError:
         raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
@@ -297,12 +301,29 @@ def _guard(ir: WorkflowIR, node: AgentNode, purpose: str) -> JsonObject:
     return ir.schemas[guard.schema_ref]
 
 
-def _output_schema(ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+def _output_schemas(ir: WorkflowIR, tool: AgentToolIR) -> list[JsonObject]:
+    """Every schema a live run checks and classifies a tool's result with: what its target returns and, for a tool
+    pinned to an Action, the Action's output and its connector's or worker's (``action_schemas``)."""
     # Read from the module, so a kind of tool registered there is mocked like the others.
-    return agent_tools.TOOL_TARGETS[tool.target].output_schema(ir, tool)
+    schemas = [agent_tools.TOOL_TARGETS[tool.target].output_schema(ir, tool)]
+    pinned = next((d for d in ir.dependencies if d.digest == tool.dependency and d.kind == "Action"), None)
+    if pinned is not None:
+        schemas += action_schemas(ir, cast(ActionDefinition, load_definition(pinned.document)), "output")
+    return schemas
+
+
+def _unmarked(ir: WorkflowIR, schema: JsonObject, value: JsonValue) -> None:
+    """Refuse a value that ``schema`` marks secret anywhere it is present, whether or not it fits the schema."""
+    try:
+        classify(schema, value, _bundle(ir))
+    except (_Failure, RecursionError, ArithmeticError):
+        raise ValueError("The value holds a value marked secret, or can't be classified") from None
 
 
 def _shaped(ir: WorkflowIR, schema: JsonObject, value: JsonValue) -> bool:
     """Whether ``value`` fits ``schema`` by its shape alone, before any value is classified."""
-    bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
-    return payload_issues(schema, value, bundle) == []
+    return payload_issues(schema, value, _bundle(ir)) == []
+
+
+def _bundle(ir: WorkflowIR) -> dict[str, JsonObject]:
+    return {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}

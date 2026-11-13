@@ -594,3 +594,88 @@ def test_a_workflow_tool_takes_its_mock_sequence_in_order():
     # Each call completed as a called workflow's success, with the sequence's next value as its output.
     assert simulator.data.outputs["support#1.1"] == {"sent": 1}
     assert simulator.data.outputs["support#2.1"] == {"sent": 2}
+
+
+# The connector marks the token secret; the Action that runs it doesn't. A live run classifies by both.
+VAULT_OUTPUT = {
+    "type": "object",
+    "properties": {"status": {"type": "string"}, "token": {"type": "string", "x-secret": True}},
+}
+VAULT = orders_connector()
+VAULT["metadata"]["name"] = "vault"
+VAULT["spec"]["actions"]["get"]["outputSchema"] = VAULT_OUTPUT
+VAULT_GET = order_action("vault-get", "get")
+VAULT_GET["spec"]["implementation"]["uses"] = "vault@1.0.0"
+VAULT_GET["spec"]["connection"] = {"connector": "vault@1.0.0"}
+VAULT_LOOKUP = LOOKUP | {"name": "vault_lookup", "action": "vault-get@1.0.0", "connection": "vault"}
+VAULT_DOCUMENT = plain(answering(workflow(agent(tools=[VAULT_LOOKUP]))))
+VAULT_DOCUMENT["spec"]["connections"]["vault"] = {"connector": "vault@1.0.0"}
+VAULTED = artifact(VAULT_DOCUMENT, catalog(VAULT, VAULT_GET))
+VAULTED_VALUE = {"status": "ok", "token": "tok-live-8"}
+
+
+@pytest.mark.parametrize("key", ["tool:support/vault_lookup", "node:support#1.1"])
+def test_a_tool_mock_secret_for_the_actions_connector_is_refused(key):
+    mocks = {"agent:support": turns(calls(("vault_lookup", {"id": "A-17"})), {"final": "Done."}), key: VAULTED_VALUE}
+
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT") as refused:
+        simulate(mocks, flow=VAULTED)
+
+    assert "tok-live-8" not in repr(refused.value)
+
+
+@pytest.mark.parametrize("key", ["tool:support/vault_lookup", "node:support#1.1"])
+def test_studio_refuses_a_tool_mock_secret_for_the_actions_connector(key):
+    connector = studio_connector()
+    connector["metadata"]["name"] = "vault"
+    connector["spec"]["actions"]["get"]["outputSchema"] = VAULT_OUTPUT
+    request = studio_request(
+        VAULT_DOCUMENT,
+        [connector, VAULT_GET],
+        {key: VAULTED_VALUE},
+        aiTurns={"support": turns(calls(("vault_lookup", {"id": "A-17"})), {"final": "Done."})},
+    )
+
+    with pytest.raises(SimulationRefused) as refused:
+        execute(request, None)
+
+    assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-SECRET_VALUE", ["/mocks/" + key.replace("/", "~1")])
+    assert "tok-live-8" not in repr(refused.value.__dict__)
+
+
+# A tool whose output needs a voucher and marks the token secret: a value without a voucher doesn't fit it.
+VOUCHER_ACTION = order_action("orders-voucher", "refund")
+VOUCHER_ACTION["spec"]["outputSchema"] = {
+    "type": "object",
+    "properties": {"voucher": {"type": "string"}, "token": {"type": "string", "x-secret": True}},
+    "required": ["voucher"],
+}
+VOUCHER = REFUND | {"name": "issue_voucher", "action": "orders-voucher@1.0.0"}
+VOUCHER_DOCUMENT = plain(answering(workflow(agent(tools=[LOOKUP, VOUCHER]))))
+VOUCHERING = artifact(VOUCHER_DOCUMENT, catalog(VOUCHER_ACTION))
+
+
+def test_a_call_mock_is_checked_for_secrets_by_every_tool_even_one_it_does_not_fit():
+    mocks = {
+        "agent:support": turns(calls(("issue_voucher", {"id": "A-17"})), {"final": "Done."}),
+        "node:support#1.1": SECRET_CALL,
+    }
+
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT") as refused:
+        simulate(mocks, flow=VOUCHERING)
+
+    assert "tok-live-7" not in repr(refused.value)
+
+
+def test_studio_checks_a_call_mock_for_secrets_by_every_tool():
+    request = studio_request(
+        VOUCHER_DOCUMENT,
+        [studio_connector(), order_action("orders-get", "get"), VOUCHER_ACTION],
+        {"node:support#1.1": SECRET_CALL},
+        aiTurns={"support": turns(calls(("issue_voucher", {"id": "A-17"})), {"final": "Done."})},
+    )
+
+    with pytest.raises(SimulationRefused) as refused:
+        execute(request, None)
+
+    assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-SECRET_VALUE", ["/mocks/node:support#1.1"])
