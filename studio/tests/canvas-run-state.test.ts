@@ -242,6 +242,34 @@ describe("how the Runs tab frames a run", () => {
     );
   });
 
+  it("frames the whole run between 55% and 60% on a wide canvas before cropping it", () => {
+    // 1,400 wide: at 56%, 784 + 16 spare fits an 800 px canvas; at 57% it doesn't.
+    const wide = { x: 0, y: 0, width: 1400, height: 200 };
+    const framed = frameRun(wide, send, { width: 800, height: 700 });
+    expect(framed.zoom).toBe(0.56);
+    expect(framed.pan.x).toBeCloseTo(8);
+  });
+
+  it("keeps 60% and the framed step below 768 px, where 55% would read too small", () => {
+    // 680 wide would fit a 400 px column at 56%, but a phone keeps 60%.
+    const short = { x: 0, y: 0, width: 680, height: 200 };
+    expect(frameRun(short, send, { width: 400, height: 700 }).zoom).toBe(0.6);
+  });
+
+  it("measures the outline at each zoom it tries", () => {
+    // Labels grow as the canvas zooms out: the outline widens with them.
+    const outline = (zoom: number) => ({
+      x: 0,
+      y: 0,
+      width: 1000 + (1 - zoom) * 200,
+      height: 200,
+    });
+    // 86%: 1,028 × 0.86 = 884.08 + 16 fits 901; 88%: 1,024 × 0.88 = 901.12 doesn't.
+    const framed = frameRun(outline, send, { width: 901, height: 700 });
+    expect(framed.zoom).toBe(0.86);
+    expect(framed.pan.x).toBeCloseTo((901 - 1028 * 0.86) / 2);
+  });
+
   it("frames the failed step, else the running one, else the last finished", () => {
     const tiles = ["$trigger:manual", "fetch", "check", "send"];
     const recorded = (extra: Partial<CanvasRun>) => ({

@@ -137,36 +137,48 @@ export interface FrameBox {
   width: number;
   height: number;
 }
+/** The zooms the Runs tab tries, largest first: 100% to 60% in 2% steps. */
+const FRAME_ZOOMS = Array.from({ length: 21 }, (_, i) => (100 - 2 * i) / 100);
+/** On a canvas 768 px wide or more, a whole run may go down to 55%. */
+const WIDE_FRAME_ZOOMS = [0.59, 0.58, 0.57, 0.56, 0.55];
+
 /**
  * How the Runs tab frames a run in the visible canvas area: the largest zoom
  * from 100% down to 60%, in 2% steps, at which the workflow's outline (all
- * that is drawn: tiles, badges, labels) fits with 8 px to spare on each side,
- * centered across and down. When it doesn't fit at 60%, each direction
- * where the outline fits is centered; in a direction where it is larger,
- * `step` is centered and the pan then stops before either edge of the
- * outline comes inside the area, so no room is left empty while the
- * workflow goes on beyond the other edge. Below 60% tiles are too small to read.
+ * that is drawn: tiles, badges, the text of their labels) fits with 8 px to
+ * spare on each side, centered across and down; on a canvas 768 px wide or
+ * more, also 59% down to 55%, so a run that misses by a little still shows
+ * whole. The outline may depend on the zoom (labels grow as it shrinks).
+ * When nothing fits, at 60%: each direction where the outline fits is
+ * centered; in a direction where it is larger, `step` is centered and the
+ * pan then stops before either edge of the outline comes inside the area,
+ * so no room is left empty while the workflow goes on beyond the other edge.
  */
 export function frameRun(
-  workflow: FrameBox,
+  workflow: FrameBox | ((zoom: number) => FrameBox),
   step: FrameBox | null,
   area: { width: number; height: number },
 ): { zoom: number; pan: { x: number; y: number } } {
-  for (let percent = 100; percent >= 60; percent -= 2) {
-    const zoom = percent / 100;
+  const outlineAt = typeof workflow === "function" ? workflow : () => workflow;
+  const zooms =
+    area.width >= 768 ? [...FRAME_ZOOMS, ...WIDE_FRAME_ZOOMS] : FRAME_ZOOMS;
+  for (const zoom of zooms) {
+    const outline = outlineAt(zoom);
+    // A hair of tolerance: 1,400 × 0.56 is 784.0000000000001 in floating point.
     if (
-      workflow.width * zoom + 16 <= area.width &&
-      workflow.height * zoom + 16 <= area.height
+      outline.width * zoom + 16 <= area.width + 1e-6 &&
+      outline.height * zoom + 16 <= area.height + 1e-6
     )
       return {
         zoom,
         pan: {
-          x: (area.width - workflow.width * zoom) / 2 - workflow.x * zoom,
-          y: (area.height - workflow.height * zoom) / 2 - workflow.y * zoom,
+          x: (area.width - outline.width * zoom) / 2 - outline.x * zoom,
+          y: (area.height - outline.height * zoom) / 2 - outline.y * zoom,
         },
       };
   }
   const zoom = 0.6;
+  const outline = outlineAt(zoom);
   const axis = (
     start: number,
     size: number,
@@ -182,12 +194,12 @@ export function frameRun(
       Math.max(room - (start + size) * zoom, centered),
     );
   };
-  const focus = step ?? workflow;
+  const focus = step ?? outline;
   return {
     zoom,
     pan: {
-      x: axis(workflow.x, workflow.width, focus.x, focus.width, area.width),
-      y: axis(workflow.y, workflow.height, focus.y, focus.height, area.height),
+      x: axis(outline.x, outline.width, focus.x, focus.width, area.width),
+      y: axis(outline.y, outline.height, focus.y, focus.height, area.height),
     },
   };
 }

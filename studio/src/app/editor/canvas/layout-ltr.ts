@@ -817,25 +817,35 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
 }
 
 /**
- * What a run on the Runs tab draws, in canvas units: each tile with its
- * corner badge and its label block (End's too), path labels, joins and
- * sub-steps, but no "+" (nothing is added there). The Runs tab frames this.
+ * What a run on the Runs tab draws at `zoom`, in canvas units: each tile with
+ * its corner badge and its label, path labels, joins and sub-steps, but no
+ * "+" (nothing is added there). A label counts as wide as its widest line of
+ * text (`textHalf`: half of it, unscaled, when the page has measured it),
+ * else as its whole block; labels grow as the zoom shrinks (labelScale).
  */
-export function runOutline(layout: LtrLayout): LtrBounds {
+export function runOutline(
+  layout: LtrLayout,
+  zoom = 0.6,
+  textHalf?: (tileId: string) => number | undefined,
+): LtrBounds {
   const boxes: LtrBounds[] = [];
+  const scale = labelScale(zoom);
   for (const tile of layout.tiles) {
-    // From 60% to 100%, a label block is at its widest below 100%.
-    const width =
-      tile.shape === "end"
-        ? 80
-        : Math.max(labelWidth(0.6, tile.shape), labelWidth(1, tile.shape));
-    const labelLeft = tile.x + tile.width / 2 - width / 2;
+    const block = tile.shape === "end" ? 80 : labelWidth(zoom, tile.shape);
+    const measured = textHalf?.(tile.id);
+    const half =
+      measured === undefined
+        ? block / 2
+        : Math.min(measured * scale, block / 2);
+    const center = tile.x + tile.width / 2;
+    // A step's corner badge sits 10 units beyond its top and right; the
+    // trigger and End draw none.
+    const badge = tile.step ? 10 : 0;
     boxes.push({
-      // The corner badge sits 10 units beyond the tile's top and right.
-      minX: Math.min(tile.x, labelLeft),
-      minY: tile.y - 10,
-      maxX: Math.max(tile.x + tile.width + 10, labelLeft + width),
-      maxY: tile.labelY + LTR.labelHeight,
+      minX: Math.min(tile.x, center - half),
+      minY: tile.y - badge,
+      maxX: Math.max(tile.x + tile.width + badge, center + half),
+      maxY: tile.labelY + LTR.labelHeight * scale,
     });
   }
   for (const label of layout.labels)

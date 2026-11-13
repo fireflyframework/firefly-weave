@@ -1632,7 +1632,16 @@ export class CanvasView implements OnInit, DoCheck {
     if (key === this.framed) return;
     this.framed = key;
     const tile = layout.tiles.find((item) => item.id === focus);
-    const bounds = runOutline(layout);
+    const halves = this.labelTextHalves(layout);
+    const outlineAt = (zoom: number) => {
+      const bounds = runOutline(layout, zoom, (id) => halves.get(id));
+      return {
+        x: bounds.minX,
+        y: bounds.minY,
+        width: bounds.maxX - bounds.minX,
+        height: bounds.maxY - bounds.minY,
+      };
+    };
     const tools = [
       ...root.querySelectorAll<HTMLElement>(
         ".canvas-v2-tools, .canvas-v2-tools-menu, .canvas-read-only",
@@ -1640,12 +1649,7 @@ export class CanvasView implements OnInit, DoCheck {
     ].reduce((most, item) => Math.max(most, item.offsetHeight), 0);
     this.framedView = this.frameView(
       frameRun(
-        {
-          x: bounds.minX,
-          y: bounds.minY,
-          width: bounds.maxX - bounds.minX,
-          height: bounds.maxY - bounds.minY,
-        },
+        outlineAt,
         tile
           ? {
               x: tile.x,
@@ -1661,6 +1665,37 @@ export class CanvasView implements OnInit, DoCheck {
         },
       ),
     );
+  }
+  /**
+   * Half the widest line of each tile's label as drawn now, unscaled (canvas
+   * units at a label scale of 1), so the frame counts text, not the label's
+   * wider block. The zoom on screen is read from a drawn tile: the view may
+   * have changed since the page was last drawn.
+   */
+  private labelTextHalves(layout: LtrLayout): Map<string, number> {
+    const halves = new Map<string, number>();
+    const root = this.root().nativeElement;
+    const sample = layout.tiles[0];
+    const body = sample
+      ? root.querySelector<HTMLElement>(
+          `.tile-node[data-tile="${CSS.escape(sample.id)}"] .tile-body`,
+        )
+      : null;
+    const shown = body ? body.getBoundingClientRect().width / sample.width : 0;
+    if (!shown) return halves;
+    const scale = labelScale(shown);
+    for (const node of root.querySelectorAll<HTMLElement>(
+      ".tile-node[data-tile]",
+    )) {
+      let widest = 0;
+      for (const line of node.querySelectorAll<HTMLElement>(
+        ".tile-label strong, .tile-label span",
+      ))
+        widest = Math.max(widest, line.getBoundingClientRect().width);
+      const id = node.dataset["tile"];
+      if (id && widest) halves.set(id, widest / shown / scale / 2);
+    }
+    return halves;
   }
   /** The view the run was last framed with; any pan or zoom since replaces it. */
   private framedView: View | null = null;

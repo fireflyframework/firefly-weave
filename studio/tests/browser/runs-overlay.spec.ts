@@ -360,34 +360,36 @@ for (const size of [
           }),
         )
         .toMatchObject({ sendInView: true });
+      // What is drawn: tiles, badges and the lines of text under them.
       const measured = await canvas.root.evaluate((root) => {
         const frame = root.getBoundingClientRect();
         const drawn = [
           ...root.querySelectorAll(
-            ".tile-node .tile-body, .tile-node .tile-label, .tile-node .tile-badge",
+            ".tile-node .tile-body, .tile-node .tile-badge, .tile-label strong, .tile-label span",
           ),
         ].map((element) => element.getBoundingClientRect());
-        const tiles = [...root.querySelectorAll(".tile-node .tile-body")].map(
-          (element) => element.getBoundingClientRect(),
-        );
+        const labelOf = (tile: string) =>
+          [
+            ...root.querySelectorAll(
+              `.tile-node[data-tile="${tile}"] .tile-label strong, .tile-node[data-tile="${tile}"] .tile-label span`,
+            ),
+          ].map((element) => element.getBoundingClientRect());
+        const inside = (rects: DOMRect[]) =>
+          rects.length > 0 &&
+          rects.every(
+            (rect) => rect.left >= frame.left && rect.right <= frame.right,
+          );
         return {
           left: Math.min(...drawn.map((rect) => rect.left)) - frame.left,
           right: frame.right - Math.max(...drawn.map((rect) => rect.right)),
-          // How much of the first tile is past the left edge.
-          tileCut: frame.left - Math.min(...tiles.map((rect) => rect.left)),
+          trigger: inside(labelOf("$trigger:manual")),
+          end: inside(labelOf("$end")),
         };
       });
-      if (size.width === 1440) {
-        // Wider than the column at 60%: nothing left empty on the right,
-        // and only a little of the path's start is cut off.
-        expect(measured.right).toBeLessThanOrEqual(24);
-        expect(measured.tileCut).toBeLessThanOrEqual(60);
-      } else {
-        // It fits: centered across.
-        expect(Math.abs(measured.left - measured.right)).toBeLessThanOrEqual(
-          24,
-        );
-        expect(measured.left).toBeGreaterThan(0);
-      }
+      // The whole run shows: the trigger's and End's labels are in view.
+      expect(measured).toMatchObject({ trigger: true, end: true });
+      // Centered across: as much room on the left as on the right.
+      expect(Math.abs(measured.left - measured.right)).toBeLessThanOrEqual(8);
+      expect(measured.left).toBeGreaterThan(0);
     });
   });
