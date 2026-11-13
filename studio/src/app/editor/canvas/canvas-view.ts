@@ -586,7 +586,8 @@ export class CanvasView implements OnInit, DoCheck {
     return this.tilesMemo(
       this.layout(),
       viewing ? NO_STEP_FACTS : h.canvasFacts(),
-      this.selection,
+      // The Runs tab draws the run, not the Designer's selection; focus keeps its own ring.
+      viewing ? NO_SELECTION : this.selection,
       this.active(),
       h.canvasRun(),
       h.model.canvas,

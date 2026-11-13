@@ -69,6 +69,13 @@ SPDX-License-Identifier: Apache-2.0
           <span class="sr-only" role="status">Loading run {{ v.short }}…</span>
         } @else {
           <p class="run-caption">
+            <!-- Below 480 px the live dot leads the caption, so the title keeps one line. -->
+            @if (chosen()?.following) {
+              <span class="run-follow run-follow-caption"
+                ><span class="run-live-dot" aria-hidden="true"></span>Following
+                this run</span
+              >
+            }
             @if (v.failedAt) {
               <span class="run-failed-at">{{ v.failedAt }}</span>
             }

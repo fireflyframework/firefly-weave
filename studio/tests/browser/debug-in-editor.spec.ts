@@ -237,6 +237,10 @@ test("back on the Runs tab, the canvas shows only the run, with all its room", a
   await expect(
     runs.canvas.locator('.tile-node[data-tile="fetch"] .tile-output'),
   ).toHaveCount(0);
+  // send was selected in the Designer: the Runs canvas draws no selection.
+  await expect(
+    runs.canvas.locator('.tile-node[data-tile="send"] .tile-body'),
+  ).toHaveAttribute("aria-pressed", "false");
   const right = (selector: string) =>
     page
       .locator(selector)

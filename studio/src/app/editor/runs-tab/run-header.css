@@ -114,6 +114,19 @@ button.icon-button.run-copy {
   box-shadow: 0 0 0 4px var(--live-glow);
   flex: none;
 }
+.run-follow-caption {
+  display: none;
+}
+/* Below 480 px the title line keeps the run's ID, Copy run ID and the
+   status; "Following this run" leads the caption line instead. */
+@media (max-width: 479px) {
+  .run-title .run-follow {
+    display: none;
+  }
+  .run-caption .run-follow-caption {
+    display: inline-flex;
+  }
+}
 /* One line that ends in an ellipsis when it doesn't fit. */
 .run-caption {
   display: block;

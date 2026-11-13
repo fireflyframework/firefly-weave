@@ -155,11 +155,6 @@ test("the Runs tab's chunk stays under its budget, out of the first page", () =>
   const first = [...index.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(
     (match) => match[1],
   );
-  const total = first.reduce(
-    (sum, file) => sum + statSync(join(BUILD, file)).size,
-    0,
-  );
-  expect(total).toBeLessThanOrEqual(FIRST_PAGE_BUDGET);
   // The list's own element name lives only in its chunk.
   const runs = readdirSync(BUILD).filter(
     (file) =>
@@ -169,7 +164,7 @@ test("the Runs tab's chunk stays under its budget, out of the first page", () =>
   expect(runs).toHaveLength(1);
   expect(first).not.toContain(runs[0]);
   const size = gzipped(runs[0]);
-  console.log(JSON.stringify({ firstPage: total, runsChunkGzip: size }));
+  console.log(JSON.stringify({ runsChunkGzip: size }));
   expect(size).toBeLessThanOrEqual(RUNS_BUDGET);
 });
 

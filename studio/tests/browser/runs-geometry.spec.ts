@@ -125,3 +125,25 @@ for (const layout of layouts)
       }
     });
   });
+
+test.describe("360x640, a run that is still going", () => {
+  test.use({ viewport: { width: 360, height: 640 } });
+
+  test("the title keeps one line, and the live line leads the caption", async ({
+    page,
+  }) => {
+    const { runs } = await openRunsTab(page);
+    await expect(runs.rows.first()).toBeVisible();
+    await choose(page, runs, RUN_IDS.running);
+    const header = runs.canvas.locator(".run-header");
+    const title = await box(header.locator("h2"));
+    const pill = await box(header.locator(".run-pill"));
+    // The ID, Copy run ID and the status share the first line.
+    expect(Math.abs(title.middle - pill.middle)).toBeLessThanOrEqual(2);
+    expect(title.height).toBeLessThanOrEqual(28);
+    const live = header.locator(".run-caption .run-follow");
+    await expect(live).toBeVisible();
+    await expect(live).toHaveText("Following this run");
+    expect(await clippedText(runs.canvas, ".run-header")).toEqual([]);
+  });
+});
