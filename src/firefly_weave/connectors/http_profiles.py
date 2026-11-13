@@ -18,7 +18,7 @@
 import asyncio
 import base64
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -36,7 +36,14 @@ from firefly_weave.connectors.credential_output import contains_sensitive
 from firefly_weave.connectors.egress import EgressDenied
 from firefly_weave.connectors.http import HttpPolicy
 from firefly_weave.connectors.http_logging import protected_http_diagnostics
-from firefly_weave.contracts.connectors import ActionContext, BoundConnection, ConnectionTestResult, ConnectorFailure
+from firefly_weave.contracts.connectors import (
+    ActionContext,
+    BoundConnection,
+    ConnectionTestResult,
+    ConnectorFailure,
+    ConnectorInvocation,
+    ResolvedSecret,
+)
 from firefly_weave.contracts.http_profiles import (
     HttpOperation,
     HttpParameter,
@@ -47,6 +54,9 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from pyfly.context import ApplicationContext
+
+# A connection test sends one request and gives it this long, sign-in included.
+CONNECTION_TEST_SECONDS = 10
 
 
 def _scalar(value: JsonValue, parameter: HttpParameter) -> str:
@@ -160,36 +170,7 @@ class HttpProfileConnector:
                 raise failure("TIMEOUT")
             async with asyncio.timeout(timeout):
                 await context.authorize()
-                auth = connection.auth
-                if auth.kind == "machine-token":
-                    assert auth.client_id and auth.endpoint
-                    token = await self.tokens.acquire(
-                        context, MachineProfile(auth.client_id, auth.endpoint, tuple(auth.scopes), auth.authentication)
-                    )
-                    headers["Authorization"] = "Bearer " + token.consume()
-                else:
-                    values = {}
-                    for slot in sorted(auth.slots()):
-                        secret = await context.credentials(slot)
-                        value = secret.value
-                        if not value or len(value) > 8192 or any(ord(c) < 32 or ord(c) > 126 for c in value):
-                            raise failure("AUTH")
-                        values[slot] = value
-                        secrets.append(value)
-                    if auth.kind == "bearer":
-                        if not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", values["token"]):
-                            raise failure("AUTH")
-                        headers["Authorization"] = "Bearer " + values["token"]
-                    elif auth.kind == "api-key":
-                        assert auth.header
-                        headers[auth.header] = values["api_key"]
-                    elif auth.kind == "basic":
-                        if ":" in values["username"]:
-                            raise failure("AUTH")
-                        encoded = base64.b64encode((values["username"] + ":" + values["password"]).encode()).decode()
-                        secrets.append(encoded)
-                        headers["Authorization"] = "Basic " + encoded
-                    values.clear()
+                token = await self._authenticate(connection, context, headers, secrets)
                 header_bytes = sum(len(k.encode()) + len(v.encode()) + 4 for k, v in headers.items())
                 if header_bytes > 32768 or len(url.encode()) + header_bytes + len(body) > min(
                     invocation.max_request_bytes, 1048576
@@ -259,11 +240,54 @@ class HttpProfileConnector:
             if token is not None:
                 token.discard()
 
+    async def _authenticate(
+        self, connection: ProfileConnection, context: ActionContext, headers: dict[str, str], secrets: list[str]
+    ) -> MachineToken | None:
+        """Add the connection's sign-in to ``headers`` and each secret used to ``secrets``; the caller clears both."""
+        auth = connection.auth
+        if auth.kind == "machine-token":
+            assert auth.client_id and auth.endpoint
+            token = await self.tokens.acquire(
+                context, MachineProfile(auth.client_id, auth.endpoint, tuple(auth.scopes), auth.authentication)
+            )
+            headers["Authorization"] = "Bearer " + token.consume()
+            return token
+        values = {}
+        try:
+            for slot in sorted(auth.slots()):
+                secret = await context.credentials(slot)
+                value = secret.value
+                if not value or len(value) > 8192 or any(ord(c) < 32 or ord(c) > 126 for c in value):
+                    raise ConnectorFailure("HTTP_PROFILE_AUTH", "not_started")
+                values[slot] = value
+                secrets.append(value)
+            if auth.kind == "bearer":
+                if not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", values["token"]):
+                    raise ConnectorFailure("HTTP_PROFILE_AUTH", "not_started")
+                headers["Authorization"] = "Bearer " + values["token"]
+            elif auth.kind == "api-key":
+                assert auth.header
+                headers[auth.header] = values["api_key"]
+            elif auth.kind == "basic":
+                if ":" in values["username"]:
+                    raise ConnectorFailure("HTTP_PROFILE_AUTH", "not_started")
+                encoded = base64.b64encode((values["username"] + ":" + values["password"]).encode()).decode()
+                secrets.append(encoded)
+                headers["Authorization"] = "Basic " + encoded
+            return None
+        finally:
+            values.clear()
+
     async def test_connection(self, connection: BoundConnection) -> ConnectionTestResult:
+        """Send one HEAD to the base URL with the connection's sign-in; never follow a redirect or read a body.
+
+        Any answer from 200 to 499 other than 401, 403 and 407 means the server is there and took the sign-in.
+        The request goes through the same ``http-connector`` egress policy as the connection's actions.
+        """
         from firefly_weave.contracts.connectors import ConnectionRequest
 
+        revision = connection.revision
         try:
-            revision = connection.revision
             validate_profile_connection(
                 ConnectionRequest(
                     name=revision.name,
@@ -273,9 +297,59 @@ class HttpProfileConnector:
                     allowed_destinations=revision.allowed_destinations,
                 )
             )
-            return ConnectionTestResult(ok=True, code="ok")
-        except ValueError:
+            profile = ProfileConnection.model_validate(revision.config)
+        except (ValueError, ValidationError):
             return ConnectionTestResult(ok=False, code="failed")
+        if set(revision.secret_refs) != profile.auth.slots():
+            return ConnectionTestResult(ok=False, code="failed")
+
+        async def credentials(name: str) -> ResolvedSecret:
+            return connection.credentials(name)
+
+        async def authorize() -> None:
+            # The connection service checked the caller's authority right before this test.
+            return None
+
+        deadline = datetime.now(UTC) + timedelta(seconds=CONNECTION_TEST_SECONDS)
+        invocation = ConnectorInvocation(revision, {}, "test", {}, {}, 0, 0)
+        context = ActionContext(f"connection-test:{revision.id}", deadline, credentials, invocation, authorize)
+        headers: dict[str, str] = {}
+        secrets: list[str] = []
+        token: MachineToken | None = None
+        try:
+            async with asyncio.timeout(CONNECTION_TEST_SECONDS):
+                token = await self._authenticate(profile, context, headers, secrets)
+                with protected_http_diagnostics():
+                    response = await self.client.request_bounded(
+                        "HEAD",
+                        profile.base_url,
+                        max_response_bytes=0,
+                        egress_policy=self.policy.egress(
+                            "http-connector",
+                            revision.allowed_destinations,
+                            sends_credentials=bool(profile.auth.slots()),
+                        ),
+                        headers=headers,
+                        timeout=max(0.1, (deadline - datetime.now(UTC)).total_seconds()),
+                        follow_redirects=False,
+                    )
+            status = response.status_code
+            if status in {401, 403, 407}:
+                return ConnectionTestResult(ok=False, code="failed", reason="unauthorized")
+            if 200 <= status < 500:
+                return ConnectionTestResult(ok=True, code="ok")
+            return ConnectionTestResult(ok=False, code="failed", reason="status")
+        except EgressDenied:
+            return ConnectionTestResult(ok=False, code="failed", reason="destination")
+        except (httpcore.ConnectError, httpcore.ConnectTimeout, httpcore.TimeoutException, TimeoutError):
+            return ConnectionTestResult(ok=False, code="failed", reason="unreachable")
+        except Exception:
+            return ConnectionTestResult(ok=False, code="failed")
+        finally:
+            headers.clear()
+            secrets.clear()
+            if token is not None:
+                token.discard()
 
 
 def register_http_profile_services(context: "ApplicationContext") -> None:

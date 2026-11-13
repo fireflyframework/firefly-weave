@@ -52,6 +52,7 @@ from firefly_weave.contracts.connectors import (
     BoundConnection,
     ConnectionRequest,
     ConnectionRevision,
+    ConnectionTestReason,
     ConnectionTestResult,
     ResolvedSecret,
     transport_encrypted,
@@ -321,6 +322,7 @@ class ConnectionService(ConnectionBindingPort):
             )
         active = True
         resolved: dict[str, ResolvedSecret] = {}
+        reason: ConnectionTestReason | None = None
 
         def credentials(name: str) -> ResolvedSecret:
             if not active or name not in resolved:
@@ -341,8 +343,10 @@ class ConnectionService(ConnectionBindingPort):
                     BoundConnection("test", revision, credentials)
                 )
                 ok = tested.ok is True
+                # Only the adapter's reason is kept; a test result never carries what the server answered.
+                reason = None if ok else tested.reason
         except Exception:
-            ok = False
+            ok, reason = False, None
         finally:
             active = False
             resolved.clear()
@@ -350,7 +354,11 @@ class ConnectionService(ConnectionBindingPort):
             await self.refresh(actor, scope, revision.id, deadline, context)
         # Plain HTTP is allowed but never silent: the answer says whether requests to the base URL are encrypted.
         result = ConnectionTestResult(
-            ok=ok, code="ok" if ok else "failed", job_id=job_id, encrypted=transport_encrypted(revision.config)
+            ok=ok,
+            code="ok" if ok else "failed",
+            job_id=job_id,
+            encrypted=transport_encrypted(revision.config),
+            reason=reason,
         )
         async with self.uow.open(scope) as tx:
             await ConnectionRepository(tx).execute(

@@ -169,3 +169,19 @@ export const waitingStepTest: StepTestView = {
   ended_at: null,
   duration_ms: null,
 };
+
+/** A step test whose output was classified as secret: no value, and why. */
+export const omittedStepTest: StepTestView = {
+  id: "8f9a0b1c-3d4e-4f5a-9b0c-1d2e3f4a5b6c",
+  run_id: "4a5b6c7d-8e9f-4a0b-8c1d-2e3f4a5b6c7d",
+  status: "succeeded",
+  side_effect: "read_only",
+  pending: [],
+  output: null,
+  omitted: "classified_secret",
+  error: null,
+  attempts: 1,
+  started_at: "2026-10-07T10:00:00Z",
+  ended_at: "2026-10-07T10:00:01Z",
+  duration_ms: 812,
+};

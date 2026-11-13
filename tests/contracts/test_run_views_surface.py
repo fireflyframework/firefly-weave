@@ -30,6 +30,8 @@ EXPECTED = {
     "runs.steps": (ENVIRONMENT + "/runs/{identifier}/steps", StepFactPage),
     "runs.logs": (ENVIRONMENT + "/runs/{identifier}/logs", RunLogPage),
 }
+# Published before it is served, outside run views: answering a waiting AI agent step test.
+UNSERVED_ELSEWHERE = {"step_tests.answer"}
 
 
 spec = cache(export_openapi)
@@ -48,7 +50,8 @@ def test_operation_availability_matches_served_reads(identifier):
     assert operation.capability == "run.read"
     assert operation.served is (identifier != "runs.logs")
     assert operation.page is False and operation.request is None
-    assert all(other.served for key, other in OPERATIONS.items() if key not in EXPECTED)
+    unserved = {key for key, other in OPERATIONS.items() if key not in EXPECTED and not other.served}
+    assert unserved == UNSERVED_ELSEWHERE
 
 
 @pytest.mark.parametrize("identifier", sorted(EXPECTED))
@@ -88,7 +91,8 @@ def test_query_parameters_keep_their_constraints_and_defaults():
     assert RunStepQuery.model_fields["include"].default is None
 
 
-def test_every_other_operation_documents_no_501():
+def test_every_other_operation_documents_501_only_when_unserved():
     for identifier, operation in OPERATIONS.items():
         if identifier not in EXPECTED:
-            assert "501" not in spec()["paths"][operation.canonical_path][operation.method.lower()]["responses"]
+            responses = spec()["paths"][operation.canonical_path][operation.method.lower()]["responses"]
+            assert ("501" in responses) is (identifier in UNSERVED_ELSEWHERE), identifier

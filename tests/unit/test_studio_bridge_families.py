@@ -254,6 +254,12 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "studio_documents.read",
         "studio_documents.save",
         "studio_documents.delete",
+        "step_tests.create",
+        "step_tests.read",
+        "step_tests.cancel",
+        "step_tests.answer",
+        "test_policy.read",
+        "test_policy.save",
         *(
             "deployment_change_requests." + verb
             for verb in (
@@ -308,6 +314,33 @@ def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):
         "releases.usage",
         "operations_summary.read",
         "operations_telemetry.read",
+    }
+
+
+def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        crossing = {
+            identifier
+            for identifier, operation in OPERATIONS.items()
+            if identifier.startswith(("step_tests.", "test_policy."))
+            and studio.check_scope(
+                operation.canonical_path.format(
+                    tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
+                ),
+                operation.method,
+            )
+            == 200
+        }
+    assert crossing == {
+        "step_tests.create",
+        "step_tests.read",
+        "step_tests.cancel",
+        "step_tests.answer",
+        "test_policy.read",
+        "test_policy.save",
     }
 
 

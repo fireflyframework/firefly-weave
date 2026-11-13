@@ -229,6 +229,13 @@ export type StepTestStatus =
   | "failed"
   | "timed_out"
   | "cancelled";
+/** Why a step test's output was left out, as run views say it. */
+export type StepTestOmission =
+  | "classified_secret"
+  | "classification_unavailable"
+  | "uncertain_derived"
+  | "confidential_text"
+  | "resource_limit";
 export interface StepTestView {
   id: string;
   run_id: string;
@@ -236,6 +243,8 @@ export interface StepTestView {
   side_effect: SideEffect;
   pending: StepTestPending[];
   output: Json;
+  /** Set when the output was left out: then `output` is null and holds no value. */
+  omitted?: StepTestOmission;
   error: { code: string; message: string } | null;
   attempts: number;
   started_at: string;

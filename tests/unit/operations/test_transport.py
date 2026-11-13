@@ -321,3 +321,147 @@ async def test_unserved_operations_are_telemetry_unavailable(status, code, expec
     )
     assert records[0]["status"] == expected
     assert attributes(status=expected)["status"] == expected
+
+
+class SlotWatch:
+    """The process's request slots, recording when a request finds none free."""
+
+    def __init__(self, monkeypatch, name, size):
+        import asyncio
+        import threading
+
+        import firefly_weave.operations.execution as execution
+
+        self.refused = asyncio.Event()
+        watch = self
+        # A wait far longer than the test, so a slow host never turns the expected admission into a refusal.
+        monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 30, raising=False)
+
+        class Watched(threading.BoundedSemaphore):
+            def acquire(self, blocking=True, timeout=None):
+                taken = super().acquire(blocking, timeout)
+                if not taken:
+                    watch.refused.set()
+                return taken
+
+        monkeypatch.setattr(execution, name, Watched(size))
+
+
+class Held:
+    """Requests that stay inside the API, holding their slot, until they are told to finish."""
+
+    def __init__(self):
+        import asyncio
+
+        self.entered: dict[str, asyncio.Event] = {}
+        self.finish: dict[str, asyncio.Event] = {}
+
+    async def downstream(self, scope, receive, send):
+        path = scope["path"]
+        if path in self.finish:
+            self.entered[path].set()
+            await self.finish[path].wait()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    def start(self, app, method, path):
+        import asyncio
+
+        self.entered[path], self.finish[path] = asyncio.Event(), asyncio.Event()
+        return asyncio.create_task(request(app, method, path))
+
+
+async def request(app, method, path):
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"{}" if method == "POST" else b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await app({"type": "http", "method": method, "path": path, "headers": []}, receive, send)
+    return sent
+
+
+async def test_an_operator_command_waits_for_a_work_slot_that_a_finishing_request_frees(monkeypatch):
+    """Two claim polls hold both work slots; an operator's resume is admitted when one of them ends."""
+    import asyncio
+
+    from firefly_weave.operations.execution import WORK_SLOTS
+    from firefly_weave.operations.transport import BodyBoundary
+
+    watch = SlotWatch(monkeypatch, "_work_slots", WORK_SLOTS)
+    held = Held()
+    app = BodyBoundary(held.downstream)
+    polls = [held.start(app, "POST", f"/tasks/claim/{index}") for index in range(WORK_SLOTS)]
+    try:
+        async with asyncio.timeout(5):
+            for entered in held.entered.values():
+                await entered.wait()
+            resume = asyncio.create_task(request(app, "POST", "/workers/id/resume"))
+            await watch.refused.wait()
+            held.finish["/tasks/claim/0"].set()
+            answered = await resume
+        assert answered[0]["status"] == 200, answered
+    finally:
+        for finish in held.finish.values():
+            finish.set()
+        await asyncio.gather(*polls, return_exceptions=True)
+
+
+async def test_a_command_still_refused_after_its_wait_keeps_the_capacity_answer(monkeypatch):
+    """No slot frees in time: the request waited its bound, then answers 429 WV-OPERATION-CAPACITY, Retry-After 1."""
+    import asyncio
+
+    import firefly_weave.operations.execution as execution
+    from firefly_weave.operations.transport import BodyBoundary
+
+    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 0.05, raising=False)
+    held = Held()
+    app = BodyBoundary(held.downstream)
+    polls = [held.start(app, "POST", f"/tasks/claim/{index}") for index in range(execution.WORK_SLOTS)]
+    try:
+        async with asyncio.timeout(5):
+            for entered in held.entered.values():
+                await entered.wait()
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            answered = await request(app, "POST", "/workers/id/resume")
+            waited = loop.time() - started
+        assert answered[0]["status"] == 429
+        assert dict(answered[0]["headers"])[b"retry-after"] == b"1"
+        assert json.loads(answered[-1]["body"])["code"] == "WV-OPERATION-CAPACITY"
+        assert waited >= execution.REQUEST_SLOT_WAIT_SECONDS
+        # Requests that give up leave nothing behind, so refusals never build a queue while the slots stay held.
+        assert not execution._waiting
+    finally:
+        for finish in held.finish.values():
+            finish.set()
+        await asyncio.gather(*polls, return_exceptions=True)
+
+
+async def test_a_readiness_probe_waits_for_a_get_slot_that_a_finishing_read_frees(monkeypatch):
+    """Four reads hold every GET slot; the readiness probe is answered when one of them ends."""
+    import asyncio
+
+    from firefly_weave.operations.execution import CONTROL_SLOTS
+    from firefly_weave.operations.transport import BodyBoundary
+
+    watch = SlotWatch(monkeypatch, "_control_slots", CONTROL_SLOTS)
+    held = Held()
+    app = BodyBoundary(held.downstream)
+    reads = [held.start(app, "GET", f"/operations/summary/{index}") for index in range(CONTROL_SLOTS)]
+    try:
+        async with asyncio.timeout(5):
+            for entered in held.entered.values():
+                await entered.wait()
+            probe = asyncio.create_task(request(app, "GET", "/health/ready"))
+            await watch.refused.wait()
+            held.finish["/operations/summary/0"].set()
+            answered = await probe
+        assert answered[0]["status"] == 200, answered
+    finally:
+        for finish in held.finish.values():
+            finish.set()
+        await asyncio.gather(*reads, return_exceptions=True)

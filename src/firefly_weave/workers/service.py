@@ -306,7 +306,8 @@ class WorkerService(WorkerAdmissionPort):
         context: AuditContext,
         tx: Transaction,
     ) -> list[ConnectorExecutionPin]:
-        if capability not in {"release.activate", "run.start"}:
+        # A step test's activation is admitted under step.test, which grants nothing else.
+        if capability not in {"release.activate", "run.start", "step.test"}:
             raise AccessDenied()
         self.definitions.require(actor, scope, capability, context)
         executable: dict[str, Any] = dict(artifact.executable)
