@@ -16,9 +16,14 @@
 
 """CI pins its Linux image and its actions, and runs a cross-platform tier on macOS and Windows (acceptance spec §4)."""
 
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -259,6 +264,65 @@ def test_the_changes_job_tells_the_cluster_job_whether_to_run():
     script = changes_step()["run"]
     assert "then cluster=true; else cluster=false; fi" in script
     assert 'echo "cluster=$cluster" >> "$GITHUB_OUTPUT"' in script
+
+
+# The changes job runs on Linux, and Windows has no POSIX bash of its own: its bash.exe may start WSL instead.
+POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX bash, which the changes job has")
+
+
+# A fake git for the changes script: it records its arguments and prints $CHANGED as `git diff --name-only` would.
+LISTING_GIT = 'git() { printf "%s\\n" "$*" >> "$GIT_ARGS"; printf "%s" "$CHANGED"; }'
+
+
+def run_changes_script(tmp_path, git, changed=""):
+    """The changes job's own script, run as GitHub runs a bash step (bash -eo pipefail), with `git` defined as a
+    shell function so that no PATH lookup reaches the real one. Returns the process and the output file."""
+    step = changes_step()
+    output = tmp_path / "github-output"
+    env = {
+        "PATH": os.environ["PATH"],
+        "BASE": "1111111",
+        "HEAD": "2222222",
+        "CLUSTER_PATHS": step["env"]["CLUSTER_PATHS"],
+        "GITHUB_OUTPUT": output.as_posix(),
+        "GIT_ARGS": (tmp_path / "git-args").as_posix(),
+        "CHANGED": changed,
+    }
+    bash = shutil.which("bash")
+    assert bash is not None
+    script = git + "\n" + step["run"]
+    process = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script], env=env, capture_output=True, text=True
+    )
+    return process, output
+
+
+@POSIX_ONLY
+@pytest.mark.parametrize(
+    ("changed", "count", "cluster"),
+    [
+        ("", 0, "false"),
+        ("docs/operations/kubernetes.md\nsrc/firefly_weave/sdk/platform_clusters.py\nDockerfile\n", 2, "true"),
+        ("scripts/acceptance.py\ndocs/operations/kubernetes.md\n", 0, "false"),
+    ],
+    ids=["empty", "matching", "non-matching"],
+)
+def test_the_changes_script_tells_the_cluster_job_to_run_only_for_changes_on_the_cluster_path(
+    tmp_path, changed, count, cluster
+):
+    process, output = run_changes_script(tmp_path, LISTING_GIT, changed)
+    assert process.returncode == 0, process.stderr
+    assert (tmp_path / "git-args").read_text() == "diff --name-only --no-renames 1111111...2222222\n"
+    assert output.read_text() == f"cluster={cluster}\n"
+    assert process.stdout == f"{count} changed file(s) on the cluster path: cluster={cluster}\n"
+
+
+@POSIX_ONLY
+def test_the_changes_script_fails_instead_of_skipping_the_cluster_job_when_git_cannot_list_the_changes(tmp_path):
+    process, output = run_changes_script(tmp_path, 'git() { echo "fatal: bad revision" >&2; return 128; }')
+    assert process.returncode == 128
+    assert "fatal: bad revision" in process.stderr
+    assert not output.exists()
 
 
 def test_the_cluster_path_covers_the_code_and_tooling_the_cluster_job_proves():
