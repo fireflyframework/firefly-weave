@@ -18,7 +18,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, ConfigDict, Field, field_validator
@@ -174,7 +174,7 @@ class DebugState(ContractModel):
     pending_keys: list[str] = Field(default_factory=list, max_length=MAX_PENDING_KEYS, exclude_if=lambda v: not v)
     # How many values of each mock sequence the session gave out, by mock key, prefixed with the frame key inside
     # called workflows. Omitted when none, so stored sessions keep their bytes.
-    consumed: dict[str, int] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    consumed: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict, exclude_if=lambda v: not v)
     # The tasks AI agents gave people that nobody has answered yet, by instance key, prefixed like ``inputs``.
     asks: dict[str, PersonTask] = Field(default_factory=dict, exclude_if=lambda v: not v)
 

@@ -662,11 +662,16 @@ artifact, as a call step does.
 
 **Checks before anything runs.** Saved turns may call only the agent's tools,
 with arguments that fit each tool's parameters, and every turn must pass the
-agent's turn checks; tool mocks must fit what the tool returns. Anything else is
-refused with `WV-DEBUG-MOCK-OUTPUT`. A key that names no agent, no tool of it,
-a turn, or a review is refused with `WV-DEBUG-MOCK-KEY`. Saved turns that end
-before the agent does stop the simulation with `WV-DEBUG-MISSING_MOCK` on that
-turn, such as `support#2`.
+agent's turn checks; tool mocks must fit what the tool returns. A mock of one
+call must fit what one of the agent's tools returns, and it's checked against
+every tool it fits, because any of them may be the tool the call runs: a value
+that one of them marks secret is refused. Anything else is refused with
+`WV-DEBUG-MOCK-OUTPUT`. A key that names no agent, no tool of it, a turn, a
+review, or a call the agent can't make (past its `maxIterations`, or past 16
+calls in a turn) is refused with `WV-DEBUG-MOCK-KEY`. An agent with no saved
+turns, or saved turns that end before the agent does, stops the simulation with
+`WV-DEBUG-MISSING_MOCK` on that turn, such as `support#2`, and the hint names
+the agent's `node:` and `agent:` keys.
 
 **Reviews and questions.** A call that needs a review waits at its review key,
 such as `support#1.1.review`, and a question to a person waits at its call key,
@@ -677,9 +682,15 @@ rejection is a result the model reads. Set `"autoApprove": true` in the saved
 turns to approve every review at once; a question with a tool mock is answered
 by the mock.
 
-**Not simulated yet.** Scripted failures (`errors`) and results that never
-arrive (`pending`) can't name an agent's turn or call, and an entry's `memory`
-isn't read: a simulated agent starts with the memory its run holds.
+**Failures and results that never arrive.** Scripted failures (`errors`) and
+results that never arrive (`pending`) can't name an agent's turn or call by its
+own key. Under `action:EXACT_REFERENCE` they reach every call of a tool that
+runs that action, as they reach its steps: a failure is a result the model
+reads (or fails the agent, with `onToolError: incident`), and a pending call
+keeps the agent waiting.
+
+**Not simulated yet.** An entry's `memory` isn't read: a simulated agent starts
+with the memory its run holds.
 
 **Only simulations read these mocks.** Saved turns, tool mocks and
 `autoApprove` belong to debug sessions and to Studio's Execute. A live run never

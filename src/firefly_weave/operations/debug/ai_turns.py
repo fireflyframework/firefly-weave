@@ -26,7 +26,8 @@ from typing import Literal, cast
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.ir import ActionNode, AgentNode, AgentToolIR, IRNode, WorkflowIR
-from firefly_weave.contracts.agent_turns import TurnOutput, call_id
+from firefly_weave.compiler.schemas import payload_issues
+from firefly_weave.contracts.agent_turns import MAX_TURN_TOOL_CALLS, TurnOutput, call_id
 from firefly_weave.contracts.instance_keys import InstanceKey, InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.studio_documents import ai_turns_problems
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -149,7 +150,8 @@ def agent_mock(prepared: PreparedWorkflow, key: str) -> AgentMock | None:
     """The agent a mock key names; None for a key that names no agent, which the simulator checks as it checks a step's.
 
     ``<key>`` is the agent's step ID (every activation) or the instance key of one activation inside loops. A turn
-    or a review is never mocked: saved turns answer a turn, and a person answers a review.
+    or a review is never mocked: saved turns answer a turn, and a person answers a review. A call key names a call the
+    agent can make: in a turn that may call tools, and at most ``MAX_TURN_TOOL_CALLS`` a turn.
     """
     kind, _, rest = key.partition(":")
     if kind == "agent":
@@ -166,18 +168,23 @@ def agent_mock(prepared: PreparedWorkflow, key: str) -> AgentMock | None:
     if isinstance(node, AgentNode):
         return AgentMock("pin", node)
     parsed = parse_agent_key(rest)
-    if parsed is None or parsed.call is None or parsed.review:
+    if parsed is None or parsed.call is None or parsed.review or parsed.call > MAX_TURN_TOOL_CALLS:
         return None
     node = step_instance(prepared, parsed.agent)
-    return AgentMock("call", node) if isinstance(node, AgentNode) else None
+    # The turn after the last one that may call tools is a final answer, with no calls.
+    if not isinstance(node, AgentNode) or parsed.turn > node.limits.max_iterations:
+        return None
+    return AgentMock("call", node)
 
 
 def check_agent_mock(ir: WorkflowIR, mock: AgentMock, value: JsonValue) -> None:
     """Check an agent mock as the kernel would check what it stands for; ``WV-DEBUG-MOCK-OUTPUT`` when it doesn't fit.
 
     Saved turns may call only the agent's tools, with arguments that fit each tool's parameters, and every turn must
-    pass the agent's turn guard. A tool mock's values fit the tool's output; a call's value fits one of the agent's
-    tools; a pin fits the agent's output and answers its first turn.
+    pass the agent's turn guard. A tool mock's values fit the tool's output; a pin fits the agent's output and answers
+    its first turn. A call's value fits the output of one of the agent's tools at least, and is classified by every
+    tool output it fits: a value that one of them marks secret is refused, since any of those tools may be the one
+    the call runs.
     """
     try:
         if mock.kind == "turns":
@@ -196,8 +203,12 @@ def check_agent_mock(ir: WorkflowIR, mock: AgentMock, value: JsonValue) -> None:
         elif mock.kind == "pin":
             validate(ir, _guard(ir, mock.node, "agent_output"), value)
             _check_turn(ir, mock.node, pinned_turn(mock.node, value))
-        elif not any(_fits(ir, _output_schema(ir, tool), value) for tool in mock.node.tools):
-            raise ValueError("The call's value fits none of the agent's tools")
+        else:
+            fitting = [schema for tool in mock.node.tools if _shaped(ir, schema := _output_schema(ir, tool), value)]
+            if not fitting:
+                raise ValueError("The call's value fits none of the agent's tools")
+            for schema in fitting:
+                validate(ir, schema, value)
     except ValueError:
         raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
@@ -291,9 +302,7 @@ def _output_schema(ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
     return agent_tools.TOOL_TARGETS[tool.target].output_schema(ir, tool)
 
 
-def _fits(ir: WorkflowIR, schema: JsonObject, value: JsonValue) -> bool:
-    try:
-        validate(ir, schema, value)
-    except ValueError:
-        return False
-    return True
+def _shaped(ir: WorkflowIR, schema: JsonObject, value: JsonValue) -> bool:
+    """Whether ``value`` fits ``schema`` by its shape alone, before any value is classified."""
+    bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
+    return payload_issues(schema, value, bundle) == []

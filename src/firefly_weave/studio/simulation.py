@@ -333,11 +333,10 @@ def classify_test_data(
     arguments by its tool's input. Both lists are refused before anything is simulated.
     """
     from firefly_weave.compiler.agent_tools import offline_input_schema, offline_output_schema
-    from firefly_weave.compiler.schemas import _Failure, validate_payload
+    from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.compiler.test_data import output_target, step_at
     from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
-    from firefly_weave.runtime.agents import parse_agent_key
 
     bundle = {name: schema.value for name, schema in catalog.schemas.items()}
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
@@ -354,38 +353,30 @@ def classify_test_data(
         except (RecursionError, ArithmeticError):
             unclassified.append(path)
 
-    def tools_of(step: JsonObject | None) -> dict[str, JsonObject]:
-        tools = step.get("tools") if step is not None and step.get("kind") == "agent" else None
-        listed = tools if isinstance(tools, list) else []
-        return {cast(str, tool["name"]): tool for tool in listed if isinstance(tool, dict) and "name" in tool}
-
-    def call_output(step: JsonObject | None, value: JsonValue) -> object:
-        # A mock of one call is checked by the first of the agent's tools it fits; one that fits none is refused
-        # by the simulator.
-        for tool in tools_of(step).values():
-            schema = offline_output_schema(tool, catalog)
-            if schema is not None and not validate_payload(schema, value, bundle):
-                return schema
-        return None
+    tools_of = _agent_tools
 
     def mocks_of(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> None:
         for key, value in mocks.items():
             if key.startswith("node:"):
                 instance = key.removeprefix("node:")
-                step = step_at(workflow, instance)
-                called = parse_agent_key(instance)
-                if called is not None and called.call is not None and tools_of(step):
-                    check(_pointer(*prefix, key), call_output(step, value), value)
-                else:
-                    check(_pointer(*prefix, key), output_target(workflow, step, catalog), value)
+                outputs = _call_outputs(workflow, instance, value, catalog, bundle)
+                if outputs is None:
+                    check(_pointer(*prefix, key), output_target(workflow, step_at(workflow, instance), catalog), value)
+                # A mock of one call is classified by every tool output it fits, since any of those tools may be the
+                # one the call runs; one that fits none is refused by the simulator.
+                for schema in outputs or []:
+                    found = len(secret) + len(unclassified)
+                    check(_pointer(*prefix, key), schema, value)
+                    if len(secret) + len(unclassified) > found:
+                        break
             elif key.startswith("action:"):
                 check(_pointer(*prefix, key), _action_output(catalog, key.removeprefix("action:")), value)
             elif key.startswith("tool:"):
                 activation, _, name = key.removeprefix("tool:").rpartition("/")
                 tool = tools_of(step_at(workflow, activation)).get(name)
-                schema = offline_output_schema(tool, catalog) if tool is not None else None
+                returned = offline_output_schema(tool, catalog) if tool is not None else None
                 for item in tool_values(value):
-                    check(_pointer(*prefix, key), schema, item)
+                    check(_pointer(*prefix, key), returned, item)
 
     check("/input", cast(JsonObject, spec).get("inputSchema"), request.input)
     mocks_of(document, request.mocks, "mocks")
@@ -417,6 +408,31 @@ def classify_test_data(
                     arguments = cast(JsonObject, call).get("arguments")
                     check(pointer + "/arguments", offline_input_schema(tool, catalog), arguments)
     return secret, unclassified
+
+
+def _agent_tools(step: JsonObject | None) -> dict[str, JsonObject]:
+    """An AI agent step's tools by name; none for any other step."""
+    tools = step.get("tools") if step is not None and step.get("kind") == "agent" else None
+    listed = tools if isinstance(tools, list) else []
+    return {cast(str, tool["name"]): tool for tool in listed if isinstance(tool, dict) and "name" in tool}
+
+
+def _call_outputs(
+    workflow: JsonObject, instance: str, value: JsonValue, catalog: CatalogSnapshot, bundle: dict[str, JsonObject]
+) -> list[JsonObject] | None:
+    """For a mock of one AI agent call (``node:support#1.1``), the outputs of the agent's tools it fits by its shape
+    alone; None when ``instance`` isn't a call of an agent with tools."""
+    from firefly_weave.compiler.agent_tools import offline_output_schema
+    from firefly_weave.compiler.schemas import payload_issues
+    from firefly_weave.compiler.test_data import step_at
+    from firefly_weave.runtime.agents import parse_agent_key
+
+    called = parse_agent_key(instance)
+    tools = _agent_tools(step_at(workflow, instance)) if called is not None and called.call is not None else {}
+    if not tools:
+        return None
+    schemas = (offline_output_schema(tool, catalog) for tool in tools.values())
+    return [schema for schema in schemas if schema is not None and payload_issues(schema, value, bundle) == []]
 
 
 def secret_paths(document: JsonObject, request: SimulationRequest, catalog: CatalogSnapshot) -> list[str]:
@@ -969,6 +985,12 @@ def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catal
     misfits = set()
     for key, value in mocks.items():
         if not key.startswith("node:"):
+            continue
+        outputs = _call_outputs(document, key.removeprefix("node:"), value, catalog, bundle)
+        if outputs is not None:
+            # A mock of one AI agent call is a tool's result, not the agent's output: it fits a tool's or misfits.
+            if not outputs:
+                misfits.add(key)
             continue
         target = output_target(document, step_at(document, key.removeprefix("node:")), catalog)
         if isinstance(target, dict) and validate_payload(target, value, bundle):

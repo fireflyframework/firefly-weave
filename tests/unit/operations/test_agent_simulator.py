@@ -29,11 +29,13 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
 from agent_fixtures import INPUT, NOW, agent, answering, artifact, plain, workflow  # noqa: E402
-from test_agent_workflows import order_action, orders_connector  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+from test_agent_kernel import looped  # noqa: E402
+from test_agent_workflows import LOOKUP, catalog, order_action, orders_connector  # noqa: E402
 
 from firefly_weave.contracts.agent_turns import TURN_TASK_TYPE  # noqa: E402
 from firefly_weave.operations.debug.ai_turns import with_ai_turns  # noqa: E402
-from firefly_weave.operations.debug.models import DebugError  # noqa: E402
+from firefly_weave.operations.debug.models import DebugError, ScriptedError  # noqa: E402
 from firefly_weave.operations.debug.simulator import Simulator  # noqa: E402
 from firefly_weave.runtime.kernel import KernelError, transition  # noqa: E402
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TaskIntent  # noqa: E402
@@ -357,9 +359,13 @@ def studio_connector():
     return connector
 
 
-def studio_request(**scripts):
-    definitions = [studio_connector(), order_action("orders-get", "get"), order_action("orders-cancel", "cancel")]
-    document = plain(answering(workflow(agent())))
+def studio_request(document=None, definitions=None, mocks=None, **scripts):
+    definitions = definitions or [
+        studio_connector(),
+        order_action("orders-get", "get"),
+        order_action("orders-cancel", "cancel"),
+    ]
+    document = document or plain(answering(workflow(agent())))
     body = {
         "source": json.dumps(document),
         "format": "json",
@@ -368,7 +374,7 @@ def studio_request(**scripts):
         "input": INPUT,
         "now": "2026-11-12T09:00:00Z",
         "target": {"mode": "workflow"},
-        "mocks": {"tool:support/cancel_order": {"status": "cancelled"}},
+        "mocks": {"tool:support/cancel_order": {"status": "cancelled"}} if mocks is None else mocks,
         "scripts": scripts,
     }
     return ExecuteRequest.model_validate_json(json.dumps(body))
@@ -409,3 +415,166 @@ def test_studio_refuses_a_secret_value_in_a_tool_mock():
     assert refused.value.code == "WV-SCHEMA-SECRET_VALUE"
     assert refused.value.paths == ["/mocks/tool:support~1lookup_order"]
     assert "tok-live-1" not in repr(refused.value.__dict__)
+
+
+# A second tool whose output marks a token secret: a value with a token fits the lookup's output too.
+TOKEN_ACTION = order_action("orders-token", "refund")
+TOKEN_ACTION["spec"]["outputSchema"] = {
+    "type": "object",
+    "properties": {"status": {"type": "string"}, "token": {"type": "string", "x-secret": True}},
+}
+REFUND = {
+    "name": "refund_order",
+    "description": "Refund an order.",
+    "action": "orders-token@1.0.0",
+    "connection": "orders",
+    "fixed": {"object": {"region": {"literal": "eu"}}},
+}
+TWO_TOOLS_DOCUMENT = plain(answering(workflow(agent(tools=[LOOKUP, REFUND]))))
+TWO_TOOLS = artifact(TWO_TOOLS_DOCUMENT, catalog(TOKEN_ACTION))
+SECRET_CALL = {"status": "ok", "token": "tok-live-7"}
+
+
+def test_a_call_mock_secret_for_any_tool_it_fits_is_refused():
+    mocks = {
+        "agent:support": turns(calls(("refund_order", {"id": "A-17"})), {"final": "Done."}),
+        "node:support#1.1": SECRET_CALL,
+    }
+
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT") as refused:
+        simulate(mocks, flow=TWO_TOOLS)
+
+    assert "tok-live-7" not in repr(refused.value)
+
+
+def test_studio_refuses_a_call_mock_secret_for_any_tool_it_fits():
+    definitions = [studio_connector(), order_action("orders-get", "get"), TOKEN_ACTION]
+    request = studio_request(
+        TWO_TOOLS_DOCUMENT,
+        definitions,
+        {"node:support#1.1": SECRET_CALL},
+        aiTurns={"support": turns(calls(("refund_order", {"id": "A-17"})), {"final": "Done."})},
+    )
+
+    with pytest.raises(SimulationRefused) as refused:
+        execute(request, None)
+
+    assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-SECRET_VALUE", ["/mocks/node:support#1.1"])
+    assert "tok-live-7" not in repr(refused.value.__dict__)
+
+
+def test_studio_keeps_a_mock_for_one_call():
+    request = studio_request(
+        mocks={"node:support#1.1": {"status": "from the call"}},
+        aiTurns={"support": turns(lookup(), {"final": "Shipped."})},
+    )
+
+    answer = execute(request, None)
+
+    # Before, the call's mock was checked against the agent's own output, dropped, and the run blocked at the call.
+    assert answer.status == "completed"
+    [step] = answer.trace
+    assert (step.nodeId, step.output["result"], step.output["usage"]["toolCalls"]) == ("support", "Shipped.", 1)
+
+
+def test_a_turn_without_saved_turns_asks_for_them_at_the_agents_keys():
+    view = simulate({}).continue_until_breakpoint()
+
+    [missing] = view.diagnostics
+    assert missing.code == "WV-DEBUG-MISSING_MOCK"
+    assert missing.message == "The AI agent's turn support#1 needs saved turns or a pinned output."
+    assert missing.hint == "Add a mock under node:support, agent:support."
+
+
+@pytest.mark.parametrize("key", ["node:support#7.1", "node:support#99.1", "node:support#1.17"])
+def test_a_call_key_past_the_agents_limits_is_refused(key):
+    # The agent takes at most six turns with tools (a seventh is a final answer) and 16 calls a turn.
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-KEY"):
+        simulate({key: SHIPPED})
+
+
+def test_an_action_failure_or_pending_result_reaches_an_agents_tool_call():
+    script = {"agent:support": turns(lookup(), {"final": "Done."})}
+    failed = Simulator(
+        FLOW,
+        mocks=script,
+        errors={"action:orders-get@1.0.0": ScriptedError(code="RATE_LIMITED")},
+        input=INPUT,
+        now=NOW,
+    )
+
+    # The model reads the failure as the call's result and goes on to its next saved turn.
+    assert failed.continue_until_breakpoint().status == "succeeded"
+    [result] = [message for message in failed.data.inputs["support#2"]["messages"] if message["role"] == "tool"]
+    assert (result["content"]["error"], result["isError"]) == ("RATE_LIMITED", True)
+
+    waiting = Simulator(FLOW, mocks=script, pending=["action:orders-get@1.0.0"], input=INPUT, now=NOW)
+    view = waiting.continue_until_breakpoint()
+    assert view.status == "waiting" and "support#1.1" in view.active_nodes
+
+
+def test_a_sequence_position_is_never_negative():
+    simulator = simulate({"agent:support": turns(lookup(), {"final": "Done."}), "tool:support/lookup_order": SHIPPED})
+    stored = json.loads(simulator.serialize())
+    stored["consumed"] = {"tool:support/lookup_order": -1}
+
+    with pytest.raises(ValidationError):
+        Simulator.restore(json.dumps(stored))
+
+
+LOOPED = artifact(plain(looped(agent())))
+TWO_ORDERS = {**INPUT, "orders": ["A-17", "A-18"]}
+
+
+def test_an_activations_keys_win_over_the_steps_in_a_loop():
+    mocks = {
+        "agent:support": turns(lookup("A-17"), {"final": "from the step"}),
+        "agent:support[1]": turns(lookup("A-18"), {"final": "from the second"}),
+        "tool:support/lookup_order": {"status": "from the step"},
+        "tool:support[1]/lookup_order": {"status": "from the second"},
+    }
+    simulator = Simulator(LOOPED, mocks=mocks, input=TWO_ORDERS, now=NOW)
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.variables["output"] == ["from the step", "from the second"]
+    assert simulator.data.outputs["support[0]#1.1"] == {"status": "from the step"}
+    assert simulator.data.outputs["support[1]#1.1"] == {"status": "from the second"}
+
+
+def test_auto_approve_answers_only_the_activation_whose_turns_say_so():
+    cancel = turns(calls(("cancel_order", {"id": "A-17"})), {"final": "Cancelled."})
+    mocks = {
+        "agent:support": cancel | {"autoApprove": True},
+        "agent:support[1]": cancel,
+        "tool:support/cancel_order": {"status": "cancelled"},
+    }
+    simulator = Simulator(LOOPED, mocks=mocks, input=TWO_ORDERS, now=NOW)
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.status == "waiting"
+    assert list(simulator.data.asks) == ["support[1]#1.1.review"]
+    assert simulator.data.outputs["support[0]#1.1"] == {"status": "cancelled"}
+
+
+NOTIFY = {"name": "notify", "description": "Notify the customer.", "workflow": "notify-customer@1.0.0"}
+NOTIFYING = artifact(plain(answering(workflow(agent(tools=[NOTIFY])))))
+
+
+def test_a_workflow_tool_takes_its_mock_sequence_in_order():
+    mocks = {
+        "agent:support": turns(
+            calls(("notify", {"message": "Shipped."})),
+            calls(("notify", {"message": "Delivered."})),
+            {"final": "Notified."},
+            autoApprove=True,
+        ),
+        "tool:support/notify": {"sequence": [{"sent": 1}, {"sent": 2}]},
+    }
+    simulator = simulate(mocks, flow=NOTIFYING)
+
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    # Each call completed as a called workflow's success, with the sequence's next value as its output.
+    assert simulator.data.outputs["support#1.1"] == {"sent": 1}
+    assert simulator.data.outputs["support#2.1"] == {"sent": 2}

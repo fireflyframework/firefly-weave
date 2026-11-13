@@ -469,7 +469,10 @@ class Simulator:
         reference = agent_key(self._workflow(frame).ir, instance, state.agents)
         if reference is not None:
             own = agent_candidates(reference, instance)
-            return list(dict.fromkeys([*own, *fallbacks])) if own is not None else []
+            if own is None:
+                return []
+            # A turn is answered at the agent's keys only; a call also at the keys its tool's intent names.
+            return own if reference.key.call is None else list(dict.fromkeys([*own, *fallbacks]))
         try:
             phase = split_phase(instance)
         except InvalidInstanceKey:
@@ -947,8 +950,11 @@ class Simulator:
             answer = Answer("mock", None, {})
         if answer.kind == "none":
             tried = self._candidates(key, node_id, fallbacks)
+            turn = agent_key(called.ir, node_id)
             self._missing(
-                "An action requires an explicit mock.",
+                f"The AI agent's turn {node_id} needs saved turns or a pinned output."
+                if turn is not None and turn.key.call is None
+                else "An action requires an explicit mock.",
                 "Add a mock under "
                 + ", ".join(tried)
                 + (f" in the mocks of {called.reference}" if called.reference else "")
