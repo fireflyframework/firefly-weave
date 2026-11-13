@@ -29,6 +29,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: weave-worker
+      annotations:
+        # The configuration your runner's policy binds this component to; its runner refuses any other.
+        firefly.weave/configuration: __WEAVE_WORKER_CONFIGURATION__
     spec:
       terminationGracePeriodSeconds: 240
       automountServiceAccountToken: false
@@ -74,6 +77,15 @@ spec:
                 secretKeyRef:
                   name: weave-worker-runtime
                   key: WEAVE_EFFECT_URL
+            # The worker reports where it runs, so placement and drains can find its pod.
+            - name: WEAVE_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WEAVE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           resources:
             requests:
               cpu: 100m

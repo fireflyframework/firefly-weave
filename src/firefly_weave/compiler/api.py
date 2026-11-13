@@ -18,7 +18,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+from collections import OrderedDict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -32,6 +35,7 @@ from firefly_weave.compiler.ir import ArtifactEnvelope, require_supported_ir
 from firefly_weave.compiler.lowering import DEFAULT_ARTIFACT_LIMITS, ArtifactLimits, ConstructionBudget, lower
 from firefly_weave.compiler.parser import ParseFailure, parse_source
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
+from firefly_weave.contracts import language_features
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -325,6 +329,15 @@ def validate_authoring(
     )
 
 
+# Verified artifacts kept for import_artifact, least recently used first. One artifact may hold up to 32 MiB, so the
+# kept ones are bounded by their bytes as well as by their number.
+IMPORTED_ARTIFACTS = 64
+IMPORTED_BYTES = 64 * 1024 * 1024
+type _ImportKey = tuple[str, bytes, ArtifactLimits, frozenset[str]]
+_imported: OrderedDict[_ImportKey, CompiledArtifact] = OrderedDict()
+_imported_lock = threading.Lock()
+
+
 def import_artifact(
     source: str | bytes | JsonObject,
     *,
@@ -337,7 +350,103 @@ def import_artifact(
     (``ir_unsupported``) before strict validation. Hashes provide integrity, not provenance. Publication must
     recompile trusted source. Source hashes/maps/diagnostics are an untrusted author envelope, outside executable
     identity.
+
+    A verified artifact is kept for the process and returned again, unchecked, only for the same content under the
+    same limits and language features (the advertised ones at the time of the call when ``features`` is omitted).
+    One change to a run reads its stored artifact in several checks while it holds the project's operation lock;
+    verifying it each time kept that lock long enough for another change to the project to be refused. A refused
+    artifact is never kept, so it is checked, and refused, every time. The check reads a snapshot of the content the
+    key was taken from, so a source changed by its holder during the import cannot be kept under the earlier key.
     """
+    found = _import_key(source, limits, features)
+    if found is None:
+        return _verified_artifact(source, limits, features)
+    key, snapshot = found
+    with _imported_lock:
+        if (kept := _imported.get(key)) is not None:
+            _imported.move_to_end(key)
+            return kept
+    artifact = _verified_artifact(snapshot, limits, key[3])
+    if len(artifact.to_bytes()) > IMPORTED_BYTES:
+        # Keeping it would push every other artifact out and still leave the budget exceeded.
+        return artifact
+    with _imported_lock:
+        _imported[key] = artifact
+        _imported.move_to_end(key)
+        while len(_imported) > IMPORTED_ARTIFACTS or (
+            sum(len(kept.to_bytes()) for kept in _imported.values()) > IMPORTED_BYTES
+        ):
+            _imported.popitem(last=False)
+    return artifact
+
+
+_PLAIN_SCALARS = frozenset({str, int, float, bool, type(None)})
+
+
+def _import_key(
+    source: str | bytes | JsonObject, limits: ArtifactLimits, features: Collection[str] | None
+) -> tuple[_ImportKey, str | bytes | JsonObject] | None:
+    """What an import's outcome depends on, and the snapshot of the content to check.
+
+    The key holds the content's SHA-256, its form, the limits and the language features; the snapshot is decoded
+    from the very text the key hashes. None for a source that is not plain JSON (a subclass of dict, list, str or
+    int, a key that is not a string, a tuple, a cycle, a value nested past the limits): it is checked as given and
+    never kept, so the parser refuses it as it would without the cache.
+    """
+    snapshot: str | bytes | JsonObject
+    if type(source) is str:
+        form, content, snapshot = "str", source.encode("utf-8", "surrogatepass"), source
+    elif type(source) is bytes:
+        form, content, snapshot = "bytes", source, source
+    else:
+        if not _plain_json(source, limits):
+            return None
+        try:
+            text = json.dumps(source, separators=(",", ":"), allow_nan=False)
+        except ValueError:
+            return None
+        form, content, snapshot = "object", text.encode(), cast(JsonObject, json.loads(text))
+    try:
+        listed = frozenset(language_features.ADVERTISED_FEATURES if features is None else features)
+    except TypeError:
+        return None
+    return (form, hashlib.sha256(content).digest(), limits, listed), snapshot
+
+
+def _plain_json(value: object, limits: ArtifactLimits) -> bool:
+    """Whether every value is exactly a JSON type and every key exactly a string, within the limits' depth and nodes.
+
+    One walk, without recursion; the node bound also ends a walk through a cycle or a much-shared value.
+    """
+    if type(value) is not dict:
+        return False
+    pending: list[tuple[object, int]] = [(value, 1)]
+    nodes = 0
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > limits.max_nodes:
+            return False
+        kind = type(item)
+        if kind is dict:
+            if depth > limits.max_depth:
+                return False
+            for key, nested in cast(dict[object, object], item).items():
+                if type(key) is not str:
+                    return False
+                pending.append((nested, depth + 1))
+        elif kind is list:
+            if depth > limits.max_depth:
+                return False
+            pending.extend((nested, depth + 1) for nested in cast(list[object], item))
+        elif kind not in _PLAIN_SCALARS:
+            return False
+    return True
+
+
+def _verified_artifact(
+    source: str | bytes | JsonObject, limits: ArtifactLimits, features: Collection[str] | None
+) -> CompiledArtifact:
     value = parse_source(
         source, format="object" if isinstance(source, dict) else "json", limits=limits.value_limits()
     ).value

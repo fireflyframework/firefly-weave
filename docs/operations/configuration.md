@@ -219,12 +219,25 @@ outstanding work, and may return a bounded
 authorize further ordinary execution. Serialized byte limits are separate from
 process memory and database disk usage.
 
+**Request execution.** Each API process works on at most two requests that
+change something and four that read or stop something at a time. Reads and
+stops are `GET`, `HEAD`, and `OPTIONS` requests (health and readiness probes
+included), paths that end in `/cancel`, `/disable`, or `/revoke`, and
+`/operations/compatibility` requests; debug requests always count as changes.
+A request that finds every slot of its kind busy waits, in arrival order, up
+to 250 ms for one to free, then answers 429 `WV-OPERATION-CAPACITY` with
+`Retry-After: 1`. These limits have no setting.
+
 **Request bodies.** Each API process receives at most 16 request bodies and
 128 MiB at a time. Ordinary traffic can use 12 receivers and 96 MiB; four
 receivers and 32 MiB stay reserved for control and inspection requests, and the
 pools never borrow from each other. The capabilities response reports the total
 and reserved control ceilings. When saturated, the API returns a bounded capacity
 error instead of queuing request bodies.
+
+**Checked workflow artifacts.** Each server or worker process keeps up to 64
+workflow artifacts it has checked, and 64 MiB of them at most, in memory, and
+reuses one only for the same content. These bounds have no setting.
 
 **Every replica and the migration must use the same policy.** The policy's
 fingerprint is checked against the database's policy metadata, and a mismatch

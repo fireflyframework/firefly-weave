@@ -221,16 +221,14 @@ for (const [width, height] of [
     expect(capture.creates[0].headers()["idempotency-key"]).toMatch(
       /^[0-9a-f-]{36}$/,
     );
-    const check = dialog.getByRole("button", {
-      name: "Check configuration (no request is sent)",
-    });
+    const check = dialog.getByRole("button", { name: "Test connection" });
     await expect(check).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(dialog.getByRole("status").last()).toContainText(
-      "Checking the configuration",
+      "Testing… Weave sends one request to api.pets.example.",
     );
     await expect(dialog).toContainText(
-      "The platform accepted this configuration.",
+      "Connected: api.pets.example answered.",
       {
         timeout: 30_000,
       },
@@ -244,6 +242,42 @@ for (const [width, height] of [
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   });
+
+test("Test connection says it sends one request and shows why it failed", async ({
+  page,
+}) => {
+  const capture = await platform(page);
+  await page.route("**/environments/development/connections", (r) => {
+    capture.creates.push(r.request());
+    return r.fulfill({
+      status: 201,
+      json: {
+        ...oauthBody,
+        id: revisionId,
+        revision: 1,
+        connector: "weave-http@2.0.0",
+      },
+    });
+  });
+  await page.route(`**/connections/${revisionId}/test`, (r) => {
+    capture.tests.push(r.request());
+    return r.fulfill({
+      json: { ok: false, code: "failed", reason: "unauthorized" },
+    });
+  });
+  const dialog = await openForm(page);
+  await fillOauth(dialog);
+  const create = dialog.getByRole("button", { name: "Create connection" });
+  await create.scrollIntoViewIfNeeded();
+  await create.click();
+  await expect(dialog).toContainText("Created pets (revision 1).");
+  await dialog.getByRole("button", { name: "Test connection" }).click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "api.pets.example refused this connection's sign-in.",
+  );
+  await expect(dialog).not.toContainText(/no request/i);
+  expect(capture.tests).toHaveLength(1);
+});
 
 test("an invalid field keeps its red border, and the focus ring clears its label", async ({
   page,
@@ -462,10 +496,8 @@ test("a check that finishes after a newer revision is created is not shown for i
   await fillOauth(dialog);
   await dialog.getByRole("button", { name: "Create connection" }).click();
   await expect(dialog).toContainText("Created pets (revision 1).");
-  await dialog
-    .getByRole("button", { name: "Check configuration (no request is sent)" })
-    .click();
-  await expect(dialog).toContainText("Checking the configuration");
+  await dialog.getByRole("button", { name: "Test connection" }).click();
+  await expect(dialog).toContainText("Testing… Weave sends one request to");
   await dialog
     .getByLabel("Scopes (optional)", { exact: true })
     .fill("pets.write");
@@ -476,7 +508,7 @@ test("a check that finishes after a newer revision is created is not shown for i
   // Let the late answer reach the page before checking it was dropped.
   await page.waitForTimeout(300);
   await expect(dialog).not.toContainText(
-    "The platform accepted this configuration.",
+    "Connected: api.pets.example answered.",
   );
 });
 

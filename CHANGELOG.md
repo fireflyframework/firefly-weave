@@ -20,6 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- An operator's command, such as resuming a drained worker, no longer answers
+  429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
+  both of the API's slots for changes. A request that finds every slot of its
+  kind busy now waits, in arrival order, up to 250 ms for one to free before it
+  is refused, with the same code and `Retry-After`; reads, such as the
+  readiness probe, wait the same way for theirs.
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists
@@ -38,9 +44,18 @@ SPDX-License-Identifier: Apache-2.0
   summaries carry and filter `transaction_state`, six `transaction.*` events
   leave through the outbox (subscriptions now select up to 12 types), and
   `weave.transactions` and `weave.transaction_phases` count them. Histories
-  with transactions export and replay. Debug sessions don't simulate
-  transactions yet. Weave AI's guide names the `transaction` step. Migration
-  `0039_transactions_reserve` changes only the catalog.
+  with transactions export and replay. Weave AI's guide names the
+  `transaction` step. Migration `0039_transactions_reserve` changes only the
+  catalog.
+- Debug sessions and `weave workflow simulate` run transactions. Confirms,
+  cancels and undos take their own mocks, and a phase without one completes
+  with `{}` when its output allows it. Scripted failures take an `effect`,
+  `pending` keys (`--pending KEY`) never answer, and the `resolve` and
+  `cancel` commands apply a person's resolution and a run cancel to the
+  session only (`WV-DEBUG-INCIDENT` when one doesn't apply). The view lists
+  each transaction under `transactions`. A transaction no longer stops a
+  session at its first step. Older clients ignore `transactions`; an older
+  server answers 422 to `resolve`, `cancel` and requests with `pending`.
 - Steps can handle their own failures with the On error setting: `onError:
   continue` goes on with a `null` output, and `onError: errorOutput` runs the
   step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
@@ -86,6 +101,120 @@ SPDX-License-Identifier: Apache-2.0
   table; a workflow that uses one waits for it.
 - Published actions offer Change in a new version for retry, timeout and the
   request.
+- Steps can run for real in an environment. `POST {environment}/step-tests`
+  runs one step of a saved draft, an action or an AI task, as a test run of the
+  normal runtime. Only its creator can read or cancel it with the step test API;
+  its run is a test run that `run.read` and `run.cancel` reach like any other.
+  The server checks, before anything is written, the new `step_tester` role
+  (`step.test`), catalog read on the project, the environment's test policy,
+  `connection.bind` on each connection, the step's side effect (steps that
+  change data need `acknowledged_side_effect`, every time), the input and the
+  releases; a person runs at most 4 at once and starts 30 a minute per
+  environment. Test versions and activations never appear in a list, lookup or
+  compile catalog, expire with their run's timeout, and are purged once no run
+  uses them. Each environment's test policy (`GET`/`PUT
+  {environment}/test-policy`) is off until an administrator turns it on;
+  `weave platform up` turns it on in the local demo environment and gives the
+  local owner the role there. Migration `0040_editor_step_tests`.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin. In Studio, the button is now **Test connection**,
+  names the host it calls, and says whether the host was unreachable, not
+  allowed, refused the sign-in or answered with an error.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
+- Two changes to the same project at once, such as a failing parallel branch
+  and its sibling completing together, no longer answer 429
+  `WV-OPERATION-CAPACITY`. A change used to check its run's stored workflow
+  artifact again for every check while it held the project's operation lock.
+  Weave now keeps each checked artifact for the process (at most 64, and
+  64 MiB) and reuses it only for the same content, limits and language
+  features. A task completion holds the lock about 76 ms instead of 220–330 ms
+  on an idle host.
+- The agentic worker serves a new task, the **model turn**
+  (`weave-agentic.turn@1.0.0`), which AI agent steps will run on: one request
+  to the model with the transcript so far and the step's tools. The answer is
+  the model's tool calls as written, or its final answer; the worker never runs
+  a tool. Tool-call IDs are the kernel's, a turn carries at most 16 calls, and
+  the turn action is idempotent with 3 attempts and 600 seconds. A turn's input
+  must end its instructions with the data notice, which tells the model that
+  tool results and context are data, not instructions, and it carries the
+  version of the rules it was built with.
+- One token count, shared by the server and the worker, decides whether a turn
+  fits its context. It is set from the worst measured case of each kind of
+  text, never below the local models measured
+  (`qwen3:4b-instruct-2507-q4_K_M`, `qwen2.5:1.5b`), and it counts exactly what
+  is sent. A turn that doesn't fit is refused before any request
+  (`LLM_CONTEXT_LIMIT`). On Ollama, an answer to a prompt Ollama cut is
+  discarded whole, including a cut that kept half the context. Output that
+  can't be carried (nested too deep, or outside JSON) fails as `LLM_OUTPUT`, and
+  model requests are never instrumented. Platform AI setup grants the agentic
+  worker both tasks and refuses a catalog without the turn task.
+- A local platform connects a kind or k3d cluster on this computer as a
+  Kubernetes target. `weave platform cluster create --provider kind|k3d --name
+  NAME` makes a single-node cluster on a Docker network of its own, from the
+  chosen provider's pinned tool (kind or k3d) and kubectl, which it downloads
+  into the installation directory and checks by SHA-256, and connects its
+  `weave-workers` namespace (`--no-connect` skips that). `weave platform cluster connect` connects any namespace of such a
+  cluster, up to eight targets per installation: it joins the platform to the
+  cluster's network, points the nodes at the platform registry, applies objects
+  rendered from code (Pod Security `restricted`, NetworkPolicies in
+  `weave-system` and the connected namespace that let only Weave's runner and
+  workers there reach the platform, and no pod there reach the registry, a
+  runner account limited to what its commands need, client secrets in
+  owner-read-only files), proves the network rules with test pods before it
+  registers anything, and starts a runner in the cluster. Pods in the cluster's
+  other namespaces aren't restricted and can reach the platform's API, sign-in
+  and registry, so don't run workloads you don't trust in a connected cluster. The worker Deployment
+  starts at 0 replicas and then changes only through reviewed change requests.
+  `cluster list` shows each cluster, target and runner, and `--check` names
+  drifted objects by kind and name without their values; `cluster disconnect`
+  revokes and removes a target, `cluster delete` deletes a test cluster,
+  `doctor --cluster` reports the pinned tools, and `up` points connected
+  clusters at the platform's current addresses. Connecting a namespace again
+  after `cluster disconnect` enables the target it had, with its approval
+  policy, and names that target in a progress line and as `enabled_again` in
+  JSON output. Connect, disconnect and list resend a request for up to 60 s when
+  the platform answers that it is busy. `up` prints a `Clusters:` line with
+  each connected cluster's state and, for an `unreachable` one, its reason
+  (JSON: `reason`), and when `up` or `connect` can't apply the platform's new
+  addresses to a cluster, the platform leaves that cluster's network until a
+  later `up` or `connect` succeeds. `weave platform status` shows a namespace
+  whose connect stopped as `pending`; its JSON `clusters` maps each namespace to
+  its state. See
+  [Connect a kind or k3d cluster on this computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
+- Kubernetes runners restart workers and take scale-downs, which remove exactly
+  the reviewed pods. Before it lowers the replicas, the runner gives each
+  reviewed pod the lowest `controller.kubernetes.io/pod-deletion-cost` and
+  clears it from the pods it keeps; the receipt warns with `WV-DRAIN-VICTIMS`
+  when a reviewed pod is still there. A restart (`restart_workers`) sets
+  `firefly.weave/restarted-at` on the pod template and succeeds when every pod
+  is new and ready with the same image. Kubernetes runners now register adapter
+  version 2, and a cluster runner may read, list, and patch the worker pods it
+  marks for removal: grant `get`, `list`, and `patch` on pods before you upgrade
+  one. The runner image includes kubectl v1.37.2, pinned by checksum. A runner
+  may reach the API over plain HTTP outside loopback when the private-origin
+  policy allows its `runner` purpose for that address, and signs in through a
+  loopback token relay (`WEAVE_TOKEN_RELAY`). `deploy/kubernetes/worker.yaml`
+  gains the `__WEAVE_WORKER_CONFIGURATION__` annotation placeholder and reports
+  its pod's namespace and node. See the upgrade notes.
+- Acceptance runs in the `cluster` and `k3d` profiles make their own
+  single-node kind or k3d cluster, `weave-acc-RUN_ID`, with `weave platform
+  cluster create --no-connect` and a private kubeconfig, and delete it before
+  the platform; these profiles need a run ID of at most 22 characters. The
+  bring-up journey checks the pinned kubectl and cluster tool, collect keeps the
+  cluster's objects and runner logs (redacted), `--block-egress` limits the
+  nodes to their own network, and the evidence records the tool and Kubernetes
+  versions (k3d joins kind). `pytest -m real_operations
+  tests/e2e/test_operations_cluster.py` on a kept `cluster` or `k3d` run proves
+  connect, scale with drain, restart, network reach, the runner's permissions,
+  two namespaces, reconnect and the client-secret scan. A new `cluster` CI job
+  runs them on pull requests that change the operations, deployment, worker or
+  runner code, migrations, the platform SDK or CLI, the Studio operations pages,
+  the cluster journeys, the Dockerfile or the pinned tool versions, and on a
+  manual run with the `cluster` or `k3d` profile.
 
 ## 0.1.0a17
 

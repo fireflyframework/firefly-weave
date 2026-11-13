@@ -18,6 +18,7 @@
 
 import hashlib
 import json
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pyfly.container import service
@@ -52,6 +53,24 @@ def endpoint_origin(endpoint: str) -> str | None:
         return canonical_origin(f"{scheme}://{rendered_host}:{port}", "model")
     except ValueError:
         return None
+
+
+HTTP_ADAPTERS = frozenset({"weave-http", "weave-http-v2"})
+
+
+def http_origin(base_url: object) -> str | None:
+    """The scheme, host and port of an HTTP connection's base URL; never its user information, path or query."""
+    if not isinstance(base_url, str):
+        return None
+    try:
+        parsed = urlsplit(base_url.strip())
+        host, port = parsed.hostname, parsed.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    rendered_host = f"[{host}]" if ":" in host else host
+    return endpoint_origin(f"{parsed.scheme}://{rendered_host}" + (f":{port}" if port is not None else ""))
 
 
 def _bind_resources(principal: Principal, scope: Scope) -> set[UUID] | None:
@@ -181,7 +200,12 @@ class BindableConnectionService:
                             raise
                         enabled = False
                     ai = is_agentic_revision(revision)
-                    safe_origin = endpoint_origin(str(revision.config.get("endpoint", ""))) if ai else None
+                    if ai:
+                        safe_origin = endpoint_origin(str(revision.config.get("endpoint", "")))
+                    elif revision.adapter in HTTP_ADAPTERS:
+                        safe_origin = http_origin(revision.config.get("baseUrl"))
+                    else:
+                        safe_origin = None
                     items.append(
                         BindableConnection(
                             connection_id=revision.id,

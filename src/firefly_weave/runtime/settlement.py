@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.contracts.instance_keys import instance_view, node_of
-from firefly_weave.contracts.transactions import TRANSACTION_STATE_ORDER, split_phase
+from firefly_weave.contracts.transactions import (
+    TRANSACTION_STATE_ORDER,
+    dispatch_effect,
+    participants_view,
+    split_phase,
+)
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.runtime.models import ControlCommand, RuntimeEvent, TransactionRecord, Transition
@@ -248,39 +253,14 @@ async def child_effect(repository: RuntimeRepository, run_id: UUID, artifact: Ma
         f"SELECT DISTINCT payload->>'action_digest' AS digest FROM task_intents WHERE {SCOPE} AND run_id=:run",
         run=run_id,
     )
-    if not digests:
-        return "none"
     dependencies = (artifact.get("executable") or {}).get("dependencies") or []
-    effects = {
-        dependency["digest"]: dependency["document"]["spec"].get("sideEffect")
-        for dependency in dependencies
-        if dependency.get("kind") == "Action"
-    }
-    return "none" if all(effects.get(row["digest"]) == "read_only" for row in digests) else "unknown"
+    return dispatch_effect(False, [row["digest"] for row in digests], dependencies)
 
 
 def worst(transactions: Mapping[str, TransactionRecord]) -> str | None:
     """A run's transaction state: its worst transaction's."""
     states = {record.status for record in transactions.values()}
     return next((state for state in TRANSACTION_STATE_ORDER if state in states), None)
-
-
-def participants_view(record: TransactionRecord) -> list[JsonObject]:
-    """Keys, modes, statuses and attempts of each participant; never a value."""
-    views: list[JsonObject] = []
-    for item in record.participants:
-        identity = instance_view(item.key)
-        view: JsonObject = {
-            "node_id": identity.node_id,
-            "instance_key": item.key,
-            "mode": item.mode,
-            "status": item.status,
-            "effect": item.effect,
-        }
-        if item.attempts:
-            view["attempts"] = item.attempts
-        views.append(view)
-    return views
 
 
 # Statuses that show a transaction is going back.
@@ -408,7 +388,7 @@ def event_facts(
     from firefly_weave.contracts.platform_events import TransactionEventFacts
 
     code = re.compile(r"^[A-Z][A-Z0-9_-]{0,63}$")
-    views = participants_view(record)
+    views = participants_view(record.participants)
     waiting = set(pending(record.status, views)) if record.status not in {"completed", "reconciled"} else set()
     if record.rollback:
         waiting |= {item.key for item in record.participants if item.status in {"done", "unknown"}}
@@ -538,7 +518,7 @@ async def project_transactions(
             state=record.status,
             business_key=None if record.business_key_withheld else record.business_key,
             cause=None if record.cause is None else record.cause.model_dump_json(),
-            participants=json.dumps(participants_view(record)),
+            participants=json.dumps(participants_view(record.participants)),
             revision=record.revision,
             opened=record.opened_at,
             decided=decided,

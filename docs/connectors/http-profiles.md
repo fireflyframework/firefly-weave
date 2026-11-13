@@ -180,12 +180,29 @@ reverse proxies and arbitrary instrumentation.
 
 ### Connection tests
 
-`test_connection` checks the configuration and slot policy without acquiring
-credentials or sending requests. Its `ok` means that the local configuration
-passed, not that a provider authenticated or a destination is reachable.
+`test_connection` checks the configuration and slot policy, then sends one
+`HEAD` request to `baseUrl` with the connection's sign-in. A machine-token
+connection first requests its token, so it sends two requests. The test follows
+no redirect, reads no response body, gives up after 10 seconds, and goes through
+the same `http-connector` egress policy as the connection's actions: a
+destination the policy refuses is never contacted.
+
+`ok` is true when the server answers with a status from 200 to 499 other than
+401, 403, and 407. When the test fails after sending, `reason` says why:
+
+| `reason` | Meaning |
+| --- | --- |
+| `unreachable` | The server didn't answer in time, or the connection was refused |
+| `destination` | The egress policy refused the address; nothing was sent |
+| `unauthorized` | The server answered 401, 403, or 407 to the connection's sign-in |
+| `status` | The server answered with a 5xx status |
+
+A failure with no `reason` means the configuration itself can't be used. The
+answer never carries response headers or content. Some servers answer `HEAD /`
+with an error although their API works; a failed test never blocks a run.
 `weave connections test ID` runs it for a saved revision; its request file is
-optional. Installed `connector test --mode native` likewise tests composition,
-not a remote account. For a connection whose `baseUrl` is `http://`, the answer
+optional. Installed `connector test --mode native` tests composition, not a
+remote account. For a connection whose `baseUrl` is `http://`, the answer
 also carries `"encrypted": false` (`true` for `https://`; absent for connectors
 without an HTTP base URL), and the CLI prints the "Not encrypted" line on
 standard error.

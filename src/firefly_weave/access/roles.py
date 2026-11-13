@@ -66,6 +66,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         "worker_operator": frozenset({"status.read", "worker.drain"}),
         # Resolving a transaction by hand asserts facts about other systems, a duty apart from operating runs.
         "transaction_reconciler": frozenset({"transaction.reconcile"}),
+        # Running steps for real in an environment; grants nothing else.
+        "step_tester": frozenset({"step.test"}),
         "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
     }
 )

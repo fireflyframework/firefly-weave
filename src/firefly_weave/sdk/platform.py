@@ -85,6 +85,9 @@ _DISPLAY_NAME = "Local Weave platform"
 # Development people get the smallest set that authors, publishes, activates, runs, inspects
 # runs, and works on human tasks in the demo workspace; administrators choose others explicitly.
 DEFAULT_PERSON_ROLES = ("developer", "deployer", "operator", "viewer", "task_participant")
+# The workers namespace that cluster connect and disconnect use when none is given. It lives here, not with the
+# cluster code, so that the CLI reads it without loading that code.
+DEFAULT_CLUSTER_NAMESPACE = "weave-workers"
 PERSON_ROLES = (
     "deployment_reader",
     "deployment_planner",
@@ -107,10 +110,12 @@ PERSON_ROLES = (
     "email_manager",
     "execution_manager",
     "transaction_reconciler",
+    "step_tester",
 )
 # The account `up --username` creates gets every role a local owner needs to set up the demo
-# workspace from Studio: AI connections, Weave AI, executions, workers and deployments. Other
-# accounts keep the defaults above; `user grant` adds roles to any account this platform created.
+# workspace from Studio: AI connections, Weave AI, executions, workers and deployments, and to
+# test steps in the demo environment. Other accounts keep the defaults above; `user grant` adds
+# roles to any account this platform created.
 LOCAL_OWNER_ROLES = (
     "developer",
     "deployer",
@@ -126,6 +131,7 @@ LOCAL_OWNER_ROLES = (
     "deployment_approver",
     "deployment_operator",
     "transaction_reconciler",
+    "step_tester",
 )
 _PEOPLE = "people.json"
 _PEOPLE_FORMAT = "weave/local-people-v1"
@@ -517,8 +523,15 @@ def _compose_env(state: dict[str, Any]) -> dict[str, str]:
 
 
 def _run(
-    state: dict[str, Any], name: str, command: list[str], *, env: dict[str, str] | None = None, timeout: float = 300
+    state: dict[str, Any],
+    name: str,
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: float = 300,
+    stdin: bytes | None = None,
 ) -> bytes:
+    """Run one platform command with a private log of its output; ``stdin`` goes to the command, never to the log."""
     path = Path(state["directory"]) / (name + "-" + uuid4().hex[:8] + ".log")
     try:
         return run_command(
@@ -528,6 +541,7 @@ def _run(
             timeout=timeout,
             limit=8 * 1024 * 1024,
             log_path=path,
+            stdin=stdin,
         )
     except Exception:
         if path.is_file() and b"all predefined address pools have been fully subnetted" in read_file(
@@ -889,9 +903,20 @@ def status(directory: Path) -> dict[str, Any]:
 
         result["private_origins"] = platform_origins.summary(state)
     if state.get("mode") == "docker":
-        from firefly_weave.sdk import platform_operations
+        from firefly_weave.sdk import platform_clusters, platform_operations
 
         result["operations"] = platform_operations.status(state)
+        # The connected clusters and each namespace's state, from the receipt alone: status reaches no cluster. A
+        # namespace whose connect stopped reads pending: it holds its Keycloak clients and Secrets until disconnected.
+        try:
+            connected = platform_clusters.receipt(directory)["clusters"]
+        except PlatformError:
+            connected = {}
+        if connected:
+            result["clusters"] = {
+                key: {namespace: target["state"] for namespace, target in sorted(entry["targets"].items())}
+                for key, entry in sorted(connected.items())
+            }
     return result
 
 
@@ -1301,6 +1326,47 @@ async def _grant(
                 f"The local API refused the connection grant ({error.code}). Use a connection revision ID "
                 "from the demo environment."
             ) from None
+
+
+async def _test_calls(
+    api: str, scope: dict[str, str], host_token: str, transport: httpx.AsyncBaseTransport | None
+) -> str:
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.step_tests import EnvironmentTestPolicy, EnvironmentTestPolicyUpdate
+    from firefly_weave.sdk.client import WeaveClient
+    from firefly_weave.sdk.errors import WeaveError
+
+    async with WeaveClient(api, lambda: host_token, Scope.model_validate(scope), timeout=30, transport=transport) as c:
+        policy: EnvironmentTestPolicy = await c.invoke("test_policy.read")
+        # Turned on once: a policy someone saved, on or off, is theirs to keep.
+        if policy.revision > 0:
+            return policy.test_calls
+        try:
+            saved: EnvironmentTestPolicy = await c.invoke(
+                "test_policy.save", body=EnvironmentTestPolicyUpdate(test_calls="enabled")
+            )
+        except WeaveError as error:
+            if error.code != "WV-REVISION":
+                raise
+            current: EnvironmentTestPolicy = await c.invoke("test_policy.read")
+            return current.test_calls
+        return saved.test_calls
+
+
+def demo_test_calls(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """Turn test calls on in the demo environment the first time; returns whether they are on now."""
+    import asyncio
+
+    from firefly_weave.sdk.errors import WeaveError
+
+    state, scope = _workspace(directory, "that runs steps for real")
+    api = _ready_api(directory, state)
+    try:
+        return asyncio.run(_test_calls(api, scope, _host_token(state), transport))
+    except WeaveError as error:
+        raise PlatformError(
+            f"Test calls weren't turned on in the demo environment ({error.code}). Run up again."
+        ) from None
 
 
 def integrations_grant(
@@ -2042,6 +2108,7 @@ def up(
         start(directory, progress)
         first = demo(directory)
         result = {**_summary(state), "first_run_saved": True, "run": first["receipt"]}
+        result["test_calls"] = demo_test_calls(directory)
         if state.get("private_origins"):
             result["private_origins"] = platform_origins.summary(state)
         if username is not None:
@@ -2071,6 +2138,10 @@ def up(
                 result["account"] = account
         if operations:
             result["operations"] = platform_operations.enable(directory, _load(directory), progress or (lambda _: None))
+            from firefly_weave.sdk import platform_clusters
+
+            # Connected clusters follow the platform's new addresses; a cluster that's gone reads missing.
+            result["clusters"] = platform_clusters.refresh(directory, progress or (lambda _: None))
         elif unavailable:
             result["operations"] = platform_operations.unavailable()
         return result

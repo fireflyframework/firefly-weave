@@ -294,6 +294,43 @@ def test_endpoint_origin_is_only_a_validated_origin_string(endpoint, expected):
     assert modules()[0].endpoint_origin(endpoint) == expected
 
 
+@pytest.mark.parametrize(
+    "adapter, connector", [("weave-http-v2", "weave-http@2.0.0"), ("weave-http", "weave-http@1.0.0")]
+)
+async def test_an_http_connections_item_names_its_origin_and_nothing_else(catalog, adapter, connector):
+    base = "https://user:pw-canary@api.acme.test:8443/v1?x=query-canary"
+    catalog.records[100] = catalog.records[100].model_copy(
+        update={
+            "adapter": adapter,
+            "connector": connector,
+            "config": {"baseUrl": base, "auth": {"kind": "none"}},
+            "secret_refs": {},
+        }
+    )
+    page = await listing(catalog, limit=1)
+    item = page.items[0]
+    assert item.endpoint_origin == "https://api.acme.test:8443"
+    assert item.enabled is True and item.provider is None
+    assert "canary" not in page.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "base, expected",
+    [
+        ("http://API.acme.test/v1#part", "http://api.acme.test:80"),
+        ("https://[2001:db8::1]:8443/", "https://[2001:db8::1]:8443"),
+        ("https://user@api.acme.test", "https://api.acme.test:443"),
+        (None, None),
+        (42, None),
+        ("ftp://files.acme.test", None),
+        ("https://api.acme.test:0", None),
+        ("not-a-url", None),
+    ],
+)
+def test_an_http_origin_is_the_base_urls_scheme_host_and_port_only(base, expected):
+    assert modules()[0].http_origin(base) == expected
+
+
 async def test_invalid_stored_endpoint_is_omitted_and_disabled(catalog):
     catalog.records[100] = catalog.records[100].model_copy(
         update={"config": {"provider": "openai-chat", "endpoint": "https://user:private-canary@model.example/v1"}}

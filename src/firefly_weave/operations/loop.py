@@ -176,7 +176,8 @@ class OperationsLoop:
             rolled = await self.roll_statistics(authority, started + STATISTICS_SECONDS)
             revalidated = await self.revalidate(authority, started + ENVIRONMENT_SECONDS)
             maintained = await self.maintain_changes(authority, self.monotonic() + UPKEEP_SECONDS)
-            if rolled is False or not (revalidated and maintained):
+            swept = await self.sweep_step_tests(authority, self.monotonic() + UPKEEP_SECONDS)
+            if rolled is False or not (revalidated and maintained and swept):
                 raise QuantumIncomplete()
             return rolled
 
@@ -329,6 +330,22 @@ class OperationsLoop:
                 logging.getLogger(__name__).error("Operations change request upkeep failed (%s)", failure_cause(error))
                 completed = False
         return completed
+
+    async def sweep_step_tests(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
+        """Retire expired test activations and purge retired ones no run uses; True when the unit completed."""
+        if not isinstance(authority, _SchedulerScope):
+            raise AccessDenied()
+        from firefly_weave.step_tests.sweep import sweep_test_activations
+
+        try:
+            async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
+                await sweep_test_activations(tx, self.clock())
+        except QuantumIncomplete:
+            return False
+        except Exception as error:
+            logging.getLogger(__name__).error("Operations step test sweep failed (%s)", failure_cause(error))
+            return False
+        return True
 
     async def close(self) -> None:
         try:

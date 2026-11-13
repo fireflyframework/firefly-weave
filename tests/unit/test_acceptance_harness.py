@@ -255,11 +255,13 @@ def test_a_step_that_never_starts_is_not_run_and_stops_its_journey(pytester, mon
 
 
 def test_a_skip_marker_on_a_step_the_harness_skips_anyway_keeps_the_harness_record(pytester, monkeypatch):
-    # J0.11 waits for a capability that has not landed: the step reads skipped with it, not not_run.
-    source = '@pytest.mark.journey_step("J0.11")\n@pytest.mark.skip(reason="later")\ndef test_step(run):\n    pass\n'
+    # J2.2 waits for capabilities that have not landed: the step reads skipped with them, not not_run.
+    source = '@pytest.mark.journey_step("J2.2")\n@pytest.mark.skip(reason="later")\ndef test_step(run):\n    pass\n'
     result, records = run_steps(pytester, monkeypatch, source)
     assert result.ret == 0
-    assert records == [{"id": "J0.11", "status": "skipped", "missing": ["step-tests"]}]
+    assert records == [
+        {"id": "J2.2", "status": "skipped", "missing": ["editor-canvas", "step-details", "step-execution"]}
+    ]
 
 
 @pytest.mark.parametrize(

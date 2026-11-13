@@ -165,8 +165,10 @@ def test_up_reuses_complete_installation_demo_and_saved_account(owned, monkeypat
     calls = []
     monkeypatch.setattr(platform_docker, "start", lambda s, n: calls.append("start"))
     monkeypatch.setattr(platform, "demo", lambda d: {"existing": True, "receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(directory, Path("."), None, username="developer")
     assert calls == ["start"]
+    assert result["test_calls"] == "enabled"
     assert result["account"] == {
         "username": "developer",
         "existing": True,
@@ -222,6 +224,7 @@ def test_new_up_sets_mode_before_setup_and_creates_account_only_once(tmp_path, m
     monkeypatch.setattr(platform, "_load", lambda p: state)
     monkeypatch.setattr(platform, "start", lambda *a: calls.append("start"))
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(
         platform, "user", lambda *a: calls.append("user") or {"username": "developer", "password": "once"}
     )
@@ -251,6 +254,7 @@ def test_up_gives_its_new_account_the_local_owner_roles(tmp_path, monkeypatch):
     monkeypatch.setattr(platform, "_load", lambda p: state)
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda d, u, roles: seen.append(tuple(roles)) or {"username": u})
     platform.up(directory, tmp_path, "owned", username="owner")
     assert seen == [platform.LOCAL_OWNER_ROLES]
@@ -263,6 +267,7 @@ def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
     platform._write(directory / "up-user.json", {"stage": "attempted", "username": "developer"})
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("repeated unknown account operation"))
     with pytest.raises(platform.PlatformError, match="incomplete"):
         platform.up(directory, Path("."), None, username="developer")
@@ -274,6 +279,7 @@ def test_up_refuses_an_unreadable_people_record_before_marking_an_account_attemp
     (directory / "people.json").chmod(0o600)
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("created an account"))
     with pytest.raises(platform.PlatformError, match="not readable"):
         platform.up(directory, Path("."), None, username="developer")
@@ -284,6 +290,7 @@ def test_up_returns_the_new_password_when_its_receipt_cannot_be_completed(owned,
     directory, state = owned
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: {"username": "developer", "password": "once"})
     write = platform._write
 
@@ -476,6 +483,7 @@ def test_repeated_up_refuses_changed_roles_instead_of_claiming_new_access(owned,
     platform._write(directory / "up-user.json", {"stage": "ready", "username": "developer", "roles": ["viewer"]})
     monkeypatch.setattr(platform, "start", lambda *a: None)
     monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("reset existing account"))
     with pytest.raises(platform.PlatformError, match="roles"):
         platform.up(directory, Path("."), None, username="developer", roles=["tenant_admin"])
@@ -491,6 +499,43 @@ def test_status_does_not_claim_foreign_listener_as_owned_api(owned, monkeypatch)
     monkeypatch.setattr(platform, "_probe", lambda *a: True)
     result = platform.status(directory)
     assert result["api_ready"] is False
+
+
+def test_status_names_each_connected_cluster_and_its_namespaces_with_their_states(owned, monkeypatch, capsys):
+    """A namespace whose connect stopped reads pending, not connected: it still holds its Keycloak clients and
+    Secrets until it is connected again or disconnected."""
+    from firefly_weave.cli.platform import _show_status
+    from firefly_weave.sdk import platform_clusters, platform_docker
+
+    directory, _ = owned
+    monkeypatch.setattr(platform_docker, "inspect", lambda state: {"state": "absent"})
+    monkeypatch.setattr(platform, "_probe", lambda *a: True)
+    assert "clusters" not in platform.status(directory)
+    target = {
+        "target_name": "kind-weave-test",
+        "pair": 1,
+        "generation": "0" * 32,
+        "state": "connected",
+        "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "connected_at": "2026-11-12T10:00:00Z",
+    }
+    pending = {"target_name": "kind-weave-test.team-b", "pair": 2, "generation": "1" * 32, "state": "pending"}
+    record = {
+        "provider": "kind",
+        "cluster": "weave-test",
+        "context": "kind-weave-test",
+        "docker_context": "colima-weave-tests",
+        "network": "weave-kind-weave-test",
+        "subnet": "172.30.0.0/16",
+        "api_address": "172.30.0.5",
+        "registry_address": "172.30.0.6",
+        "targets": {"weave-workers": target, "team-b": pending},
+    }
+    platform_clusters.save(directory, {"format": platform_clusters.FORMAT, "clusters": {"kind-weave-test": record}})
+    result = platform.status(directory)
+    assert result["clusters"] == {"kind-weave-test": {"team-b": "pending", "weave-workers": "connected"}}
+    _show_status(result)
+    assert "Clusters: kind-weave-test (team-b pending, weave-workers connected)" in capsys.readouterr().out.splitlines()
 
 
 def test_public_secret_rotation_and_removal_report_live_docker_snapshot(owned, monkeypatch):

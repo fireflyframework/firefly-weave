@@ -74,8 +74,12 @@ def quiet(monkeypatch, loop: OperationsLoop, calls: list) -> None:
         calls.append(("upkeep", deadline))
         return True
 
+    async def swept(scope, deadline):
+        return True
+
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintain)
+    monkeypatch.setattr(loop, "sweep_step_tests", swept)
 
 
 def units(monkeypatch, loop: OperationsLoop, opened: list) -> None:

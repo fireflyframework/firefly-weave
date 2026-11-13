@@ -31,8 +31,9 @@ from uuid import uuid4
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import read_file, real_path, strict_json
 
-# The clients the local provider accepts: those setup creates, and the two local operations add.
-_CLIENTS = frozenset({"weave-host", "weave-worker", "weave-cli", "weave-operations-worker", "weave-operations-runner"})
+# The clients setup creates; the local provider also accepts those local operations add (platform_operations.CLIENTS:
+# its two clients and every cluster pair), and nothing else.
+_SETUP_CLIENTS = frozenset({"weave-host", "weave-worker", "weave-cli"})
 
 
 def _private_bytes(path: Path, data: bytes) -> None:
@@ -74,6 +75,9 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
             raise local.PlatformError("The saved runtime database is outside this installation.")
         authority = parsed.netloc.rsplit("@", 1)[0]
         values[key] = urlunsplit((parsed.scheme, authority + "@postgres:5432", parsed.path, "", ""))
+    from firefly_weave.sdk import platform_operations
+
+    accepted = _SETUP_CLIENTS | set(platform_operations.CLIENTS)
     providers = json.loads(runtime["WEAVE_OIDC_PROVIDERS"])
     issuer = f"http://localhost:{state['ports']['keycloak']}/realms/weave"
     if (
@@ -84,7 +88,7 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
         or providers[0].get("jwks_uri") != issuer + "/protocol/openid-connect/certs"
         or providers[0].get("local_development") is not True
         or not isinstance(providers[0].get("clients"), dict)
-        or not set(providers[0]["clients"]) <= _CLIENTS
+        or not set(providers[0]["clients"]) <= accepted
     ):
         raise local.PlatformError("The saved identity configuration is outside this installation.")
     providers[0]["jwks_uri"] = "http://127.0.0.1:8080/realms/weave/protocol/openid-connect/certs"

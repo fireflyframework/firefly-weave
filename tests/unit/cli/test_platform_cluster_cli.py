@@ -1,0 +1,739 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""weave platform cluster create and delete: one single-node test cluster on its own network, from pinned tools,
+never filling the shared Docker disk and never deleting a cluster the command didn't create."""
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+from fake_commands import FakeCommands
+
+from firefly_weave.cli import EXIT_USAGE
+from firefly_weave.cli.main import cli
+from firefly_weave.sdk import platform_cluster_tools as tools
+from firefly_weave.sdk import platform_clusters as clusters
+from firefly_weave.sdk.platform import PlatformError
+
+GIB = 1024**3
+NAME = "weave-test-abc123"
+ENDPOINT = "unix:///Users/me/.colima/weave-tests/docker.sock"
+
+
+def df(free_gib):
+    available = int(free_gib * GIB / 1024)
+    return f"Filesystem 1024-blocks Used Available Capacity Mounted on\noverlay 15728640 1 {available} 50% /\n"
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    """An existing platform folder, pinned tools that need no download, and a Docker that answers like Colima."""
+    directory = tmp_path / "platform"
+    directory.mkdir(mode=0o700)
+    commands = FakeCommands(directory)
+    configs = {}
+
+    def created(call):
+        for flag in ("--config", "--registry-config"):
+            if flag in call.argv:
+                configs[flag] = Path(call.argv[call.argv.index(flag) + 1]).read_text()
+        return ""
+
+    commands.answer(
+        ["docker", "context", "inspect", "colima-weave-tests"],
+        json.dumps([{"Endpoints": {"docker": {"Host": ENDPOINT}}}]),
+    )
+    commands.answer(["docker", "run", "df"], df(8))
+    commands.answer(["docker", "ps", "--all"], "")
+    commands.answer(["create"], created)
+    commands.answer(["wait", "--for=condition=Ready"], "node/weave-test-abc123-control-plane condition met\n")
+    commands.answer(["delete"], "")
+    commands.answer(["docker", "network", "ls"], "")
+    clock = {"now": 0.0}
+    monkeypatch.setattr(clusters.local, "_run", commands)
+    monkeypatch.setattr(clusters, "clock", lambda: clock["now"])
+    monkeypatch.setattr(clusters, "sleep", lambda seconds: clock.__setitem__("now", clock["now"] + seconds))
+    monkeypatch.setattr(clusters, "free_port", lambda: 43123)
+    monkeypatch.setattr(clusters.tools, "tool", lambda path, name: tools._path(path, name))
+    return directory, commands, configs
+
+
+def invoke(directory, action, provider="kind", *extra, output="json", context="colima-weave-tests"):
+    argv = ["platform", "--directory", str(directory), "cluster", action, "--provider", provider, "--name", NAME]
+    argv += ["--context", context, "--output", output, *extra]
+    return CliRunner().invoke(cli, argv)
+
+
+def create(directory, provider="kind", *extra, output="json", context="colima-weave-tests"):
+    return invoke(directory, "create", provider, "--no-connect", *extra, output=output, context=context)
+
+
+def calls(commands, *tokens):
+    return [call for call in commands.calls if all(token in call.argv for token in tokens)]
+
+
+def test_the_installed_weave_command_has_cluster_create_and_delete():
+    from importlib.metadata import entry_points
+
+    (weave,) = [item for item in entry_points(group="console_scripts") if item.name == "weave"]
+    assert weave.load() is cli
+    group = cli.commands["platform"].commands["cluster"]
+    assert {"create", "delete"} <= set(group.commands)
+    help_text = CliRunner().invoke(cli, ["platform", "cluster", "create", "--help"]).output
+    for flag in ("--provider", "--name", "--no-connect", "--context", "--output"):
+        assert flag in help_text
+
+
+def test_delete_help_warns_that_it_deletes_any_cluster_with_that_name():
+    help_text = " ".join(CliRunner().invoke(cli, ["platform", "cluster", "delete", "--help"]).output.split())
+    assert "Delete any kind or k3d cluster with this name, even one Weave didn't create." in help_text
+
+
+def test_create_help_and_the_cli_reference_say_what_create_refuses_and_deletes():
+    refusals = (
+        "Refuses a name that already exists on the Docker context or whose network does, a Docker context that isn't "
+        "on this computer's Unix socket, and less than 6 GiB of free Docker disk."
+    )
+    reference = (Path(__file__).resolve().parents[3] / "docs/reference/cli.md").read_text()
+    (row,) = [line for line in reference.splitlines() if line.startswith("| `cluster create ")]
+    help_text = " ".join(CliRunner().invoke(cli, ["platform", "cluster", "create", "--help"]).output.split())
+    assert refusals in row and refusals in help_text
+    assert "kind or k3d fails or is interrupted, nothing is deleted" in row
+    assert (
+        f"a cluster whose nodes aren't Ready within {clusters.READY_SECONDS} s, or whose readiness wait is "
+        "interrupted, is deleted again"
+    ) in row
+
+
+def test_create_refuses_when_the_docker_disk_has_less_than_6_gib_free(world):
+    directory, commands, _ = world
+    commands.answer(["docker", "run", "df"], df(5))
+    result = create(directory)
+    assert result.exit_code != 0
+    assert (
+        "Docker has 5 GiB free; a cluster needs 6 GiB. Free space without pruning other projects' images, "
+        "or use another context."
+    ) in result.output
+    assert not calls(commands, "create")
+    (check,) = calls(commands, "df")
+    assert check.argv[:4] == ["docker", "--context", "colima-weave-tests", "run"] and "none" in check.argv
+
+
+def test_kind_clusters_get_their_own_network_and_the_registry_configuration(world):
+    directory, commands, configs = world
+    assert create(directory).exit_code == 0
+    (call,) = calls(commands, "create", "cluster")
+    assert call.argv[1:5] == ["create", "cluster", "--name", NAME]
+    assert call.argv[call.argv.index("--image") + 1] == tools.KIND_NODE_IMAGE
+    assert call.env["KIND_EXPERIMENTAL_DOCKER_NETWORK"] == f"weave-kind-{NAME}"
+    assert call.env["DOCKER_CONTEXT"] == "colima-weave-tests"
+    assert '[plugins."io.containerd.grpc.v1.cri".registry]' in configs["--config"]
+    assert 'config_path = "/etc/containerd/certs.d"' in configs["--config"]
+    assert not list(directory.glob(".cluster-*")), "the configuration file is removed after use"
+
+
+def test_k3d_clusters_bind_their_api_to_loopback_and_disable_what_the_tests_do_not_need(world):
+    directory, commands, configs = world
+    result = create(directory, "k3d")
+    assert result.exit_code == 0 and json.loads(result.output)["network"] == f"k3d-{NAME}"
+    (call,) = calls(commands, "cluster", "create", NAME)
+    argv = call.argv
+    assert argv[1:4] == ["cluster", "create", NAME]
+    assert argv[argv.index("--image") + 1] == tools.K3S_IMAGE
+    assert argv[argv.index("--api-port") + 1] == "127.0.0.1:43123"
+    assert argv[argv.index("--servers") + 1] == "1" and argv[argv.index("--agents") + 1] == "0"
+    disabled = [argv[index + 1] for index, item in enumerate(argv) if item == "--k3s-arg"]
+    assert disabled == [
+        f"--disable={name}@server:0" for name in ("traefik", "servicelb", "metrics-server", "local-storage")
+    ]
+    assert call.env["DOCKER_HOST"] == ENDPOINT
+    assert configs["--registry-config"].strip() == "mirrors: {}"
+
+
+def test_create_prints_the_cluster_context_and_network_as_one_json_line_or_a_sentence(world):
+    directory, _, _ = world
+    result = create(directory)
+    assert result.exit_code == 0 and result.output.count("\n") == 1
+    assert json.loads(result.output) == {"cluster": NAME, "context": f"kind-{NAME}", "network": f"weave-kind-{NAME}"}
+    text = create(directory, output="text")
+    assert text.output.strip() == (
+        f"Created kind cluster {NAME}: kubeconfig context kind-{NAME}, Docker network weave-kind-{NAME}."
+    )
+
+
+CONNECTED = {
+    "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "target_name": f"kind-{NAME}",
+    "provider": "kind",
+    "cluster": NAME,
+    "namespace": "weave-workers",
+    "context": f"kind-{NAME}",
+    "runner": "online",
+    "observed_at": "2026-11-12T10:00:05Z",
+}
+
+
+def platform_on(monkeypatch, context):
+    """A platform with operations on, whose containers run on this Docker context."""
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+    monkeypatch.setattr(clusters.local, "_state", lambda path: {"context": context, "id": "a" * 24})
+
+
+def test_create_without_no_connect_connects_the_new_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    platform_on(monkeypatch, "colima-weave-tests")
+    asked = []
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        asked.append((path, provider, name, namespace, kubeconfig, len(commands.calls)))
+        return CONNECTED
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    result = invoke(directory, "create")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "cluster": NAME,
+        "context": f"kind-{NAME}",
+        "network": f"weave-kind-{NAME}",
+        "target_id": CONNECTED["target_id"],
+        "target_name": f"kind-{NAME}",
+    }
+    ((path, provider, name, namespace, kubeconfig, at),) = asked
+    assert (path, provider, name, namespace, kubeconfig) == (directory, "kind", NAME, "weave-workers", None)
+    assert calls(commands, "wait", "--for=condition=Ready") and at == len(commands.calls)
+
+
+def test_create_refuses_before_creating_when_operations_are_off(world):
+    directory, commands, _ = world
+    result = invoke(directory, "create")
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        "Operations are off in this installation. Run weave platform up without --no-operations, or create with "
+        "--no-connect."
+    ) in " ".join(result.output.split())
+    assert not calls(commands, "create")
+
+
+def test_create_refuses_before_creating_when_its_context_is_not_the_platforms(world, monkeypatch):
+    """Connect accepts only nodes on the platform's own Docker context; without --no-connect, create says so before
+    it takes 6 GiB of another context's disk."""
+    directory, commands, _ = world
+    platform_on(monkeypatch, "colima-platform")
+    asked = []
+    monkeypatch.setattr(clusters, "connect", lambda *args, **kwargs: asked.append(args))
+    result = invoke(directory, "create")
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        "Connect needs the cluster on this platform's Docker context colima-platform, not colima-weave-tests. "
+        "Create it with --context colima-platform, or with --no-connect. Nothing was changed."
+    ) in " ".join(result.output.split())
+    assert asked == [] and not calls(commands, "create") and not calls(commands, "df")
+    assert create(directory).exit_code == 0 and calls(commands, "create")
+
+
+def test_a_new_cluster_that_fails_to_connect_stays_and_says_how_to_retry(world, monkeypatch):
+    directory, commands, _ = world
+    platform_on(monkeypatch, "colima-weave-tests")
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        raise PlatformError("A test pod couldn't pull the worker image through the platform registry.")
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    result = invoke(directory, "create")
+    assert result.exit_code != 0
+    assert (
+        f"The cluster {NAME} was created but isn't connected: A test pod couldn't pull the worker image through the "
+        f"platform registry. Run weave platform cluster connect --provider kind --name {NAME} to retry."
+    ) in " ".join(result.output.split())
+    assert not calls(commands, "delete")
+
+
+def test_a_failed_wait_deletes_the_cluster_this_run_created(world):
+    directory, commands, _ = world
+    commands.answer(["wait", "--for=condition=Ready"], PlatformError("not ready"))
+    result = create(directory)
+    assert result.exit_code != 0
+    assert "The cluster's nodes weren't Ready within 180 s; the cluster was deleted." in result.output
+    assert calls(commands, "delete", "cluster", "--name", NAME)
+    for call in calls(commands, "wait"):
+        assert call.argv[1:3] == ["--context", f"kind-{NAME}"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (
+            PlatformError(
+                "Stage cluster-create failed. Inspect the private cluster-create-*.log file in the installation "
+                "directory."
+            ),
+            "Stage cluster-create failed. Inspect the private cluster-create-*.log file in the installation directory.",
+        ),
+        (KeyboardInterrupt(), "Creating the cluster was interrupted."),
+    ],
+    ids=["failed", "interrupted"],
+)
+def test_a_failed_or_interrupted_create_deletes_nothing_and_says_to_run_delete(world, failure, reason):
+    """kind and k3d run in their own session and are killed outright on a timeout or an interrupt, so they can't
+    remove the nodes they made; the command deletes only a cluster it created, so it says how to remove them."""
+    directory, commands, _ = world
+    commands.answer(["create"], failure)
+    result = create(directory)
+    assert result.exit_code != 0
+    assert reason in result.output
+    assert (
+        "Nothing was deleted; run weave platform cluster delete with the same provider and name to remove any nodes "
+        "kind left behind."
+    ) in result.output
+    assert calls(commands, "create") and not calls(commands, "delete")
+    assert not list(directory.glob(".cluster-*")), "the configuration file is removed after an interrupt too"
+
+
+@pytest.mark.parametrize(("provider", "label"), [("kind", "io.x-k8s.kind.cluster"), ("k3d", "k3d.cluster")])
+def test_create_refuses_a_cluster_name_that_already_exists_on_the_context(world, provider, label):
+    directory, commands, _ = world
+    commands.answer(["docker", "ps", "--all", f"label={label}={NAME}"], f"{NAME}-control-plane\n")
+    result = create(directory, provider)
+    assert result.exit_code != 0
+    assert f"A cluster named {NAME} already exists on context colima-weave-tests; nothing was changed." in result.output
+    assert not calls(commands, "create") and not calls(commands, "delete")
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (PlatformError("not ready"), "The cluster's nodes weren't Ready within 180 s"),
+        (KeyboardInterrupt(), "The readiness wait was interrupted"),
+    ],
+    ids=["not-ready", "wait-interrupted"],
+)
+@pytest.mark.parametrize(
+    ("cleanup", "outcome"),
+    [
+        (PlatformError("delete failed"), "deleting the cluster failed"),
+        (KeyboardInterrupt(), "deleting the cluster was interrupted"),
+    ],
+    ids=["delete-failed", "delete-interrupted"],
+)
+def test_a_failed_or_interrupted_cleanup_says_to_run_delete(world, failure, reason, cleanup, outcome):
+    """A second Ctrl-C during the cleanup still ends with what to run, not a bare Aborted!."""
+    directory, commands, _ = world
+    commands.answer(["wait", "--for=condition=Ready"], failure)
+    commands.answer(["delete"], cleanup)
+    result = create(directory)
+    assert result.exit_code != 0 and calls(commands, "delete", "cluster", "--name", NAME)
+    assert "was deleted" not in result.output
+    assert (
+        f"{reason}, and {outcome}; run weave platform cluster delete with the same provider and name to remove it."
+    ) in result.output
+
+
+def test_the_tools_keep_the_docker_configuration_but_no_other_docker_setting(world, monkeypatch):
+    directory, commands, _ = world
+    monkeypatch.setenv("DOCKER_CONFIG", "/Users/me/.docker-weave")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://elsewhere:2375")
+    create(directory)
+    (call,) = calls(commands, "create", "cluster")
+    assert call.env["DOCKER_CONFIG"] == "/Users/me/.docker-weave" and "DOCKER_HOST" not in call.env
+
+
+@pytest.mark.parametrize(("provider", "network"), [("kind", f"weave-kind-{NAME}"), ("k3d", f"k3d-{NAME}")])
+def test_create_refuses_a_cluster_whose_network_already_exists(world, provider, network):
+    """kind and k3d join an existing network of that name, so the cluster wouldn't get a network of its own."""
+    directory, commands, _ = world
+    commands.answer(["docker", "network", "ls"], f"{network}\n")
+    result = create(directory, provider)
+    assert result.exit_code != 0
+    assert (
+        f"A Docker network named {network} already exists on context colima-weave-tests, so the cluster wouldn't get "
+        "a network of its own. Nothing was changed. If an earlier create left it behind, run weave platform cluster "
+        "delete with the same provider and name to remove it; otherwise choose another name."
+    ) in result.output
+    assert not calls(commands, "create") and not calls(commands, "delete")
+
+
+@pytest.mark.parametrize("provider", ["kind", "k3d"])
+def test_every_tool_is_fetched_before_the_cluster_is_created(world, monkeypatch, provider):
+    """A download or checksum failure after the cluster exists would delete the cluster this run just made."""
+    directory, commands, _ = world
+
+    def tool(path, name):
+        if name == "kubectl":
+            raise PlatformError("kubectl couldn't be downloaded; nothing was kept. Check the network, then try again.")
+        return tools._path(path, name)
+
+    monkeypatch.setattr(clusters.tools, "tool", tool)
+    result = create(directory, provider)
+    assert result.exit_code != 0 and "kubectl couldn't be downloaded; nothing was kept." in result.output
+    assert not calls(commands, "create") and not calls(commands, "delete")
+
+
+REMOTE = (
+    "Docker context colima-weave-tests doesn't use a local Unix socket; test clusters run only on this computer's "
+    "Docker."
+)
+
+
+@pytest.mark.parametrize(
+    ("context", "endpoints", "refusal"),
+    [
+        ("colima-weave-tests", {"docker": {"Host": "tcp://10.0.0.5:2376"}}, REMOTE),
+        ("colima-weave-tests", {}, REMOTE),
+        ("tcp://10.0.0.5:2376", None, "Select a named local Docker context."),
+    ],
+    ids=["remote-engine", "no-endpoint", "not-a-context-name"],
+)
+def test_only_a_context_on_this_computers_docker_socket_is_used(world, context, endpoints, refusal):
+    """Like every platform command: a remote or shared engine could hold another cluster with the same name."""
+    directory, commands, _ = world
+    if endpoints is not None:
+        commands.answer(["docker", "context", "inspect", context], json.dumps([{"Endpoints": endpoints}]))
+    for result in (create(directory, context=context), invoke(directory, "delete", "k3d", context=context)):
+        assert result.exit_code != 0 and refusal in result.output
+    assert all(call.argv[:3] == ["docker", "context", "inspect"] for call in commands.calls)
+
+
+def test_delete_deletes_the_cluster_and_reports_it(world):
+    directory, commands, _ = world
+    result = invoke(directory, "delete", "k3d")
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {"cluster": NAME, "disconnected": [], "deleted": True}
+    (call,) = calls(commands, "cluster", "delete", NAME)
+    assert call.env["DOCKER_HOST"] == ENDPOINT
+
+
+def test_the_command_uses_the_pinned_tools(world):
+    directory, commands, _ = world
+    create(directory)
+    used = {Path(call.argv[0]) for call in commands.calls if call.argv[0] != "docker"}
+    assert used == {
+        directory / "tools" / f"kind-{tools.TOOLS['kind'].version}",
+        directory / "tools" / f"kubectl-{tools.TOOLS['kubectl'].version}",
+    }
+
+
+def test_a_bad_name_refuses_before_any_command(world):
+    directory, commands, _ = world
+    result = CliRunner().invoke(
+        cli,
+        [
+            "platform",
+            "--directory",
+            str(directory),
+            "cluster",
+            "create",
+            "--provider",
+            "kind",
+            "--name",
+            "Weave_Test",
+            "--no-connect",
+            "--context",
+            "colima-weave-tests",
+        ],
+    )
+    assert result.exit_code != 0 and "Use --provider kind or k3d" in result.output and commands.calls == []
+
+
+def test_the_docker_context_comes_from_the_installation_or_must_be_given(world, tmp_path):
+    directory, commands, _ = world
+    (directory / "platform.json").write_text(json.dumps({"context": "colima-weave-tests"}))
+    (directory / "platform.json").chmod(0o600)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "platform",
+            "--directory",
+            str(directory),
+            "cluster",
+            "create",
+            "--provider",
+            "kind",
+            "--name",
+            NAME,
+            "--no-connect",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls(commands, "create")[0].env["DOCKER_CONTEXT"] == "colima-weave-tests"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "platform",
+            "--directory",
+            str(elsewhere),
+            "cluster",
+            "create",
+            "--provider",
+            "kind",
+            "--name",
+            NAME,
+            "--no-connect",
+        ],
+    )
+    assert result.exit_code != 0 and "pass --context" in result.output
+
+
+def test_create_never_makes_the_installation_folder(world, tmp_path):
+    """weave platform setup refuses a folder that exists, so creating a cluster first must not make it."""
+    _, commands, _ = world
+    missing = tmp_path / "not-yet"
+    result = create(missing)
+    assert result.exit_code != 0 and "weave platform up" in result.output
+    assert not missing.exists() and commands.calls == []
+
+
+def test_an_installation_folder_that_others_can_open_is_refused_before_any_command(world):
+    """Like every platform command, create and delete keep their tools and logs only in a folder that is yours alone."""
+    directory, commands, _ = world
+    directory.chmod(0o755)
+    for result in (create(directory), invoke(directory, "delete")):
+        assert result.exit_code != 0
+        assert "The installation directory must belong to you with permissions 0700." in result.output
+    assert commands.calls == []
+
+
+def receipt_with_target(directory):
+    target = {
+        "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "target_name": f"kind-{NAME}",
+        "pair": 1,
+        "generation": "0123456789abcdef0123456789abcdef",
+        "state": "connected",
+        "connected_at": "2026-11-12T10:00:00Z",
+    }
+    record = {
+        "provider": "kind",
+        "cluster": NAME,
+        "context": f"kind-{NAME}",
+        "docker_context": "colima-weave-tests",
+        "network": f"weave-kind-{NAME}",
+        "subnet": "172.30.0.0/16",
+        "api_address": "172.30.0.5",
+        "registry_address": "172.30.0.6",
+        "targets": {"weave-workers": target, "team-b": {**target, "pair": 2, "target_name": f"kind-{NAME}.team-b"}},
+    }
+    clusters.save(directory, {"format": clusters.FORMAT, "clusters": {f"kind-{NAME}": record}})
+
+
+def test_delete_disconnects_each_connected_target_before_deleting_the_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    receipt_with_target(directory)
+    asked = []
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
+        # The cluster goes with every object in it, so disconnect never reaches it.
+        assert in_cluster is False
+        asked.append((namespace, len(commands.calls)))
+        return {"target_id": None, "disabled": True, "removed": []}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = invoke(directory, "delete")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "cluster": NAME,
+        "disconnected": [f"kind-{NAME}.team-b", f"kind-{NAME}"],
+        "deleted": True,
+    }
+    assert [namespace for namespace, _ in asked] == ["team-b", "weave-workers"]
+    (deleted,) = calls(commands, "delete", "cluster")
+    assert all(at <= commands.calls.index(deleted) for _, at in asked)
+
+
+def test_a_target_that_fails_to_disconnect_keeps_the_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    receipt_with_target(directory)
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
+        raise PlatformError("The local Keycloak service is unavailable. Check platform status, then retry.")
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = invoke(directory, "delete")
+    assert result.exit_code != 0
+    assert (
+        "The local Keycloak service is unavailable. Check platform status, then retry. The cluster was not deleted."
+        in (" ".join(result.output.split()))
+    )
+    assert not calls(commands, "delete")
+
+
+def test_delete_names_each_disconnected_target_and_the_deleted_cluster_in_text(world, monkeypatch):
+    directory, _, _ = world
+    assert invoke(directory, "delete", output="text").stdout.splitlines() == [f"Deleted cluster {NAME}."]
+    receipt_with_target(directory)
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
+        return {"target_id": None, "disabled": True, "removed": []}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = invoke(directory, "delete", output="text")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        f"Disconnected kind-{NAME}.team-b.",
+        f"Disconnected kind-{NAME}.",
+        f"Deleted cluster {NAME}.",
+    ]
+
+
+def test_delete_refuses_another_context_than_the_one_its_targets_are_connected_on(world, monkeypatch):
+    """A cluster of the same name on another context isn't the connected one: its targets stay connected."""
+    directory, commands, _ = world
+    receipt_with_target(directory)
+    other = json.dumps([{"Endpoints": {"docker": {"Host": "unix:///Users/me/.colima/other/docker.sock"}}}])
+    commands.answer(["docker", "context", "inspect", "colima-other"], other)
+    asked = []
+    monkeypatch.setattr(clusters, "disconnect", lambda *args, **kwargs: asked.append(args))
+    result = invoke(directory, "delete", context="colima-other")
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        f"The kind cluster {NAME} connected to this platform runs on Docker context colima-weave-tests, not "
+        "colima-other. Nothing was changed. To delete it, run delete with --context colima-weave-tests."
+    ) in " ".join(result.output.split())
+    assert asked == [] and not calls(commands, "delete")
+    assert set(clusters.receipt(directory)["clusters"][f"kind-{NAME}"]["targets"]) == {"weave-workers", "team-b"}
+
+
+@pytest.mark.parametrize(("provider", "network"), [("kind", f"weave-kind-{NAME}"), ("k3d", f"k3d-{NAME}")])
+def test_delete_removes_the_clusters_own_network_when_nothing_else_uses_it(world, provider, network):
+    """kind always leaves its network behind, and k3d does when a create was interrupted or timed out before its
+    nodes existed; a network another container still uses stays."""
+    directory, commands, _ = world
+    commands.answer(["docker", "network", "ls"], f"{network}\n")
+    commands.answer(["docker", "network", "rm"], "")
+    assert invoke(directory, "delete", provider).exit_code == 0
+    (removed,) = calls(commands, "network", "rm")
+    assert removed.argv == ["docker", "--context", "colima-weave-tests", "network", "rm", network]
+    assert "DOCKER_HOST" not in removed.env
+    commands.calls.clear()
+    commands.answer(["docker", "ps", "--all", f"network={network}"], "another-project-db\n")
+    assert invoke(directory, "delete", provider).exit_code == 0
+    assert not calls(commands, "network", "rm")
+    commands.calls.clear()
+    commands.answer(["docker", "network", "ls"], "")
+    assert invoke(directory, "delete", provider).exit_code == 0
+    assert not calls(commands, "network", "rm")
+
+
+def run(directory, *argv):
+    return CliRunner().invoke(cli, ["platform", "--directory", str(directory), *argv])
+
+
+def test_connect_prints_the_target_and_its_runner(world, monkeypatch):
+    directory, _, _ = world
+    asked = []
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        asked.append((provider, name, namespace, kubeconfig))
+        notice("preflight: checking the cluster and your kubeconfig")
+        return CONNECTED
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    config = directory / "kubeconfig"
+    text = run(directory, "cluster", "connect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert text.exit_code == 0, text.output
+    assert text.stdout.splitlines() == [
+        f"Target: kind-{NAME}",
+        "Runner: online",
+        "Observed: 2026-11-12T10:00:05Z",
+    ]
+    assert "preflight: checking the cluster and your kubeconfig" in text.stderr
+    connect_json = ["cluster", "connect", "--provider", "kind", "--name", NAME, "--output", "json"]
+    result = run(directory, *connect_json, "--kubeconfig", str(config))
+    assert json.loads(result.stdout) == CONNECTED and result.stderr == ""
+    assert asked == [("kind", NAME, "team-b", None), ("kind", NAME, "weave-workers", config)]
+
+
+def test_connect_refuses_a_bad_name_with_its_sentence_and_a_usage_exit(world):
+    directory, commands, _ = world
+    result = run(directory, "cluster", "connect", "--provider", "kind", "--name", "Weave_Test", "--output", "json")
+    assert result.exit_code == EXIT_USAGE
+    assert json.loads(result.stdout)["diagnostics"][0]["message"] == clusters.NAME_PROBLEM
+    assert commands.calls == []
+
+
+def test_disconnect_refuses_a_namespace_without_a_target_and_changes_nothing(world):
+    directory, commands, _ = world
+    result = run(directory, "cluster", "disconnect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert result.exit_code == EXIT_USAGE
+    assert f"kind-{NAME} has no target in namespace team-b; nothing was changed." in " ".join(result.output.split())
+    assert commands.calls == []
+
+
+def test_disconnect_prints_the_namespace_the_cluster_and_how_many_objects_it_removed(world, monkeypatch):
+    directory, _, _ = world
+    removed = ["ConfigMap/weave-worker-config", "Role/weave-worker", "Secret/weave-worker-identity"]
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+        notice("target: revoking the runner and disabling the target")
+        return {"target_id": None, "disabled": True, "removed": removed}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = run(directory, "cluster", "disconnect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [f"Disconnected team-b from kind-{NAME}; removed 3 objects."]
+    assert result.stderr.splitlines() == ["target: revoking the runner and disabling the target"]
+
+
+def test_list_output_json_has_the_contract_keys(world, monkeypatch):
+    directory, _, _ = world
+    receipt_with_target(directory)
+    state = {"directory": str(directory), "source": str(directory), "context": "colima-weave-tests", "id": "a" * 24}
+    monkeypatch.setattr(clusters.local, "_state", lambda path: state)
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: None)
+    result = run(directory, "cluster", "list", "--output", "json")
+    assert result.exit_code == 0, result.output
+    (listed,) = json.loads(result.stdout)["clusters"]
+    assert set(listed) == {"provider", "cluster", "context", "network", "state", "targets"}
+    assert listed["state"] == "missing"
+    for target in listed["targets"]:
+        assert set(target) == {"target_id", "target_name", "namespace", "runner", "drift"}
+        assert (target["runner"], target["drift"]) == ("unknown", [])
+    text = run(directory, "cluster", "list")
+    assert text.stdout.splitlines()[:2] == [
+        f"Cluster: kind-{NAME} (missing)",
+        f"Target: kind-{NAME}.team-b, runner unknown",
+    ]
+
+
+def test_doctor_cluster_reports_the_pinned_tools_and_creates_no_file(world, monkeypatch):
+    directory, _, _ = world
+    monkeypatch.setattr(clusters.local, "doctor", lambda source, context: {"ok": True, "version": "26.11.0"})
+    before = sorted(directory.rglob("*"))
+    result = run(directory, "doctor", "--cluster", "--output", "json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["cluster_tools"] == {name: tools.NOT_FETCHED for name in tools.TOOLS}
+    assert sorted(directory.rglob("*")) == before
+    plain = run(directory, "doctor", "--output", "json")
+    assert "cluster_tools" not in json.loads(plain.stdout)
+
+
+def test_doctor_cluster_prints_each_tools_version_or_that_it_isnt_fetched(world, monkeypatch):
+    directory, _, _ = world
+    monkeypatch.setattr(clusters.local, "doctor", lambda source, context: {"ok": True, "version": "26.11.0"})
+    found = {"kind": "v0.33.0", "k3d": tools.NOT_FETCHED, "kubectl": "v1.37.2"}
+    monkeypatch.setattr(clusters, "doctor_cluster", lambda path: found)
+    result = run(directory, "doctor", "--cluster")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "Version: 26.11.0",
+        "Cluster tools: kind v0.33.0, k3d not fetched, kubectl v1.37.2",
+    ]
+    assert "Cluster tools" not in run(directory, "doctor").stdout

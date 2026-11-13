@@ -22,10 +22,11 @@ when stopped. It never accepts database or administrator settings.
 """
 
 import asyncio
-import logging
+import base64
+import ipaddress
+import json
 import os
 import signal
-import socket
 import sys
 import traceback
 from collections.abc import Mapping
@@ -37,6 +38,7 @@ import httpx
 
 from firefly_weave import private_origins
 from firefly_weave.contracts.connectors import ConnectorFailure
+from firefly_weave.sdk.token_relay import start_relay
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth, private_transport
@@ -45,7 +47,8 @@ from firefly_weave.sdk.worker_registration import register_worker_http
 
 TASK_TYPE = "example-sleep@1.0.0"
 MANIFEST = Path(__file__).with_name("manifest.json")
-LOG = logging.getLogger("weave.operations_worker")
+# How long the closed probe waits for each address before it counts the address as closed.
+PROBE_SECONDS = 3.0
 
 
 def capacity(environ: Mapping[str, str]) -> int:
@@ -65,46 +68,6 @@ async def sleep(lease: Any) -> dict[str, int]:
     milliseconds = int(lease.input["ms"])
     await asyncio.sleep(milliseconds / 1000)
     return {"slept_ms": milliseconds}
-
-
-async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    try:
-        while data := await reader.read(65536):
-            writer.write(data)
-            await writer.drain()
-    finally:
-        writer.close()
-
-
-async def start_relay(destination: str, *, listen: int = 8080) -> asyncio.Server:
-    """A loopback relay to Keycloak on the platform network, so the worker can sign in over plain HTTP.
-
-    OAuth clients accept plain HTTP only on loopback, so the worker signs in through 127.0.0.1. The relay
-    forwards whole connections to the one destination its environment names (any Keycloak path, which gives
-    the worker no reach it lacks: it is on the platform network). Each connection is checked against the
-    worker's private-origin entries for worker-auth, as one that carries credentials, before anything is
-    forwarded, and goes to the checked address, never to the name resolved again. A refusal is logged with
-    its reason and a count only.
-    """
-    host, _, port = destination.rpartition(":")
-    refused = 0
-
-    async def relay(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        nonlocal refused
-        try:
-            found = await asyncio.get_running_loop().getaddrinfo(host, int(port), type=socket.SOCK_STREAM)
-            addresses = sorted({item[4][0] for item in found})
-            private_origins.active().check("worker-auth", f"http://{host}:{port}/", addresses, sends_credentials=True)
-            upstream_reader, upstream_writer = await asyncio.open_connection(addresses[0], int(port))
-        except Exception as error:
-            refused += 1
-            reason = error.reason if isinstance(error, private_origins.PrivateOriginDenied) else "unreachable"
-            LOG.warning("The token relay refused a connection (%s); %d refused so far", reason, refused)
-            writer.close()
-            return
-        await asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer), return_exceptions=True)
-
-    return await asyncio.start_server(relay, "127.0.0.1", listen)
 
 
 async def register(
@@ -168,9 +131,67 @@ async def main() -> None:
         await worker.run()
 
 
+async def probe_token(environ: Mapping[str, str]) -> str:
+    """Sign in exactly as the worker does and give only the token's issuer: the token, its other claims and the
+    client secret never leave the pod."""
+    private_origins.install(private_origins.load())
+    relay = environ.get("WEAVE_TOKEN_RELAY")
+    if relay:
+        await start_relay(relay)
+    api = environ["WEAVE_API_URL"]
+    provider = ClientCredentialsTokenProvider.from_file(Path(environ["WEAVE_WORKER_OAUTH_CONFIG_FILE"]), api)
+    payload = (await provider.get_access_token(api)).split(".")[1]
+    issuer = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["iss"]
+    if not isinstance(issuer, str):
+        raise ValueError("The token names no issuer")
+    return json.dumps({"iss": issuer})
+
+
+def _addresses(values: list[str]) -> list[tuple[str, int]] | None:
+    """Literal IP:port pairs; a name could fail to resolve and look closed, so names are refused."""
+    found = []
+    for value in values:
+        host, separator, port = value.rpartition(":")
+        try:
+            address = ipaddress.ip_address(host.removeprefix("[").removesuffix("]"))
+        except ValueError:
+            return None
+        if not separator or not port.isdigit() or not 1 <= int(port) <= 65535:
+            return None
+        found.append((str(address), int(port)))
+    return found
+
+
+async def _answers(host: str, port: int) -> bool:
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), PROBE_SECONDS)
+    except (OSError, TimeoutError):
+        return False
+    writer.close()
+    return True
+
+
+async def probe_closed(values: list[str]) -> int:
+    """0 when every address refuses or doesn't answer within PROBE_SECONDS, 1 when one answers, 2 for bad input."""
+    addresses = _addresses(values)
+    if not addresses:
+        return 2
+    answered = await asyncio.gather(*(_answers(host, port) for host, port in addresses))
+    return 1 if any(answered) else 0
+
+
 def cli(argv: list[str]) -> int:
     if argv == ["--release-manifest"]:
         sys.stdout.write(MANIFEST.read_text() if MANIFEST.exists() else _packaged_manifest())
+        return 0
+    if argv[:1] == ["--probe-closed"]:
+        return asyncio.run(probe_closed(argv[1:]))
+    if argv == ["--probe-token"]:
+        try:
+            print(asyncio.run(probe_token(os.environ)))
+        except Exception as error:
+            print("The token probe failed: " + failure(error), file=sys.stderr)
+            return 1
         return 0
     try:
         asyncio.run(main())

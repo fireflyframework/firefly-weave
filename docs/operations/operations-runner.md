@@ -64,6 +64,15 @@ runners: an older server refuses the members a newer runner reports, so its
 observe jobs fail and its applies end in reconciliation. Grant the read after
 the server upgrade and before the runner upgrade.
 
+To remove exactly the reviewed pods in a scale-down, a Kubernetes runner also
+patches the worker pods (`get` and `patch` on `pods`, since `kubectl patch`
+reads a pod first) to set their deletion cost. Grant them before you upgrade a
+Kubernetes runner to a release that registers adapter version 2, together with
+the `list` read. Without them, every scale-down that
+runner takes fails before any change, because the runner checks each pod patch
+with a server-side dry run first; the change request can be planned again once
+the grant is in place.
+
 ## 2. Copy the destination's actual identity
 
 Run the relevant read-only command on the runner host. Replace the illustrative
@@ -190,6 +199,10 @@ not wildcards; plans must use immutable `@sha256:` images. A component's
 The runner does not accept shell commands, arbitrary Kubernetes manifests, or
 credential values from a plan.
 
+`capabilities` must include `observe`, and every adapter accepts `update` and
+`scale_workers`. A Kubernetes policy may also list `restart_workers`, and a
+Compose policy `deploy` and `restart_workers`; the runner refuses any other.
+
 The default local ceilings are ten replicas, 4,000 CPU millicores, and 8,192 MiB
 per component. Lower them for smaller destinations. Raising desired capacity in
 Studio cannot bypass these ceilings. They are separate from workflow quotas,
@@ -236,11 +249,21 @@ never get one.
 
 ### Kubernetes
 
-Kubernetes and Container Apps runners register adapter version 1: they take no
-plan that lowers a worker component's replicas, because their adapters do not
-yet remove exactly the reviewed members. Such a job waits unclaimed and is
-cancelled at its deadline; the change request gives its drained workers back
-and can be planned again. Scale those components down outside Weave until then.
+Kubernetes runners register adapter version 2 too. Before a scale-down lowers
+the replicas, the runner clears any earlier deletion cost from the pods it
+keeps and gives each reviewed pod the lowest
+`controller.kubernetes.io/pod-deletion-cost`, so the ReplicaSet removes those
+pods first. Deletion cost is a preference: if a kept pod stops being ready
+before the ReplicaSet acts, Kubernetes may remove it instead, and the change
+request's receipt warns that a reviewed worker is still there. A restart sets
+the `firefly.weave/restarted-at` annotation on the pod template, keeps the
+image and replicas, and succeeds only when every pod is new and ready.
+
+Container Apps runners register adapter version 1: they take no plan that
+lowers a worker component's replicas, because their adapter does not yet remove
+exactly the reviewed members. Such a job waits unclaimed and is cancelled at
+its deadline; the change request gives its drained workers back and can be
+planned again. Scale those components down outside Weave until then.
 
 The adapter manages **existing deployments**, not arbitrary resources. Each
 allowed deployment must have the matching local configuration alias in its pod

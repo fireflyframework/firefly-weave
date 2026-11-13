@@ -29,6 +29,7 @@ from test_incident_migration import upgrade
 pytestmark = pytest.mark.integration
 PRIOR_HEAD = "0036_editor_studio_documents"
 HEAD = "0037_language_transactions"
+LATER_ROLES = {"step_tester"}
 
 
 @pytest.fixture
@@ -243,4 +244,5 @@ async def test_role_bindings_accept_the_transaction_reconciler(upgraded):
         assert "'transaction_reconciler'" in definition and "'worker_operator'" in definition
         from firefly_weave.access.roles import ROLE_CAPABILITIES
 
-        assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES)
+        # Roles that later migrations add are checked by those migrations' tests (step_tester: 0040_editor_step_tests).
+        assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES) - LATER_ROLES

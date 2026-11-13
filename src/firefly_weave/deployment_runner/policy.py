@@ -61,6 +61,8 @@ class DestinationPolicy(ContractModel):
         supported = {"observe", "update", "scale_workers"}
         if self.adapter == "azure-container-apps" and not self.lock_file:
             raise ValueError("ACA requires a shared local runner lock")
+        if self.adapter == "kubernetes":
+            supported |= {"restart_workers"}
         if self.adapter == "docker-compose":
             supported |= {"deploy", "restart_workers"}
             if not self.compose_file or not self.lock_file:

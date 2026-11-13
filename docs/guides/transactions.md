@@ -125,9 +125,10 @@ weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_un
 
 ## Test a step that takes part in a transaction
 
-A debug session doesn't simulate transactions yet: it stops with
-`WV-DEBUG-MISSING_MOCK` and asks you to run the workflow on a test activation.
-To check that the systems you call behave as a transaction expects, try these by
+A debug session simulates a transaction with mocks for each step and for its
+confirm, cancel, and undo; see
+[Simulate transactions](../reference/simulation.md#simulate-transactions).
+A simulation can't show how the systems you call behave, so also try these by
 hand on a test activation:
 
 - send the same confirm, cancel or undo twice: the second must change nothing;

@@ -82,6 +82,11 @@ async def maintained(scope, deadline):
     return True
 
 
+async def swept(scope, deadline):
+    """A step test sweep with nothing to do; its own tests run on PostgreSQL."""
+    return True
+
+
 def tasks_named(name: str) -> list[asyncio.Task]:
     return [task for task in asyncio.all_tasks() if task.get_name() == name and not task.done()]
 
@@ -210,6 +215,7 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     # Statistics have their own tests; here they have nothing to roll up.
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
+    monkeypatch.setattr(loop, "sweep_step_tests", swept)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
     assert pages == [(16, True)]
@@ -248,6 +254,7 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     # Statistics have their own tests; here they have nothing to roll up.
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
+    monkeypatch.setattr(loop, "sweep_step_tests", swept)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
 
@@ -271,6 +278,7 @@ async def test_a_quantum_that_outlives_its_wall_clock_guard_is_cancelled(monkeyp
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
+    monkeypatch.setattr(loop, "sweep_step_tests", swept)
     async with asyncio.timeout(2):
         assert await loop.cycle() is False
 
@@ -296,6 +304,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
+    monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     async with saturated_requests():
         assert await loop.cycle() is True

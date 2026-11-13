@@ -18,11 +18,13 @@
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
+
+from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
@@ -33,6 +35,7 @@ from firefly_weave.compiler.ir import (
     DecisionTableNode,
     HumanTaskNode,
     IRNode,
+    Participation,
     SignalNode,
     TransformNode,
     UnsupportedIR,
@@ -41,8 +44,10 @@ from firefly_weave.compiler.ir import (
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
+from firefly_weave.contracts.transactions import PHASE_SEGMENTS, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
+    MAX_PENDING_KEYS,
     Boundary,
     CalledWorkflow,
     DebugCommand,
@@ -56,6 +61,21 @@ from firefly_weave.operations.debug.models import (
     ScriptedError,
     SelectedScope,
     SignalReceipt,
+)
+from firefly_weave.operations.debug.transactions import (
+    SESSION_RUN_ID,
+    Answer,
+    PhaseTarget,
+    decided_started,
+    due_deadline,
+    frame_effect,
+    phase_target,
+    phase_targets,
+    resolution_problem,
+    scripted_effect,
+    started_data,
+    step_instance,
+    transaction_views,
 )
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
@@ -74,7 +94,16 @@ from firefly_weave.runtime.kernel import (
     validate,
     validate_action,
 )
-from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import (
+    CallIntent,
+    ControlCommand,
+    Deadline,
+    HumanTaskIntent,
+    RunState,
+    RuntimeEvent,
+    TaskIntent,
+    Transition,
+)
 from firefly_weave.runtime.step_failures import continuation_steps, failure_data, final_failure, wait_failure
 from firefly_weave.runtime.transactions import in_transaction, shapes
 
@@ -132,22 +161,81 @@ def _instance_node(prepared: PreparedWorkflow, key: str) -> IRNode | None:
     """The node that ``key`` addresses: a step ID (every instance), or one instance of a step inside loops.
 
     An instance key names one position per enclosing loop, each below that loop's ``maxItems``. Repeated
-    activations (``#``) and loop yields (``~``) are not addressed by a session.
+    activations (``#``) and loop yields (``~``) are not addressed by a session; confirms, cancels and undos are
+    addressed as phases (``phase_target``), never as steps.
     """
+    return step_instance(prepared, key)
+
+
+@dataclass(frozen=True)
+class _ActionTarget:
+    """An action a mock or a failure stands for: a step, or the confirm, cancel or undo of one."""
+
+    definition: ActionDefinition
+    node: ActionNode | None
+
+
+type _Target = _ActionTarget | CallWorkflowNode | PhaseTarget | IRNode
+
+
+def _action_definition(ir: WorkflowIR, digest: str) -> tuple[str, ActionDefinition]:
+    dependency = next(d for d in ir.dependencies if d.digest == digest and d.kind == "Action")
+    return dependency.reference, cast(ActionDefinition, load_definition(dependency.document))
+
+
+def _key_targets(prepared: PreparedWorkflow, key: str) -> list[_Target]:
+    """What a mock or failure key stands for: one step or phase for ``node:`` keys, every step and phase that uses
+    the action for ``action:`` keys, nothing for a key that names none."""
+    ir = prepared.ir
+    if key.startswith("node:"):
+        instance = key.removeprefix("node:")
+        phase = phase_target(prepared, instance)
+        if phase is not None:
+            return [phase]
+        node = _instance_node(prepared, instance)
+        if isinstance(node, ActionNode):
+            return [_ActionTarget(_action_definition(ir, node.dependency)[1], node)]
+        return [node] if node is not None else []
+    if not key.startswith("action:"):
+        return []
+    reference = key.removeprefix("action:")
+    targets: list[_Target] = []
+    for node in ir.graph.nodes:
+        if isinstance(node, ActionNode):
+            found, definition = _action_definition(ir, node.dependency)
+            if found == reference:
+                targets.append(_ActionTarget(definition, node))
+    targets.extend(p for p in phase_targets(prepared) if p.kind == "action" and p.reference == reference)
+    return targets
+
+
+def _undone(target: _Target) -> bool:
+    """Whether a target is a step a transaction takes part in, whose failure says what it may have applied."""
+    node = target.node if isinstance(target, _ActionTarget) else target
+    return isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None
+
+
+def _accepts_empty(prepared: PreparedWorkflow, instance: str) -> bool:
+    """Whether ``instance`` is a confirm, cancel or undo whose output schema accepts an empty object."""
+    target = phase_target(prepared, instance)
+    if target is None:
+        return False
     try:
-        parsed = split_instance(key)
-    except InvalidInstanceKey:
-        return None
-    node = prepared.nodes.get(parsed.node_id)
-    if node is None or parsed.segments or parsed.count is not None:
-        return None
-    if parsed.indexes:
-        loops = enclosing_loops(prepared.nodes, node)
-        if len(parsed.indexes) != len(loops):
-            return None
-        if any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=True)):
-            return None
-    return node
+        _validate_output(prepared.ir, target, {})
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_output(ir: WorkflowIR, target: _ActionTarget | PhaseTarget, value: JsonValue) -> None:
+    """Check a mocked result: an action's output, or a phase's (its action's output, or its called workflow's)."""
+    if isinstance(target, _ActionTarget):
+        validate_action(ir, target.definition, "output", value, node=target.node)
+    elif target.kind == "action":
+        participation = cast(Participation, target.step.txn)
+        validate_action(ir, _action_definition(ir, participation.phases[target.phase].dependency)[1], "output", value)
+    else:
+        validate(ir, target.output_schema, value)
 
 
 class Simulator:
@@ -161,6 +249,7 @@ class Simulator:
         limits: DebugLimits = _DEFAULT_LIMITS,
         workflows: Mapping[str, CalledWorkflow] | None = None,
         errors: Mapping[str, ScriptedError] | None = None,
+        pending: Collection[str] | None = None,
     ) -> None:
         self.limits = limits
         self.artifact = import_artifact(json.loads(artifact.to_bytes()))
@@ -172,6 +261,8 @@ class Simulator:
         validate(self.ir, self.ir.schemas[self.ir.input_schema], input)
         self._validate_mocks(self._prepared, mocks)
         self._validate_errors(self._prepared, mocks, dict(errors or {}))
+        unanswered = sorted(set(pending or ()))
+        self._validate_pending(self._prepared, mocks, dict(errors or {}), unanswered)
         called = self._called_workflows(dict(workflows or {}))
         self.data = DebugState(
             artifact=json.loads(self.artifact.to_bytes()),
@@ -183,9 +274,10 @@ class Simulator:
                 for reference, item in called.items()
             },
             errors=dict(errors or {}),
+            pending_keys=unanswered,
         )
         self._workflows = {"": _Workflow("", self.artifact, self._prepared, mocks), **called}
-        self.data.pending.append(self._event("started", {}))
+        self.data.pending.append(self._event("started", started_data(self._prepared, SESSION_RUN_ID)))
         self._bounded()
 
     def _called_workflows(self, supplied: dict[str, CalledWorkflow]) -> dict[str, _Workflow]:
@@ -236,30 +328,22 @@ class Simulator:
 
     def _validate_mocks(self, prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue]) -> None:
         ir = prepared.ir
-        steps: dict[str, tuple[ActionDefinition, ActionNode]] = {}
-        actions: dict[str, list[tuple[ActionDefinition, ActionNode]]] = {}
-        for node in ir.graph.nodes:
-            if isinstance(node, ActionNode):
-                dep = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
-                definition = cast(ActionDefinition, load_definition(dep.document))
-                steps[node.id] = (definition, node)
-                actions.setdefault("action:" + dep.reference, []).append((definition, node))
         for key, value in mocks.items():
-            if key.startswith("node:"):
-                # node:<step> mocks every instance of an action step; node:<instance key> mocks one of them.
-                step = _instance_node(prepared, key.removeprefix("node:"))
-                if isinstance(step, CallWorkflowNode) and step.mode == "wait":
-                    # A waiting call's mock stands for the whole called run.
-                    self._validate_call_mock(ir, step, value)
-                    continue
-                targets = [steps[step.id]] if step is not None and step.id in steps else []
-            else:
-                targets = actions.get(key, [])
-            if not targets:
+            # node:<step> mocks every instance of an action step, node:<instance key> one of them, and
+            # node:<step>#confirm (or #cancel, #undo) that phase; action:<reference> every step and phase using it.
+            targets = _key_targets(prepared, key)
+            if key.startswith("node:") and len(targets) == 1 and isinstance(targets[0], CallWorkflowNode):
+                if targets[0].mode != "wait":
+                    raise DebugError("WV-DEBUG-MOCK-KEY")
+                # A waiting call's mock stands for the whole called run.
+                self._validate_call_mock(ir, targets[0], value)
+                continue
+            answered = [target for target in targets if isinstance(target, (_ActionTarget, PhaseTarget))]
+            if not answered or len(answered) != len(targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
             try:
-                for definition, node in targets:
-                    validate_action(ir, definition, "output", value, node=node)
+                for target in answered:
+                    _validate_output(ir, target, value)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
@@ -284,45 +368,92 @@ class Simulator:
     def _validate_errors(
         prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue], errors: Mapping[str, ScriptedError]
     ) -> None:
-        """Scripted failures name steps like mocks do: any action, a waiting call, or a step that handles failures."""
-        ir = prepared.ir
-        references = {
-            "action:" + d.reference
-            for node in ir.graph.nodes
-            if isinstance(node, ActionNode)
-            for d in ir.dependencies
-            if d.digest == node.dependency and d.kind == "Action"
-        }
-        for key in errors:
+        """Scripted failures name steps like mocks do: any action or phase, a waiting call, a step that handles
+        failures, or a step that changes nothing inside a transaction (its transaction handles the failure).
+
+        An ``effect`` only means something for a step a transaction would undo, and nothing applied can't come with
+        an unknown outcome, as a completion refuses it.
+        """
+        owners = prepared.transactions.owners if prepared.transactions is not None else {}
+        for key, failure in errors.items():
             if key in mocks:
                 raise DebugError("WV-DEBUG-MOCK-CONFLICT")
+            targets = _key_targets(prepared, key)
             if key.startswith("node:"):
-                node = _instance_node(prepared, key.removeprefix("node:"))
-                scripted = isinstance(node, ActionNode) or (isinstance(node, CallWorkflowNode) and node.mode == "wait")
+                node = targets[0] if len(targets) == 1 else None
+                scripted = isinstance(node, (_ActionTarget, PhaseTarget)) or (
+                    isinstance(node, CallWorkflowNode) and node.mode == "wait"
+                )
+                pure = isinstance(node, (TransformNode, DecisionTableNode))
                 handles = (
                     isinstance(node, (TransformNode, DecisionTableNode, SignalNode, HumanTaskNode))
                     and node.on_error is not None
-                )
+                ) or (pure and cast(IRNode, node).id in owners)
                 if not (scripted or handles):
                     raise DebugError("WV-DEBUG-MOCK-KEY")
-            elif key not in references:
+            elif not any(isinstance(target, (_ActionTarget, PhaseTarget)) for target in targets):
+                raise DebugError("WV-DEBUG-MOCK-KEY")
+            if failure.effect is not None and not any(_undone(target) for target in targets):
+                raise DebugError("WV-DEBUG-MOCK-KEY")
+            if failure.effect == "none" and failure.outcome == "unknown":
+                raise DebugError("WV-DEBUG-MOCK-OUTPUT")
+
+    @staticmethod
+    def _validate_pending(
+        prepared: PreparedWorkflow,
+        mocks: Mapping[str, JsonValue],
+        errors: Mapping[str, ScriptedError],
+        pending: Sequence[str],
+    ) -> None:
+        """Results that never arrive name tasks, phases and waiting calls like mocks do, never one with a mock or a
+        failure too, and at most ``MAX_PENDING_KEYS`` of them, however they were merged."""
+        if len(pending) > MAX_PENDING_KEYS:
+            raise DebugError("WV-DEBUG-LIMIT")
+        for key in pending:
+            if key in mocks or key in errors:
+                raise DebugError("WV-DEBUG-MOCK-CONFLICT")
+            targets = _key_targets(prepared, key)
+            answered = [
+                target
+                for target in targets
+                if isinstance(target, (_ActionTarget, PhaseTarget))
+                or (isinstance(target, CallWorkflowNode) and target.mode == "wait")
+            ]
+            if not answered or len(answered) != len(targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
 
-    def _scripted(self, key: str, instance: str, reference: str | None = None) -> ScriptedError | None:
-        """The failure scripted for one instance of the simulated workflow, under the mocks' precedence: the
-        instance, then its step, then its action. A mock found first wins."""
-        if key:
-            return None
-        mocks, errors = self._workflows[""].mocks, self.data.errors
-        candidates = ["node:" + instance, "node:" + node_of(instance)]
-        if reference is not None:
-            candidates.append("action:" + reference)
-        for candidate in candidates:
+    @staticmethod
+    def _candidates(instance: str, fallbacks: Sequence[str]) -> list[str]:
+        """The keys that may answer ``instance``, most specific first: the instance, its step, then the caller's
+        fallbacks. A confirm, cancel or undo is answered at its own phase keys, never at its step's."""
+        try:
+            phase = split_phase(instance)
+        except InvalidInstanceKey:
+            phase = None
+        step = f"{node_of(phase[0])}#{PHASE_SEGMENTS[phase[1]]}" if phase is not None else node_of(instance)
+        return list(dict.fromkeys(["node:" + instance, "node:" + step, *fallbacks]))
+
+    def _answer(self, frame: str, instance: str, fallbacks: Sequence[str], *, retry: bool = False) -> Answer:
+        """What the session gives one step or phase instance of the run ``frame``: the first candidate key found in
+        the mocks, the scripted failures or the results that never arrive. Failures and results that never arrive
+        apply to the simulated workflow itself; a retried attempt skips failures, which belong to the first one.
+        """
+        mocks = self._workflow(frame).mocks
+        errors = {} if frame or retry else self.data.errors
+        pending = set() if frame else set(self.data.pending_keys)
+        for candidate in self._candidates(instance, fallbacks):
             if candidate in mocks:
-                return None
+                return Answer("mock", candidate, mocks[candidate])
             if candidate in errors:
-                return errors[candidate]
-        return None
+                return Answer("error", candidate, errors[candidate])
+            if candidate in pending:
+                return Answer("pending", candidate)
+        return Answer("none")
+
+    def _scripted(self, key: str, instance: str, fallbacks: Sequence[str] = ()) -> ScriptedError | None:
+        """The failure scripted for one instance of the simulated workflow, under the mocks' precedence."""
+        answer = self._answer(key, instance, fallbacks)
+        return cast(ScriptedError, answer.value) if answer.kind == "error" else None
 
     def _failure(self, called: _Workflow, instance: str, failure: ScriptedError) -> RuntimeEvent:
         """The event a platform would record for this failure: the step's setting takes it, or an incident opens
@@ -330,14 +461,16 @@ class Simulator:
         ir = called.ir
         node = called.prepared.nodes[node_of(instance)]
         side_effect = "idempotent"
+        spec: JsonObject | None = None
         if isinstance(node, ActionNode):
             dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
-            side_effect = cast(str, cast(JsonObject, dependency.document["spec"])["sideEffect"])
+            spec = cast(JsonObject, dependency.document["spec"])
+            side_effect = cast(str, spec["sideEffect"])
         data = failure_data(instance, failure.attempts, failure.code, failure.outcome, failure.attempts)
         if in_transaction(shapes(ir), instance):
-            # As recovery does: the transaction decides, and only a step that never started is known to have
-            # applied nothing (a session cannot tell whether a release would vouch for a definite failure).
-            data["effect"] = "none" if failure.outcome == "not_started" else "unknown"
+            # The transaction decides. A session answers as a transaction-aware release: the effect it was given,
+            # else nothing applied for a step that never started or a code its action declares definite.
+            data["effect"] = scripted_effect(spec if split_phase(instance) is None else None, failure)
             return self._event("step_failed", data)
         policy = error_policy(ir, instance)
         verdict = final_failure(policy, side_effect, failure.outcome)
@@ -353,7 +486,15 @@ class Simulator:
     def restore(cls, serialized: str, *, limits: DebugLimits = _DEFAULT_LIMITS) -> "Simulator":
         if len(serialized.encode()) > limits.session_bytes:
             raise DebugError("WV-DEBUG-LIMIT")
-        data = DebugState.model_validate_json(serialized)
+        try:
+            data = DebugState.model_validate_json(serialized)
+        except ValidationError as error:
+            if any(item["loc"] == ("pending_keys",) and item["type"] == "too_long" for item in error.errors()):
+                raise DebugError("WV-DEBUG-LIMIT") from None
+            raise
+        if data.pending_keys != sorted(set(data.pending_keys)):
+            # A session stores its pending keys once each and sorted; any other list was not stored by one.
+            raise DebugError("WV-DEBUG-MOCK-KEY")
         result = cls.__new__(cls)
         result.limits = limits
         result.artifact = import_artifact(data.artifact)
@@ -362,6 +503,7 @@ class Simulator:
         result._unchecked = result._unchecked_bytes = 0
         result._validate_mocks(result._prepared, data.mocks)
         result._validate_errors(result._prepared, data.mocks, data.errors)
+        result._validate_pending(result._prepared, data.mocks, data.errors, data.pending_keys)
         called = result._called_workflows(dict(data.workflows))
         if any(frame.state is not None and frame.workflow not in called for frame in data.frames):
             raise DebugError("WV-DEBUG-WORKFLOW")
@@ -502,6 +644,7 @@ class Simulator:
             active_nodes=list(state.active),
             variables=state.model_dump(mode="json"),
             loops=self._loops(self._workflows[frame.workflow].prepared, state),
+            transactions=transaction_views(state),
         )
 
     def inspect(self) -> DebugView:
@@ -524,6 +667,7 @@ class Simulator:
             selected_scope=self._scope(state, selected),
             frames=[self._frame_view(frame) for frame in self.data.frames],
             selected_frame=upcoming[0] if upcoming is not None and upcoming[0] else None,
+            transactions=transaction_views(state),
         ).model_copy(deep=True)
 
     def _stops_at(self, path: str) -> bool:
@@ -653,30 +797,17 @@ class Simulator:
         return key, run, self._eligible(key, run)
 
     def _step(self) -> bool:
-        d = self.data
-        if d.diagnostics:
+        if self.data.diagnostics:
             return False
         scheduled = self._scheduled()
         if scheduled is None:
             return False
-        key, run, event = scheduled
+        return self._step_run(*scheduled)
+
+    def _step_run(self, key: str, run: Run, event: RuntimeEvent | None) -> bool:
+        """One boundary of the run ``key``: ``event`` begins a new event, None continues the one in progress."""
+        d = self.data
         called = self._workflow(key)
-        if called.prepared.transactions is not None:
-            # Transactions are not simulated yet: their confirms, cancels and undos would run with the steps' own
-            # mocks. The session stops before the workflow starts.
-            d.diagnostics = [
-                Diagnostic(
-                    code="WV-DEBUG-MISSING_MOCK",
-                    severity="error",
-                    stage="evaluation",
-                    path="",
-                    message="A transaction can't be simulated yet; run it on a test activation.",
-                    hint="Publish the workflow and run it on a test activation"
-                    + (f" ({called.reference})" if called.reference else "")
-                    + ".",
-                )
-            ]
-            return True
         state = cast(RunState, run.state)
         if event is not None:
             event = event.model_copy(update={"sequence": state.accepted_sequence + 1})
@@ -713,71 +844,139 @@ class Simulator:
             run.cursor = None
             # Measured context parts last one event, as in production, where every transition prepares its own.
             called.prepared.contexts.parts.clear()
-            for change in result.steps:
-                waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
-                if isinstance(waiting, (SignalNode, HumanTaskNode)):
-                    scripted = self._scripted(key, change.node_id)
-                    if scripted is not None:
-                        run.pending.append(self._failure(called, change.node_id, scripted))
-            for command in result.commands:
-                if isinstance(command, Deadline):
-                    run.deadlines.append(command)
-                elif isinstance(command, CallIntent):
-                    d.inputs[_path(key, command.node_id)] = command.input
-                    if not self._call(key, run, called, command):
-                        return True
-                elif isinstance(command, HumanTaskIntent):
-                    d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
-                elif isinstance(command, TaskIntent):
-                    d.inputs[_path(key, command.node_id)] = command.input
-                    scripted = self._scripted(key, command.node_id, command.action_reference)
-                    if scripted is not None:
-                        run.pending.append(self._failure(called, command.node_id, scripted))
-                        continue
-                    # A step mock applies to every instance of the step.
-                    mock = "node:" + command.node_id
-                    if mock not in called.mocks:
-                        mock = "node:" + node_of(command.node_id)
-                    if mock not in called.mocks:
-                        mock = "action:" + command.action_reference
-                    if mock not in called.mocks:
-                        tried = dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id), mock])
-                        d.diagnostics = [
-                            Diagnostic(
-                                code="WV-DEBUG-MISSING_MOCK",
-                                severity="error",
-                                stage="evaluation",
-                                path="",
-                                message="An action requires an explicit mock.",
-                                hint="Add a mock under "
-                                + ", ".join(tried)
-                                + (f" in the mocks of {called.reference}" if called.reference else "")
-                                + ".",
-                            )
-                        ]
-                        return True
-                    run.pending.append(
-                        self._event("task_completed", {"node_id": command.node_id, "output": called.mocks[mock]})
-                    )
-                    self._grown(called.mocks[mock])
+            if not self._dispatch(key, run, called, result):
+                return True
             if result.state.status in TERMINAL:
                 self._ended(key)
         return True
 
-    def _call(self, key: str, run: Run, called: _Workflow, command: CallIntent) -> bool:
-        """Answer a call from a mock, or start a frame that runs the called workflow; False when it cannot."""
+    def _dispatch(self, key: str, run: Run, called: _Workflow, result: Transition) -> bool:
+        """Carry out what one transition of the run ``key`` asks for: deadlines, calls, people's tasks, tasks, and the
+        stop of a called step a transaction no longer waits for. False when the session can't go on (a missing
+        mock)."""
+        d = self.data
+        for change in result.steps:
+            waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
+            if isinstance(waiting, (SignalNode, HumanTaskNode)):
+                scripted = self._scripted(key, change.node_id)
+                if scripted is not None:
+                    run.pending.append(self._failure(called, change.node_id, scripted))
+        for command in result.commands:
+            if isinstance(command, Deadline):
+                run.deadlines.append(command)
+            elif isinstance(command, CallIntent):
+                d.inputs[_path(key, command.node_id)] = command.input
+                if not self._call(key, run, called, command):
+                    return False
+            elif isinstance(command, HumanTaskIntent):
+                d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
+            elif isinstance(command, ControlCommand) and command.kind == "settle":
+                self._settle(key, command.node_id)
+            elif isinstance(command, TaskIntent):
+                d.inputs[_path(key, command.node_id)] = command.input
+                if not self._task(key, run, called, command.node_id, command.action_reference):
+                    return False
+        return True
+
+    def _task(
+        self, key: str, run: Run, called: _Workflow, node_id: str, reference: str, *, generation: int | None = None
+    ) -> bool:
+        """Answer one task of the run ``key`` as a worker would: a mock's result, a scripted failure, no result ever,
+        or an empty result for a confirm, cancel or undo with nothing to say. ``generation`` is a person's retry,
+        which skips failures. False when the session can't answer it (a missing mock)."""
+        fallbacks = ("action:" + reference,)
+        answer = self._answer(key, node_id, fallbacks, retry=generation is not None)
+        if answer.kind == "error":
+            run.pending.append(self._failure(called, node_id, cast(ScriptedError, answer.value)))
+            return True
+        if answer.kind == "pending":
+            # Its result never arrives in this session: the step stays in flight.
+            return True
+        if answer.kind == "none" and _accepts_empty(called.prepared, node_id):
+            # A confirm, cancel or undo with nothing to say completes with an empty result.
+            answer = Answer("mock", None, {})
+        if answer.kind == "none":
+            tried = self._candidates(node_id, fallbacks)
+            self.data.diagnostics = [
+                Diagnostic(
+                    code="WV-DEBUG-MISSING_MOCK",
+                    severity="error",
+                    stage="evaluation",
+                    path="",
+                    message="An action requires an explicit mock.",
+                    hint="Add a mock under "
+                    + ", ".join(tried)
+                    + (f" in the mocks of {called.reference}" if called.reference else "")
+                    + ".",
+                )
+            ]
+            return False
+        value = cast(JsonValue, answer.value)
+        data: JsonObject = {"node_id": node_id, "output": value}
+        if generation is not None:
+            data["generation"] = generation
+        run.pending.append(self._event("task_completed", data))
+        self._grown(value)
+        return True
+
+    def _retry(self, key: str, run: Run, name: str, generation: int) -> None:
+        """Answer a person's retry of a stuck confirm, cancel or undo, or of a step after the point of no return. The
+        kernel only makes it active again, so the session answers the new attempt as a worker or child run would."""
+        called = self._workflow(key)
+        phase = phase_target(called.prepared, name)
+        node = called.prepared.nodes[node_of(name)]
+        value = self.data.inputs.get(_path(key, name))
+        if phase is not None and phase.kind == "action":
+            self._task(key, run, called, name, phase.reference, generation=generation)
+            return
+        if phase is None and isinstance(node, ActionNode):
+            reference = _action_definition(called.ir, node.dependency)[0]
+            self._task(key, run, called, name, reference, generation=generation)
+            return
+        if phase is not None:
+            # A called phase goes on whatever its run ends with, as the kernel issues it.
+            digest = cast(Participation, phase.step.txn).phases[phase.phase].dependency
+            intent = CallIntent(
+                node_id=name,
+                workflow_digest=digest,
+                workflow_reference=phase.reference,
+                input=value,
+                mode="wait",
+                on_failure="continue",
+            )
+        else:
+            step = cast(CallWorkflowNode, node)
+            intent = CallIntent(
+                node_id=name,
+                workflow_digest=step.dependency,
+                workflow_reference=called_workflow(called.ir, step)[0],
+                input=value,
+                mode="wait",
+                on_failure=step.on_failure or "stop",
+            )
+        self._call(key, run, called, intent, generation=generation)
+
+    def _call(
+        self, key: str, run: Run, called: _Workflow, command: CallIntent, *, generation: int | None = None
+    ) -> bool:
+        """Answer a call from a mock, or start a frame that runs the called workflow; False when it cannot.
+        ``generation`` is a person's retry: it skips failures, and runs the called workflow again in the call's frame.
+        """
         d = self.data
         child = _path(key, command.node_id)
+        attempt = generation or 0
+        candidates = self._candidates(command.node_id, ())
         if command.mode == "wait":
-            scripted = self._scripted(key, command.node_id)
-            if scripted is not None:
-                run.pending.append(self._failure(called, command.node_id, scripted))
+            answer = self._answer(key, command.node_id, (), retry=generation is not None)
+            if answer.kind == "error":
+                run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
                 return True
-            candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
-            mock = next((mock for mock in candidates if mock in called.mocks), None)
-            if mock is not None:
-                value = called.mocks[mock]
-                run.pending.append(self._event("call_completed", self._mocked_call(child, command, value)))
+            if answer.kind == "pending":
+                # The called run started and never ends in this session.
+                return True
+            if answer.kind == "mock":
+                value = cast(JsonValue, answer.value)
+                run.pending.append(self._event("call_completed", self._mocked_call(child, command, value, attempt)))
                 self._grown(value)
                 return True
         if command.workflow_reference in self._workflows:
@@ -790,10 +989,22 @@ class Simulator:
                 mode=command.mode,
                 on_failure=command.on_failure,
                 state=RunState(input=command.input),
+                generation=attempt,
             )
-            d.frames.append(frame)
-            frame.pending.append(self._event("started", {}))
+            earlier = next((index for index, item in enumerate(d.frames) if item.key == child), None)
+            if earlier is None:
+                d.frames.append(frame)
+            else:
+                # A retried call runs its workflow again in the same frame; the earlier run's boundaries stay.
+                d.frames[earlier] = frame
+                d.frames = [item for item in d.frames if not item.key.startswith(child + "/")]
+            callee = self._workflows[command.workflow_reference].prepared
+            frame.pending.append(self._event("started", started_data(callee, frame_run_id(child))))
             self._grown(command.input)
+            return True
+        if _accepts_empty(called.prepared, command.node_id):
+            # A called confirm, cancel or undo with nothing to say completes with an empty result.
+            run.pending.append(self._event("call_completed", self._mocked_call(child, command, {}, attempt)))
             return True
         if command.mode == "detach":
             # A detached call continues at once; without its workflow, its run is shown as not simulated.
@@ -817,9 +1028,12 @@ class Simulator:
         return False
 
     @staticmethod
-    def _mocked_call(key: str, command: CallIntent, value: JsonValue) -> JsonObject:
+    def _mocked_call(key: str, command: CallIntent, value: JsonValue, generation: int = 0) -> JsonObject:
         """The recorded outcome a mocked call delivers, shaped like the outcome of a real child run."""
-        data: JsonObject = {"node_id": command.node_id, "generation": 0}
+        data: JsonObject = {"node_id": command.node_id, "generation": generation}
+        if split_phase(command.node_id) is not None:
+            # A called confirm, cancel or undo is mocked with its workflow's output and answered as a success.
+            return data | {"child_run_id": str(frame_run_id(key)), "status": "succeeded", "output": value}
         if command.on_failure == "continue":
             envelope = cast(JsonObject, value)
             status = cast(str, envelope["status"])
@@ -850,16 +1064,32 @@ class Simulator:
         state, caller_state = cast(RunState, frame.state), cast(RunState, caller.state)
         if frame.mode != "wait" or caller_state.status in TERMINAL or frame.call_node not in caller_state.active:
             return
-        data: JsonObject = {"node_id": frame.call_node, "generation": 0}
+        data: JsonObject = {"node_id": frame.call_node, "generation": frame.generation}
+        calling = self._workflow(_parent(key))
+        ir = calling.ir
+        # A transaction decides what a called step's outcome means: it always receives it, with what the called run
+        # may have applied, as the platform delivers it.
+        settling = in_transaction(calling.prepared.transactions, frame.call_node)
+        if settling:
+            data["effect"] = frame_effect(self._workflows[frame.workflow].prepared, key, self.data.inputs)
         refused = None
         if state.status == "succeeded":
-            # The same check a platform applies before it delivers a child's output.
-            ir = self._workflow(_parent(key)).ir
-            node = cast(CallWorkflowNode, self._workflow(_parent(key)).prepared.nodes[node_of(frame.call_node)])
+            # The same check a platform applies before it delivers a child's output; a called confirm, cancel or
+            # undo is checked against its own workflow's output schema.
+            phase = phase_target(calling.prepared, frame.call_node)
+            if phase is not None:
+                schema = phase.output_schema
+            else:
+                node = cast(CallWorkflowNode, calling.prepared.nodes[node_of(frame.call_node)])
+                schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
             bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
-            refused = screened(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), state.output, bundle)
-        if frame.on_failure == "stop" and state.status in STOPPED:
+            refused = screened(schema, state.output, bundle)
+        if frame.on_failure == "stop" and state.status in STOPPED and not settling:
             event = self._event("incident_opened", data | {"code": "WV-CALL-INTERRUPTED"})
+        elif refused is not None and settling:
+            # The child ran and its output was refused: the step failed and may have applied.
+            failed = failure_data(frame.call_node, frame.generation, refused, "unknown", frame.generation + 1)
+            event = self._event("step_failed", failed | {"effect": "unknown"})
         elif refused is not None:
             event = self._event("incident_opened", data | {"code": refused})
         else:
@@ -870,16 +1100,30 @@ class Simulator:
         frame.result = event.id
         caller.pending.append(event)
 
-    def _cancel(self, frame: FrameState) -> None:
-        """Cancel a waiting frame whose caller ended, as a platform's cancellation of a child run does."""
+    def _settle(self, key: str, node_id: str) -> None:
+        """A transaction going back stops a called step still in flight: its frame is cancelled, as the platform
+        cancels the child run."""
+        child = _path(key, node_id)
+        frame = next((f for f in self.data.frames if f.key == child), None)
+        if frame is not None and frame.state is not None and frame.state.status not in TERMINAL:
+            self._cancel(frame, "Transaction undone")
+
+    def _cancel(self, frame: FrameState, reason: str = "Caller run ended") -> None:
+        """Cancel a waiting frame, as a platform's cancellation of a child run does. A frame without transactions
+        ends at once; one whose transactions still hold work undoes them first, then ends cancelled."""
         state = cast(RunState, frame.state)
-        event = self._event("cancelled", {"reason": "Caller run ended"}).model_copy(
+        event = self._event("cancelled", {"reason": reason}).model_copy(
             update={"sequence": state.accepted_sequence + 1}
         )
-        frame.state = transition(state, event, self._workflows[frame.workflow].artifact).state
+        workflow = self._workflows[frame.workflow]
+        result = transition(state, event, workflow.artifact)
+        frame.state = result.state
         frame.events.append(event)
-        frame.pending, frame.deadlines, frame.signals = [], [], []
         self.data.boundaries.append(Boundary(kind="event", event_type="cancelled", frame=frame.key))
+        if workflow.prepared.transactions is not None and result.state.status not in TERMINAL:
+            self._dispatch(frame.key, frame, workflow, result)
+            return
+        frame.pending, frame.deadlines, frame.signals = [], [], []
         self._ended(frame.key)
 
     def _due(self, key: str, run: Run) -> Deadline | tuple[SignalNode, SignalReceipt] | RuntimeEvent | None:
@@ -895,7 +1139,7 @@ class Simulator:
         for deadline in deadlines:
             if deadline.deadline > self.data.now or deadline.node_id in deferred:
                 continue
-            if deadline.node_id != "@run" and deadline.node_id not in state.active:
+            if not due_deadline(state, deadline):
                 continue
             if deadline.name and any(
                 s.name == deadline.name and s.accepted_at < deadline.deadline for s in run.signals
@@ -928,7 +1172,7 @@ class Simulator:
                 return self._event("step_failed", found)
             return self._event(
                 "wait_elapsed" if step in duration_steps(ir) else "timed_out",
-                {"node_id": due.node_id, "deadline": due.deadline.isoformat()},
+                {"node_id": due.node_id, "deadline": due.deadline.isoformat(), **decided_started(due)},
             )
         if isinstance(due, tuple):
             node, receipt = due
@@ -992,6 +1236,61 @@ class Simulator:
 
         return self._mutate(receive)
 
+    def resolve(
+        self, incident_key: str, resolution: str, payload: JsonValue = None, *, frame: str | None = None
+    ) -> DebugView:
+        """Apply a person's resolution of a transaction in doubt in the run ``frame`` (the simulated workflow by
+        default), as one event boundary of that run; ``payload`` is the reconciled result or record. The kernel
+        decides: a resolution it doesn't take changes nothing and is refused with ``WV-DEBUG-INCIDENT``, as is one
+        while a run is in the middle of an event. The steps it releases run on the next ``next`` or ``continue``.
+        Only ``accept_reconciled_result`` takes a payload; any other resolution with one is refused with
+        ``WV-DEBUG-COMMAND``, so nothing a person sends is silently dropped.
+        """
+        if payload is not None and resolution != "accept_reconciled_result":
+            raise DebugError("WV-DEBUG-COMMAND")
+
+        def apply() -> None:
+            key = frame or ""
+            run = self._run(key)
+            state = cast(RunState, run.state)
+            if self._current() is not None or resolution_problem(state, incident_key, resolution):
+                raise DebugError("WV-DEBUG-INCIDENT")
+            prior = state.incidents[incident_key]
+            data: JsonObject = {
+                "incident_key": incident_key,
+                "node_id": prior.node_id,
+                "generation": prior.generation,
+                "kind": resolution,
+                "code": prior.code,
+            }
+            if resolution == "accept_reconciled_result":
+                data["output"] = payload
+            self._step_run(key, run, self._event("incident_resolved", data))
+            # The kernel ends a resolution's event only once the steps it released ran, so its cursor holds the truth.
+            after = run.cursor.result.state if run.cursor else cast(RunState, run.state)
+            if incident_key in after.incidents:
+                raise DebugError("WV-DEBUG-INCIDENT")
+            retried = prior.node_id in after.active and prior.node_id not in state.active
+            if resolution == "retry_safe" and prior.code != "WV-TXN-SETTLE-TIMEOUT" and retried:
+                self._retry(key, run, prior.node_id, prior.generation + 1)
+
+        return self._mutate(apply)
+
+    def cancel(self, skip_undo: bool = False) -> DebugView:
+        """Cancel the simulated run, as a person's cancel does: its open transactions are undone first, or force
+        ended with ``skip_undo``. The cancel is queued first; ``next`` or ``continue`` applies it."""
+
+        def queue() -> None:
+            d = self.data
+            if d.diagnostics or (d.cursor.result.state if d.cursor else d.state).status in TERMINAL:
+                raise DebugError("WV-DEBUG-STATE")
+            data: JsonObject = {"reason": "Cancelled in the simulation"}
+            if skip_undo:
+                data["skip_undo"] = True
+            d.pending.insert(0, self._event("cancelled", data))
+
+        return self._mutate(queue)
+
     def advance_time(self, seconds: int) -> DebugView:
         def move() -> None:
             if type(seconds) is not int or seconds < 0:
@@ -1008,6 +1307,9 @@ class Simulator:
         return self._mutate(move)
 
     def command(self, command: DebugCommand) -> DebugView:
+        if command.skip_undo and command.kind != "cancel":
+            # Only a cancel can skip the undo; any other command with it would silently ignore it.
+            raise DebugError("WV-DEBUG-COMMAND")
         if command.kind == "next":
             return self.next()
         if command.kind == "continue":
@@ -1020,6 +1322,10 @@ class Simulator:
             return self.signal(command.name, command.payload, frame=command.frame)
         if command.kind == "advance_time" and command.seconds is not None:
             return self.advance_time(command.seconds)
+        if command.kind == "resolve" and command.incident_key is not None and command.resolution is not None:
+            return self.resolve(command.incident_key, command.resolution, command.payload, frame=command.frame)
+        if command.kind == "cancel" and command.frame is None:
+            return self.cancel(command.skip_undo)
         if command.kind == "breakpoints" and command.node_ids is not None:
             self.set_breakpoints(set(command.node_ids))
             return self.inspect()

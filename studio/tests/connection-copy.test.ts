@@ -36,6 +36,8 @@ import {
   prefillFromBuilder,
   sameRequest,
   suggestedName,
+  testCopy,
+  testOrigin,
   type ConnectionDraft,
 } from "../src/app/integrations/connection-copy";
 
@@ -344,6 +346,73 @@ describe("server diagnostics", () => {
       "highlighted settings",
     );
     expect(connectionFailureCopy(500, "WV-INTERNAL", "create")).toBe("");
+  });
+});
+
+describe("connection test copy", () => {
+  it("says one request is sent, and why one failed", () => {
+    const origin = testOrigin("https://user:secret@API.acme.test:8443/v1?x=1");
+    expect(origin).toBe("api.acme.test:8443");
+    expect(testCopy.label).toBe("Test connection");
+    expect(testCopy.running(origin)).toBe(
+      "Testing… Weave sends one request to api.acme.test:8443.",
+    );
+    expect(testCopy.ok(origin)).toBe("Connected: api.acme.test:8443 answered.");
+    expect(
+      (["unreachable", "destination", "unauthorized", "status"] as const).map(
+        (reason) => testCopy.failed(origin, reason),
+      ),
+    ).toEqual([
+      "Couldn't reach api.acme.test:8443.",
+      "This platform doesn't allow requests to api.acme.test:8443.",
+      "api.acme.test:8443 refused this connection's sign-in.",
+      "api.acme.test:8443 answered with an error.",
+    ]);
+    expect(testCopy.failed(origin, undefined)).toContain(
+      "can't use this connection as configured",
+    );
+  });
+
+  it("names the server when the connection has no HTTP address", () => {
+    expect(testOrigin(undefined)).toBe("the server");
+    expect(testOrigin("not a url")).toBe("the server");
+    expect(testCopy.failed(testOrigin(undefined), "unauthorized")).toBe(
+      "The server refused this connection's sign-in.",
+    );
+  });
+
+  it("claims no request or answer for a connection without an HTTP address", () => {
+    // Email and Teams connections have no base URL; their test checks the saved settings and contacts nothing.
+    expect(testCopy.running(testOrigin(undefined))).toBe(
+      "Testing the connection…",
+    );
+    expect(testCopy.ok(testOrigin(undefined))).toBe(
+      "The platform accepted this connection.",
+    );
+    expect(testCopy.running("api.example.com")).toBe(
+      "Testing… Weave sends one request to api.example.com.",
+    );
+    expect(testCopy.ok("api.example.com")).toBe(
+      "Connected: api.example.com answered.",
+    );
+  });
+
+  it("keeps a host as written when it starts a sentence", () => {
+    const origin = testOrigin("https://api.example.com/v2");
+    expect(testCopy.failed(origin, "unauthorized")).toBe(
+      "api.example.com refused this connection's sign-in.",
+    );
+    expect(testCopy.failed(origin, "status")).toBe(
+      "api.example.com answered with an error.",
+    );
+    expect(testCopy.failed(testOrigin(42), "status")).toBe(
+      "The server answered with an error.",
+    );
+  });
+
+  it("never claims that no request is sent", () => {
+    for (const text of [testCopy.label, testCopy.running("api.acme.test")])
+      expect(text).not.toMatch(/no request/i);
   });
 });
 

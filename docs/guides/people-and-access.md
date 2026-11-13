@@ -83,6 +83,7 @@ business data.
 | Deployer | `deployer` | Activate and retire releases, bind connections, and manage triggers and subscriptions |
 | Execution manager | `execution_manager` | Read, archive, and permanently purge run content |
 | Transaction reconciler | `transaction_reconciler` | Decide by hand how a workflow transaction in doubt ended; it grants no other access |
+| Step tester | `step_tester` | Run one step of a saved draft for real in an environment whose test calls are on; it grants no other access |
 | Task participant | `task_participant` | Read eligible tasks; claim, release, and complete assigned work |
 | Task manager | `task_manager` | Manage assignment bindings, groups, and human tasks |
 | Email reader, Email sender, Email manager | `email_reader`, `email_sender`, `email_manager` | Read conversations, send messages, or manage email sources |
@@ -111,6 +112,29 @@ and role names use `lumi`.
 
 A worker identity stays limited to worker capabilities even if a human role is
 attached to it by mistake.
+
+**Running steps for real needs a role and an environment that allows it.** A
+step tester (`step_tester`) can run one step of a saved draft for real, but only
+where that environment's test calls are on, and only with connections they may
+bind. Test calls are off in every environment until someone with
+`environment.manage` (a tenant administrator) turns them on; `weave platform
+up` turns them on in the local demo environment only. Read and change the
+setting with the API; the first save sends no `If-Match`, and later saves send
+the revision they read:
+
+```sh
+# Read whether test calls are on in an environment.
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$WEAVE_API_URL/api/v1/tenants/$TENANT/projects/$PROJECT/environments/$ENVIRONMENT/test-policy"
+# Turn them on for the first time; to change a saved policy, add -H 'If-Match: "1"' with the revision you read.
+curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"test_calls": "enabled"}' \
+  "$WEAVE_API_URL/api/v1/tenants/$TENANT/projects/$PROJECT/environments/$ENVIRONMENT/test-policy"
+```
+
+The SDK's `WeaveClient` calls the same operations as `test_policy.read` and
+`test_policy.save` (pass `revision=` for a saved policy). Every change is
+audited with the old and new values.
 
 **Scope narrows a grant.** A tenant binding covers every project and
 environment in the tenant. A project binding covers that project and its
@@ -407,7 +431,7 @@ different set instead. An existing username is never reset. Never use this
 command with a shared or production identity provider.
 
 `weave platform up --username NAME` creates its first account with the local
-owner roles instead: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator` and `transaction_reconciler`. To add roles later to an account this platform
+owner roles instead: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator`, `transaction_reconciler` and `step_tester`. To add roles later to an account this platform
 created, use `user grant`; it adds grants, never removes them, and first checks
 that the sign-in still belongs to the recorded person:
 

@@ -27,11 +27,12 @@ key ``"{run_id}:{phase key}"``: ``hold#confirm``, ``hold#cancel`` and ``add#undo
 digit-first segments belong to AI agent turns.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Final, Literal, get_args
+from typing import Any, Final, Literal, Protocol, get_args
 
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, instance_view, split_instance
+from firefly_weave.contracts.values import JsonObject
 
 type TransactionState = Literal[
     "open",
@@ -179,3 +180,58 @@ def split_phase(key: str) -> tuple[str, UndoPhase] | None:
     if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in _PHASES:
         return None
     return key.rpartition("#")[0], _PHASES[parsed.segments[0]]
+
+
+def dispatch_effect(calls: bool, action_digests: Iterable[str], dependencies: Sequence[Mapping[str, Any]]) -> Effect:
+    """What a run may have applied from what it dispatched: ``none`` only with no call and no task of an action
+    that changes data (every task's action is ``read_only``), otherwise ``unknown``. Platform runs and simulated
+    runs share this rule."""
+    if calls:
+        return "unknown"
+    digests = list(action_digests)
+    if not digests:
+        return "none"
+    effects = {
+        dependency["digest"]: dependency["document"]["spec"].get("sideEffect")
+        for dependency in dependencies
+        if dependency.get("kind") == "Action"
+    }
+    return "none" if all(effects.get(digest) == "read_only" for digest in digests) else "unknown"
+
+
+class Participant(Protocol):
+    """What a view of one step of a transaction reads from its record."""
+
+    @property
+    def key(self) -> str: ...
+
+    @property
+    def mode(self) -> UndoMode: ...
+
+    @property
+    def status(self) -> ParticipantStatus: ...
+
+    @property
+    def effect(self) -> Effect: ...
+
+    @property
+    def attempts(self) -> int: ...
+
+
+def participants_view(participants: Iterable[Participant]) -> list[JsonObject]:
+    """Keys, modes, statuses and attempts of each participant; never a value. Platform runs and simulated runs
+    share this view."""
+    views: list[JsonObject] = []
+    for item in participants:
+        identity = instance_view(item.key)
+        view: JsonObject = {
+            "node_id": identity.node_id,
+            "instance_key": item.key,
+            "mode": item.mode,
+            "status": item.status,
+            "effect": item.effect,
+        }
+        if item.attempts:
+            view["attempts"] = item.attempts
+        views.append(view)
+    return views

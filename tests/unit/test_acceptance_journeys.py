@@ -133,6 +133,7 @@ def test_the_committed_map_is_valid():
         "studio-brand",
         "brand-assets",
         "docs-brand",
+        "step-tests",
         "text-operators",
         "instance-keys",
         "loop-compiler",
@@ -147,6 +148,7 @@ def test_the_committed_map_is_valid():
         "ai-models-screen",
         "run-views",
         "compose-operations",
+        "kubernetes-operations",
         "metrics",
         "acceptance-foundations",
         "real-platform-journeys",
@@ -161,6 +163,12 @@ def test_the_committed_map_is_valid():
     for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.4", "J5.7", "J9.2/operations-controls"):
         assert enablement.missing(step) == (), step
     assert enablement.missing("J5.6") == ("alerts",)
+    # Step tests landed on the platform: J0 checks the role and the demo environment's test calls; executing a
+    # step from Studio still waits for step execution.
+    assert enablement.missing("J0.4/step-tester") == ()
+    assert enablement.missing("J0.11") == ()
+    assert enablement.missing("J2.2") == ("editor-canvas", "step-details", "step-execution")
+    assert enablement.missing("J9.2/execute-in-local") == ("step-execution",)
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
     assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
     assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))
@@ -182,6 +190,19 @@ def test_the_committed_map_is_valid():
     assert "metrics" not in enablement.steps["J5.7"]
     assert set(enablement.steps["J5.7"]) == {"real-platform-journeys", "run-views", "compose-operations"}
     assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
+
+
+def test_kubernetes_operations_enable_the_cluster_tools_check():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert enablement.missing("J0.2/cluster-tools") == ()
+    assert enablement.checks("J0.2") == ("J0.2/cluster-tools",)
+    # It runs where prepare made a cluster: the cluster profiles, not nightly or release yet.
+    assert [profile for profile in journeys.PROFILES if enablement.applies("J0.2/cluster-tools", profile)] == [
+        "cluster",
+        "k3d",
+    ]
+    # Checking the cluster prepare made also waits for the acceptance profiles.
+    assert enablement.missing("J0.13") == ("ai-and-cluster-profiles",)
 
 
 def test_resolved_enablement_lists_each_step_and_viewport():

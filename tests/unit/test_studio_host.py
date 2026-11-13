@@ -131,6 +131,34 @@ def test_bridge_allowlist_no_credentials_or_redirects(tmp_path):
         assert len(seen) == 1
 
 
+def test_the_host_forwards_the_person_a_change_is_for(tmp_path):
+    seen = []
+
+    async def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    profile = StudioProfile(
+        name="Development",
+        base_url="https://api.example",
+        tenant_id="00000000-0000-0000-0000-000000000001",
+        project_id="00000000-0000-0000-0000-000000000002",
+        environment_id="00000000-0000-0000-0000-000000000003",
+    )
+    person = "8f0c2b7e-3a51-4c1d-9e2f-6b7a8c9d0e1f"
+    transport = httpx.MockTransport(upstream)
+    with client(tmp_path, profile=profile, token_provider=lambda: "test", transport=transport) as browser:
+        headers = pair(browser)
+        path = (
+            "/studio/api/api/v1/tenants/00000000-0000-0000-0000-000000000001"
+            "/projects/00000000-0000-0000-0000-000000000002/capabilities"
+        )
+        assert browser.get(path, headers={**headers, "X-Weave-Principal": person}).status_code == 200
+        assert browser.get(path, headers=headers).status_code == 200
+    assert seen[0].headers["x-weave-principal"] == person
+    assert "x-weave-principal" not in seen[1].headers
+
+
 def test_offline_bridge_is_explicit_and_profile_requires_tls(tmp_path):
     with client(tmp_path) as browser:
         pair(browser)

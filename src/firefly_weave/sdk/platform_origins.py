@@ -70,6 +70,11 @@ AI_CONSENT = "weave platform ai enable"
 AI_PURPOSES = frozenset({"model", "worker-auth", "platform-api"})
 OPERATIONS_CONSENT = "weave platform up"
 OPERATIONS_PURPOSES = frozenset({"worker-auth", "platform-api"})
+# A connected cluster's entries are its consent record. Its pods read them from the cluster's own ConfigMap, so they
+# are never rendered into this installation's file, where two clusters would name the same in-cluster origin.
+CLUSTER_CONSENT = "weave platform cluster connect"
+_CLUSTER_NAME = re.compile(r"(kind|k3d)-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?")
+_SECTIONS = frozenset({"ai", "operations", "clusters"})
 
 
 def fixture_origin(value: str) -> str:
@@ -249,6 +254,34 @@ def _fixture_entries(value: dict[str, Any]) -> list[private_origins.PrivateOrigi
     ]
 
 
+def _cluster_records(subnet: str) -> list[dict[str, Any]]:
+    """The canonical entries of a cluster on this private Docker subnet."""
+    from firefly_weave.sdk.platform_cluster_objects import subnet_entries
+
+    local._validate_subnet(subnet)
+    return entry_records(subnet_entries(subnet))
+
+
+def _cluster_section(name: Any, section: Any) -> None:
+    """Refuse a cluster section that isn't exactly what connect records for one private subnet."""
+    if (
+        not isinstance(name, str)
+        or not _CLUSTER_NAME.fullmatch(name)
+        or not isinstance(section, dict)
+        or set(section) != {"entries", "consent", "consented_at"}
+        or section["consent"] != CLUSTER_CONSENT
+        or not isinstance(section["consented_at"], str)
+        or not isinstance(section["entries"], list)
+    ):
+        raise ValueError("Unknown cluster consent")
+    bridges = [item for item in section["entries"] if isinstance(item, dict) and item.get("credentials") == "bridge"]
+    networks = bridges[0].get("networks") if bridges else None
+    if not isinstance(networks, list) or len(networks) != 1 or not isinstance(networks[0], str):
+        raise ValueError("Unknown cluster consent")
+    if section["entries"] != _cluster_records(networks[0]):
+        raise ValueError("Unknown cluster consent")
+
+
 def _render(value: dict[str, Any]) -> bytes:
     entries = [*_fixture_entries(value), *_ai_entries(value)]
     # AI and operations both need the loopback sign-in entries; an operations entry AI already wrote is written once.
@@ -266,7 +299,7 @@ def validate_state(state: dict[str, Any]) -> None:
             raise ValueError("Unknown consent metadata")
         keys = set(value) - {"file_sha256"}
         fixtures = keys & _FIXTURE_KEYS
-        if not keys or keys - _FIXTURE_KEYS - {"ai", "operations"} or (fixtures and fixtures != _FIXTURE_KEYS):
+        if not keys or keys - _FIXTURE_KEYS - _SECTIONS or (fixtures and fixtures != _FIXTURE_KEYS):
             raise ValueError("Unknown consent metadata")
         if fixtures:
             if (
@@ -303,6 +336,11 @@ def validate_state(state: dict[str, Any]) -> None:
                 or operations["entries"] != entry_records(_ai_entries(value, "operations"))
             ):
                 raise ValueError("Unknown consent metadata")
+        if "clusters" in value:
+            if not isinstance(value["clusters"], dict) or not value["clusters"]:
+                raise ValueError("Unknown consent metadata")
+            for name, section in value["clusters"].items():
+                _cluster_section(name, section)
         # The recorded entries must form one valid policy: one entry per origin and purpose.
         _render(value)
     except (local.PlatformError, ValueError, TypeError, KeyError):
@@ -501,7 +539,54 @@ def remove_ai_entries(state: dict[str, Any]) -> bool:
         return False
     verified(state)
     del value["ai"]
-    if not set(value) & (_FIXTURE_KEYS | {"operations"}):
+    if not set(value) & (_FIXTURE_KEYS | _SECTIONS):
+        _transition(state, None)
+        return True
+    data = _render(value)
+    value["file_sha256"] = hashlib.sha256(data).hexdigest()
+    _transition(state, value)
+    return True
+
+
+def set_cluster_entries(state: dict[str, Any], cluster: str, subnet: str) -> bool:
+    """Durably record a connected cluster's entries for its Docker subnet under their own consent; True on change.
+    `cluster` is the cluster's context name, kind-NAME or k3d-NAME."""
+    if state.get("mode") != "docker":
+        raise local.PlatformError("Private origins need the Docker platform; use weave platform up.")
+    if not _CLUSTER_NAME.fullmatch(cluster):
+        raise ValueError("A cluster's entries are recorded under kind-NAME or k3d-NAME")
+    records = _cluster_records(subnet)
+    value = dict(state.get("private_origins") or {})
+    clusters = dict(value.get("clusters") or {})
+    if (clusters.get(cluster) or {}).get("entries") == records:
+        return False
+    if value:
+        verified(state)
+    clusters[cluster] = {
+        "entries": records,
+        "consent": CLUSTER_CONSENT,
+        "consented_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    value["clusters"] = clusters
+    data = _render(value)
+    value["file_sha256"] = hashlib.sha256(data).hexdigest()
+    _transition(state, value)
+    return True
+
+
+def remove_cluster_entries(state: dict[str, Any], cluster: str) -> bool:
+    """Drop a disconnected cluster's entries; the file goes away when nothing else remains. True on change."""
+    value = dict(state.get("private_origins") or {})
+    clusters = dict(value.get("clusters") or {})
+    if cluster not in clusters:
+        return False
+    verified(state)
+    del clusters[cluster]
+    if clusters:
+        value["clusters"] = clusters
+    else:
+        del value["clusters"]
+    if not set(value) & (_FIXTURE_KEYS | _SECTIONS):
         _transition(state, None)
         return True
     data = _render(value)

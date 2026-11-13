@@ -71,7 +71,7 @@ def worker_runtime_fixture(worker_runtime_fixture):
 
 
 async def no_upkeep(authority, deadline):
-    """Change request upkeep with nothing to do."""
+    """Change request upkeep, or the step test sweep, with nothing to do."""
     return True
 
 
@@ -87,8 +87,10 @@ async def refresh(operations_case, scheduler_url):
         health,
     )
     loop.engine = create_async_engine(scheduler_url)
-    # Change request upkeep is tested on its own (test_change_request_retention.py); these quanta time revalidation.
+    # Change request upkeep and the step test sweep are tested on their own (test_change_request_retention.py,
+    # test_step_test_sweep.py); these quanta time revalidation.
     loop.maintain_changes = no_upkeep  # type: ignore[method-assign]
+    loop.sweep_step_tests = no_upkeep  # type: ignore[method-assign]
     # Quanta whose budget ran out: each can cut short at most the one refresh it was running.
     loop.cut_short = 0  # type: ignore[attr-defined]
     environment = loop._environment

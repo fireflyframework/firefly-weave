@@ -360,6 +360,32 @@ async def test_business_failure_and_sibling_complete_concurrently(
         assert await tx.scalar(text("SELECT count(*) FROM step_instances WHERE node_id='@join:fork'")) == 0
 
 
+@pytest.mark.parametrize("worker_runtime_fixture", ["failure"], indirect=True)
+async def test_a_completion_verifies_its_runs_stored_artifact_at_most_once(
+    task_service, transaction_factory, queued_task, worker_ids, monkeypatch
+):
+    """A completion holds its project's operation lock, and a sibling's completion waits at most 250 ms for it.
+
+    Verifying the run's stored artifact again each time a check needed it (nine times for a failing branch, about
+    130 ms on an idle host) kept the lock past that wait, so the sibling answered 429 WV-OPERATION-CAPACITY.
+    """
+    from firefly_weave.compiler.api import CompiledArtifact
+
+    leases = await claim_branches(task_service, transaction_factory, worker_ids)
+    verified = []
+    verify = CompiledArtifact.__post_init__
+
+    def counted(artifact):
+        verify(artifact)
+        verified.append(artifact.digest)
+
+    monkeypatch.setattr(CompiledArtifact, "__post_init__", counted)
+    async with transaction_factory() as tx:
+        receipt = await task_service.complete(tx, leases["a"].proof, uuid4(), 8)
+    assert receipt.status == "completed"
+    assert len(verified) <= 1, verified
+
+
 async def test_invalid_branch_action_output_leaves_both_branches_unchanged(
     task_service, transaction_factory, queued_task, worker_ids, access_db
 ):

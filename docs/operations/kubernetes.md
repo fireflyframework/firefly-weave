@@ -21,7 +21,10 @@ SPDX-License-Identifier: Apache-2.0
 This walkthrough installs the Weave API on a cluster your organization already
 runs. You render the manifests with an exact server image, migrate the database
 with an explicit Job, start the API, run one workflow, and let people connect.
-Adding a remote worker is optional and comes last.
+Adding a remote worker is optional and comes last. To try Kubernetes targets on
+a kind or k3d cluster on this computer instead, which a local platform creates
+and connects for you, see
+[Connect a kind or k3d cluster on this computer](cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 **Who this is for:** administrators and operators with access to the cluster,
 the database administrator (DBA), and the identity provider's administrator.
@@ -727,17 +730,26 @@ PY
 ```
 
 Expected: `Private cloud worker configuration written`. Now render the worker
-manifest with `WEAVE_WORKER_IMAGE_REF` from `cloud-images.env`, create its
-Secret, and apply it. The Deployment still has zero replicas:
+manifest with `WEAVE_WORKER_IMAGE_REF` from `cloud-images.env` and
+`WEAVE_WORKER_CONFIGURATION`, the configuration name your runner's destination
+policy binds the worker component to (the runner refuses a Deployment whose
+`firefly.weave/configuration` annotation names another). Then create its Secret
+and apply it. The Deployment still has zero replicas:
 
 ```sh
-# Pin the worker image and supply its private API credentials before applying the Deployment.
+# Pin the worker image and its configuration, and supply its private API credentials before applying the Deployment.
 python3 - <<'PY'
 import os, re
 from pathlib import Path
 image = os.environ["WEAVE_WORKER_IMAGE_REF"]
+configuration = os.environ["WEAVE_WORKER_CONFIGURATION"]
 assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}", image)
-text = Path("deploy/kubernetes/worker.yaml").read_text().replace("__WEAVE_WORKER_IMAGE__", image)
+assert re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}", configuration)
+text = (
+    Path("deploy/kubernetes/worker.yaml").read_text()
+    .replace("__WEAVE_WORKER_IMAGE__", image)
+    .replace("__WEAVE_WORKER_CONFIGURATION__", configuration)
+)
 with (Path(os.environ["WEAVE_CLOUD_DIR"]) / "worker.yaml").open("x") as stream:
     stream.write(text)
 PY

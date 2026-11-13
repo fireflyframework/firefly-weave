@@ -44,20 +44,53 @@ The first run builds the server image and takes about 25 minutes.
 
 | Stage | What it does | Timeout |
 | --- | --- | --- |
-| prepare | Checks tools, pulls the images in [versions.toml](versions.toml) by digest, builds the Acme fixture and the server image from the inputs `weave platform up` uses, builds Studio | 30 min |
-| up | On Linux CI with `--block-egress`, drops container traffic to public addresses; then journey J0 | 25 min |
+| prepare | Checks tools, pulls the images in [versions.toml](versions.toml) by digest, builds the Acme fixture and the server image from the inputs `weave platform up` uses, builds Studio; in the cluster profiles, creates the run's cluster | 30 min |
+| up | On Linux CI with `--block-egress`, drops container traffic to public addresses and lets the cluster's nodes reach only their own network, over IPv4 and IPv6; then journey J0 | 25 min |
 | run | The other pytest journeys, the Playwright suites of the profile, then the Studio journeys (`studio/playwright.acceptance.config.ts`) | 35 min (pr) |
-| collect | `weave platform status` and container logs | 5 min |
+| collect | `weave platform status`, container logs and, in the cluster profiles, the cluster's objects and runner logs | 5 min |
 | scan | Fails when any generated secret appears in evidence, private files or any Studio browser storage; records step J9.4 | 5 min |
-| down | Removes the run's containers, networks and volumes, then audits that nothing is left | 10 min |
+| down | Deletes the run's cluster, removes the run's containers, networks and volumes, then audits that nothing is left | 10 min |
 
 Each run writes `build/acceptance/RUN_ID/`. `private/` holds the platform, the
-people files (0600) and Playwright traces; never share it. `evidence/` holds
+people files (0600), the cluster's kubeconfig (0600) and Playwright traces; never
+share it. `evidence/` holds
 `acceptance.json`, which validates against
 [evidence.schema.json](evidence.schema.json), plus step screenshots and logs.
 Run one stage of an existing run with `--stages up --run-id RUN_ID`; keep
 everything for debugging with `--keep`, then remove it with
 `--stages down --run-id RUN_ID`.
+
+## Cluster profiles
+
+The `cluster` and `k3d` profiles run on a single-node cluster made for the run,
+named `weave-acc-RUN_ID`. A cluster name has at most 32 characters, so these
+profiles refuse a run ID longer than 22 characters, and the cluster needs 6 GiB of
+free Docker disk. `prepare` creates the cluster without connecting it:
+
+```sh
+KUBECONFIG=build/acceptance/RUN_ID/private/kubeconfig \
+  weave platform --directory build/acceptance/RUN_ID/private/cluster cluster create \
+  --provider kind --name weave-acc-RUN_ID --no-connect --context CONTEXT --output json
+```
+
+The `k3d` profile uses `--provider k3d`. kind or k3d write the cluster's context
+into the run's own kubeconfig, never into yours, and `private/cluster/` keeps
+kubectl and the provider's tool (kind or k3d), pinned, with their logs. Every
+journey runs with that kubeconfig. Each cluster journey connects its own
+namespace. `run.json` records the cluster under `cluster`, and the evidence names
+the tool's version (`kind` or `k3d`) and the Kubernetes version.
+
+With `--block-egress`, a cluster network that has an IPv6 subnet, as kind's
+does, needs Docker's ip6tables `DOCKER-USER` chain (`"ip6tables": true` in
+`/etc/docker/daemon.json`, the default since Docker 27). Without it, `up` stops
+before it changes any rule and says so.
+
+`collect` writes `get` and `describe` of each namespace Weave manages on the
+cluster, and each runner's log, to `evidence/cluster/` with the run's secrets
+redacted, including the cluster journeys' client secrets and the cluster
+administrator's key. A secret found there fails the stage, and the scan looks
+for them too. `down` runs `weave platform cluster delete` for the cluster before
+it removes the platform.
 
 ## Enable a journey step
 

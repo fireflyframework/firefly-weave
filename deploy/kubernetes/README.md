@@ -35,12 +35,19 @@ receives only its six API/identity/effect settings.
 | --- | --- | --- |
 | [migrate.yaml](migrate.yaml) | One explicit, nonretrying migration Job | `__WEAVE_SERVER_IMAGE__`, unique `__WEAVE_MIGRATION_JOB__`, `weave-migration` Secret |
 | [api.yaml](api.yaml) | One API Deployment and ClusterIP Service | `__WEAVE_SERVER_IMAGE__`, `weave-api-runtime` Secret |
-| [worker.yaml](worker.yaml) | Optional remote worker Deployment with zero replicas | `__WEAVE_WORKER_IMAGE__`, admitted release/current grants and `weave-worker-runtime` Secret |
+| [worker.yaml](worker.yaml) | Optional remote worker Deployment with zero replicas | `__WEAVE_WORKER_IMAGE__`, `__WEAVE_WORKER_CONFIGURATION__` (the configuration your runner's policy binds the worker component to), admitted release/current grants and `weave-worker-runtime` Secret |
 
 The image placeholders require actual registry digest references. Do not apply
 the unrendered directory. Apply the migration, API and optional worker separately
 in the documented order; do not bulk-apply all three files as a startup script.
 The worker stays at zero replicas until explicitly scaled after admission checks.
+Kubernetes fills in the worker's `WEAVE_POD_NAMESPACE` and `WEAVE_NODE_NAME`, so
+each worker reports its namespace and node next to its pod name.
+
+To try Kubernetes targets on a kind or k3d cluster on your own computer, you
+don't render these templates: a local platform creates the cluster and applies
+its own objects; see
+[Connect a kind or k3d cluster on this computer](../../docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 All containers run as UID/GID 65532 with a read-only root filesystem, bounded
 writable `/tmp`, dropped capabilities and no mounted Kubernetes API token.

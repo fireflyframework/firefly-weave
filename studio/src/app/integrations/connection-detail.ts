@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The Connections view's detail panel (WP-21): what a connection revision
 // reaches and how it signs in, with secret handle names only (the platform
-// never returns values), plus "Check configuration (no request is sent)",
-// the platform's static check. Load it lazily (@defer).
+// never returns values), plus "Test connection", which sends one request to the
+// connection's address with its sign-in. Load it lazily (@defer).
 import {
   ChangeDetectorRef,
   Component,
@@ -33,14 +33,15 @@ import { ApiError, type StudioApi } from "../api";
 import { describeError } from "../errors";
 import {
   authKinds,
-  checkCopy,
   connectionFailureCopy,
   connectionProblems,
   slotLabels,
+  testCopy,
+  testOrigin,
   type FieldProblem,
 } from "./connection-copy";
 
-/** The check waits up to a minute, like the connection form's. */
+/** The test waits up to a minute, like the connection form's. */
 const checkTimeout = 60_000;
 
 const text = (value: unknown) =>
@@ -134,11 +135,12 @@ let sequence = 0;
           @switch (check().state) {
             @case ("running") {
               <p class="hint">
-                <span class="loading-spinner small"></span>{{ copy.running }}
+                <span class="loading-spinner small"></span
+                >{{ copy.running(origin()) }}
               </p>
             }
             @case ("ok") {
-              <p class="notice connection-ok">{{ copy.ok }}</p>
+              <p class="notice connection-ok">{{ copy.ok(origin()) }}</p>
             }
             @case ("failed") {
               <div class="notice error-notice" role="alert">
@@ -197,8 +199,8 @@ export class ConnectionDetail {
   canCheck = input(false);
 
   readonly prefix = `connection-detail-${++sequence}`;
-  readonly checkLabel = checkCopy.label;
-  readonly copy = checkCopy;
+  readonly checkLabel = testCopy.label;
+  readonly copy = testCopy;
   readonly text = text;
   check = signal<CheckState>({ state: "idle" });
   failure = computed(() => {
@@ -216,6 +218,8 @@ export class ConnectionDetail {
   address = computed(() =>
     text(record(this.connection()["config"])["baseUrl"]),
   );
+  /** Where the test sends its request: host and port only. */
+  origin = computed(() => testOrigin(this.address() || undefined));
   signIn = computed(() => {
     const auth = record(record(this.connection()["config"])["auth"]);
     const kind = authKinds.find((k) => k.value === auth["kind"]);
@@ -262,7 +266,7 @@ export class ConnectionDetail {
     this.checking = id;
     this.check.set({ state: "running" });
     try {
-      const result = await api.request<{ ok?: unknown }>(
+      const result = await api.request<{ ok?: unknown; reason?: unknown }>(
         `${api.environment}/connections/${encodeURIComponent(id)}/test`,
         "POST",
         {},
@@ -273,7 +277,11 @@ export class ConnectionDetail {
       this.check.set(
         result.ok === true
           ? { state: "ok" }
-          : { state: "failed", message: checkCopy.failed, problems: [] },
+          : {
+              state: "failed",
+              message: testCopy.failed(this.origin(), result.reason),
+              problems: [],
+            },
       );
     } catch (e) {
       if (this.checking !== id) return;

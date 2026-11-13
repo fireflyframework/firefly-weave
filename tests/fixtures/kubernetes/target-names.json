@@ -1,0 +1,154 @@
+[
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "weave-workers",
+    "target": "kind-weave-test",
+    "cluster_problem": null,
+    "namespace_problem": null
+  },
+  {
+    "provider": "k3d",
+    "cluster": "weave-test",
+    "namespace": "weave-workers",
+    "target": "k3d-weave-test",
+    "cluster_problem": null,
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-acc-20261111t231509-a1b2c3",
+    "namespace": "weave-workers-j6",
+    "target": "kind-weave-acc-20261111t231509-a1b2c3.weave-workers-j6",
+    "cluster_problem": null,
+    "namespace_problem": null
+  },
+  {
+    "provider": "k3d",
+    "cluster": "a",
+    "namespace": "b",
+    "target": "k3d-a.b",
+    "cluster_problem": null,
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz",
+    "target": "kind-weave-test.naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz",
+    "cluster_problem": null,
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-acc-20261111t231509-a1b2c3d",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "Weave-Test",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "-weave-test",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test-",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave_test",
+    "namespace": "weave-workers",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": null
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "weave-system",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "weave-system is used by Weave's runners. Choose another namespace."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "kube-public",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "kube-public is used by Kubernetes. Choose another namespace."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "default",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "default is used by Kubernetes. Choose another namespace."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazx",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "Use a namespace of 1 to 63 lowercase letters, digits and hyphens."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "Weave-Workers",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "Use a namespace of 1 to 63 lowercase letters, digits and hyphens."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "Use a namespace of 1 to 63 lowercase letters, digits and hyphens."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
+    "namespace": "-weave-workers",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "Use a namespace of 1 to 63 lowercase letters, digits and hyphens."
+  },
+  {
+    "provider": "k3d",
+    "cluster": "Weave",
+    "namespace": "kube-system",
+    "target": null,
+    "cluster_problem": "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.",
+    "namespace_problem": "kube-system is used by Kubernetes. Choose another namespace."
+  }
+]

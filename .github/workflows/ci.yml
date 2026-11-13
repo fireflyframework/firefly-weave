@@ -35,30 +35,38 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Tag runs restore no dependency cache: what a tag checks or builds installs from the lockfiles alone,
+# never from a cache another run wrote. Every other run keeps its uv and npm caches.
 jobs:
   offline:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.8.22'
           python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py
   studio-checks:
     name: studio checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.8.22'
           python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
-          cache: npm
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
@@ -72,16 +80,19 @@ jobs:
         shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.8.22'
           python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
-          cache: npm
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
@@ -99,16 +110,19 @@ jobs:
     name: studio performance
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.8.22'
           python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
-          cache: npm
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
@@ -145,18 +159,21 @@ jobs:
     steps:
       - name: Keep repository line endings
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.8.22'
           python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
       - name: Portable Python unit subset
         run: uv run --no-sync python -m pytest tests/unit/compiler tests/contracts tests/unit/email tests/unit/providers tests/unit/operations tests/unit/test_private_origins.py tests/unit/test_release_versions.py tests/unit/test_acme_fixture.py tests/unit/test_acceptance_journeys.py tests/unit/test_acceptance_evidence.py tests/unit/test_ci_workflows.py -q --tb=short --show-capture=no -p no:cacheprovider
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
-          cache: npm
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
@@ -173,7 +190,9 @@ jobs:
     runs-on: [self-hosted, weave-owned-release]
     environment: weave-owned-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py --release --docker-context colima-weave-tests
 # The release runner supplies guarded PostgreSQL/Keycloak/Kafka, the retained
 # predecessor artifact/interpreter, and secret environment variables. This job builds

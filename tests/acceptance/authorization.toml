@@ -149,6 +149,37 @@ answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
 capability = "run.read"
 identifier = "random"
 
+# Step tests: a permitted call names a random draft, so it answers 404 (or 403 WV-STEPTEST-DISABLED where test calls
+# are off) and nothing runs; a random step test is another person's as much as a missing one, so it answers 404.
+[operations."step_tests.answer"]
+capability = "step.test"
+identifier = "random"
+body = { instance_key = "ask", confirm = false }
+answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
+
+[operations."step_tests.cancel"]
+capability = "step.test"
+identifier = "random"
+
+[operations."step_tests.create"]
+capability = "step.test"
+body = { kind = "action", step_id = "step", input = {}, draft_id = "random", draft_revision = 1, timeout_seconds = 60 }
+answers = [{ status = 403, code = "WV-STEPTEST-DISABLED" }]
+
+[operations."step_tests.read"]
+capability = "step.test"
+identifier = "random"
+
+# The test policy: reading needs status.read. A permitted save without If-Match expects no stored policy, so where
+# one is stored (the demo environment after platform up) it answers 409 WV-REVISION and changes nothing.
+[operations."test_policy.read"]
+capability = "status.read"
+
+[operations."test_policy.save"]
+capability = "environment.manage"
+body = { test_calls = "disabled" }
+answers = [{ status = 409, code = "WV-REVISION" }]
+
 # Canvas rows: a canvas needs exactly the listed capability (test data also needs simulate and, for run data,
 # run.read). A random draft has no document, so a permitted call answers 404 and nothing is stored.
 [operations."studio_documents.delete"]

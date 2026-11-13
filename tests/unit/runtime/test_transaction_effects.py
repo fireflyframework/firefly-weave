@@ -94,3 +94,17 @@ def test_a_transaction_deadline_key_names_its_transaction_kind_and_generation(ke
 @pytest.mark.parametrize("text", ["move#settle.0", "move#settle.01", "move#hold.1", "move#settle.x", "move#undo"])
 def test_other_keys_are_not_transaction_deadlines(text):
     assert split_deadline(text) is None
+
+
+def test_dispatch_effect_is_none_only_without_calls_and_changing_actions():
+    from firefly_weave.contracts.transactions import dispatch_effect
+
+    dependencies = [
+        {"digest": "read", "kind": "Action", "document": {"spec": {"sideEffect": "read_only"}}},
+        {"digest": "change", "kind": "Action", "document": {"spec": {"sideEffect": "non_idempotent"}}},
+    ]
+    assert dispatch_effect(False, ["read"], dependencies) == "none"
+    assert dispatch_effect(False, ["read", "change"], dependencies) == "unknown"
+    assert dispatch_effect(True, [], dependencies) == "unknown"
+    assert dispatch_effect(False, [], dependencies) == "none"
+    assert dispatch_effect(False, ["unknown-digest"], dependencies) == "unknown"

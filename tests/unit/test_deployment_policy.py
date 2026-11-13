@@ -16,6 +16,7 @@
 
 """A runner independently constrains API plans to its operator-owned destination."""
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -61,3 +62,11 @@ def test_operator_policy_accepts_explicit_destination_and_image_repository():
 def test_unsafe_or_unimplemented_policy_is_rejected(change):
     with pytest.raises(ValidationError):
         DestinationPolicy.model_validate_json(__import__("json").dumps(policy(**change)))
+
+
+def test_a_kubernetes_policy_may_restart_workers_but_not_deploy():
+    allowed = policy(capabilities=["observe", "scale_workers", "restart_workers"])
+    restart = DestinationPolicy.model_validate_json(json.dumps(allowed))
+    assert "restart_workers" in restart.capabilities
+    with pytest.raises(ValidationError, match="Only implemented capabilities"):
+        DestinationPolicy.model_validate_json(json.dumps(policy(capabilities=["observe", "deploy"])))

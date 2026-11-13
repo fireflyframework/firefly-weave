@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import tomllib
 import urllib.request
 
 import pytest
@@ -79,9 +80,31 @@ def test_j0_01_version(run):
 
 @pytest.mark.journey_step("J0.2")
 def test_j0_02_doctor(run):
-    result = run.platform("doctor", "--source", str(run.source), "--context", run.context, "--output", "json")
+    arguments = ("doctor", "--source", str(run.source), "--context", run.context, "--output", "json")
+    if run.config.get("cluster"):
+        # The cluster profiles' tools are in the folder prepare made the cluster from (scripts/acceptance.py).
+        cluster = str(run.private / "cluster")
+        result = run.weave("platform", "--directory", cluster, *arguments, "--cluster")
+    else:
+        result = run.platform(*arguments)
     report = json.loads(run.require(result).stdout)
     assert report["ok"] is True and report["version"] == __version__ and report["context"] == run.context
+    run.check("J0.2/cluster-tools", lambda: _expect_cluster_tools(run, report))
+
+
+def _expect_cluster_tools(run, report):
+    """prepare made the cluster with the provider's tool and kubectl, both verified at the versions.toml pins; the
+    other provider's tool was never fetched."""
+    cluster = run.config.get("cluster")
+    assert cluster, f"The {run.profile} profile checks the cluster tools, but prepare made no cluster"
+    pins = tomllib.loads((run.source / "tests/acceptance/versions.toml").read_text(encoding="utf-8"))
+    tools = pins["cluster"]["tools"]
+    other = "k3d" if cluster["provider"] == "kind" else "kind"
+    assert report["cluster_tools"] == {
+        "kubectl": tools["kubectl"],
+        cluster["provider"]: tools[cluster["provider"]],
+        other: "not fetched",
+    }
 
 
 @pytest.mark.journey_step("J0.3")
@@ -185,6 +208,18 @@ async def test_j0_04_people(run):
                 assert binding["role"] == role and binding["scope"].get("environment_id") is None
                 added.append({"role": role, "scope": project})
             run.add_grants(name, added)
+    run.check("J0.4/step-tester", lambda: _expect_step_testers(run, scope))
+
+
+def _expect_step_testers(run, scope):
+    """The owner tests steps in the demo environment from up; the builder once granted, and only there."""
+    local = {key: scope[key] for key in ("tenant_id", "project_id", "environment_id")}
+    owner = [grant for grant in run.person("owner")["grants"] if grant["role"] == "step_tester"]
+    assert owner == [{"role": "step_tester", "scope": local}]
+    granted = run.platform("user", "grant", "--username", "builder", "--role", "step_tester", "--output", "json")
+    value = json.loads(run.require(granted).stdout)
+    assert value["grants"] == [{"role": "step_tester", "scope": local}]
+    run.add_grants("builder", value["grants"])
 
 
 @pytest.mark.journey_step("J0.5")
@@ -421,6 +456,14 @@ async def test_j0_10_a_change_request_scales_the_fixture_worker_on_local_docker(
     placement = worker.get("placement") or {}
     assert (placement.get("target_name"), placement.get("component")) == ("local-docker", "fixture-worker"), worker
     run.save_private("fixture-worker", {"worker_id": worker["id"], "change_request_id": created["id"]})
+
+
+@pytest.mark.journey_step("J0.11")
+async def test_j0_11_test_calls_are_on_in_the_demo_environment(run):
+    async with run.client("owner") as owner:
+        policy = await owner.invoke("test_policy.read")
+    # platform up turned them on once, and every other environment keeps them off.
+    assert policy.test_calls == "enabled" and policy.revision >= 1
 
 
 @pytest.mark.journey_step("J0.14")

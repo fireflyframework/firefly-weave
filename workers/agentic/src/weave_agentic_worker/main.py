@@ -31,18 +31,21 @@ import httpx
 from firefly_weave import private_origins
 from firefly_weave.ai_policy import PolicyFile
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.contracts.agent_turns import TURN_CAPABILITY, turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.private_origins import PrivateOrigins
 from firefly_weave.sdk.transport import WorkerTransport
-from firefly_weave.sdk.worker import Worker
+from firefly_weave.sdk.worker import TaskHandler, Worker
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth, private_transport
 from firefly_weave.sdk.worker_identity import worker_identity
 from firefly_weave.sdk.worker_registration import register_worker_http
 
-from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
+from weave_agentic_worker.handler import AgenticTaskHandler, TurnTaskHandler, WorkerPolicy
 
 CAPABILITY = "weave-agentic.generate@1.0.0"
+# The typed AI call and the AI agent turn, in the order the catalog, the manifest and registration list them.
+CAPABILITIES = (CAPABILITY, TURN_CAPABILITY)
 POLICY_ENV = "WEAVE_AGENTIC_POLICY_FILE"
 MAX_CAPACITY = 16
 
@@ -109,13 +112,17 @@ async def main() -> None:
             prefix,
             {
                 "release_id": os.environ["WEAVE_WORKER_RELEASE_ID"],
-                "task_types": [CAPABILITY],
+                "task_types": list(CAPABILITIES),
                 "capacity": slots,
                 "identity": worker_identity().model_dump(mode="json"),
             },
         )
         transport = WorkerTransport(client, prefix, UUID(response.json()["id"]))
-        worker = Worker(transport, {CAPABILITY: AgenticTaskHandler(transport, policy)}, slots)
+        handlers: dict[str, TaskHandler] = {
+            CAPABILITY: AgenticTaskHandler(transport, policy),
+            TURN_CAPABILITY: TurnTaskHandler(transport, policy),
+        }
+        worker = Worker(transport, handlers, slots)
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(signum, lambda: asyncio.create_task(worker.stop()))
@@ -134,7 +141,7 @@ def run() -> None:
     if args.catalog:
         definitions = [
             load_definition(value).model_dump(by_alias=True)
-            for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition())
+            for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition(), turn_action_definition())
         ]
         print(
             json.dumps(
@@ -142,7 +149,7 @@ def run() -> None:
                     "definitions": [
                         {"document": value, "digest": FrozenDocument.from_value(value).digest} for value in definitions
                     ],
-                    "tasks": [task_capability().model_dump(by_alias=True)],
+                    "tasks": [task.model_dump(by_alias=True) for task in (task_capability(), turn_capability())],
                     "adapters": ["weave-agentic-provider"],
                     "schemas": {},
                 }
@@ -150,11 +157,8 @@ def run() -> None:
         )
         return
     if args.release_manifest:
-        print(
-            json.dumps(
-                {"capabilities": [task_capability().model_dump(by_alias=True)], "credential_capabilities": [CAPABILITY]}
-            )
-        )
+        tasks = [task.model_dump(by_alias=True) for task in (task_capability(), turn_capability())]
+        print(json.dumps({"capabilities": tasks, "credential_capabilities": list(CAPABILITIES)}))
         return
     try:
         asyncio.run(main())

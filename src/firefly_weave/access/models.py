@@ -48,6 +48,7 @@ Role = Literal[
     "deployment_runner",
     "worker_operator",
     "transaction_reconciler",
+    "step_tester",
 ]
 
 

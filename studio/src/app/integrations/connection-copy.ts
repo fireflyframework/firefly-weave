@@ -647,7 +647,7 @@ export function connectionFailureCopy(
   if (status === 403 || code === "WV-DENIED" || code === "WV-FORBIDDEN")
     return action === "create"
       ? "Your account can't create connections in this environment. Hand the request below to an administrator."
-      : "Your account can't check connections in this environment.";
+      : "Your account can't test connections in this environment.";
   if (code === "WV-CONNECTION")
     return action === "create"
       ? "The platform didn't accept this connection. Review the highlighted settings."
@@ -663,12 +663,58 @@ export function connectionFailureCopy(
   return "";
 }
 
-export const checkCopy = {
-  label: "Check configuration (no request is sent)",
-  running: "Checking the configuration… This can take up to a minute.",
-  ok: "The platform accepted this configuration. No request was sent to the API, so the address and credentials are confirmed on the first run.",
-  failed:
-    "The platform can't use this connection as configured. Review the settings and the secret handle names with your platform operator.",
+/** Why a connection test that sent its request failed, as the platform reports it. */
+export type ConnectionTestReason =
+  | "unreachable"
+  | "destination"
+  | "unauthorized"
+  | "status";
+
+/** What the copy calls a connection whose base URL names no host. */
+const anyServer = "the server";
+
+/** The host, and a port other than the default, a connection's base URL names; never user information or a path. */
+export function testOrigin(baseUrl: unknown): string {
+  if (typeof baseUrl !== "string") return anyServer;
+  try {
+    return new URL(baseUrl.trim()).host || anyServer;
+  } catch {
+    return anyServer;
+  }
+}
+
+/** The origin as a sentence's first word: a host stays as written, and only the fallback is capitalized. */
+const subject = (origin: string) =>
+  origin === anyServer ? "The server" : origin;
+
+/**
+ * A connection test of an HTTP connection sends one request with the connection's sign-in; its answer says why it
+ * failed. Other connectors (email, Teams) only check the saved settings, so their copy claims no request or answer.
+ */
+export const testCopy = {
+  label: "Test connection",
+  running: (origin: string) =>
+    origin === anyServer
+      ? "Testing the connection…"
+      : `Testing… Weave sends one request to ${origin}.`,
+  ok: (origin: string) =>
+    origin === anyServer
+      ? "The platform accepted this connection."
+      : `Connected: ${origin} answered.`,
+  failed(origin: string, reason: unknown): string {
+    switch (reason) {
+      case "unreachable":
+        return `Couldn't reach ${origin}.`;
+      case "destination":
+        return `This platform doesn't allow requests to ${origin}.`;
+      case "unauthorized":
+        return `${subject(origin)} refused this connection's sign-in.`;
+      case "status":
+        return `${subject(origin)} answered with an error.`;
+      default:
+        return "The platform can't use this connection as configured. Review the settings and the secret handle names with your platform operator.";
+    }
+  },
 };
 
 const quote = (value: string) =>

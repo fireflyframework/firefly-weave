@@ -258,11 +258,22 @@ def step_stage(step_id: str) -> str:
 def load_versions(path: Path) -> dict[str, Any]:
     """Pinned tools and images (versions.toml); every image is pinned by tag and digest."""
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    if data.get("version") != 1 or set(data) != {"version", "tools", "images"}:
-        raise JourneysInvalid("versions.toml has version = 1 and the tables tools and images")
-    for name, ref in data["images"].items():
+    if data.get("version") != 1 or not {"version", "tools", "images"} <= set(data) <= {
+        "version",
+        "tools",
+        "images",
+        "cluster",
+    }:
+        raise JourneysInvalid("versions.toml has version = 1, the tables tools and images, and optionally cluster")
+    # The cluster profiles' tools and node images; prepare pulls [images] on every profile, so these stay apart.
+    cluster = data.get("cluster", {"tools": {}, "images": {}})
+    if not isinstance(cluster, dict) or set(cluster) != {"tools", "images"}:
+        raise JourneysInvalid("versions.toml cluster has exactly the tables cluster.tools and cluster.images")
+    for name, ref in [*data["images"].items(), *cluster["images"].items()]:
         if not isinstance(ref, str) or IMAGE.fullmatch(ref) is None:
             raise JourneysInvalid(f"versions.toml image {name} must be pinned as name:tag@sha256:digest")
     if any(not isinstance(value, str) for value in data["tools"].values()):
         raise JourneysInvalid("versions.toml tool versions are strings")
+    if any(not isinstance(value, str) for value in cluster["tools"].values()):
+        raise JourneysInvalid("versions.toml cluster tool versions are strings")
     return data

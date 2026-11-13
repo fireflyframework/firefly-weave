@@ -205,6 +205,14 @@ from firefly_weave.contracts.runtime import (
     UnavailableRunAcknowledgment,
 )
 from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+from firefly_weave.contracts.step_tests import (
+    EnvironmentTestPolicy,
+    EnvironmentTestPolicyUpdate,
+    StepTestAccepted,
+    StepTestAnswer,
+    StepTestRequest,
+    StepTestView,
+)
 from firefly_weave.contracts.studio_documents import StudioDocument, StudioDocumentSave
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObjectData
@@ -1562,6 +1570,58 @@ OPERATIONS = {
             "connection.manage",
             RetirementRequest,
             request_required=False,
+        ),
+        Operation(
+            "test_policy.read",
+            ENVIRONMENT + "/test-policy",
+            "GET",
+            EnvironmentTestPolicy,
+            "status.read",
+        ),
+        Operation(
+            "test_policy.save",
+            ENVIRONMENT + "/test-policy",
+            "PUT",
+            EnvironmentTestPolicy,
+            "environment.manage",
+            EnvironmentTestPolicyUpdate,
+            # Without If-Match the save expects no stored policy yet (revision 0); with it, the current revision.
+            revision="optional",
+            etag=True,
+        ),
+        Operation(
+            "step_tests.create",
+            ENVIRONMENT + "/step-tests",
+            "POST",
+            StepTestAccepted,
+            "step.test",
+            StepTestRequest,
+            (202,),
+            idempotency=True,
+        ),
+        Operation(
+            "step_tests.read",
+            ENVIRONMENT + "/step-tests/{identifier}",
+            "GET",
+            StepTestView,
+            "step.test",
+        ),
+        Operation(
+            "step_tests.cancel",
+            ENVIRONMENT + "/step-tests/{identifier}/cancel",
+            "POST",
+            StepTestView,
+            "step.test",
+            request_required=False,
+        ),
+        Operation(
+            "step_tests.answer",
+            ENVIRONMENT + "/step-tests/{identifier}/answers",
+            "POST",
+            StepTestView,
+            "step.test",
+            StepTestAnswer,
+            served=False,
         ),
         Operation(
             "ai_setup.publish",

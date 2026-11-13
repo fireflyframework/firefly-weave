@@ -119,10 +119,13 @@ async def call_pins(
 
 
 async def pinned_callee(repository: DefinitionRepository, scope: Scope, identifier: UUID) -> PinnedCallee | None:
-    """Load a pinned activation of ``scope``'s environment, the latest revision of its name, and its version."""
+    """Load a pinned activation of ``scope``'s environment, the latest revision of its name, and its version.
+
+    A step test's activation is never a callee: it isn't found here.
+    """
     rows = await repository.rows(
         "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND project_id=:project "
-        "AND environment_id=:environment AND id=:id",
+        "AND environment_id=:environment AND id=:id AND NOT test",
         environment=scope.environment_id,
         id=identifier,
     )
@@ -131,7 +134,7 @@ async def pinned_callee(repository: DefinitionRepository, scope: Scope, identifi
     activation = Activation.model_validate_json(json.dumps(rows[0]["payload"]))
     latest = await repository.rows(
         "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND project_id=:project "
-        "AND environment_id=:environment AND name=:name ORDER BY revision DESC LIMIT 1",
+        "AND environment_id=:environment AND name=:name AND NOT test ORDER BY revision DESC LIMIT 1",
         environment=scope.environment_id,
         name=activation.name,
     )

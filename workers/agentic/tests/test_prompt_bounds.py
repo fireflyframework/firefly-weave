@@ -29,7 +29,7 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from weave_agentic_worker.execution import conservative_tokens, estimate_tokens, fewest_tokens, run_model
+from weave_agentic_worker.execution import conservative_tokens, fewest_tokens, rough_tokens, run_model
 
 TEXT = {"type": "string", "maxLength": 20000}
 ESTIMATE = conservative_tokens
@@ -61,7 +61,7 @@ def answering(calls, counted=None):
 
 def test_other_endpoints_keep_four_characters_per_token():
     # Endpoints other than Ollama refuse an oversized prompt themselves instead of cutting it.
-    assert estimate_tokens("abcd", "ef") == 2 and estimate_tokens("中" * 2890) == 723
+    assert rough_tokens("abcd", "ef") == 2 and rough_tokens("中" * 2890) == 723
 
 
 def test_on_ollama_text_outside_ascii_counts_its_utf8_bytes():

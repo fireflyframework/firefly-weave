@@ -49,6 +49,7 @@
         "runner",
         "docker",
         "kind",
+        "k3d",
         "kubernetes",
         "ollama",
         "model",
@@ -62,6 +63,7 @@
         "runner": { "type": "string" },
         "docker": { "type": "string" },
         "kind": { "type": ["string", "null"] },
+        "k3d": { "type": ["string", "null"] },
         "kubernetes": { "type": ["string", "null"] },
         "ollama": { "type": ["string", "null"] },
         "model": {
