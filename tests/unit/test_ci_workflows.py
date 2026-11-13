@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -382,6 +383,58 @@ def test_the_cluster_job_keeps_the_run_for_the_journeys_then_always_tears_it_dow
     assert steps[last]["id"] == "acceptance"
     (upload,) = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact")]
     assert upload["if"] == "always() && steps.acceptance.outputs.scan == 'passed'"
+
+
+def test_only_the_cluster_jobs_journeys_must_find_a_cluster():
+    """There a run without a cluster fails the journeys instead of skipping them, so the job can't pass having proven
+    nothing; a developer's run without one still skips them."""
+    steps = jobs("acceptance.yml")["cluster"]["steps"]
+    (journeys,) = [step for step in steps if "-m real_operations" in step.get("run", "")]
+    assert journeys["env"] == {"WEAVE_ACC_CLUSTER_REQUIRED": "true"}
+    texts = [path.read_text(encoding="utf-8") for path in sorted(WORKFLOWS.glob("*.yml"))]
+    assert sum(text.count("WEAVE_ACC_CLUSTER_REQUIRED") for text in texts) == 1
+
+
+def cluster_journeys():
+    """tests/e2e/test_operations_cluster.py, loaded by path as the acceptance harness is."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "weave_cluster_journeys_ci", ROOT / "tests/e2e/test_operations_cluster.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def journeys_outcome(journeys):
+    """How the journeys' run ends without a cluster: pytest's Skipped or Failed, and its message. pytest.raises
+    can't tell them apart here, since a Skipped it doesn't expect would only skip this test."""
+    try:
+        journeys.prepared_run()
+    except (pytest.skip.Exception, pytest.fail.Exception) as ended:
+        return type(ended), str(ended)
+    raise AssertionError("the journeys found a run")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the cluster journeys run only on Linux and macOS")
+@pytest.mark.parametrize(("required", "outcome"), [("true", pytest.fail.Exception), (None, pytest.skip.Exception)])
+def test_the_cluster_journeys_fail_without_a_cluster_only_where_one_is_required(monkeypatch, required, outcome):
+    journeys = cluster_journeys()
+    if required is None:
+        monkeypatch.delenv("WEAVE_ACC_CLUSTER_REQUIRED", raising=False)
+    else:
+        monkeypatch.setenv("WEAVE_ACC_CLUSTER_REQUIRED", required)
+    monkeypatch.delenv("WEAVE_ACC_RUN_DIR", raising=False)
+    ended, message = journeys_outcome(journeys)
+    assert ended is outcome and message.startswith("Set WEAVE_ACC_RUN_DIR to a kept acceptance run")
+    # A kept run whose prepare stage made no cluster: the pr profile's.
+    monkeypatch.setenv("WEAVE_ACC_RUN_DIR", str(ROOT / "build/acceptance/run-without-cluster"))
+    found = SimpleNamespace(context="colima-weave-tests", config={})
+    monkeypatch.setattr(journeys, "_harness", lambda: SimpleNamespace(Run=lambda path: found))
+    ended, message = journeys_outcome(journeys)
+    assert ended is outcome and message.startswith("The run has no cluster")
 
 
 def test_the_changes_and_cluster_jobs_use_only_the_actions_the_pr_job_pins():

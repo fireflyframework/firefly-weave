@@ -18,10 +18,11 @@
 
 Run them with ``pytest -m real_operations`` and WEAVE_ACC_RUN_DIR set to a kept run of the ``cluster`` or ``k3d``
 acceptance profile (``scripts/acceptance.py --profile cluster --keep --stages prepare,up,run``): its prepare stage
-made the run's cluster without connecting it, and J0 made the platform and the people. Without it every test is
-skipped. The run must live under this checkout's build/ directory and use the colima-weave-tests context (or
-``default`` on GitHub Actions). Every kubectl and cluster command uses the run's private kubeconfig, never the
-developer's.
+made the run's cluster without connecting it, and J0 made the platform and the people. Without it, or without a
+cluster in the run, every test is skipped, except where WEAVE_ACC_CLUSTER_REQUIRED is ``true``: the acceptance
+workflow's cluster job sets it, so there every test fails instead. The run must live under this checkout's build/
+directory and use the colima-weave-tests context (or ``default`` on GitHub Actions). Every kubectl and cluster
+command uses the run's private kubeconfig, never the developer's.
 
 The journeys connect the namespaces weave-workers-o-j4 and weave-workers-o4-b through ``weave platform cluster
 connect`` and move them through change requests only. The pods they start themselves carry the label
@@ -44,7 +45,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID, uuid4
 
 import pytest
@@ -84,6 +85,8 @@ FINISHED = {"succeeded", "failed", "cancelled", "timed_out", "suspended"}
 CAPACITY = {"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"}
 SUFFIX = uuid4().hex[:6]
 INPUT = {"ref": "/input"}
+# The acceptance workflow's cluster job sets it to true, so that the journeys can't pass there having proven nothing.
+REQUIRED = "WEAVE_ACC_CLUSTER_REQUIRED"
 
 
 def _harness() -> Any:
@@ -98,19 +101,31 @@ def _harness() -> Any:
     return sys.modules[name]
 
 
-@pytest.fixture(scope="module")
-def run() -> Any:
+def _unavailable(reason: str) -> NoReturn:
+    """Skip the journeys, or fail them where they must run."""
+    if os.environ.get(REQUIRED) == "true":
+        pytest.fail(f"{reason}. {REQUIRED} is true, so the cluster journeys must run here.", pytrace=False)
+    pytest.skip(reason)
+
+
+def prepared_run() -> Any:
+    """The kept acceptance run the journeys use, with its cluster."""
     root = os.environ.get("WEAVE_ACC_RUN_DIR")
     if not root:
-        pytest.skip("Set WEAVE_ACC_RUN_DIR to a kept acceptance run to run the cluster journeys")
+        _unavailable("Set WEAVE_ACC_RUN_DIR to a kept acceptance run to run the cluster journeys")
     path = Path(root).resolve()
     assert (ROOT / "build").resolve() in path.parents, "the run must live under this checkout's build/"
     found = _harness().Run(path)
     hosted = found.context == "default" and os.environ.get("GITHUB_ACTIONS") == "true"
     assert found.context == OWNED_CONTEXT or hosted, f"the journeys use only {OWNED_CONTEXT}"
     if "network" not in found.config.get("cluster", {}):
-        pytest.skip("The run has no cluster; prepare it with --profile cluster or --profile k3d")
+        _unavailable("The run has no cluster; prepare it with --profile cluster or --profile k3d")
     return found
+
+
+@pytest.fixture(scope="module")
+def run() -> Any:
+    return prepared_run()
 
 
 # The run's cluster, through its own kubeconfig and the pinned kubectl that prepare fetched.

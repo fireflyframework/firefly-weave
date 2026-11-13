@@ -159,6 +159,9 @@ jobs:
           # shellcheck disable=SC2016
           dbus-run-session -- bash -c 'printf %s "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && uv run --no-sync python scripts/acceptance.py --profile "$ACCEPTANCE_PROFILE" --run-id "$ACCEPTANCE_RUN_ID" --docker-context default --block-egress --keep --stages prepare,up,run'
       - name: Connect, scale, drain and restart workers on the run's cluster
+        env:
+          # A run without a cluster fails the journeys here instead of skipping them.
+          WEAVE_ACC_CLUSTER_REQUIRED: 'true'
         run: WEAVE_ACC_RUN_DIR="$GITHUB_WORKSPACE/build/acceptance/$ACCEPTANCE_RUN_ID" uv run --no-sync python -m pytest -m real_operations tests/e2e/test_operations_cluster.py -p no:cacheprovider -q --tb=short -rs
       - name: Collect and scan the evidence, then delete the cluster and the platform
         id: acceptance
