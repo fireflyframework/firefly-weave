@@ -16,12 +16,21 @@
 
 # Real-service acceptance on Linux (ubuntu-24.04, zero retries). Needs no secrets, so it
 # also runs for fork pull requests. Every pull request and every push to main runs the pr profile.
+# Pull requests that change how Weave runs workers on a cluster, and manual runs, also run the
+# cluster profile (kind) or, on a manual run, the k3d profile, on a cluster made for the run.
+# Pushes to main run no cluster job.
 name: Acceptance
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Cluster profile for the cluster job
+        type: choice
+        options: [cluster, k3d]
+        default: cluster
 permissions:
   contents: read
 concurrency:
@@ -66,5 +75,95 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: acceptance-pr-${{ github.run_id }}
+          path: ${{ steps.acceptance.outputs.evidence }}
+          retention-days: 30
+  changes:
+    name: Changes on the cluster path
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      cluster: ${{ steps.paths.outputs.cluster }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find whether the pull request changes the cluster path
+        id: paths
+        env:
+          # Both commits reach the script through the environment, never pasted into it.
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # The runner, deployments, workers and operations code, the migrations, the platform
+          # SDK and CLI that make and connect clusters, the Studio operations pages and the
+          # cluster journeys.
+          CLUSTER_PATHS: '^(src/firefly_weave/(deployment_runner|deployments|workers|operations)/|migrations/|src/firefly_weave/sdk/platform[^/]*\.py$|src/firefly_weave/cli/platform\.py$|studio/src/app/operate/|tests/e2e/test_operations_cluster\.py$)'
+        run: |
+          # --no-renames lists both the old and the new path of a moved file.
+          changed="$(git diff --name-only --no-renames "$BASE...$HEAD")"
+          # grep exits 1 when no line matches; any other failure fails the step.
+          count="$(grep -c -E -- "$CLUSTER_PATHS" <<<"$changed")" || [ "$?" -eq 1 ]
+          if [ "$count" -gt 0 ]; then cluster=true; else cluster=false; fi
+          echo "cluster=$cluster" >> "$GITHUB_OUTPUT"
+          echo "$count changed file(s) on the cluster path: cluster=$cluster"
+  cluster:
+    name: Acceptance (${{ inputs.profile || 'cluster' }} profile)
+    needs: changes
+    # On a manual run the changes job is skipped, and a skipped need skips this job unless its
+    # condition checks the run's status itself.
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.cluster == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    permissions:
+      contents: read
+    env:
+      ACCEPTANCE_PROFILE: ${{ inputs.profile || 'cluster' }}
+      # At most 22 characters, so the cluster name weave-acc-<run ID> fits.
+      ACCEPTANCE_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Free disk space for platform images
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npx playwright install --with-deps chromium
+        working-directory: studio
+      - name: Secret Service for the Studio host's credential store
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-tools
+      - name: Make the run's cluster, start the platform and run the journeys with container egress blocked
+        run: |
+          KEYRING_PASSWORD="$(openssl rand -hex 24)"
+          export KEYRING_PASSWORD
+          # Single quotes on purpose: the inner shell expands the variables, so the password never
+          # appears on a command line.
+          # shellcheck disable=SC2016
+          dbus-run-session -- bash -c 'printf %s "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && uv run --no-sync python scripts/acceptance.py --profile "$ACCEPTANCE_PROFILE" --run-id "$ACCEPTANCE_RUN_ID" --docker-context default --block-egress --keep --stages prepare,up,run'
+      - name: Connect, scale, drain and restart workers on the run's cluster
+        run: WEAVE_ACC_RUN_DIR="$GITHUB_WORKSPACE/build/acceptance/$ACCEPTANCE_RUN_ID" uv run --no-sync python -m pytest -m real_operations tests/e2e/test_operations_cluster.py -p no:cacheprovider -q --tb=short -rs
+      - name: Collect and scan the evidence, then delete the cluster and the platform
+        id: acceptance
+        if: always()
+        # Without --keep, so down removes everything the run made.
+        run: uv run --no-sync python scripts/acceptance.py --profile "$ACCEPTANCE_PROFILE" --run-id "$ACCEPTANCE_RUN_ID" --docker-context default --stages collect,scan,down
+      - name: Upload evidence
+        if: always() && steps.acceptance.outputs.scan == 'passed'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: acceptance-${{ env.ACCEPTANCE_PROFILE }}-${{ github.run_id }}
           path: ${{ steps.acceptance.outputs.evidence }}
           retention-days: 30
