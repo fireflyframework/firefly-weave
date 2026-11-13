@@ -14,10 +14,11 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""No-queue isolation for pure CPU work; database sessions remain with their caller."""
+"""Bounded isolation for pure CPU work; database sessions remain with their caller."""
 
 import asyncio
 import threading
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
@@ -35,12 +36,107 @@ _control_slots = threading.BoundedSemaphore(CONTROL_SLOTS)
 _debug_slots = threading.BoundedSemaphore(DEBUG_EXECUTION_SLOTS)
 _inventory_slots = threading.BoundedSemaphore(INVENTORY_SLOTS)
 
+# A request that finds every slot of its kind busy waits this long for a request that is ending to hand it one, so a
+# short request such as a claim poll holding a slot does not refuse an operator's command outright. The wait is no
+# longer than a project change waits for the project's operation lock.
+REQUEST_SLOT_WAIT_SECONDS = 0.25
+# The requests waiting for each kind of slot, longest first. While any of them waits, a freed slot is handed to the
+# first one and never returned to its semaphore, so a request that arrives later cannot take it ahead of them.
+_waiting: dict[threading.BoundedSemaphore, deque[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]] = {}
+_waiting_lock = threading.Lock()
+
+
+def _capacity_unavailable() -> CatalogError:
+    return CatalogError(429, "WV-OPERATION-CAPACITY", "Pure execution capacity unavailable")
+
+
+def _free(slots: threading.BoundedSemaphore) -> None:
+    """Hand a freed slot to the request that has waited longest for it, or return it when none waits; any thread."""
+    try:
+        current: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        current = None
+    while True:
+        with _waiting_lock:
+            queue = _waiting.get(slots)
+            if not queue:
+                slots.release()
+                return
+            loop, woken = queue.popleft()
+            if not queue:
+                del _waiting[slots]
+        if loop is current:
+            # Passed over in this loop, not by recursion: thousands of requests may have stopped waiting at once.
+            if woken.done():
+                continue
+            woken.set_result(None)
+            return
+        try:
+            loop.call_soon_threadsafe(_hand_over, slots, woken)
+        except RuntimeError:  # Its event loop has closed, so nobody waits there any more.
+            continue
+        return
+
+
+def _hand_over(slots: threading.BoundedSemaphore, woken: asyncio.Future[None]) -> None:
+    """Give the slot to a waiting request on its own event loop, or to the next one if this request stopped waiting."""
+    if woken.done():
+        _free(slots)
+    else:
+        woken.set_result(None)
+
+
+async def _admitted(slots: threading.BoundedSemaphore) -> bool:
+    """Take one of ``slots``: at once if one is free and nobody waits, else when a finishing request hands one over.
+
+    Waiting requests get freed slots in the order they arrived; one that gets none within REQUEST_SLOT_WAIT_SECONDS is
+    refused.
+    """
+    loop = asyncio.get_running_loop()
+    woken: asyncio.Future[None] = loop.create_future()
+    entry = (loop, woken)
+    with _waiting_lock:
+        if slots not in _waiting and slots.acquire(blocking=False):
+            return True
+        _waiting.setdefault(slots, deque()).append(entry)
+    try:
+        async with asyncio.timeout(REQUEST_SLOT_WAIT_SECONDS):
+            await woken
+        return True
+    except TimeoutError:
+        if woken.done() and not woken.cancelled():
+            # A slot handed over just as the wait ran out belongs to this request; refusing would lose it.
+            return True
+        # The wait ran out, but a slot may have freed while the event loop was busy. Leave the list first; with nobody
+        # else waiting, taking a free slot keeps the arrival order.
+        with _waiting_lock:
+            queue = _waiting.get(slots)
+            if queue is not None and entry in queue:
+                queue.remove(entry)
+                if not queue:
+                    del _waiting[slots]
+            return slots not in _waiting and slots.acquire(blocking=False)
+    except BaseException:
+        if woken.done() and not woken.cancelled():
+            # Handed a slot, then cancelled before it could use it: the slot goes to the next waiting request.
+            _free(slots)
+        raise
+    finally:
+        with _waiting_lock:
+            queue = _waiting.get(slots)
+            if queue is not None and entry in queue:
+                queue.remove(entry)
+                if not queue:
+                    del _waiting[slots]
+
 
 class _Lease:
-    def __init__(self, control: bool, *, slots: threading.BoundedSemaphore | None = None) -> None:
+    def __init__(
+        self, control: bool, *, slots: threading.BoundedSemaphore | None = None, admitted: bool = False
+    ) -> None:
         self.slots = slots if slots is not None else (_control_slots if control else _work_slots)
-        if not self.slots.acquire(blocking=False):
-            raise CatalogError(429, "WV-OPERATION-CAPACITY", "Pure execution capacity unavailable")
+        if not admitted and not self.slots.acquire(blocking=False):
+            raise _capacity_unavailable()
         self.lock = threading.Lock()
         self.owned = True
         self.running = False
@@ -65,7 +161,7 @@ class _Lease:
     def release(self) -> None:
         if not self.owned and not self.running and not self.released:
             self.released = True
-            self.slots.release()
+            _free(self.slots)
 
 
 _request_lease: ContextVar[_Lease | None] = ContextVar("weave_request_execution", default=None)
@@ -123,7 +219,11 @@ class ReservedSlots:
 
 @asynccontextmanager
 async def request_execution(*, control: bool = False) -> AsyncIterator[None]:
-    lease = _Lease(control)
+    """Hold one request slot for the whole request; a request waits briefly for one to free, then is refused."""
+    slots = _control_slots if control else _work_slots
+    if not await _admitted(slots):
+        raise _capacity_unavailable()
+    lease = _Lease(control, slots=slots, admitted=True)
     token = _request_lease.set(lease)
     try:
         yield
