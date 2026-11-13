@@ -131,6 +131,16 @@ export function versionBanner(
     : `This run used ${runVersion}; you're editing the draft of ${draftVersion}.`;
 }
 
+/** The banner in one line on a phone; null when no step differs. */
+export function bannerSummary(
+  runVersion: string,
+  diff: VersionDiff,
+): string | null {
+  const differ = diff.changed.length + diff.added.length + diff.missing.length;
+  if (!differ) return null;
+  return `This run used ${runVersion}. ${differ} ${differ === 1 ? "step differs" : "steps differ"}.`;
+}
+
 export interface RunOverlay {
   canvas: RecordedRun;
   /** Every step of the draft, and every step the run reached. */

@@ -135,10 +135,14 @@ for (const size of sizes)
       await expect(banner).toContainText("New in this draft: check.");
       await expect(banner).toContainText("Not in this draft: log.");
       // On a phone the banner first reads in one line.
-      if (size.width < 768)
+      if (size.width < 768) {
         await expect(banner.locator("summary")).toHaveText(
           "This run used 1.2.0. 3 steps differ.Details",
         );
+        // Details is a full-size tap target on its own.
+        const details = await banner.getByText("Details").boundingBox();
+        expect(details!.height).toBeGreaterThanOrEqual(44);
+      }
       await expect(canvas.tile("send").locator(".tile-badge")).toHaveAttribute(
         "data-badge",
         "changed",

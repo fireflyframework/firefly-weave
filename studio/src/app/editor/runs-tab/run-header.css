@@ -271,15 +271,17 @@ button.icon-button.run-copy {
   flex-wrap: wrap;
   align-items: center;
   column-gap: var(--space-2);
-  min-height: var(--control-touch);
-  margin: -10px 0;
   cursor: pointer;
   list-style: none;
 }
 .run-banner-details summary::-webkit-details-marker {
   display: none;
 }
+/* On its own line Details is a full 44 px tap target. */
 .run-banner-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-touch);
   color: var(--link);
   text-decoration: underline;
 }

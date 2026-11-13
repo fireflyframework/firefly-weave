@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import { edgeRun, pulses, tileRun } from "../src/app/editor/canvas/run-state";
 import {
+  bannerSummary,
   overlayOf,
   versionBanner,
   versionDiff,
@@ -441,5 +442,22 @@ describe("what changed since the run", () => {
     expect(versionBanner("1.3.0+test.d3c29f400322", "1.3.0", true)).toBe(
       "This test run used a draft of 1.3.0.",
     );
+  });
+});
+
+describe("the banner's one line on a phone", () => {
+  it("counts the steps that differ, one or many", () => {
+    const diff = (changed: string[], added: string[], missing: string[]) => ({
+      changed,
+      added,
+      missing,
+    });
+    expect(bannerSummary("1.2.0", diff(["send"], [], []))).toBe(
+      "This run used 1.2.0. 1 step differs.",
+    );
+    expect(bannerSummary("1.2.0", diff(["send"], ["check"], ["log"]))).toBe(
+      "This run used 1.2.0. 3 steps differ.",
+    );
+    expect(bannerSummary("1.3.0", diff([], [], []))).toBeNull();
   });
 });

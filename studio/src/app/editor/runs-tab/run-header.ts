@@ -38,6 +38,7 @@ import { Icon } from "../../icon";
 import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
+import { bannerSummary } from "./run-overlay";
 import { environmentName, type RunsView } from "./runs-view";
 
 const FAILED = new Set(["failed", "timed_out"]);
@@ -131,14 +132,10 @@ export class RunHeader {
   /** On a phone: the banner in one line, its lines behind Details. */
   readonly bannerSummary = computed(() => {
     const overlay = this.chosen()?.overlay;
-    const diff = overlay?.diff;
-    const differ =
-      (diff?.changed.length ?? 0) +
-      (diff?.added.length ?? 0) +
-      (diff?.missing.length ?? 0);
     const version = this.view()?.version;
-    if (!overlay?.banner || !differ || !version) return null;
-    return `This run used ${version}. ${differ} ${differ === 1 ? "step differs" : "steps differ"}.`;
+    return overlay?.banner && overlay.diff && version
+      ? bannerSummary(version, overlay.diff)
+      : null;
   });
   /** Why the run can't be drawn: not here, or its data withheld. */
   readonly problem = computed(() => {
