@@ -388,7 +388,7 @@ def _resources(cpu: str, memory: str, cpu_limit: str, memory_limit: str) -> dict
 
 def _worker_resources() -> dict[str, Any]:
     # Also every probe's: a probe runs the worker's program, whose imports alone take about 95 MiB.
-    return _resources("100m", "128Mi", str(WORKER_CPU_MILLIS // 1000), f"{WORKER_MEMORY_MIB}Mi")
+    return _resources("100m", "128Mi", f"{WORKER_CPU_MILLIS}m", f"{WORKER_MEMORY_MIB}Mi")
 
 
 def _file(volume: str, path: str, key: str) -> dict[str, Any]:

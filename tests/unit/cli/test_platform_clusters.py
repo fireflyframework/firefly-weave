@@ -680,7 +680,7 @@ def test_the_registered_worker_component_fits_the_runners_binding_and_the_pods_l
     assert (component.cpu_millis, component.memory_mib) == (1000, 512)
     assert component.cpu_millis <= binding["max_cpu_millis"] and component.memory_mib <= binding["max_memory_mib"]
     (container,) = cluster.worker["spec"]["template"]["spec"]["containers"]
-    assert container["resources"]["limits"] == {"cpu": "1", "memory": "512Mi"}
+    assert container["resources"]["limits"] == {"cpu": "1000m", "memory": "512Mi"}
 
 
 def request_id(cluster):
