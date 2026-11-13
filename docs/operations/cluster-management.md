@@ -428,12 +428,12 @@ directory on first use and check each file's SHA-256. Run the commands in the
 folder where you ran `weave platform up`, or name its installation directory
 with `weave platform --directory`.
 
-![A connected local cluster: the platform joins the cluster's own Docker network, and only Weave's runner and workers reach it](../diagrams/local-cluster-connect.svg)
+![A connected local cluster: the platform joins the cluster's own Docker network, and in Weave's namespaces only the runner and workers reach it](../diagrams/local-cluster-connect.svg)
 
 **How to read this diagram:** The platform's API and registry, on the left, join
 the cluster's own Docker network. Follow the arrows from the right: the runner
-and the workers reach the API and sign-in, other pods are refused, and the node
-pulls images from the platform registry.
+and the workers reach the API and sign-in, in Weave's namespaces other pods are
+refused, and the node pulls images from the platform registry.
 
 [Open diagram at full size](../diagrams/local-cluster-connect.svg)
 
@@ -538,6 +538,12 @@ mounts a service account token. Both namespaces enforce the Pod Security
 filesystem, and the runner and the workers read their client secret from a
 file only they can read (mode `400`).
 
+The NetworkPolicies cover only `weave-system` and the connected namespaces.
+There, only the runner and the workers reach the platform's API and sign-in,
+and no pod reaches the registry. Pods in the cluster's other namespaces aren't
+restricted and can reach the platform's API, sign-in, and registry. Don't run
+workloads you don't trust in a cluster you connect.
+
 Connect creates the worker Deployment once. Its replicas, image, resources, and
 restarts then belong to reviewed change requests, so running connect again
 never changes them; see [Request a change](#request-a-change). Each target's
@@ -600,7 +606,9 @@ works.
 Connect creates the worker Deployment and its sign-in secret only when they're
 missing, so a changed worker stays drifted after `connect`. To repair it,
 delete both, connect again, and check. If kubectl isn't installed, use the one
-Weave fetched, `.local/platform/tools/kubectl-v1.37.2` (with `.exe` on Windows):
+Weave fetched, `.local/platform/tools/kubectl-v1.37.2` (with `.exe` on Windows).
+If you connected the cluster with `--kubeconfig`, add `--kubeconfig` with the
+same file to each of the three commands:
 
 ```sh
 # Delete the drifted worker and its sign-in secret in weave-workers, connect again, then check.
@@ -654,7 +662,7 @@ namespace that another Weave installation now owns. The namespace it keeps
 still carries this installation's `firefly.weave/installation` label, so this
 installation can connect it again, and another installation's connect refuses
 it. Remove the label, or delete the namespace, to hand it to another
-installation:
+installation; add `--kubeconfig` if you connected the cluster with it:
 
 ```sh
 # Remove this installation's label from the team-b namespace of the weave-test cluster.

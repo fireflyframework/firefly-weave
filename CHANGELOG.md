@@ -155,16 +155,19 @@ SPDX-License-Identifier: Apache-2.0
 - A local platform connects a kind or k3d cluster on this computer as a
   Kubernetes target. `weave platform cluster create --provider kind|k3d --name
   NAME` makes a single-node cluster on a Docker network of its own, from the
-  pinned kind, k3d and kubectl it downloads into the installation directory and
-  checks by SHA-256, and connects its `weave-workers` namespace (`--no-connect`
-  skips that). `weave platform cluster connect` connects any namespace of such a
+  chosen provider's pinned tool (kind or k3d) and kubectl, which it downloads
+  into the installation directory and checks by SHA-256, and connects its
+  `weave-workers` namespace (`--no-connect` skips that). `weave platform cluster connect` connects any namespace of such a
   cluster, up to eight targets per installation: it joins the platform to the
   cluster's network, points the nodes at the platform registry, applies objects
-  rendered from code (Pod Security `restricted`, NetworkPolicies that let only
-  Weave's runner and workers reach the platform and no pod reach the registry,
-  a runner account limited to what its commands need, client secrets in
+  rendered from code (Pod Security `restricted`, NetworkPolicies in
+  `weave-system` and the connected namespace that let only Weave's runner and
+  workers there reach the platform, and no pod there reach the registry, a
+  runner account limited to what its commands need, client secrets in
   owner-read-only files), proves the network rules with test pods before it
-  registers anything, and starts a runner in the cluster. The worker Deployment
+  registers anything, and starts a runner in the cluster. Pods in the cluster's
+  other namespaces aren't restricted and can reach the platform's API, sign-in
+  and registry, so don't run workloads you don't trust in a connected cluster. The worker Deployment
   starts at 0 replicas and then changes only through reviewed change requests.
   `cluster list` shows each cluster, target and runner, and `--check` names
   drifted objects by kind and name without their values; `cluster disconnect`
