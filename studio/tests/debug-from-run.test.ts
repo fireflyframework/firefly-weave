@@ -208,6 +208,19 @@ describe("test data from a run", () => {
     expect(loop.stopAt).toEqual({ key: "send[1]", code: "SMTP_REJECTED" });
   });
 
+  it("names the finished steps Execute works out again instead of copying", () => {
+    expect(built(failedRun()).recomputed).toEqual(["check"]);
+    // Not a step of this draft, or not finished: nothing to work out again.
+    const { recomputed } = built({
+      ...failedRun([
+        fact("check", "transform", "running"),
+        fact("log", "transform", "succeeded", { output: "logged" }),
+      ]),
+      definition: older,
+    });
+    expect(recomputed).toEqual([]);
+  });
+
   it("pins carry the hashes of the run's version", () => {
     const { data } = built({ ...failedRun(), definition: older });
     expect(data.pins?.["fetch"]).toMatchObject({

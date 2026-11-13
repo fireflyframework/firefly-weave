@@ -75,6 +75,8 @@ export interface ChosenRun {
   /** Its row in the list; null for a run that isn't listed. */
   summary: RunSummary | null;
   record: RunRecord | null;
+  /** The version the run used; null until read, or when it can't be. */
+  definition: Workflow | null;
   overlay: RunOverlay | null;
   data: RunData | null;
   /** Read again every 2 s until it ends. */
@@ -250,6 +252,7 @@ export class RunsTabState {
       id,
       summary,
       record: null,
+      definition: null,
       overlay: null,
       data: null,
       following: false,
@@ -289,6 +292,7 @@ export class RunsTabState {
     data.setFacts(read.facts ?? []);
     this.updateChosen(ticket, {
       record: read.record,
+      definition,
       data,
       limited: read.limited,
       overlay: this.overlay(read, summary, definition),

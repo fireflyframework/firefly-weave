@@ -93,15 +93,26 @@ SPDX-License-Identifier: Apache-2.0
       </div>
       <div class="run-actions">
         <!-- Debug in editor and Copy to editor turn the run into test data. -->
-        @if (v.failed) {
-          <button type="button" class="primary run-main" aria-disabled="true">
+        @let refused = refusal();
+        @let off = !!refused || busy() || v.loading;
+        <button
+          type="button"
+          class="run-main"
+          [class.primary]="v.failed"
+          [attr.aria-disabled]="off ? 'true' : null"
+          [attr.aria-busy]="busy() ? 'true' : null"
+          [attr.aria-describedby]="refused ? 'run-refusal' : null"
+          (click)="!off && debug(v.failed ? 'debug' : 'copy')"
+        >
+          @if (busy()) {
+            <span class="loading-spinner small" aria-hidden="true"></span
+            >Copying run data…
+          } @else if (v.failed) {
             <weave-icon name="execute" [size]="16" />Debug in editor
-          </button>
-        } @else {
-          <button type="button" class="run-main" aria-disabled="true">
+          } @else {
             <weave-icon name="copy" [size]="16" />Copy to editor
-          </button>
-        }
+          }
+        </button>
         <button type="button" class="run-wide" (click)="openOperate()">
           <weave-icon name="external" [size]="16" />Open in Operate
         </button>
@@ -115,6 +126,11 @@ SPDX-License-Identifier: Apache-2.0
         <weave-row-menu class="run-more" label="More" [items]="more()" />
       </div>
     </header>
+    @if (refusal(); as why) {
+      <p class="run-refusal" id="run-refusal">
+        <weave-icon name="lock" [size]="16" />{{ why }}
+      </p>
+    }
     @if (chosen()?.stopped) {
       <div class="run-note-row" role="status">
         <weave-icon name="schedule" [size]="16" />

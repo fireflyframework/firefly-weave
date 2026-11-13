@@ -111,6 +111,15 @@ export interface StepDetailsHost {
   readonly runView?: () => RunViewPort | null;
   /** The run open in the Runs tab: step details show its data, read-only. */
   readonly runData?: RunDataPort | null;
+  /** After Debug in editor: where the run failed, shown on that step's Output. */
+  readonly runNotice?: {
+    draftId: string;
+    runId: string;
+    key: string;
+    code: string | null;
+  } | null;
+  /** The open draft's ID. */
+  readonly draftId?: string;
   /** The run the canvas draws; on the Runs tab it names the steps changed since. */
   canvasRun?(): CanvasRun | null;
   /** Opens a run in Operate › Runs. */

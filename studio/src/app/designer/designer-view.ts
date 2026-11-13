@@ -559,7 +559,9 @@ import type { App } from "../app";
       }
       <section
         class="canvas-panel"
-        [class.with-run-log]="h.editorNext && h.runLogOpen() && !!h.execution"
+        [class.with-run-log]="
+          h.editorNext && h.tab !== 'Runs' && h.runLogOpen() && !!h.execution
+        "
         id="editor-view"
         role="tabpanel"
         [attr.aria-labelledby]="'view-tab-' + h.tab.toLowerCase()"

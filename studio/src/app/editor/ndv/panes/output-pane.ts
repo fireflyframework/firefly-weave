@@ -61,6 +61,7 @@ import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import { OMISSION_WORDS } from "../../../operate/run-contracts";
 import { shortId } from "../../../format";
+import { instanceStep } from "../../state/instance-keys";
 import { isRecordedRun } from "../../canvas/run-state";
 import { RunStepLogs } from "./run-step-logs";
 
@@ -206,6 +207,22 @@ import { RunStepLogs } from "./run-step-logs";
           }
           @if (problem()) {
             <p class="pane-problem" role="alert">{{ problem() }}</p>
+          }
+          @if (runFailedHere(); as said) {
+            <div
+              class="notice pane-run-notice pane-run-stopped"
+              data-tone="danger"
+              role="status"
+            >
+              <weave-icon name="critical" [size]="16" />
+              <div>
+                <p>{{ said }}</p>
+                <p>
+                  Execute workflow gave every earlier step the run's data and
+                  stopped here.
+                </p>
+              </div>
+            </div>
           }
           @if (notice(); as said) {
             <div class="pane-notice" role="status">
@@ -584,6 +601,14 @@ export class OutputPane {
     return host.runView?.()?.listed
       ? "Choose a run to see what this step returned."
       : "There's no run to show here.";
+  }
+  /** After Debug in editor, on the step where the run failed: its error. */
+  runFailedHere(): string | null {
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (!notice || notice.draftId !== host.draftId) return null;
+    if (instanceStep(notice.key) !== instanceStep(target)) return null;
+    return `In run ${shortId(notice.runId)}, this step failed${notice.code ? `: ${notice.code}` : ""}.`;
   }
   /** The chosen run's short ID while it loads; null otherwise. */
   loadingRun(): string | null {

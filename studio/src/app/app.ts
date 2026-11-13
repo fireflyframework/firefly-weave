@@ -3050,6 +3050,13 @@ export class App implements CanvasHost {
   get runData() {
     return this.runView()?.data ?? null;
   }
+  /** After Debug in editor: the step where the run failed, until the next execution. */
+  runNotice: {
+    draftId: string;
+    runId: string;
+    key: string;
+    code: string | null;
+  } | null = null;
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers
@@ -7365,17 +7372,21 @@ export class App implements CanvasHost {
    * Runs an execution from step details or the canvas. When the project's
    * catalog can't be read, asks before executing with what's on this computer.
    */
-  async executeIn(target: ExecuteTarget): Promise<ExecuteOutcome> {
+  async executeIn(
+    target: ExecuteTarget,
+    options: { fresh?: boolean } = {},
+  ): Promise<ExecuteOutcome> {
     // The Runs tab reads runs that happened: nothing executes there.
     if (this.tab === "Runs")
       return { kind: "failed", message: "Go back to editing to execute." };
+    this.runNotice = null;
     const service = this.execution;
     if (!service)
       return { kind: "failed", message: "Studio is still loading Execute." };
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
     this.lastTarget = target;
-    let outcome = await service.execute(target);
+    let outcome = await service.execute(target, options);
     if (outcome.kind === "busy") return outcome;
     const draftId = this.draftId;
     if (
@@ -7390,7 +7401,7 @@ export class App implements CanvasHost {
       // Another workflow opened while the question was open: nothing runs.
       draftId === this.draftId
     )
-      outcome = await service.execute(target, { catalog: "none" });
+      outcome = await service.execute(target, { ...options, catalog: "none" });
     if (outcome.kind === "done") {
       this.runLogOpen.set(true);
       this.playRun(outcome.response);

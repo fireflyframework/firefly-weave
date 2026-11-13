@@ -271,6 +271,8 @@ export interface DialogOptions {
    * The dialog then starts on Cancel, as a destructive confirmation does.
    */
   alternateLabel?: string;
+  /** Starts on the main answer even beside an alternate one, when the main answer loses nothing. */
+  startOnConfirm?: boolean;
   danger?: boolean;
   fields?: DialogField[];
 }
@@ -429,8 +431,10 @@ export class DialogHost {
   }
   /** A destructive answer anywhere in a question without fields: start on Cancel. */
   startsOnCancel(request: DialogRequest) {
-    const { fields, danger, alternateLabel } = request.options;
-    return !fields?.length && (!!danger || !!alternateLabel);
+    const { fields, danger, alternateLabel, startOnConfirm } = request.options;
+    return (
+      !fields?.length && (!!danger || (!!alternateLabel && !startOnConfirm))
+    );
   }
   hintId(field: DialogField) {
     return `${this.messageId}-${field.name}-hint`;

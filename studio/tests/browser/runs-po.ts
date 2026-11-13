@@ -32,7 +32,12 @@ import type {
 import type { RunViewsFixture } from "../../src/app/operate/run-views.fixture";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
-import { allCapabilities, connected, newWorkflow } from "./support";
+import {
+  allCapabilities,
+  connected,
+  newWorkflow,
+  type CatalogEntry,
+} from "./support";
 
 /** The fixtures' day: every run started a little before noon. */
 export const NOW = "2026-10-07T12:00:00Z";
@@ -63,7 +68,7 @@ const fetch = step("fetch", {
   kind: "action",
   uses: "sql.lookup@1.0.0",
   with: {
-    object: { parameters: { object: { customerId: { ref: "/input/total" } } } },
+    object: { parameters: { object: { customerId: { literal: "c-1" } } } },
   },
 });
 const check = step("check", {
@@ -502,6 +507,8 @@ export interface RunsPlatform {
   logs: 501 | RunLogEntry[];
   /** Answers every read of outputs (include=output) with this status while set. */
   outputFailure: { status: number; code: string; message: string } | null;
+  /** Holds every read of outputs (include=output) until released; returns the release. */
+  holdOutputs(): () => void;
 }
 
 const problem = (status: number, code: string, message: string) => ({
@@ -518,6 +525,7 @@ export async function routeRuns(
 ): Promise<RunsPlatform> {
   let hold: Promise<void> | null = null;
   let readHold: Promise<void> | null = null;
+  let outputHold: Promise<void> | null = null;
   const platform: RunsPlatform = {
     runs,
     requests: [],
@@ -530,6 +538,14 @@ export async function routeRuns(
       hold = new Promise((resolve) => (release = resolve));
       return () => {
         hold = null;
+        release();
+      };
+    },
+    holdOutputs() {
+      let release = () => {};
+      outputHold = new Promise((resolve) => (release = resolve));
+      return () => {
+        outputHold = null;
         release();
       };
     },
@@ -610,6 +626,8 @@ export async function routeRuns(
         ? route.fulfill({ json: run.view })
         : route.fulfill(problem(404, "WV-NOT-FOUND", "Run not found."));
     }
+    if (outputHold && url.searchParams.get("include") === "output")
+      await outputHold;
     const failure = platform.outputFailure;
     if (failure && url.searchParams.get("include") === "output")
       return route.fulfill(
@@ -668,6 +686,10 @@ export async function openRunsTab(
     logs?: 501 | RunLogEntry[];
     /** Registers more routes after connecting, before the tab opens. */
     before?: (platform: RunsPlatform) => Promise<void> | void;
+    /** The account's tenant and project, when the spec keeps test data under it. */
+    account?: { tenantId: string; projectId: string };
+    /** The platform's actions, when not the default ones. */
+    catalog?: CatalogEntry[];
   } = {},
 ): Promise<{ runs: RunsPage; platform: RunsPlatform }> {
   await page.clock.install({ time: new Date(NOW) });
@@ -676,6 +698,8 @@ export async function openRunsTab(
     capabilities: options.capabilities ?? [...allCapabilities, "compile"],
     environmentId: RUNS_ENV,
     environmentName: "development",
+    catalog: options.catalog,
+    ...options.account,
   });
   const platform = await routeRuns(
     page,

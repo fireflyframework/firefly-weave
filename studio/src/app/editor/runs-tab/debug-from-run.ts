@@ -73,6 +73,8 @@ export interface RunTestData {
   leftOut: LeftOut[];
   /** Where the simulation will stop: the step that failed in the run. */
   stopAt: { key: string; code: string | null } | null;
+  /** Steps of the draft that finished in the run and that Execute works out again from the copied data. */
+  recomputed: string[];
 }
 
 /** Steps whose output a simulation can't work out: the run's output stands for them. */
@@ -123,6 +125,7 @@ export function testDataFromRun(
   const humans: Record<string, HumanScript> = {};
   const signals: Record<string, SignalScript> = {};
   const leftOut: LeftOut[] = [];
+  const recomputed = new Set<string>();
   const stopAt = FAILED.has(source.status) ? source.failedStep : null;
   for (const fact of source.facts) {
     const key = fact.instance_key || fact.node_id;
@@ -130,6 +133,8 @@ export function testDataFromRun(
     const kind = fact.kind as string;
     const copied =
       pinned(kind, step) || kind === "humanTask" || kind === "signal";
+    if (!copied && step && fact.status === "succeeded")
+      recomputed.add(fact.node_id);
     // Only what finished is copied; the failed step and steps at work get nothing.
     if (!copied || fact.status !== "succeeded" || key === stopAt?.key) continue;
     if (!step) {
@@ -228,6 +233,7 @@ export function testDataFromRun(
     ],
     leftOut,
     stopAt,
+    recomputed: [...recomputed],
   };
 }
 

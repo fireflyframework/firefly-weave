@@ -348,3 +348,20 @@ button.icon-button.run-copy {
     margin: -10px -10px -10px -8px;
   }
 }
+
+/* Why the run's data can't become test data here, under the header. */
+.run-refusal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--type-small);
+  color: var(--muted);
+  flex: none;
+}
+.run-refusal weave-icon {
+  flex: none;
+}

@@ -38,6 +38,7 @@ import { Icon } from "../../icon";
 import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
+import { DebugRun, debugRefusal } from "./debug-run";
 import { bannerSummary } from "./run-overlay";
 import { environmentName, type RunsView } from "./runs-view";
 
@@ -185,6 +186,32 @@ export class RunHeader {
     inject(DestroyRef).onDestroy(() => clearInterval(ticker));
   }
 
+  /** Copying the run's data and executing with it. */
+  readonly busy = signal(false);
+  /**
+   * Why the run's data can't become test data here, known before a click.
+   * The test data opens after the header draws (and again for another
+   * account): its version says when to ask again.
+   */
+  readonly refusal = computed(() => {
+    const app = this.app();
+    app.testDataReady();
+    app.testData?.version();
+    return debugRefusal(app);
+  });
+  /** Debug in editor (a failed run) or Copy to editor (any other). */
+  async debug(intent: "debug" | "copy"): Promise<void> {
+    const chosen = this.chosen();
+    if (!chosen || this.busy()) return;
+    this.busy.set(true);
+    try {
+      const outcome = await new DebugRun().run(this.app(), chosen, intent);
+      if (outcome.kind === "refused")
+        this.app().notify(outcome.message, undefined, "danger");
+    } finally {
+      this.busy.set(false);
+    }
+  }
   copyId(): void {
     const id = this.chosen()?.id;
     if (!id) return;
