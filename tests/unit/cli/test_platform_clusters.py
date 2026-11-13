@@ -22,12 +22,14 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fake_commands import FakeCommands
 
+from firefly_weave.contracts.public import Problem
 from firefly_weave.sdk import platform_clusters as clusters
+from firefly_weave.sdk.errors import WeaveError
 from firefly_weave.sdk.platform import PlatformError
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -455,6 +457,10 @@ class Cluster:
         # Keycloak client IDs each disconnect deleted, and the clusters whose private origins it removed.
         self.deleted_clients = []
         self.removed_origins = []
+        # The targets and deployments the API lists. As the API does, create refuses a second target for a namespace
+        # (adapter, external identity, boundary) it already holds, disabled or not.
+        self.targets = []
+        self.deployments = []
 
     def network(self, call):
         containers = {key: {"Name": name, "IPv4Address": "172.30.0.2/16"} for key, name in self.nodes.items()}
@@ -493,6 +499,17 @@ class Cluster:
         self.api_calls.append((operation, kwargs))
         if operation == "deployment_targets.create":
             self.registered_after = [call.name for call in self.commands.calls]
+            body = kwargs["body"]
+            held = {(item.adapter, item.external_identity, item.boundary) for item in self.targets}
+            if (body.adapter, body.external_identity, body.boundary) in held:
+                message = "This target boundary is already registered"
+                raise WeaveError(Problem(status=409, code="WV-TARGET-EXISTS", message=message))
+        if operation == "deployment_targets.list":
+            return SimpleNamespace(items=list(self.targets), next_cursor=None)
+        if operation == "deployments.list":
+            wanted = kwargs["query"].get("target_id")
+            items = [item for item in self.deployments if wanted is None or str(item.target_id) == wanted]
+            return SimpleNamespace(items=items, next_cursor=None)
         if operation == "deployment_runners.list":
             fresh = datetime.now(UTC) + timedelta(seconds=60)
             runner = SimpleNamespace(id=self.runner_id, revoked=False, expires_at=fresh)
@@ -678,6 +695,75 @@ def test_a_probe_that_reaches_the_platform_unlabeled_stops_connect_and_a_rerun_r
         ["weave-cluster-runner-1"],
     ]
     assert cluster.count("principals.create") == 2 and cluster.count("deployment_targets.create") == 1
+
+
+def test_connecting_a_disconnected_namespace_again_enables_the_target_it_kept(world):
+    """Disconnect can only disable a target and keeps the namespace, and the API never registers one namespace twice:
+    connect enables the namespace's own target again for the new runner, with its deployment, and keeps its approval
+    policy. A disabled target of another namespace with the same name stays as it is."""
+    directory, _, _, cluster = world
+    kept, deployment = uuid4(), uuid4()
+
+    def target(identifier, uid, revision):
+        return SimpleNamespace(
+            id=identifier,
+            adapter="kubernetes",
+            external_identity=uid,
+            boundary="weave-workers",
+            disabled=True,
+            revision=revision,
+            runner_principal_id=uuid4(),
+        )
+
+    cluster.targets = [target(uuid4(), "another-cluster-namespace-uid", 2), target(kept, UID, 3)]
+    cluster.deployments = [
+        SimpleNamespace(id=uuid4(), target_id=cluster.targets[0].id, name="weave-workers"),
+        SimpleNamespace(id=deployment, target_id=kept, name="weave-workers"),
+    ]
+    result = connect(world)
+    assert result["target_id"] == str(kept) and request_id(cluster) == str(kept)
+    assert cluster.count("deployment_targets.create") == 0 and cluster.count("deployments.create") == 0
+    (update,) = [kwargs for name, kwargs in cluster.api_calls if name == "deployment_targets.update"]
+    entry = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert (update["identifier"], update["revision"], update["body"].disabled) == (kept, 3, False)
+    assert str(update["body"].runner_principal_id) == entry["runner_principal_id"]
+    assert update["body"].capabilities == ["observe", "update", "scale_workers", "restart_workers"]
+    assert update["body"].approval_policy is None
+    assert (entry["target_id"], entry["deployment_id"], entry["state"]) == (str(kept), str(deployment), "connected")
+
+
+def test_a_connect_that_stopped_after_enabling_the_kept_target_adopts_it_on_the_rerun(world, monkeypatch):
+    """The API enabled the kept target for this pair's runner, then connect stopped before recording it: the rerun
+    takes that target as it is instead of registering the namespace a second time."""
+    directory, _, _, cluster = world
+    kept = SimpleNamespace(
+        id=uuid4(),
+        adapter="kubernetes",
+        external_identity=UID,
+        boundary="weave-workers",
+        disabled=True,
+        revision=3,
+        runner_principal_id=uuid4(),
+    )
+    cluster.targets = [kept]
+    invoke = cluster.invoke
+
+    async def stopping(operation, **kwargs):
+        if operation == "deployments.list":
+            raise RuntimeError("connect stopped here")
+        return await invoke(operation, **kwargs)
+
+    monkeypatch.setattr(cluster, "invoke", stopping)
+    with pytest.raises(RuntimeError):
+        connect(world)
+    entry = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert "target_id" not in entry and cluster.count("deployment_targets.update") == 1
+    # What the update did on the API's side.
+    kept.disabled, kept.runner_principal_id = False, UUID(entry["runner_principal_id"])
+    monkeypatch.setattr(cluster, "invoke", invoke)
+    result = connect(world)
+    assert result["target_id"] == str(kept.id) and request_id(cluster) == str(kept.id)
+    assert cluster.count("deployment_targets.update") == 1 and cluster.count("deployment_targets.create") == 0
 
 
 @pytest.mark.parametrize(

@@ -33,7 +33,7 @@ import secrets
 import socket
 import tempfile
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1012,6 +1012,46 @@ async def _principals(
     )
 
 
+async def _pages(client: Any, operation: str, **query: str) -> AsyncIterator[Any]:
+    """Every item of a paged list operation."""
+    cursor: str | None = None
+    while True:
+        page = await client.invoke(operation, query={"limit": 100, **query, **({"cursor": cursor} if cursor else {})})
+        for item in page.items:
+            yield item
+        cursor = page.next_cursor
+        if cursor is None:
+            return
+
+
+async def _enable_kept(client: Any, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any) -> None:
+    """A namespace connected before keeps its target after disconnect, which can only disable it, and the API never
+    registers one namespace (its UID and name) twice: enable that target again for this runner, with its deployment,
+    and keep its approval policy. A target this entry's runner already holds was enabled by a connect that stopped
+    before saving it."""
+    from firefly_weave.contracts.deployments import TargetUpdate
+
+    runner = UUID(entry["runner_principal_id"])
+    kept = None
+    async for item in _pages(client, "deployment_targets.list"):
+        if (item.adapter, item.external_identity, item.boundary) == ("kubernetes", uid, namespace) and (
+            item.disabled or item.runner_principal_id == runner
+        ):
+            kept = item
+            break
+    if kept is None:
+        return
+    if kept.disabled:
+        update = TargetUpdate(runner_principal_id=runner, capabilities=list(objects.CAPABILITIES), disabled=False)
+        await client.invoke("deployment_targets.update", identifier=kept.id, body=update, revision=kept.revision)
+    entry["target_id"] = str(kept.id)
+    async for deployment in _pages(client, "deployments.list", target_id=str(kept.id)):
+        if str(deployment.target_id) == str(kept.id) and deployment.name == DEPLOYMENT:
+            entry["deployment_id"] = str(deployment.id)
+            break
+    save_entry()
+
+
 async def _register(
     client: Any, connection: _Connection, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any
 ) -> None:
@@ -1029,6 +1069,8 @@ async def _register(
         "capabilities": list(objects.CAPABILITIES),
         "approval_policy": {"distinct_approver": False},
     }
+    if entry.get("target_id") is None:
+        await _enable_kept(client, entry, uid, namespace, save_entry)
     await platform_operations._target(
         client,
         entry,
