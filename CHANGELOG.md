@@ -44,9 +44,18 @@ SPDX-License-Identifier: Apache-2.0
   summaries carry and filter `transaction_state`, six `transaction.*` events
   leave through the outbox (subscriptions now select up to 12 types), and
   `weave.transactions` and `weave.transaction_phases` count them. Histories
-  with transactions export and replay. Debug sessions don't simulate
-  transactions yet. Weave AI's guide names the `transaction` step. Migration
-  `0039_transactions_reserve` changes only the catalog.
+  with transactions export and replay. Weave AI's guide names the
+  `transaction` step. Migration `0039_transactions_reserve` changes only the
+  catalog.
+- Debug sessions and `weave workflow simulate` run transactions. Confirms,
+  cancels and undos take their own mocks, and a phase without one completes
+  with `{}` when its output allows it. Scripted failures take an `effect`,
+  `pending` keys (`--pending KEY`) never answer, and the `resolve` and
+  `cancel` commands apply a person's resolution and a run cancel to the
+  session only (`WV-DEBUG-INCIDENT` when one doesn't apply). The view lists
+  each transaction under `transactions`. A transaction no longer stops a
+  session at its first step. Older clients ignore `transactions`; an older
+  server answers 422 to `resolve`, `cancel` and requests with `pending`.
 - Steps can handle their own failures with the On error setting: `onError:
   continue` goes on with a `null` output, and `onError: errorOutput` runs the
   step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
