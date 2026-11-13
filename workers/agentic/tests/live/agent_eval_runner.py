@@ -283,13 +283,10 @@ def local_model(spec: ModelSpec, secret: str, timeout: float, options: BuildOpti
     return build_model(spec, secret, timeout, options, transport=httpx2.AsyncHTTPTransport())
 
 
-async def run_case(
-    document: dict[str, Any], case: dict[str, Any], endpoint: Endpoint, *, model_builder: ModelBuilder = local_model
-) -> CaseResult:
-    """One turn case, once, through the worker's turn task."""
-    result = CaseResult(case["id"], case["category"], passed=False, turns=1)
-    sent = turn_input(document, case, endpoint.model)
-    result.counted_tokens = turn_tokens(TurnInput.model_validate(sent))
+async def run_turn_task(
+    sent: dict[str, Any], endpoint: Endpoint, key: str, model_builder: ModelBuilder = local_model
+) -> Any:
+    """One turn input through the worker's turn task, as a leased task for ``key`` runs it; a failed turn raises."""
     origins = endpoint.origins()
     with tempfile.TemporaryDirectory() as scratch, po.installed(origins):
         handler = TurnTaskHandler(
@@ -301,20 +298,30 @@ async def run_case(
         now = datetime.now(UTC)
         lease = TaskLease(
             proof=LeaseProof(task_id=uuid4(), generation=1, owner=uuid4(), token="evaluation"),
-            operation_key=f"evaluation:{case['id']}#1",
+            operation_key=f"evaluation:{key}",
             deadline=now + timedelta(minutes=10),
             expires_at=now + timedelta(minutes=10),
             capability="weave-agentic.turn@1.0.0",
             worker_release_id=uuid4(),
             input=sent,
         )
-        started = time.monotonic()
-        try:
-            output = await handler(lease)
-        except ConnectorFailure as failure:
-            result.reasons = [f"the turn failed with {failure.code}"]
-            result.seconds = round(time.monotonic() - started, 3)
-            return result
+        return await handler(lease)
+
+
+async def run_case(
+    document: dict[str, Any], case: dict[str, Any], endpoint: Endpoint, *, model_builder: ModelBuilder = local_model
+) -> CaseResult:
+    """One turn case, once, through the worker's turn task."""
+    result = CaseResult(case["id"], case["category"], passed=False, turns=1)
+    sent = turn_input(document, case, endpoint.model)
+    result.counted_tokens = turn_tokens(TurnInput.model_validate(sent))
+    started = time.monotonic()
+    try:
+        output = await run_turn_task(sent, endpoint, f"{case['id']}#1", model_builder)
+    except ConnectorFailure as failure:
+        result.reasons = [f"the turn failed with {failure.code}"]
+        result.seconds = round(time.monotonic() - started, 3)
+        return result
     result.seconds = round(time.monotonic() - started, 3)
     assert isinstance(output, dict)
     usage = output["usage"]
