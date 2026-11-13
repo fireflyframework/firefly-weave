@@ -1396,9 +1396,10 @@ show it on the canvas.
 shows what happened in the run (finished, failed with its code, still running,
 not reached), and the header names the run, its status, the version it used
 and when it started. When the run used another version than the draft, a
-banner says so ("This run used 1.2.0. 1 step differs."), steps changed since
-the run say "Changed since this run", and steps new in the draft say "New in
-this draft". A run that is still going is followed until it ends, for at most
+banner says so ("This run used 1.2.0; you're editing the draft of 1.3.0.");
+on a phone it folds into one line with **Details**. Steps changed since the
+run say "Changed since this run", and steps new in the draft say "New in this
+draft". A run that is still going is followed until it ends, for at most
 30 minutes.
 
 **A step in the run.** Open a step (double-click it, or press **Enter** on it)
