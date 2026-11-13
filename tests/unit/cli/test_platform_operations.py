@@ -515,6 +515,7 @@ def test_up_refreshes_the_connected_clusters_after_operations_and_reports_them(o
     monkeypatch.setattr(platform_clusters, "refresh", lambda directory, notice: called.append("clusters") or missing)
     monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
     monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(directory, Path("."), None)
     assert called == ["enable", "clusters"] and result["clusters"] == missing
 
