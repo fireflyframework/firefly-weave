@@ -630,10 +630,17 @@ recreated it in the meantime, so only `list --check` confirms the repair.
 Each `weave platform up` with operations on points every connected cluster at
 the platform's current addresses. It joins the platform to each cluster's
 network again and, when an address moved, applies the new addresses to the
-cluster's objects through your default kubeconfig. `up` reports each cluster as
-`connected`, `missing`, or `unreachable` with the reason, and a cluster never
-makes `up` fail. A cluster you connected with `--kubeconfig` elsewhere reads
-`unreachable` here; run `connect` again with that file.
+cluster's objects through your default kubeconfig. `up` prints a `Clusters:`
+line with each cluster as `connected`, `missing`, or `unreachable` with the
+reason, and a cluster never makes `up` fail. A cluster you connected with
+`--kubeconfig` elsewhere reads `unreachable` here; run `connect` again with that
+file.
+
+When `up` or `connect` can't apply the platform's new addresses to a cluster,
+the platform leaves that cluster's network, so the cluster's runner and workers
+can't reach the platform until a later `up` or `connect` succeeds. This keeps
+the platform off the network at addresses the cluster's network rules don't
+name.
 
 ### Disconnect a target
 

@@ -177,7 +177,13 @@ SPDX-License-Identifier: Apache-2.0
   after `cluster disconnect` enables the target it had, with its approval
   policy, and names that target in a progress line and as `enabled_again` in
   JSON output. Connect, disconnect and list resend a request for up to 60 s when
-  the platform answers that it is busy. See
+  the platform answers that it is busy. `up` prints a `Clusters:` line with
+  each connected cluster's state and, for an `unreachable` one, its reason
+  (JSON: `reason`), and when `up` or `connect` can't apply the platform's new
+  addresses to a cluster, the platform leaves that cluster's network until a
+  later `up` or `connect` succeeds. `weave platform status` shows a namespace
+  whose connect stopped as `pending`; its JSON `clusters` maps each namespace to
+  its state. See
   [Connect a kind or k3d cluster on this computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 - Kubernetes runners restart workers and take scale-downs, which remove exactly
   the reviewed pods. Before it lowers the replicas, the runner gives each
