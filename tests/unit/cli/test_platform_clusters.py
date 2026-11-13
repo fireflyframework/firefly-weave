@@ -1477,6 +1477,46 @@ def test_disconnect_keeps_every_object_of_a_weave_system_another_installation_ow
     assert clusters.receipt(directory)["clusters"] == {}
 
 
+def busy(cluster, monkeypatch, operation, times):
+    """The API answers `operation` with its 429 capacity refusal `times` times, then as usual."""
+    invoke, left = cluster.invoke, [times]
+    refusal = Problem(status=429, code="WV-OPERATION-CAPACITY", message="Operation capacity unavailable")
+
+    async def refusing(name, **kwargs):
+        if name == operation and left[0] > 0:
+            left[0] -= 1
+            cluster.api_calls.append((name, kwargs))
+            raise WeaveError(refusal)
+        return await invoke(name, **kwargs)
+
+    monkeypatch.setattr(cluster, "invoke", refusing)
+
+
+def test_connect_and_disconnect_send_a_request_again_after_the_apis_capacity_refusal(world, monkeypatch):
+    """A 429 capacity refusal means the API rolled the request back and asks for it again: a busy platform never
+    stops connect or disconnect."""
+    _, _, _, cluster = world
+    busy(cluster, monkeypatch, "deployments.create", 2)
+    connected = connect(world)
+    assert cluster.count("deployments.create") == 3
+    busy(cluster, monkeypatch, "deployment_targets.update", 1)
+    result = disconnect(world)
+    assert result["target_id"] == connected["target_id"] and result["disabled"] is True
+    assert cluster.count("deployment_targets.update") == 2
+
+
+def test_a_capacity_refusal_that_outlasts_the_wait_stops_disconnect(world, monkeypatch):
+    """The refusal reaches the caller (the CLI's platform client turns it into its one-sentence refusal) once the
+    wait is over; the attempts are bounded."""
+    _, _, _, cluster = world
+    connect(world)
+    busy(cluster, monkeypatch, "deployment_targets.update", 10**6)
+    with pytest.raises(WeaveError) as refused:
+        disconnect(world)
+    assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+    assert 1 < cluster.count("deployment_targets.update") < 100
+
+
 def test_disconnecting_a_cluster_whose_nodes_are_gone_frees_the_target_without_reaching_it(world):
     """A deleted cluster has nothing left to delete: the platform still revokes, disables, deletes the clients, leaves
     the network kind left behind, and frees the pair."""

@@ -33,7 +33,7 @@ import secrets
 import socket
 import tempfile
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -559,6 +559,46 @@ OTHER_CONTAINERS = (
 )
 # Replaced in tests.
 wait_async = asyncio.sleep
+# How long a request the API refused for capacity is sent again before the refusal stands.
+CAPACITY_SECONDS = 60
+_CAPACITY = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+class _Patient:
+    """The platform client, sending a request again after the API's capacity refusal: a 429 with a capacity code
+    means the API rolled the request back and asks for it again, as the SDK's worker transport does."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    async def invoke(self, operation: str, **kwargs: Any) -> Any:
+        from firefly_weave.sdk.errors import WeaveError
+
+        deadline = clock() + CAPACITY_SECONDS
+        while True:
+            try:
+                return await self._client.invoke(operation, **kwargs)
+            except WeaveError as error:
+                if error.status != 429 or error.code not in _CAPACITY or clock() >= deadline:
+                    raise
+            await wait_async(1)
+
+
+def _api(
+    state: dict[str, Any],
+    operations: dict[str, Any],
+    work: Callable[[Any], Awaitable[Any]],
+    transport: httpx.AsyncBaseTransport | None,
+) -> Any:
+    """Run `work` with the platform client signed in as the owner, through capacity refusals."""
+
+    async def patient(client: Any) -> Any:
+        return await work(_Patient(client))
+
+    return asyncio.run(platform_operations._api(state, operations, patient, transport))
 
 
 @dataclass
@@ -1253,7 +1293,7 @@ def connect(
         async def link(client: WeaveClient) -> None:
             await _principals(client, connection, entry, subjects, save_entry)
 
-        asyncio.run(platform_operations._api(state, operations, link, transport))
+        _api(state, operations, link, transport)
         draft = _draft(connection, namespace, entry, runner_image)
         labels = objects._labels(network, draft)
         if worker_new:
@@ -1271,7 +1311,7 @@ def connect(
         async def register(client: WeaveClient) -> None:
             await _register(client, connection, entry, uid, namespace, save_entry)
 
-        asyncio.run(platform_operations._api(state, operations, register, transport))
+        _api(state, operations, register, transport)
 
         notice(f"runner: starting weave-runner-{namespace}")
         if runner_later:
@@ -1294,7 +1334,7 @@ def connect(
         async def ready(client: WeaveClient) -> str:
             return await _ready(client, connection, entry, namespace, f"{_key(connection, entry)}-observe-{rotated}")
 
-        observed = asyncio.run(platform_operations._api(state, operations, ready, transport))
+        observed = _api(state, operations, ready, transport)
 
         notice("receipt: recording the connected target")
         entry["state"] = "connected"
@@ -1554,7 +1594,7 @@ def disconnect(
         async def retire(client: WeaveClient) -> bool:
             return await _retire(client, target)
 
-        disabled = asyncio.run(platform_operations._api(state, operations, retire, transport))
+        disabled = _api(state, operations, retire, transport)
         if parts:
             notice(f"objects: deleting {len(parts)} objects of {target['target_name']}")
             document = json.dumps({"apiVersion": "v1", "kind": "List", "items": parts}).encode()
@@ -1732,9 +1772,10 @@ def _runner_states(
     if not ids or "scope" not in operations:
         return {}
     try:
-        return asyncio.run(platform_operations._api(state, operations, read, transport))
+        states: dict[str, str] = _api(state, operations, read, transport)
     except local.PlatformError:
         return {}
+    return states
 
 
 def clusters(
