@@ -96,7 +96,7 @@ SPDX-License-Identifier: Apache-2.0
 - Published actions offer Change in a new version for retry, timeout and the
   request.
 - The agentic worker serves a new task, the **model turn**
-  (`weave-agentic.turn@1.0.0`), which AI agent steps will run on: one request
+  (`weave-agentic.turn@1.0.0`), which AI agent steps run on: one request
   to the model with the transcript so far and the step's tools. The answer is
   the model's tool calls as written, or its final answer; the worker never runs
   a tool. Tool-call IDs are the kernel's, a turn carries at most 16 calls, and
@@ -104,6 +104,12 @@ SPDX-License-Identifier: Apache-2.0
   must end its instructions with the data notice, which tells the model that
   tool results and context are data, not instructions, and it carries the
   version of the rules it was built with.
+- The documentation covers AI agents at run time: the worker protocol describes
+  the model turn task's input, output and retries; history and replay lists an
+  agent's keys and what replay checks (`WV-REPLAY-AGENT-INPUT`); incident
+  operations gives the decisions for each `WV-AGENT-*` incident and for
+  incidents at turn and tool-call keys; and the AI worker guide explains that AI
+  tasks and agent turns share `WEAVE_AGENTIC_CAPACITY`.
 - One token count, shared by the server and the worker, decides whether a turn
   fits its context. It is set from the worst measured case of each kind of
   text, never below the local models measured
