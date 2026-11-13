@@ -190,6 +190,10 @@ for (const size of sizes)
       await expect(
         page.getByRole("button", { name: "Add a step", exact: true }),
       ).toHaveCount(0);
+      // Nor the workflow settings, which edit.
+      await expect(
+        page.getByRole("button", { name: "Open workflow settings" }),
+      ).toHaveCount(0);
       await expect(canvas.root.locator("[data-toolbar-for]")).toHaveCount(0);
       await runs.tabs.getByRole("tab", { name: "Source" }).click();
       expect(await sourceOf(page)).toBe(before);

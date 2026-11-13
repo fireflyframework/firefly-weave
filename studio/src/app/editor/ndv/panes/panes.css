@@ -795,7 +795,8 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 
 /* Run mode: what a run recorded, or why it isn't shown. */
-.pane-run-notice {
+/* The run's words in text color; the tone is for the icon and the border. */
+.step-details .pane-run-notice[data-tone] {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);

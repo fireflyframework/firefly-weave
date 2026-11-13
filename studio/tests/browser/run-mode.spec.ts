@@ -75,14 +75,13 @@ for (const size of sizes)
       const { runs } = await openRunsTab(page);
       const details = await choose(page, runs, RUN_IDS.failed);
       await details.openWithKeyboard("send");
-      // Step details opens on what the step returned.
-      await expect
-        .poll(() =>
-          page.evaluate(
-            () => !!document.activeElement?.closest('[data-region="output"]'),
-          ),
-        )
-        .toBe(true);
+      // Step details opens on what the step returned: the Output pane itself.
+      await expect(outputRegion(details)).toBeFocused();
+      // The neighbor steps' buttons stay off the panes' edges: the top bar's
+      // Previous and Next move between steps.
+      await expect(details.dialog.locator(".sd-neighbors:visible")).toHaveCount(
+        0,
+      );
       await showPane(details, "Parameters");
       const note = details.dialog.locator(".sd-run-note");
       await expect(note).toContainText(
@@ -230,6 +229,14 @@ for (const size of sizes)
       await expect(outputRegion(details).locator(".pane-sub")).toContainText(
         "Failed in this run",
       );
+      // A failed step returns nothing to count.
+      await expect(outputRegion(details).locator(".pane-count")).toHaveText("");
+      // The callout reads in text color; danger is for its icon and border.
+      await expect(
+        outputRegion(details)
+          .locator(".pane-run-notice[data-tone=danger] p")
+          .first(),
+      ).toHaveCSS("color", await tokenColor(page, "--text"));
     });
 
     test("step logs say when the platform doesn't serve them, and ask once", async ({
@@ -471,5 +478,19 @@ test.describe("step details in run mode", () => {
     await expect(
       page.getByRole("dialog", { name: "Keyboard shortcuts" }),
     ).toBeVisible();
+  });
+});
+
+test.describe("step details in run mode on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the breadcrumb keeps the step's place in one short line", async ({
+    page,
+  }) => {
+    const { runs } = await openRunsTab(page);
+    const details = await choose(page, runs, RUN_IDS.failed);
+    await details.openWithKeyboard("send");
+    await expect(details.dialog.locator(".sd-crumb")).toHaveText("Step 5 of 5");
+    await expect(details.dialog.locator(".sd-run-chip")).toBeVisible();
   });
 });

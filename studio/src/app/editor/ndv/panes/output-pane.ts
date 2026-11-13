@@ -143,7 +143,7 @@ import { RunStepLogs } from "./run-step-logs";
       }
       @let paths = this.paths();
       <span class="pane-count">{{
-        none
+        none || (recorded && recorded.output.kind !== "value")
           ? ""
           : paths
             ? paths.took
@@ -232,9 +232,7 @@ import { RunStepLogs } from "./run-step-logs";
               <div class="notice pane-run-notice" data-tone="danger">
                 <weave-icon name="critical" [size]="16" />
                 <div>
-                  <p>
-                    <strong>{{ recorded.failed }}</strong>
-                  </p>
+                  <p>{{ recorded.failed }}</p>
                   <p>A failed step returns no output.</p>
                 </div>
               </div>

@@ -790,9 +790,19 @@ export class StepDetails {
       : "";
   }
   crumb(): string {
-    return this.pseudo()
+    const where = this.pseudo()
       ? ""
       : breadcrumb(this.host().model.definition, this.target());
+    // On a phone in run mode the run's chip takes the room: "Step 5 of 5".
+    if (
+      where &&
+      this.host().windowWidth < 480 &&
+      this.controller().viewingRuns()
+    ) {
+      const position = where.split(" · ").at(-1) ?? where;
+      return position.charAt(0).toUpperCase() + position.slice(1);
+    }
+    return where;
   }
   docs(): string {
     const step = this.controller().step(this.target());
@@ -1797,7 +1807,10 @@ export class StepDetails {
       found =
         focus.region === "parameters"
           ? (control(panel) ?? control(root.querySelector(".sd-tabs")))
-          : (control(region) ?? region);
+          : // A run's step opens on its Output pane itself, ringed whole.
+            focus.region === "output" && this.controller().viewingRuns()
+            ? region
+            : (control(region) ?? region);
     }
     const name = root.querySelector<HTMLElement>(".sd-name:not([disabled])");
     found ??=

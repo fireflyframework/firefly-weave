@@ -957,3 +957,13 @@ weave-issues-indicator {
   color: var(--muted);
   font: var(--type-caption);
 }
+/* A run's step opens with focus on its Output pane, ringed whole. The
+   neighbor steps' buttons stay off the panes' edges: Previous and Next in
+   the top bar move between steps. */
+.step-details[data-run-mode] [data-region="output"]:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.step-details[data-run-mode] .sd-neighbors {
+  display: none;
+}

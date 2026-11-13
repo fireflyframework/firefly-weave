@@ -138,7 +138,8 @@ import type { App } from "../app";
           <span class="tag version-badge">{{
             h.model.definition.metadata.version
           }}</span>
-          @if (h.stepDetailsOn()) {
+          <!-- Workflow settings edit: the Runs tab doesn't offer them. -->
+          @if (h.stepDetailsOn() && h.tab !== "Runs") {
             <button
               type="button"
               class="icon-button workflow-settings-button"
