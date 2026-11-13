@@ -205,6 +205,18 @@ for (const size of sizes)
       await expect(input.locator(".pane-received")).toHaveText(
         JSON.stringify({ customer: "Ada", total: 120.5 }, null, 2),
       );
+      // What it received has no fields to list: JSON shows, Table works,
+      // Schema can't be chosen.
+      const views = input.getByRole("radiogroup", { name: "Input view" });
+      await expect(views.getByRole("radio", { name: "JSON" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(
+        views.getByRole("radio", { name: "Schema" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await views.getByRole("radio", { name: "Table" }).click();
+      await expect(input.getByRole("table")).toContainText("Ada");
     });
 
     test("the failed step shows the run's error", async ({ page }) => {

@@ -79,13 +79,21 @@ import { ndvRegistry, type Json } from "../registry";
           aria-label="Input view"
           (keydown)="radioKey($event)"
         >
+          @let shownAs =
+            selectedSource() === "received" ? receivedView() : view();
           @for (choice of views; track choice.id) {
+            @let noFields =
+              selectedSource() === "received" && choice.id === "schema";
             <button
               type="button"
               role="radio"
-              [attr.aria-checked]="view() === choice.id"
-              [attr.tabindex]="view() === choice.id ? 0 : -1"
-              (click)="setView(choice.id)"
+              [attr.aria-checked]="shownAs === choice.id"
+              [attr.tabindex]="shownAs === choice.id ? 0 : -1"
+              [attr.aria-disabled]="noFields ? 'true' : null"
+              [attr.title]="
+                noFields ? 'What a step received has no fields to list' : null
+              "
+              (click)="!noFields && setView(choice.id)"
             >
               <weave-icon [name]="choice.icon" [size]="16" />{{ choice.label }}
             </button>
@@ -159,12 +167,20 @@ import { ndvRegistry, type Json } from "../registry";
         @if (chosen === "received") {
           @let got = received();
           @if (got.ok) {
-            <pre
-              class="pane-json pane-received"
-              tabindex="0"
-              aria-label="What it received"
-              >{{ json(got.value) }}</pre
-            >
+            @if (receivedView() === "table") {
+              <weave-data-table
+                [value]="got.value"
+                label="What it received"
+                [query]="query()"
+              />
+            } @else {
+              <pre
+                class="pane-json pane-received"
+                tabindex="0"
+                aria-label="What it received"
+                >{{ json(got.value) }}</pre
+              >
+            }
             <p class="pane-received-note">
               Studio evaluated {{ got.step }}'s input mapping with this run's
               data{{ got.version ? " from version " + got.version : "" }}, so
@@ -397,6 +413,11 @@ export class InputPane implements OnInit {
           ...sources,
         ]
       : sources;
+  }
+  /** What it received shows as Table or JSON: it has no fields to list as Schema. */
+  receivedView(): DataView {
+    const view = this.view();
+    return view === "schema" ? "json" : view;
   }
   /** What the step received in the run, recomputed, or why Studio can't say. */
   received() {
