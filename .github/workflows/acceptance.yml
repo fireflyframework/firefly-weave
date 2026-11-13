@@ -98,10 +98,12 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           # The runner, deployments, workers and operations code, the migrations, the platform
-          # SDK and CLI that make and connect clusters, the Studio operations pages, the
-          # cluster journeys, and the tooling that makes the cluster: the image with kubectl
-          # and the pinned cluster tools.
-          CLUSTER_PATHS: '^(src/firefly_weave/(deployment_runner|deployments|workers|operations)/|migrations/|src/firefly_weave/sdk/platform[^/]*\.py$|src/firefly_weave/cli/platform\.py$|studio/src/app/operate/|tests/e2e/test_operations_cluster\.py$|Dockerfile$|tests/acceptance/versions\.toml$)'
+          # SDK and CLI that make and connect clusters, the SDK client, token relay, worker
+          # sign-in and private origins that the cluster's runner and workers use, the cluster
+          # operations CLI, the Studio operations pages, the cluster journeys and their fixture
+          # worker, and the tooling that makes the cluster: the image with kubectl and the
+          # pinned cluster tools.
+          CLUSTER_PATHS: '^(src/firefly_weave/(deployment_runner|deployments|workers|operations)/|migrations/|src/firefly_weave/sdk/platform[^/]*\.py$|src/firefly_weave/sdk/(client|token_relay|worker_auth)\.py$|src/firefly_weave/private_origins\.py$|src/firefly_weave/cli/(platform|cluster_operations)\.py$|studio/src/app/operate/|tests/e2e/test_operations_cluster\.py$|tests/fixtures/operations-worker/|Dockerfile$|tests/acceptance/versions\.toml$)'
         run: |
           # --no-renames lists both the old and the new path of a moved file.
           changed="$(git diff --name-only --no-renames "$BASE...$HEAD")"
