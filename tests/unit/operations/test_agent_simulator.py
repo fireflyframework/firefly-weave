@@ -477,6 +477,22 @@ def test_studio_keeps_a_mock_for_one_call():
     assert (step.nodeId, step.output["result"], step.output["usage"]["toolCalls"]) == ("support", "Shipped.", 1)
 
 
+def test_studio_names_the_call_whose_mock_fits_none_of_the_agents_tools():
+    request = studio_request(
+        mocks={"node:support#1.1": {"status": 7}},
+        aiTurns={"support": turns(lookup(), {"final": "Shipped."})},
+    )
+
+    answer = execute(request, None)
+
+    assert answer.blocked is not None
+    assert (answer.blocked.reason, answer.blocked.instanceKey, answer.blocked.message) == (
+        "missing_mock",
+        "support#1.1",
+        "The pinned result of call support#1.1 fits none of the tools of support. Edit it, or unpin it.",
+    )
+
+
 def test_a_turn_without_saved_turns_asks_for_them_at_the_agents_keys():
     view = simulate({}).continue_until_breakpoint()
 

@@ -829,16 +829,22 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if blocked is None and missing is not None:
         last = next(reversed(data.inputs), None) if data.inputs else None
         if last is not None and last not in data.outputs:
+            from firefly_weave.runtime.agents import parse_agent_key
+
             step = node_of(last)
+            called = parse_agent_key(last)
+            if "node:" + last in misfits and called is not None and called.call is not None:
+                # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
+                message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
+            elif {"node:" + last, "node:" + step} & misfits:
+                message = f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
+            else:
+                message = f"Step {step} needs test data."
             blocked = Blocked(
                 reason="missing_mock",
                 nodeId=step,
                 instanceKey="" if last == step else last,
-                message=(
-                    f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
-                    if {"node:" + last, "node:" + step} & misfits
-                    else f"Step {step} needs test data."
-                ),
+                message=message,
             )
     if blocked is None and target.mode != "workflow" and view.status not in {"paused"} and not view.diagnostics:
         step = cast(str, target.stepId)
