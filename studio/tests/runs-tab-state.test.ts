@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/app/api";
 import {
   FOLLOW_LIMIT_MS,
+  OTHER_WORKFLOW,
   RunsTabState,
   type RunsTabHost,
 } from "../src/app/editor/runs-tab/runs-tab-state";
@@ -603,6 +604,24 @@ describe("the chosen run", () => {
     await state.choose(fixtureIds.failed);
     expect(state.chosen()?.error?.code).toBe("WV-STUDIO-RUN-UNREADABLE");
     expect(state.chosen()?.record).toBeNull();
+  });
+
+  it("refuses a run of another workflow, keeping nothing of it", async () => {
+    const { state, host, platform } = await started();
+    const failed = summaryOf(platform.data, fixtureIds.failed);
+    platform.documents.set(
+      failed.workflow.definition_version_id,
+      workflow("1.2.0", {}),
+    );
+    // A link names a run of this project; the open workflow is another one.
+    host.setWorkflow("refund-approval");
+    await state.choose(fixtureIds.failed);
+    expect(state.chosen()?.error).toEqual({
+      code: OTHER_WORKFLOW,
+      message: "invoice-approval",
+    });
+    expect(state.chosen()?.data).toBeNull();
+    expect(state.chosen()?.overlay).toBeNull();
   });
 
   it("applies an answer only to the run, workflow, account and environment it was asked for", async () => {

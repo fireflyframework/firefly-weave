@@ -41,8 +41,9 @@ import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
 import { DebugRun, debugRefusal } from "./debug-run";
-import { takeDebug } from "./run-links";
+import { dropDebug, takeDebug } from "./run-links";
 import { bannerSummary } from "./run-overlay";
+import { OTHER_WORKFLOW } from "./runs-tab-state";
 import { environmentName, type RunsView } from "./runs-view";
 
 const FAILED = new Set(["failed", "timed_out"]);
@@ -149,6 +150,12 @@ export class RunHeader {
   readonly problem = computed(() => {
     const error = this.chosen()?.error;
     if (!error) return null;
+    if (error.code === OTHER_WORKFLOW)
+      return {
+        title: `Run ${shortId(this.chosen()!.id)} isn't a run of ${this.app().model.definition.metadata.name}.`,
+        detail: "Open it in Operate to read it.",
+        operate: true,
+      };
     return error.code === "WV-NOT-FOUND"
       ? {
           title: `Run ${shortId(this.chosen()!.id)} isn't in ${environmentName(this.app())}.`,
@@ -189,13 +196,23 @@ export class RunHeader {
       const chosen = this.chosen();
       const view = this.view();
       const refused = this.refusal();
-      if (!chosen?.record || !view || view.loading) return;
+      const access = this.tab().state()?.state() === "access";
       untracked(() => {
         const app = this.app();
+        const fence = {
+          scope: app.stepDataScope,
+          environment: app.profile?.environmentId ?? "",
+        };
+        // The tab may not read runs here: nothing asked for starts later.
+        if (access) return dropDebug();
+        if (!chosen) return;
+        // The run's read ended in an error: the request is taken, unused.
+        if (chosen.error) return void takeDebug(app.draftId, chosen.id, fence);
+        if (!chosen.record || !view || view.loading) return;
         // The draft's test data still opening: wait for it, as it may lift
         // the refusal.
         if (refused && !opened(app)) return;
-        const intent = takeDebug(app.draftId, chosen.id);
+        const intent = takeDebug(app.draftId, chosen.id, fence);
         if (intent && !refused) void this.debug(intent);
       });
     });

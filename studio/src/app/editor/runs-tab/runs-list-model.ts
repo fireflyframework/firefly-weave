@@ -55,6 +55,29 @@ export const filterCount = (filters: RunsTabFilters): number =>
     !filters.includeTest,
   ].filter(Boolean).length;
 
+/** Why the Runs tab can't list runs yet, or "ready". */
+export type RunsTabMode =
+  | "offline"
+  | "no-environment"
+  | "pending"
+  | "unnamed"
+  | "ready";
+/**
+ * What the Runs tab can list: nothing without a platform, an environment or
+ * the account's identity; nothing for a workflow without a name either, whose
+ * query would name no workflow and list every run in the environment.
+ */
+export function runsTabMode(facts: {
+  profile: { environmentId?: string | null } | null;
+  identity: unknown;
+  name: string;
+}): RunsTabMode {
+  if (!facts.profile) return "offline";
+  if (!facts.profile.environmentId) return "no-environment";
+  if (!facts.identity) return "pending";
+  return facts.name.trim() ? "ready" : "unnamed";
+}
+
 export const RUNS_TAB_PAGE = 50;
 /** The list stops loading older runs here and says so. */
 export const MAX_LISTED_RUNS = 500;

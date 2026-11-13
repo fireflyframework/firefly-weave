@@ -64,29 +64,52 @@ export function takeLinkedRun(draftId: string): string | null {
   return run;
 }
 
+/** The account (step data scope) and environment a request was made under. */
+export interface DebugFence {
+  scope: string;
+  environment: string;
+}
 /**
  * Debug in editor or Copy to editor asked for from Operate, kept for the
- * Runs tab of that draft until the run it names has loaded there. In memory
- * only, taken once.
+ * Runs tab of that draft until the run it names has loaded there, under the
+ * account and environment of the click. In memory only, taken once, and
+ * forgotten when the tab is left, the account or environment changes, or the
+ * run can't be read.
  */
 let asked: {
   draftId: string;
   run: string;
   intent: "debug" | "copy";
+  fence: DebugFence;
 } | null = null;
 export function handOverDebug(
   draftId: string,
   run: string,
   intent: "debug" | "copy" | null,
+  fence: DebugFence,
 ): void {
-  asked = intent ? { draftId, run, intent } : null;
+  asked = intent ? { draftId, run, intent, fence: { ...fence } } : null;
 }
 export function takeDebug(
   draftId: string,
   run: string,
+  fence: DebugFence,
 ): "debug" | "copy" | null {
-  if (asked?.draftId !== draftId || asked.run !== run) return null;
+  if (!asked) return null;
+  // Another account or environment: the click that asked isn't this one's.
+  if (
+    asked.fence.scope !== fence.scope ||
+    asked.fence.environment !== fence.environment
+  ) {
+    asked = null;
+    return null;
+  }
+  if (asked.draftId !== draftId || asked.run !== run) return null;
   const { intent } = asked;
   asked = null;
   return intent;
+}
+/** Forgets a request not taken yet. */
+export function dropDebug(): void {
+  asked = null;
 }

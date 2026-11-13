@@ -15,8 +15,14 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { describe, expect, it } from "vitest";
-import { parseRunsLink, runsLink } from "../src/app/editor/runs-tab/run-links";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  dropDebug,
+  handOverDebug,
+  parseRunsLink,
+  runsLink,
+  takeDebug,
+} from "../src/app/editor/runs-tab/run-links";
 
 const RUN = "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12";
 
@@ -53,5 +59,40 @@ describe("a link to the Runs tab", () => {
     expect(runsLink("local:a b", null)).toBe(
       "/workflows/local%3Aa%20b/designer?tab=runs",
     );
+  });
+});
+
+// A Debug request from Operate belongs to the click that made it: the
+// account, environment and draft it was asked under, and the Runs tab it
+// opened.
+describe("a Debug request from Operate", () => {
+  const A = { scope: "3:principal-a", environment: "env-dev" };
+  const B = { scope: "4:principal-b", environment: "env-dev" };
+  const PROD = { scope: "3:principal-a", environment: "env-prod" };
+  afterEach(() => dropDebug());
+
+  it("is not taken under another account, and is forgotten", () => {
+    handOverDebug("d-1", RUN, "debug", A);
+    expect(takeDebug("d-1", RUN, B)).toBeNull();
+    expect(takeDebug("d-1", RUN, A)).toBeNull();
+  });
+
+  it("is not taken in another environment, and is forgotten", () => {
+    handOverDebug("d-1", RUN, "debug", A);
+    expect(takeDebug("d-1", RUN, PROD)).toBeNull();
+    expect(takeDebug("d-1", RUN, A)).toBeNull();
+  });
+
+  it("is forgotten when the Runs tab it opened is left", () => {
+    handOverDebug("d-1", RUN, "copy", A);
+    dropDebug();
+    expect(takeDebug("d-1", RUN, A)).toBeNull();
+  });
+
+  it("is taken once by the click's own account and environment, and only for its run", () => {
+    handOverDebug("d-1", RUN, "debug", A);
+    expect(takeDebug("d-1", "another-run", A)).toBeNull();
+    expect(takeDebug("d-1", RUN, A)).toBe("debug");
+    expect(takeDebug("d-1", RUN, A)).toBeNull();
   });
 });

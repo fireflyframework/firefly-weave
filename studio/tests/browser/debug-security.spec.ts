@@ -33,6 +33,7 @@ import {
   openRunsTab,
   RUN_IDS,
   RUNS_ACCOUNT,
+  RUNS_ENV,
   routeRuns,
   runFixture,
   runsPage,
@@ -42,7 +43,12 @@ import {
   type RunsPage,
 } from "./runs-po";
 import { StepDetailsPage } from "./step-details-po";
-import { allCapabilities, newWorkflow, type CatalogEntry } from "./support";
+import {
+  allCapabilities,
+  connected,
+  newWorkflow,
+  type CatalogEntry,
+} from "./support";
 
 test.skip(
   !hasPython,
@@ -220,6 +226,7 @@ test("a refused run read shows the access state and nothing of the run", async (
   };
   await runs.row(RUN_IDS.failed).click();
   await expect(runs.panel).toContainText("You need run.read in development.");
+  await expect(runs.rows).toHaveCount(0);
   await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
   await expect(runs.canvas.locator(".tile-output")).toHaveCount(0);
   expect(outputReads(platform.requests)).toEqual([]);
@@ -283,8 +290,14 @@ test("signing out forgets the chosen run, the list and the run's data kept here"
   await expect.poll(runData).toEqual([]);
   // Back to the workflow: no list and no run without an account.
   await page.goBack();
-  await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
+  await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+  await expect(runs.panel).toBeVisible();
+  await page.clock.runFor(6_000);
   await expect(runs.rows).toHaveCount(0);
+  await expect(runs.panel.locator(".runs-body")).not.toContainText(
+    "invoice-approval",
+  );
+  await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
 });
 
 test("the run's error is said by its code, never the platform's message", async ({
@@ -308,4 +321,75 @@ test("the run's error is said by its code, never the platform's message", async 
     "In run 1c0d7f8a, this step failed: SMTP_REJECTED.",
   );
   await expect(page.locator("body")).not.toContainText("ada@example.com");
+});
+
+test("a Debug request whose run didn't load never starts Debug later", async ({
+  page,
+}) => {
+  // Debug in editor starts only from a click: a request from Operate whose
+  // run didn't load in the editor never starts Debug when the run is chosen
+  // later for another reason.
+  const draft = "00000003-1111-4111-8111-111111111111";
+  await page.clock.install({ time: new Date(NOW) });
+  await useNewEditor(page);
+  await connected(page, {
+    capabilities: [...allCapabilities, "compile"],
+    environmentId: RUNS_ENV,
+    environmentName: "development",
+    catalog: WORKER_CATALOG,
+    ...RUNS_ACCOUNT,
+  });
+  const platform = await routeRuns(page, listedKinds.map(runFixture));
+  const kept = await keepDrafts(page, [
+    { id: draft, revision: 5, document: runsWorkflow },
+  ]);
+  // The editor's own read of the run fails once (Operate's read before it
+  // succeeds): the run doesn't load where Debug was handed over.
+  let failed = false;
+  await page.route(new RegExp(`/runs/${RUN_IDS.failed}$`), async (route) => {
+    if (
+      route.request().method() === "GET" &&
+      !failed &&
+      page.url().includes("/workflows/")
+    ) {
+      failed = true;
+      return route.fulfill({
+        status: 500,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ code: "WV-INTERNAL", message: "Try again." }),
+      });
+    }
+    return route.fallback();
+  });
+  await localAuthoring(page);
+
+  await page.goto(`/operate/runs/${RUN_IDS.failed}`);
+  await page
+    .locator(".record-detail")
+    .getByRole("button", { name: "Debug in editor" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${draft}/designer`));
+  const runs = runsPage(page);
+  await expect(
+    page.getByText("Studio can't show this run's data."),
+  ).toBeVisible();
+
+  // The person leaves the Runs tab, comes back, and chooses the run to read it.
+  await runs.tabs.getByRole("tab", { name: "Designer" }).click();
+  await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+  await expect(runs.rows).toHaveCount(listedKinds.length + 1);
+  await expect(runs.canvas.locator(".run-header .run-caption")).toBeVisible();
+  await runs.row(RUN_IDS.failed).click();
+  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
+    `Run ${RUN_IDS.failed.slice(0, 8)}`,
+  );
+  // Long enough for Debug to copy, execute and say so if it started.
+  await page.clock.runFor(11_000);
+  expect(outputReads(platform.requests)).toEqual([]);
+  expect(kept.saved).toEqual([]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(runs.tabs.getByRole("tab", { name: "Runs" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });

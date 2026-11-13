@@ -250,6 +250,23 @@ for (const size of sizes)
 test.describe("the Runs list's states", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("a workflow without a name asks for one and lists nothing", async ({
+    page,
+  }) => {
+    const { runs, platform } = await openRunsTab(page, {
+      workflow: {
+        ...runsWorkflow,
+        metadata: { ...runsWorkflow.metadata, name: "" },
+      },
+    });
+    await expect(runs.panel).toContainText(
+      "Name this workflow to see its runs.",
+    );
+    await page.clock.runFor(6_000);
+    expect(platform.listQueries()).toEqual([]);
+    await expect(runs.rows).toHaveCount(0);
+  });
+
   test("without a platform, the Runs tab says runs live on one", async ({
     page,
   }) => {

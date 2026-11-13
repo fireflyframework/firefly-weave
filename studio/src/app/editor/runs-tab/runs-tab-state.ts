@@ -70,6 +70,8 @@ export interface RunsTabHost {
   environmentId(): string;
 }
 
+/** The chosen run's error when it is a run of another workflow; its message names that workflow. */
+export const OTHER_WORKFLOW = "WV-STUDIO-OTHER-WORKFLOW";
 export interface ChosenRun {
   id: string;
   /** Its row in the list; null for a run that isn't listed. */
@@ -282,6 +284,14 @@ export class RunsTabState {
       summary?.workflow.definition_version_id ?? read.record.versionId;
     const definition = await this.runDefinition(versionId);
     if (!this.runHolds(ticket)) return;
+    // A run of another workflow (a link can name any run): nothing of it
+    // draws here, and its data can't become this workflow's test data.
+    if (definition && definition.metadata.name !== this.host.workflowName()) {
+      this.updateChosen(ticket, {
+        error: { code: OTHER_WORKFLOW, message: definition.metadata.name },
+      });
+      return;
+    }
     const data = new RunData(
       read.record,
       this.host.environmentId(),

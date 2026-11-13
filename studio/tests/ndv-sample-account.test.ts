@@ -132,6 +132,40 @@ describe("sample ownership at the real App account boundary", () => {
   });
 });
 
+describe("the run's error after Debug in editor, at the account boundary", () => {
+  const notice = {
+    draftId: "d-1",
+    runId: "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12",
+    key: "send",
+    code: "SMTP_REJECTED",
+    missing: true,
+  };
+  it("is forgotten for a different verified principal", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.wizardVerified({
+      session: structuredClone(app.api.session),
+      identity: { ...app.identity, principal_id: "other" },
+    } as never);
+    expect(app.runNotice).toBeNull();
+  });
+  it("is forgotten on a connection switch with the same open workflow", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.applyConnection({ session: app.api.session });
+    expect(app.runNotice).toBeNull();
+  });
+  it("stays for the same account", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.wizardVerified({
+      session: structuredClone(app.api.session),
+      identity: structuredClone(app.identity!),
+    } as never);
+    expect(app.runNotice).toEqual(notice);
+  });
+});
+
 describe("sample ownership during background platform checks", () => {
   async function check(app: App) {
     await (

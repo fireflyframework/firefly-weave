@@ -31,10 +31,12 @@ import {
   RUNS_ENV,
   routeRuns,
   runFixture,
+  runsPage,
   runsWorkflow,
   runsWorkflowV120,
   WORKER_CATALOG,
 } from "./runs-po";
+import { acme, acmePlatform, platformHost } from "./platform-host";
 import { StepDetailsPage } from "./step-details-po";
 import { allCapabilities, connected } from "./support";
 
@@ -189,4 +191,152 @@ test("a reader without catalog.read sees neither button", async ({ page }) => {
   await expect(
     detail.getByRole("button", { name: /Debug in editor|Copy to editor/ }),
   ).toHaveCount(0);
+});
+
+test("a Debug request is forgotten when the environment changes before its run loads", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date(NOW) });
+  await useNewEditor(page);
+  await platformHost(page, {
+    platforms: [acmePlatform()],
+    active: "Acme",
+    test: (host) => ({
+      json: {
+        session: host.session(),
+        identity: {
+          ...host.identity(),
+          grants: host.identity().grants.map((grant) => ({
+            ...grant,
+            capabilities: [...allCapabilities, "compile"],
+          })),
+        },
+        workspaces: host.current?.workspaces ?? [],
+        truncated: false,
+        workspace_revoked: false,
+      },
+    }),
+  });
+  const platform = await routeRuns(page, listedKinds.map(runFixture));
+  // Only Production has runs; Staging has none.
+  await page.route("**/environments/*/run-summaries**", (route) =>
+    route.request().url().includes(acme[0].environment_id)
+      ? route.fallback()
+      : route.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  const kept = await keepDrafts(page, DRAFTS.slice(2, 3));
+  await localAuthoring(page);
+  // The editor's read of the run waits until released; Operate's doesn't.
+  let release = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  await page.route(new RegExp(`/runs/${RUN_IDS.failed}$`), async (route) => {
+    if (page.url().includes("/workflows/")) await held;
+    return route.fallback();
+  });
+  const detail = await openDetail(page, RUN_IDS.failed);
+  await detail.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${draft(3)}/designer`));
+  // Another environment while the run loads, then back.
+  const workspace = async (name: string) => {
+    await page.locator(".platform-indicator").click();
+    await page.getByRole("button", { name: "Switch workspace" }).click();
+    await page.getByRole("radio", { name }).check();
+    await page.getByRole("button", { name: "Start working" }).click();
+  };
+  await workspace("Acme / Payments / Staging");
+  const runs = runsPage(page);
+  await expect(runs.panel).toContainText("No runs of invoice-approval yet.");
+  release();
+  await workspace("Acme / Payments / Production");
+  await expect(runs.rows).toHaveCount(listedKinds.length + 1);
+  await runs.row(RUN_IDS.failed).click();
+  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
+    "Run 1c0d7f8a",
+  );
+  await page.clock.runFor(11_000);
+  expect(
+    platform.requests.filter(
+      (url) => url.searchParams.get("include") === "output",
+    ),
+  ).toEqual([]);
+  expect(kept.saved).toEqual([]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("Operate says when the run or its version can't be read, and opens nothing", async ({
+  page,
+}) => {
+  await platform(page);
+  const detail = await openDetail(page, RUN_IDS.failed);
+  const toast = page.getByRole("alert").locator(".toast");
+  // The run's read answers something that isn't a run.
+  await page.route(new RegExp(`/runs/${RUN_IDS.failed}$`), (route) =>
+    route.fulfill({ json: { id: "not-a-run" } }),
+  );
+  await detail.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(toast).toHaveText(
+    /Studio couldn't open run 1c0d7f8a in the editor: the platform's answer wasn't a run\./,
+  );
+  await page.unroute(new RegExp(`/runs/${RUN_IDS.failed}$`));
+  // The version it used answers no workflow.
+  await page.route("**/projects/*/workflows/*/export", (route) =>
+    route.fulfill({ json: { document: {} } }),
+  );
+  await page.locator(".toast-dismiss").click();
+  await detail.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(toast).toHaveText(
+    /Studio couldn't open run 1c0d7f8a in the editor: its version couldn't be read\./,
+  );
+  await expect(page).not.toHaveURL(/\/workflows\//);
+});
+
+test("another environment while the drafts are read opens nothing", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date(NOW) });
+  await useNewEditor(page);
+  await platformHost(page, {
+    platforms: [acmePlatform()],
+    active: "Acme",
+    test: (host) => ({
+      json: {
+        session: host.session(),
+        identity: {
+          ...host.identity(),
+          grants: host.identity().grants.map((grant) => ({
+            ...grant,
+            capabilities: [...allCapabilities, "compile"],
+          })),
+        },
+        workspaces: host.current?.workspaces ?? [],
+        truncated: false,
+        workspace_revoked: false,
+      },
+    }),
+  });
+  await routeRuns(page, listedKinds.map(runFixture));
+  const kept = await keepDrafts(page, DRAFTS);
+  // The drafts list waits until released.
+  let release = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  await page.route(
+    (url) => /\/projects\/[^/]+\/drafts$/.test(url.pathname),
+    async (route) => {
+      await held;
+      return route.fallback();
+    },
+  );
+  const detail = await openDetail(page, RUN_IDS.failed);
+  await detail.getByRole("button", { name: "Debug in editor" }).click();
+  await expect.poll(() => kept.listed).toBe(0);
+  await page.locator(".platform-indicator").click();
+  await page.getByRole("button", { name: "Switch workspace" }).click();
+  await page.getByRole("radio", { name: "Acme / Payments / Staging" }).check();
+  await page.getByRole("button", { name: "Start working" }).click();
+  release();
+  await expect.poll(() => kept.listed).toBeGreaterThan(0);
+  await page.clock.runFor(2_000);
+  await expect(page).not.toHaveURL(/\/workflows\//);
+  await expect(page.locator(".toast")).toHaveCount(0);
+  expect(kept.created).toEqual([]);
 });

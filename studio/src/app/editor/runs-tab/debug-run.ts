@@ -129,7 +129,6 @@ export class DebugRun {
       scope: host.stepDataScope,
       environment: host.profile?.environmentId ?? "",
       draftId: host.draftId,
-      run: chosen.id,
     };
     const holds = () =>
       host.stepDataScope === fence.scope &&

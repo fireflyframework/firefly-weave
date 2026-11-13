@@ -23,6 +23,7 @@ import {
   MAX_LISTED_RUNS,
   refreshed,
   runRow,
+  runsTabMode,
   runsTabQuery,
   type RunsTabFilters,
 } from "../src/app/editor/runs-tab/runs-list-model";
@@ -87,6 +88,27 @@ describe("the list's query", () => {
       });
     },
   );
+});
+
+describe("what the Runs tab can list", () => {
+  const profile = { environmentId: "4a1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d" };
+  const identity = { principal_id: "person" };
+  it("lists only a named workflow's runs", () => {
+    expect(runsTabMode({ profile, identity, name: "invoice-approval" })).toBe(
+      "ready",
+    );
+    // Without a name the query would name no workflow, so every run in the
+    // environment would list: the tab asks for a name instead.
+    expect(runsTabMode({ profile, identity, name: "" })).toBe("unnamed");
+    expect(runsTabMode({ profile, identity, name: "  " })).toBe("unnamed");
+  });
+  it("says what it waits for before a name matters", () => {
+    expect(runsTabMode({ profile: null, identity, name: "" })).toBe("offline");
+    expect(runsTabMode({ profile: {}, identity, name: "a" })).toBe(
+      "no-environment",
+    );
+    expect(runsTabMode({ profile, identity: null, name: "a" })).toBe("pending");
+  });
 });
 
 describe("a run as a list row", () => {

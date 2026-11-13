@@ -167,6 +167,14 @@ SPDX-License-Identifier: Apache-2.0
         </button>
       </div>
     }
+    @case ("unnamed") {
+      <div class="runs-message">
+        <span class="runs-ring"
+          ><weave-icon name="workflows" [size]="16"
+        /></span>
+        <strong>Name this workflow to see its runs.</strong>
+      </div>
+    }
     @case ("no-environment") {
       <div class="runs-message">
         <span class="runs-ring"

@@ -25,8 +25,11 @@ import { shortId } from "../../format";
 import type { Workflow } from "../../model";
 import { findDraft, type DraftPage } from "./draft-for-run";
 import { readRunRecord } from "./run-record";
-import { handOverDebug, handOverLinkedRun } from "./run-links";
+import { dropDebug, handOverDebug, handOverLinkedRun } from "./run-links";
 import { workflowOf } from "./runs-tab-state";
+
+/** Drafts read a page at a time, five pages at most, for the run's workflow. */
+const DRAFTS_PAGE = 100;
 
 /** What opening a run in the editor needs from Studio's shell. */
 export interface OpenRunHost {
@@ -38,6 +41,8 @@ export interface OpenRunHost {
       collection: string,
       environment?: boolean,
       cursor?: string,
+      filters?: Record<string, string>,
+      limit?: number,
     ): Promise<DraftPage>;
     mutate<T>(
       path: string,
@@ -101,32 +106,34 @@ export async function openRunInEditor(
         ? host.draftId
         : null;
     let draftId = open;
+    // Studio read every page of drafts, or stopped after the first five.
+    let complete = true;
     if (!draftId) {
-      const { found } = await findDraft(name, (cursor) =>
-        api.page("drafts", false, cursor),
+      const search = await findDraft(name, (cursor) =>
+        api.page("drafts", false, cursor, {}, DRAFTS_PAGE),
       );
       if (!holds()) return;
-      draftId = found?.id ?? null;
+      draftId = search.found?.id ?? null;
+      complete = search.complete;
     }
     if (!draftId) {
+      const none = complete
+        ? `${name} has no draft here.`
+        : `Studio didn't find a draft of ${name} among the ${5 * DRAFTS_PAGE} drafts it read.`;
       const create = await host.dialogs.confirm({
         title: `Create a draft from ${version.metadata.version}?`,
         message:
-          `${name} has no draft here. Create a draft from ${version.metadata.version} to read this run in the editor?\n\n` +
+          `${none} Create a draft from ${version.metadata.version} to read this run in the editor?\n\n` +
           `The draft starts as a copy of ${version.metadata.version}, the version this run used; published versions don't change.`,
         confirmLabel: "Create draft",
         cancelLabel: "Cancel",
       });
       if (!create || !holds()) return;
       draftId = crypto.randomUUID();
-      // One key for this draft: a save whose answer was lost is sent again
-      // as the same save.
       await api.mutate(
         `${api.project}/drafts/${encodeURIComponent(draftId)}`,
         "PUT",
         { document: version },
-        undefined,
-        crypto.randomUUID(),
       );
       if (!holds()) return;
     }
@@ -136,8 +143,9 @@ export async function openRunInEditor(
     // The workflow shows: its Runs tab takes the run, then Debug or Copy
     // starts there once the run has loaded.
     handOverLinkedRun(draftId, runId);
-    handOverDebug(draftId, runId, intent);
-    await host.selectTab("Runs");
+    handOverDebug(draftId, runId, intent, fence);
+    // The tab didn't open: nothing may start from this click later.
+    if (!(await host.selectTab("Runs"))) dropDebug();
   } catch (error) {
     if (holds()) refuse(describeError(error).message);
   }

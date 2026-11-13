@@ -79,6 +79,7 @@ import {
   type RunNotice,
   type StepDetailsHost,
 } from "./editor/ndv/step-details-host";
+import { dropDebug } from "./editor/runs-tab/run-links";
 import {
   StepDetailsService,
   openRequest,
@@ -3052,8 +3053,18 @@ export class App implements CanvasHost {
   get runData() {
     return this.runView()?.data ?? null;
   }
-  /** After Debug in editor: the step where the run failed, until the next execution. */
-  runNotice: RunNotice | null = null;
+  /**
+   * After Debug in editor: the step where the run failed, until the next
+   * execution, for the account that read the run only.
+   */
+  get runNotice(): RunNotice | null {
+    const kept = this.keptRunNotice;
+    return kept && kept.scope === this.stepDataScope ? kept.notice : null;
+  }
+  set runNotice(notice: RunNotice | null) {
+    this.keptRunNotice = notice ? { notice, scope: this.stepDataScope } : null;
+  }
+  private keptRunNotice: { notice: RunNotice; scope: string } | null = null;
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers
@@ -9343,6 +9354,10 @@ export class App implements CanvasHost {
   }
   /** Forgets everything read from the platform; the open workflow is kept. */
   private clearPlatformState() {
+    // The run's error after Debug, and a Debug asked for from Operate, belong
+    // to the account that read the run.
+    this.runNotice = null;
+    dropDebug();
     this.aiSheet = null;
     this.aiTests.clear();
     this.aiSetupGeneration++;

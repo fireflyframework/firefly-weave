@@ -35,6 +35,7 @@ import type { App } from "../../app";
 import type { RunViewsApi } from "../../operate/run-contracts";
 import { RunHeader } from "./run-header";
 import {
+  dropDebug,
   parseRunsLink,
   replaceAddress,
   runsLink,
@@ -44,7 +45,8 @@ import { RunsList } from "./runs-list";
 import { RunsTabState, type RunsTabHost } from "./runs-tab-state";
 
 /** What the tab can show before it reads anything. */
-export type RunsTabMode = "offline" | "no-environment" | "pending" | "ready";
+export type { RunsTabMode } from "./runs-list-model";
+import { runsTabMode, type RunsTabMode } from "./runs-list-model";
 
 /** The shell as the tab's state reads it. */
 function tabHost(app: App): RunsTabHost {
@@ -153,6 +155,8 @@ export class RunsView implements DoCheck {
       this.narrow.set(event.matches);
     media?.addEventListener("change", changed);
     inject(DestroyRef).onDestroy(() => {
+      // Leaving the tab forgets a Debug request it didn't start.
+      dropDebug();
       media?.removeEventListener("change", changed);
       this.state()?.destroy();
       this.release();
@@ -221,14 +225,11 @@ export class RunsView implements DoCheck {
         parseRunsLink(location.search)?.run ??
         null;
     }
-    const p = app.profile;
-    const mode: RunsTabMode = !p
-      ? "offline"
-      : !p.environmentId
-        ? "no-environment"
-        : !app.identity
-          ? "pending"
-          : "ready";
+    const mode = runsTabMode({
+      profile: app.profile,
+      identity: app.identity,
+      name: app.model.definition.metadata.name ?? "",
+    });
     const key = [
       mode,
       scopeOf(app),
@@ -265,6 +266,9 @@ export class RunsView implements DoCheck {
 
   private restart(mode: RunsTabMode) {
     untracked(() => {
+      // Another account, environment or workflow under a tab that could
+      // read runs: a Debug request made before belongs to none of them.
+      if (this.mode() === "ready") dropDebug();
       this.state()?.destroy();
       this.release();
       this.mode.set(mode);
