@@ -258,7 +258,8 @@ def check_pinned(
     bind: Callable[[ConnectionRequirement | None], None],
 ) -> None:
     """Refuse an IR whose tool names a target its pinned fields don't fit: an action pinned as an Action and run on
-    a declared connection, a workflow pinned as a Workflow, a person with its forms."""
+    a declared connection, a workflow pinned as a Workflow, a person with its forms. A kind it doesn't know is refused,
+    so a new kind is checked here before an IR may name it."""
     from firefly_weave.contracts.definitions import ActionDefinition
 
     if tool.target == "action":
@@ -269,5 +270,8 @@ def check_pinned(
     elif tool.target == "workflow":
         if tool.dependency not in workflows:
             raise ValueError("Unknown AI agent tool workflow")
-    elif tool.human is None:
-        raise ValueError("A person tool needs its forms")
+    elif tool.target == "human":
+        if tool.human is None:
+            raise ValueError("A person tool needs its forms")
+    else:
+        raise ValueError("Unknown AI agent tool kind")

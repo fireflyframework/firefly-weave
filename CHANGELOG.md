@@ -130,6 +130,8 @@ SPDX-License-Identifier: Apache-2.0
   reason, and a tool name the model wrote is shown escaped. Values past a
   page's 8 MiB are left out with `resource_limit`, so an activation of any size
   can be read.
+- An AI agent tool of a kind the platform doesn't know is refused when an
+  artifact is loaded, even when it carries a person's forms.
 - When Weave AI proposes a change to an existing AI agent step, it keeps every
   safeguard the proposal leaves out, also when the proposal renames the step or
   a tool, moves a tool to another agent, or points a tool at another version of

@@ -19,7 +19,8 @@
 A test-only kind, ``probe``, runs each call as a task of a fake task type. It is registered the way a real kind would
 be: one entry in ``TOOL_TARGETS``, and its pinned fields in the IR's pin check (``check_pinned``), which sits next to
 the compiler's resolvers. The pinned IR names it, with the IR's closed list of kinds widened for the test. An agent
-that calls it then goes through the kernel, replay, exports and the agent log with no other change.
+that calls it then goes through the kernel, replay, exports and the agent log with no other change. A kind the pin
+check doesn't know is refused, whatever fields its tool carries.
 
 Not covered here: compiling such a tool, because a workflow definition names a tool's target by a field (``action``,
 ``workflow`` or ``human``), so a new kind also adds a field there and its resolver; and the simulator, whose agent and
@@ -121,7 +122,7 @@ class ProbeTarget:
 
 
 @pytest.fixture
-def probe(monkeypatch):
+def widened(monkeypatch):
     """The probe kind, registered in the runtime's registry and allowed by the IR for this test only."""
     targets = MappingProxyType({**TOOL_TARGETS, "probe": ProbeTarget()})
     for module in (
@@ -131,14 +132,6 @@ def probe(monkeypatch):
         "firefly_weave.operations.agent_log",
     ):
         monkeypatch.setattr(f"{module}.TOOL_TARGETS", targets)
-    # The IR's pin check knows each kind's pinned fields; the probe's pin is an action's.
-    checked = compiler_tools.check_pinned
-
-    def check_pinned(tool, actions, workflows, bind):
-        pinned = tool.model_copy(update={"target": "action"}) if tool.target == "probe" else tool
-        return checked(pinned, actions, workflows, bind)
-
-    monkeypatch.setattr(compiler_tools, "check_pinned", check_pinned)
     field = ir_module.AgentToolIR.model_fields["target"]
     original = field.annotation
     field.annotation = Literal["action", "workflow", "human", "probe"]
@@ -152,19 +145,38 @@ def probe(monkeypatch):
     for model in models:
         model.model_rebuild(force=True)
     try:
-        yield probe_flow()
+        yield
     finally:
         field.annotation = original
         for model in models:
             model.model_rebuild(force=True)
 
 
-def probe_flow() -> CompiledArtifact:
-    """The runtime tests' agent, its lookup tool pinned as a probe: the same artifact with that one change."""
+@pytest.fixture
+def probe(widened, monkeypatch):
+    """The probe kind with its pinned fields in the IR's pin check: the probe's pin is an action's."""
+    checked = compiler_tools.check_pinned
+
+    def check_pinned(tool, actions, workflows, bind):
+        pinned = tool.model_copy(update={"target": "action"}) if tool.target == "probe" else tool
+        return checked(pinned, actions, workflows, bind)
+
+    monkeypatch.setattr(compiler_tools, "check_pinned", check_pinned)
+    return probe_flow()
+
+
+def probe_flow(**fields) -> CompiledArtifact:
+    """The runtime tests' agent, its lookup tool pinned as a probe: the same artifact with that one change, and any
+    other ``fields`` set on the tool."""
     envelope = json.loads(artifact(plain(answering(workflow(agent(tools=[LOOKUP]))))).to_bytes())
     executable = copy.deepcopy(envelope["executable"])
     [node] = [node for node in executable["graph"]["nodes"] if node["kind"] == "agent"]
     node["tools"][0]["target"] = "probe"
+    for name, value in fields.items():
+        if value is None:
+            node["tools"][0].pop(name, None)
+        else:
+            node["tools"][0][name] = value
     envelope.update(executable=executable, digest=canonical_digest(executable))
     return CompiledArtifact(canonical_bytes(envelope))
 
@@ -212,6 +224,13 @@ def test_a_new_kind_of_tool_runs_end_to_end_with_only_its_registry_entries(probe
     assert (logged.target.kind, logged.target.reference, logged.status) == ("probe", "orders-get@1.0.0", "succeeded")
     assert logged.output.available is False
     assert [item.reason for item in logged.output.omissions] == ["classified_secret"]
+
+
+def test_a_kind_the_pin_check_does_not_know_is_refused(widened):
+    # A tool of an unknown kind that carries a person's forms is still not a person tool.
+    person = {"questionSchema": {"type": "object"}, "formSchema": {"type": "object"}, "assignment": "support-leads"}
+    with pytest.raises(ValueError, match="Unknown AI agent tool kind"):
+        probe_flow(human=person, dependency=None, connection=None)
 
 
 def _dump(output):
