@@ -1217,17 +1217,25 @@ def endpoint_addresses(commands, since=0):
 
 def test_a_refresh_after_an_unreachable_one_still_repoints_the_cluster(world, monkeypatch):
     """The receipt records the platform's new addresses only once the EndpointSlice and the policies carry them, so
-    a refresh that couldn't apply leaves the next one something to repair."""
+    a refresh that couldn't apply leaves the next one something to repair. Until then the platform's keycloak (whose
+    network namespace the API shares) and registry stay off the cluster network: the policies don't name their new
+    addresses yet, so any pod in Weave's namespaces could reach them there."""
     directory, commands, config, cluster = world
     connect(world)
     cluster.joined.discard(KEYCLOAK)
     cluster.addresses[KEYCLOAK] = "172.30.0.7"
     monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
+    before = len(commands.calls)
     assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    left = [(call.name, call.argv[-1]) for call in commands.calls[before:] if "disconnect" in call.argv]
+    assert left == [("cluster-network-leave", KEYCLOAK), ("cluster-network-leave", REGISTRY)]
+    assert cluster.joined == set()
     assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
     monkeypatch.setenv("KUBECONFIG", str(config))
     before = len(commands.calls)
     assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "connected"}]
+    assert network_changes(commands, before) == [("connect", KEYCLOAK), ("connect", REGISTRY)]
+    assert cluster.joined == {KEYCLOAK, REGISTRY}
     assert endpoint_addresses(commands, before) == [["172.30.0.7"]]
     assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.7"
 

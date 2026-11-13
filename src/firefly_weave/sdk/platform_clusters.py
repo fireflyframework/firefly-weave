@@ -35,7 +35,7 @@ import tempfile
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -610,6 +610,9 @@ class _Connection:
     operations: dict[str, Any]
     kube: list[str]
     network: objects.ClusterNetwork | None = None
+    # The platform's containers on the cluster network once the join is checked: they leave it again when the
+    # cluster's policies can't follow their addresses.
+    platform: list[str] = field(default_factory=list)
 
 
 def _docker(connection: _Connection) -> list[str]:
@@ -729,6 +732,7 @@ def _join(connection: _Connection) -> dict[str, Any]:
         local._validate_subnet(subnet)
     except local.PlatformError as error:
         raise _leave(connection, joined, error) from None
+    connection.platform = _present(ids, members)
     api, registry = (item[1] for item in platform.values() if item is not None)
     connection.network = objects.ClusterNetwork(
         provider=found.provider,
@@ -1411,20 +1415,26 @@ def _refresh_cluster(
     if not _moved(entry, record):
         return "connected"
     # The platform's containers moved: the EndpointSlice and every policy's exceptions follow them.
-    path, server = _server(_candidates(None), key, provider, cluster, NO_CONTEXT_TO_REFRESH.format(context=key))
-    if not _local(server):
-        raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
-    _check_api_port(state, provider, cluster, nodes, key, server)
-    connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
-    _check_namespace(state, connection.kube, objects.SYSTEM_NAMESPACE)
-    for owned in entry["targets"]:
-        _check_namespace(state, connection.kube, owned, _taken(TAKEN_ON_REFRESH, provider, cluster, owned))
-    _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
-    _follow(connection, entry["targets"], "cluster-refresh-namespace")
-    # Only now do the cluster's objects carry the new addresses; a refresh that stopped before leaves them to the next.
-    value = receipt(directory)
-    _recorded(value, key, record)
-    save(directory, value)
+    try:
+        path, server = _server(_candidates(None), key, provider, cluster, NO_CONTEXT_TO_REFRESH.format(context=key))
+        if not _local(server):
+            raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
+        _check_api_port(state, provider, cluster, nodes, key, server)
+        connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
+        _check_namespace(state, connection.kube, objects.SYSTEM_NAMESPACE)
+        for owned in entry["targets"]:
+            _check_namespace(state, connection.kube, owned, _taken(TAKEN_ON_REFRESH, provider, cluster, owned))
+        _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
+        _follow(connection, entry["targets"], "cluster-refresh-namespace")
+        # Only now do the cluster's objects carry the new addresses; a refresh that stopped before leaves them to the
+        # next.
+        value = receipt(directory)
+        _recorded(value, key, record)
+        save(directory, value)
+    except local.PlatformError as error:
+        # The policies still name the platform's old addresses, so any pod in Weave's namespaces could reach it at
+        # the new ones: its containers leave the network until a refresh applies the policies that name them.
+        raise _leave(connection, connection.platform, error) from None
     return "connected"
 
 
