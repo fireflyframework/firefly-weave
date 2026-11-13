@@ -625,6 +625,10 @@ async def _server_records(
     advance("catalog")
     release = await setup.admit_release(client, value["image_id"], manifest)
     value["action_version_id"] = await setup.publish(client, "actions", catalog["action"], setup.ACTION_DIGEST)
+    # The AI agent step's turn action: without it every agent workflow is refused with an unknown action.
+    value["turn_action_version_id"] = await setup.publish(
+        client, "actions", catalog["turn_action"], setup.TURN_ACTION_DIGEST
+    )
     if value.get("release_id") != release:
         changed.append("release")
     value["release_id"] = release

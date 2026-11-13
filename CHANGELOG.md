@@ -133,8 +133,33 @@ SPDX-License-Identifier: Apache-2.0
   64 MiB) and reuses it only for the same content, limits and language
   features. A task completion holds the lock about 76 ms instead of 220–330 ms
   on an idle host.
+- Workflows can run AI agents. An `agent` step lets a model work in turns:
+  each turn it answers or calls the step's tools, up to 32 of them, each an
+  Action, a callable workflow (run as a child run) or a question to a person,
+  and the platform runs those calls as durable work before the next turn. It
+  needs the `ai.agent` language feature, which the platform now advertises in
+  its capabilities. Every call that changes data waits for a person's review;
+  `approval: auto` on such a tool is refused (`WV-COMP-AGENT_UNREVIEWED_EFFECT`).
+  With `distinctReviewer: true`, the run's starter gets `403 WV-REVIEW-DISTINCT`
+  when they read, claim, complete or reassign that review. Fixed arguments
+  always win, a value marked secret can't reach the model
+  (`WV-COMP-AI_SECRET_INPUT`), and tool results are redacted by their schemas
+  before the model reads them. Limits bound each agent's turns, tool calls and
+  tokens, and a run spends at most 2,000,000 tokens across its agents; an agent
+  that runs out fails with `WV-AGENT-ITERATIONS`, `WV-AGENT-BUDGET`,
+  `WV-AGENT-TIMEOUT` or `WV-AGENT-TOOL-FAILED`, which `onError` can handle,
+  while a changing call that may have applied keeps its own
+  `WV-TASK-AMBIGUOUS` incident. Agents remember within a step or across the
+  run's activations that share a `run` memory key. Replay and export check each
+  turn's recorded input (`WV-REPLAY-AGENT-INPUT`), and activation refuses an
+  agent whose model the AI policy doesn't approve, and any other step or tool
+  that would run the model turn (`WV-ACTIVATION-AI-RESERVED`). The step's
+  fields, limits and failures are in the AI agent steps reference; the worker
+  protocol, history and replay, incident operations and AI worker pages now
+  cover agents too, and AI tasks and agent turns share
+  `WEAVE_AGENTIC_CAPACITY`.
 - The agentic worker serves a new task, the **model turn**
-  (`weave-agentic.turn@1.0.0`), which AI agent steps will run on: one request
+  (`weave-agentic.turn@1.0.0`), which AI agent steps run on: one request
   to the model with the transcript so far and the step's tools. The answer is
   the model's tool calls as written, or its final answer; the worker never runs
   a tool. Tool-call IDs are the kernel's, a turn carries at most 16 calls, and
@@ -151,7 +176,65 @@ SPDX-License-Identifier: Apache-2.0
   discarded whole, including a cut that kept half the context. Output that
   can't be carried (nested too deep, or outside JSON) fails as `LLM_OUTPUT`, and
   model requests are never instrumented. Platform AI setup grants the agentic
-  worker both tasks and refuses a catalog without the turn task.
+  worker both tasks and refuses a catalog without the turn task, and
+  `weave platform ai enable` publishes the turn action, so AI agent workflows
+  compile and run on a platform set up from the CLI.
+- Before you upgrade, note that AI readiness and AI setup's **Publish** now need
+  the agentic worker's model turn task (`weave-agentic.turn`). A site whose AI
+  worker runs only the generate task (`weave-agentic.generate`) sees AI as not
+  ready, and Publish refuses with `422 WV-AI-WORKER-MISSING` until the worker is
+  upgraded to a release that serves both tasks.
+- An AI agent's log shows what it did, turn by turn. `runs.agent_log`
+  (`GET …/runs/{identifier}/agents/{key}/log`, `run.read`; `weave runs
+  agent-log --key`, `read_agent_log()`) reads one activation, or a step's
+  activations in loop order, 20 to a page: each turn's tokens and time, the tool
+  calls the model asked for and how each ended (`succeeded`, `failed`, `refused`
+  with the code the model read, `rejected` or `expired` with the review), and
+  the final answer. Arguments, outputs and the answer are classified by the
+  tool's and the step's schemas. A value marked secret is left out with its
+  reason, and a tool name the model wrote is shown escaped. Values past a
+  page's 8 MiB are left out with `resource_limit`, so an activation of any size
+  can be read.
+- AI agents run in simulations, in debug sessions and in Studio's Execute,
+  without a model or their tools. Saved turns (`agent:` mocks, from Studio's
+  `aiTurns`) answer the agent's turns one by one, and `tool:AGENT/TOOL` mocks
+  answer its tool calls, one value for every call or a `sequence` taken in
+  order; `node:` keys still win, for one call or as the agent's pinned output.
+  Tool mocks are checked against every schema a live run checks the tool's
+  result with, the connector's or worker's included, and a mock of one call is
+  refused when any of the agent's tools marks a value in it secret. Turns that
+  call a tool the agent doesn't declare, or with arguments that don't fit, and
+  call keys past the agent's limits, are refused before the simulation starts
+  (`WV-DEBUG-MOCK-OUTPUT`, `WV-DEBUG-MOCK-KEY`), and turns that run out stop it
+  on that turn (`WV-DEBUG-MISSING_MOCK`). A call that
+  needs a review waits until `human_decision` answers its review key, such as
+  `support#1.1.review`, unless the saved turns say `autoApprove`. Studio's
+  Execute ships the agent's turn action, asks for each unanswered review or
+  question by its title, and refuses a value marked secret in a tool mock or a
+  saved call's arguments. Live runs never read saved turns, tool mocks or
+  `autoApprove`.
+- An AI agent tool of a kind the platform doesn't know is refused when an
+  artifact is loaded, even when it carries a person's forms.
+- When Weave AI proposes a change to an existing AI agent step, it keeps every
+  safeguard the proposal leaves out, also when the proposal renames the step or
+  a tool, moves a tool to another agent, or points a tool at another version of
+  its action or another connection to the same connector: a tool's fixed
+  arguments, approval and person, the review the tool really gets (its own or
+  its step's), and the step's limits, memory and error handling. A tool that
+  keeps its name but runs another action is also held to the draft's tools of
+  that action, so swapping two tools' names keeps the stricter safeguards on
+  each. Weave AI never loosens a safeguard: a tool failure that stops the agent
+  stays; memory keeps the draft's scope unless the proposal narrows it, and the
+  draft's key unless the scope becomes `step`; and its window and context size
+  keep the lower value. A change that would loosen one is not applied and the
+  answer says so. A proposal Weave AI withholds, and a
+  draft whose safeguards it can't read, are named first in the answer. Weave AI
+  can also ask that a different person than the run's starter approves an
+  agent's data-changing calls (`distinctReviewer`).
+- A transaction step's undo action (`confirm`, `cancel` or `compensate`) can't
+  run an AI model: the compiler refuses one that does
+  (`WV-COMP-AGENT_ACTION` at its `uses`), and activation refuses it too
+  (`WV-ACTIVATION-AI-RESERVED`), since an undo has none of an AI step's guards.
 - A local platform connects a kind or k3d cluster on this computer as a
   Kubernetes target. `weave platform cluster create --provider kind|k3d --name
   NAME` makes a single-node cluster on a Docker network of its own, from the

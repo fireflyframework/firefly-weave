@@ -56,6 +56,7 @@ def test_feature_vocabulary_is_frozen():
         "text.join",
     )
     assert dict(KIND_FEATURES) == {
+        "agent": "ai.agent",
         "forEach": "flow.forEach",
         "callWorkflow": "flow.callWorkflow",
         "transaction": "flow.transaction",
@@ -132,6 +133,7 @@ def test_limits_follow_their_sources():
 
 def test_features_are_what_the_target_runs():
     assert ADVERTISED_FEATURES == (
+        "ai.agent",
         "flow.callWorkflow",
         "flow.forEach",
         "flow.onError",
@@ -140,6 +142,7 @@ def test_features_are_what_the_target_runs():
         "text.join",
     )
     assert language_manifest().features == [
+        "ai.agent",
         "flow.callWorkflow",
         "flow.forEach",
         "flow.onError",
@@ -168,6 +171,7 @@ def test_capabilities_list_every_runnable_kind_from_the_manifest():
         [
             "action",
             "llm",
+            "agent",
             "transform",
             "decisionTable",
             "switch",
@@ -238,6 +242,7 @@ def test_a_manifest_from_a_server_without_step_fields_still_reads():
 def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
     assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
+        "agent",
         "forEach",
         "callWorkflow",
         "transaction",

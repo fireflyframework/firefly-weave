@@ -180,3 +180,22 @@ The [Acme API fixture](fixtures/acme_api/server.py) answers as
 `weave platform up --allow-private-origin` creates. Its control API (faults,
 request journal, reset) is published on loopback only, and its journal keeps the
 SHA-256 of `X-Api-Key`, never the key.
+
+The [orders fixture](fixtures/agents/orders_server.py) answers as
+`http://orders.acceptance.test:8080` for the AI agent journeys (J4.7 to J4.14),
+and records every call on a loopback control API. Those journeys run Ollama in
+a Weave-managed container by default; set `WEAVE_ACC_OLLAMA=host` to use the
+Ollama already serving on this computer.
+
+In host mode, J4.14 stops the Ollama on this computer to show a model endpoint
+going down, so start it again yourself after the run:
+
+1. It stops only a process named `ollama` that listens on port 11434, and
+   fails without stopping anything when another process holds the port.
+2. It starts `ollama serve` again, with its log in `private/ollama-serve.log`.
+   On Linux, that server keeps the stopped server's `OLLAMA_` settings. On
+   other systems, which don't show another process's environment, it runs
+   with `OLLAMA_CONTEXT_LENGTH=8192`, as the
+   [Ollama guide](../../docs/guides/ollama.md) asks, plus any `OLLAMA_`
+   variable you export before the run, such as `OLLAMA_MODELS`.
+3. When the step ends, it stops the server it started.

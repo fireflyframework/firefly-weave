@@ -26,7 +26,6 @@ from agent_eval_runner import (
     loop_cases,
     run_case,
     score,
-    summary,
     turn_cases,
     turn_input,
 )
@@ -108,16 +107,13 @@ def test_every_turn_case_is_a_turn_the_kernel_could_send(case):
         assert not validate_payload(case["result_schema"], complete(case), {})
 
 
-async def test_the_runner_scores_a_perfect_scripted_model_18_of_18():
+async def test_the_runner_scores_a_perfect_scripted_model_on_every_turn_case():
     results = [
         await run_case(DOCUMENT, case, ENDPOINT, model_builder=builder(perfect_model(case)))
         for case in turn_cases(DOCUMENT)
     ]
     assert [(result.id, result.reasons) for result in results if not result.passed] == []
-    report = summary(ENDPOINT.model, results, [case["id"] for case in loop_cases(DOCUMENT)])
-    assert (report["passed"], report["cases"]) == (18, 18)
-    assert report["categories"]["grounded_final"] == {"passed": 5, "cases": 5}
-    assert len(report["waiting_for_the_loop"]) == 7
+    assert len(results) == 18 and [result.turn_requests for result in results].count([2]) == 3
     structured = next(result for result in results if result.id == "grounded-structured-result")
     assert structured.requests == 2 and structured.input_tokens == 24000
 

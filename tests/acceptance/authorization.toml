@@ -149,6 +149,12 @@ answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
 capability = "run.read"
 identifier = "random"
 
+# An AI agent's log: a random run has no agent step, so a permitted call answers 404.
+[operations."runs.agent_log"]
+capability = "run.read"
+identifier = "random"
+key = "support"
+
 # Step tests: a permitted call names a random draft, so it answers 404 (or 403 WV-STEPTEST-DISABLED where test calls
 # are off) and nothing runs; a random step test is another person's as much as a missing one, so it answers 404.
 [operations."step_tests.answer"]

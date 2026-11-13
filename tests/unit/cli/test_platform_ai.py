@@ -55,6 +55,7 @@ class Server:
 
     def __init__(self):
         self.calls, self.connections, self.owners, self.granted = [], set(), [], []
+        self.published = []
         self.scope_visible = False
         self.answer = {
             "ok": True,
@@ -72,6 +73,7 @@ class Server:
 
     async def publish(self, client, collection, document, digest):
         self.calls.append(("publish", collection))
+        self.published.append((collection, document["metadata"]["name"], digest))
         return CONNECTOR if collection == "connectors" else str(uuid4())
 
     async def admit_release(self, client, image, manifest):
@@ -652,6 +654,22 @@ def test_the_api_container_mounts_ai_settings_only_while_enabled(harness):
     settings = (h.directory / "api-container.env").read_text()
     assert "WEAVE_PRIVATE_ORIGINS_FILE" not in settings and "WEAVE_LUMI_GATEWAY" not in settings
     assert "WEAVE_PRIVATE_ORIGINS_FILE" not in h.starts[-1]
+
+
+def test_enable_publishes_the_ai_agent_turn_action_with_the_connector_and_the_generate_action(harness):
+    # An AI agent step uses weave-agentic-turn@1.0.0: without it the platform refuses every agent workflow.
+    h = harness
+    enable(h)
+    expected = [
+        ("connectors", "weave-agentic-provider", platform_ai.setup.CONNECTOR_DIGEST),
+        ("actions", "weave-agentic-generate", platform_ai.setup.ACTION_DIGEST),
+        ("actions", "weave-agentic-turn", platform_ai.setup.TURN_ACTION_DIGEST),
+    ]
+    assert h.server.published == expected
+    assert saved(h)["turn_action_version_id"]
+    # Repeating enable publishes the same documents under the same digest keys and changes nothing.
+    again = enable(h)
+    assert h.server.published == expected * 2 and again["changed"] == []
 
 
 def test_enable_reads_the_installation_under_its_lock(harness, monkeypatch):

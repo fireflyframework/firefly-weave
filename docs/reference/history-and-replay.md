@@ -155,6 +155,43 @@ outcome that does not match its call evidence makes the report `inconsistent`
 (`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
 `incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
 
+## AI agent runs in a history
+
+An [AI agent](ai-agents.md) records its work at its own
+[instance keys](compiler.md#instance-keys), here for a step `support`:
+
+| Key | What it records |
+| --- | --- |
+| `support` | The agent itself: its deadline, its output or failure, and its own incidents |
+| `support#2` | Turn 2: the [turn task](worker-protocol.md#ai-agent-turn-tasks) and its answer |
+| `support#2.1` | The first tool call of turn 2: a task, a call of a workflow, or a human task, by the tool's kind |
+| `support#2.1.review` | The review of that call, a human task |
+
+Inside a loop the agent's key carries the iteration first, as in `support[3]#2.1`.
+A call the platform refused never ran and records no events of its own; the
+model's next turn input carries the refusal.
+
+Replay checks these facts like any others, and also:
+
+- A turn's answer must fit the turn's pinned output schema, a call's result the
+  output schema of the tool the agent recorded for that call, and a review's
+  answer the review form (`approve` or `reject`, with an optional `comment`). An
+  output that doesn't fit makes the report `inconsistent` with
+  `WV-REPLAY-EVENT`.
+- Each turn task's evidence records `input_digest`, the SHA-256 digest of the
+  canonical JSON of the input the model was given. Replay rebuilds every turn
+  input from the recorded facts, with the rules version the artifact pins, and
+  compares digests. A transcript rebuilt differently makes the report
+  `inconsistent` with `WV-REPLAY-AGENT-INPUT`; evidence without the digest makes
+  it `incomplete` with the same code.
+- A review's `human_completed` event carries the `input_digest` of the call
+  input the review showed, which an approval runs, and exports keep it.
+
+Replay never calls a model or a tool: the recorded answers are the evidence. An
+export classifies a call's output by every tool the call may have run, narrowed
+by the action or workflow its evidence names, so a value a tool marks secret
+stays out.
+
 ## Handled step failures in a history
 
 A step whose On error setting handles a failure records a `step_failed` event
@@ -325,6 +362,7 @@ earlier facts are never rewritten to fill the gap.
 | --- | --- | --- |
 | `inconsistent` with an artifact or lock diagnostic | You replayed with a different artifact | Use the artifact whose `digest` equals the export's `artifact_digest` |
 | `incomplete` for a run that is still running | Open runs are never fully evidenced | Replay again after the run finishes |
+| `inconsistent` with `WV-REPLAY-AGENT-INPUT` | An AI agent's turn input, rebuilt from the recorded facts, differs from the input its task recorded | Confirm the export is unchanged; the diagnostic's `sequence` is the fact that issued the turn. Never edit history to make it agree; see [AI agent runs in a history](#ai-agent-runs-in-a-history) |
 | `incomplete` with `WV-REPLAY-BOUNDED-PREFIX` | The run has more accepted facts than the export or replay limit (at most 1,000); the platform replay has the same bound | Keep the verified prefix: it covers the facts up to `last_verified_sequence` |
 | `incomplete` with `WV-REPLAY-LIMIT` | The export reached its 64 MiB size budget, or one fact was too large to include | Keep the verified prefix; the withheld facts are not part of the check |
 | `WV-REPLAY-INPUT: bounded artifact and recorded events required` | A file is not valid JSON, is too large, or has more than 10,000 events | Check both files and their sizes |

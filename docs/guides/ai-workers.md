@@ -21,7 +21,10 @@ SPDX-License-Identifier: Apache-2.0
 Use an **AI task** when a business process needs a model's answer before it
 continues. For example, a workflow can summarize a support request, then give
 that summary to a person for review. You define the expected result; Weave
-accepts the answer only if it satisfies that contract.
+accepts the answer only if it satisfies that contract. When the model must call
+tools and read their results before it answers, use an
+[AI agent step](../reference/ai-agents.md); its turns run on the same worker
+([Serve AI agent turns](#serve-ai-agent-turns)).
 
 Use [Weave AI](weave-ai.md) when *you*, the person using Studio, want an
 explanation or a proposed definition change. Weave AI has separate configuration
@@ -237,14 +240,17 @@ workers/agentic/.venv/bin/weave-agentic-worker --catalog > agentic-catalog.json
 workers/agentic/.venv/bin/weave-agentic-worker --release-manifest > agentic-release.json
 ```
 
-The catalog contains `weave-agentic-provider@1.0.0`, the worker Action
-`weave-agentic-generate@1.0.0`, and the exact task capability. Complete these
-operations in order:
+The catalog contains `weave-agentic-provider@1.0.0`, two worker Actions, and
+their exact task capabilities: `weave-agentic-generate@1.0.0` runs AI tasks on
+`weave-agentic.generate@1.0.0`, and `weave-agentic-turn@1.0.0` runs each turn
+of an [AI agent step](../reference/ai-agents.md) on `weave-agentic.turn@1.0.0`.
+The release manifest declares both tasks and both credential capabilities.
+Complete these operations in order:
 
 1. Register the worker release with its image digest and the exported task and
-   credential capabilities. This makes the task available to the compiler.
-2. Publish the Connector and then the Action through the normal definition APIs.
-   Publishing the Action before admitting its task returns `WV-COMP-UNKNOWN_TASK`.
+   credential capabilities. This makes the tasks available to the compiler.
+2. Publish the Connector and then the Actions through the normal definition APIs.
+   Publishing an Action before admitting its task returns `WV-COMP-UNKNOWN_TASK`.
 3. Create the provider connection described below, then use the worker connection
    grant API to authorize the release and task capability for that exact revision.
 4. Activate the workflow with explicit worker-release and connection-revision pins.
@@ -252,10 +258,11 @@ operations in order:
 A published definition, an admitted worker release, and a running worker are
 separate prerequisites. Completing one does not automatically complete the others.
 
-The Action is `non_idempotent` and allows one attempt. A provider request can
-incur charges even when its result is lost. Weave fences completion and preserves
-accepted results for replay; it cannot promise exactly one provider request
-after an ambiguous network failure.
+The AI task's Action is `non_idempotent` and allows one attempt. A provider
+request can incur charges even when its result is lost. Weave fences completion
+and preserves accepted results for replay; it cannot promise exactly one provider
+request after an ambiguous network failure. The turn Action is `idempotent` with
+three attempts; see [Serve AI agent turns](#serve-ai-agent-turns).
 
 ## Configure the provider connection
 
@@ -280,13 +287,14 @@ AI connections read-only.
    credential grants (the **Readiness** checklist's **Publish** and **Authorize**)
    before binding the connection to an executable workflow.
 
-The API also publishes the canonical provider Connector and the AI task Action for
+The API also publishes the canonical provider Connector and both AI Actions for
 you: `ai_setup.publish` (`definition.publish` at project scope) publishes the
 exact built-in versions, and repeating it returns the same version IDs. It needs
-an admitted Agentic worker release in the project first. After the connection
-exists, `ai_setup.grant` (`connection.manage`) authorizes each admitted Agentic
-release in the environment that declares the credential capability to use its
-credential, skipping pairs that already exist. See [AI discovery, readiness and setup](../reference/api.md#ai-discovery-readiness-and-setup).
+an admitted Agentic worker release in the project that serves both tasks first;
+otherwise it answers 422 `WV-AI-WORKER-MISSING`. After the connection exists,
+`ai_setup.grant` (`connection.manage`) authorizes each admitted Agentic release
+in the environment to use its credential for each task whose credential
+capability it declares, skipping pairs that already exist. See [AI discovery, readiness, and setup](../reference/api.md#ai-discovery-readiness-and-setup).
 
 For API clients, create a connection for the published provider Connector with
 this configuration:
@@ -411,7 +419,7 @@ Provide these explicit deployment settings:
 | `WEAVE_WORKER_TOKEN_FILE` | Mounted worker access-token file; use this or OAuth configuration, never both. |
 | `WEAVE_WORKER_OAUTH_CONFIG_FILE` | Mounted client-credentials configuration JSON; alternative to the access-token file. |
 | `WEAVE_AGENTIC_POLICY_FILE` | Mounted policy JSON file |
-| `WEAVE_AGENTIC_CAPACITY` | Concurrent tasks, 1 to 16; default 1, the right value for one local Ollama |
+| `WEAVE_AGENTIC_CAPACITY` | Concurrent tasks, AI tasks and agent turns together, 1 to 16; default 1, the right value for one local Ollama |
 | `WEAVE_PRIVATE_ORIGINS_FILE` | Mounted private-origin policy; plain HTTP to the API or the token endpoint needs its `platform-api` and `worker-auth` entries |
 
 Choose exactly one authentication mode:
@@ -447,8 +455,8 @@ private-origin entry lists it. A refused API request is not replayed after
 refresh, which avoids silently repeating a state-changing operation.
 
 The worker principal needs only its task/credential grants. The worker registers
-one instance with the capacity `WEAVE_AGENTIC_CAPACITY` sets (one by default) and
-drains on `SIGTERM` or `SIGINT`. Lease renewal failure cancels the running model
+one instance for both tasks, with the capacity `WEAVE_AGENTIC_CAPACITY` sets (one
+by default), and drains on `SIGTERM` or `SIGINT`. Lease renewal failure cancels the running model
 call. No database or administrator credentials are needed.
 
 ```sh
@@ -464,6 +472,39 @@ docker build -f workers/agentic/Dockerfile -t weave-agentic-worker:local .
 Run it with the environment settings and read-only mounted policy and authentication files.
 The image runs as UID 65532; make those files readable by that UID. It uses the
 separate locked Python 3.13 environment and does not change the server image.
+
+## Serve AI agent turns
+
+The same worker runs the model turns of [AI agent steps](../reference/ai-agents.md);
+no other setting turns them on. Each turn is one `weave-agentic.turn@1.0.0`
+task: the worker sends the transcript and the step's tools to the model in one
+request, or two when a text answer must become the step's structured result, and
+returns the model's tool calls as written, or its final answer. The worker never
+runs a tool. The platform checks each call and runs the tools as their own
+tasks, child runs, or human tasks, so the workers behind an agent's tools need
+their own capacity. The [worker protocol](../reference/worker-protocol.md#ai-agent-turn-tasks)
+describes a turn's input and output.
+
+A turn passes the same checks as an AI task before any request: the AI policy,
+the connection, the egress destination, the options, and a credential only when
+the policy entry requires one. A turn that offers tools needs a model that can
+call them; a model that can't fails the turn with `LLM_NO_TOOL_SUPPORT`.
+
+**Retries.** The turn Action is `idempotent` and has three attempts within 600
+seconds. Recovery retries a turn whose lease was lost or that failed with
+`LLM_UNREACHABLE`, `LLM_TIMEOUT`, `LLM_RATE_LIMITED`, or `LLM_CAPACITY`, with
+the same input. Each attempt can call the provider and incur charges. A turn
+that fails for good goes to the agent's On error setting, or stops the run at an
+incident; see
+[AI agent incidents](../reference/incident-operations.md#ai-agent-incidents).
+
+**Capacity.** `WEAVE_AGENTIC_CAPACITY` counts AI tasks and turns together. One
+agent sends one turn at a time, and only its tool calls run in parallel, so the
+capacity you need is the number of AI tasks and agents you want answered at
+once. Keep 1 for a local Ollama, which serves one request at a time. A turn's
+600 seconds start when the agent issues it, so time spent waiting for a free
+slot is time the model can't use, and a turn that nobody claims before then
+fails with `WV-TASK-DEADLINE`.
 
 ## Reasoning, limits, and results
 
@@ -552,6 +593,8 @@ models, environments, or interactive Entra sign-in for people.
 | A connection handle exists but credentials are unavailable | Ask the operator to check the exact environment-scoped secret grant and secret source; a new grant needs an API rollout. |
 | Activation cannot bind a worker or connection | Check the admitted release, task capability, worker authority, and exact connection-revision grant. |
 | The task waits without being claimed | Check that the independently deployed worker is running, authenticated, and has capacity for its admitted release. |
+| Readiness reports `worker_missing`, or `ai_setup.publish` answers `WV-AI-WORKER-MISSING`, although a worker runs AI tasks | The admitted release predates AI agents: admit a worker release that serves `weave-agentic.turn@1.0.0` as well as the generate task. |
+| An AI agent's turns wait while AI tasks run | Raise `WEAVE_AGENTIC_CAPACITY` within what your model endpoint can serve; see [Serve AI agent turns](#serve-ai-agent-turns). |
 | The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A connection test calls the model through the AI gateway. |
 | Activation answers `WV-ACTIVATION-AI-PROVIDER` or `WV-ACTIVATION-AI-MODEL` | Match the step's `provider` to the connection, or ask the operator to approve the model for that exact endpoint in the API's policy. |
 | You are not sure which layer is missing | Read `ai_readiness.read`: eight ordered checks from the admitted worker release to the last AI test, each with a safe detail code and, when you may run it, the operation that fixes it. |

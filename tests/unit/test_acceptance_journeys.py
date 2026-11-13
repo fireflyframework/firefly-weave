@@ -19,8 +19,12 @@
 import importlib.util
 import json
 import re
+import socket
 import sys
+import time
+import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -146,6 +150,8 @@ def test_the_committed_map_is_valid():
         "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
+        # The platform runs AI agents; their Studio editor, memory and acceptance stay off.
+        "agents",
         "run-views",
         "compose-operations",
         "kubernetes-operations",
@@ -190,6 +196,93 @@ def test_the_committed_map_is_valid():
     assert "metrics" not in enablement.steps["J5.7"]
     assert set(enablement.steps["J5.7"]) == {"real-platform-journeys", "run-views", "compose-operations"}
     assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
+
+
+AGENT_STEPS = tuple(f"J4.{n}" for n in range(7, 15))
+
+
+def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
+    # J4.1 to J4.6 are the Studio steps, which wait for the agent editor; the platform's own steps follow them.
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert enablement.journey_steps("J4") == AGENT_STEPS
+    for step in AGENT_STEPS:
+        assert enablement.missing(step) == (), step
+        assert {"real-platform-journeys", "agents"} <= set(enablement.steps[step]), step
+        assert [profile for profile in journeys.PROFILES if enablement.applies(step, profile)] == [
+            "ai",
+            "nightly",
+            "release",
+        ], step
+    # The agent that calls a workflow as a tool needs the workflow call runtime too.
+    assert "workflow-call-runtime" in enablement.steps["J4.11"]
+    assert enablement.checks("J4.9") == ("J4.9/injected-cancel",)
+
+
+def orders_fixture():
+    spec = importlib.util.spec_from_file_location(
+        "orders_fixture", ROOT / "tests/acceptance/fixtures/agents/orders_server.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def orders():
+    import threading
+
+    api, control = orders_fixture().make_servers(host="127.0.0.1", api_port=0, control_port=0)
+    for server in (api, control):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{api.server_port}", f"http://127.0.0.1:{control.server_port}"
+    for server in (api, control):
+        server.shutdown()
+        server.server_close()
+
+
+def call(method, url):
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None)
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = response.read()
+            return response.status, json.loads(body) if body else None
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def test_the_orders_fixture_answers_with_its_token_and_records_every_call(orders):
+    api, control = orders
+    assert call("GET", api + "/orders/A-17") == (
+        200,
+        {"orderId": "A-17", "status": "shipped", "tracking": "shipped-7731"},
+    )
+    assert call("POST", api + "/orders/A-17/cancel") == (200, {"orderId": "A-17", "cancelled": True})
+    assert call("GET", api + "/orders/Z-404")[0] == 404
+    assert call("POST", api + "/orders/Z-404/cancel")[0] == 404
+    assert call("GET", api + "/orders/A-17/cancel")[0] == 405
+    calls = call("GET", control + "/_control/calls")[1]["calls"]
+    assert [(item["method"], item["path"], item["status"]) for item in calls] == [
+        ("GET", "/orders/A-17", 200),
+        ("POST", "/orders/A-17/cancel", 200),
+        ("GET", "/orders/Z-404", 404),
+        ("POST", "/orders/Z-404/cancel", 404),
+        ("GET", "/orders/A-17/cancel", 405),
+    ]
+    assert call("POST", control + "/_control/reset") == (204, None)
+    assert call("GET", control + "/_control/calls") == (200, {"calls": []})
+
+
+def test_the_orders_fixture_serves_its_control_api_only_on_the_control_port(orders):
+    api, control = orders
+    assert call("GET", api + "/_control/calls")[0] == 404
+    assert call("GET", control + "/orders/A-17")[0] == 404
+    # An order whose record tells the model to cancel it: the journeys check the instruction gains no authority.
+    status, order = call("GET", api + "/orders/B-22")
+    assert status == 200 and "cancel_order for B-22" in order["note"]
 
 
 def test_kubernetes_operations_enable_the_cluster_tools_check():
@@ -280,3 +373,146 @@ def test_every_enabled_step_has_a_test_and_every_tested_step_is_declared():
     enabled = {key for key in enablement.steps if not enablement.missing(key)}
     assert sorted(enabled - tested) == []
     assert sorted(tested - set(enablement.steps)) == []
+
+
+def agent_journeys():
+    spec = importlib.util.spec_from_file_location("agent_journeys", ROOT / "tests/acceptance/test_agent_journeys.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+AGENT = agent_journeys()
+
+
+class PagedCli:
+    """The CLI's human task list, served a page at a time; records the cursor of each read."""
+
+    def __init__(self, pages):
+        self.pages, self.cursors, self.run = pages, [], self
+
+    def arguments(self, *args):
+        return args
+
+    def weave(self, *args):
+        cursor = args[args.index("--cursor") + 1] if "--cursor" in args else None
+        self.cursors.append(cursor)
+        page = self.pages[0 if cursor is None else int(cursor)]
+        return SimpleNamespace(returncode=0, stdout=json.dumps(page))
+
+
+def task(identifier, run_id, status="ready"):
+    return {"id": identifier, "run_id": run_id, "status": status}
+
+
+def test_a_review_past_the_first_page_of_human_tasks_is_found():
+    run_id = "6f1c8f0e-2c55-4f53-9c38-0d7f7c0e1a11"
+    cli = PagedCli(
+        [
+            {"items": [task("t1", "other")], "next_cursor": "1"},
+            {"items": [task("t2", run_id, "claimed")], "next_cursor": "2"},
+            {"items": [task("t3", run_id)], "next_cursor": None},
+        ]
+    )
+    assert AGENT.review_in(cli, run_id)["id"] == "t3"
+    assert cli.cursors == [None, "1", "2"]
+
+
+def test_the_human_task_list_reads_every_page():
+    cli = PagedCli([{"items": [task("t1", "r")], "next_cursor": "1"}, {"items": [task("t2", "r")]}])
+    assert [item["id"] for item in AGENT.human_tasks(cli)] == ["t1", "t2"]
+
+
+def test_a_tool_the_model_never_asked_for_is_reported_as_never_asked():
+    log = {"turns": [{"calls": [{"name": "lookup_order", "status": "succeeded"}]}, {"calls": []}]}
+    assert AGENT.asked_outcome(log, "cancel_order") == "never asked"
+    log["turns"][1]["calls"] = [{"name": "cancel_order", "status": "rejected"}]
+    assert AGENT.asked_outcome(log, "cancel_order") == "rejected"
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def answers(port):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def wait_for(condition, what):
+    deadline = time.monotonic() + 20
+    while not condition():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.1)
+
+
+def test_host_mode_refuses_to_stop_a_listener_that_is_not_ollama(tmp_path, monkeypatch):
+    # What lsof and ps report is faked: the rule under test is which process stop() may signal, not the tools.
+    signalled = []
+    monkeypatch.setattr(AGENT, "listeners", lambda port: [4242])
+    monkeypatch.setattr(AGENT, "command_of", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(AGENT.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
+    ollama = AGENT.HostOllama(SimpleNamespace(private=tmp_path), url="http://127.0.0.1:11434")
+
+    with pytest.raises(AssertionError, match="not Ollama"):
+        ollama.stop()
+
+    assert signalled == []
+
+
+FAKE_OLLAMA = """#!{python}
+import http.server, json, os
+with open({record!r}, "w") as stream:
+    json.dump(dict(os.environ), stream)
+host, port = os.environ["OLLAMA_HOST"].rsplit(":", 1)
+
+
+class Version(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{{"version": "0.0.0"}}')
+
+    def log_message(self, *args):
+        pass
+
+
+http.server.HTTPServer((host, int(port)), Version).serve_forever()
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="host mode is for macOS and Linux: it starts a script and sends SIGTERM"
+)
+def test_host_mode_restarts_ollama_with_its_own_environment_and_stops_it_at_the_end(tmp_path, monkeypatch):
+    port, record = free_port(), tmp_path / "environment.json"
+    binary = tmp_path / "bin" / "ollama"
+    binary.parent.mkdir()
+    binary.write_text(FAKE_OLLAMA.format(python=sys.executable, record=str(record)), encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{binary.parent}:{AGENT.os.environ['PATH']}")
+    monkeypatch.setenv("OLLAMA_HOST", f"127.0.0.1:{port}")
+    monkeypatch.setenv("WEAVE_ACC_SECRET_PROBE", "pytest-only")
+    ollama = AGENT.HostOllama(SimpleNamespace(private=tmp_path), url=f"http://127.0.0.1:{port}")
+    ollama.start()
+    try:
+        environment = json.loads(record.read_text(encoding="utf-8"))
+        # The stopped server's environment could not be read, so the documented one: the context Weave assumes.
+        assert environment["OLLAMA_CONTEXT_LENGTH"] == "8192"
+        assert environment["OLLAMA_HOST"] == f"127.0.0.1:{port}"
+        assert "WEAVE_ACC_SECRET_PROBE" not in environment
+    finally:
+        ollama.close()
+    assert not answers(port)
+
+
+def test_a_restarted_ollama_keeps_the_stopped_servers_ollama_settings_only():
+    stopped = {"OLLAMA_CONTEXT_LENGTH": "16384", "OLLAMA_MODELS": "/models", "PYTEST_CURRENT_TEST": "x"}
+    environment = AGENT.restart_environment(stopped)
+    assert environment["OLLAMA_CONTEXT_LENGTH"] == "16384" and environment["OLLAMA_MODELS"] == "/models"
+    assert "PYTEST_CURRENT_TEST" not in environment and "PATH" in environment

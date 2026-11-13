@@ -21,7 +21,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import Field
@@ -32,6 +32,7 @@ from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_dec
 from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value, value_shape
 from firefly_weave.compiler.ir import (
     ActionNode,
+    AgentNode,
     BranchOutputNode,
     CallWorkflowNode,
     DecisionTableNode,
@@ -53,6 +54,7 @@ from firefly_weave.compiler.ir import (
     WorkflowIR,
 )
 from firefly_weave.compiler.schemas import validate_payload
+from firefly_weave.contracts.agent_turns import TurnOutput
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.limits import Limits
@@ -66,6 +68,30 @@ from firefly_weave.contracts.transactions import (
     split_phase,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.runtime.agent_tools import (
+    REVIEW_DECISIONS,
+    TOOL_TARGETS,
+    AgentKeyRef,
+    agent_key,
+    review_form,
+    review_intent,
+)
+from firefly_weave.runtime.agents import (
+    ActivationValues,
+    AgentEffects,
+    UnsupportedRules,
+    activate,
+    append_memory,
+    budget_granted,
+    call_key,
+    parse_agent_key,
+    review_decided,
+    review_key,
+    tool_failed,
+    tool_resolved,
+    turn_completed,
+    turn_key,
+)
 from firefly_weave.runtime.capacity import (
     ADMISSION_OUTPUT_BYTES,
     ADMISSION_REDUCTIONS,
@@ -96,6 +122,8 @@ from firefly_weave.runtime.control import (
     loop_suffix,
 )
 from firefly_weave.runtime.models import (
+    AgentFailure,
+    AgentState,
     BranchState,
     CallIntent,
     ControlCommand,
@@ -163,9 +191,9 @@ def deadline_order(node_id: str, due: datetime, duration_nodes: set[str]) -> tup
 
 
 def duration_steps(ir: WorkflowIR) -> set[str]:
-    """Steps whose deadlines elapse and continue the run: duration waits, loops resuming after a yield, and the hold
-    and settle deadlines of transactions."""
-    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode, TransactionNode))}
+    """Steps whose deadlines elapse and continue the run: duration waits, loops resuming after a yield, the hold
+    and settle deadlines of transactions, and an AI agent's own deadline and its reviews'."""
+    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode, TransactionNode, AgentNode))}
 
 
 def unsettled(state: RunState) -> bool:
@@ -185,6 +213,9 @@ STEP_OUTCOMES: frozenset[StepOutcome] = frozenset({"not_started", "failed", "unk
 def error_policy(ir: WorkflowIR, key: str) -> str:
     """What the final failure of the step instance ``key`` does: ``stop``, ``continue`` or ``errorOutput``."""
     node = next((node for node in ir.graph.nodes if node.id == node_of(key)), None)
+    if isinstance(node, AgentNode) and (parsed := parse_agent_key(key)) is not None and parsed.call is not None:
+        # A tool call's final failure goes to its agent, which hands it to the model or fails by its setting.
+        return "continue"
     if isinstance(node, HandlesErrors) and node.on_error is not None:
         return node.on_error
     return "stop"
@@ -349,29 +380,36 @@ def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> tup
     in the envelope of a call that continues on failure; error objects carry a code and a message.
     """
     output_schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
+    return call_outcome(ir, output_schema, node.mode, node.on_failure, data)
+
+
+def call_outcome(
+    ir: WorkflowIR, output_schema: JsonObject, mode: str, on_failure: str | None, data: JsonObject
+) -> tuple[JsonValue, JsonObject | None]:
+    """``call_result`` for any waiting call: the callee's output schema and the call's settings, without a node."""
     value = data.get("output")
     if data.get("reconciled") is True:
         # An operator's reconciled result: the called workflow's output, or the whole envelope when it continues.
-        validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), value)
+        validate(ir, call_output_schema(mode, on_failure, output_schema), value)
         return value, None
     status, child = data.get("status"), data.get("child_run_id")
     if not isinstance(child, str):
         raise KernelError("WV-RUNTIME-EVENT")
     if status == "succeeded":
         validate(ir, output_schema, value)
-        if node.on_failure != "continue":
+        if on_failure != "continue":
             return value, None
         envelope: JsonObject = {"status": status, "runId": child, "output": value}
     elif status in {"failed", "cancelled", "timed_out"}:
         validate(ir, CALL_ERROR_SCHEMA, value)
-        if node.on_failure != "continue":
+        if on_failure != "continue":
             if status != "failed":
                 raise KernelError("WV-RUNTIME-EVENT")
             return None, cast(JsonObject, value)
         envelope = {"status": status, "runId": child, "error": value}
     else:
         raise KernelError("WV-RUNTIME-EVENT")
-    validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), envelope)
+    validate(ir, call_output_schema(mode, on_failure, output_schema), envelope)
     return envelope, None
 
 
@@ -705,6 +743,10 @@ def _advance_owned(
         """Delete an iteration's frame and every frame, join and loop that its body created."""
         within = iteration_suffix(loop_suffix(key), index)
         del current_state.branches[branch_key(node.id, "body", within)]
+        body = [*node.scope, node.id, "body"]
+        for name in [name for name in current_state.agents if loop_suffix(name).startswith(within)]:
+            if nodes[node_of(name)].scope[: len(body)] == body:
+                del current_state.agents[name]
         if node.id not in prepared.nested_blocks:
             return
         inner = [*node.scope, node.id, "body"]
@@ -737,6 +779,7 @@ def _advance_owned(
                 "waits": {},
                 "incidents": {},
                 "deferred_results": [],
+                "agents": {},
             }
         )
         for key, branch in current_state.branches.items():
@@ -1306,6 +1349,16 @@ def _advance_owned(
         """Whether the instance ``name`` is a task: an action step, or an action that confirms, cancels or undoes."""
         phase = split_phase(name)
         node = nodes[node_of(name)]
+        if isinstance(node, AgentNode):
+            reference = agent_key(ir, name, current_state.agents)
+            return reference is not None and (
+                reference.key.call is None
+                or (
+                    not reference.key.review
+                    and reference.target is not None
+                    and reference.target.completion == "task_completed"
+                )
+            )
         if phase is None:
             return isinstance(node, ActionNode)
         participation = node.txn if isinstance(node, (ActionNode, CallWorkflowNode)) else None
@@ -1399,6 +1452,9 @@ def _advance_owned(
             current_state.active.remove(name)
             current_state.waits.pop(name, None)
             result.commands.append(ControlCommand(kind="settle", node_id=name))
+        # An agent whose work stopped has ended: its state goes with it.
+        for name in [name for name in current_state.agents if name not in current_state.active]:
+            del current_state.agents[name]
         queue[:] = [name for name in queue if owner_of(name) is not None]
         maybe_end()
 
@@ -1594,6 +1650,386 @@ def _advance_owned(
                 break
             accept(completion)
 
+    def start_agent(node: AgentNode, key: str) -> None:
+        """Activate an AI agent: evaluate its texts once, load its run memory, arm its deadline, send turn 1."""
+
+        def text(expression: object) -> str:
+            value = mapping(node, key, cast(JsonObject, cast(ContractModel, expression).model_dump(by_alias=True)))
+            validate(ir, {"type": "string", "minLength": 1}, value)
+            return cast(str, value)
+
+        context = (
+            mapping(node, key, cast(JsonObject, node.context.model_dump(by_alias=True)))
+            if node.context is not None
+            else None
+        )
+        fixed = {
+            tool.name: cast(JsonObject, mapping(node, key, cast(JsonObject, tool.fixed.model_dump(by_alias=True))))
+            for tool in node.tools
+            if tool.fixed is not None
+        }
+        values = ActivationValues(
+            instructions=text(node.instructions),
+            prompt=text(node.prompt),
+            context=context,
+            has_context=node.context is not None,
+            fixed=fixed,
+        )
+        memory = current_state.memories.get(cast(str, node.memory.key), []) if node.memory.scope == "run" else []
+        try:
+            effects = activate(ir, node, key, values, memory, current_state.agent_tokens, event.timestamp)
+        except UnsupportedRules:
+            raise KernelError("WV-RUNTIME-ACTIVATION") from None
+        current_state.active.append(key)
+        result.steps.append(StepChange(node_id=key, status="waiting"))
+        deadline = checked_deadline(event.timestamp, node.limits.timeout_seconds)
+        current_state.waits[key] = deadline
+        result.commands.append(Deadline(node_id=key, deadline=deadline))
+        agent_effects(node, key, effects)
+
+    def agent_effects(node: AgentNode, key: str, effects: AgentEffects) -> None:
+        """Apply one agent transition: its state, the turn and tool calls it sends, and how the step ends."""
+        nonlocal current_state
+        prior = current_state.agents.get(key)
+        if effects.tokens:
+            current_state = current_state.model_copy(
+                update={"agent_tokens": current_state.agent_tokens + effects.tokens}
+            )
+        if effects.state is None:
+            current_state.agents.pop(key, None)
+        else:
+            current_state.agents[key] = effects.state
+        if effects.turn is not None and effects.state is not None:
+            dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+            definition = load_definition(dependency.document)
+            assert isinstance(definition, ActionDefinition)
+            implementation = definition.spec.implementation
+            assert isinstance(implementation, WorkerImplementation)
+            name = turn_key(key, effects.state.turn)
+            current_state.active.append(name)
+            result.steps.append(StepChange(node_id=name, status="waiting"))
+            result.commands.append(
+                TaskIntent(
+                    node_id=name,
+                    action_digest=node.dependency,
+                    action_reference=dependency.reference,
+                    input=effects.turn.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    connection_slot=node.connection,
+                    task_type=implementation.task_type,
+                    task_version=implementation.task_version,
+                    deadline=checked_deadline(event.timestamp, definition.spec.timeout_seconds),
+                )
+            )
+        tools = {tool.name: tool for tool in node.tools}
+        for call in effects.calls:
+            tool = tools[call.name]
+            if call.status == "review" and effects.state is not None:
+                # The review closes by its own expiry or with the agent, whichever comes first: only an expiry before
+                # the agent's deadline needs a deadline of its own, since close_agent closes the review otherwise.
+                name = review_key(key, call.turn, call.index)
+                expiry = effects.state.deadline
+                if tool.review is not None:
+                    expiry = min(checked_deadline(event.timestamp, tool.review.expiry_seconds), expiry)
+                review = review_intent(
+                    ir, node, tool, name, cast(JsonObject, call.input), cast(str, call.digest), expiry
+                )
+                current_state.active.append(name)
+                result.steps.append(StepChange(node_id=name, status="waiting"))
+                result.commands.append(review)
+                if expiry < effects.state.deadline:
+                    current_state.waits[name] = expiry
+                    result.commands.append(Deadline(node_id=name, deadline=expiry))
+                continue
+            if call.status != "running":
+                continue
+            target = TOOL_TARGETS[tool.target]
+            current_state.active.append(call.key)
+            result.steps.append(StepChange(node_id=call.key, status="waiting"))
+            result.commands.append(
+                target.intent(ir, node, tool, call.key, cast(JsonObject, call.input), event.timestamp)
+            )
+        if effects.memory_append is not None and node.memory.scope == "run":
+            name = cast(str, node.memory.key)
+            current_state.memories[name] = append_memory(
+                current_state.memories.get(name, []), effects.memory_append, node.memory.window
+            )
+        if effects.complete is not None:
+            if not agent_guard(node, key, key, "agent_output", effects.complete, prior):
+                return
+            complete(node, key, effects.complete)
+            close_agent(key)
+            queue.append(successor(key))
+        elif effects.failure is not None:
+            agent_failed(node, key, effects.failure, prior, keep_state=effects.state is not None)
+
+    def agent_failed(
+        node: AgentNode,
+        key: str,
+        code: str,
+        state: AgentState | None,
+        *,
+        error: JsonObject | None = None,
+        keep_state: bool = False,
+    ) -> None:
+        """An agent failed for good. A call that changes data and is never retried, still running, may have applied: it
+        keeps its key and its task under its own WV-TASK-AMBIGUOUS incident, whatever the settings, and the failure
+        waits in the agent's state until a person has settled each such call (``held_call_ended``). Otherwise the
+        onError setting takes the failure, or, without one, the agent's key holds the incident. Whatever else the agent
+        has open ends with it; a budget stop keeps the state for one more granted turn."""
+        tools = {tool.name: tool for tool in node.tools}
+        # A call whose key already ended, such as the one whose failure ends the agent, holds nothing in doubt.
+        effects = {
+            call.key: TOOL_TARGETS[tools[call.name].target].side_effect(ir, tools[call.name])
+            for call in (state.calls if state is not None else [])
+            if call.status == "running" and call.key in current_state.active
+        }
+        held = {name for name, effect in effects.items() if effect == "non_idempotent"}
+        # The agent is the step's one attempt; anything that changes data and was still running may have applied.
+        outcome: StepOutcome = "unknown" if any(effect != "read_only" for effect in effects.values()) else "failed"
+        failure = error or step_error(code, outcome, 1, key)
+        if keep_state:
+            if node.on_error is not None and not held:
+                close_agent(key)
+                fail_step(node, key, failure)
+                return
+            incident(key, code)
+            return
+        if held and state is not None:
+            close_agent(key, keep=True, held=held)
+            current_state.agents[key] = state.model_copy(update={"failure": AgentFailure(code=code, error=failure)})
+            for name in sorted(held):
+                incident(name, "WV-TASK-AMBIGUOUS")
+            return
+        if node.on_error is not None:
+            close_agent(key)
+            fail_step(node, key, failure)
+            return
+        # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
+        close_agent(key, keep=True)
+        incident(key, code)
+
+    def held_call_ended(
+        node: AgentNode, reference: AgentKeyRef, identifier: str, state: AgentState, completion: RuntimeEvent
+    ) -> None:
+        """A call the failed agent held in doubt ended through a person's resolution: a reconciled result, or a failure
+        confirmed to have changed nothing (the revoked lease fences the worker's own result). Once no such call is left,
+        the agent's failure goes where it would have."""
+        nonlocal current_state
+        assert state.failure is not None
+        key = reference.key.agent
+        if (
+            reference.key.review
+            or reference.tool is None
+            or completion.type not in {"task_completed", "step_failed"}
+            or not any(call.key == identifier and call.status == "running" for call in state.calls)
+        ):
+            raise KernelError("WV-RUNTIME-EVENT")
+        current_state.active.remove(identifier)
+        current_state.waits.pop(identifier, None)
+        # The call may have been held twice: by recovery before the agent failed, then by the agent's own failure once
+        # that resolution let the deferred failure run. The resolution closed its own incident; the agent's hold, always
+        # at generation 0, closes here, since one resolution settles the call.
+        current_state.incidents.pop(f"{identifier}:0", None)
+        current_state = current_state.model_copy(
+            update={
+                "incident": current_state.incidents[min(current_state.incidents)].code
+                if current_state.incidents
+                else None,
+                # Without an incident left, the barrier its hold raised is gone again, as lift() leaves it; a manual
+                # pause keeps it until the run is resumed.
+                "status": "waiting"
+                if current_state.status == "suspended"
+                and not current_state.incidents
+                and not current_state.manual_paused
+                else current_state.status,
+            }
+        )
+        if completion.type == "step_failed":
+            error = tool_failure(reference, identifier, completion)[1]
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+        else:
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+        calls = [call.model_copy(update={"status": "done"}) if call.key == identifier else call for call in state.calls]
+        current_state.agents[key] = state.model_copy(update={"calls": calls})
+        if any(call.status == "running" and call.key in current_state.active for call in calls):
+            return
+        if node.on_error is not None:
+            close_agent(key)
+            fail_step(node, key, state.failure.error)
+            return
+        close_agent(key, keep=True)
+        incident(key, state.failure.code)
+
+    def agent_guard(
+        node: AgentNode, key: str, identifier: str, purpose: str, value: JsonValue, state: AgentState | None
+    ) -> bool:
+        """Whether a turn's answer or the agent's output fits its guard. One that breaks it, in an agent with an
+        onError setting, fails the agent there; without a setting the run keeps its incident at the agent's key."""
+        try:
+            guard(node.path, purpose, value)
+        except KernelError as broken:
+            code = str(broken)
+            if code not in HANDLED_KERNEL_CODES or node.on_error is None:
+                raise
+            error = step_error(code, "failed", 1, identifier)
+            if identifier != key:
+                # The turn ran, but its answer is refused: its own record says so.
+                result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            agent_failed(node, key, code, state, error=error)
+            return False
+        return True
+
+    def close_agent(key: str, *, keep: bool = False, held: set[str] | frozenset[str] = frozenset()) -> None:
+        """End an agent: settle every turn, tool and review it still has open, except the calls it holds in doubt,
+        and drop its state."""
+        for name in [name for name in current_state.active if name.startswith(key + "#") and name not in held]:
+            current_state.active.remove(name)
+            current_state.waits.pop(name, None)
+            result.commands.append(ControlCommand(kind="settle", node_id=name))
+        current_state.agents.pop(key, None)
+        current_state.waits.pop(key, None)
+        if not keep and key in current_state.active:
+            current_state.active.remove(key)
+
+    def agent_event(reference: AgentKeyRef, identifier: str, completion: RuntimeEvent) -> None:
+        """A turn or a tool call of an agent ended: the agent's pure loop decides what follows."""
+        nonlocal current
+        node, agent = reference.node, reference.key.agent
+        state = current_state.agents.get(agent)
+        if state is None:
+            raise KernelError("WV-RUNTIME-EVENT")
+        # A failure while the agent decides belongs to the agent's own key.
+        current = agent
+        if state.failure is not None:
+            held_call_ended(node, reference, identifier, state, completion)
+            return
+        if reference.key.call is None and completion.type != "step_failed":
+            if (
+                completion.type != "task_completed"
+                or "output" not in completion.data
+                or reference.key.turn != state.turn
+            ):
+                raise KernelError("WV-RUNTIME-EVENT")
+            value = completion.data["output"]
+            current_state.active.remove(identifier)
+            if not agent_guard(node, agent, identifier, "agent_turn_output", value, state):
+                return
+            result.steps.append(StepChange(node_id=identifier, status="completed", output=value))
+            effects = turn_completed(
+                ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens
+            )
+        elif completion.type == "step_failed" and reference.key.call is None:
+            # A turn failed for good and the agent's setting takes it: the step's error names the turn.
+            if reference.key.turn != state.turn:
+                raise KernelError("WV-RUNTIME-EVENT")
+            code, error = turn_failure(identifier, completion)
+            current_state.active.remove(identifier)
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            agent_failed(node, agent, code, state, error=error)
+            return
+        elif completion.type == "step_failed":
+            if reference.key.review or reference.tool is None:
+                raise KernelError("WV-RUNTIME-EVENT")
+            code, error = tool_failure(reference, identifier, completion)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            try:
+                effects = tool_failed(ir, node, state, identifier, code, current_state.agent_tokens)
+            except ValueError:
+                raise KernelError("WV-RUNTIME-EVENT") from None
+        elif reference.key.review and reference.tool is not None and reference.key.call is not None:
+            decision, comment, digest = review_answer(identifier, completion)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            if decision == "expired":
+                # Nobody answered in time: the open review task closes with its deadline.
+                result.commands.append(ControlCommand(kind="settle", node_id=identifier))
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+            call = call_key(agent, reference.key.turn, reference.key.call)
+            try:
+                effects = review_decided(ir, node, state, call, decision, comment, digest, current_state.agent_tokens)
+            except ValueError:
+                raise KernelError("WV-RUNTIME-EVENT") from None
+        elif not reference.key.review and reference.tool is not None and reference.target is not None:
+            content, is_error = reference.target.result(ir, reference.tool, completion, state.rules)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+            effects = tool_resolved(ir, node, state, identifier, content, is_error, current_state.agent_tokens)
+        else:
+            raise KernelError("WV-RUNTIME-EVENT")
+        agent_effects(node, agent, effects)
+
+    def turn_failure(key: str, completion: RuntimeEvent) -> tuple[str, JsonObject]:
+        """The code and error object of a turn's final failure; a turn changes nothing, so any outcome is handled."""
+        data = completion.data
+        code, outcome, attempts = data.get("code"), data.get("outcome", "unknown"), data.get("attempts", 1)
+        if not isinstance(code, str) or outcome not in STEP_OUTCOMES or not isinstance(attempts, int):
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            return code, step_error(code, cast(StepOutcome, outcome), attempts, key)
+        except ValueError as error:
+            raise KernelError("WV-RUNTIME-EVENT") from error
+
+    def tool_failure(reference: AgentKeyRef, key: str, completion: RuntimeEvent) -> tuple[str, JsonObject]:
+        """The code and error object of a tool call's final failure. An unknown outcome of a call that changes data
+        and is never retried is never handed on: it keeps its incident until a person says what happened."""
+        data = completion.data
+        code, outcome, attempts = data.get("code"), data.get("outcome", "unknown"), data.get("attempts", 1)
+        if (
+            not isinstance(code, str)
+            or not 0 < len(code) <= 128
+            or outcome not in STEP_OUTCOMES
+            or not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+            or attempts < 0
+        ):
+            raise KernelError("WV-RUNTIME-EVENT")
+        assert reference.tool is not None and reference.target is not None
+        if outcome == "unknown" and reference.target.side_effect(ir, reference.tool) == "non_idempotent":
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            return code, step_error(code, cast(StepOutcome, outcome), attempts, key)
+        except ValueError as error:
+            raise KernelError("WV-RUNTIME-EVENT") from error
+
+    def review_answer(
+        key: str, completion: RuntimeEvent
+    ) -> tuple[Literal["approve", "reject", "expired"], str | None, str | None]:
+        """A review's decision, its comment and the digest the task service copied from the stored task."""
+        if completion.type == "wait_elapsed":
+            due = current_state.waits.get(key)
+            if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
+                raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+            return "expired", None, None
+        output = completion.data.get("output")
+        if completion.type != "human_completed" or not isinstance(output, dict):
+            raise KernelError("WV-RUNTIME-EVENT")
+        decision, data, digest = output.get("decision"), output.get("data"), completion.data.get("input_digest")
+        if decision not in REVIEW_DECISIONS or not isinstance(data, dict) or not isinstance(digest, str):
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            validate(ir, review_form(), data)
+        except ValueError:
+            raise KernelError("WV-RUNTIME-EVENT") from None
+        comment = data.get("comment")
+        return cast(Literal["approve", "reject"], decision), cast(str | None, comment), digest
+
+    def agent_timeout(key: str, completion: RuntimeEvent) -> None:
+        due = current_state.waits.get(key)
+        if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
+            raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+        node = nodes[node_of(key)]
+        assert isinstance(node, AgentNode)
+        agent_failed(node, key, "WV-AGENT-TIMEOUT", current_state.agents.get(key))
+
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state
         identifier = completion.data.get("node_id")
@@ -1615,6 +2051,15 @@ def _advance_owned(
             phase_result(identifier, completion)
             return
         node = nodes[node_of(identifier)]
+        if isinstance(node, AgentNode):
+            reference = agent_key(ir, identifier, current_state.agents)
+            if reference is not None:
+                agent_event(reference, identifier, completion)
+                return
+            if completion.type == "wait_elapsed" and "#" not in identifier:
+                agent_timeout(identifier, completion)
+                return
+            raise KernelError("WV-RUNTIME-EVENT")
         if completion.type == "step_failed":
             if handles(node, identifier, completion.data.get("effect", "unknown")):
                 error = reported_failure(node, identifier, completion)
@@ -1838,6 +2283,17 @@ def _advance_owned(
                         else None
                     }
                 )
+                if kind == "retry_safe" and prior.code == "WV-AGENT-BUDGET":
+                    budget_node = nodes[node_of(prior.node_id)]
+                    budget_state = current_state.agents.get(prior.node_id)
+                    if not isinstance(budget_node, AgentNode) or budget_state is None or budget_state.granted:
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    current = prior.node_id
+                    agent_effects(
+                        budget_node,
+                        prior.node_id,
+                        budget_granted(ir, budget_node, budget_state, current_state.agent_tokens),
+                    )
                 if kind == "accept_reconciled_failure":
                     attempts = event.data.get("attempts", prior.generation)
                     completion = event.model_copy(
@@ -1901,7 +2357,9 @@ def _advance_owned(
                 generation = event.data.get("generation", 0)
                 if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
                     raise KernelError("WV-RUNTIME-EVENT")
-                if not inside or handles(nodes[node_of(current)], current, event.data.get("effect", "unknown")):
+                if not isinstance(nodes[node_of(current)], AgentNode) and (
+                    not inside or handles(nodes[node_of(current)], current, event.data.get("effect", "unknown"))
+                ):
                     reported_failure(nodes[node_of(current)], current, event)
                 interim = current_state.incidents.get(f"{current}:{generation}")
                 if interim is not None and interim.code != "WV-TASK-FAILED":
@@ -2370,6 +2828,10 @@ def _advance_owned(
                     start_iterations(current)
                 else:
                     queue.append(node.join + suffix)
+            elif isinstance(node, AgentNode):
+                if current in current_state.active:
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                start_agent(node, current)
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

@@ -30,6 +30,7 @@ LABELS = {
     "start": "Start with input",
     "end": "Return the result",
     "action": "Call an action",
+    "agent": "Run an AI agent",
     "transform": "Shape the data",
     "decisionTable": "Apply a decision table",
     "wait": "Wait for a duration",

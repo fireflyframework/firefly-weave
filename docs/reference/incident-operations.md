@@ -93,6 +93,7 @@ commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit
     | `WV-TASK-RETRIES-EXHAUSTED` | A safe-to-repeat Action used every automatic attempt, or no time was left for another | Fix the cause, then `retry_safe` before the Action's deadline, or `terminate` |
     | `WV-TASK-DEADLINE` | Nobody claimed the task before its deadline | Its time budget is spent, so another attempt cannot run: usually `terminate`, then check that an executor or worker is running and [start a linked retry](#start-a-new-run-from-a-finished-one) |
     | `WV-TASK-FAILED` | The executor or worker reported a failure | `retry_safe` only when the side effect is safe to repeat; otherwise reconcile or `terminate` |
+    | `WV-AGENT-BUDGET`, `WV-AGENT-ITERATIONS`, `WV-AGENT-TIMEOUT`, `WV-AGENT-TOOL-FAILED` | An AI agent stopped without a final answer, and its step has no On error setting | See [AI agent incidents](#ai-agent-incidents) |
 
     The Action's side effect decides what is safe. Studio shows it as **Side
     effect**, under **What this action needs** in the **Call an action** step's
@@ -314,6 +315,34 @@ They do not use saved platforms: they need `--environment-url` (or
 `WEAVE_ACCESS_TOKEN`. They require TLS outside loopback, refuse redirects, and
 print JSON without the token.
 
+### AI agent incidents
+
+An [AI agent step](ai-agents.md) opens incidents at three kinds of
+[keys](history-and-replay.md#ai-agent-runs-in-a-history): the agent's own
+(`support`), a turn's (`support#2`), and a tool call's (`support#2.1`). Read the
+[agent log](ai-agents.md#agent-log) first: it shows each turn and how each call
+ended.
+
+| Key | `code` | What happened | Decisions that fit |
+| --- | --- | --- | --- |
+| The agent | `WV-AGENT-BUDGET` | A turn crossed the step's `maxTotalTokens` or the run's 2,000,000 tokens. The calls that turn asked for didn't run | `retry_safe` grants one forced final turn, under the next turn's key, in which the model must answer without tools (a tool call then fails the agent with `WV-AGENT-ITERATIONS`); or `terminate` |
+| The agent | `WV-AGENT-ITERATIONS`, `WV-AGENT-TIMEOUT`, `WV-AGENT-TOOL-FAILED` | The agent used its turns, passed its `timeoutSeconds`, or a tool failed with `onToolError: incident` | `terminate` only; then change the workflow or its limits and start a linked retry |
+| A turn | `WV-TASK-RETRIES-EXHAUSTED` | The turn failed for good: with a code that isn't retried, such as `LLM_MODEL_NOT_FOUND`, or after its last attempt | Fix the cause, then `retry_safe`, which runs the turn again with the same input within its 600 seconds; or `terminate`. `accept_reconciled_result` takes an output that fits the [turn's output](worker-protocol.md#ai-agent-turn-tasks) |
+| A tool call | `WV-TASK-AMBIGUOUS` | A call of a `non_idempotent` Action may have applied: its attempt ended with an unknown outcome, or it was still running when the agent ended | Check the other system, then `accept_reconciled_result` with the Action's output, or `accept_reconciled_failure` with your evidence; or `terminate`. `retry_safe` is refused |
+
+When the agent is still running, the model reads a reconciled call's result on
+its next turn: the Action's output, or the error `WV-TASK-RECONCILED-FAILURE`.
+Any other tool failure opens no incident; the model reads the error as the
+call's result, unless the step sets `onToolError: incident`.
+
+An agent whose step has an On error setting doesn't open the agent's or a
+turn's incident: the setting takes the failure. A tool call that may have
+applied is different. When the agent ends while such a call still runs, the
+call's lease is revoked, its task waits at its own `WV-TASK-AMBIGUOUS` incident
+whatever the settings say, and the agent's failure waits too. Once a person has
+settled every such call, the failure goes to the On error setting, or opens its
+incident at the agent's key.
+
 ## Forward migration and compatibility
 
 This section is for administrators who apply database migrations.
@@ -398,6 +427,7 @@ Some runs created before the current admission policy cannot be shown safely.
 | HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), a reconciled result lacks `output` or `evidence_reference`, or `accept_reconciled_failure` was used for a step without an On error setting, without `evidence_reference`, for a call, or for a transaction in doubt other than `WV-TXN-PIVOT-UNKNOWN` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
 | HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
 | A task incident keyed `send[2]:0` | A task failed in iteration 2 of a loop; the other iterations' results wait behind the incident | Decide it like any task incident; `retry_safe` retries only that iteration |
+| An incident at `support#2` or `support#2.1` | A turn or a tool call of the AI agent step `support` failed, and the agent waits behind the incident | See [AI agent incidents](#ai-agent-incidents) |
 | `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT` | A loop's list was not a list, was longer than `maxItems`, or its results exceeded the payload limit; see [loops at run time](compiler.md#loops-at-run-time) | Only `terminate` applies; fix the workflow and start a new run |
 | HTTP 409 `WV-RUNTIME-STATE` | The incident is no longer active, or no failed task matches it | Read the run and its incidents again |
 | `WV-CALL-START`, `WV-CALL-DEPTH` or `WV-CALL-INTERRUPTED` on a call step | A waiting call could not start its child, or its child was cancelled or timed out while the call stops on failure | `retry_safe` starts a new child run (the next generation of the call); `accept_reconciled_result` needs the called workflow's output (or the whole `{status, runId, output, error}` envelope when the call continues on failure) and an `evidence_reference`; `terminate` ends the run |
