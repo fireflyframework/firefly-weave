@@ -235,6 +235,10 @@ pools never borrow from each other. The capabilities response reports the total
 and reserved control ceilings. When saturated, the API returns a bounded capacity
 error instead of queuing request bodies.
 
+**Checked workflow artifacts.** Each server or worker process keeps up to 64
+workflow artifacts it has checked, and 64 MiB of them at most, in memory, and
+reuses one only for the same content. These bounds have no setting.
+
 **Every replica and the migration must use the same policy.** The policy's
 fingerprint is checked against the database's policy metadata, and a mismatch
 keeps the API from becoming ready. A smaller policy is a deliberate
