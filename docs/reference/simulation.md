@@ -243,9 +243,12 @@ implementation.
 | `signal` | `name`, `payload`, `frame` (optional) | Validate the payload against the signal's schema and queue it at virtual now, in the called workflow `frame` names |
 | `human_decision` | `name`: the human task step ID; `payload`: `{"decision": ..., "data": {...}}`; `frame` (optional) | Validate the decision and form data, then queue the completion |
 | `advance_time` | `seconds`: whole number, zero or more | Move virtual time forward |
+| `resolve` | `incident_key`; `resolution`: `retry_safe`, `accept_reconciled_result`, `accept_reconciled_failure`, or `terminate`; `payload` (with `accept_reconciled_result` only); `frame` (optional) | Apply a person's resolution of a transaction in doubt (see [Simulate transactions](#simulate-transactions)) |
+| `cancel` | `skip_undo` (optional) | Queue a cancel of the simulated run; its open transactions are undone first |
 
-`signal`, `human_decision`, and `advance_time` return the current view without
-advancing the graph. Follow them with `next` or `continue`. The CLI's `--help`
+`signal`, `human_decision`, `advance_time`, and `cancel` return the current
+view without advancing the graph. Follow them with `next` or `continue`. The
+CLI's `--help`
 lists every command except `human_decision`, which works the same way.
 
 **Mock keys.** Use `action:EXACT_REFERENCE`, such as
@@ -284,6 +287,7 @@ Every command returns a view:
 | `selected_scope` | Inside a loop body only: the `item`, `index` and `loops` values the selected step reads |
 | `frames` | Workflows whose calls ran in the simulation only: one entry per call (see [Simulate workflow calls](#simulate-workflow-calls)) |
 | `selected_frame` | Only while the next boundary belongs to a called workflow: that call's frame key |
+| `transactions` | Workflows with transactions only: each transaction's `state`, `cause`, `incident_key`, and steps, without values; each frame carries its own (see [Simulate transactions](#simulate-transactions)) |
 
 Node IDs in `selected_node`, `active_nodes`, `current_nodes`, boundaries and
 events are [instance keys](compiler.md#instance-keys): the step ID outside loops,
@@ -501,13 +505,109 @@ instance key, the step, the action. The first key found in either `mocks` or
 - Signals and human tasks with a setting fail when they start waiting; moving
   time past their timeout fails them too, as on a platform.
 
-Debug sessions do not run transactions yet. Scripted failures apply to the
-simulated workflow itself, not inside called workflows. With the local
-simulation, repeat `--error KEY=CODE`:
+For steps in a transaction, see [Simulate transactions](#simulate-transactions).
+Scripted failures apply to the simulated workflow itself, not inside called
+workflows. With the local simulation, repeat `--error KEY=CODE`:
 
 ```bash
 weave workflow simulate request.json --error 'node:send[2]=RATE_LIMITED' --output json
 ```
+
+## Simulate transactions
+
+A simulation runs a workflow's transactions as a platform run does: the same
+rules decide when a step is confirmed, cancelled, or undone, and when a
+transaction is in doubt. Nothing outside the session changes. For what
+transactions are, see the [transactions guide](../guides/transactions.md).
+
+**Answer each confirm, cancel, and undo.** A step that takes part in a
+transaction can have a confirm, a cancel, or an undo. Each one has its own keys,
+never its step's: `node:add` answers `add`, not `add#undo`.
+
+| Key | Answers |
+| --- | --- |
+| `node:add[2]#undo` | That phase of one loop iteration |
+| `node:hold#confirm`, `node:hold#cancel`, `node:add#undo` | That phase of every instance of the step |
+| `action:EXACT_REFERENCE` | Every step and phase that uses the action |
+
+The first key in the table that holds a mock, a failure, or a pending entry
+wins. A phase without one completes with an empty result, `{}`, when its
+output schema accepts it; otherwise the session stops with
+`WV-DEBUG-MISSING_MOCK`, and the hint lists the phase's keys. An undo by a
+called workflow runs that workflow in the simulation when `workflows` carries
+its artifact. A mock for it is the called workflow's plain output, checked
+against its output schema. A breakpoint can't name a phase: a phase is a
+result, not a step.
+
+**Script failures with their effect.** A scripted failure of a step in a
+transaction can say whether the step may have applied anything: `effect` is
+`none` or `unknown`. Without it, the session uses `none` when `outcome` is
+`not_started` or the action lists the code in `definiteFailures`, and `unknown`
+otherwise. `effect: none` with `outcome: unknown` is refused
+(`WV-DEBUG-MOCK-OUTPUT`). A step that failed with `effect: none` is skipped; one
+with `unknown` is undone with the others, in reverse order. A scripted failure
+of a confirm, cancel, or undo makes it stuck, so the transaction is in doubt;
+`attempts` sets the incident's key, such as `add#undo:10`.
+
+```json
+{
+  "errors": {
+    "node:add": {"code": "UNAVAILABLE", "effect": "unknown"},
+    "node:add#undo": {"code": "UNAVAILABLE", "attempts": 10}
+  }
+}
+```
+
+**Leave results pending.** `pending` lists keys whose result never arrives in
+the session, keyed like mocks: at most 1,000, each once. In the CLI, repeat
+`--pending KEY`. Move time to see what a platform does when a result doesn't
+come:
+
+- a rollback waits for a pending step until its settle deadline, then the
+  transaction is in doubt with `WV-TXN-SETTLE-TIMEOUT`;
+- a transaction whose step that can't be undone is pending stays `deciding`,
+  and a cancel or a failure waits for that step;
+- a reservation's hold runs out while the body waits, such as at a wait step,
+  and the transaction is cancelled. With a step still pending, the rollback
+  waits for it, as in the first point.
+
+**Resolve a transaction in doubt.** The `resolve` command applies a person's
+resolution. It changes only the session: it needs the session's own access, not
+the permissions to resolve a real incident, and no run or incident of the
+project changes. Use `incident_key` as the view's `transactions` shows it, put
+the reconciliation record or the output in `payload`, and name a called
+workflow's frame with `frame`.
+
+| Incident code | `retry_safe` | `accept_reconciled_result` | `accept_reconciled_failure` | `terminate` |
+| --- | --- | --- | --- | --- |
+| `WV-TXN-UNDO-STUCK`, `WV-TXN-CANCEL-STUCK`, `WV-TXN-CONFIRM-STUCK`, `WV-TXN-AFTER-PIVOT-STUCK` | Retry | Mark as reconciled: `payload` is the record, such as `{"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}` | — | Force end |
+| `WV-TXN-SETTLE-TIMEOUT` | Wait again under a new deadline | Mark as reconciled | — | Force end |
+| `WV-TXN-PIVOT-UNKNOWN` | — | It happened: `payload` is the step's output | It didn't happen | Force end |
+
+A retried attempt skips its scripted failure and takes the next key that holds
+a mock, or the empty result of a phase. A transform or decision table after the
+point of no return fails again when retried; mark it as reconciled to see the
+transaction end well. The session checks every record and output as a platform
+does: a resolution it refuses changes nothing and answers `WV-DEBUG-INCIDENT`.
+The steps a resolution releases run on the next `next` or `continue`.
+
+```json
+[
+  {"kind": "continue"},
+  {"kind": "resolve", "incident_key": "add#undo:10", "resolution": "retry_safe"},
+  {"kind": "continue"}
+]
+```
+
+**Cancel a simulated run.** The `cancel` command cancels the simulated run as a
+person's cancel does: its open transactions are undone first, or force ended
+with `"skip_undo": true`. Follow it with `next` or `continue`.
+
+**What a simulation can't show.** A platform's own retries of a confirm,
+cancel, or undo before it is stuck; a result that arrives after its deadline; a
+step a rollback revokes before a worker takes it, because a session treats every
+dispatched step as taken (script `"outcome": "not_started"` to see it skipped);
+and a called step that can't be undone and never started.
 
 ## Use the Python library
 
@@ -671,10 +771,11 @@ fingerprints.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | `WV-DEBUG-REQUEST` from the CLI | The request file is not valid JSON, misses a field, or its input or mocks violate a schema | Check `artifact`, `mocks`, `input`, and a `now` with a time zone |
-| `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
+| `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name`, or carries one it doesn't take: a `payload` on a `resolve` other than `accept_reconciled_result`, `skip_undo` on a command other than `cancel`, or `frame` on a `cancel` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
 | `WV-DEBUG-MISSING_MOCK` at a **Call a workflow** step | The step waits for another workflow, and the request has neither a mock for the call nor the called workflow's artifact | Add a `node:` mock for the call, or the artifact under `workflows` (`--workflow` in the CLI); see [Simulate workflow calls](#simulate-workflow-calls) |
-| `WV-DEBUG-MOCK-KEY` | A mock key names no action node or waiting call in this artifact, or no iteration of it (detached calls and `action:` keys for calls take no mocks) | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
+| `WV-DEBUG-MISSING_MOCK` at a confirm, cancel, or undo | The phase has no mock, and its output needs fields | Add a mock under one of the hint's keys, such as `node:add#undo`; see [Simulate transactions](#simulate-transactions) |
+| `WV-DEBUG-MOCK-KEY` | A mock key names no action node or waiting call in this artifact, or no iteration of it (detached calls and `action:` keys for calls take no mocks); a phase key names a confirm, cancel, or undo its step doesn't have; or an `effect` is set on a key that names no step of a transaction | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems`, and `#confirm`, `#cancel`, or `#undo` only for a phase the step declares |
 | `WV-DEBUG-WORKFLOW` | A `workflows` entry is not a version any call reaches, has no artifact, or its artifact is another version or has other input or output schemas; `resolve_workflows` reached a version this project never published, or one whose published definition differs from the one its caller was compiled against; `resolve_workflows` was set in a request to the CLI, which has no published versions; or a stored session has a frame of a version it does not carry | Compile the exact version the call names; on a platform, publish it or pass its artifact; from the CLI, pass `--workflow` |
 | `WV-DEBUG-FRAME` | `step_out`, `signal` or `human_decision` named a frame that does not exist or is not simulated, or `step_out` had no called workflow to leave | Use a `key` from `frames` |
 | `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
@@ -682,7 +783,8 @@ fingerprints.
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
 | `WV-DEBUG-HUMAN-TASK` | That human task is not waiting for a decision now | Continue until it is active, and use its step ID as `name` |
-| `WV-DEBUG-STATE` | The simulated run already finished | Start a new simulation |
+| `WV-DEBUG-STATE` | The simulated run already finished, or the session ended with a diagnostic | Start a new simulation |
+| `WV-DEBUG-INCIDENT` | A `resolve` named no open incident of a transaction in doubt in that run or frame, a resolution its code doesn't take, or a record or output the session refused; or another run was in the middle of an event | Use `incident_key` from `transactions` and a resolution from the table in [Simulate transactions](#simulate-transactions), or `continue` first |
 | `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist, or no iteration of it, or a path through a step that is not a call or a call whose workflow the session does not have | Use complete IDs from `weave workflow explain`, or instance keys with one position per enclosing loop, prefixed with the frame keys of the calls |
 | `WV-DEBUG-TIME` | `advance_time` was negative or not a whole number | Use whole seconds, zero or more |
 | `WV-DEBUG-LIMIT` | A simulation limit was reached | Use a smaller input, or advance time in smaller amounts |
