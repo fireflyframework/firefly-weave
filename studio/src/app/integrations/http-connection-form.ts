@@ -19,8 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // checklist that names who must act before API actions can run. Both are
 // meant to be mounted lazily (@defer or a dynamic import). The form holds
 // secret handle NAMES only; it never asks for, stores or sends a secret
-// value, and it performs no request to the called API: "Check configuration"
-// asks the platform for a static check.
+// value. "Test connection" asks the platform to send one request to the API's
+// address with the saved connection's sign-in.
 import {
   ChangeDetectorRef,
   Component,
@@ -50,7 +50,6 @@ import {
 import {
   authKinds,
   authSlots,
-  checkCopy,
   checkDraft,
   connectionFailureCopy,
   connectionProblems,
@@ -64,6 +63,8 @@ import {
   sameRequest,
   slotLabels,
   suggestedName,
+  testCopy,
+  testOrigin,
   type AuthKind,
   type BuilderConnection,
   type ConnectionDraft,
@@ -82,7 +83,7 @@ import {
   type ReadinessStep,
 } from "./readiness";
 
-/** "Check configuration" waits this long: the platform check can reach an identity provider. */
+/** "Test connection" waits this long: a machine-token connection first asks its identity provider. */
 export const connectionCheckTimeout = 60_000;
 const maximumPages = 4;
 let sequence = 0;
@@ -626,9 +627,8 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       gap: 8px;
       margin-top: 8px;
     }
-    /* A long label ("Check configuration (no request is sent)") wraps inside
-       the dialog. On one line it is wider than a 360 px column and widens
-       every section of the grid with it. */
+    /* A long button label wraps inside the dialog: on one line it could be
+       wider than a 360 px column and widen every section of the grid with it. */
     .row button {
       max-width: 100%;
       padding-block: var(--space-1);
@@ -1096,12 +1096,13 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
         @switch (check().state) {
           @case ("running") {
             <p class="dialog-status" role="status">
-              <span class="loading-spinner small"></span>{{ checkCopy.running }}
+              <span class="loading-spinner small"></span
+              >{{ testCopy.running(testedOrigin()) }}
             </p>
           }
           @case ("ok") {
             <p class="notice ok" data-tone="success" role="status">
-              {{ checkCopy.ok }}
+              {{ testCopy.ok(testedOrigin()) }}
             </p>
           }
           @case ("failed") {
@@ -1230,8 +1231,10 @@ export class HttpConnectionForm implements OnInit {
   readonly id = `http-connection-${++sequence}`;
   readonly connector = httpConnector;
   readonly authKinds = authKinds;
-  readonly checkCopy = checkCopy;
-  readonly checkLabel = checkCopy.label;
+  readonly testCopy = testCopy;
+  readonly checkLabel = testCopy.label;
+  /** Where the created revision's test sends its request: host and port only. */
+  testedOrigin = signal("the server");
   draft: ConnectionDraft = emptyDraft();
   problems = signal<FieldProblem[]>([]);
   failure = signal("");
@@ -1593,6 +1596,14 @@ export class HttpConnectionForm implements OnInit {
       name: String(revision["name"] ?? this.draft.name),
       revision: Number(revision["revision"]) || 1,
     };
+    const config = revision["config"];
+    this.testedOrigin.set(
+      testOrigin(
+        config !== null && typeof config === "object"
+          ? (config as Record<string, unknown>)["baseUrl"]
+          : this.draft.origin,
+      ),
+    );
     this.attempt = null;
     this.done.set(created);
     this.editedSince.set(false);
@@ -1643,7 +1654,7 @@ export class HttpConnectionForm implements OnInit {
       return null;
     }
   }
-  /** "Check configuration (no request is sent)": the platform's static check. */
+  /** "Test connection": the platform sends one request to the API with the created revision's sign-in. */
   async checkConfiguration() {
     const revision = this.done();
     if (!revision || this.check().state === "running") return;
@@ -1653,7 +1664,11 @@ export class HttpConnectionForm implements OnInit {
     // belongs to the older revision and is dropped.
     const current = () => this.done()?.id === revision.id;
     try {
-      const result = await api.request<{ ok?: unknown; code?: unknown }>(
+      const result = await api.request<{
+        ok?: unknown;
+        code?: unknown;
+        reason?: unknown;
+      }>(
         `${api.environment}/connections/${encodeURIComponent(revision.id)}/test`,
         "POST",
         {},
@@ -1664,7 +1679,10 @@ export class HttpConnectionForm implements OnInit {
       this.check.set(
         result.ok === true
           ? { state: "ok" }
-          : { state: "failed", message: checkCopy.failed },
+          : {
+              state: "failed",
+              message: testCopy.failed(this.testedOrigin(), result.reason),
+            },
       );
     } catch (e) {
       if (!current()) return;

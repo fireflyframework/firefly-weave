@@ -14,14 +14,18 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""CI pins its Linux image and runs a cross-platform tier on macOS and Windows (acceptance spec §4)."""
+"""CI pins its Linux image and its actions, and runs a cross-platform tier on macOS and Windows (acceptance spec §4)."""
 
+import re
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github/workflows"
+USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(.*?)\s*$")
+# owner/repo[/path]@<full commit SHA> # <version>: the comment is what Dependabot reads and moves with the SHA.
+PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40} # v?\d+(?:\.\d+)*")
 XPLAT_SPECS = (
     "shell.spec.ts",
     "shell-navigation.spec.ts",
@@ -46,6 +50,18 @@ def test_no_workflow_uses_a_floating_ubuntu_image():
         assert "ubuntu-latest" not in path.read_text(encoding="utf-8"), path.name
 
 
+def test_every_action_is_pinned_to_a_full_commit_with_its_version():
+    # A tag can be moved to other code; a full commit SHA cannot. Actions in this repository (./) need no pin.
+    references = [
+        (path.name, number, match[1])
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if (match := USES.match(line)) and not match[1].startswith("./")
+    ]
+    assert references
+    assert [reference for reference in references if not PINNED_ACTION.fullmatch(reference[2])] == []
+
+
 def test_linux_check_and_documentation_jobs_run_on_ubuntu_24_04():
     checks = jobs("ci.yml")
     assert checks["offline"]["runs-on"] == checks["studio"]["runs-on"] == "ubuntu-24.04"
@@ -58,7 +74,8 @@ def test_the_cross_platform_tier_runs_vitest_xplat_and_portable_python():
     assert job["runs-on"] == "${{ matrix.os }}" and job["defaults"]["run"]["shell"] == "bash"
     commands = runs(job)
     uses = [step.get("uses", "") for step in job["steps"]]
-    assert commands.index("git config --global core.autocrlf false") < uses.index("actions/checkout@v4")
+    checkout = next(index for index, ref in enumerate(uses) if ref.startswith("actions/checkout@"))
+    assert commands.index("git config --global core.autocrlf false") < checkout
     assert "npm test && npm run build" in commands
     assert "npx playwright test --grep @xplat" in commands
     (pytest_line,) = [command for command in commands if "-m pytest" in command]

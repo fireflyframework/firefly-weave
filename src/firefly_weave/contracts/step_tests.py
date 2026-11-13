@@ -20,7 +20,7 @@ These are platform API bodies, so every field is snake_case. The server enforces
 policy, connection binding, side-effect acknowledgement, ownership); these models only fix the wire shapes.
 """
 
-from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Final, Literal, NamedTuple, Protocol, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -28,7 +28,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.contracts.catalog import Digest
 from firefly_weave.contracts.definitions import ContractModel, PositiveInt, ResourceName, SideEffect, VersionedReference
 from firefly_weave.contracts.instance_keys import InstanceKeyText, InstanceKeyTextOrEmpty
-from firefly_weave.contracts.values import JsonData, JsonObjectData, UnicodeString
+from firefly_weave.contracts.values import JsonData, JsonObject, JsonObjectData, UnicodeString
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.catalog import CatalogSnapshot
@@ -41,6 +41,10 @@ DRAFT_TEST_MAX_LIFETIME_SECONDS: Final = 3600
 type ToolName = Annotated[UnicodeString, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")]
 type StepTestStatus = Literal["running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]
 type StepTestCalls = Literal["enabled", "disabled"]
+# Why a step test's output was left out, as run views say it.
+type OmissionReason = Literal[
+    "classified_secret", "classification_unavailable", "uncertain_derived", "confidential_text", "resource_limit"
+]
 
 
 def _absent(value: object) -> bool:
@@ -118,6 +122,8 @@ class StepTestView(ContractModel):
     side_effect: SideEffect
     pending: list[StepTestPending] = Field(default_factory=list)
     output: JsonData = None
+    # Set when the output was left out, which tells an omitted output from a null one.
+    omitted: OmissionReason | None = Field(default=None, exclude_if=_absent)
     error: StepTestError | None = None
     attempts: int = Field(ge=0)
     started_at: AwareDatetime
@@ -128,6 +134,8 @@ class StepTestView(ContractModel):
     def pending_while_waiting(self) -> Self:
         if (self.status == "waiting") != bool(self.pending):
             raise ValueError("pending lists items exactly while the step test is waiting")
+        if self.omitted is not None and self.output is not None:
+            raise ValueError("An omitted output holds no value")
         return self
 
 
@@ -203,9 +211,19 @@ class SynthesizedTest(ContractModel):
     timeout_seconds: PositiveInt
 
 
+class DraftStep(NamedTuple):
+    """The saved draft's workflow document and the step a step test runs, as found in it."""
+
+    workflow: JsonObject
+    step: JsonObject
+
+
 class StepTestSynthesizer(Protocol):
-    """Builds the workflow for step tests of some step kinds (actions and AI tasks here; AI agents elsewhere)."""
+    """Builds the workflow for step tests of some step kinds (actions and AI tasks here; AI agents elsewhere).
+
+    The draft supplies what the request doesn't carry, such as the step's connection slot and AI profile.
+    """
 
     kinds: frozenset[str]
 
-    def synthesize(self, request: StepTestRequest, catalog: "CatalogSnapshot") -> SynthesizedTest: ...
+    def synthesize(self, request: StepTestRequest, draft: DraftStep, catalog: "CatalogSnapshot") -> SynthesizedTest: ...

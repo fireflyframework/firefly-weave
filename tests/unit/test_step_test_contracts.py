@@ -181,6 +181,16 @@ def test_a_synthesized_test_is_one_workflow_with_its_strongest_side_effect():
     assert synthesized.side_effect == "read_only"
 
 
+def test_the_synthesizer_protocol_takes_the_draft_step():
+    import inspect
+
+    parameters = list(inspect.signature(st.StepTestSynthesizer.synthesize).parameters)
+    assert parameters == ["self", "request", "draft", "catalog"]
+    step = {"id": "fetch", "kind": "action"}
+    draft = st.DraftStep(workflow={"kind": "Workflow"}, step=step)
+    assert draft.step is step and tuple(draft) == ({"kind": "Workflow"}, step)
+
+
 PLATFORM_BODIES = [
     st.StepTestRequest,
     st.StepTestAccepted,

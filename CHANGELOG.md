@@ -20,6 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- An operator's command, such as resuming a drained worker, no longer answers
+  429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
+  both of the API's slots for changes. A request that finds every slot of its
+  kind busy now waits, in arrival order, up to 250 ms for one to free before it
+  is refused, with the same code and `Retry-After`; reads, such as the
+  readiness probe, wait the same way for theirs.
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists
@@ -38,9 +44,18 @@ SPDX-License-Identifier: Apache-2.0
   summaries carry and filter `transaction_state`, six `transaction.*` events
   leave through the outbox (subscriptions now select up to 12 types), and
   `weave.transactions` and `weave.transaction_phases` count them. Histories
-  with transactions export and replay. Debug sessions don't simulate
-  transactions yet. Weave AI's guide names the `transaction` step. Migration
-  `0039_transactions_reserve` changes only the catalog.
+  with transactions export and replay. Weave AI's guide names the
+  `transaction` step. Migration `0039_transactions_reserve` changes only the
+  catalog.
+- Debug sessions and `weave workflow simulate` run transactions. Confirms,
+  cancels and undos take their own mocks, and a phase without one completes
+  with `{}` when its output allows it. Scripted failures take an `effect`,
+  `pending` keys (`--pending KEY`) never answer, and the `resolve` and
+  `cancel` commands apply a person's resolution and a run cancel to the
+  session only (`WV-DEBUG-INCIDENT` when one doesn't apply). The view lists
+  each transaction under `transactions`. A transaction no longer stops a
+  session at its first step. Older clients ignore `transactions`; an older
+  server answers 422 to `resolve`, `cancel` and requests with `pending`.
 - Steps can handle their own failures with the On error setting: `onError:
   continue` goes on with a `null` output, and `onError: errorOutput` runs the
   step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
@@ -86,6 +101,38 @@ SPDX-License-Identifier: Apache-2.0
   table; a workflow that uses one waits for it.
 - Published actions offer Change in a new version for retry, timeout and the
   request.
+- Steps can run for real in an environment. `POST {environment}/step-tests`
+  runs one step of a saved draft, an action or an AI task, as a test run of the
+  normal runtime. Only its creator can read or cancel it with the step test API;
+  its run is a test run that `run.read` and `run.cancel` reach like any other.
+  The server checks, before anything is written, the new `step_tester` role
+  (`step.test`), catalog read on the project, the environment's test policy,
+  `connection.bind` on each connection, the step's side effect (steps that
+  change data need `acknowledged_side_effect`, every time), the input and the
+  releases; a person runs at most 4 at once and starts 30 a minute per
+  environment. Test versions and activations never appear in a list, lookup or
+  compile catalog, expire with their run's timeout, and are purged once no run
+  uses them. Each environment's test policy (`GET`/`PUT
+  {environment}/test-policy`) is off until an administrator turns it on;
+  `weave platform up` turns it on in the local demo environment and gives the
+  local owner the role there. Migration `0040_editor_step_tests`.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin. In Studio, the button is now **Test connection**,
+  names the host it calls, and says whether the host was unreachable, not
+  allowed, refused the sign-in or answered with an error.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
+- Two changes to the same project at once, such as a failing parallel branch
+  and its sibling completing together, no longer answer 429
+  `WV-OPERATION-CAPACITY`. A change used to check its run's stored workflow
+  artifact again for every check while it held the project's operation lock.
+  Weave now keeps each checked artifact for the process (at most 64, and
+  64 MiB) and reuses it only for the same content, limits and language
+  features. A task completion holds the lock about 76 ms instead of 220–330 ms
+  on an idle host.
 - The agentic worker serves a new task, the **model turn**
   (`weave-agentic.turn@1.0.0`), which AI agent steps will run on: one request
   to the model with the transcript so far and the step's tools. The answer is

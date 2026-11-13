@@ -36,6 +36,9 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.oidc import AuthenticationFailed
 from firefly_weave.access.providers.base import AccessTokenVerifier, PrincipalResolver
 
+# The person a client made a request for, as the canonical UUID text of their principal ID.
+EXPECTED_PRINCIPAL_HEADER = "X-Weave-Principal"
+
 
 @dataclass(frozen=True)
 class VerifierSet:
@@ -140,6 +143,20 @@ class AuthenticationFilter(OncePerRequestFilter):
                 request, JSONResponse({"code": "WV-INTERNAL", "message": "Request failed"}, status_code=500)
             )
         request.state.principal = principal
+        # A client that names the person it made this request for (Studio does, for every change) is refused when
+        # the token now belongs to someone else, such as after a sign-in elsewhere: nothing runs as another person.
+        expected = request.headers.get(EXPECTED_PRINCIPAL_HEADER)
+        if expected is not None and expected != str(principal.id):
+            return self.finish(
+                request,
+                JSONResponse(
+                    {
+                        "code": "WV-PRINCIPAL-CHANGED",
+                        "message": "This request was made for another person; nothing was changed.",
+                    },
+                    status_code=409,
+                ),
+            )
         context = SecurityContext(user_id=str(principal.id))
         request.state.security_context = context
         current = RequestContext.current()

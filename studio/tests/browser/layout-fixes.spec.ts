@@ -157,9 +157,7 @@ test.describe("360x740", () => {
     await page.locator(".resource-row").click();
     const detail = page.locator(".record-detail");
     await expect(
-      detail.getByRole("button", {
-        name: "Check configuration (no request is sent)",
-      }),
+      detail.getByRole("button", { name: "Test connection" }),
     ).toBeVisible();
     await expectNoSidewaysScroll(detail);
   });
