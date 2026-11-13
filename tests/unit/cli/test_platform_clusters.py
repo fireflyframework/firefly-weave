@@ -1304,6 +1304,59 @@ def test_connect_never_repoints_another_target_whose_namespace_another_installat
     assert saved["api_address"] == "172.30.0.5" and set(saved["targets"]) == {"weave-workers"}
 
 
+def network_leaves(commands, since=0):
+    """Each platform container a call took off the cluster network: (call name, container)."""
+    return [(call.name, call.argv[-1]) for call in commands.calls[since:] if "disconnect" in call.argv]
+
+
+@pytest.mark.parametrize("stage", ["namespace check", "mirror", "runner push", "shared apply"])
+def test_a_connect_that_stops_before_the_cluster_follows_the_moved_platform_takes_it_off_the_network(world, stage):
+    """Until the policies name the platform's new addresses, any pod in Weave's namespaces could reach it there: a
+    connect that stops between the join and repointing the cluster's other targets leaves the network, and the next
+    connect joins again."""
+    directory, commands, config, cluster = world
+    connect(world)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    namespace, refusal = "weave-workers", f"The {stage} failed."
+    if stage == "namespace check":
+        # The cluster's other target, weave-workers, now belongs to another installation.
+        cluster.namespace, namespace, refusal = FOREIGN, "team-b", TAKEN_TARGET
+    tokens = {"mirror": ["exec", "mkdir"], "runner push": ["push"], "shared apply": [KUBECTL, "apply", "--server-side"]}
+    if stage in tokens:
+        commands.answer(tokens[stage], PlatformError(refusal))
+    before = len(commands.calls)
+    with pytest.raises(PlatformError) as stopped:
+        clusters.connect(directory, "kind", "weave-test", namespace, kubeconfig=config, notice=lambda line: None)
+    assert str(stopped.value) == refusal
+    assert network_leaves(commands, before) == [
+        ("cluster-network-leave", KEYCLOAK),
+        ("cluster-network-leave", REGISTRY),
+    ]
+    assert cluster.joined == set()
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
+    # Once the cause is gone, connect joins again and the cluster carries the new address.
+    cluster.namespace = ""
+    if stage in tokens:
+        commands.answer(tokens[stage], "")
+    commands.answer([KUBECTL, "get", "namespace", "team-b", "-o", "jsonpath={.metadata.uid}"], UID)
+    clusters.connect(directory, "kind", "weave-test", namespace, kubeconfig=config, notice=lambda line: None)
+    assert cluster.joined == {KEYCLOAK, REGISTRY}
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.7"
+
+
+def test_a_connect_that_stops_while_the_platform_kept_its_addresses_stays_on_the_network(world):
+    """The policies already name the platform's addresses, so a reconnect that stops has nothing to take off."""
+    _, commands, _, cluster = world
+    connect(world)
+    commands.answer([KUBECTL, "apply", "--server-side"], PlatformError("The API server refused the apply."))
+    before = len(commands.calls)
+    with pytest.raises(PlatformError):
+        connect(world)
+    assert network_leaves(commands, before) == []
+    assert cluster.joined == {KEYCLOAK, REGISTRY}
+
+
 def test_refresh_applies_only_to_the_cluster_that_publishes_the_contexts_port(world, monkeypatch, tmp_path):
     """Refresh reaches the cluster through the default kubeconfig, so it ties the context's server port to the port
     the cluster's API publishes, as preflight does."""

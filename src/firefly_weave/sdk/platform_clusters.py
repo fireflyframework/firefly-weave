@@ -1267,34 +1267,41 @@ def connect(
         targets: dict[str, dict[str, Any]] = saved["targets"] if saved is not None else {}
         others = {name: item for name, item in targets.items() if name != namespace}
         moved = _moved(saved, record)
-        if moved:
-            # The cluster's other targets follow the platform's new addresses below: as in refresh, each namespace must
-            # still be this installation's before anything is applied.
-            for owned in sorted(others):
-                _check_namespace(state, kube, owned, _taken(TAKEN_TARGET, provider, cluster, owned))
-        # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
-        platform_origins.set_cluster_entries(state, key, network.subnet)
+        try:
+            if moved:
+                # The cluster's other targets follow the platform's new addresses below: as in refresh, each namespace
+                # must still be this installation's before anything is applied.
+                for owned in sorted(others):
+                    _check_namespace(state, kube, owned, _taken(TAKEN_TARGET, provider, cluster, owned))
+            # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
+            platform_origins.set_cluster_entries(state, key, network.subnet)
 
-        notice("mirror: pointing the nodes at the platform registry")
-        _mirror(connection)
+            notice("mirror: pointing the nodes at the platform registry")
+            _mirror(connection)
 
-        notice("images: pushing the runner image to the platform registry")
-        runner_image = _runner_image(connection)
+            notice("images: pushing the runner image to the platform registry")
+            runner_image = _runner_image(connection)
 
-        notice(f"shared: applying the objects in {objects.SYSTEM_NAMESPACE}")
-        _apply(connection, "cluster-apply-shared", objects.shared_objects(network))
+            notice(f"shared: applying the objects in {objects.SYSTEM_NAMESPACE}")
+            _apply(connection, "cluster-apply-shared", objects.shared_objects(network))
 
-        notice(f"namespace: applying {namespace}")
-        _apply(
-            connection,
-            "cluster-apply-namespace",
-            objects.namespace_objects(_draft(connection, namespace, targets.get(namespace, {}), runner_image)),
-        )
-        if moved:
-            # The cluster's other targets follow the platform's new addresses before the receipt records them.
-            _follow(connection, others, "cluster-apply-namespace")
-        _recorded(value, key, record)
-        save(directory, value)
+            notice(f"namespace: applying {namespace}")
+            _apply(
+                connection,
+                "cluster-apply-namespace",
+                objects.namespace_objects(_draft(connection, namespace, targets.get(namespace, {}), runner_image)),
+            )
+            if moved:
+                # The cluster's other targets follow the platform's new addresses before the receipt records them.
+                _follow(connection, others, "cluster-apply-namespace")
+            _recorded(value, key, record)
+            save(directory, value)
+        except local.PlatformError as error:
+            if not moved:
+                raise
+            # As in refresh: the policies don't name the platform's new addresses yet, so any pod in Weave's
+            # namespaces could reach it there. Its containers leave the network until a connect or up repoints them.
+            raise _leave(connection, connection.platform, error) from None
         uid = _uid(connection, namespace)
 
         notice("identities: the runner's and the workers' sign-in")
