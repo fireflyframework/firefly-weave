@@ -501,6 +501,43 @@ def test_status_does_not_claim_foreign_listener_as_owned_api(owned, monkeypatch)
     assert result["api_ready"] is False
 
 
+def test_status_names_each_connected_cluster_and_its_namespaces_with_their_states(owned, monkeypatch, capsys):
+    """A namespace whose connect stopped reads pending, not connected: it still holds its Keycloak clients and
+    Secrets until it is connected again or disconnected."""
+    from firefly_weave.cli.platform import _show_status
+    from firefly_weave.sdk import platform_clusters, platform_docker
+
+    directory, _ = owned
+    monkeypatch.setattr(platform_docker, "inspect", lambda state: {"state": "absent"})
+    monkeypatch.setattr(platform, "_probe", lambda *a: True)
+    assert "clusters" not in platform.status(directory)
+    target = {
+        "target_name": "kind-weave-test",
+        "pair": 1,
+        "generation": "0" * 32,
+        "state": "connected",
+        "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "connected_at": "2026-11-12T10:00:00Z",
+    }
+    pending = {"target_name": "kind-weave-test.team-b", "pair": 2, "generation": "1" * 32, "state": "pending"}
+    record = {
+        "provider": "kind",
+        "cluster": "weave-test",
+        "context": "kind-weave-test",
+        "docker_context": "colima-weave-tests",
+        "network": "weave-kind-weave-test",
+        "subnet": "172.30.0.0/16",
+        "api_address": "172.30.0.5",
+        "registry_address": "172.30.0.6",
+        "targets": {"weave-workers": target, "team-b": pending},
+    }
+    platform_clusters.save(directory, {"format": platform_clusters.FORMAT, "clusters": {"kind-weave-test": record}})
+    result = platform.status(directory)
+    assert result["clusters"] == {"kind-weave-test": {"team-b": "pending", "weave-workers": "connected"}}
+    _show_status(result)
+    assert "Clusters: kind-weave-test (team-b pending, weave-workers connected)" in capsys.readouterr().out.splitlines()
+
+
 def test_public_secret_rotation_and_removal_report_live_docker_snapshot(owned, monkeypatch):
     from firefly_weave.sdk import platform_docker
 

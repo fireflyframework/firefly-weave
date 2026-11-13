@@ -22,6 +22,8 @@ The scan reports counts only; it never returns or prints a canary.
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -53,6 +55,50 @@ def admin_secret(platform_dir: Path) -> str | None:
         if separator and name == "WEAVE_KC_ADMIN_SECRET":
             return value.strip().strip("'\"") or None
     return None
+
+
+REDACTED = "[redacted]"
+KUBECONFIG = "kubeconfig"
+_KUBECONFIG_SECRET = re.compile(r"^\s*(client-key-data|token):\s*(\S+)\s*$", re.MULTILINE)
+
+
+def kubeconfig_secrets(path: Path) -> list[str]:
+    """The cluster admin's credentials in a kubeconfig: each token, and each client key both as the file holds it
+    (base64) and decoded, as a leak would print it. Certificates are public and stay out."""
+    if not path.is_file():
+        return []
+    found: list[str] = []
+    for name, value in _KUBECONFIG_SECRET.findall(path.read_text(encoding="utf-8")):
+        found.append(value)
+        if name == "client-key-data":
+            # A value that isn't base64 stays in as written.
+            with contextlib.suppress(ValueError):
+                found.append(base64.b64decode(value, validate=True).decode("utf-8", "replace").strip())
+    return found
+
+
+def run_secrets(private: Path, cluster: Iterable[str] = ()) -> list[str]:
+    """The secrets the canary scan looks for: the run's canaries, each person's password, the identity provider's
+    admin secret, the cluster admin's credentials in the run's kubeconfig, and ``cluster``, the client secrets read
+    from the run's cluster; longest first, so a secret that holds another one is replaced whole."""
+    found: list[Any] = []
+    canaries = private / "canaries.json"
+    if canaries.is_file():
+        found += json.loads(canaries.read_text(encoding="utf-8")).values()
+    for person in sorted((private / "people").glob("*.json")):
+        found.append(json.loads(person.read_text(encoding="utf-8"))["password"])
+    found.append(admin_secret(private / ".local" / "platform"))
+    found += kubeconfig_secrets(private / KUBECONFIG)
+    found += cluster
+    return sorted({value for value in found if isinstance(value, str) and value}, key=len, reverse=True)
+
+
+def redact(text: str, secrets: Iterable[str]) -> tuple[str, bool]:
+    """``text`` with each secret replaced by [redacted], and whether it held any."""
+    redacted = text
+    for value in secrets:
+        redacted = redacted.replace(value, REDACTED)
+    return redacted, redacted != text
 
 
 @dataclass(frozen=True)

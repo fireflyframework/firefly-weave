@@ -303,6 +303,21 @@ def package_worker(
 OWNERSHIP_LABEL = "io.getfirefly.weave.deployment"
 
 
+def _stop_group(child: subprocess.Popen[bytes]) -> None:
+    """Kill the command's own process group; a group that is already gone needs nothing.
+
+    Once every process of a group has exited, macOS can answer killpg with EPERM instead of ESRCH. EPERM while the
+    leader still runs means the kill really failed, and waiting for the leader could last forever.
+    """
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if child.poll() is None:
+            raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
+
+
 def run_command(
     argv: list[str],
     *,
@@ -311,8 +326,13 @@ def run_command(
     log_path: Path | None = None,
     env: dict[str, str] | None = None,
     cwd: Path | None = None,
+    stdin: bytes | None = None,
 ) -> bytes:
-    """Bound bytes and wall time, killing only the process group created here."""
+    """Bound bytes and wall time, killing only the process group created here.
+
+    ``stdin``, when given, is written to the command while its output is read, and never logged: the log keeps the
+    output only, so a secret passed this way stays out of argv, the environment and the log.
+    """
     if timeout <= 0 or limit < 1:
         fail()
     log = None
@@ -328,7 +348,7 @@ def run_command(
     try:
         child = subprocess.Popen(
             argv,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -340,21 +360,39 @@ def run_command(
             log.close()
         raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
     result = bytearray()
+    pending = memoryview(stdin or b"")
     deadline = time.monotonic() + timeout
     assert child.stdout is not None
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
+            if child.stdin is not None:
+                os.set_blocking(child.stdin.fileno(), False)
+                if pending:
+                    selector.register(child.stdin, selectors.EVENT_WRITE)
+                else:
+                    child.stdin.close()
             while selector.get_map():
                 if child.returncode is None and child.poll() is not None:
                     # A completed command's helper can retain the pipe: stop the owned group,
                     # then drain the output already buffered before returning the leader's result.
-                    with suppress(ProcessLookupError):
-                        os.killpg(child.pid, signal.SIGKILL)
+                    _stop_group(child)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     fail()
                 for key, _ in selector.select(min(remaining, 0.1)):
+                    if key.fileobj is child.stdin:
+                        try:
+                            pending = pending[os.write(key.fd, pending[:65536]) :]
+                        except BlockingIOError:
+                            continue
+                        except BrokenPipeError:
+                            # The command stopped reading; its exit status tells whether that was a failure.
+                            pending = pending[len(pending) :]
+                        if not pending:
+                            selector.unregister(child.stdin)
+                            child.stdin.close()
+                        continue
                     chunk = os.read(key.fd, min(65536, limit - len(result) + 1))
                     if not chunk:
                         selector.unregister(key.fileobj)
@@ -368,13 +406,16 @@ def run_command(
     except (OSError, subprocess.TimeoutExpired):
         raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
     finally:
-        with suppress(ProcessLookupError):
-            os.killpg(child.pid, signal.SIGKILL)
-        child.wait()
-        child.stdout.close()
-        if log is not None:
-            log.write(result[:limit])
-            log.close()
+        try:
+            _stop_group(child)
+            child.wait()
+        finally:
+            child.stdout.close()
+            if child.stdin is not None and not child.stdin.closed:
+                child.stdin.close()
+            if log is not None:
+                log.write(result[:limit])
+                log.close()
 
 
 def verified_context(directory: Path) -> dict[str, Any]:

@@ -182,11 +182,14 @@ class OperationsRunner:
         adapter: InfrastructureAdapter,
         *,
         renew_interval: float = 15,
+        on_contact: Callable[[], None] | None = None,
     ) -> None:
         if not 0 < renew_interval <= 15:
             raise ValueError("Renew within the bounded lease window")
         self.client, self.policy, self.adapter = client, policy, adapter
         self.renew_interval = renew_interval
+        # Told after each renewal the platform accepted, so a long job still shows the runner in contact.
+        self.on_contact = on_contact
 
     async def send(self, operation: str, body: Any) -> Any:
         """Send a report or a renewal; a busy platform's capacity refusal (429) sends the same request again.
@@ -234,6 +237,14 @@ class OperationsRunner:
                     raise RunnerPolicyError()
                 validate_lease(refreshed, self.policy)
                 lease = refreshed
+                if self.on_contact is not None:
+                    try:
+                        self.on_contact()
+                    except OSError as error:
+                        # A heartbeat that can't be written never fails the job; the liveness probe notices.
+                        LOG.warning(
+                            "The runner couldn't record its heartbeat: %s", error.strerror or type(error).__name__
+                        )
 
         async def before_write() -> None:
             nonlocal effects_started

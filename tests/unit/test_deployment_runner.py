@@ -297,10 +297,10 @@ def test_a_restart_of_anything_but_a_worker_is_refused():
 
 
 @pytest.mark.parametrize(
-    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "1"), ("azure-container-apps", "1")]
+    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "2"), ("azure-container-apps", "1")]
 )
 def test_only_an_adapter_that_removes_the_reviewed_members_registers_version_2(adapter, version):
-    """Version 2 promises the scale-down rule: Compose removes exactly the reviewed members; the others do not yet."""
+    """Version 2 promises the scale-down rule: Compose and Kubernetes remove exactly the reviewed members."""
     from types import SimpleNamespace
     from uuid import uuid4
 
@@ -377,3 +377,241 @@ async def test_a_report_refused_for_any_other_reason_is_not_sent_again(monkeypat
     await OperationsRunner(client, policy, adapter).execute(lease)
     assert len(refused) == 1
     assert client.reports[-1].state == "reconciliation_required"
+
+
+def served(monkeypatch):
+    """Replace the SDK client serve() builds: record how it was built, register, and claim nothing."""
+    from types import SimpleNamespace
+
+    from firefly_weave.deployment_runner import application
+
+    built = []
+
+    class Client:
+        def __init__(self, base_url, provider, scope, *, timeout, transport=None, private_origin=None):
+            built.append({"base_url": base_url, "transport": transport, "private_origin": private_origin})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            assert operation == "deployment_runners.claim"
+            return None
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return built
+
+
+def runner_configuration(base_url):
+    from firefly_weave.deployment_runner.application import RunnerConfiguration
+
+    return RunnerConfiguration.model_validate(
+        {
+            "base_url": base_url,
+            "scope": Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()),
+            "token_file": "/run/weave/secrets/token",
+            "destination": DestinationPolicy.model_validate_json(
+                __import__("json").dumps(
+                    {
+                        "target_id": str(uuid4()),
+                        "adapter": "kubernetes",
+                        "external_identity": "namespace-uid",
+                        "boundary": "weave-workers",
+                        "executable": "/usr/local/bin/kubectl",
+                        "context": "weave-runner",
+                        "capabilities": ["observe"],
+                        "components": [
+                            {"name": "weave-worker", "container": "worker", "kind": "worker", "configuration": "local"}
+                        ],
+                        "image_repositories": ["127.0.0.1:5000/example-sleep"],
+                    }
+                )
+            ),
+        }
+    )
+
+
+async def test_the_runner_uses_the_pinned_transport_for_a_plain_http_api(monkeypatch):
+    from firefly_weave import private_origins as po
+    from firefly_weave.deployment_runner.application import serve
+
+    built = served(monkeypatch)
+    origin = "http://weave-api.weave-system.svc:8000"
+    entry = po.PrivateOrigin(origin=origin, purpose="runner", networks=("10.89.0.0/24",), credentials="bridge")
+    with po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry])):
+        for base_url in (origin, "https://weave.example", "http://127.0.0.1:8000"):
+            await serve(runner_configuration(base_url), once=True)
+    # Only the approved private origin gets the DNS-pinned transport; HTTPS and loopback stay as they were.
+    assert [(item["transport"] is not None, item["private_origin"]) for item in built] == [
+        (True, "runner"),
+        (False, None),
+        (False, None),
+    ]
+
+
+async def test_the_runner_writes_its_heartbeat_after_a_claim(monkeypatch, tmp_path):
+    import stat
+
+    from firefly_weave.deployment_runner.application import serve
+
+    served(monkeypatch)
+    beat = tmp_path / "heartbeat"
+    monkeypatch.setenv("WEAVE_RUNNER_HEARTBEAT_FILE", str(beat))
+    await serve(runner_configuration("https://weave.example"), once=True)
+    assert stat.S_IMODE(beat.stat().st_mode) == 0o600
+
+
+async def test_lease_renewals_during_a_job_count_as_contact():
+    """A restart can run 330 s, longer than the liveness probe allows, so every renewal refreshes the heartbeat."""
+    lease, policy = fixture()
+    client, adapter, contacts = Client(lease), Adapter(lease), []
+    await OperationsRunner(client, policy, adapter, on_contact=lambda: contacts.append(True)).execute(lease)
+    assert client.renewals >= 1 and len(contacts) == client.renewals
+
+
+async def test_the_runner_starts_the_token_relay_when_asked(monkeypatch):
+    from firefly_weave.deployment_runner import application
+
+    served(monkeypatch)
+    started, closed = [], []
+
+    class Relay:
+        def close(self):
+            closed.append(True)
+
+        async def wait_closed(self):
+            return None
+
+    async def start_relay(destination, *, listen=8080):
+        started.append((destination, listen))
+        return Relay()
+
+    monkeypatch.setattr(application, "start_relay", start_relay)
+    monkeypatch.setenv("WEAVE_TOKEN_RELAY", "weave-api.weave-system.svc:8080")
+    await application.serve(runner_configuration("https://weave.example"), once=True)
+    assert started == [("weave-api.weave-system.svc:8080", 8080)] and closed == [True]
+
+
+def scale_down_lease():
+    """The fixture's lease as a reviewed scale-down from 3 workers to 1."""
+    lease, policy = fixture()
+    observed = lease.observation.resources[0].model_copy(update={"replicas": 3, "ready_replicas": 3})
+    observation = lease.observation.model_copy(update={"resources": [observed]})
+    observation = observation.model_copy(
+        update={"digest": canonical_digest(observation.model_dump(mode="json", exclude={"digest"}))}
+    )
+    step = lease.plan.steps[0]
+    component = step.component.model_copy(update={"replicas": 1})
+    plan = lease.plan.model_copy(
+        update={"steps": [step.model_copy(update={"component": component})], "observation_digest": observation.digest}
+    )
+    plan = plan.model_copy(update={"digest": canonical_digest(plan.model_dump(mode="json", exclude={"digest"}))})
+    job = lease.job.model_copy(update={"plan_digest": plan.digest})
+    deployment = lease.deployment.model_copy(update={"components": [component]})
+    return lease.model_copy(
+        update={"plan": plan, "observation": observation, "job": job, "deployment": deployment}
+    ), policy
+
+
+class Cluster:
+    """kubectl for the fixture's namespace: three ready worker pods, and no permission to patch pods."""
+
+    def __init__(self, image, target_id):
+        self.image, self.target_id, self.writes, self.dry_pod_patches = image, str(target_id), [], 0
+
+    def deployment(self, replicas):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": "worker",
+                "namespace": "weave",
+                "uid": "deployment-uid",
+                "resourceVersion": "8",
+                "generation": 1,
+                "labels": {"firefly.weave/target": self.target_id},
+            },
+            "spec": {
+                "replicas": replicas,
+                "selector": {"matchLabels": {"app": "worker"}},
+                "template": {
+                    "metadata": {"annotations": {"firefly.weave/configuration": "current"}},
+                    "spec": {"containers": [{"name": "worker", "image": self.image}]},
+                },
+            },
+            "status": {"observedGeneration": 1, "replicas": 3, "readyReplicas": 3, "updatedReplicas": 3},
+        }
+
+    async def command(self, argv, **kwargs):
+        import json
+
+        from firefly_weave.deployment_runner.command import CommandError
+
+        args = argv[6:]
+        if args[:2] == ["get", "namespace"]:
+            return json.dumps({"metadata": {"name": "weave", "uid": "test-cluster"}}).encode()
+        if args[:2] == ["get", "deployments.apps"]:
+            value = self.deployment(3)
+            value["metadata"]["labels"] = {}
+            return json.dumps(value).encode()
+        if args[:2] == ["get", "pods"] and "?(@.metadata.annotations" in args[-1]:
+            return b""
+        if args[:2] == ["get", "pods"]:
+            fields = ["worker-abc12-{0}", "weave", "", "abc12", "apps/v1", "ReplicaSet", "worker-abc12", "Running"]
+            line = "\t".join([*fields, "True", "0", "2026-11-11T10:0{0}:00Z", "node"]) + "\n"
+            return "".join(line.format(index) for index in range(3)).encode()
+        if args[:2] == ["patch", "deployments.apps"]:
+            if "--dry-run=server" not in args:
+                self.writes.append(args)
+            return json.dumps(self.deployment(1)).encode()
+        if args[:2] == ["patch", "pods"]:
+            self.dry_pod_patches += "--dry-run=server" in args
+            raise CommandError()
+        raise AssertionError(args)
+
+
+async def test_a_scale_down_without_permission_to_patch_pods_fails_before_any_change():
+    """A Kubernetes runner set up before scale-downs may lack patch on pods: the job fails, nothing changed."""
+    from firefly_weave.deployment_runner.kubernetes import KubernetesAdapter
+
+    lease, policy = scale_down_lease()
+    client, cluster = Client(lease), Cluster(lease.plan.steps[0].component.image, policy.target_id)
+    await OperationsRunner(client, policy, KubernetesAdapter(policy, command=cluster.command)).execute(lease)
+    terminal = client.reports[-1]
+    assert [item.state for item in client.reports] == ["running", "failed"]
+    assert terminal.receipt.code == "precondition_failed" and not terminal.receipt.external_effects_may_continue
+    assert cluster.writes == [] and cluster.dry_pod_patches == 1
+
+
+async def test_a_heartbeat_that_cannot_be_written_never_fails_a_job(caplog):
+    import logging
+
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+
+    def contact():
+        raise PermissionError(13, "Permission denied")
+
+    with caplog.at_level(logging.WARNING):
+        await OperationsRunner(client, policy, adapter, on_contact=contact).execute(lease)
+    assert client.reports[-1].state == "succeeded" and client.renewals >= 1
+    assert any("heartbeat" in record.getMessage() for record in caplog.records)
+
+
+async def test_the_runner_keeps_claiming_when_its_heartbeat_cannot_be_written(monkeypatch, tmp_path, caplog):
+    import logging
+
+    from firefly_weave.deployment_runner.application import serve
+
+    served(monkeypatch)
+    monkeypatch.setenv("WEAVE_RUNNER_HEARTBEAT_FILE", str(tmp_path / "missing" / "heartbeat"))
+    with caplog.at_level(logging.WARNING):
+        await serve(runner_configuration("https://weave.example"), once=True)
+    assert any("heartbeat" in record.getMessage() for record in caplog.records)

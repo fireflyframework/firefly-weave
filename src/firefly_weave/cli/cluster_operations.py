@@ -181,9 +181,12 @@ def check(config: Path) -> None:
     """Validate local policy and read the destination; do not register or apply jobs."""
     import asyncio
 
+    from firefly_weave import private_origins
     from firefly_weave.deployment_runner.application import adapter_for, load_configuration
 
     try:
+        # The configuration may name a private origin that only this policy approves.
+        private_origins.install(private_origins.load())
         settings = load_configuration(config)
         machine_result(asyncio.run(adapter_for(settings.destination).observe()))
     except Exception:
@@ -199,9 +202,11 @@ def run(config: Path, once: bool) -> None:
     """Poll Weave over HTTPS and execute only leased, approved local operations."""
     import asyncio
 
+    from firefly_weave import private_origins
     from firefly_weave.deployment_runner.application import load_configuration, serve
 
     try:
+        private_origins.install(private_origins.load())
         settings = load_configuration(config)
         asyncio.run(serve(settings, once=once))
     except (KeyboardInterrupt, asyncio.CancelledError):

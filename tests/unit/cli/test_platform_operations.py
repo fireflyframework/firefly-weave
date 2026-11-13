@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from ai_platform_support import OWNER, SCOPE, SERVER_IMAGE, SUBNET, owned_fixture  # noqa: F401
 
@@ -33,6 +34,9 @@ RUNNER_IMAGE_ID = "sha256:" + "2" * 64
 PUSHED = "sha256:" + "3" * 64
 SUBJECTS = {"weave-operations-worker": str(uuid4()), "weave-operations-runner": str(uuid4())}
 HOST = str(uuid4())
+CLUSTER_CLIENTS = {
+    f"weave-cluster-{role}-{pair}": "application" for pair in range(1, 9) for role in ("runner", "worker")
+}
 MANIFEST = json.loads((Path(__file__).resolve().parents[2] / "fixtures/operations-worker/manifest.json").read_text())
 
 
@@ -294,21 +298,96 @@ def test_the_provider_accepts_the_operations_clients_once(owned):
         "weave-cli": "human",
         "weave-operations-worker": "application",
         "weave-operations-runner": "application",
+        **CLUSTER_CLIENTS,
     }
     assert platform_operations.prepare_provider(state) is False
     assert platform_docker.environment(state, {})["WEAVE_OIDC_PROVIDERS"]
 
 
-def test_the_api_environment_accepts_exactly_the_operations_clients(owned):
+def test_up_registers_the_cluster_client_pairs_once(owned):
+    """An installation from before cluster connections lists the two operations clients only: the first up of this
+    version adds the eight runner and eight worker clients once, so the API is recreated once, never per connect."""
+    directory, state, _ = owned
+    path = directory / "runtime.env"
+    before = '"weave-cli": "human"'
+    after = before + ', "weave-operations-worker": "application", "weave-operations-runner": "application"'
+    path.write_text(path.read_text().replace(before, after))
+    assert platform_operations.prepare_provider(state) is True
+    clients = json.loads(platform._env_file(path)["WEAVE_OIDC_PROVIDERS"])[0]["clients"]
+    assert {name: kind for name, kind in clients.items() if name.startswith("weave-cluster-")} == CLUSTER_CLIENTS
+    assert platform_operations.prepare_provider(state) is False
+
+
+@pytest.mark.parametrize("intruder", ["intruder", "weave-cluster-runner-9", "weave-cluster-worker-0"])
+def test_the_api_environment_accepts_exactly_the_operations_and_cluster_clients(owned, intruder):
     directory, state, _ = owned
     path = directory / "runtime.env"
     text = path.read_text()
-    path.write_text(text.replace('"weave-cli": "human"', '"weave-cli": "human", "intruder": "application"'))
+    path.write_text(text.replace('"weave-cli": "human"', f'"weave-cli": "human", "{intruder}": "application"'))
     with pytest.raises(platform.PlatformError, match="identity configuration"):
         platform_docker.environment(state, {})
     path.write_text(text)
     platform_operations.prepare_provider(state)
-    platform_docker.environment(state, {})
+    clients = json.loads(platform_docker.environment(state, {})["WEAVE_OIDC_PROVIDERS"])[0]["clients"]
+    assert {"weave-cluster-runner-8", "weave-cluster-worker-8"} <= set(clients)
+
+
+async def test_keycloak_clients_are_made_for_exactly_the_ids_given_and_a_second_secret_updates_them(owned):
+    """A cluster target uses the same client setup with its own pair: only the IDs it passes, with its secret."""
+    _, state, _ = owned
+    subject = str(uuid4())
+    made: dict[str, dict] = {}
+    methods: list[str] = []
+
+    def keycloak(request):
+        path = request.url.path
+        if path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if path.endswith("/service-account-user"):
+            return httpx.Response(200, json={"id": subject})
+        if path.endswith("/clients") and request.method == "GET":
+            wanted = request.url.params["clientId"]
+            if wanted == "weave-worker":
+                mapper = {"id": "mapper-1", "name": "sub", "protocolMapper": "oidc-sub-mapper"}
+                return httpx.Response(200, json=[{"id": "template", "clientId": wanted, "protocolMappers": [mapper]}])
+            return httpx.Response(200, json=[made[wanted]] if wanted in made else [])
+        body = json.loads(request.content)
+        methods.append(request.method)
+        made[body["clientId"]] = {**body, "id": "id-" + body["clientId"]}
+        return httpx.Response(201 if request.method == "POST" else 204)
+
+    transport = httpx.MockTransport(keycloak)
+    found = await platform_operations._keycloak_clients(state, {"weave-cluster-runner-3": b"first"}, transport)
+    assert found == {"weave-cluster-runner-3": subject} and list(made) == ["weave-cluster-runner-3"]
+    assert made["weave-cluster-runner-3"]["secret"] == "first"
+    assert made["weave-cluster-runner-3"]["protocolMappers"] == [{"name": "sub", "protocolMapper": "oidc-sub-mapper"}]
+    await platform_operations._keycloak_clients(state, {"weave-cluster-runner-3": b"second"}, transport)
+    assert methods == ["POST", "PUT"] and made["weave-cluster-runner-3"]["secret"] == "second"
+
+
+async def test_deleting_cluster_clients_removes_exactly_those_and_never_a_platform_client(owned):
+    """Disconnect deletes its pair's clients, one already gone is fine, and the platform's own can't be named."""
+    _, state, _ = owned
+    present = {"weave-cluster-runner-2": "id-runner-2"}
+    deleted: list[str] = []
+
+    def keycloak(request):
+        path = request.url.path
+        if path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.method == "GET":
+            wanted = request.url.params["clientId"]
+            return httpx.Response(200, json=[{"id": present[wanted], "clientId": wanted}] if wanted in present else [])
+        deleted.append(path.rsplit("/", 1)[1])
+        return httpx.Response(204)
+
+    transport = httpx.MockTransport(keycloak)
+    pair = ["weave-cluster-runner-2", "weave-cluster-worker-2"]
+    await platform_operations._delete_keycloak_clients(state, pair, transport)
+    assert deleted == ["id-runner-2"]
+    with pytest.raises(platform.PlatformError, match="Only cluster clients"):
+        await platform_operations._delete_keycloak_clients(state, ["weave-cluster-runner-2", "weave-worker"], transport)
+    assert deleted == ["id-runner-2"]
 
 
 def test_the_host_account_may_register_the_target_before_it_does(operations):
@@ -419,6 +498,61 @@ def test_up_prepares_the_provider_before_starting_and_sets_operations_up_after(o
     monkeypatch.setattr(platform, "demo_test_calls", lambda directory: called.append("test calls") or "enabled")
     platform.up(directory, Path("."), None)
     assert called[:4] == ["provider", "start", "demo", "test calls"] and "enable" in called[4:]
+
+
+def test_up_refreshes_the_connected_clusters_after_operations_and_reports_them(owned, monkeypatch):
+    """A cluster that's gone reads missing in up's result; up itself still succeeds."""
+    from firefly_weave.sdk import platform_clusters
+
+    directory, _, _ = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
+    called = []
+    missing = [{"name": "kind-weave-test", "state": "missing"}]
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: None)
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable") or {})
+    monkeypatch.setattr(platform_clusters, "refresh", lambda directory, notice: called.append("clusters") or missing)
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
+    result = platform.up(directory, Path("."), None)
+    assert called == ["enable", "clusters"] and result["clusters"] == missing
+
+
+def test_up_prints_each_clusters_state_and_why_one_could_not_be_refreshed(owned, monkeypatch):
+    """Progress lines are cut to the terminal's width and JSON output has none, so up's own output names each
+    cluster's state and the whole reason a cluster reads unreachable."""
+    from click.testing import CliRunner
+
+    from firefly_weave.cli.main import cli
+    from firefly_weave.sdk import platform_clusters
+
+    directory, _, _ = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
+    reason = "No kind-weave-b context in your default kubeconfig. Run weave platform cluster connect again."
+    found = [
+        {"name": "kind-weave-a", "state": "connected"},
+        {"name": "kind-weave-b", "state": "unreachable", "reason": reason},
+        {"name": "k3d-weave-c", "state": "missing"},
+    ]
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: None)
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: {})
+    monkeypatch.setattr(platform_clusters, "refresh", lambda directory, notice: found)
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
+    result = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "up"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "Clusters: kind-weave-a connected; kind-weave-b unreachable (No kind-weave-b context in your default "
+        "kubeconfig. Run weave platform cluster connect again.); k3d-weave-c missing"
+    ) in result.stdout.splitlines()
+    found[:] = [{"name": "kind-weave-a", "state": "missing"}]
+    missing = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "up"])
+    assert "Clusters: kind-weave-a missing" in missing.stdout.splitlines()
 
 
 @pytest.mark.parametrize(("flags", "expected"), [([], True), (["--no-operations"], False)])

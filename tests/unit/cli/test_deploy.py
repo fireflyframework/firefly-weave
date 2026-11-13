@@ -314,6 +314,65 @@ def test_bounded_real_subprocess_times_out_and_limits_output():
         run_command([sys.executable, "-c", "raise ValueError('secret')"], timeout=2, limit=10000)
 
 
+def test_a_process_group_that_refuses_the_kill_still_ends_the_command_cleanly(tmp_path, monkeypatch):
+    """macOS can answer killpg on an exited group with EPERM, not ESRCH. The runner must still return a finished
+    command's output, still report a timeout, and still close the pipe and write its log."""
+    import sys
+
+    from firefly_weave.sdk import deployment
+
+    killpg = deployment.os.killpg
+
+    def macos(pid, signum):
+        # What macOS can answer for a group whose processes have all exited.
+        try:
+            killpg(pid, signum)
+        except ProcessLookupError:
+            raise PermissionError(1, "Operation not permitted") from None
+
+    monkeypatch.setattr(deployment.os, "killpg", macos)
+    log = tmp_path / "command.log"
+    assert deployment.run_command([sys.executable, "-c", "print('owned')"], timeout=10, log_path=log) == b"owned\n"
+    assert log.read_bytes() == b"owned\n"
+    # The leader exits at once while a helper in its own session keeps the pipe open: the runner stops the leader's
+    # group, now empty, inside its read loop, then reads to the end.
+    detached = (
+        "import subprocess, sys; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(0.5)'], start_new_session=True); "
+        "print('owned')"
+    )
+    assert deployment.run_command([sys.executable, "-c", detached], timeout=10) == b"owned\n"
+    with pytest.raises(deployment.DeploymentError, match="prerequisites"):
+        deployment.run_command([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.2, limit=100)
+
+
+def test_a_running_group_that_refuses_the_kill_fails_at_once_instead_of_waiting(tmp_path, monkeypatch):
+    """EPERM while the leader still runs means the kill really failed; the runner reports it rather than waiting."""
+    import contextlib
+    import os
+    import signal
+    import sys
+    import time
+
+    from firefly_weave.sdk import deployment
+
+    def refused(pid, signum):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(deployment.os, "killpg", refused)
+    marker = tmp_path / "child.pid"
+    code = f"import os, pathlib, time; pathlib.Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(5)"
+    started = time.monotonic()
+    try:
+        with pytest.raises(deployment.DeploymentError, match="prerequisites"):
+            deployment.run_command([sys.executable, "-c", code], timeout=0.5, limit=100)
+        assert time.monotonic() - started < 3
+    finally:
+        if marker.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(marker.read_text()), signal.SIGKILL)
+
+
 def test_package_ancestor_swap_cannot_write_outside_requested_tree(package_inputs, tmp_path, monkeypatch):
     import os
 

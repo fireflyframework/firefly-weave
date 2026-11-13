@@ -22,7 +22,6 @@ import asyncio
 import math
 import os
 import signal
-from contextlib import suppress
 from pathlib import Path
 
 # The longest one command may run: within the runner's 600 s job budget, long enough to stop drained workers
@@ -36,23 +35,40 @@ class CommandError(Exception):
 
 
 async def _reap(process: asyncio.subprocess.Process) -> None:
-    # The command owns a new session, including any child processes it creates.
-    with suppress(ProcessLookupError):
+    # The command owns a new session, including any child processes it creates. A group that is already gone needs
+    # nothing; once all its processes have exited, macOS can answer EPERM instead of ESRCH. EPERM while the leader
+    # still runs means the kill really failed, and waiting for it could last forever.
+    try:
         os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # The leader may have exited a moment before its exit was seen: wait briefly, so it is reaped and its pipes
+        # are closed, and refuse only when it really keeps running.
+        try:
+            await asyncio.wait_for(process.wait(), 1)
+        except TimeoutError:
+            raise CommandError() from None
     await process.wait()
 
 
 async def _finish_cleanup(process: asyncio.subprocess.Process) -> None:
     cleanup = asyncio.create_task(_reap(process))
-    cancelled = False
+    # A caller already being cancelled (asyncio.timeout, a TaskGroup) gets its CancelledError whatever the cleanup
+    # found, so its cancellation keeps working.
+    current = asyncio.current_task()
+    cancelled = current is not None and current.cancelling() > 0
     while not cleanup.done():
         try:
-            await asyncio.shield(cleanup)
+            # Waits without cancelling the cleanup and without raising its error here.
+            await asyncio.wait({cleanup})
         except asyncio.CancelledError:
             cancelled = True
-    cleanup.result()
+    failure = cleanup.exception()
     if cancelled:
         raise asyncio.CancelledError
+    if failure is not None:
+        raise failure
 
 
 async def run_command(

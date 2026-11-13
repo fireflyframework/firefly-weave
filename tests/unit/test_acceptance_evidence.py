@@ -16,6 +16,7 @@
 
 """Acceptance evidence: the canary scan, journey results and the acceptance.json schema."""
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -46,6 +47,7 @@ ENVIRONMENT = {
     "runner": "local",
     "docker": "28.0.0",
     "kind": None,
+    "k3d": None,
     "kubernetes": None,
     "ollama": None,
     "model": None,
@@ -69,6 +71,23 @@ def test_the_scan_finds_canaries_across_chunks_and_skips_excluded_trees(tmp_path
     found = evidence.scan_tree([tmp_path / "evidence", tmp_path / "private"], [CANARY], exclude=[people])
     assert found == evidence.Scan(files=2, hits=1)
     assert evidence.scan_tree([tmp_path / "evidence"], []) == evidence.Scan(files=2, hits=0)
+
+
+def test_run_secrets_hold_the_cluster_admins_credentials_and_the_given_cluster_secrets(tmp_path):
+    key = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEI" + "k" * 40 + "\n-----END EC PRIVATE KEY-----\n"
+    certificate = base64.b64encode(b"-----BEGIN CERTIFICATE-----public-----END CERTIFICATE-----").decode()
+    encoded = base64.b64encode(key.encode()).decode()
+    token = "kubeconfig-token-" + "t" * 24
+    (tmp_path / "kubeconfig").write_text(
+        "users:\n- name: kind-weave-acc\n  user:\n"
+        f"    client-certificate-data: {certificate}\n    client-key-data: {encoded}\n    token: {token}\n",
+        encoding="utf-8",
+    )
+    found = evidence.run_secrets(tmp_path, ["worker-secret-value"])
+    # The key as the kubeconfig holds it and as a leak would print it; the certificate is public.
+    assert set(found) == {encoded, key.strip(), token, "worker-secret-value"}
+    assert found == sorted(found, key=len, reverse=True)
+    assert evidence.run_secrets(tmp_path / "no-run") == []
 
 
 @pytest.mark.skipif(
