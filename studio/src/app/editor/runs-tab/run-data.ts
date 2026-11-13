@@ -120,7 +120,24 @@ export class RunData implements RunDataPort {
   }
   /** Step instances read without outputs: status, timing and the runs they called. */
   setFacts(facts: readonly StepFact[]): void {
-    for (const fact of facts) this.facts.set(keyOf(fact), fact);
+    for (const fact of facts) {
+      const key = keyOf(fact);
+      const was = this.facts.get(key);
+      this.facts.set(key, fact);
+      // An instance read while at work has finished since: its output is
+      // read again the next time its step is shown.
+      const output = this.outputs.get(key);
+      if (
+        was &&
+        AT_WORK.has(was.status) &&
+        !AT_WORK.has(fact.status) &&
+        output?.kind === "none" &&
+        output.why === "running"
+      ) {
+        this.outputs.delete(key);
+        this.asked.delete(fact.node_id);
+      }
+    }
     this.changed();
   }
   markLoading(stepId: string): void {

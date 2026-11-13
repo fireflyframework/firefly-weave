@@ -383,3 +383,60 @@ describe("each instance's state", () => {
     expect(data.state("check")).toBe("not-reached");
   });
 });
+
+describe("a followed run's loop step", () => {
+  it("reads an iteration's output again once it finishes after the first read", async () => {
+    const fact = (key: string, status: StepFact["status"], output?: unknown) =>
+      ({
+        node_id: "send",
+        instance_key: key,
+        iteration: [Number(key.at(-2))],
+        kind: "action",
+        status,
+        scheduled_at: null,
+        started_at: null,
+        ended_at: null,
+        duration_ms: null,
+        queue_wait_ms: null,
+        attempts: 1,
+        worker_id: null,
+        error_code: null,
+        child_run_id: null,
+        log_entries: 0,
+        ...(output !== undefined ? { output } : {}),
+      }) as StepFact;
+    const settled = () => new Promise<void>((done) => queueMicrotask(done));
+    // What the platform has: item 1 at work, later finished.
+    let finished = false;
+    const reads: string[] = [];
+    const data: RunData = new RunData(
+      record({ status: "running" }),
+      "env",
+      null,
+      (step) => {
+        reads.push(step);
+        data.setOutputs(
+          [
+            fact("send[0]", "succeeded", { a: 0 }),
+            finished
+              ? fact("send[1]", "succeeded", { a: 1 })
+              : fact("send[1]", "running"),
+          ],
+          step,
+        );
+      },
+    );
+    data.setFacts([fact("send[0]", "succeeded"), fact("send[1]", "running")]);
+    data.read("send");
+    await settled();
+    expect(data.output("send[1]")).toEqual({ kind: "none", why: "running" });
+    // Following the run: item 1 finishes.
+    finished = true;
+    data.setFacts([fact("send[0]", "succeeded"), fact("send[1]", "succeeded")]);
+    expect(data.output("send[1]").kind).toBe("loading");
+    data.read("send");
+    await settled();
+    expect(reads).toEqual(["send", "send"]);
+    expect(data.output("send[1]")).toEqual({ kind: "value", value: { a: 1 } });
+  });
+});
