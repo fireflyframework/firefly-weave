@@ -32,6 +32,7 @@ import {
   type RunsPlatform,
 } from "./runs-po";
 import { sizes, StepDetailsPage } from "./step-details-po";
+import { tokenColor } from "./support";
 
 /** The Runs tab with `id` chosen, its run drawn. */
 async function choose(page: Page, runs: RunsPage, id: string) {
@@ -109,6 +110,24 @@ for (const size of sizes)
               .map((field) => field.outerHTML.slice(0, 80)),
           );
       expect(await editable()).toEqual([]);
+      // Each field reads as its value: no mode switch, menu or chevron, and
+      // no field box drawn around it.
+      const panel = details.dialog.locator(".sd-tabpanel:not([hidden])");
+      await expect(panel.locator(".param-mode:visible")).toHaveCount(0);
+      await expect(panel.locator(".param-menu:visible")).toHaveCount(0);
+      await expect(panel.locator(".choice-field button:visible")).toHaveCount(
+        0,
+      );
+      await expect(
+        panel.locator('.param-resource-modes [aria-checked="false"]:visible'),
+      ).toHaveCount(0);
+      const sunken = await tokenColor(page, "--sunken");
+      for (const field of await panel
+        .locator(".choice-field, button.ref-pill-button")
+        .all()) {
+        await expect(field).toHaveCSS("background-color", sunken);
+        await expect(field).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+      }
       await details.tab("Settings").click();
       expect(await editable()).toEqual([]);
       // Rename and Pin do nothing.

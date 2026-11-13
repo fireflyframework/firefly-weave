@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   tabindex="-1"
   [attr.aria-label]="'Step details: ' + name()"
   [attr.data-layout]="layout()"
+  [attr.data-run-mode]="controller().viewingRuns() ? '' : null"
   [attr.data-table]="table() ? '' : null"
   [attr.data-data-folded]="folded('data') ? '' : null"
   (keydown)="key($event)"
