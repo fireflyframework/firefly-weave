@@ -24,16 +24,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from agent_fixtures import CANCEL, INPUT, LOOKUP, SHIPPED, Run, agent, answering, tasks, tool_calls, workflow
-from test_agent_workflows import (
-    AGENTIC_DESCRIPTOR,
-    action_definition,
-    callee,
-    order_action,
-    orders_connector,
-    task_capability,
-    turn_action_definition,
-    turn_capability,
-)
+from test_agent_workflows import catalog, order_action
 
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import WorkflowIR
@@ -41,7 +32,6 @@ from firefly_weave.connectors.http import HttpPolicy
 from firefly_weave.connectors.http_profiles import HttpProfileConnector
 from firefly_weave.contracts.agent_turns import wire_json
 from firefly_weave.contracts.connectors import ActionContext, ConnectionRevision, ConnectorFailure, ConnectorInvocation
-from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.runtime.agents import parse_agent_key
 from firefly_weave.runtime.models import CallIntent, HumanTaskIntent, TaskIntent, Transition
@@ -109,7 +99,7 @@ def test_no_turn_input_holds_a_secret_value():
         "properties": {"token": {"type": "string", "x-secret": True}, "note": {"type": "string"}},
     }
     token = {**LOOKUP, "name": "get_token", "description": "Get an order's desk token.", "action": "orders-token@1.0.0"}
-    run = Run(answering(workflow(agent(tools=[token, LOOKUP]))), snapshot=catalog_with(action))
+    run = Run(answering(workflow(agent(tools=[token, LOOKUP]))), snapshot=catalog(action))
     run.send("started")
     run.answer("support#1", tool_calls(("get_token", {"id": "A-17"})))
 
@@ -132,7 +122,7 @@ def test_the_model_cant_override_a_fixed_field():
     open_input = {"type": "object", "properties": {"id": {"type": "string"}, "region": {"type": "string"}}}
     action = order_action("orders-open", "get", input_schema={**open_input, "required": ["id"]})
     lookup = {**LOOKUP, "action": "orders-open@1.0.0"}
-    run = Run(answering(workflow(agent(tools=[lookup]))), {**INPUT, "region": "us"}, catalog_with(action))
+    run = Run(answering(workflow(agent(tools=[lookup]))), {**INPUT, "region": "us"}, catalog(action))
     run.send("started")
 
     result = run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17", "region": "eu"})))
@@ -229,28 +219,6 @@ def test_an_unknown_tool_gets_an_error_and_dispatches_nothing():
     assert incidents(run) == set()
 
 
-def catalog_with(*extra, http=False) -> CatalogSnapshot:
-    definitions = [
-        AGENTIC_DESCRIPTOR.manifest.value,
-        turn_action_definition(),
-        action_definition(),
-        orders_connector(),
-        order_action("orders-get", "get"),
-        order_action("orders-cancel", "cancel"),
-        callee(callable_field={}),
-        *extra,
-    ]
-    capabilities = [task_capability(), turn_capability()]
-    adapters = ["weave-agentic-provider", "http"]
-    if http:
-        definitions.append(HTTP_PROFILE_DESCRIPTOR.manifest.value)
-        capabilities.extend(HTTP_PROFILE_DESCRIPTOR.capabilities)
-        adapters.append("weave-http-v2")
-    return CatalogSnapshot.from_definitions(
-        [load_definition(value) for value in definitions], tasks=capabilities, adapters=adapters
-    )
-
-
 def fetch_action():
     return build_http_action(
         {
@@ -264,7 +232,7 @@ def fetch_action():
 
 
 def http_catalog() -> CatalogSnapshot:
-    return catalog_with(fetch_action(), http=True)
+    return catalog(fetch_action(), http=True)
 
 
 def fetching():

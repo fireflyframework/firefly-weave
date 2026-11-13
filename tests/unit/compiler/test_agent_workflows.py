@@ -30,6 +30,7 @@ from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
 from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 
 ORDER_INPUT = {
     "type": "object",
@@ -113,7 +114,9 @@ def author_action(name, task_type, **changes):
     return value
 
 
-def catalog(*extra, schema_bundle=None):
+def catalog(*extra, schema_bundle=None, http=False):
+    """The agent catalog: the agentic provider, the orders actions and a callee; ``http`` adds the HTTP profile
+    connector and its adapter."""
     definitions = [
         AGENTIC_DESCRIPTOR.manifest.value,
         turn_action_definition(),
@@ -126,10 +129,16 @@ def catalog(*extra, schema_bundle=None):
         callee(callable_field={}),
         *extra,
     ]
+    capabilities = [task_capability(), turn_capability()]
+    adapters = ["weave-agentic-provider", "http"]
+    if http:
+        definitions.append(HTTP_PROFILE_DESCRIPTOR.manifest.value)
+        capabilities.extend(HTTP_PROFILE_DESCRIPTOR.capabilities)
+        adapters.append("weave-http-v2")
     return CatalogSnapshot.from_definitions(
         [load_definition(value) for value in definitions],
-        tasks=[task_capability(), turn_capability()],
-        adapters=["weave-agentic-provider", "http"],
+        tasks=capabilities,
+        adapters=adapters,
         schema_bundle=schema_bundle,
     )
 
