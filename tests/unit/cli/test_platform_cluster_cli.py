@@ -575,6 +575,24 @@ def test_a_target_that_fails_to_disconnect_keeps_the_cluster(world, monkeypatch)
     assert not calls(commands, "delete")
 
 
+def test_delete_names_each_disconnected_target_and_the_deleted_cluster_in_text(world, monkeypatch):
+    directory, _, _ = world
+    assert invoke(directory, "delete", output="text").stdout.splitlines() == [f"Deleted cluster {NAME}."]
+    receipt_with_target(directory)
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
+        return {"target_id": None, "disabled": True, "removed": []}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = invoke(directory, "delete", output="text")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        f"Disconnected kind-{NAME}.team-b.",
+        f"Disconnected kind-{NAME}.",
+        f"Deleted cluster {NAME}.",
+    ]
+
+
 def test_delete_refuses_another_context_than_the_one_its_targets_are_connected_on(world, monkeypatch):
     """A cluster of the same name on another context isn't the connected one: its targets stay connected."""
     directory, commands, _ = world
@@ -659,6 +677,21 @@ def test_disconnect_refuses_a_namespace_without_a_target_and_changes_nothing(wor
     assert commands.calls == []
 
 
+def test_disconnect_prints_the_namespace_the_cluster_and_how_many_objects_it_removed(world, monkeypatch):
+    directory, _, _ = world
+    removed = ["ConfigMap/weave-worker-config", "Role/weave-worker", "Secret/weave-worker-identity"]
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+        notice("target: revoking the runner and disabling the target")
+        return {"target_id": None, "disabled": True, "removed": removed}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = run(directory, "cluster", "disconnect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [f"Disconnected team-b from kind-{NAME}; removed 3 objects."]
+    assert result.stderr.splitlines() == ["target: revoking the runner and disabling the target"]
+
+
 def test_list_output_json_has_the_contract_keys(world, monkeypatch):
     directory, _, _ = world
     receipt_with_target(directory)
@@ -690,3 +723,17 @@ def test_doctor_cluster_reports_the_pinned_tools_and_creates_no_file(world, monk
     assert sorted(directory.rglob("*")) == before
     plain = run(directory, "doctor", "--output", "json")
     assert "cluster_tools" not in json.loads(plain.stdout)
+
+
+def test_doctor_cluster_prints_each_tools_version_or_that_it_isnt_fetched(world, monkeypatch):
+    directory, _, _ = world
+    monkeypatch.setattr(clusters.local, "doctor", lambda source, context: {"ok": True, "version": "26.11.0"})
+    found = {"kind": "v0.33.0", "k3d": tools.NOT_FETCHED, "kubectl": "v1.37.2"}
+    monkeypatch.setattr(clusters, "doctor_cluster", lambda path: found)
+    result = run(directory, "doctor", "--cluster")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "Version: 26.11.0",
+        "Cluster tools: kind v0.33.0, k3d not fetched, kubectl v1.37.2",
+    ]
+    assert "Cluster tools" not in run(directory, "doctor").stdout
