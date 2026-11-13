@@ -17,6 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What step details need from the editor that hosts them. The shell (App)
 // already has every member; nothing here is new state of its own.
+import type { CanvasRun } from "../canvas/run-state";
+import type { RunDataPort } from "../runs-tab/run-port";
 import type { Signal } from "@angular/core";
 import type { Profile, StudioApi, Validation } from "../../api";
 import type { ContractGap } from "../../designer/contract-gaps";
@@ -103,6 +105,14 @@ export interface StepDetailsHost {
   executeIn?(target: ExecuteTarget): Promise<ExecuteOutcome>;
   /** This step's pin came from another workflow (pasted, or loaded from a file) and isn't kept yet. */
   pinFromElsewhere?(id: string): boolean;
+  /** The run open in the Runs tab: step details show its data, read-only. */
+  readonly runData?: RunDataPort | null;
+  /** The run the canvas draws; on the Runs tab it names the steps changed since. */
+  canvasRun?(): CanvasRun | null;
+  /** Opens a run in Operate › Runs. */
+  viewRun?(run: Record<string, unknown>): Promise<void>;
+  /** Shows another view of the workflow: Back to editing selects Designer. */
+  selectTab?(tab: string): Promise<boolean>;
   /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */
   flushAutosave?(): Promise<boolean>;
   /**

@@ -516,7 +516,12 @@ export class StepDetails {
         this.renaming.set(null);
         // Opening a step shows its form; the grid opens from Edit table.
         this.controller().parameterComponent.set(null);
-        afterNextRender(() => this.applyFocus(request.focus), {
+        // A step of a run opens on what it returned.
+        const focus: FocusTarget =
+          this.host().runData && request.focus.kind === "first"
+            ? { kind: "region", region: "output" }
+            : request.focus;
+        afterNextRender(() => this.applyFocus(focus), {
           injector: this.injector,
         });
       });
@@ -1078,6 +1083,40 @@ export class StepDetails {
   // ------------------------------------------------------- execute step
   executeLabel(): string {
     return this.target() === "$trigger" ? "Execute workflow" : "Execute step";
+  }
+  // ------------------------------------------------------- run mode
+  /** "Run 1c0d7f8a": the run step details reads, on the Runs tab; "" otherwise. */
+  runChip(): string {
+    const run = this.host().runData;
+    return run ? `Run ${run.runId.slice(0, 8)}` : "";
+  }
+  /** A step that ran several times: each iteration with its state, the failed one first. */
+  runIterations(): { key: string; label: string }[] {
+    const run = this.host().runData;
+    const target = this.target();
+    if (!run || target.startsWith("$")) return [];
+    run.version();
+    const keys = run.iterations(target);
+    if (keys.length < 2) return [];
+    // Numbered in loop order; listed failed first, as iterations() gives them.
+    const ordered = [...keys].sort((a, b) => indexOf(a) - indexOf(b));
+    const states = {
+      failed: "Failed",
+      running: "Running",
+      finished: "Finished",
+      "not-reached": "Not reached",
+    } as const;
+    return keys.map((key) => ({
+      key,
+      label: `Item ${ordered.indexOf(key) + 1} of ${keys.length} · ${states[run.state(key)]}`,
+    }));
+  }
+  chooseIteration(key: string): void {
+    const target = this.target();
+    this.controller().iteration.update((all) => ({ ...all, [target]: key }));
+  }
+  backToEditing(): void {
+    void this.host().selectTab?.("Designer");
   }
   canExecute(): boolean {
     return (
@@ -2073,4 +2112,10 @@ export class StepDetails {
     }
     this.close();
   }
+}
+
+/** An instance key's loop index ("send[2]" is 2); 0 without one. */
+function indexOf(key: string): number {
+  const match = /\[(\d+)\]$/.exec(key);
+  return match ? Number(match[1]) : 0;
 }

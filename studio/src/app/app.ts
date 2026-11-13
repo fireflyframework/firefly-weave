@@ -3047,6 +3047,9 @@ export class App implements CanvasHost {
   get viewingRuns() {
     return this.tab === "Runs";
   }
+  get runData() {
+    return this.runView()?.data ?? null;
+  }
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers

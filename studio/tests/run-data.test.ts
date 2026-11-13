@@ -329,3 +329,57 @@ describe("recorded outputs", () => {
     expect(data.childRun("fetch")).toBeNull();
   });
 });
+
+describe("reading a step's outputs", () => {
+  it("asks once per step, and again only after a failed read", async () => {
+    // A read starts after the view that asked has drawn.
+    const settled = () => new Promise<void>((done) => queueMicrotask(done));
+    const asked: string[] = [];
+    const data = new RunData(record(), "env", null, (stepId) =>
+      asked.push(stepId),
+    );
+    data.read("fetch");
+    data.read("fetch");
+    data.read("send");
+    await settled();
+    expect(asked).toEqual(["fetch", "send"]);
+    data.markError("send", "The platform didn't answer.");
+    data.read("send");
+    data.read("fetch");
+    await settled();
+    expect(asked).toEqual(["fetch", "send", "send"]);
+  });
+});
+
+describe("each instance's state", () => {
+  it("reads failed, running and finished from the step facts", () => {
+    const data = new RunData(record({ completed: { fetch: {} } }), "env", null);
+    const fact = (key: string, status: StepFact["status"]): StepFact => ({
+      node_id: "send",
+      instance_key: key,
+      iteration: [Number(key.at(-2))],
+      kind: "action",
+      status,
+      scheduled_at: null,
+      started_at: null,
+      ended_at: null,
+      duration_ms: null,
+      queue_wait_ms: null,
+      attempts: 1,
+      worker_id: null,
+      error_code: status === "failed" ? "SMTP_REJECTED" : null,
+      child_run_id: null,
+      log_entries: 0,
+    });
+    data.setFacts([
+      fact("send[0]", "succeeded"),
+      fact("send[1]", "failed"),
+      fact("send[2]", "running"),
+    ]);
+    expect(data.state("send[0]")).toBe("finished");
+    expect(data.state("send[1]")).toBe("failed");
+    expect(data.state("send[2]")).toBe("running");
+    expect(data.state("fetch")).toBe("finished");
+    expect(data.state("check")).toBe("not-reached");
+  });
+});

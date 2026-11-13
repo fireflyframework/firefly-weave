@@ -70,12 +70,26 @@ export class RunData implements RunDataPort {
   /** Step ID to a read in progress, failed or too large. */
   private readonly marks = new Map<string, StepMark>();
 
+  /** Steps whose outputs were asked for. */
+  private readonly asked = new Set<string>();
+
   constructor(
     private record: RunRecord,
     readonly environmentId: string,
     private readonly definition: Workflow | null,
+    /** Reads one step's outputs (include=output) into this run's data. */
+    private readonly reader: (stepId: string) => void = () => {},
   ) {
     this.runId = record.id;
+  }
+
+  /** Reads a step's outputs the first time step details shows it, or again after a failed read. */
+  read(stepId: string): void {
+    const mark = this.marks.get(stepId);
+    if (this.asked.has(stepId) && mark?.kind !== "error") return;
+    this.asked.add(stepId);
+    // Views ask while they draw; the read starts after.
+    queueMicrotask(() => this.reader(stepId));
   }
 
   /** The run read again while it is followed; outputs already read stay. */
@@ -182,6 +196,20 @@ export class RunData implements RunDataPort {
         };
   }
 
+  state(key: string): "failed" | "running" | "finished" | "not-reached" {
+    const fact = this.facts.get(key);
+    if (fact && FAILED.has(fact.status)) return "failed";
+    if (
+      (fact && AT_WORK.has(fact.status)) ||
+      this.record.active.includes(key) ||
+      this.record.waiting.includes(key)
+    )
+      return "running";
+    if (this.record.incidents.some((incident) => incident.key === key))
+      return "failed";
+    return fact || key in this.record.completed ? "finished" : "not-reached";
+  }
+
   iterations(stepId: string): readonly string[] {
     const instances = [...this.facts.values()].filter(
       (fact) => fact.node_id === stepId,
@@ -209,6 +237,10 @@ export class RunData implements RunDataPort {
 
   label(): string {
     return `run ${shortId(this.runId)}`;
+  }
+
+  definitionVersion(): string | null {
+    return this.definition?.metadata.version ?? null;
   }
 
   private mark(stepId: string, mark: StepMark) {

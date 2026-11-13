@@ -283,6 +283,7 @@ export class RunsTabState {
       read.record,
       this.host.environmentId(),
       definition,
+      (stepId) => void this.readOutput(stepId),
     );
     data.setFacts(read.facts ?? []);
     this.updateChosen(ticket, {

@@ -147,14 +147,35 @@ import { ndvRegistry, type Json } from "../registry";
         >
       }
       <span class="pane-count">{{
-        data !== undefined && shownView() === "table"
-          ? tableCount(data, query())
-          : countLabel(all.length, query() ? shown.length : undefined)
+        chosen === "received"
+          ? ""
+          : data !== undefined && shownView() === "table"
+            ? tableCount(data, query())
+            : countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
     <div class="sd-pane-body">
       <div class="pane-content">
-        @if (!sources.length) {
+        @if (chosen === "received") {
+          @let got = received();
+          @if (got.ok) {
+            <pre
+              class="pane-json pane-received"
+              tabindex="0"
+              aria-label="What it received"
+              >{{ json(got.value) }}</pre
+            >
+            <p class="pane-received-note">
+              Studio evaluated {{ got.step }}'s input mapping with this run's
+              data{{ got.version ? " from version " + got.version : "" }}, so
+              this is what the step received.
+            </p>
+          } @else if (got.reason) {
+            <p class="pane-empty-text">{{ got.reason }}</p>
+          } @else {
+            <p class="pane-empty-text">This step's input maps nothing.</p>
+          }
+        } @else if (!sources.length) {
           <p class="pane-empty-text">This step doesn't read data.</p>
         } @else if (data !== undefined && shownView() !== "schema") {
           @if (shownView() === "table") {
@@ -337,6 +358,8 @@ export class InputPane implements OnInit {
   }
   private selection: {
     session: FormSession;
+    /** The run open in run mode: another run starts at What it received. */
+    run: string | null;
     requested: string | null;
     chosen: string;
   } | null = null;
@@ -344,7 +367,9 @@ export class InputPane implements OnInit {
     const session = this.session();
     const sources = this.sources();
     const requested = this.source();
-    const changed = this.selection?.session !== session;
+    const run = session.controller.run()?.runId ?? null;
+    const changed =
+      this.selection?.session !== session || this.selection?.run !== run;
     const desired = changed
       ? null
       : requested !== this.selection?.requested
@@ -353,16 +378,54 @@ export class InputPane implements OnInit {
     const chosen = sources.some((source) => source.id === desired)
       ? desired!
       : defaultSource(sources);
-    this.selection = { session, requested, chosen };
+    this.selection = { session, run, requested, chosen };
     return chosen;
   }
   sources() {
     const scope = this.scope();
-    return scope.found ? inputSources(scope) : [];
+    const sources = scope.found ? inputSources(scope) : [];
+    // In run mode the first source is what the step received in that run.
+    const { controller, target } = this.session();
+    return controller.run() && !target.startsWith("$") && !this.compact()
+      ? [
+          {
+            id: "received",
+            label: "What it received",
+            detail: "",
+            icon: "output",
+          },
+          ...sources,
+        ]
+      : sources;
+  }
+  /** What the step received in the run, recomputed, or why Studio can't say. */
+  received() {
+    const { controller, target } = this.session();
+    const received = controller.runReceived(target);
+    const version = controller.run()?.definitionVersion() ?? null;
+    return received.ok
+      ? {
+          version,
+          ok: true as const,
+          value: received.value as Json,
+          reason: "",
+          step: target,
+        }
+      : {
+          version,
+          ok: false as const,
+          value: undefined,
+          reason: received.reason,
+          step: target,
+        };
   }
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
+    if (source === "received") {
+      const received = controller.runReceived(this.session().target);
+      return received.ok ? (received.value as Json) : undefined;
+    }
     if (source === "input")
       return (
         controller.testEvent() ??
@@ -397,6 +460,9 @@ export class InputPane implements OnInit {
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {
+    const run = this.session().controller.run();
+    if (source === "received") return "Recomputed from the run's data";
+    if (run) return `From ${run.label()}`;
     if (source === "input")
       return this.session().controller.testEvent() === undefined &&
         this.session().host.execution?.sampleUsed() != null

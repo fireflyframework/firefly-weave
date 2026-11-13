@@ -495,6 +495,8 @@ export interface RunsPlatform {
   readFailure: { status: number; code: string; message: string } | null;
   /** The logs runs.logs answers, or 501 (the platform doesn't serve them yet). */
   logs: 501 | RunLogEntry[];
+  /** Answers every read of outputs (include=output) with this status while set. */
+  outputFailure: { status: number; code: string; message: string } | null;
 }
 
 const problem = (status: number, code: string, message: string) => ({
@@ -528,6 +530,7 @@ export async function routeRuns(
     listFailure: null,
     readFailure: null,
     logs: options.logs ?? 501,
+    outputFailure: null,
   };
   const fixture = (): RunViewsFixture => ({
     runs: [
@@ -592,6 +595,11 @@ export async function routeRuns(
         ? route.fulfill({ json: run.view })
         : route.fulfill(problem(404, "WV-NOT-FOUND", "Run not found."));
     }
+    const failure = platform.outputFailure;
+    if (failure && url.searchParams.get("include") === "output")
+      return route.fulfill(
+        problem(failure.status, failure.code, failure.message),
+      );
     if (url.pathname.endsWith("/logs") && !Array.isArray(platform.logs))
       return route.fulfill(
         problem(501, "WV-UNAVAILABLE", "This platform doesn't serve logs yet."),

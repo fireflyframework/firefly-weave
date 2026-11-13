@@ -848,3 +848,59 @@ weave-issues-indicator {
   border-left: 0;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
+
+/* Run mode: the run's chip and its iterations beside the breadcrumb, and
+   the read-only note at the top of Parameters. */
+.sd-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--info-bd);
+  border-radius: var(--radius-pill);
+  background: var(--info-bg);
+  color: var(--info-ink);
+  font: var(--type-caption);
+  white-space: nowrap;
+  flex: none;
+}
+.sd-iteration {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  font: var(--type-label);
+  min-width: 0;
+}
+.sd-iteration select {
+  min-height: var(--control-sm);
+  min-width: 0;
+  font: var(--type-label);
+}
+.sd-run-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin: var(--space-2) var(--space-4) 0;
+  padding: 6px 6px 6px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  font: var(--type-small);
+}
+.sd-run-note > weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.sd-run-note button {
+  margin-left: auto;
+  flex: none;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .sd-iteration select {
+    min-height: var(--control-touch);
+  }
+}

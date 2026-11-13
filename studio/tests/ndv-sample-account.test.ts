@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
+import { signal } from "@angular/core";
 import { afterAll, describe, expect, it, vi } from "vitest";
 vi.hoisted(() =>
   vi.stubGlobal("document", {
@@ -73,6 +74,8 @@ async function fixture() {
     loadIdentity: async () => {},
     detachPlatformDraft() {},
     loginWatcher: { stop() {} },
+    // No run is open in the Runs tab.
+    runView: signal(null),
   });
   const controller = new StepDetailsController(app);
   await controller.setTestEvent({ name: "private sample" });

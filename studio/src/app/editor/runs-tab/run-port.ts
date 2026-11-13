@@ -41,12 +41,18 @@ export type Received =
 export interface RunDataPort {
   readonly runId: string;
   readonly environmentId: string;
+  /** Changes whenever the run's data does: views read it to redraw. */
+  version(): number;
+  /** Reads a step's recorded outputs, once per step while the run is open. */
+  read(stepId: string): void;
   /** The run's input. */
   input(): Json;
   /** The recorded output of a step instance (its instance key). */
   output(key: string): RecordedOutput;
   /** What the step received, recomputed with the version the run used. */
   received(stepId: string): Received;
+  /** How one step instance went in the run. */
+  state(key: string): "failed" | "running" | "finished" | "not-reached";
   /** The step's instance keys, the failing one first. */
   iterations(stepId: string): readonly string[];
   /** The error code the step failed with in this run; null when it didn't fail. */
@@ -55,6 +61,8 @@ export interface RunDataPort {
   childRun(key: string): string | null;
   /** "run 3f2a…" */
   label(): string;
+  /** The version the run used ("1.2.0"); null when Studio couldn't read it. */
+  definitionVersion(): string | null;
 }
 
 /** The run open in the Runs tab, as the shell draws it. */
