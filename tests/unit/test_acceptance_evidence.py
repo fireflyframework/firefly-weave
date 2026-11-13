@@ -73,10 +73,6 @@ def test_the_scan_finds_canaries_across_chunks_and_skips_excluded_trees(tmp_path
     assert evidence.scan_tree([tmp_path / "evidence"], []) == evidence.Scan(files=2, hits=0)
 
 
-@pytest.mark.skipif(
-    os.name != "posix" or os.geteuid() == 0,
-    reason="needs POSIX permissions that bind the current user",
-)
 def test_run_secrets_hold_the_cluster_admins_credentials_and_the_given_cluster_secrets(tmp_path):
     key = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEI" + "k" * 40 + "\n-----END EC PRIVATE KEY-----\n"
     certificate = base64.b64encode(b"-----BEGIN CERTIFICATE-----public-----END CERTIFICATE-----").decode()
@@ -94,6 +90,10 @@ def test_run_secrets_hold_the_cluster_admins_credentials_and_the_given_cluster_s
     assert evidence.run_secrets(tmp_path / "no-run") == []
 
 
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0,
+    reason="needs POSIX permissions that bind the current user",
+)
 def test_the_scan_fails_closed_on_a_directory_it_cannot_read(tmp_path):
     locked = tmp_path / "evidence" / "locked"
     locked.mkdir(parents=True)
