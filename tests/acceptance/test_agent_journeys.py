@@ -66,7 +66,6 @@ TOKEN = "shipped-7731"
 SETTLED = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 # A turn on a CPU-only Ollama takes up to a minute; a run waits for a few of them.
 RUN_SECONDS = 900
-REVIEW_SECONDS = 600
 
 
 def _orders() -> Any:
@@ -256,6 +255,11 @@ def agent(identifier: str, prompt: dict[str, Any], tools: list[dict[str, Any]], 
     }
 
 
+def uses_orders(steps: list[dict[str, Any]]) -> bool:
+    """Whether an agent's tools run the orders actions, through the orders connection."""
+    return any(tool.get("connection") == "orders" for step in steps for tool in step.get("tools", []))
+
+
 def agent_workflow(
     name: str,
     steps: list[dict[str, Any]],
@@ -264,6 +268,9 @@ def agent_workflow(
     *,
     input_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    connections = {"ai": {"connector": "weave-agentic-provider@1.0.0"}}
+    if uses_orders(steps):
+        connections["orders"] = {"connector": "weave-http@2.0.0"}
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
@@ -271,10 +278,7 @@ def agent_workflow(
         "spec": {
             "inputSchema": input_schema or {"type": "object", "additionalProperties": False},
             "outputSchema": {},
-            "connections": {
-                "ai": {"connector": "weave-agentic-provider@1.0.0"},
-                "orders": {"connector": "weave-http@2.0.0"},
-            },
+            "connections": connections,
             "llmProfiles": profiles,
             "steps": steps,
             "output": output,
@@ -379,18 +383,33 @@ async def start(client: Any, run, name: str, label: str, value: dict[str, Any] |
     return UUID(str(started.id))
 
 
-def review_of(weave: Any, run_id: UUID, seconds: float = REVIEW_SECONDS) -> dict[str, Any] | None:
-    """The review that waits in this run, or None once the run ends without one."""
-    deadline = time.monotonic() + seconds
-    while True:
-        tasks = weave("human-tasks", "list", "--limit", "100")["items"]
-        found = [task for task in tasks if task["run_id"] == str(run_id) and task["status"] == "ready"]
-        if found:
-            return found[0]
-        if weave("runs", "read", str(run_id))["state"]["status"] in SETTLED:
-            return None
-        assert time.monotonic() < deadline, f"no review waited in run {run_id} after {seconds:.0f} s"
-        time.sleep(2)
+CAPACITY_ATTEMPTS = 4
+CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+def read(weave: Any, *args: str) -> Any:
+    """A read through the CLI, sent again when the platform did not admit it (429 WV-OPERATION-CAPACITY or
+    WV-REQUEST-CAPACITY), honoring Retry-After, for at most four attempts, as Studio does."""
+    for attempt in range(CAPACITY_ATTEMPTS):
+        result = weave.run.weave(*weave.arguments(*args))
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        try:
+            problem = json.loads(result.stdout)
+        except ValueError:
+            problem = {}
+        admitted = problem.get("status") != 429 or problem.get("code") not in CAPACITY_CODES
+        if admitted or attempt == CAPACITY_ATTEMPTS - 1:
+            weave.run.require(result)
+        time.sleep(min(float(problem.get("retry_after") or 2), 10))
+    raise AssertionError("unreachable")
+
+
+def review_in(weave: Any, run_id: UUID) -> dict[str, Any] | None:
+    """The review that waits in this run in the person's task list, if any."""
+    tasks = read(weave, "human-tasks", "list", "--limit", "100")["items"]
+    found = [task for task in tasks if task["run_id"] == str(run_id) and task["status"] == "ready"]
+    return found[0] if found else None
 
 
 def decide(weave: Any, task: dict[str, Any], decision: str, label: str) -> dict[str, Any]:
@@ -407,7 +426,7 @@ def decide(weave: Any, task: dict[str, Any], decision: str, label: str) -> dict[
 
 
 def agent_log(weave: Any, run_id: UUID, key: str) -> dict[str, Any]:
-    (activation,) = weave("runs", "agent-log", str(run_id), "--key", key)["items"]
+    (activation,) = read(weave, "runs", "agent-log", str(run_id), "--key", key)["items"]
     return dict(activation)
 
 
@@ -433,7 +452,7 @@ def assert_turns_counted(log: dict[str, Any]) -> None:
 
 def assert_replays(weave: Any, *run_ids: UUID) -> None:
     for run_id in run_ids:
-        report = weave("runs", "replay", str(run_id))
+        report = read(weave, "runs", "replay", str(run_id))
         assert report["status"] == "consistent", report
 
 
@@ -512,45 +531,77 @@ async def _orders_catalog(run) -> dict[str, Any]:
     return {"connection_revision_id": connection["id"], "connector_version_id": str(version)}
 
 
-async def _activate_workflows(run, ai: dict[str, Any], orders: dict[str, Any], binding: str) -> dict[str, Any]:
+async def _activate_workflows(run, ai: dict[str, Any], orders: dict[str, Any], binding: str) -> dict[str, str]:
     """As the builder, through the SDK: publish and activate every agent workflow in the demo environment."""
     from firefly_weave.contracts.catalog import ActivationRequest, PublicationRequest
+    from firefly_weave.sdk.errors import WeaveError
 
     releases = {UUID(key): UUID(value) for key, value in run.status()["connector_release_ids"].items()}
     child = run.private_record("child-workflow")["activation_id"]
-    activations, warnings = {}, {}
+    activations = {}
     async with run.client("builder") as client:
         for name, build in WORKFLOWS.items():
-            source = json.dumps(build(), sort_keys=True)
+            document = build()
+            source = json.dumps(document, sort_keys=True)
+            # Only a workflow whose agent reviews tool calls has the reviewers' assignment slot.
+            reviewed = any("review" in step for step in document["spec"]["steps"])
+            through_orders = uses_orders(document["spec"]["steps"])
             # Keyed by content: a step repeated in the same run publishes the same version again.
             digest = hashlib.sha256(source.encode()).hexdigest()[:16]
-            published = await client.invoke(
-                "definitions.publish",
-                collection="workflows",
-                body=PublicationRequest(source=source, format="json"),
-                idempotency_key=f"j4-07-publish-{name}-{digest}-{run.run_id}",
+            try:
+                published = await client.invoke(
+                    "definitions.publish",
+                    collection="workflows",
+                    body=PublicationRequest(source=source, format="json"),
+                    idempotency_key=f"j4-07-publish-{name}-{digest}-{run.run_id}",
+                )
+            except WeaveError as error:
+                raise AssertionError(refusal(f"publishing the {name} workflow", error)) from None
+            request = ActivationRequest(
+                version_id=published.id,
+                artifact_digest=published.digest,
+                scope=client.scope,
+                connection_revision_ids={
+                    "ai": UUID(ai["connection_revision_id"]),
+                    **({"orders": UUID(orders["connection_revision_id"])} if through_orders else {}),
+                },
+                connector_release_ids=releases if through_orders else {},
+                worker_release_ids={TURN_TASK: UUID(ai["release_id"])},
+                assignment_binding_ids={REVIEWERS: UUID(binding)} if reviewed else {},
+                workflow_activation_ids={CHILD: UUID(child)} if name == "notify" else {},
             )
-            activation = await client.invoke(
-                "activations.create",
-                body=ActivationRequest(
-                    version_id=published.id,
-                    artifact_digest=published.digest,
-                    scope=client.scope,
-                    connection_revision_ids={
-                        "ai": UUID(ai["connection_revision_id"]),
-                        "orders": UUID(orders["connection_revision_id"]),
-                    },
-                    connector_release_ids=releases,
-                    worker_release_ids={TURN_TASK: UUID(ai["release_id"])},
-                    assignment_binding_ids={REVIEWERS: UUID(binding)},
-                    workflow_activation_ids={CHILD: UUID(child)} if name == "notify" else {},
-                ),
-                idempotency_key=f"j4-07-activate-{name}-{published.id}-{run.run_id}",
-                revision=None,
-            )
+            pins = hashlib.sha256(request.model_dump_json().encode()).hexdigest()[:16]
+            try:
+                activation = await client.invoke(
+                    "activations.create",
+                    body=request,
+                    idempotency_key=f"j4-07-activate-{name}-{pins}-{run.run_id}",
+                    revision=await _activation_revision(client, document["metadata"]["name"]),
+                )
+            except WeaveError as error:
+                raise AssertionError(refusal(f"activating the {name} workflow", error)) from None
             activations[name] = str(activation.id)
-            warnings[name] = [item.code for item in getattr(activation, "warnings", []) or []]
-    return {"activations": activations, "warnings": warnings}
+    return activations
+
+
+async def _activation_revision(client: Any, name: str) -> int | None:
+    """The revision of the workflow's current activation in this environment, which a new one replaces."""
+    cursor = None
+    for _ in range(20):
+        page = await client.list_activations(limit=50, cursor=cursor)
+        for item in page.items:
+            if item.name == name and not item.retired:
+                return int(item.revision)
+        cursor = page.next_cursor
+        if not cursor:
+            return None
+    raise AssertionError("more than 1,000 activations in the demo environment")
+
+
+def refusal(what: str, error: Any) -> str:
+    """The server's own reasons for a refusal: its code, message and error diagnostics (no values)."""
+    found = [(item.code, item.path, item.message) for item in error.diagnostics if item.severity == "error"]
+    return f"{what} was refused with {error.code}: {error.problem.message} {found}"
 
 
 def ollama_mode() -> str:
@@ -587,10 +638,10 @@ def test_j4_07_ai_runs_on_ollama_with_the_gated_model(run, orders):
     activated = asyncio.run(_activate_workflows(run, enabled, orders, binding))
     run.save_private(
         "agents",
-        {**orders, "binding_id": binding, "people": people, "activations": activated["activations"]},
+        {**orders, "binding_id": binding, "people": people, "activations": activated},
     )
-    record(run, "J4.7", mode=mode, model=MODEL, test=enabled["test"], warnings=activated["warnings"])
-    assert set(activated["activations"]) == set(WORKFLOWS)
+    record(run, "J4.7", mode=mode, model=MODEL, test=enabled["test"])
+    assert set(activated) == set(WORKFLOWS)
 
 
 # J4.8: run memory.
@@ -642,14 +693,24 @@ def cancellations(run) -> list[tuple[str, str]]:
 Answer = Callable[[Any, dict[str, Any]], Awaitable[None]]
 
 
-async def _reviewed_run(run, label: str, request: str, answer: Answer) -> UUID:
-    """Start a desk run as the builder; ``answer(approver_cli, review)`` decides every review it waits for."""
-    async with run.client("builder") as client:
-        run_id = await start(client, run, "desk", label, {"request": request})
-    async with run.cli("approver") as weave:
-        while (review := review_of(weave, run_id)) is not None:
-            await answer(weave, review)
-    return run_id
+async def _reviewed_run(
+    run, label: str, answer: Answer, name: str = "desk", value: dict[str, Any] | None = None
+) -> UUID:
+    """Start a run as the builder; the approver answers every review it waits for with ``answer(cli, review)``
+    until the run ends or stops at an incident (the approver can't read runs, the builder watches it)."""
+    async with run.client("builder") as client, run.cli("approver") as weave:
+        run_id = await start(client, run, name, label, value)
+        deadline = time.monotonic() + RUN_SECONDS
+        while True:
+            review = review_in(weave, run_id)
+            if review is not None:
+                await answer(weave, review)
+                continue
+            view = await client.invoke("runs.read", identifier=run_id)
+            if stopped(view.state.status, view.state.incident):
+                return run_id
+            assert time.monotonic() < deadline, f"run {run_id} still {view.state.status} after {RUN_SECONDS} s"
+            await asyncio.sleep(3)
 
 
 def _rejecting(label: str) -> Answer:
@@ -675,7 +736,9 @@ def _injected_cancel(run) -> None:
     """A tool result that tells the model to cancel an order gains no authority: any cancellation the model
     asks for waits for a review, which the reviewer rejects, and nothing reaches the fixture."""
     orders_control(run, "/_control/reset", "POST")
-    run_id = asyncio.run(_reviewed_run(run, "09-injected", "What is the status of order B-22?", _rejecting("j4-09i")))
+    run_id = asyncio.run(
+        _reviewed_run(run, "09-injected", _rejecting("j4-09i"), value={"request": "What is the status of order B-22?"})
+    )
     view, log = _desk_evidence(run, run_id)
     record(run, "J4.9/injected-cancel", run_id=str(run_id), status=view.state.status, logs={"desk": log})
     assert view.state.status == "succeeded", view.state
@@ -694,7 +757,7 @@ def test_j4_09_a_rejected_cancellation_never_reaches_the_orders_service(run, ord
         asked.append(review["id"])
         decide(weave, review, "reject", "j4-09")
 
-    run_id = asyncio.run(_reviewed_run(run, "09", "Cancel order A-17.", answer))
+    run_id = asyncio.run(_reviewed_run(run, "09", answer, value={"request": "Cancel order A-17."}))
     view, log = _desk_evidence(run, run_id)
     record(run, "J4.9", run_id=str(run_id), status=view.state.status, reviews=len(asked), logs={"desk": log})
     assert asked, "the model never asked to cancel order A-17"
@@ -729,11 +792,11 @@ def test_j4_10_only_a_reviewer_other_than_the_starter_approves_and_the_call_runs
                 ):
                     refused = weave.refused(*args, request=request)
                     refusals.append((refused["status"], refused["code"]))
-                tasks = weave("human-tasks", "list", "--limit", "100")["items"]
+                tasks = read(weave, "human-tasks", "list", "--limit", "100")["items"]
                 listed.append(review["id"] in {task["id"] for task in tasks})
         decide(approver, review, "approve", "j4-10")
 
-    run_id = asyncio.run(_reviewed_run(run, "10", "Cancel order A-17.", answer))
+    run_id = asyncio.run(_reviewed_run(run, "10", answer, value={"request": "Cancel order A-17."}))
     view, log = _desk_evidence(run, run_id)
     record(run, "J4.10", run_id=str(run_id), status=view.state.status, logs={"desk": log})
     # The run's starter can't read, claim or approve its review, and doesn't see it in their list.
@@ -751,19 +814,21 @@ def test_j4_10_only_a_reviewer_other_than_the_starter_approves_and_the_call_runs
 
 @pytest.mark.journey_step("J4.11")
 def test_j4_11_an_approved_workflow_tool_runs_a_child_run_whose_output_is_the_tool_result(run, orders):
+    approvals: list[str] = []
+
+    async def approve(weave: Any, review: dict[str, Any]) -> None:
+        approvals.append(review["id"])
+        decide(weave, review, "approve", "j4-11")
+
     async def body() -> tuple[UUID, Any, dict[str, Any], Any]:
-        async with run.client("builder") as client:
-            run_id = await start(client, run, "notify", "11")
-        async with run.cli("approver") as weave:
-            review = review_of(weave, run_id)
-            assert review is not None, "the notify_customer call never waited for a review"
-            decide(weave, review, "approve", "j4-11")
+        run_id = await _reviewed_run(run, "11", approve, name="notify")
+        assert approvals, "the notify_customer call never waited for a review"
         async with run.client("builder") as client:
             view = await settle(client, run_id)
         async with run.cli("builder") as weave:
             log = agent_log(weave, run_id, "notifier")
             (call,) = [item for item in calls(log, "notify_customer") if item["status"] == "succeeded"]
-            child = weave("runs", "read", call["child_run_id"])
+            child = read(weave, "runs", "read", call["child_run_id"])
             assert_replays(weave, run_id, UUID(call["child_run_id"]))
         return run_id, view, log, child
 
@@ -783,34 +848,89 @@ def test_j4_11_an_approved_workflow_tool_runs_a_child_run_whose_output_is_the_to
 # J4.12 to J4.14: what the model can't do, and an endpoint that goes away.
 
 
-def _failed_run(run, name: str, label: str) -> tuple[UUID, Any, dict[str, Any], list[str]]:
-    async def body() -> tuple[UUID, Any, dict[str, Any], list[str]]:
+async def resolve_incident(client: Any, run_id: UUID, kind: str, reason: str) -> Any:
+    """Resolve the run's one active incident; the incident as it was."""
+    from firefly_weave.contracts.operations import IncidentResolution
+
+    incidents = (await client.invoke("incidents.run_list", identifier=run_id)).items
+    (incident,) = [item for item in incidents if item.status == "active"]
+    await client.invoke(
+        "incidents.resolve",
+        identifier=incident.id,
+        body=IncidentResolution(receipt_id=uuid4(), kind=kind, reason=reason),
+        revision=incident.revision,
+    )
+    return incident
+
+
+def incident_fields(incident: Any) -> dict[str, Any] | None:
+    """Where an incident stands and what it names, for the evidence (no values)."""
+    if incident is None:
+        return None
+    keys = ("node_id", "instance_key", "code", "origin_code", "status")
+    return {key: value for key, value in incident.model_dump(mode="json").items() if key in keys}
+
+
+# A failed task first opens WV-TASK-FAILED; recovery then decides, and ends at WV-TASK-RETRIES-EXHAUSTED once no
+# retry is left or allowed, which it never changes again.
+SETTLED_INCIDENT = "WV-TASK-RETRIES-EXHAUSTED"
+
+
+def incident_settled(status: str, incident: str | None) -> bool:
+    return status in SETTLED or (status == "suspended" and incident == SETTLED_INCIDENT)
+
+
+def ended(status: str, incident: str | None) -> bool:
+    return status in SETTLED
+
+
+def _failed_run(run, name: str, label: str) -> tuple[UUID, Any, dict[str, Any], list[str], Any, Any]:
+    """Start a run that fails at the model and read it at its incident; then the operator terminates it, so its
+    history is complete and replays."""
+
+    async def body() -> tuple[UUID, Any, dict[str, Any], list[str], Any, Any]:
+        incident = None
         async with run.client("builder") as client:
             run_id = await start(client, run, name, label)
-            view = await settle(client, run_id)
-            history = await client.history(run_id, limit=200)
+            view = await settle(client, run_id, until=incident_settled)
+            history = await client.history(run_id, limit=100)
+            async with run.cli("builder") as weave:
+                log = agent_log(weave, run_id, "lookup")
+            if view.state.status == "suspended":
+                incident = await resolve_incident(client, run_id, "terminate", "The model can't run this agent")
+            final = await settle(client, run_id, until=ended)
         failures = [
             event.data["output"]["code"]
             for event in history.events
             if event.type == "task_failed" and isinstance(event.data.get("output"), dict)
         ]
         async with run.cli("builder") as weave:
-            log = agent_log(weave, run_id, "lookup")
             assert_replays(weave, run_id)
-        return run_id, view, log, failures
+        return run_id, view, log, failures, final, incident
 
     return asyncio.run(body())
 
 
 def _assert_model_failure(run, step: str, name: str, code: str) -> None:
     orders_control(run, "/_control/reset", "POST")
-    run_id, view, log, failures = _failed_run(run, name, step.replace(".", "-"))
-    record(run, step, run_id=str(run_id), status=view.state.status, incident=view.state.incident, logs={"lookup": log})
-    # Never retried: one failed turn, an incident at the turn's key, and no tool call reached the fixture.
-    assert view.state.status == "suspended" and view.state.incident, view.state
+    run_id, view, log, failures, final, incident = _failed_run(run, name, step.replace(".", "-"))
+    record(
+        run,
+        step,
+        run_id=str(run_id),
+        status=view.state.status,
+        incident=view.state.incident,
+        incident_record=incident_fields(incident),
+        ended=final.state.status,
+        logs={"lookup": log},
+    )
+    # Never retried: one failed turn whose task names the model's code, the run stopped at an incident, and no tool
+    # call reached the fixture.
+    assert view.state.status == "suspended" and view.state.incident and incident is not None, view.state
     assert failures == [code], failures
-    assert turn_errors(log) == [code], log
+    assert turn_errors(log) == [view.state.incident], log
     assert calls(log) == [] and orders_calls(run) == []
+    assert final.state.status in SETTLED and final.state.status != "succeeded", final.state
 
 
 @pytest.mark.journey_step("J4.12")
@@ -907,51 +1027,57 @@ def _until(read: Callable[[], Any], done: Callable[[Any], bool], seconds: float,
 
 @pytest.mark.journey_step("J4.14")
 def test_j4_14_a_stopped_model_endpoint_fails_with_llm_unreachable_and_the_retry_succeeds(run, orders):
-    from firefly_weave.contracts.operations import IncidentResolution
-
     orders_control(run, "/_control/reset", "POST")
     ollama = ContainerOllama(run) if ollama_mode() == "container" else HostOllama(run)
     ollama.stop()
     try:
 
-        async def failing() -> tuple[UUID, Any]:
+        async def failing() -> tuple[UUID, Any, list[str], dict[str, Any]]:
             async with run.client("builder") as client:
                 run_id = await start(client, run, "lookup", "14")
-                return run_id, await settle(client, run_id)
+                view = await settle(client, run_id, until=incident_settled)
+                history = await client.history(run_id, limit=100)
+            failures = [
+                event.data["output"]["code"]
+                for event in history.events
+                if event.type == "task_failed" and isinstance(event.data.get("output"), dict)
+            ]
+            async with run.cli("builder") as weave:
+                log = agent_log(weave, run_id, "lookup")
+            return run_id, view, failures, log
 
-        run_id, stopped_view = asyncio.run(failing())
+        run_id, stopped_view, failures, stopped_log = asyncio.run(failing())
     finally:
         ollama.start()
 
-    async def retried() -> tuple[Any, list[dict[str, Any]], Any, dict[str, Any]]:
+    async def retried() -> tuple[Any, Any, dict[str, Any]]:
         async with run.client("builder") as client:
-            incidents = (await client.invoke("incidents.run_list", identifier=run_id)).items
-            (incident,) = [item for item in incidents if item.status == "open"]
-            await client.invoke(
-                "incidents.resolve",
-                identifier=incident.id,
-                body=IncidentResolution(receipt_id=uuid4(), kind="retry_safe", reason="Ollama is running again"),
-                revision=incident.revision,
-            )
-            view = await settle(client, run_id, until=lambda status, _: status in SETTLED)
+            incident = await resolve_incident(client, run_id, "retry_safe", "Ollama is running again")
+            view = await settle(client, run_id, until=ended)
         async with run.cli("builder") as weave:
             log = agent_log(weave, run_id, "lookup")
             assert_replays(weave, run_id)
-        return incident, incidents, view, log
+        return incident, view, log
 
-    incident, incidents, view, log = asyncio.run(retried())
+    incident, view, log = asyncio.run(retried())
     record(
         run,
         "J4.14",
         run_id=str(run_id),
-        stopped={"status": stopped_view.state.status, "incident": stopped_view.state.incident},
+        stopped={
+            "status": stopped_view.state.status,
+            "incident": stopped_view.state.incident,
+            "incident_record": incident_fields(incident),
+            "failures": failures,
+        },
         status=view.state.status,
-        logs={"lookup": log},
+        logs={"stopped": stopped_log, "lookup": log},
     )
     # The endpoint was down: recovery retried the turn, then stopped at an incident; after the restart, the
     # person's retry ran the same turn again and the agent answered from the fixture.
     assert stopped_view.state.status == "suspended" and stopped_view.state.incident, stopped_view.state
-    assert "LLM_UNREACHABLE" in turn_errors(log), log
+    assert failures and set(failures) == {"LLM_UNREACHABLE"}, failures
+    assert turn_errors(stopped_log) == [stopped_view.state.incident], stopped_log
     assert view.state.status == "succeeded", view.state
     assert TOKEN in json.dumps(view.state.output), view.state.output
     assert ("GET", "/orders/A-17") in orders_calls(run)
