@@ -25,8 +25,10 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from click.testing import CliRunner
 from fake_commands import FakeCommands
 
+from firefly_weave.cli.main import cli
 from firefly_weave.contracts.public import Problem
 from firefly_weave.sdk import platform_clusters as clusters
 from firefly_weave.sdk.errors import WeaveError
@@ -794,6 +796,34 @@ def test_connect_never_adopts_an_enabled_target_another_runner_holds(world):
     assert not [grant for grant in grants if str(held.id) in [str(item) for item in grant.resources]]
     entry = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
     assert "target_id" not in entry and "deployment_id" not in entry
+
+
+def connect_command(case, output):
+    """weave platform cluster connect as the developer runs it, with standard output and standard error apart."""
+    directory, _, config, _ = case
+    argv = ["platform", "--directory", str(directory), "cluster", "connect", "--provider", "kind", "--name"]
+    return CliRunner().invoke(cli, [*argv, "weave-test", "--kubeconfig", str(config), "--output", output])
+
+
+def test_a_reconnect_names_the_disabled_target_it_enables_again(world):
+    """Connect enables whichever disabled target holds the namespace, also one disabled on purpose rather than by a
+    disconnect, so a progress line names it by its own name and ID."""
+    _, _, _, cluster = world
+    kept = listed_target(name="paused-workers")
+    cluster.targets = [kept]
+    result = connect_command(world, "text")
+    assert result.exit_code == 0, result.output
+    assert f"target: enabled the disabled target paused-workers ({kept.id}) again" in result.stderr.splitlines()
+
+
+def test_a_reconnect_with_json_output_names_the_target_it_enabled_again(world):
+    """JSON output has no progress lines, so its result names the target connect enabled again."""
+    _, _, _, cluster = world
+    kept = listed_target(name="paused-workers")
+    cluster.targets = [kept]
+    result = connect_command(world, "json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["enabled_again"] == {"target_id": str(kept.id), "target_name": "paused-workers"}
 
 
 @pytest.mark.parametrize(

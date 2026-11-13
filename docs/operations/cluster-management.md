@@ -511,6 +511,14 @@ this installation connected was taken since, the refusal says which namespace
 and gives the `disconnect` command that frees it. One installation connects up
 to eight cluster targets.
 
+A disconnect can only disable a target, and the platform never registers one
+namespace twice, so connect enables the namespace's disabled target again for
+the new runner, with its deployment and approval policy. It enables any
+disabled target of the namespace, also one that someone disabled on purpose,
+so it names that target in a progress line: `target: enabled the disabled
+target NAME (ID) again`. With `--output json`, which prints no progress lines,
+the result names it in `enabled_again`, with `target_id` and `target_name`.
+
 ## List and check connected clusters
 
 ```sh

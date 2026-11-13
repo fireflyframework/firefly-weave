@@ -1064,11 +1064,16 @@ async def _pages(client: Any, operation: str, **query: str) -> AsyncIterator[Any
             return
 
 
-async def _enable_kept(client: Any, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any) -> None:
+async def _enable_kept(
+    client: Any, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any, notice: Callable[[str], None]
+) -> dict[str, str] | None:
     """A namespace connected before keeps its target after disconnect, which can only disable it, and the API never
     registers one namespace (its UID and name) twice: enable that target again for this runner, with its deployment,
     and keep its approval policy. A target this entry's runner already holds was enabled by a connect that stopped
-    before saving it."""
+    before saving it.
+
+    Any disabled target of the namespace is enabled again, also one disabled for another reason than a disconnect, so
+    the notice names it as soon as the API enabled it, and the target is returned for connect's result."""
     from firefly_weave.contracts.deployments import TargetUpdate
 
     runner = UUID(entry["runner_principal_id"])
@@ -1080,22 +1085,33 @@ async def _enable_kept(client: Any, entry: dict[str, Any], uid: str, namespace: 
             kept = item
             break
     if kept is None:
-        return
+        return None
+    enabled = None
     if kept.disabled:
         update = TargetUpdate(runner_principal_id=runner, capabilities=list(objects.CAPABILITIES), disabled=False)
         await client.invoke("deployment_targets.update", identifier=kept.id, body=update, revision=kept.revision)
+        enabled = {"target_id": str(kept.id), "target_name": kept.name}
+        notice(f"target: enabled the disabled target {kept.name} ({kept.id}) again")
     entry["target_id"] = str(kept.id)
     async for deployment in _pages(client, "deployments.list", target_id=str(kept.id)):
         if str(deployment.target_id) == str(kept.id) and deployment.name == DEPLOYMENT:
             entry["deployment_id"] = str(deployment.id)
             break
     save_entry()
+    return enabled
 
 
 async def _register(
-    client: Any, connection: _Connection, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any
-) -> None:
-    """The target, its deployment and the runner's grant on it; the workers' grant on the fixture release only."""
+    client: Any,
+    connection: _Connection,
+    entry: dict[str, Any],
+    uid: str,
+    namespace: str,
+    save_entry: Any,
+    notice: Callable[[str], None],
+) -> dict[str, str] | None:
+    """The target, its deployment and the runner's grant on it; the workers' grant on the fixture release only.
+    Returns the disabled target it enabled again, if any."""
     from firefly_weave.contracts.members import MemberGrantRequest
     from firefly_weave.sdk.members import MembersClient
 
@@ -1109,8 +1125,9 @@ async def _register(
         "capabilities": list(objects.CAPABILITIES),
         "approval_policy": {"distinct_approver": False},
     }
+    enabled = None
     if entry.get("target_id") is None:
-        await _enable_kept(client, entry, uid, namespace, save_entry)
+        enabled = await _enable_kept(client, entry, uid, namespace, save_entry, notice)
     deployment = platform_operations.deployment_request(DEPLOYMENT, objects.WORKER, operations)
     # The worker's own size, which its runner's binding allows; the defaults would ask for more and be refused.
     deployment["components"][0] |= {"cpu_millis": objects.WORKER_CPU_MILLIS, "memory_mib": objects.WORKER_MEMORY_MIB}
@@ -1136,6 +1153,7 @@ async def _register(
         )
         entry["worker_granted"] = operations["release_id"]
         save_entry()
+    return enabled
 
 
 def _log_hint(connection: _Connection, namespace: str) -> str:
@@ -1308,10 +1326,10 @@ def connect(
 
         notice(f"target: registering {entry['target_name']}")
 
-        async def register(client: WeaveClient) -> None:
-            await _register(client, connection, entry, uid, namespace, save_entry)
+        async def register(client: WeaveClient) -> dict[str, str] | None:
+            return await _register(client, connection, entry, uid, namespace, save_entry, notice)
 
-        _api(state, operations, register, transport)
+        enabled = _api(state, operations, register, transport)
 
         notice(f"runner: starting weave-runner-{namespace}")
         if runner_later:
@@ -1340,7 +1358,7 @@ def connect(
         entry["state"] = "connected"
         entry["connected_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         save(directory, value)
-        return {
+        result = {
             "target_id": entry["target_id"],
             "target_name": entry["target_name"],
             "provider": provider,
@@ -1350,6 +1368,10 @@ def connect(
             "runner": "online",
             "observed_at": observed,
         }
+        if enabled is not None:
+            # JSON output has no progress lines: the result names the disabled target this connect enabled again.
+            result["enabled_again"] = enabled
+        return result
 
 
 # Refresh
