@@ -771,17 +771,13 @@ def encoded(value):
 
 # The Secrets of the namespaces Weave manages: the runner's and the worker's client secret, and one that isn't Weave's.
 SECRETS = {
-    "weave-system": [
-        {
-            "metadata": {"name": "weave-runner-identity-weave-workers-o-j4"},
-            "data": {"client-secret": encoded(RUNNER_SECRET)},
-        },
-        {"metadata": {"name": "registry-pull"}, "data": {"client-secret": encoded("not-a-weave-identity")}},
-    ],
-    "weave-workers-o-j4": [
-        {"metadata": {"name": "weave-worker-identity"}, "data": {"client-secret": encoded(WORKER_SECRET)}}
-    ],
+    "weave-system": {
+        "weave-runner-identity-weave-workers-o-j4": RUNNER_SECRET,
+        "registry-pull": "not-a-weave-identity",
+    },
+    "weave-workers-o-j4": {"weave-worker-identity": WORKER_SECRET, "registry-pull": "not-a-weave-identity"},
 }
+CLIENT_SECRET = "jsonpath={.data.client-secret}"
 
 
 class ClusterRecorder:
@@ -843,8 +839,10 @@ class ClusterRecorder:
             stdout = "c0ffee\n"
         elif argv[3:5] == ["ps", "--all"] and any(part.startswith("name=weave-acc-") for part in argv):
             stdout = "".join(name + "\n" for name in self.leftovers)
-        elif tool.startswith("kubectl-") and "secrets" in argv:
-            stdout = json.dumps({"items": SECRETS.get(argv[argv.index("--namespace") + 1], [])})
+        elif tool.startswith("kubectl-") and argv[5:7] == ["get", "secrets"]:
+            stdout = "".join(f"secret/{name}\n" for name in SECRETS.get(argv[4], {}))
+        elif tool.startswith("kubectl-") and argv[5:7] == ["get", "secret"]:
+            stdout = encoded(SECRETS[argv[4]][argv[7]])
         elif tool.startswith("kubectl-") and "namespaces" in argv:
             stdout = "weave-system weave-workers-o-j4"
         elif tool.startswith("kubectl-") and "deployments" in argv:
@@ -853,6 +851,9 @@ class ClusterRecorder:
             stdout = self.logs
         elif tool.startswith("kubectl-") and ("get" in argv or "describe" in argv):
             stdout = f"objects in {argv[argv.index('--namespace') + 1]}\n"
+        if code != 0 and kwargs.get("check", True):
+            # As Recorder.run does.
+            raise acceptance.StageFailed(f"{' '.join(argv[:3])} exited {code}")
         return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr="")
 
 
@@ -1092,6 +1093,7 @@ def test_blocked_egress_covers_the_cluster_network(tmp_path, monkeypatch):
     # IPv6 too: kind's network has an IPv6 subnet, which Docker masquerades out like the IPv4 one.
     six = ["sudo", "-n", "ip6tables", "-w"]
     assert [argv for argv in commands if argv[:3] == six[:3]] == [
+        [*six, "-S", "DOCKER-USER"],
         [*six, "-N", "WEAVE-ACCEPTANCE"],
         [*six, "-A", "WEAVE-ACCEPTANCE", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "RETURN"],
         [*six, "-A", "WEAVE-ACCEPTANCE", "-s", CLUSTER_SUBNET6, "-d", CLUSTER_SUBNET6, "-j", "RETURN"],
@@ -1122,6 +1124,30 @@ def test_a_node_that_still_reaches_a_public_address_fails_up(tmp_path, monkeypat
     plan = blocked_cluster_plan(tmp_path, monkeypatch)
     with pytest.raises(acceptance.StageFailed, match=message):
         acceptance.up(plan, ClusterRecorder(**trouble))
+
+
+def test_a_failed_ipv4_rule_leaves_no_ipv6_chain_for_down(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    plan = blocked_cluster_plan(tmp_path, monkeypatch)
+    recorder = ClusterRecorder(failing=("iptables -w -I DOCKER-USER",))
+    with pytest.raises(acceptance.StageFailed):
+        acceptance.up(plan, recorder)
+    assert plan.state["egress_rules"] is True and "egress_rules6" not in plan.state
+    recorder = ClusterRecorder()
+    acceptance.down(plan, recorder)
+    assert not any(argv[:3] == ["sudo", "-n", "ip6tables"] for argv, _ in recorder.calls)
+    assert plan.state["resources_left"] == []
+
+
+def test_up_changes_no_rule_when_docker_manages_no_ipv6_chain(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    plan = blocked_cluster_plan(tmp_path, monkeypatch)
+    recorder = ClusterRecorder(failing=("ip6tables -w -S DOCKER-USER",))
+    why = r"Docker manages no ip6tables DOCKER-USER chain.*IPv6 traffic.*can't be blocked.*daemon\.json.*--block-egress"
+    with pytest.raises(acceptance.StageFailed, match=why):
+        acceptance.up(plan, recorder)
+    changes = [argv for argv, _ in recorder.calls if argv[:2] == ["sudo", "-n"] and "-S" not in argv]
+    assert changes == [] and "egress_rules" not in plan.state
 
 
 def test_a_cluster_network_without_ipv6_gets_no_ipv6_rules(tmp_path, monkeypatch):
@@ -1190,9 +1216,33 @@ def test_collect_redacts_the_cluster_journeys_client_secrets(tmp_path, monkeypat
         acceptance.collect(plan, recorder)
     log = (plan.evidence / "cluster" / "weave-runner-weave-workers-o-j4.log").read_text(encoding="utf-8")
     assert log == "signed in as [redacted] with [redacted]\n"
-    # Read into memory from Weave's namespaces only.
-    read = [argv[3:] for argv, _ in recorder.calls if "secrets" in argv]
-    assert read == [["--namespace", namespace, "get", "secrets", "--output", "json"] for namespace in SECRETS]
+    # Only the identity Secrets' client secrets enter memory: the runners' in weave-system, the workers' elsewhere.
+    read = [argv[3:] for argv, _ in recorder.calls if argv[5:7] in (["get", "secrets"], ["get", "secret"])]
+    runner = "weave-runner-identity-weave-workers-o-j4"
+    assert read == [
+        ["--namespace", "weave-system", "get", "secrets", "--output", "name"],
+        ["--namespace", "weave-system", "get", "secret", runner, "--output", CLIENT_SECRET],
+        ["--namespace", "weave-workers-o-j4", "get", "secrets", "--output", "name"],
+        ["--namespace", "weave-workers-o-j4", "get", "secret", "weave-worker-identity", "--output", CLIENT_SECRET],
+    ]
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [
+        "get namespaces",
+        # The second namespace, so skipping one that can't be read fails too.
+        "--namespace weave-workers-o-j4 get secrets",
+        "get secret weave-worker-identity",
+    ],
+)
+def test_a_cluster_whose_client_secrets_cant_be_read_fails_collect_and_scan(tmp_path, monkeypatch, failing):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = secrets_plan(tmp_path, monkeypatch)
+    with pytest.raises(acceptance.StageFailed, match="client secrets can't be checked"):
+        acceptance.collect(plan, ClusterRecorder(failing=(failing,)))
+    with pytest.raises(acceptance.StageFailed, match="client secrets can't be checked"):
+        acceptance.scan(plan, ClusterRecorder(failing=(failing,)))
 
 
 def test_the_scan_finds_a_cluster_journeys_client_secret(tmp_path, monkeypatch):

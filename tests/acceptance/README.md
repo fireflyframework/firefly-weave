@@ -80,6 +80,11 @@ journey runs with that kubeconfig. Each cluster journey connects its own
 namespace. `run.json` records the cluster under `cluster`, and the evidence names
 the tool's version (`kind` or `k3d`) and the Kubernetes version.
 
+With `--block-egress`, a cluster network that has an IPv6 subnet, as kind's
+does, needs Docker's ip6tables `DOCKER-USER` chain (`"ip6tables": true` in
+`/etc/docker/daemon.json`, the default since Docker 27). Without it, `up` stops
+before it changes any rule and says so.
+
 `collect` writes `get` and `describe` of each namespace Weave manages on the
 cluster, and each runner's log, to `evidence/cluster/` with the run's secrets
 redacted, including the cluster journeys' client secrets and the cluster

@@ -125,9 +125,11 @@ WEAVE_NAMESPACE_NAMES = [
 ]
 # The Secrets that hold the cluster journeys' client secrets: each target's runner's in weave-system, and its
 # workers' in their own namespace.
+SYSTEM_NAMESPACE = "weave-system"
 RUNNER_IDENTITY = "weave-runner-identity-"
 WORKER_IDENTITY = "weave-worker-identity"
 SECRET_KEY = "client-secret"
+CLIENT_SECRET = f"jsonpath={{.data.{SECRET_KEY}}}"
 # At most half of down, so the platform's teardown and the audit always keep time after a hung delete.
 CLUSTER_DELETE_SECONDS = 300
 # Runs in a container: exits 0 when it connects to the address and port, and PROBE_BLOCKED when it can't (refused,
@@ -512,27 +514,33 @@ def prepare_cluster(plan: Plan, recorder: Recorder, provider: str) -> dict[str, 
 
 def _cluster_secrets(plan: Plan, recorder: Recorder) -> list[str]:
     """The runner and worker client secrets the cluster journeys made, read from the run's cluster into memory only,
-    each as used and as Kubernetes keeps it (base64). None before the cluster exists; a cluster that can't be read
-    fails the stage, so redaction and the leak check never go without them."""
+    each as used and as Kubernetes keeps it (base64). Only the identity Secrets' client secrets are read, by name:
+    the runners' in weave-system and the workers' in each workers namespace. None before the cluster exists; a
+    cluster that can't be read fails the stage, so redaction and the leak check never go without them."""
     cluster = plan.state.get("cluster") or {}
     tool = _cluster_tool(plan, "kubectl")
     if "network" not in cluster or not tool.is_file():
         return []
     kubectl, env = [str(tool), "--context", cluster["context"]], _cluster_env(plan)
-    unread = "The run's cluster didn't list {what}, so the cluster journeys' client secrets can't be checked"
-    listed = recorder.run([*kubectl, *WEAVE_NAMESPACE_NAMES], env=env, check=False, timeout=60)
-    if listed.returncode != 0:
-        raise StageFailed(unread.format(what="Weave's namespaces"))
-    found: list[str] = []
-    for namespace in listed.stdout.split():
-        argv = [*kubectl, "--namespace", namespace, "get", "secrets", "--output", "json"]
-        result = recorder.run(argv, env=env, check=False, timeout=60)
+
+    def read(argv: list[str], what: str) -> str:
+        result = recorder.run([*kubectl, *argv], env=env, check=False, timeout=60)
         if result.returncode != 0:
-            raise StageFailed(unread.format(what=f"the Secrets in {namespace}"))
-        for item in json.loads(result.stdout)["items"]:
-            name, value = item["metadata"]["name"], (item.get("data") or {}).get(SECRET_KEY)
-            if value and (name == WORKER_IDENTITY or name.startswith(RUNNER_IDENTITY)):
-                found += [value, base64.b64decode(value).decode("utf-8", "replace")]
+            raise StageFailed(
+                f"The run's cluster didn't return {what}, so the cluster journeys' client secrets can't be checked"
+            )
+        return result.stdout
+
+    found: list[str] = []
+    for namespace in read(WEAVE_NAMESPACE_NAMES, "Weave's namespaces").split():
+        listed = read(["--namespace", namespace, "get", "secrets", "--output", "name"], f"the Secrets in {namespace}")
+        for name in (line.removeprefix("secret/") for line in listed.split()):
+            wanted = name.startswith(RUNNER_IDENTITY) if namespace == SYSTEM_NAMESPACE else name == WORKER_IDENTITY
+            if wanted:
+                argv = ["--namespace", namespace, "get", "secret", name, "--output", CLIENT_SECRET]
+                value = read(argv, f"the Secret {namespace}/{name}").strip()
+                if value:
+                    found += [value, base64.b64decode(value).decode("utf-8", "replace")]
     return found
 
 
@@ -629,13 +637,18 @@ def up(plan: Plan, recorder: Recorder) -> None:
         cluster = plan.state.get("cluster")
         rules = egress_rules(cluster["subnet"] if cluster else None)
         subnet6 = cluster.get("ipv6_subnet") if cluster else None
-        rules6 = egress_rules6(subnet6) if subnet6 else []
+        if subnet6:
+            _require_ipv6_hook(recorder, cluster["network"], subnet6)
         plan.state["egress_rules"] = True
-        if rules6:
-            plan.state["egress_rules6"] = True
         plan.save()
-        for argv in [*rules, *rules6]:
+        for argv in rules:
             recorder.run(argv)
+        if subnet6:
+            # Marked only now: when an IPv4 rule fails, down has no IPv6 chain to release.
+            plan.state["egress_rules6"] = True
+            plan.save()
+            for argv in egress_rules6(subnet6):
+                recorder.run(argv)
         # From Docker's default network, and from the cluster's, which its nodes use, over each family it has.
         probes = [(None, "IPv4")]
         if cluster:
@@ -645,6 +658,19 @@ def up(plan: Plan, recorder: Recorder) -> None:
         plan.state["egress_blocked"] = True
     plan.save()
     _journeys(plan, recorder, [J0_TESTS], allow_empty=False)
+
+
+def _require_ipv6_hook(recorder: Recorder, network: str, subnet6: str) -> None:
+    """Before any rule changes: a cluster network's IPv6 traffic can be blocked only through Docker's ip6tables
+    DOCKER-USER chain, so a host without it stops here rather than run with IPv6 egress open."""
+    found = recorder.run(["sudo", "-n", "ip6tables", "-w", "-S", "DOCKER-USER"], check=False, timeout=60)
+    if found.returncode != 0:
+        raise StageFailed(
+            "Docker manages no ip6tables DOCKER-USER chain on this host (or sudo can't run ip6tables), so the IPv6 "
+            f"traffic of the cluster network {network} ({subnet6}) can't be blocked. Turn on Docker's ip6tables "
+            '("ip6tables": true in /etc/docker/daemon.json, the default since Docker 27) and restart Docker, or run '
+            "without --block-egress. No rule was changed."
+        )
 
 
 def _probe(plan: Plan, recorder: Recorder, network: str | None, family: str) -> None:
@@ -811,7 +837,7 @@ def _collect_cluster(plan: Plan, recorder: Recorder) -> None:
     for namespace in names([*kubectl, *WEAVE_NAMESPACE_NAMES]):
         keep(f"{namespace}.get.txt", [*kubectl, "--namespace", namespace, "get", CLUSTER_OBJECTS, "--output", "wide"])
         keep(f"{namespace}.describe.txt", [*kubectl, "--namespace", namespace, "describe", CLUSTER_OBJECTS])
-    system = [*kubectl, "--namespace", "weave-system"]
+    system = [*kubectl, "--namespace", SYSTEM_NAMESPACE]
     for deployment in names([*system, "get", "deployments", "--selector", RUNNERS, "--output", "name"]):
         name = deployment.rsplit("/", 1)[-1]
         keep(f"{name}.log", [*system, "logs", deployment, "--all-containers", "--tail", "5000"])
