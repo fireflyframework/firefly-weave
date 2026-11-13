@@ -192,7 +192,7 @@ jobs:
           mv desktop/work/release-assets/SHA256SUMS desktop/work/release-assets/weave-studio-${{ matrix.target }}-SHA256SUMS
       - name: Retain offline frozen startup diagnostics
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: weave-studio-${{ matrix.target }}-offline-diagnostics
           if-no-files-found: ignore
@@ -201,7 +201,7 @@ jobs:
             desktop/work/build/weave-studio-host/warn-weave-studio-host.txt
             desktop/src-tauri/binaries/weave-studio-host-*
       - name: Retain installers and host integrity manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: weave-studio-${{ steps.product.outputs.version }}-${{ matrix.target }}-unsigned
           if-no-files-found: error
