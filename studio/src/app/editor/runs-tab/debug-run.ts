@@ -42,12 +42,12 @@ import { runPrints } from "../state/test-data-tools";
 import type { ToastAction } from "../../toast";
 import {
   leftOutText,
+  mergeQuestion,
   mergedTestData,
   testDataFromRun,
-  TOO_LARGE_FOR_TEST_DATA,
-  type RunTestData,
 } from "./debug-from-run";
 import { OVERLAY_FACTS_LIMIT } from "./run-overlay";
+import type { RunNotice } from "../ndv/step-details-host";
 import type { ChosenRun } from "./runs-tab-state";
 
 /** What Debug in editor needs from Studio's shell. */
@@ -63,14 +63,14 @@ export interface DebugHost {
   readonly dialogs: {
     choose(options: DialogOptions): Promise<DialogChoice | null>;
   };
-  runNotice: {
-    draftId: string;
-    runId: string;
-    key: string;
-    code: string | null;
-  } | null;
+  runNotice: RunNotice | null;
   can(capability: string): boolean;
-  notify(text: string, action?: ToastAction, tone?: "neutral" | "danger"): void;
+  notify(
+    text: string,
+    action?: ToastAction,
+    tone?: "neutral" | "danger",
+    detail?: string,
+  ): void;
   selectTab(tab: string): Promise<boolean>;
   executeIn(
     target: ExecuteTarget,
@@ -105,40 +105,13 @@ export function debugRefusal(host: DebugHost): string | null {
   return null;
 }
 
-/** "check", "check and log", "check, log and send" */
-function listText(items: readonly string[]): string {
-  return items.length > 1
-    ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
-    : (items[0] ?? "");
-}
-/** "the run's input, 1 pinned output, 1 person's answer and 1 signal" */
-function copiedText(built: RunTestData): string {
-  const count = (n: number, one: string, many: string) =>
-    n ? [`${n} ${n === 1 ? one : many}`] : [];
-  const parts = [
-    ...(built.data.input ? ["the run's input"] : []),
-    ...count(
-      Object.keys(built.data.pins ?? {}).length,
-      "pinned output",
-      "pinned outputs",
-    ),
-    ...count(
-      Object.keys(built.data.humans ?? {}).length,
-      "person's answer",
-      "people's answers",
-    ),
-    ...count(Object.keys(built.data.signals ?? {}).length, "signal", "signals"),
-  ];
-  return parts.length > 1
-    ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
-    : (parts[0] ?? "nothing");
-}
-
 export class DebugRun {
   async run(
     host: DebugHost,
     chosen: ChosenRun,
     intent: "debug" | "copy",
+    /** Told when the Merge or Replace question opens, and when copying goes on. */
+    phase: (phase: "asking" | "copying") => void = () => {},
   ): Promise<DebugOutcome> {
     const refusal = debugRefusal(host);
     if (refusal) return { kind: "refused", message: refusal };
@@ -167,12 +140,15 @@ export class DebugRun {
       facts = await readOutputs(host.api, chosen.id);
     } catch (error) {
       if (!holds()) return { kind: "stale" };
+      // Refused: this account can't read the run any more, so the tab forgets
+      // it as any refused read of it does.
+      if (error instanceof ApiError && error.status === 403) {
+        chosen.data?.refused();
+        return { kind: "stale" };
+      }
       return { kind: "refused", message: describeError(error).message };
     }
     if (!holds()) return { kind: "stale" };
-    // More step instances than Studio reads: none of it is kept.
-    if (facts.length > OVERLAY_FACTS_LIMIT)
-      return { kind: "refused", message: TOO_LARGE_FOR_TEST_DATA };
     const now = new Date().toISOString();
     const built = testDataFromRun(
       {
@@ -194,21 +170,14 @@ export class DebugRun {
     let next = built.data;
     const existing = entriesOf(current).length;
     if (existing) {
-      const stop = built.stopAt
-        ? ` ${instanceStep(built.stopAt.key)} failed in this run, so Execute stops there.`
-        : "";
-      const again = built.recomputed.length
-        ? ` ${listText(built.recomputed)} ${built.recomputed.length === 1 ? "is" : "are"} worked out again from the copied data.`
-        : "";
-      const environment =
-        host.workspaceNames?.environment || "this environment";
+      phase("asking");
       const choice = await host.dialogs.choose({
         title: `Use run ${short}'s data as test data?`,
-        message:
-          `Your test data already has ${existing} ${existing === 1 ? "entry" : "entries"}. ` +
-          "Merge keeps the ones for steps this run didn't reach; Replace removes them. " +
-          `Studio copies ${copiedText(built)}.${stop}${again} ` +
-          `Each entry is marked as data from a run in ${environment}, so only people who can read those runs can open it.`,
+        message: mergeQuestion(
+          built,
+          existing,
+          host.workspaceNames?.environment || "this environment",
+        ),
         confirmLabel: "Merge",
         alternateLabel: "Replace",
         cancelLabel: "Cancel",
@@ -216,21 +185,20 @@ export class DebugRun {
         startOnConfirm: true,
       });
       if (!choice) return { kind: "cancelled" };
+      phase("copying");
       if (!holds()) return { kind: "stale" };
       if (choice === "confirm")
-        next = mergedTestData(service.data(), built.data, now);
+        next = mergedTestData(service.data(), built, now);
     }
-    const kept = await service.keepFromRun(next, built.pointers);
-    if (!holds()) return { kind: "stale" };
+    const kept = await service.keepFromRun(next, built.pointers, holds);
+    if (!holds() || (!kept.ok && "stale" in kept)) return { kind: "stale" };
     if (!kept.ok) return { kind: "refused", message: kept.message };
     const left = leftOutText(built.leftOut, kept.refused);
     // Said once Execute has answered, with where it stopped; Undo puts the
     // test data back as it was.
     const say = (stop: string) =>
       host.notify(
-        [`Test data now holds run ${short}'s data.`, stop, left]
-          .filter(Boolean)
-          .join(" "),
+        `Test data now holds run ${short}'s data.`,
         {
           label: "Undo",
           run: () => {
@@ -238,6 +206,8 @@ export class DebugRun {
               host.notify("The test data changed since, so Undo did nothing.");
           },
         },
+        "neutral",
+        [stop, left].filter(Boolean).join(" ") || undefined,
       );
     await host.selectTab("Designer");
     if (!holds()) return { kind: "stale" };
@@ -261,6 +231,9 @@ export class DebugRun {
         runId: chosen.id,
         key: built.stopAt!.key,
         code: built.stopAt!.code,
+        missing:
+          outcome.kind === "done" &&
+          outcome.response.blocked?.reason === "missing_mock",
       };
     await host.openStepDetails(instanceStep(stoppedAt), {
       focus: { kind: "region", region: "output" },
@@ -298,7 +271,7 @@ async function readOutputs(
       throw error;
     }
     facts.push(...page.items);
-    // Past what the overlay reads, the run's data is refused whole.
+    // Past what the overlay reads, testDataFromRun refuses the run whole.
     if (!page.next_cursor || facts.length > OVERLAY_FACTS_LIMIT) return facts;
     cursor = page.next_cursor;
   }

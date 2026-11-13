@@ -700,7 +700,12 @@ export class CanvasView implements OnInit, DoCheck {
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      output: fact ? fact.text : (h.summaryOf?.(tile.id) ?? ""),
+      // The Runs tab draws the run only: nothing from the editor's executions.
+      output: fact
+        ? fact.text
+        : this.viewingRuns()
+          ? ""
+          : (h.summaryOf?.(tile.id) ?? ""),
       outputTone: fact?.tone ?? null,
       name: tileName({
         id: tile.id,

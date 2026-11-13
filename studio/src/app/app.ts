@@ -76,6 +76,7 @@ import type {
 } from "./editor/state/test-data";
 import {
   stepDetailsEnabled,
+  type RunNotice,
   type StepDetailsHost,
 } from "./editor/ndv/step-details-host";
 import {
@@ -1411,9 +1412,10 @@ export class App implements CanvasHost {
     text: string,
     action?: ToastAction,
     tone: "neutral" | "danger" = "neutral",
+    detail?: string,
   ) {
     this.message = "";
-    this.toasts.show({ text, action, tone });
+    this.toasts.show({ text, detail, action, tone });
     this.cdr.markForCheck();
   }
   async initialize() {
@@ -3051,12 +3053,7 @@ export class App implements CanvasHost {
     return this.runView()?.data ?? null;
   }
   /** After Debug in editor: the step where the run failed, until the next execution. */
-  runNotice: {
-    draftId: string;
-    runId: string;
-    key: string;
-    code: string | null;
-  } | null = null;
+  runNotice: RunNotice | null = null;
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers

@@ -1253,6 +1253,12 @@ dd {
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+div.dialog-message p {
+  margin: 0;
+}
+div.dialog-message p + p {
+  margin-top: var(--space-2);
+}
 .dialog-form label {
   margin: 16px 0 6px;
 }
@@ -2583,6 +2589,22 @@ input[type="file"][hidden] {
 }
 .toast button:hover {
   background: var(--hover);
+}
+/* A toast with a title and a quieter second line: the title in bold, the
+   line under it muted, and the action a small bordered button. */
+.toast-text strong {
+  display: block;
+  font-weight: 600;
+}
+.toast-detail {
+  display: block;
+  color: var(--muted);
+}
+.toast button.toast-action-box {
+  align-self: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
 }
 /* Dismiss: a 24 px target with a fine pointer. For touch it is a 44 px
    target that reaches into the toast's padding, so the toast keeps its

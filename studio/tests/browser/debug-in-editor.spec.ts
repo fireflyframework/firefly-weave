@@ -24,17 +24,20 @@ import { expect, test, type Page } from "@playwright/test";
 import { pinSample } from "./execute-po";
 import { hasPython, localAuthoring } from "./local-authoring";
 import {
+  keepDrafts,
   listedKinds,
   openRunsTab,
   RUN_IDS,
+  RUNS_ACCOUNT,
   RUNS_ENV,
   runsWorkflow,
+  WORKER_CATALOG,
   type RunFixture,
   type RunsPage,
   type RunsPlatform,
 } from "./runs-po";
 import { StepDetailsPage } from "./step-details-po";
-import { lookupAction, workerAction, type CatalogEntry } from "./support";
+import type { CatalogEntry } from "./support";
 
 test.skip(
   !hasPython,
@@ -52,34 +55,6 @@ const kept = (page: Page) =>
     }
     return null;
   });
-/** A platform account Studio can keep test data for: its IDs are UUIDs. */
-const ACCOUNT = {
-  tenantId: "0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11",
-  projectId: "5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f",
-};
-/**
- * The platform's actions, run by workers: the Studio host compiles the
- * workflow with them, and an action without test data stops the run there.
- */
-const CATALOG: CatalogEntry[] = [
-  {
-    id: "a1",
-    document: {
-      ...lookupAction,
-      spec: {
-        ...workerAction.spec,
-        implementation: {
-          kind: "worker",
-          taskType: "sql-lookup",
-          taskVersion: "1.0.0",
-        },
-        inputSchema: lookupAction.spec.inputSchema,
-        outputSchema: lookupAction.spec.outputSchema,
-      },
-    } as CatalogEntry["document"],
-  },
-  { id: "a2", document: workerAction },
-];
 /** The canvas tile's title, where it says a step has pinned test data. */
 const tileTitle = (page: Page, id: string) =>
   page
@@ -104,50 +79,25 @@ interface Opened {
  */
 async function openDraftRuns(
   page: Page,
-  options: { runs?: RunFixture[]; catalog?: CatalogEntry[] } = {},
+  options: {
+    runs?: RunFixture[];
+    catalog?: CatalogEntry[];
+    /** The draft the platform keeps, when not the runs' own version. */
+    draft?: unknown;
+  } = {},
 ): Promise<Opened> {
   const { runs, platform } = await openRunsTab(page, {
     runs: options.runs,
-    account: ACCOUNT,
-    catalog: options.catalog ?? CATALOG,
+    account: RUNS_ACCOUNT,
+    catalog: options.catalog ?? WORKER_CATALOG,
   });
   await expect(runs.rows).toHaveCount((options.runs ?? listedKinds).length + 1);
   const id = /\/workflows\/([^/]+)\/designer/.exec(
     new URL(page.url()).pathname,
   )![1];
-  const saved: Record<string, unknown>[] = [];
-  let revision = 1;
-  await page.route(`**/projects/*/drafts/${id}`, (route) => {
-    if (route.request().method() === "GET")
-      return route.fulfill({ json: { id, revision, document: runsWorkflow } });
-    revision += 1;
-    return route.fulfill({
-      json: { id, revision, document: route.request().postDataJSON().document },
-    });
-  });
-  await page.route(`**/projects/*/drafts/${id}/studio/*`, (route) => {
-    const kind = route.request().url().split("/").pop()!;
-    if (route.request().method() === "GET")
-      return route.fulfill({
-        status: 404,
-        json: { status: 404, code: "WV-NOT-FOUND", message: "Not found" },
-      });
-    const body = route.request().postDataJSON();
-    if (kind === "test-data") saved.push(body.document);
-    return route.fulfill({
-      json: {
-        draft_id: id,
-        kind,
-        revision: saved.length,
-        draft_revision: revision,
-        document: body.document,
-        contains_run_data: false,
-        source_environment_ids: [],
-        updated_at: "2026-11-13T10:00:00Z",
-        updated_by: "human",
-      },
-    });
-  });
+  const { saved } = await keepDrafts(page, [
+    { id, document: options.draft ?? runsWorkflow },
+  ]);
   await page.goto(`/workflows/${id}/designer?tab=runs`);
   await expect(runs.rows).toHaveCount((options.runs ?? listedKinds).length + 1);
   return { runs, platform, saved };
@@ -191,6 +141,28 @@ test("Debug in editor stops at the step that failed, with the run's error", asyn
   await expect(stopped).toContainText(
     "Execute workflow gave every earlier step the run's data and stopped here.",
   );
+  // The stopped state: what send needs, and how to go on.
+  const output = outputRegion(details);
+  await expect(output.locator(".pane-sub .pill")).toHaveText("Stopped here");
+  await expect(output.locator(".pane-stopped-why")).toHaveText(
+    "send needs test data",
+  );
+  await expect(output).toContainText(
+    "send has no test output, so the simulation can't run it. Fix the step, then set a test output or generate a sample to go on.",
+  );
+  await expect(
+    output.getByRole("button", { name: "Set test output" }),
+  ).toBeVisible();
+  await expect(
+    output.getByRole("button", { name: "Generate sample" }),
+  ).toBeVisible();
+  await expect(output).not.toContainText("No output yet");
+  // What send was given, as data: Input opens on JSON.
+  await expect(
+    details.dialog
+      .locator('[data-region="input"]')
+      .getByRole("radio", { name: "JSON" }),
+  ).toHaveAttribute("aria-checked", "true");
   // Focus is in the Output region, on its first control.
   await expect
     .poll(() =>
@@ -199,8 +171,11 @@ test("Debug in editor stops at the step that failed, with the run's error", asyn
       ),
     )
     .toBe(true);
-  await expect(toast(page)).toContainText(
-    "Test data now holds run 1c0d7f8a's data. Execute workflow stopped at send, where the run failed.",
+  await expect(toast(page).locator("strong")).toHaveText(
+    "Test data now holds run 1c0d7f8a's data.",
+  );
+  await expect(toast(page).locator(".toast-detail")).toHaveText(
+    "Execute workflow stopped at send, where the run failed.",
   );
   // What the host was given: fetch's output as a pin, the person's answer
   // and the signal as scripts.
@@ -236,7 +211,7 @@ test("Debug in editor stops at the step that failed, with the run's error", asyn
   expect(await tileTitle(page, "fetch")).toContain("Pinned test data");
 });
 
-test("back on the Runs tab, the Designer's run log takes none of the run's room", async ({
+test("back on the Runs tab, the canvas shows only the run, with all its room", async ({
   page,
 }) => {
   const { runs } = await openDraftRuns(page);
@@ -246,10 +221,22 @@ test("back on the Runs tab, the Designer's run log takes none of the run's room"
   const details = new StepDetailsPage(page);
   await expect(details.dialogFor("send")).toBeVisible();
   await details.close();
-  // The run log docks beside the Designer's canvas.
+  // The run log docks beside the Designer's canvas, and the tiles show what
+  // the execution gave each step.
   await expect(page.getByRole("region", { name: "Run log" })).toBeVisible();
+  await expect(
+    page.locator('.tile-node[data-tile="wait-for-reply"] .tile-output'),
+  ).toBeVisible();
   await runs.tabs.getByRole("tab", { name: "Runs" }).click();
-  await choose(page, runs, RUN_IDS.failed);
+  await choose(page, runs, RUN_IDS.running);
+  // The running run hasn't reached wait-for-reply: nothing under it, and
+  // nothing from the editor's execution under fetch either.
+  await expect(
+    runs.canvas.locator('.tile-node[data-tile="wait-for-reply"] .tile-output'),
+  ).toHaveCount(0);
+  await expect(
+    runs.canvas.locator('.tile-node[data-tile="fetch"] .tile-output'),
+  ).toHaveCount(0);
   const right = (selector: string) =>
     page
       .locator(selector)
@@ -276,20 +263,41 @@ test("Copy to editor runs a succeeded run to its end", async ({ page }) => {
   expect(Object.keys(data.pins).sort()).toEqual(["fetch", "send"]);
 });
 
+/** The runs' workflow with a step after send, which no run reaches. */
+const withNotify = {
+  ...runsWorkflow,
+  spec: {
+    ...runsWorkflow.spec,
+    steps: [
+      ...runsWorkflow.spec.steps,
+      {
+        id: "notify",
+        kind: "action",
+        uses: "crm.lookup@2.0.0",
+        with: { object: { customer: { literal: "ops" } } },
+      },
+    ],
+  },
+};
+
 test("with test data present it asks, and Merge keeps what the run didn't reach", async ({
   page,
 }) => {
-  const { runs, saved } = await openDraftRuns(page);
+  const { runs, saved } = await openDraftRuns(page, { draft: withNotify });
   await localAuthoring(page);
-  // A sample pinned on send, which failed in the run: the run gives it nothing.
+  // Samples pinned on send, where the run failed, and on notify, which the
+  // run never reached.
   await runs.tabs.getByRole("tab", { name: "Designer" }).click();
-  // The Designer's own canvas, its tools back, has replaced the run's.
   await expect(
     page.getByRole("toolbar", { name: "Workflow commands" }),
   ).toBeVisible();
   const details = new StepDetailsPage(page);
   await pinSample(details, "send");
-  await expect.poll(() => savedPins(saved).at(-1)).toEqual(["send"]);
+  await pinSample(details, "notify");
+  await page.clock.runFor(11_000);
+  await expect
+    .poll(() => savedPins(saved).at(-1)?.sort())
+    .toEqual(["notify", "send"]);
   const original = saved.at(-1)!;
 
   const debug = async () => {
@@ -303,36 +311,40 @@ test("with test data present it asks, and Merge keeps what the run didn't reach"
     return ask;
   };
   const ask = await debug();
-  await expect(ask).toContainText(
-    "Your test data already has 1 entry. Merge keeps the ones for steps this run didn't reach; Replace removes them.",
-  );
-  await expect(ask).toContainText(
-    "Studio copies the run's input, 1 pinned output, 1 person's answer and 1 signal. send failed in this run, so Execute stops there. check is worked out again from the copied data. Each entry is marked as data from a run in development, so only people who can read those runs can open it.",
-  );
-  // Merge loses nothing: the question starts on it.
+  await expect(ask.locator(".dialog-message p")).toHaveText([
+    "Your test data already has 2 entries. Merge keeps the ones for steps this run didn't reach. Replace removes them.",
+    "Studio copies the run's input, fetch's output, approve's answer and wait-for-reply's signal. Execute stops at send, where the run failed. Studio works out check again from the copied data.",
+    "Each entry is marked as data from a run in development, so only people who can read those runs can open it.",
+  ]);
+  // While the question is open the button keeps its name, unavailable.
+  const main = runs.canvas.locator(".run-main");
+  await expect(main).toHaveText("Debug in editor");
+  await expect(main).toHaveAttribute("aria-disabled", "true");
+  // Merge loses nothing the run didn't reach: the question starts on it.
   await expect(ask.getByRole("button", { name: "Merge" })).toBeFocused();
   await ask.getByRole("button", { name: "Merge" }).click();
-  // send keeps its own sample, so Execute runs to the end.
-  await expect(toast(page)).toHaveText(
-    /^Test data now holds run 1c0d7f8a's data\.\s*Undo/,
+  // send's sample is gone with the rest of what the run reached: Execute
+  // stops where the run failed.
+  await expect(details.dialogFor("send")).toBeVisible();
+  await expect(outputRegion(details)).toContainText(
+    "In run 1c0d7f8a, this step failed: SMTP_REJECTED.",
   );
-  await expect(details.dialog).toHaveCount(0);
   await expect
-    .poll(() => savedPins(saved).at(-1)?.sort())
-    .toEqual(["fetch", "send"]);
-  expect(
-    (saved.at(-1)!["pins"] as Record<string, { source: string }>)["send"],
-  ).toMatchObject({ source: "schema" });
+    .poll(async () => Object.keys((await kept(page))?.pins ?? {}).sort())
+    .toEqual(["fetch", "notify"]);
+  expect((await kept(page)).pins.notify).toMatchObject({ source: "schema" });
 
   // Undo puts the test data back as it was: the next save is the original.
   await toast(page).getByRole("button", { name: "Undo" }).click();
-  // The draft saves at most every 10 seconds.
   await page.clock.runFor(11_000);
-  await expect.poll(() => savedPins(saved).at(-1)).toEqual(["send"]);
+  await expect
+    .poll(() => savedPins(saved).at(-1)?.sort())
+    .toEqual(["notify", "send"]);
   expect(saved.at(-1)!["pins"]).toEqual(original["pins"]);
   expect(saved.at(-1)!["input"]).toEqual(original["input"]);
 
-  // Replace removes what the run didn't reach: Execute stops at send.
+  // Replace removes notify's sample too.
+  await details.close();
   const again = await debug();
   await again.getByRole("button", { name: "Replace" }).click();
   await expect(details.dialogFor("send")).toBeVisible();
@@ -344,7 +356,7 @@ test("a value marked secret in the run is left out and named", async ({
   page,
 }) => {
   // The platform's sql.lookup marks the IDs it returns secret.
-  const lookup = CATALOG[0].document as unknown as {
+  const lookup = WORKER_CATALOG[0].document as unknown as {
     spec: Record<string, unknown>;
   };
   const secret: CatalogEntry[] = [
@@ -369,14 +381,17 @@ test("a value marked secret in the run is left out and named", async ({
         },
       } as unknown as CatalogEntry["document"],
     },
-    CATALOG[1],
+    WORKER_CATALOG[1],
   ];
   const { runs, saved } = await openDraftRuns(page, { catalog: secret });
   await localAuthoring(page);
   await choose(page, runs, RUN_IDS.failed);
   await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
-  await expect(toast(page)).toContainText(
-    "Test data now holds run 1c0d7f8a's data. Left out 1 value: fetch (marked secret).",
+  await expect(toast(page).locator("strong")).toHaveText(
+    "Test data now holds run 1c0d7f8a's data.",
+  );
+  await expect(toast(page).locator(".toast-detail")).toHaveText(
+    "Left out 1 value: fetch (marked secret).",
   );
   // Without fetch's output, Execute stops at fetch, which needs test data.
   const details = new StepDetailsPage(page);
@@ -392,6 +407,59 @@ test("a value marked secret in the run is left out and named", async ({
     expect(JSON.stringify(document)).not.toContain("c-1");
   }
   expect(JSON.stringify(await kept(page))).not.toContain("c-1");
+});
+
+test("a refused read of the run's data forgets the run and keeps nothing", async ({
+  page,
+}) => {
+  const { runs, platform, saved } = await openDraftRuns(page);
+  const calls = await localAuthoring(page);
+  await choose(page, runs, RUN_IDS.failed);
+  platform.outputFailure = {
+    status: 403,
+    code: "WV-FORBIDDEN",
+    message: "Not allowed.",
+  };
+  await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(runs.panel).toContainText("You need run.read in development.");
+  await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
+  await page.clock.runFor(11_000);
+  expect(saved).toEqual([]);
+  expect(executions(calls)).toEqual([]);
+  expect(await kept(page)).toBeNull();
+});
+
+test("a host check that fails says why, and keeps nothing", async ({
+  page,
+}) => {
+  const { runs, saved } = await openDraftRuns(page);
+  const calls = await localAuthoring(page);
+  await page.route("**/studio/local/testdata/check", (route) =>
+    route.fulfill({
+      status: 422,
+      contentType: "application/problem+json",
+      body: JSON.stringify({
+        status: 422,
+        code: "WV-STUDIO-REQUEST",
+        message: "The check couldn't read this test data.",
+      }),
+    }),
+  );
+  const unhandled: string[] = [];
+  page.on("pageerror", (error) => unhandled.push(String(error)));
+  await choose(page, runs, RUN_IDS.failed);
+  await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(page.getByRole("alert").locator(".toast")).toContainText(
+    "Studio could not read that request. Reload the page and try again.",
+  );
+  // The button is ready again.
+  await expect(
+    runs.canvas.getByRole("button", { name: "Debug in editor" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  await page.clock.runFor(11_000);
+  expect(saved).toEqual([]);
+  expect(executions(calls)).toEqual([]);
+  expect(unhandled).toEqual([]);
 });
 
 test("switching workflow while the run's data loads changes nothing", async ({

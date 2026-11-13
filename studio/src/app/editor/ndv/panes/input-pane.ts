@@ -58,6 +58,7 @@ import {
 } from "./views";
 import type { FormSession } from "../params/form-session";
 import { ndvRegistry, type Json } from "../registry";
+import { instanceStep } from "../../state/instance-keys";
 
 @Component({
   selector: "weave-input-pane",
@@ -322,6 +323,16 @@ export class InputPane implements OnInit {
   /** The Edit formula dialog opens with the search field shown. */
   ngOnInit() {
     if (this.openSearch()) this.searching.set(true);
+    // Where Debug in editor stopped: what the step was given, as data.
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (
+      !this.compact() &&
+      notice &&
+      notice.draftId === host.draftId &&
+      instanceStep(notice.key) === instanceStep(target)
+    )
+      this.view.set("json");
   }
   readonly source = signal<string | null>(null);
   readonly view = signal<DataView>(savedView("input") ?? "schema");

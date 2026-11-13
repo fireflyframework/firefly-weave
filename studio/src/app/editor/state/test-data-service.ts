@@ -362,12 +362,14 @@ export class TestDataService {
   /**
    * A run's data (Debug in editor, Copy to editor): checks every pointer
    * once and keeps the document without the entries the check refuses,
-   * listing them. Nothing is kept when it doesn't fit, or when the test data
-   * changed while the check was out.
+   * listing them. Nothing is kept when it doesn't fit, when the test data
+   * changed while the check was out, or when `holds` (what the caller is
+   * fenced on: account, environment, workflow) no longer does.
    */
   async keepFromRun(
     next: StudioTestData,
     pointers: readonly string[],
+    holds: () => boolean = () => true,
   ): Promise<
     | {
         ok: true;
@@ -376,6 +378,7 @@ export class TestDataService {
         refused: { pointer: string; code: CheckCode }[];
       }
     | { ok: false; message: string }
+    | { ok: false; stale: true }
   > {
     if (!fitsTestData(next)) return { ok: false, message: TEST_DATA_TOO_LARGE };
     const opening = this.opened;
@@ -388,6 +391,7 @@ export class TestDataService {
           await this.host.inputs(),
         )
       : new Map<string, EntryVerdict>();
+    if (!holds()) return { ok: false, stale: true };
     if (opening !== this.opened || this.current !== previous)
       return {
         ok: false,

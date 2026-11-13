@@ -33,6 +33,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { describeError } from "../../errors";
 import { durationText, relativeTime, shortId } from "../../format";
 import { Icon } from "../../icon";
 import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
@@ -186,8 +187,13 @@ export class RunHeader {
     inject(DestroyRef).onDestroy(() => clearInterval(ticker));
   }
 
-  /** Copying the run's data and executing with it. */
-  readonly busy = signal(false);
+  /**
+   * Debug at work: reading or copying the run's data ("Copying run data…"),
+   * or waiting for the Merge or Replace answer (the button keeps its name,
+   * still unavailable).
+   */
+  readonly phase = signal<"copying" | "asking" | null>(null);
+  readonly busy = computed(() => this.phase() !== null);
   /**
    * Why the run's data can't become test data here, known before a click.
    * The test data opens after the header draws (and again for another
@@ -203,13 +209,22 @@ export class RunHeader {
   async debug(intent: "debug" | "copy"): Promise<void> {
     const chosen = this.chosen();
     if (!chosen || this.busy()) return;
-    this.busy.set(true);
+    this.phase.set("copying");
     try {
-      const outcome = await new DebugRun().run(this.app(), chosen, intent);
+      const outcome = await new DebugRun().run(
+        this.app(),
+        chosen,
+        intent,
+        (phase) => this.phase.set(phase),
+      );
       if (outcome.kind === "refused")
         this.app().notify(outcome.message, undefined, "danger");
+    } catch (error) {
+      // A host or platform failure on the way (the host's check, a save):
+      // said, never left unhandled.
+      this.app().notify(describeError(error).message, undefined, "danger");
     } finally {
-      this.busy.set(false);
+      this.phase.set(null);
     }
   }
   copyId(): void {

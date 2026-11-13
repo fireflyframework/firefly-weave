@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   leftOutText,
+  mergeQuestion,
   mergedTestData,
   testDataFromRun,
   type RunSource,
@@ -301,6 +302,19 @@ describe("test data from a run", () => {
       NOW,
     );
     expect(big).toEqual(tooMany);
+    // More step instances than Studio reads (2,000), even of steps that copy
+    // nothing: what was read is only part of the run, so nothing is kept.
+    const partial = testDataFromRun(
+      failedRun(
+        Array.from({ length: 2001 }, (_, i) =>
+          fact(`check[${i}]`, "transform", "succeeded", { output: i }),
+        ),
+      ),
+      draft,
+      runPrints,
+      NOW,
+    );
+    expect(partial).toEqual(tooMany);
   });
 
   it("refuses a run Studio can't place or that recorded no steps", () => {
@@ -331,34 +345,71 @@ describe("test data from a run", () => {
     });
   });
 
-  it("Merge keeps entries for steps the run didn't reach", () => {
+  it("Merge keeps entries only for steps the run didn't reach", () => {
+    const pin = (source: "manual" | "schema", output: unknown) => ({
+      output: output as never,
+      source,
+      pinnedAt: NOW,
+      configHash: print(1),
+      contractHash: print(2),
+      upstreamHash: print(3),
+    });
     const current: StudioTestData = {
       ...emptyTestData(NOW),
       pins: {
-        notify: {
-          output: { sent: true },
-          source: "manual",
-          pinnedAt: NOW,
-          configHash: print(1),
-          contractHash: print(2),
-          upstreamHash: print(3),
-        },
-        fetch: {
-          output: { rows: [] },
-          source: "manual",
-          pinnedAt: NOW,
-          configHash: print(1),
-          contractHash: print(2),
-          upstreamHash: print(3),
-        },
+        // Not reached by the run: kept.
+        notify: pin("manual", { sent: true }),
+        // Reached and failed: Execute must stop there, so it goes.
+        send: pin("schema", { message_id: "sample" }),
+        fetch: pin("manual", { rows: [] }),
+      },
+      humans: {
+        approve: { decision: "reject", data: {}, source: "manual" },
       },
     };
-    const { data } = built(failedRun());
-    const merged = mergedTestData(current, data, NOW);
+    const merged = mergedTestData(current, built(failedRun()), NOW);
     expect(merged.pins?.["notify"]?.source).toBe("manual");
+    expect(merged.pins?.["send"]).toBeUndefined();
     expect(merged.pins?.["fetch"]?.source).toBe("run");
     expect(merged.input?.source).toBe("run");
     expect(merged.humans?.["approve"]?.source).toBe("run");
+
+    // A reached step whose value the run didn't give (left out by the
+    // platform) keeps nothing of the draft's either.
+    const withheld = built(
+      failedRun([
+        fact("fetch", "action", "succeeded", {
+          omissions: [{ path: "/output", reason: "classified_secret" }],
+        }),
+        fact("send", "action", "failed", { error_code: "SMTP_REJECTED" }),
+      ]),
+    );
+    const kept = mergedTestData(current, withheld, NOW);
+    expect(kept.pins?.["fetch"]).toBeUndefined();
+    expect(Object.keys(kept.pins ?? {})).toEqual(["notify"]);
+  });
+
+  it("asks Merge or Replace in three short paragraphs, naming each step", () => {
+    expect(mergeQuestion(built(failedRun()), 4, "development")).toBe(
+      "Your test data already has 4 entries. Merge keeps the ones for steps this run didn't reach. Replace removes them.\n\n" +
+        "Studio copies the run's input, fetch's output, approve's answer and wait-for-reply's signal. Execute stops at send, where the run failed. Studio works out check again from the copied data.\n\n" +
+        "Each entry is marked as data from a run in development, so only people who can read those runs can open it.",
+    );
+    // A run that didn't fail, with a loop and nothing worked out again.
+    const loop = built({
+      ...failedRun([
+        fact("send[0]", "action", "succeeded", { output: { id: 0 } }),
+        fact("send[1]", "action", "succeeded", { output: { id: 1 } }),
+      ]),
+      status: "succeeded",
+      record: record("succeeded"),
+      failedStep: null,
+    });
+    expect(mergeQuestion(loop, 1, "this environment").split("\n\n")).toEqual([
+      "Your test data already has 1 entry. Merge keeps the ones for steps this run didn't reach. Replace removes them.",
+      "Studio copies the run's input and send's outputs.",
+      "Each entry is marked as data from a run in this environment, so only people who can read those runs can open it.",
+    ]);
   });
 
   it("a running run copies what it finished", () => {

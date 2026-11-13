@@ -100,11 +100,11 @@ SPDX-License-Identifier: Apache-2.0
           class="run-main"
           [class.primary]="v.failed"
           [attr.aria-disabled]="off ? 'true' : null"
-          [attr.aria-busy]="busy() ? 'true' : null"
+          [attr.aria-busy]="phase() === 'copying' ? 'true' : null"
           [attr.aria-describedby]="refused ? 'run-refusal' : null"
           (click)="!off && debug(v.failed ? 'debug' : 'copy')"
         >
-          @if (busy()) {
+          @if (phase() === "copying") {
             <span class="loading-spinner small" aria-hidden="true"></span
             >Copying run data…
           } @else if (v.failed) {

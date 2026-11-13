@@ -35,7 +35,9 @@ import { DesignerPage } from "./designer-po";
 import {
   allCapabilities,
   connected,
+  lookupAction,
   newWorkflow,
+  workerAction,
   type CatalogEntry,
 } from "./support";
 
@@ -730,4 +732,130 @@ export function runsPage(page: Page): RunsPage {
     filters: panel.getByRole("button", { name: /^Filters/ }),
     canvas: page.locator(".runs-canvas"),
   };
+}
+
+/** A platform account Studio can keep test data for: its IDs are UUIDs. */
+export const RUNS_ACCOUNT = {
+  tenantId: "0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11",
+  projectId: "5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f",
+};
+/**
+ * The platform's actions, run by workers: the Studio host compiles the
+ * runs' workflow with them, and an action without test data stops there.
+ */
+export const WORKER_CATALOG: CatalogEntry[] = [
+  {
+    id: "a1",
+    document: {
+      ...lookupAction,
+      spec: {
+        ...workerAction.spec,
+        implementation: {
+          kind: "worker",
+          taskType: "sql-lookup",
+          taskVersion: "1.0.0",
+        },
+        inputSchema: lookupAction.spec.inputSchema,
+        outputSchema: lookupAction.spec.outputSchema,
+      },
+    } as CatalogEntry["document"],
+  },
+  { id: "a2", document: workerAction },
+];
+
+export interface KeptDrafts {
+  /** The drafts the platform keeps, by ID. */
+  drafts: Map<string, { revision: number; document: unknown }>;
+  /** How often the drafts were listed. */
+  listed: number;
+  /** Drafts created by a PUT to an ID the platform didn't know, in order. */
+  created: { id: string; document: unknown }[];
+  /** Every test data document saved with a draft, in order. */
+  saved: Record<string, unknown>[];
+  /** Answers every test data save with this problem while set, keeping nothing. */
+  refuseTestData: { status: number; code: string; message: string } | null;
+}
+/**
+ * The project's drafts on the platform: listed, read, saved and created by
+ * ID, each with studio documents the platform has none of at first.
+ */
+export async function keepDrafts(
+  page: Page,
+  initial: { id: string; revision?: number; document: unknown }[],
+): Promise<KeptDrafts> {
+  const kept: KeptDrafts = {
+    drafts: new Map(
+      initial.map((draft) => [
+        draft.id,
+        { revision: draft.revision ?? 1, document: draft.document },
+      ]),
+    ),
+    listed: 0,
+    created: [],
+    saved: [],
+    refuseTestData: null,
+  };
+  await page.route(
+    (url) => /\/projects\/[^/]+\/drafts$/.test(url.pathname),
+    (route) => {
+      kept.listed++;
+      return route.fulfill({
+        json: {
+          items: [...kept.drafts].map(([id, draft]) => ({ id, ...draft })),
+          next_cursor: null,
+        },
+      });
+    },
+  );
+  await page.route(
+    (url) => /\/projects\/[^/]+\/drafts\/[^/]+$/.test(url.pathname),
+    (route) => {
+      const id = decodeURIComponent(
+        new URL(route.request().url()).pathname.split("/").pop()!,
+      );
+      const draft = kept.drafts.get(id);
+      if (route.request().method() === "GET")
+        return draft
+          ? route.fulfill({ json: { id, ...draft } })
+          : route.fulfill(problem(404, "WV-NOT-FOUND", "Not found"));
+      const { document } = route.request().postDataJSON();
+      if (!draft) kept.created.push({ id, document });
+      const revision = (draft?.revision ?? 0) + 1;
+      kept.drafts.set(id, { revision, document });
+      return route.fulfill({ json: { id, revision, document } });
+    },
+  );
+  await page.route(
+    (url) =>
+      /\/projects\/[^/]+\/drafts\/[^/]+\/studio\/[^/]+$/.test(url.pathname),
+    (route) => {
+      const url = new URL(route.request().url());
+      const parts = url.pathname.split("/");
+      const kind = parts.at(-1)!;
+      const id = decodeURIComponent(parts.at(-3)!);
+      if (route.request().method() === "GET")
+        return route.fulfill(problem(404, "WV-NOT-FOUND", "Not found"));
+      const body = route.request().postDataJSON();
+      const refused = kind === "test-data" ? kept.refuseTestData : null;
+      if (refused)
+        return route.fulfill(
+          problem(refused.status, refused.code, refused.message),
+        );
+      if (kind === "test-data") kept.saved.push(body.document);
+      return route.fulfill({
+        json: {
+          draft_id: id,
+          kind,
+          revision: kept.saved.length,
+          draft_revision: kept.drafts.get(id)?.revision ?? 1,
+          document: body.document,
+          contains_run_data: false,
+          source_environment_ids: [],
+          updated_at: "2026-11-13T10:00:00Z",
+          updated_by: "human",
+        },
+      });
+    },
+  );
+  return kept;
 }

@@ -128,8 +128,16 @@ import { RunStepLogs } from "./run-step-logs";
     }
     @let ran = simulated();
     @let recorded = runView();
+    @let stop = recorded ? null : stoppedHere();
     <div class="pane-sub">
-      @if (recorded) {
+      @if (stop) {
+        <span class="pill" data-tone="warning"
+          ><weave-icon name="schedule" [size]="16" />Stopped here</span
+        >
+        @if (stop.missing) {
+          <span class="pane-stopped-why">{{ stop.step }} needs test data</span>
+        }
+      } @else if (recorded) {
         <span class="pill" [attr.data-tone]="recorded.tone">{{
           recorded.pill
         }}</span>
@@ -145,7 +153,7 @@ import { RunStepLogs } from "./run-step-logs";
       }
       @let paths = this.paths();
       <span class="pane-count">{{
-        none || (recorded && recorded.output.kind !== "value")
+        none || stop || (recorded && recorded.output.kind !== "value")
           ? ""
           : paths
             ? paths.took
@@ -223,6 +231,23 @@ import { RunStepLogs } from "./run-step-logs";
                 </p>
               </div>
             </div>
+            @if (stop?.missing) {
+              <p class="pane-stopped-text">
+                {{ stop!.step }} has no test output, so the simulation can't run
+                it. Fix the step, then set a test output or generate a sample to
+                go on.
+              </p>
+              @if (canPin && !pin) {
+                <div class="pane-empty-actions">
+                  <button type="button" class="sm" (click)="setOutput()">
+                    Set test output
+                  </button>
+                  <button type="button" class="sm" (click)="generate()">
+                    <weave-icon name="refresh" [size]="16" />Generate sample
+                  </button>
+                </div>
+              }
+            }
           }
           @if (notice(); as said) {
             <div class="pane-notice" role="status">
@@ -339,7 +364,7 @@ import { RunStepLogs } from "./run-step-logs";
                   <span class="loading-spinner small" aria-hidden="true"></span>
                   <h4>Executing…</h4>
                 </div>
-              } @else if (!notice()) {
+              } @else if (!notice() && !stop) {
                 <div class="pane-empty">
                   <span class="pane-empty-icon" aria-hidden="true"
                     ><weave-icon name="execute" [size]="20"
@@ -372,7 +397,7 @@ import { RunStepLogs } from "./run-step-logs";
             }
             @if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
-            } @else {
+            } @else if (!stop) {
               <p class="pane-empty-text">
                 This step's output can be any value.
               </p>
@@ -601,6 +626,14 @@ export class OutputPane {
     return host.runView?.()?.listed
       ? "Choose a run to see what this step returned."
       : "There's no run to show here.";
+  }
+  /** After Debug in editor, on the step where Execute stopped as the run failed: the step, and whether it wants test data. */
+  stoppedHere(): { step: string; missing: boolean } | null {
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (!notice || notice.draftId !== host.draftId) return null;
+    if (instanceStep(notice.key) !== instanceStep(target)) return null;
+    return { step: instanceStep(notice.key), missing: notice.missing };
   }
   /** After Debug in editor, on the step where the run failed: its error. */
   runFailedHere(): string | null {

@@ -662,6 +662,33 @@ describe("keeping a run's data", () => {
     });
     expect(service.data()).toEqual(other);
   });
+
+  it("keeps nothing when what it was fenced on changed while the check was out", async () => {
+    const { value } = host();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const request = value.api.request;
+    value.api = {
+      request: async <T>(path: string, method?: string, body?: unknown) => {
+        await held;
+        return request<T>(path, method, body);
+      },
+    };
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const before = service.data();
+    let environment = "development";
+    const keeping = service.keepFromRun(
+      fromRun(),
+      ["/pins/fetch"],
+      () => environment === "development",
+    );
+    // Another environment is chosen while the host checks the entries.
+    environment = "production";
+    release();
+    expect(await keeping).toEqual({ ok: false, stale: true });
+    expect(service.data()).toBe(before);
+  });
 });
 
 describe("test data with runs the reader can't read", () => {

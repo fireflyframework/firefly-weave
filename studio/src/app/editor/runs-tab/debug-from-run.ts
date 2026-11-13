@@ -32,6 +32,7 @@ import type { Json } from "../ndv/registry";
 import { allSteps } from "../ndv/step-walk";
 import type { CheckCode } from "../state/execution";
 import type { StepFingerprints } from "../state/fingerprints";
+import { instanceStep } from "../state/instance-keys";
 import type {
   HumanScript,
   PinEntry,
@@ -75,6 +76,8 @@ export interface RunTestData {
   stopAt: { key: string; code: string | null } | null;
   /** Steps of the draft that finished in the run and that Execute works out again from the copied data. */
   recomputed: string[];
+  /** Every instance key and step ID of the draft that the run reached, the failed one included. */
+  reached: string[];
 }
 
 /** Steps whose output a simulation can't work out: the run's output stands for them. */
@@ -126,6 +129,7 @@ export function testDataFromRun(
   const signals: Record<string, SignalScript> = {};
   const leftOut: LeftOut[] = [];
   const recomputed = new Set<string>();
+  const visited = new Set<string>();
   const stopAt = FAILED.has(source.status) ? source.failedStep : null;
   for (const fact of source.facts) {
     const key = fact.instance_key || fact.node_id;
@@ -133,6 +137,7 @@ export function testDataFromRun(
     const kind = fact.kind as string;
     const copied =
       pinned(kind, step) || kind === "humanTask" || kind === "signal";
+    if (step) visited.add(key).add(fact.node_id);
     if (!copied && step && fact.status === "succeeded")
       recomputed.add(fact.node_id);
     // Only what finished is copied; the failed step and steps at work get nothing.
@@ -234,26 +239,90 @@ export function testDataFromRun(
     leftOut,
     stopAt,
     recomputed: [...recomputed],
+    reached: [...visited],
   };
 }
 
 /**
- * Merge: the run's entries replace those of the same steps; entries of
- * steps the run didn't reach stay. The input is the run's.
+ * Merge: the run's entries replace the test data of every step the run
+ * reached, the failed one included (Execute then stops where the run
+ * failed); entries of steps the run didn't reach stay.
  */
 export function mergedTestData(
   current: StudioTestData,
-  fromRun: StudioTestData,
+  fromRun: Pick<RunTestData, "data" | "reached">,
   now: string,
 ): StudioTestData {
+  const reached = new Set(fromRun.reached);
   const merged: StudioTestData = { ...current, updatedAt: now };
-  if (fromRun.input) merged.input = fromRun.input;
-  for (const section of ["pins", "humans", "signals"] as const)
-    if (fromRun[section])
-      Object.assign(merged, {
-        [section]: { ...(current[section] ?? {}), ...fromRun[section] },
-      });
+  if (fromRun.data.input) merged.input = fromRun.data.input;
+  for (const section of ["pins", "humans", "signals"] as const) {
+    const kept = Object.fromEntries(
+      Object.entries(current[section] ?? {}).filter(
+        ([key]) => !reached.has(key),
+      ),
+    );
+    const entries = { ...kept, ...(fromRun.data[section] ?? {}) };
+    if (Object.keys(entries).length)
+      Object.assign(merged, { [section]: entries });
+    else delete merged[section];
+  }
   return merged;
+}
+
+/** "check", "check and log", "check, log and send" */
+export function listText(items: readonly string[]): string {
+  return items.length > 1
+    ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+    : (items[0] ?? "");
+}
+/** "the run's input, fetch's output, approve's answer and wait-for-reply's signal" */
+function copiedText(data: StudioTestData): string {
+  const named = (
+    section: Record<string, unknown> | undefined,
+    one: string,
+    many: string,
+  ) => {
+    const counts = new Map<string, number>();
+    for (const key of Object.keys(section ?? {}))
+      counts.set(instanceStep(key), (counts.get(instanceStep(key)) ?? 0) + 1);
+    return [...counts].map(([step, n]) => `${step}'s ${n === 1 ? one : many}`);
+  };
+  const parts = [
+    ...(data.input ? ["the run's input"] : []),
+    ...named(data.pins, "output", "outputs"),
+    ...named(data.humans, "answer", "answers"),
+    ...named(data.signals, "signal", "signals"),
+  ];
+  // A long run: the first few by name, then how many more.
+  const shown =
+    parts.length > 6
+      ? [...parts.slice(0, 5), `the data of ${parts.length - 5} more steps`]
+      : parts;
+  return listText(shown) || "nothing";
+}
+/**
+ * The Merge or Replace question when test data is already there, in three
+ * paragraphs: what each answer does; what Studio copies and where Execute
+ * stops; who can open the copied entries. Sentences start with a word, never
+ * a step's name.
+ */
+export function mergeQuestion(
+  built: RunTestData,
+  existing: number,
+  environment: string,
+): string {
+  const stop = built.stopAt
+    ? ` Execute stops at ${instanceStep(built.stopAt.key)}, where the run failed.`
+    : "";
+  const again = built.recomputed.length
+    ? ` Studio works out ${listText(built.recomputed)} again from the copied data.`
+    : "";
+  return [
+    `Your test data already has ${existing} ${existing === 1 ? "entry" : "entries"}. Merge keeps the ones for steps this run didn't reach. Replace removes them.`,
+    `Studio copies ${copiedText(built.data)}.${stop}${again}`,
+    `Each entry is marked as data from a run in ${environment}, so only people who can read those runs can open it.`,
+  ].join("\n\n");
 }
 
 const CHECK_PHRASES: Readonly<Record<CheckCode, string>> = {

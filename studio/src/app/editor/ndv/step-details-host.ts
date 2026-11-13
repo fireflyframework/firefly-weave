@@ -38,6 +38,17 @@ import type {
   ExecutionService,
 } from "../state/execution-service";
 
+/** After Debug in editor: the step Execute stopped at, where the run failed. */
+export interface RunNotice {
+  draftId: string;
+  runId: string;
+  /** The instance key where the run failed. */
+  key: string;
+  /** The run's error code there. */
+  code: string | null;
+  /** The simulation stopped there for want of test data (a step it can't run). */
+  missing: boolean;
+}
 export interface StepDetailsHost {
   readonly model: StructuredCanvasAdapter;
   readonly tick: Signal<number>;
@@ -112,12 +123,7 @@ export interface StepDetailsHost {
   /** The run open in the Runs tab: step details show its data, read-only. */
   readonly runData?: RunDataPort | null;
   /** After Debug in editor: where the run failed, shown on that step's Output. */
-  readonly runNotice?: {
-    draftId: string;
-    runId: string;
-    key: string;
-    code: string | null;
-  } | null;
+  readonly runNotice?: RunNotice | null;
   /** The open draft's ID. */
   readonly draftId?: string;
   /** The run the canvas draws; on the Runs tab it names the steps changed since. */
