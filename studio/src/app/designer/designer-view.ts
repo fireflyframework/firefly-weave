@@ -87,6 +87,15 @@ import type { App } from "../app";
       .editor-views button weave-icon {
         margin-right: 6px;
       }
+      .test-data-notice {
+        margin: var(--space-2) var(--space-4) 0;
+        align-items: center;
+        color: var(--text);
+      }
+      .test-data-notice weave-icon {
+        flex: none;
+        color: var(--warning-ink);
+      }
       /* The Runs tab: the list and the run edge to edge, nothing to edit
          beside them. */
       .editor-grid.runs-mode {
@@ -410,6 +419,13 @@ import type { App } from "../app";
     }}</span>
     <span class="sr-only" id="primary-blocked">{{ h.primaryBlocker }}</span>
     <p class="command-note" role="status">{{ h.commandNote }}</p>
+    <!-- Why the workflow's test data is empty: unreadable, or holding data
+         from runs this account can't read. -->
+    @if (h.testData?.notice(); as said) {
+      <div class="notice test-data-notice" data-tone="warning" role="status">
+        <weave-icon name="lock" [size]="16" /><span>{{ said }}</span>
+      </div>
+    }
     @if (h.recoveryOffer) {
       <div class="recovery-note" role="status">
         <weave-icon name="info" [size]="16" />

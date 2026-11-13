@@ -22,9 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 import { CanvasPage, useNewEditor } from "./canvas-po";
 import { StepDetailsPage } from "./step-details-po";
+import { setTestInput } from "./formula-po";
+import { routeTestDataCheck } from "./support";
 import {
   COPY,
   PIN,
+  definition,
   edit,
   fresh,
   kept,
@@ -160,6 +163,43 @@ test("a value the platform refuses as secret leaves every copy on this computer"
   await expect
     .poll(() => page.evaluate(() => JSON.stringify(localStorage)))
     .not.toContain("s3cret-canary");
+});
+
+test("a colleague who can't read the runs sees why their test data is empty, and Studio saves none over it", async ({
+  page,
+}) => {
+  const state = fresh();
+  state.refuseRead = {
+    status: 403,
+    json: { status: 403, code: "WV-FORBIDDEN", message: "Not allowed." },
+  };
+  state.document = {
+    ...definition,
+    spec: {
+      ...definition.spec,
+      inputSchema: {
+        type: "object",
+        required: ["name"],
+        properties: { name: { type: "string", title: "Name" } },
+      },
+    },
+  };
+  await openDraft(page, state);
+  await expect(page.locator(".test-data-notice")).toHaveText(
+    "This workflow's test data includes data from runs you can't read, so Studio didn't load it.",
+  );
+  // A test input of their own, then an edit: the draft saves, but the test
+  // data, which holds runs this account can't read, is never saved over.
+  await routeTestDataCheck(page);
+  await setTestInput(page, new StepDetailsPage(page), { Name: "Ada" });
+  await edit(page);
+  await expect
+    .poll(() => state.saves.map((save) => save.kind), { timeout: 20_000 })
+    .toContain("draft");
+  await expect(page.locator(".editor-identity .status-chip")).toHaveText(
+    /^Saved \d{2}:\d{2}$/,
+  );
+  expect(state.saves.map((save) => save.kind)).not.toContain("test-data");
 });
 
 test("an entry waiting for publishing stays on this computer and is left out of saves", async ({

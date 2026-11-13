@@ -588,3 +588,96 @@ describe("test data set before the account is known", () => {
     expect(Object.keys(service.data().pins ?? {})).toEqual(["a"]);
   });
 });
+
+describe("keeping a run's data", () => {
+  const fromRun = () =>
+    withPin(
+      withPin(
+        withInput(emptyTestData(ISO), { total: 1 }, "run", ISO),
+        "send",
+        pin({ token: "s3cr3t" }),
+        ISO,
+      ),
+      "fetch",
+      pin({ rows: [] }),
+      ISO,
+    );
+
+  it("keeps what the check allows and lists what it left out", async () => {
+    const { value, store } = host({ "/pins/send": "WV-SCHEMA-SECRET_VALUE" });
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const outcome = await service.keepFromRun(fromRun(), [
+      "/input",
+      "/pins/send",
+      "/pins/fetch",
+    ]);
+    expect(outcome).toMatchObject({
+      ok: true,
+      previous: emptyTestData(ISO),
+      refused: [{ pointer: "/pins/send", code: "WV-SCHEMA-SECRET_VALUE" }],
+    });
+    expect(Object.keys(service.data().pins ?? {})).toEqual(["fetch"]);
+    expect(service.data().input?.value).toEqual({ total: 1 });
+    await service.flush();
+    expect([...store.values.values()].join("")).not.toContain("s3cr3t");
+  });
+
+  it("refuses nothing when every entry passes", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const outcome = await service.keepFromRun(fromRun(), [
+      "/input",
+      "/pins/send",
+      "/pins/fetch",
+    ]);
+    expect(outcome).toMatchObject({ ok: true, refused: [] });
+    expect(service.data()).toEqual(fromRun());
+  });
+
+  it("keeps nothing when the test data changed meanwhile", async () => {
+    const { value } = host();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const request = value.api.request;
+    value.api = {
+      request: async <T>(path: string, method?: string, body?: unknown) => {
+        await held;
+        return request<T>(path, method, body);
+      },
+    };
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const keeping = service.keepFromRun(fromRun(), ["/pins/fetch"]);
+    // Another change lands while the check is out.
+    service.rename("nothing", "else");
+    const other = withPin(emptyTestData(ISO), "other", pin({}), ISO);
+    const changing = service.change(other, []);
+    release();
+    await changing;
+    expect(await keeping).toEqual({
+      ok: false,
+      message: "The test data changed meanwhile. Try again.",
+    });
+    expect(service.data()).toEqual(other);
+  });
+});
+
+describe("test data with runs the reader can't read", () => {
+  it("a refused read of run data blocks saving over it until opened again", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    expect(service.platformSaveAllowed()).toBe(true);
+    service.refuseRead(403);
+    expect(service.notice()).toBe(
+      "This workflow's test data includes data from runs you can't read, so Studio didn't load it.",
+    );
+    expect(service.platformSaveAllowed()).toBe(false);
+    expect(service.data()).toEqual(emptyTestData(ISO));
+    await service.open({ kind: "local", draftId: "d-1" });
+    expect(service.platformSaveAllowed()).toBe(true);
+    expect(service.notice()).toBeNull();
+  });
+});

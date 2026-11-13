@@ -7892,7 +7892,11 @@ export class App implements CanvasHost {
     let document: StudioDocument | null;
     try {
       document = await readStudioDocument(this.api, draftId, "test-data");
-    } catch {
+    } catch (e) {
+      // Test data with data from runs this account can't read: say so, and
+      // save nothing over it.
+      if (e instanceof ApiError && draftId === this.draftId)
+        service.refuseRead(e.status);
       return;
     }
     if (draftId !== this.draftId) return;
@@ -7923,7 +7927,8 @@ export class App implements CanvasHost {
       service &&
       tools &&
       place?.kind === "connected" &&
-      place.draftId === draftId
+      place.draftId === draftId &&
+      service.platformSaveAllowed()
     ) {
       await service.flush();
       if (!current()) return true;
