@@ -32,6 +32,7 @@ pytestmark = pytest.mark.integration
 # The agent of the runtime tests: it asks to cancel an order, and its call waits for a distinct reviewer.
 agent = runtime.agent
 review_expiry = runtime.review_expiry
+saved_turns = runtime.saved_turns
 approve, claim, complete, usage = runtime.approve, runtime.claim, runtime.complete, runtime.usage
 
 
