@@ -83,7 +83,8 @@ for (const size of sizes)
         "stroke",
         success,
       );
-      await expect(canvas.edgeLine("send>$end")).toHaveClass(/\bskipped\b/);
+      // Past the failure the run went nowhere: plain, not "not taken".
+      await expect(canvas.edgeLine("send>$end")).toHaveClass(/\bidle\b/);
       // A run that happened isn't the draft's to-do list: no setup or pin badges.
       await expect(canvas.root.locator('[data-badge="setup"]')).toHaveCount(0);
       await expect(canvas.root.locator(".tile-issue")).toHaveCount(0);

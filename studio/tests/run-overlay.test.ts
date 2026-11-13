@@ -225,8 +225,9 @@ describe("the run over the draft", () => {
     expect(
       edgeRun({ leaves: "fetch", enters: "approve" }, overlay.canvas),
     ).toBe("taken");
+    // Past the failure the run went nowhere: that edge stays plain.
     expect(edgeRun({ leaves: "send", enters: "check" }, overlay.canvas)).toBe(
-      "skipped",
+      "idle",
     );
   });
 

@@ -273,3 +273,28 @@ describe("how the Runs tab frames a run", () => {
     );
   });
 });
+
+describe("the edges of a run that happened", () => {
+  it("dashes only the ways a finished step didn't take; edges past a failure stay plain", () => {
+    const failed = run({
+      mode: "real",
+      status: "failed",
+      current: ["send"],
+      done: ["fetch", "route"],
+    });
+    // The way route didn't take: skipped.
+    expect(edgeRun({ leaves: "route", enters: "review" }, failed)).toBe(
+      "skipped",
+    );
+    // Out of the failed step, and on from a step the run never reached: idle.
+    expect(edgeRun({ leaves: "send", enters: "$end" }, failed)).toBe("idle");
+    expect(edgeRun({ leaves: "review", enters: "$end" }, failed)).toBe("idle");
+    // A simulation keeps its whole untaken path dashed.
+    expect(
+      edgeRun(
+        { leaves: "review", enters: "$end" },
+        { ...failed, mode: "simulated" },
+      ),
+    ).toBe("skipped");
+  });
+});

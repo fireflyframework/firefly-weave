@@ -114,7 +114,14 @@ export function edgeRun(
     (edge.leaves === null || reached(edge.leaves)) &&
     (edge.enters === null || here(edge.enters));
   const ended = runEnded(run);
-  return taken ? (ended ? "taken" : "live") : ended ? "skipped" : "idle";
+  if (taken) return ended ? "taken" : "live";
+  if (!ended) return "idle";
+  // A run that happened marks only the ways a finished step didn't take:
+  // edges out of a failed step, or on from a step it never reached, stay
+  // plain. A simulation dashes the whole path it didn't take.
+  if (run.mode === "real" && edge.leaves !== null && !reached(edge.leaves))
+    return "idle";
+  return "skipped";
 }
 
 /** The live pulse plays only while a real run is followed. */
