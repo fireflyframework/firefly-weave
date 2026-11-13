@@ -903,13 +903,17 @@ def status(directory: Path) -> dict[str, Any]:
         from firefly_weave.sdk import platform_clusters, platform_operations
 
         result["operations"] = platform_operations.status(state)
-        # The connected clusters and their namespaces, from the receipt alone: status reaches no cluster.
+        # The connected clusters and each namespace's state, from the receipt alone: status reaches no cluster. A
+        # namespace whose connect stopped reads pending: it holds its Keycloak clients and Secrets until disconnected.
         try:
             connected = platform_clusters.receipt(directory)["clusters"]
         except PlatformError:
             connected = {}
         if connected:
-            result["clusters"] = {key: sorted(entry["targets"]) for key, entry in sorted(connected.items())}
+            result["clusters"] = {
+                key: {namespace: target["state"] for namespace, target in sorted(entry["targets"].items())}
+                for key, entry in sorted(connected.items())
+            }
     return result
 
 

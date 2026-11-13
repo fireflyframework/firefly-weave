@@ -355,7 +355,10 @@ def _show_status(value: dict[str, Any]) -> None:
     if operations:
         click.echo(f"Operations: {operations['stage']}, runner {operations['runner']}, target {operations['target']}")
     if value.get("clusters"):
-        named = [f"{name} ({', '.join(namespaces)})" for name, namespaces in value["clusters"].items()]
+        named = [
+            f"{name} ({', '.join(f'{namespace} {state}' for namespace, state in namespaces.items())})"
+            for name, namespaces in value["clusters"].items()
+        ]
         click.echo("Clusters: " + "; ".join(named))
     _show_private_origins(value.get("private_origins"))
 
