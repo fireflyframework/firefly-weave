@@ -85,6 +85,9 @@ _DISPLAY_NAME = "Local Weave platform"
 # Development people get the smallest set that authors, publishes, activates, runs, inspects
 # runs, and works on human tasks in the demo workspace; administrators choose others explicitly.
 DEFAULT_PERSON_ROLES = ("developer", "deployer", "operator", "viewer", "task_participant")
+# The workers namespace that cluster connect and disconnect use when none is given. It lives here, not with the
+# cluster code, so that the CLI reads it without loading that code.
+DEFAULT_CLUSTER_NAMESPACE = "weave-workers"
 PERSON_ROLES = (
     "deployment_reader",
     "deployment_planner",
@@ -520,8 +523,15 @@ def _compose_env(state: dict[str, Any]) -> dict[str, str]:
 
 
 def _run(
-    state: dict[str, Any], name: str, command: list[str], *, env: dict[str, str] | None = None, timeout: float = 300
+    state: dict[str, Any],
+    name: str,
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: float = 300,
+    stdin: bytes | None = None,
 ) -> bytes:
+    """Run one platform command with a private log of its output; ``stdin`` goes to the command, never to the log."""
     path = Path(state["directory"]) / (name + "-" + uuid4().hex[:8] + ".log")
     try:
         return run_command(
@@ -531,6 +541,7 @@ def _run(
             timeout=timeout,
             limit=8 * 1024 * 1024,
             log_path=path,
+            stdin=stdin,
         )
     except Exception:
         if path.is_file() and b"all predefined address pools have been fully subnetted" in read_file(
@@ -892,9 +903,20 @@ def status(directory: Path) -> dict[str, Any]:
 
         result["private_origins"] = platform_origins.summary(state)
     if state.get("mode") == "docker":
-        from firefly_weave.sdk import platform_operations
+        from firefly_weave.sdk import platform_clusters, platform_operations
 
         result["operations"] = platform_operations.status(state)
+        # The connected clusters and each namespace's state, from the receipt alone: status reaches no cluster. A
+        # namespace whose connect stopped reads pending: it holds its Keycloak clients and Secrets until disconnected.
+        try:
+            connected = platform_clusters.receipt(directory)["clusters"]
+        except PlatformError:
+            connected = {}
+        if connected:
+            result["clusters"] = {
+                key: {namespace: target["state"] for namespace, target in sorted(entry["targets"].items())}
+                for key, entry in sorted(connected.items())
+            }
     return result
 
 
@@ -2116,6 +2138,10 @@ def up(
                 result["account"] = account
         if operations:
             result["operations"] = platform_operations.enable(directory, _load(directory), progress or (lambda _: None))
+            from firefly_weave.sdk import platform_clusters
+
+            # Connected clusters follow the platform's new addresses; a cluster that's gone reads missing.
+            result["clusters"] = platform_clusters.refresh(directory, progress or (lambda _: None))
         elif unavailable:
             result["operations"] = platform_operations.unavailable()
         return result

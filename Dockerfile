@@ -46,10 +46,21 @@ USER 65532:65532
 EXPOSE 8000
 CMD ["uvicorn", "firefly_weave.main:create_application", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
-# The local Operations runner: the server image plus the Docker CLI and its Compose plugin, pinned by digest.
+# kubectl for runners of Kubernetes targets, pinned by version and checksum for each architecture; its minor
+# version matches the local clusters' Kubernetes (firefly_weave/sdk/platform_cluster_tools.py).
+FROM scratch AS kubectl-amd64
+ADD --checksum=sha256:c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4 https://dl.k8s.io/release/v1.37.2/bin/linux/amd64/kubectl /kubectl
+FROM scratch AS kubectl-arm64
+ADD --checksum=sha256:fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509 https://dl.k8s.io/release/v1.37.2/bin/linux/arm64/kubectl /kubectl
+FROM kubectl-${TARGETARCH} AS kubectl
+
+# The local Operations runner: the server image plus the Docker CLI and its Compose plugin, pinned by digest, and
+# kubectl.
 FROM server AS runner
 COPY --from=docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl
+RUN ["/usr/local/bin/kubectl", "version", "--client"]
 # The runner keeps its lock and the workers' zero-replica overrides here; a new volume takes this ownership.
 USER root
 RUN mkdir -p /run/weave-operations/state && chown 65532:65532 /run/weave-operations/state

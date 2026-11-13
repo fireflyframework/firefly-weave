@@ -99,154 +99,6 @@ def test_the_fixture_worker_capacity_is_bounded(value, expected):
             fixture().capacity({"WEAVE_WORKER_CAPACITY": refused})
 
 
-async def test_the_token_relay_forwards_only_to_an_approved_bridge_origin():
-    """OAuth clients accept plain HTTP only on loopback, so the worker reaches Keycloak on the platform network
-    through a loopback relay that checks the destination against the worker's private-origin entries."""
-    import asyncio
-
-    from firefly_weave import private_origins as po
-
-    async def echo(reader, writer):
-        writer.write(b"pong:" + await reader.read(4))
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_server(echo, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    module = fixture()
-    allowed = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
-        [
-            po.PrivateOrigin(
-                origin=f"http://127.0.0.1:{port}",
-                purpose="worker-auth",
-                networks=("127.0.0.1/32",),
-                credentials="loopback",
-            )
-        ]
-    )
-    with po.installed(allowed):
-        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
-        relay_port = relay.sockets[0].getsockname()[1]
-        reader, writer = await asyncio.open_connection("127.0.0.1", relay_port)
-        writer.write(b"ping")
-        await writer.drain()
-        assert await reader.read(9) == b"pong:ping"
-        writer.close()
-        relay.close()
-    with po.installed(po.PrivateOrigins.empty()):
-        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
-        relay_port = relay.sockets[0].getsockname()[1]
-        reader, writer = await asyncio.open_connection("127.0.0.1", relay_port)
-        writer.write(b"ping")
-        await writer.drain()
-        # Without an entry for the destination, the relay closes the connection and sends nothing.
-        assert await reader.read(9) == b""
-        writer.close()
-        relay.close()
-    server.close()
-
-
-async def _echo_server():
-    import asyncio
-
-    async def echo(reader, writer):
-        writer.write(b"pong:" + await reader.read(4))
-        await writer.drain()
-        writer.close()
-
-    return await asyncio.start_server(echo, "127.0.0.1", 0)
-
-
-async def _ping(port):
-    import asyncio
-
-    reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    try:
-        writer.write(b"ping")
-        await writer.drain()
-        return await reader.read(9)
-    except ConnectionResetError:
-        # A refused connection may be closed while the ping is still on its way.
-        return b""
-    finally:
-        writer.close()
-
-
-def _entry(origin, credentials):
-    from firefly_weave import private_origins as po
-
-    return po.PrivateOrigin(origin=origin, purpose="worker-auth", networks=("127.0.0.1/32",), credentials=credentials)
-
-
-async def test_the_token_relay_listens_on_loopback_only():
-    from firefly_weave import private_origins as po
-
-    module = fixture()
-    with po.installed(po.PrivateOrigins.empty()):
-        relay = await module.start_relay("127.0.0.1:9", listen=0)
-        assert [item.getsockname()[0] for item in relay.sockets] == ["127.0.0.1"]
-        relay.close()
-
-
-async def test_the_token_relay_connects_to_the_address_it_checked_never_the_name_again(monkeypatch):
-    """A name that resolves elsewhere after the check is never used: the relay connects to the checked address."""
-    import asyncio
-    import socket
-
-    from firefly_weave import private_origins as po
-
-    server = await _echo_server()
-    port = server.sockets[0].getsockname()[1]
-    loop = asyncio.get_running_loop()
-    answers = ["127.0.0.1", "192.0.2.1"]
-
-    async def resolve(host, port_number, *args, **kwargs):
-        if host != "keycloak.test":
-            return await type(loop).getaddrinfo(loop, host, port_number, *args, **kwargs)
-        address = answers.pop(0) if len(answers) > 1 else answers[0]
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port_number))]
-
-    monkeypatch.setattr(loop, "getaddrinfo", resolve)
-    module = fixture()
-    allowed = po.PrivateOrigins(platform=po.PLATFORM).with_entries([_entry(f"http://keycloak.test:{port}", "bridge")])
-    with po.installed(allowed):
-        relay = await module.start_relay(f"keycloak.test:{port}", listen=0)
-        assert await asyncio.wait_for(_ping(relay.sockets[0].getsockname()[1]), 5) == b"pong:ping"
-        relay.close()
-    server.close()
-
-
-async def test_the_token_relay_carries_credentials_only_where_an_entry_allows_them(caplog):
-    """The relay carries a client secret: an entry that allows no credentials over plain HTTP is refused, a bridge
-    entry of the local-development policy passes, and a refusal is logged with its reason and a count only."""
-    import logging
-
-    from firefly_weave import private_origins as po
-
-    server = await _echo_server()
-    port = server.sockets[0].getsockname()[1]
-    module = fixture()
-    plain = po.PrivateOrigins(platform=po.PLATFORM).with_entries([_entry(f"http://127.0.0.1:{port}", "none")])
-    with po.installed(plain):
-        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
-        with caplog.at_level(logging.WARNING):
-            assert await _ping(relay.sockets[0].getsockname()[1]) == b""
-            assert await _ping(relay.sockets[0].getsockname()[1]) == b""
-        relay.close()
-    messages = [record.getMessage() for record in caplog.records if record.name == "weave.operations_worker"]
-    assert messages == [
-        "The token relay refused a connection (credentials); 1 refused so far",
-        "The token relay refused a connection (credentials); 2 refused so far",
-    ]
-    assert all("127.0.0.1" not in message and str(port) not in message for message in messages)
-    bridge = po.PrivateOrigins(platform=po.PLATFORM).with_entries([_entry(f"http://127.0.0.1:{port}", "bridge")])
-    with po.installed(bridge):
-        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
-        assert await _ping(relay.sockets[0].getsockname()[1]) == b"pong:ping"
-        relay.close()
-    server.close()
-
-
 async def test_the_fixture_reports_an_unknown_outcome_only_when_faults_are_turned_on(monkeypatch):
     """O-J9 opens an incident through the fixture: {"fail": "unknown"} reports an unknown outcome, and only on a
     fixture service the journey started with WEAVE_FIXTURE_FAULTS=1; the platform's own workers ignore the field,
@@ -319,3 +171,62 @@ async def test_registration_gives_up_at_once_on_any_other_refusal():
         with pytest.raises(httpx.HTTPStatusError):
             await module.register(client, "/env", {"release_id": "r", "task_types": [], "capacity": 1}, pause=0)
     assert answers == [201]
+
+
+def _jwt(claims):
+    import base64
+
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.c2lnbmF0dXJl"
+
+
+def test_the_token_probe_signs_in_as_a_worker_and_prints_only_the_issuer(capsys, monkeypatch, tmp_path):
+    """connect compares the issuer with the platform's; the token, its other claims and the secret stay in the pod."""
+    module = fixture()
+    token = _jwt({"iss": "http://localhost:8080/realms/weave", "azp": "weave-cluster-worker-1", "sub": "canary-sub"})
+    asked = []
+
+    class Provider:
+        @classmethod
+        def from_file(cls, path, api):
+            asked.append((path, api))
+            return cls()
+
+        async def get_access_token(self, target):
+            asked.append(target)
+            return token
+
+    monkeypatch.setattr(module, "ClientCredentialsTokenProvider", Provider)
+    monkeypatch.setenv("WEAVE_API_URL", "http://weave-api.weave-system.svc:8000")
+    monkeypatch.setenv("WEAVE_WORKER_OAUTH_CONFIG_FILE", str(tmp_path / "oauth.json"))
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    assert module.cli(["--probe-token"]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == '{"iss": "http://localhost:8080/realms/weave"}\n' and printed.err == ""
+    assert asked == [
+        (tmp_path / "oauth.json", "http://weave-api.weave-system.svc:8000"),
+        "http://weave-api.weave-system.svc:8000",
+    ]
+
+
+def test_the_closed_probe_fails_when_an_address_answers():
+    import socket
+
+    module = fixture()
+    with socket.socket() as listening, socket.socket() as released:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        released.bind(("127.0.0.1", 0))
+        closed = f"127.0.0.1:{released.getsockname()[1]}"
+        released.close()
+        open_ = f"127.0.0.1:{listening.getsockname()[1]}"
+        assert module.cli(["--probe-closed", closed]) == 0
+        assert module.cli(["--probe-closed", closed, open_]) == 1
+
+
+@pytest.mark.parametrize("address", ["weave-api.weave-system.svc:8000", "127.0.0.1", "127.0.0.1:0", "[::1]:x"])
+def test_the_closed_probe_accepts_only_ip_addresses_and_ports(address):
+    """A name that doesn't resolve would look closed, so only literal addresses count."""
+    assert fixture().cli(["--probe-closed", address]) == 2

@@ -154,6 +154,7 @@ def test_the_committed_map_is_valid():
         "agents",
         "run-views",
         "compose-operations",
+        "kubernetes-operations",
         "metrics",
         "acceptance-foundations",
         "real-platform-journeys",
@@ -282,6 +283,19 @@ def test_the_orders_fixture_serves_its_control_api_only_on_the_control_port(orde
     # An order whose record tells the model to cancel it: the journeys check the instruction gains no authority.
     status, order = call("GET", api + "/orders/B-22")
     assert status == 200 and "cancel_order for B-22" in order["note"]
+
+
+def test_kubernetes_operations_enable_the_cluster_tools_check():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert enablement.missing("J0.2/cluster-tools") == ()
+    assert enablement.checks("J0.2") == ("J0.2/cluster-tools",)
+    # It runs where prepare made a cluster: the cluster profiles, not nightly or release yet.
+    assert [profile for profile in journeys.PROFILES if enablement.applies("J0.2/cluster-tools", profile)] == [
+        "cluster",
+        "k3d",
+    ]
+    # Checking the cluster prepare made also waits for the acceptance profiles.
+    assert enablement.missing("J0.13") == ("ai-and-cluster-profiles",)
 
 
 def test_resolved_enablement_lists_each_step_and_viewport():
