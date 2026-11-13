@@ -1071,13 +1071,16 @@ async def _register(
     }
     if entry.get("target_id") is None:
         await _enable_kept(client, entry, uid, namespace, save_entry)
+    deployment = platform_operations.deployment_request(DEPLOYMENT, objects.WORKER, operations)
+    # The worker's own size, which its runner's binding allows; the defaults would ask for more and be refused.
+    deployment["components"][0] |= {"cpu_millis": objects.WORKER_CPU_MILLIS, "memory_mib": objects.WORKER_MEMORY_MIB}
     await platform_operations._target(
         client,
         entry,
         save_entry,
         scope=operations["scope"],
         request=request,
-        deployment=platform_operations.deployment_request(DEPLOYMENT, objects.WORKER, operations),
+        deployment=deployment,
         key=_key(connection, entry),
     )
     if entry.get("worker_granted") != operations["release_id"]:

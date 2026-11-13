@@ -668,6 +668,21 @@ def test_connect_runs_its_stages_in_order_and_registers_the_target_only_after_th
     assert saved["targets"]["weave-workers"]["pair"] == 1
 
 
+def test_the_registered_worker_component_fits_the_runners_binding_and_the_pods_limits(world):
+    """The runner refuses every plan whose component asks for more than its binding allows, before any change: the
+    worker component connect registers carries the worker container's own limits, which the binding allows."""
+    _, commands, _, cluster = world
+    connect(world)
+    (deployment,) = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "deployments.create"]
+    (component,) = deployment.components
+    (config,) = [item for item in applied(commands) if item["metadata"]["name"] == "weave-runner-config-weave-workers"]
+    (binding,) = json.loads(config["data"]["runner.json"])["destination"]["components"]
+    assert (component.cpu_millis, component.memory_mib) == (1000, 512)
+    assert component.cpu_millis <= binding["max_cpu_millis"] and component.memory_mib <= binding["max_memory_mib"]
+    (container,) = cluster.worker["spec"]["template"]["spec"]["containers"]
+    assert container["resources"]["limits"] == {"cpu": "1", "memory": "512Mi"}
+
+
 def request_id(cluster):
     """The target ID connect recorded: the runner grant names it as its only resource."""
     grants = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "members.grant"]
