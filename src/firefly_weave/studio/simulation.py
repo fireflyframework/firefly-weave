@@ -139,9 +139,11 @@ class CatalogConflict(ValueError):
 
 @functools.cache
 def bundled_catalog() -> CatalogSnapshot:
-    """What ships with Weave: the HTTP, email and file connectors and the AI action, so they compile offline."""
+    """What ships with Weave: the HTTP, email and file connectors, the AI action and the AI agent's turn action, so
+    they compile offline."""
     from firefly_weave.connectors import email
     from firefly_weave.contracts import agentic
+    from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
     from firefly_weave.contracts.definitions import ConnectorDefinition
     from firefly_weave.contracts.file_connectors import FILE_DESCRIPTORS
     from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
@@ -156,9 +158,10 @@ def bundled_catalog() -> CatalogSnapshot:
         [
             *(ConnectorDefinition.model_validate(d.manifest.value) for d in descriptors),
             load_definition(agentic.action_definition()),
+            load_definition(turn_action_definition()),
             load_definition(agentic.AGENTIC_DESCRIPTOR.manifest.value),
         ],
-        tasks=[*(task for d in descriptors for task in d.capabilities), agentic.task_capability()],
+        tasks=[*(task for d in descriptors for task in d.capabilities), agentic.task_capability(), turn_capability()],
         adapters=[*adapters, "weave-agentic-provider"],
     )
 
@@ -324,13 +327,17 @@ def classify_test_data(
     """Pointers into the request of values a schema marks secret, and of values too large or too deep to classify.
 
     Only typed values are classified, each against its own schema: the input, each step mock by its step's output
-    fields, each action mock by its action's, each mock inside a called workflow by that workflow's step, each signal
-    payload, each person's answer and each saved AI turn's final answer by its profile's output fields. Both lists
-    are refused before anything is simulated.
+    fields, each action mock by its action's, each AI agent tool's mock by what the tool returns and a mock of one
+    agent call by the tool it fits, each mock inside a called workflow by that workflow's step, each signal payload,
+    each person's answer, each saved AI turn's final answer by its profile's output fields, and each saved tool call's
+    arguments by its tool's input. Both lists are refused before anything is simulated.
     """
-    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.compiler.agent_tools import offline_input_schema, offline_output_schema
+    from firefly_weave.compiler.schemas import _Failure, validate_payload
     from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
+    from firefly_weave.runtime.agents import parse_agent_key
 
     bundle = {name: schema.value for name, schema in catalog.schemas.items()}
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
@@ -347,13 +354,38 @@ def classify_test_data(
         except (RecursionError, ArithmeticError):
             unclassified.append(path)
 
+    def tools_of(step: JsonObject | None) -> dict[str, JsonObject]:
+        tools = step.get("tools") if step is not None and step.get("kind") == "agent" else None
+        listed = tools if isinstance(tools, list) else []
+        return {cast(str, tool["name"]): tool for tool in listed if isinstance(tool, dict) and "name" in tool}
+
+    def call_output(step: JsonObject | None, value: JsonValue) -> object:
+        # A mock of one call is checked by the first of the agent's tools it fits; one that fits none is refused
+        # by the simulator.
+        for tool in tools_of(step).values():
+            schema = offline_output_schema(tool, catalog)
+            if schema is not None and not validate_payload(schema, value, bundle):
+                return schema
+        return None
+
     def mocks_of(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> None:
         for key, value in mocks.items():
             if key.startswith("node:"):
-                step = step_at(workflow, key.removeprefix("node:"))
-                check(_pointer(*prefix, key), output_target(workflow, step, catalog), value)
+                instance = key.removeprefix("node:")
+                step = step_at(workflow, instance)
+                called = parse_agent_key(instance)
+                if called is not None and called.call is not None and tools_of(step):
+                    check(_pointer(*prefix, key), call_output(step, value), value)
+                else:
+                    check(_pointer(*prefix, key), output_target(workflow, step, catalog), value)
             elif key.startswith("action:"):
                 check(_pointer(*prefix, key), _action_output(catalog, key.removeprefix("action:")), value)
+            elif key.startswith("tool:"):
+                activation, _, name = key.removeprefix("tool:").rpartition("/")
+                tool = tools_of(step_at(workflow, activation)).get(name)
+                schema = offline_output_schema(tool, catalog) if tool is not None else None
+                for item in tool_values(value):
+                    check(_pointer(*prefix, key), schema, item)
 
     check("/input", cast(JsonObject, spec).get("inputSchema"), request.input)
     mocks_of(document, request.mocks, "mocks")
@@ -374,9 +406,16 @@ def classify_test_data(
         step = step_at(document, key) or {}
         profile = profiles.get(cast(str, step.get("profile"))) if isinstance(profiles, dict) else None
         schema = profile.get("outputSchema") if isinstance(profile, dict) else None
+        tools = tools_of(step)
         for index, turn in enumerate(entry.turns):
             if "final" in turn:
                 check(_pointer("scripts", "aiTurns", key, "turns", str(index), "final"), schema, turn["final"])
+            for number, call in enumerate(cast(list[JsonValue], turn.get("toolCalls", []))):
+                tool = tools.get(cast(str, call.get("name"))) if isinstance(call, dict) else None
+                if tool is not None:
+                    pointer = _pointer("scripts", "aiTurns", key, "turns", str(index), "toolCalls", str(number))
+                    arguments = cast(JsonObject, call).get("arguments")
+                    check(pointer + "/arguments", offline_input_schema(tool, catalog), arguments)
     return secret, unclassified
 
 
@@ -524,6 +563,15 @@ def _in_slice(document: JsonObject, whole: JsonObject, mocks: Mapping[str, JsonV
         elif key.startswith("action:"):
             reference = key.removeprefix("action:")
             if reference in all_actions and reference not in kept_actions:
+                continue
+        elif key.startswith(("agent:", "tool:")):
+            # An AI agent's saved turns or tool mock, by the agent they belong to.
+            activation = key.partition(":")[2].rpartition("/")[0] if key.startswith("tool:") else key[6:]
+            try:
+                step = node_of(activation)
+            except InvalidInstanceKey:
+                step = activation
+            if step in all_ids and step not in kept_ids:
                 continue
         out[key] = value
     return out
@@ -869,6 +917,22 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
                 if entry.get("afterSeconds"):
                     simulator.advance_time(int(entry["afterSeconds"]))
                 simulator.signal(node.name, entry.get("payload"))
+                moved = True
+            elif key in data.asks:
+                # A task an AI agent gave a person: a call's review, or a tool's question. Only its own key answers it.
+                script = scripts.humans.get(key)
+                if script is None:
+                    title = cast(dict[str, Any], data.inputs.get(key) or {}).get("title")
+                    return Blocked(
+                        reason="human",
+                        nodeId=node_of(key),
+                        instanceKey=key,
+                        message=title if isinstance(title, str) and title else f"Decide for {key}",
+                    )
+                entry = script.model_dump(mode="json", by_alias=True)
+                if entry.get("outcome") == "expire":
+                    continue
+                simulator.human_decision(key, {"decision": entry["decision"], "data": entry.get("data", {})})
                 moved = True
             elif isinstance(node, human_node):
                 script = scripts.humans.get(key) or scripts.humans.get(node.id)

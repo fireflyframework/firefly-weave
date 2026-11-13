@@ -31,6 +31,7 @@ from firefly_weave.compiler.calls import call_output_schema
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.ir import (
     ActionNode,
+    AgentNode,
     CallWorkflowNode,
     DecisionTableNode,
     HumanTaskNode,
@@ -46,6 +47,16 @@ from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.transactions import PHASE_SEGMENTS, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.operations.debug.ai_turns import (
+    agent_candidates,
+    agent_mock,
+    auto_approves,
+    check_agent_mock,
+    is_sequence,
+    pinned_turn,
+    scripted_turn,
+    tool_values,
+)
 from firefly_weave.operations.debug.models import (
     MAX_PENDING_KEYS,
     Boundary,
@@ -58,6 +69,7 @@ from firefly_weave.operations.debug.models import (
     FrameState,
     FrameView,
     LoopView,
+    PersonTask,
     ScriptedError,
     SelectedScope,
     SignalReceipt,
@@ -77,6 +89,7 @@ from firefly_weave.operations.debug.transactions import (
     step_instance,
     transaction_views,
 )
+from firefly_weave.runtime.agent_tools import agent_key
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import enclosing_loops, loop_scope
@@ -143,6 +156,10 @@ def _path(frame: str, key: str) -> str:
     return f"{frame}/{key}" if frame else key
 
 
+# What an agent's mock gives once its saved turns or its tool's sequence ran out: the session stops there.
+_RAN_OUT = object()
+
+
 @dataclass
 class _Workflow:
     """A compiled workflow a session runs: the simulated one (``reference`` "") or a called version."""
@@ -205,6 +222,12 @@ def _key_targets(prepared: PreparedWorkflow, key: str) -> list[_Target]:
             found, definition = _action_definition(ir, node.dependency)
             if found == reference:
                 targets.append(_ActionTarget(definition, node))
+        elif isinstance(node, AgentNode):
+            # An agent's tool that runs the action, whatever its kind: its pin names the action.
+            for tool in node.tools:
+                pinned = next((d for d in ir.dependencies if d.digest == tool.dependency and d.kind == "Action"), None)
+                if pinned is not None and pinned.reference == reference:
+                    targets.append(_ActionTarget(cast(ActionDefinition, load_definition(pinned.document)), None))
     targets.extend(p for p in phase_targets(prepared) if p.kind == "action" and p.reference == reference)
     return targets
 
@@ -236,6 +259,16 @@ def _validate_output(ir: WorkflowIR, target: _ActionTarget | PhaseTarget, value:
         validate_action(ir, _action_definition(ir, participation.phases[target.phase].dependency)[1], "output", value)
     else:
         validate(ir, target.output_schema, value)
+
+
+def _answer_schema(decisions: list[JsonValue], form: JsonObject) -> JsonObject:
+    """What a person's answer is: one of the decisions, and data that fits the form."""
+    return {
+        "type": "object",
+        "properties": {"decision": {"enum": decisions}, "data": form},
+        "required": ["decision", "data"],
+        "additionalProperties": False,
+    }
 
 
 class Simulator:
@@ -329,6 +362,11 @@ class Simulator:
     def _validate_mocks(self, prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue]) -> None:
         ir = prepared.ir
         for key, value in mocks.items():
+            # An AI agent's saved turns, one of its tools, its pin or one of its calls (see ``agent_mock``).
+            mock = agent_mock(prepared, key)
+            if mock is not None:
+                check_agent_mock(ir, mock, value)
+                continue
             # node:<step> mocks every instance of an action step, node:<instance key> one of them, and
             # node:<step>#confirm (or #cancel, #undo) that phase; action:<reference> every step and phase using it.
             targets = _key_targets(prepared, key)
@@ -422,10 +460,16 @@ class Simulator:
             if not answered or len(answered) != len(targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
 
-    @staticmethod
-    def _candidates(instance: str, fallbacks: Sequence[str]) -> list[str]:
-        """The keys that may answer ``instance``, most specific first: the instance, its step, then the caller's
-        fallbacks. A confirm, cancel or undo is answered at its own phase keys, never at its step's."""
+    def _candidates(self, frame: str, instance: str, fallbacks: Sequence[str]) -> list[str]:
+        """The keys that may answer ``instance`` of the run ``frame``, most specific first: the instance, its step,
+        then the caller's fallbacks. A confirm, cancel or undo is answered at its own phase keys, never at its step's;
+        an AI agent's turn and calls at the agent's keys (``agent_candidates``), and its reviews by a person only."""
+        run = self._run(frame)
+        state = run.cursor.result.state if run.cursor is not None else cast(RunState, run.state)
+        reference = agent_key(self._workflow(frame).ir, instance, state.agents)
+        if reference is not None:
+            own = agent_candidates(reference, instance)
+            return list(dict.fromkeys([*own, *fallbacks])) if own is not None else []
         try:
             phase = split_phase(instance)
         except InvalidInstanceKey:
@@ -441,7 +485,7 @@ class Simulator:
         mocks = self._workflow(frame).mocks
         errors = {} if frame or retry else self.data.errors
         pending = set() if frame else set(self.data.pending_keys)
-        for candidate in self._candidates(instance, fallbacks):
+        for candidate in self._candidates(frame, instance, fallbacks):
             if candidate in mocks:
                 return Answer("mock", candidate, mocks[candidate])
             if candidate in errors:
@@ -855,6 +899,10 @@ class Simulator:
         stop of a called step a transaction no longer waits for. False when the session can't go on (a missing
         mock)."""
         d = self.data
+        # A task an agent gave a person closes with its key: answered, expired, or ended with the agent.
+        for path in [path for path in d.asks if _parent(path) == key]:
+            if path.rpartition("/")[2] not in result.state.active:
+                del d.asks[path]
         for change in result.steps:
             waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
             if isinstance(waiting, (SignalNode, HumanTaskNode)):
@@ -870,6 +918,8 @@ class Simulator:
                     return False
             elif isinstance(command, HumanTaskIntent):
                 d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
+                if not self._ask(key, run, called, command):
+                    return False
             elif isinstance(command, ControlCommand) and command.kind == "settle":
                 self._settle(key, command.node_id)
             elif isinstance(command, TaskIntent):
@@ -896,27 +946,109 @@ class Simulator:
             # A confirm, cancel or undo with nothing to say completes with an empty result.
             answer = Answer("mock", None, {})
         if answer.kind == "none":
-            tried = self._candidates(node_id, fallbacks)
-            self.data.diagnostics = [
-                Diagnostic(
-                    code="WV-DEBUG-MISSING_MOCK",
-                    severity="error",
-                    stage="evaluation",
-                    path="",
-                    message="An action requires an explicit mock.",
-                    hint="Add a mock under "
-                    + ", ".join(tried)
-                    + (f" in the mocks of {called.reference}" if called.reference else "")
-                    + ".",
-                )
-            ]
+            tried = self._candidates(key, node_id, fallbacks)
+            self._missing(
+                "An action requires an explicit mock.",
+                "Add a mock under "
+                + ", ".join(tried)
+                + (f" in the mocks of {called.reference}" if called.reference else "")
+                + ".",
+            )
             return False
-        value = cast(JsonValue, answer.value)
+        given = self._given(key, called, node_id, answer)
+        if given is _RAN_OUT:
+            return False
+        value = cast(JsonValue, given)
         data: JsonObject = {"node_id": node_id, "output": value}
         if generation is not None:
             data["generation"] = generation
         run.pending.append(self._event("task_completed", data))
         self._grown(value)
+        return True
+
+    def _missing(self, message: str, hint: str) -> None:
+        """Stop the session: nothing answers the task it reached."""
+        self.data.diagnostics = [
+            Diagnostic(
+                code="WV-DEBUG-MISSING_MOCK", severity="error", stage="evaluation", path="", message=message, hint=hint
+            )
+        ]
+
+    def _given(self, frame: str, called: _Workflow, instance: str, answer: Answer) -> object:
+        """The value a found mock gives ``instance``: as written, except at an AI agent's keys. A turn takes the
+        agent's pin as its final answer, or its saved turn; a call takes its tool's next value when the tool's mock is
+        a sequence. ``_RAN_OUT`` once the saved turns or the sequence have nothing left, after stopping the session.
+        """
+        value = cast(JsonValue, answer.value)
+        reference = agent_key(called.ir, instance)
+        key = cast(str, answer.key)
+        if reference is None:
+            return value
+        if reference.key.call is None and key.startswith("node:"):
+            return pinned_turn(reference.node, value)
+        if reference.key.call is None and key.startswith("agent:"):
+            turn = scripted_turn(reference.node, cast(JsonObject, value), reference.key.turn)
+            if turn is None:
+                self._missing(
+                    f"The saved turns under {key} end before turn {instance}.",
+                    f"Add turn {reference.key.turn} to the saved turns under {key}, or pin the agent's output under "
+                    f"node:{reference.key.agent}.",
+                )
+                return _RAN_OUT
+            return turn
+        if key.startswith("tool:") and is_sequence(value):
+            values = tool_values(value)
+            consumed = _path(frame, key)
+            used = self.data.consumed.get(consumed, 0)
+            if used >= len(values):
+                self._missing(
+                    f"The mock sequence under {key} ran out before call {instance}.",
+                    f"Add a value to the sequence under {key}"
+                    + (f" in the mocks of {called.reference}" if called.reference else "")
+                    + ".",
+                )
+                return _RAN_OUT
+            self.data.consumed[consumed] = used + 1
+            return values[used]
+        return value
+
+    def _ask(self, key: str, run: Run, called: _Workflow, command: HumanTaskIntent) -> bool:
+        """A task an AI agent gives a person: answered by the session, or kept for ``human_decision``.
+
+        A review is approved at once when the saved turns that drive the agent say ``autoApprove``; a tool that asks a
+        person is answered by its mock when it has one. A review's approval carries the digest of the input under
+        review, copied from the task, as the task service copies it. False when the session can't go on.
+        """
+        reference = agent_key(called.ir, command.node_id)
+        if reference is None:
+            return True
+        context = command.context if isinstance(command.context, dict) else {}
+        digest = context.get("inputDigest")
+        event: JsonObject = {"node_id": command.node_id}
+        if isinstance(digest, str):
+            event["input_digest"] = digest
+        if reference.key.review:
+            turns = (called.mocks.get("agent:" + reference.key.agent), called.mocks.get("agent:" + reference.node.id))
+            script = next((entry for entry in turns if entry is not None), None)
+            if "approve" in command.decisions and auto_approves(script):
+                run.pending.append(
+                    self._event("human_completed", event | {"output": {"decision": "approve", "data": {}}})
+                )
+                return True
+        else:
+            answer = self._answer(key, command.node_id, ())
+            if answer.kind == "mock" and len(command.decisions) == 1:
+                value = self._given(key, called, command.node_id, answer)
+                if value is _RAN_OUT:
+                    return False
+                output: JsonObject = {"decision": command.decisions[0], "data": cast(JsonValue, value)}
+                run.pending.append(self._event("human_completed", event | {"output": output}))
+                return True
+        self.data.asks[_path(key, command.node_id)] = PersonTask(
+            decisions=list(command.decisions),
+            form_schema=command.form_schema,
+            input_digest=digest if isinstance(digest, str) else None,
+        )
         return True
 
     def _retry(self, key: str, run: Run, name: str, generation: int) -> None:
@@ -965,7 +1097,7 @@ class Simulator:
         d = self.data
         child = _path(key, command.node_id)
         attempt = generation or 0
-        candidates = self._candidates(command.node_id, ())
+        candidates = self._candidates(key, command.node_id, ())
         if command.mode == "wait":
             answer = self._answer(key, command.node_id, (), retry=generation is not None)
             if answer.kind == "error":
@@ -975,8 +1107,17 @@ class Simulator:
                 # The called run started and never ends in this session.
                 return True
             if answer.kind == "mock":
-                value = cast(JsonValue, answer.value)
-                run.pending.append(self._event("call_completed", self._mocked_call(child, command, value, attempt)))
+                given = self._given(key, called, command.node_id, answer)
+                if given is _RAN_OUT:
+                    return False
+                value = cast(JsonValue, given)
+                if agent_key(called.ir, command.node_id) is not None:
+                    # An AI agent's workflow tool is mocked with the called workflow's output, as a success.
+                    outcome: JsonObject = {"child_run_id": str(frame_run_id(child)), "status": "succeeded"}
+                    data = {"node_id": command.node_id, "generation": attempt, **outcome, "output": value}
+                else:
+                    data = self._mocked_call(child, command, value, attempt)
+                run.pending.append(self._event("call_completed", data))
                 self._grown(value)
                 return True
         if command.workflow_reference in self._workflows:
@@ -1077,8 +1218,12 @@ class Simulator:
             # The same check a platform applies before it delivers a child's output; a called confirm, cancel or
             # undo is checked against its own workflow's output schema.
             phase = phase_target(calling.prepared, frame.call_node)
+            tool = agent_key(ir, frame.call_node, caller_state.agents)
             if phase is not None:
                 schema = phase.output_schema
+            elif tool is not None and tool.target is not None and tool.tool is not None:
+                # An AI agent's workflow tool: its target says what the called workflow returns.
+                schema = tool.target.output_schema(ir, tool.tool)
             else:
                 node = cast(CallWorkflowNode, calling.prepared.nodes[node_of(frame.call_node)])
                 schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
@@ -1190,10 +1335,27 @@ class Simulator:
         return run.pending.pop(0) if due is not None else None
 
     def human_decision(self, node_id: str, payload: JsonValue, *, frame: str | None = None) -> DebugView:
+        """A person's answer to a person step, or to a task an AI agent gave a person (a review or a question).
+
+        An answer to an agent's task is a decision and the form's data, nothing else: the digest a review approves is
+        the session's copy from the task, never the person's.
+        """
+
         def receive() -> None:
             run = self._run(frame or "")
             ir = self._workflow(frame or "").ir
             state = cast(RunState, run.state)
+            asked = self.data.asks.get(_path(frame or "", node_id))
+            if asked is not None:
+                if node_id not in state.active or state.status in TERMINAL:
+                    raise DebugError("WV-DEBUG-HUMAN-TASK")
+                validate(ir, _answer_schema(cast(list[JsonValue], asked.decisions), asked.form_schema), payload)
+                data: JsonObject = {"node_id": node_id, "output": payload}
+                if asked.input_digest is not None:
+                    data["input_digest"] = asked.input_digest
+                del self.data.asks[_path(frame or "", node_id)]
+                run.pending.append(self._event("human_completed", data))
+                return
             try:
                 step = node_of(node_id)
             except InvalidInstanceKey:
@@ -1201,19 +1363,7 @@ class Simulator:
             node = next((n for n in ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == step), None)
             if node is None or node_id not in state.active or state.status in TERMINAL:
                 raise DebugError("WV-DEBUG-HUMAN-TASK")
-            validate(
-                ir,
-                {
-                    "type": "object",
-                    "properties": {
-                        "decision": {"enum": cast(list[JsonValue], node.decisions)},
-                        "data": node.form_schema,
-                    },
-                    "required": ["decision", "data"],
-                    "additionalProperties": False,
-                },
-                payload,
-            )
+            validate(ir, _answer_schema(cast(list[JsonValue], node.decisions), node.form_schema), payload)
             run.pending.append(self._event("human_completed", {"node_id": node_id, "output": payload}))
 
         return self._mutate(receive)

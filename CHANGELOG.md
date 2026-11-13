@@ -130,6 +130,20 @@ SPDX-License-Identifier: Apache-2.0
   reason, and a tool name the model wrote is shown escaped. Values past a
   page's 8 MiB are left out with `resource_limit`, so an activation of any size
   can be read.
+- AI agents run in simulations, in debug sessions and in Studio's Execute,
+  without a model or their tools. Saved turns (`agent:` mocks, from Studio's
+  `aiTurns`) answer the agent's turns one by one, and `tool:AGENT/TOOL` mocks
+  answer its tool calls, one value for every call or a `sequence` taken in
+  order; `node:` keys still win, for one call or as the agent's pinned output.
+  Turns that call a tool the agent doesn't declare, or with arguments that don't
+  fit, are refused before the simulation starts (`WV-DEBUG-MOCK-OUTPUT`), and
+  turns that run out stop it on that turn (`WV-DEBUG-MISSING_MOCK`). A call that
+  needs a review waits until `human_decision` answers its review key, such as
+  `support#1.1.review`, unless the saved turns say `autoApprove`. Studio's
+  Execute ships the agent's turn action, asks for each unanswered review or
+  question by its title, and refuses a value marked secret in a tool mock or a
+  saved call's arguments. Live runs never read saved turns, tool mocks or
+  `autoApprove`.
 - An AI agent tool of a kind the platform doesn't know is refused when an
   artifact is loaded, even when it carries a person's forms.
 - When Weave AI proposes a change to an existing AI agent step, it keeps every

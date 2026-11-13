@@ -179,5 +179,5 @@ value that doesn't fit in the page's 8 MiB has the omission `resource_limit`. Th
 `name` is the model's own text, so it's shown escaped: format characters are dropped, control characters and line
 separators are written as `\uXXXX`, and it's cut at 256 characters.
 
-See also: [history and replay](history-and-replay.md), [incident operations](incident-operations.md), and the
-[worker protocol](worker-protocol.md).
+See also: [history and replay](history-and-replay.md), [incident operations](incident-operations.md),
+[simulating an agent](simulation.md#simulate-ai-agents), and the [worker protocol](worker-protocol.md).

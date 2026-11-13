@@ -19,12 +19,11 @@
 A test-only kind, ``probe``, runs each call as a task of a fake task type. It is registered the way a real kind would
 be: one entry in ``TOOL_TARGETS``, and its pinned fields in the IR's pin check (``check_pinned``), which sits next to
 the compiler's resolvers. The pinned IR names it, with the IR's closed list of kinds widened for the test. An agent
-that calls it then goes through the kernel, replay, exports and the agent log with no other change. A kind the pin
-check doesn't know is refused, whatever fields its tool carries.
+that calls it then goes through the kernel, replay, exports, the agent log and the simulator (saved turns and a
+``tool:`` mock) with no other change. A kind the pin check doesn't know is refused, whatever fields its tool carries.
 
 Not covered here: compiling such a tool, because a workflow definition names a tool's target by a field (``action``,
-``workflow`` or ``human``), so a new kind also adds a field there and its resolver; and the simulator, whose agent and
-tool mocks are not built yet.
+``workflow`` or ``human``), so a new kind also adds a field there and its resolver.
 """
 
 import copy
@@ -61,6 +60,8 @@ import firefly_weave.compiler.ir as ir_module  # noqa: E402
 from firefly_weave.compiler.api import CompiledArtifact  # noqa: E402
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest  # noqa: E402
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR  # noqa: E402
+from firefly_weave.operations.debug.models import DebugError  # noqa: E402
+from firefly_weave.operations.debug.simulator import Simulator  # noqa: E402
 from firefly_weave.operations.exports import safe_event  # noqa: E402
 from firefly_weave.operations.replay import replay  # noqa: E402
 from firefly_weave.runtime import agent_tools  # noqa: E402
@@ -224,6 +225,15 @@ def test_a_new_kind_of_tool_runs_end_to_end_with_only_its_registry_entries(probe
     assert (logged.target.kind, logged.target.reference, logged.status) == ("probe", "orders-get@1.0.0", "succeeded")
     assert logged.output.available is False
     assert [item.reason for item in logged.output.omissions] == ["classified_secret"]
+
+    # The simulator answers the call from the tool's mock, checked against the probe's output, and replays the turns.
+    turns = {"turns": [{"toolCalls": [{"name": "lookup_order", "arguments": {"id": "A-17"}}]}, {"final": "Shipped."}]}
+    mocks = {"agent:support": turns, "tool:support/lookup_order": {"status": "shipped"}}
+    simulator = Simulator(probe, mocks=mocks, input=state.input, now=NOW)
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    assert simulator.data.outputs["support#1.1"] == {"status": "shipped"}
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT"):
+        Simulator(probe, mocks=mocks | {"tool:support/lookup_order": {"token": 7}}, input=state.input, now=NOW)
 
 
 def test_a_kind_the_pin_check_does_not_know_is_refused(widened):

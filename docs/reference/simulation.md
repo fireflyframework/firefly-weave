@@ -54,7 +54,7 @@ steps** and **Execute workflow** (see the
 [Studio guide](../guides/studio.md#execute-steps-and-read-the-run-log)).
 
 - **What it compiles against.** What ships with Weave (the HTTP, email and file
-  connectors and the AI action), the actions this workflow uses that Studio has
+  connectors, the AI action and the AI agent's turn action), the actions this workflow uses that Studio has
   (the ones it owns, before they are published), and, when connected, the
   project's catalog, read once with your session and kept for 30 seconds.
   Actions none of them has run on read-only stubs; decision tables are never
@@ -63,16 +63,20 @@ steps** and **Execute workflow** (see the
 - **What it uses as data, in order.** For a step that calls something, its
   pinned output (for one iteration, then for the step), otherwise its last
   result. The test input, or a sample of the input fields. The test answers of
-  signals and human tasks, and the saved turns of AI tasks. Executing one step
+  signals and human tasks, and the saved turns of AI tasks and AI agents (see
+  [Simulate AI agents](#simulate-ai-agents)). Executing one step
   sends only the test data of the steps it runs, and a later step never stops
   it.
 - **When it stops.** A step with no data blocks with "Step *ID* needs test
   data."; a signal or a person without a test answer blocks with "Send signal
-  *name*" or "Decide for *ID*"; a step the test data doesn't reach says which
+  *name*" or "Decide for *ID*"; an AI agent's review or question without a test
+  answer under its own instance key blocks with the task's title, such as
+  "Review cancel_order for support"; a step the test data doesn't reach says which
   path was taken; a deadline that passes fails the run at that step. Waits
   advance by themselves.
 - **Secrets.** Test input, step mocks (in this workflow and in called
-  workflows), signal payloads and decisions are checked against their schemas
+  workflows), AI agent tool mocks, the arguments of saved tool calls, signal
+  payloads and decisions are checked against their schemas
   before anything runs; a value marked secret is refused with its location
   only, and never appears in an answer.
 - **Step-through sessions.** With breakpoints, the host keeps a session in
@@ -241,7 +245,7 @@ implementation.
 | `continue` | — | Run until a breakpoint, a wait, a suspension, the end, or the command's work ceiling, through called workflows too |
 | `step_out` | `frame` (optional) | Run until the called workflow returns its outcome to its caller; breakpoints still stop on the way. Without `frame`, the called workflow of the next boundary |
 | `signal` | `name`, `payload`, `frame` (optional) | Validate the payload against the signal's schema and queue it at virtual now, in the called workflow `frame` names |
-| `human_decision` | `name`: the human task step ID; `payload`: `{"decision": ..., "data": {...}}`; `frame` (optional) | Validate the decision and form data, then queue the completion |
+| `human_decision` | `name`: the human task step ID, or an AI agent's review or question key such as `support#1.1.review`; `payload`: `{"decision": ..., "data": {...}}`; `frame` (optional) | Validate the decision and form data, then queue the completion |
 | `advance_time` | `seconds`: whole number, zero or more | Move virtual time forward |
 | `resolve` | `incident_key`; `resolution`: `retry_safe`, `accept_reconciled_result`, `accept_reconciled_failure`, or `terminate`; `payload` (with `accept_reconciled_result` only); `frame` (optional) | Apply a person's resolution of a transaction in doubt (see [Simulate transactions](#simulate-transactions)) |
 | `cancel` | `skip_undo` (optional) | Queue a cancel of the simulated run; its open transactions are undone first |
@@ -609,6 +613,79 @@ step a rollback revokes before a worker takes it, because a session treats every
 dispatched step as taken (script `"outcome": "not_started"` to see it skipped);
 and a called step that can't be undone and never started.
 
+## Simulate AI agents
+
+An AI agent step runs in a simulation without a model and without its tools:
+saved turns stand for the model, and mocks stand for each tool. Nothing leaves
+the simulation, and the agent's output reports no model usage.
+
+**Saved turns.** An `agent:` mock holds one entry in the
+[saved AI turns format](../../src/firefly_weave/contracts/schemas/studio-ai-turns-v1.json):
+`turns`, each either `toolCalls` (a `name` and `arguments` per call) or a
+`final` answer, with an optional `text`. Each turn of an activation replays the
+entry's turn at the same position. The simulator fills in what a model would:
+the profile's provider and model, no usage, and the kernel's call IDs. In
+Studio, the `aiTurns` test data become these mocks.
+
+```json
+{
+  "agent:support": {
+    "turns": [
+      {"toolCalls": [{"name": "lookup_order", "arguments": {"id": "A-17"}}]},
+      {"final": "Order A-17 has shipped."}
+    ]
+  },
+  "tool:support/lookup_order": {"status": "shipped"}
+}
+```
+
+**Tool mocks.** A `tool:AGENT/TOOL` mock is the result of every call to that
+tool: what an Action returns, what a called workflow returns, or a person's
+answer to a question. `{"sequence": [...]}` gives one value per call, in the
+order the calls run. A call that finds the sequence used up stops the
+simulation with `WV-DEBUG-MISSING_MOCK`.
+
+**Which key answers.** `AGENT` is the agent's step ID (every activation) or an
+instance key such as `support[2]` (one activation inside a loop). The most
+specific key wins:
+
+| What runs | Keys, most specific first |
+| --- | --- |
+| A turn | `node:INSTANCE_KEY`, `node:STEP_ID` (the agent's pinned output), `agent:INSTANCE_KEY`, `agent:STEP_ID` |
+| A tool call | `node:CALL_KEY` (one call, such as `node:support#1.1`), `tool:INSTANCE_KEY/TOOL`, `tool:STEP_ID/TOOL`, `action:EXACT_REFERENCE` for a tool that runs an Action |
+
+A pinned output answers the agent's first turn with its `result` and `text`, so
+no tool runs and the saved turns are never read; the output's usage reports what
+the simulation used, which is nothing. A **Call a workflow** tool without a mock
+runs the called workflow inside the simulation when the request carries its
+artifact, as a call step does.
+
+**Checks before anything runs.** Saved turns may call only the agent's tools,
+with arguments that fit each tool's parameters, and every turn must pass the
+agent's turn checks; tool mocks must fit what the tool returns. Anything else is
+refused with `WV-DEBUG-MOCK-OUTPUT`. A key that names no agent, no tool of it,
+a turn, or a review is refused with `WV-DEBUG-MOCK-KEY`. Saved turns that end
+before the agent does stop the simulation with `WV-DEBUG-MISSING_MOCK` on that
+turn, such as `support#2`.
+
+**Reviews and questions.** A call that needs a review waits at its review key,
+such as `support#1.1.review`, and a question to a person waits at its call key,
+until `human_decision` answers it. A review takes `approve` or `reject` with
+`{"comment": ...}` or `{}` as data; the approval runs the input the review
+showed, which the simulation copies from the review, never from the answer. A
+rejection is a result the model reads. Set `"autoApprove": true` in the saved
+turns to approve every review at once; a question with a tool mock is answered
+by the mock.
+
+**Not simulated yet.** Scripted failures (`errors`) and results that never
+arrive (`pending`) can't name an agent's turn or call, and an entry's `memory`
+isn't read: a simulated agent starts with the memory its run holds.
+
+**Only simulations read these mocks.** Saved turns, tool mocks and
+`autoApprove` belong to debug sessions and to Studio's Execute. A live run never
+reads them: its turns go to the model and its reviews to people, whatever the
+workflow's test data holds.
+
 ## Use the Python library
 
 Embedders use the `Simulator` class. Run this from a source checkout with
@@ -774,12 +851,13 @@ fingerprints.
 | `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name`, or carries one it doesn't take: a `payload` on a `resolve` other than `accept_reconciled_result`, `skip_undo` on a command other than `cancel`, or `frame` on a `cancel` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
 | `WV-DEBUG-MISSING_MOCK` at a **Call a workflow** step | The step waits for another workflow, and the request has neither a mock for the call nor the called workflow's artifact | Add a `node:` mock for the call, or the artifact under `workflows` (`--workflow` in the CLI); see [Simulate workflow calls](#simulate-workflow-calls) |
+| `WV-DEBUG-MISSING_MOCK` at an AI agent's turn or call | The saved turns end before the agent does, or a tool's mock sequence is used up | Add a turn under the `agent:` key, a value to the sequence, or pin the agent's output; see [Simulate AI agents](#simulate-ai-agents) |
 | `WV-DEBUG-MISSING_MOCK` at a confirm, cancel, or undo | The phase has no mock, and its output needs fields | Add a mock under one of the hint's keys, such as `node:add#undo`; see [Simulate transactions](#simulate-transactions) |
 | `WV-DEBUG-MOCK-KEY` | A mock key names no action node or waiting call in this artifact, or no iteration of it (detached calls and `action:` keys for calls take no mocks); a phase key names a confirm, cancel, or undo its step doesn't have; or an `effect` is set on a key that names no step of a transaction | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems`, and `#confirm`, `#cancel`, or `#undo` only for a phase the step declares |
 | `WV-DEBUG-WORKFLOW` | A `workflows` entry is not a version any call reaches, has no artifact, or its artifact is another version or has other input or output schemas; `resolve_workflows` reached a version this project never published, or one whose published definition differs from the one its caller was compiled against; `resolve_workflows` was set in a request to the CLI, which has no published versions; or a stored session has a frame of a version it does not carry | Compile the exact version the call names; on a platform, publish it or pass its artifact; from the CLI, pass `--workflow` |
 | `WV-DEBUG-FRAME` | `step_out`, `signal` or `human_decision` named a frame that does not exist or is not simulated, or `step_out` had no called workflow to leave | Use a `key` from `frames` |
 | `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
-| `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |
+| `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema; or an AI agent's saved turns call a tool it doesn't declare, with arguments that don't fit, or break the saved turns format; or a tool mock doesn't fit what the tool returns | Fix the mocked result or the saved turns; see [Simulate AI agents](#simulate-ai-agents) |
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
 | `WV-DEBUG-HUMAN-TASK` | That human task is not waiting for a decision now | Continue until it is active, and use its step ID as `name` |

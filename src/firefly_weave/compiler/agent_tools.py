@@ -238,16 +238,28 @@ def offline_input_schema(tool: JsonObject, catalog: CatalogSnapshot) -> JsonObje
 
     Studio's test data checks read it to check saved model turns.
     """
+    return _offline_schema(tool, catalog, "inputSchema", "questionSchema")
+
+
+def offline_output_schema(tool: JsonObject, catalog: CatalogSnapshot) -> JsonObject | None:
+    """What a tool returns, read straight from a catalog, without analysis; None when it can't be read.
+
+    Studio's simulation reads it to check a tool's mocks for values marked secret.
+    """
+    return _offline_schema(tool, catalog, "outputSchema", "formSchema")
+
+
+def _offline_schema(tool: JsonObject, catalog: CatalogSnapshot, field: str, form: str) -> JsonObject | None:
     target = tool_target(tool)
     source: object = None
     if target == "action" and isinstance(tool.get("action"), str):
         resource = catalog.resolve("Action", cast(str, tool["action"]))
-        source = cast(JsonObject, resource.definition.value["spec"]).get("inputSchema") if resource else None
+        source = cast(JsonObject, resource.definition.value["spec"]).get(field) if resource else None
     elif target == "workflow" and isinstance(tool.get("workflow"), str):
         resource = catalog.resolve("Workflow", cast(str, tool["workflow"]))
-        source = cast(JsonObject, resource.definition.value["spec"]).get("inputSchema") if resource else None
+        source = cast(JsonObject, resource.definition.value["spec"]).get(field) if resource else None
     elif target == "human" and isinstance(tool.get("human"), dict):
-        source = cast(JsonObject, tool["human"]).get("questionSchema")
+        source = cast(JsonObject, tool["human"]).get(form)
     return cast(JsonObject, source) if isinstance(source, dict) else None
 
 
