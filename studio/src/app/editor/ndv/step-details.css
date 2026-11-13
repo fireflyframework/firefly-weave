@@ -941,6 +941,12 @@ weave-issues-indicator {
   background: none;
   padding: 0;
 }
+/* The segments' drawn faces and frame go with the switch. */
+.step-details.step-details[data-run-mode] .param-resource-modes::before,
+.step-details.step-details[data-run-mode] .param-resource-modes button::before,
+.step-details.step-details[data-run-mode] .param-resource-modes button::after {
+  display: none;
+}
 .step-details.step-details[data-run-mode]
   .param-resource-modes
   [aria-checked="false"] {

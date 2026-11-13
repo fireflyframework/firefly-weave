@@ -801,6 +801,8 @@ weave-input-pane.is-compact .pane-source-field::before {
   align-items: flex-start;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+  /* One line for the run's error in a 390 px pane. */
+  padding: var(--space-3);
   color: var(--text);
 }
 .pane-run-notice[data-tone="info"] {
