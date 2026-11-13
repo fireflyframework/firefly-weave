@@ -130,6 +130,20 @@ const isRecord = (value: unknown): value is Json =>
       </div>
     }
     <div class="action-row run-controls">
+      @if (h.can("catalog.read")) {
+        <!-- The run's data as test data, in its workflow's newest draft. -->
+        <button
+          type="button"
+          [class.primary]="failed()"
+          [attr.aria-disabled]="opening() ? 'true' : null"
+          [attr.aria-busy]="opening() ? 'true' : null"
+          (click)="openInEditor(id)"
+        >
+          <weave-icon [name]="failed() ? 'execute' : 'copy'" [size]="16" />{{
+            failed() ? "Debug in editor" : "Copy to editor"
+          }}
+        </button>
+      }
       @if (waiting() && h.can("run.signal", id)) {
         <button
           [disabled]="h.busy !== '' || h.unknownCommand"
@@ -450,6 +464,22 @@ export class RunDetail implements DoCheck, OnDestroy {
   }
   status() {
     return statusLabel("run", runStatus(this.run()));
+  }
+  /** A failed run is debugged where it failed; any other is copied. */
+  failed() {
+    return runStatus(this.run()) === "failed";
+  }
+  /** Opening the run in the editor (finding or creating its draft). */
+  readonly opening = signal(false);
+  async openInEditor(id: string) {
+    if (this.opening()) return;
+    this.opening.set(true);
+    try {
+      const { openRunInEditor } = await import("../editor/runs-tab/open-run");
+      await openRunInEditor(this.host(), id, this.failed() ? "debug" : "copy");
+    } finally {
+      this.opening.set(false);
+    }
   }
   tone() {
     return toneAttribute(statusTone("run", runStatus(this.run())));

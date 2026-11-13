@@ -640,7 +640,7 @@ export class RunsTabState {
 }
 
 /** A workflow document with the fields the overlay reads; null otherwise. */
-function workflowOf(document: unknown): Workflow | null {
+export function workflowOf(document: unknown): Workflow | null {
   if (!document || typeof document !== "object") return null;
   const candidate = document as Partial<Workflow>;
   return candidate.metadata &&

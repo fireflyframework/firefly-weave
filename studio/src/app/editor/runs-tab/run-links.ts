@@ -63,3 +63,30 @@ export function takeLinkedRun(draftId: string): string | null {
   linked = null;
   return run;
 }
+
+/**
+ * Debug in editor or Copy to editor asked for from Operate, kept for the
+ * Runs tab of that draft until the run it names has loaded there. In memory
+ * only, taken once.
+ */
+let asked: {
+  draftId: string;
+  run: string;
+  intent: "debug" | "copy";
+} | null = null;
+export function handOverDebug(
+  draftId: string,
+  run: string,
+  intent: "debug" | "copy" | null,
+): void {
+  asked = intent ? { draftId, run, intent } : null;
+}
+export function takeDebug(
+  draftId: string,
+  run: string,
+): "debug" | "copy" | null {
+  if (asked?.draftId !== draftId || asked.run !== run) return null;
+  const { intent } = asked;
+  asked = null;
+  return intent;
+}

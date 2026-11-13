@@ -32,6 +32,7 @@ import {
   Injector,
   input,
   signal,
+  untracked,
 } from "@angular/core";
 import { describeError } from "../../errors";
 import { durationText, relativeTime, shortId } from "../../format";
@@ -40,6 +41,7 @@ import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
 import { DebugRun, debugRefusal } from "./debug-run";
+import { takeDebug } from "./run-links";
 import { bannerSummary } from "./run-overlay";
 import { environmentName, type RunsView } from "./runs-view";
 
@@ -48,6 +50,10 @@ const ENDED = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 /** The run's own build part goes: "1.3.0+test.d3c2…" reads "1.3.0". */
 const shortVersion = (version: string) => version.split("+")[0];
 const list = (ids: readonly string[]) => ids.join(", ");
+
+/** The open draft's test data has opened under the account (or on this computer). */
+const opened = (app: { testData: { place(): { kind: string } } | null }) =>
+  !!app.testData && app.testData.place().kind !== "memory";
 
 @Component({
   selector: "weave-run-header",
@@ -176,6 +182,22 @@ export class RunHeader {
             ?.focus(),
         { injector },
       );
+    });
+    // Debug in editor or Copy to editor asked for from Operate: it starts
+    // once that run has loaded here, unless Studio already knows why it can't.
+    effect(() => {
+      const chosen = this.chosen();
+      const view = this.view();
+      const refused = this.refusal();
+      if (!chosen?.record || !view || view.loading) return;
+      untracked(() => {
+        const app = this.app();
+        // The draft's test data still opening: wait for it, as it may lift
+        // the refusal.
+        if (refused && !opened(app)) return;
+        const intent = takeDebug(app.draftId, chosen.id);
+        if (intent && !refused) void this.debug(intent);
+      });
     });
     // Each second while followed (the run's time counts), otherwise every
     // 30 seconds for "Started 2 min ago".
