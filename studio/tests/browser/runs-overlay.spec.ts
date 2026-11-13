@@ -150,6 +150,9 @@ for (const size of sizes)
         "data-badge",
         "added",
       );
+      // The run went past the new step: both its edges are dashed.
+      await expect(canvas.edgeLine("fetch>check")).toHaveClass(/\bskipped\b/);
+      await expect(canvas.edgeLine("check>approve")).toHaveClass(/\bskipped\b/);
       await expect(
         runs.canvas.locator(".run-header .run-version"),
       ).toHaveAttribute("data-older", "");

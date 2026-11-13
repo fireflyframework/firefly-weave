@@ -326,3 +326,24 @@ describe("the edges of a run that happened", () => {
     ).toBe("skipped");
   });
 });
+
+describe("a step new in the draft, on a run of an older version", () => {
+  it("dashes both edges around it: the run went past it, not through it", () => {
+    const older = {
+      ...run({
+        mode: "real",
+        status: "succeeded",
+        done: ["fetch", "approve", "send"],
+      }),
+      changed: [],
+      added: ["check"],
+      failures: {},
+    };
+    expect(edgeRun({ leaves: "fetch", enters: "check" }, older)).toBe(
+      "skipped",
+    );
+    expect(edgeRun({ leaves: "check", enters: "approve" }, older)).toBe(
+      "skipped",
+    );
+  });
+});

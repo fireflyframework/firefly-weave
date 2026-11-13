@@ -120,8 +120,15 @@ export function edgeRun(
   if (!ended) return "idle";
   // A run that happened marks only the ways a finished step didn't take:
   // edges out of a failed step, or on from a step it never reached, stay
-  // plain. A simulation dashes the whole path it didn't take.
-  if (run.mode === "real" && edge.leaves !== null && !reached(edge.leaves))
+  // plain. A step new in the draft wasn't there to reach: the run went past
+  // it, so both its edges are dashed. A simulation dashes the whole path it
+  // didn't take.
+  if (
+    run.mode === "real" &&
+    edge.leaves !== null &&
+    !reached(edge.leaves) &&
+    !(isRecordedRun(run) && run.added.includes(edge.leaves))
+  )
     return "idle";
   return "skipped";
 }
