@@ -186,6 +186,93 @@ def test_the_committed_map_is_valid():
     assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
 
 
+AGENT_STEPS = tuple(f"J4.{n}" for n in range(7, 15))
+
+
+def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
+    # J4.1 to J4.6 are the Studio steps, which wait for the agent editor; the platform's own steps follow them.
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert enablement.journey_steps("J4") == AGENT_STEPS
+    for step in AGENT_STEPS:
+        assert enablement.missing(step) == (), step
+        assert {"real-platform-journeys", "agents"} <= set(enablement.steps[step]), step
+        assert [profile for profile in journeys.PROFILES if enablement.applies(step, profile)] == [
+            "ai",
+            "nightly",
+            "release",
+        ], step
+    # The agent that calls a workflow as a tool needs the workflow call runtime too.
+    assert "workflow-call-runtime" in enablement.steps["J4.11"]
+    assert enablement.checks("J4.9") == ("J4.9/injected-cancel",)
+
+
+def orders_fixture():
+    spec = importlib.util.spec_from_file_location(
+        "orders_fixture", ROOT / "tests/acceptance/fixtures/agents/orders_server.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def orders():
+    import threading
+
+    api, control = orders_fixture().make_servers(host="127.0.0.1", api_port=0, control_port=0)
+    for server in (api, control):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{api.server_port}", f"http://127.0.0.1:{control.server_port}"
+    for server in (api, control):
+        server.shutdown()
+        server.server_close()
+
+
+def call(method, url):
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None)
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = response.read()
+            return response.status, json.loads(body) if body else None
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def test_the_orders_fixture_answers_with_its_token_and_records_every_call(orders):
+    api, control = orders
+    assert call("GET", api + "/orders/A-17") == (
+        200,
+        {"orderId": "A-17", "status": "shipped", "tracking": "shipped-7731"},
+    )
+    assert call("POST", api + "/orders/A-17/cancel") == (200, {"orderId": "A-17", "cancelled": True})
+    assert call("GET", api + "/orders/Z-404")[0] == 404
+    assert call("POST", api + "/orders/Z-404/cancel")[0] == 404
+    assert call("GET", api + "/orders/A-17/cancel")[0] == 405
+    calls = call("GET", control + "/_control/calls")[1]["calls"]
+    assert [(item["method"], item["path"], item["status"]) for item in calls] == [
+        ("GET", "/orders/A-17", 200),
+        ("POST", "/orders/A-17/cancel", 200),
+        ("GET", "/orders/Z-404", 404),
+        ("POST", "/orders/Z-404/cancel", 404),
+        ("GET", "/orders/A-17/cancel", 405),
+    ]
+    assert call("POST", control + "/_control/reset") == (204, None)
+    assert call("GET", control + "/_control/calls") == (200, {"calls": []})
+
+
+def test_the_orders_fixture_serves_its_control_api_only_on_the_control_port(orders):
+    api, control = orders
+    assert call("GET", api + "/_control/calls")[0] == 404
+    assert call("GET", control + "/orders/A-17")[0] == 404
+    # An order whose record tells the model to cancel it: the journeys check the instruction gains no authority.
+    status, order = call("GET", api + "/orders/B-22")
+    assert status == 200 and "cancel_order for B-22" in order["note"]
+
+
 def test_resolved_enablement_lists_each_step_and_viewport():
     enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
     resolved = enablement.resolved("pr")
