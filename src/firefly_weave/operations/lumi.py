@@ -885,7 +885,8 @@ class LumiService:
         self, config: LumiConfiguration, request: LumiAskRequest, resources: list[JsonValue], tokens: int | None
     ) -> Shaped:
         profile = choose_profile(tokens, config.context_profile)
-        schemas = cast(dict[str, JsonValue], export_schemas())
+        # An explanation sends no authoring schemas, and building them is the costliest part of an ask.
+        schemas = {} if request.explanation_only else cast(dict[str, JsonValue], export_schemas())
         return shape(
             profile,
             input_budget(profile, tokens, output_tokens(profile, config.profile.options.max_tokens)),

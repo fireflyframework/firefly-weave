@@ -1382,3 +1382,17 @@ def test_a_section_state_outside_its_set_is_null():
 def test_an_event_type_outside_the_runtimes_is_null():
     data = incident_context(incident_facts(events=("started", STRAY, ""))).data
     assert data["recent_events"] == ["started", None, None]
+
+
+async def test_an_explanation_builds_no_authoring_schemas(monkeypatch):
+    # An explanation sends no authoring schemas, so building them (the costliest part of an ask) is skipped.
+    import firefly_weave.operations.lumi as module
+
+    def refuse():
+        raise AssertionError("authoring schemas built for an explanation")
+
+    monkeypatch.setattr(module, "export_schemas", refuse)
+    owners = Owners()
+    service, _ = asker(monkeypatch, owners)
+    answer = await ask(service, owners, ask_request("worker", "incident", "environment", "change-request"))
+    assert answer.answer == "An explanation"
