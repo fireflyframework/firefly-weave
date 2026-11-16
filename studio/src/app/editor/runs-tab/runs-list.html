@@ -212,6 +212,12 @@ SPDX-License-Identifier: Apache-2.0
         <button type="button" (click)="checkAgain()">Try again</button>
       </div>
     }
+    @case ("studio") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="refresh" [size]="16" /></span>
+        <strong>Reload Studio to see this workflow's runs.</strong>
+      </div>
+    }
     @case ("signed-out") {
       <div class="runs-message">
         <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>

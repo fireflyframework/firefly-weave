@@ -309,18 +309,26 @@ type PlatformNoticeKind =
   | "revocation";
 /**
  * Why the last check of who is signed in found no account: the platform
- * couldn't be reached, the credential store is locked, the platform doesn't
- * know the account, or the sign-in ended.
+ * couldn't be reached, the credential store is locked, Studio itself refused
+ * the request (an out-of-date window), the platform doesn't know the
+ * account, or the sign-in ended.
  */
-export type IdentityFailure = "offline" | "store" | "not-linked" | "expired";
+export type IdentityFailure =
+  | "offline"
+  | "store"
+  | "studio"
+  | "not-linked"
+  | "expired";
 /**
  * A check of who is signed in that failed for a reason other than the
- * account: a locked credential store says so, and anything else (no answer,
- * a 5xx, an unexpected refusal) reads as a platform Studio couldn't reach,
+ * account: a locked credential store says so, Studio's own refusal (its
+ * WV-STUDIO- codes) asks to reload Studio, and anything else (no answer, a
+ * 5xx, an unexpected refusal) reads as a platform Studio couldn't reach,
  * which offers Try again.
  */
-function unreadIdentity(plain: PlainError): "store" | "offline" {
-  return plain.code === "WV-AUTH-STORE" ? "store" : "offline";
+function unreadIdentity(plain: PlainError): "store" | "studio" | "offline" {
+  if (plain.code === "WV-AUTH-STORE") return "store";
+  return plain.code.startsWith("WV-STUDIO-") ? "studio" : "offline";
 }
 interface ConnectionSlot {
   name: string;
@@ -9545,8 +9553,15 @@ export class App implements CanvasHost {
         // Without a recorded reason the Runs tab would wait for good and the
         // banner would say nothing: an unexpected error reads as offline.
         const kind = unreadIdentity(plain);
-        const notice = { kind, name };
         this.identityFailure = kind;
+        if (kind === "studio") {
+          // Studio refused its own request: its error says to reload the
+          // window, where Try again would meet the same refusal.
+          this.fail(e);
+          await this.loadIdentity();
+          return;
+        }
+        const notice = { kind, name };
         this.platformNotice = notice;
         await this.loadIdentity();
         // The account loaded through the API after all: the banner this
@@ -10214,9 +10229,10 @@ export class App implements CanvasHost {
       return kind;
     const failure = this.checkingIdentity ? null : this.identityFailure;
     // An account the platform refuses outranks one held from before; a
-    // platform out of reach matters only while there is no account.
+    // platform out of reach matters only while there is no account. Studio's
+    // own refusal says nothing about the account: its error explains it.
     if (failure === "expired" || failure === "not-linked") return failure;
-    return this.identity ? null : failure;
+    return this.identity || failure === "studio" ? null : failure;
   }
   get platformStatusText() {
     if (!this.profile) return "Local authoring";

@@ -63,6 +63,7 @@ export type RunsTabMode =
   | "signed-out"
   | "unreachable"
   | "store"
+  | "studio"
   | "pending"
   | "unnamed"
   | "ready";
@@ -84,10 +85,11 @@ export function runsTabMode(facts: {
   notLinked?: boolean;
   /**
    * The check of who is signed in ended without an answer: the platform
-   * couldn't be reached, or the credential store is locked. Without it, a
-   * missing identity is a check still under way.
+   * couldn't be reached, the credential store is locked, or Studio refused
+   * its own request (an out-of-date window). Without it, a missing identity
+   * is a check still under way.
    */
-  unread?: "unreachable" | "store" | null;
+  unread?: "unreachable" | "store" | "studio" | null;
   name: string;
 }): RunsTabMode {
   if (!facts.profile) return "offline";
