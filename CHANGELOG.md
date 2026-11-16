@@ -33,7 +33,10 @@ SPDX-License-Identifier: Apache-2.0
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
   is made again after the same doubling wait as a worker's, and 401, 403 and
-  other refusals still stop it.
+  other refusals still stop it. When it stops, `weave operations runner run`
+  reports `WV-RUNNER-STOPPED` with the failure's kind and code and exits with 3
+  (the API couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE:
+  Invalid invocation` with 2.
 
 ## 0.1.0a18
 

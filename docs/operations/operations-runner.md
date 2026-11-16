@@ -153,6 +153,13 @@ in the foreground; the supervisor owns its lifecycle. `--once` is available for
 diagnostics: it registers, claims at most one job, and exits. It does not wait
 for a future job to arrive.
 
+While the API restarts, the runner keeps running: a claim that can't reach the
+API is made again after a wait that starts at half a second and doubles up to
+10 seconds. Any other failure stops it with `WV-RUNNER-STOPPED`, which names the
+failure's kind and code, such as `WV-TRANSPORT (HTTP 503)`. The exit code is 3
+when the API couldn't be reached or failed, and 1 when it refused the runner or
+the failure is on this host.
+
 ## 5. Understand the local policy
 
 The API's approved plan is checked again against the runner's private policy.
