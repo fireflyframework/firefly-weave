@@ -282,6 +282,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- Studio's editor has a Runs tab: a workflow's runs in the environment you work
+  in, the chosen run drawn on its canvas, and each step's recorded data in
+  read-only step details.
+- Debug in editor and Copy to editor turn a run's data into the draft's test
+  data and execute the workflow with it, stopping where the run failed; values
+  marked secret are left out and named. Operate's run detail opens a run in its
+  workflow's newest draft, and offers to create one when there is none.
+- At 767 px and below, the editor's four views (Designer, Source, Outline and
+  Runs) fold into one view switcher on the workflow name's row, so the name and
+  the 44 px settings gear keep their room on phones and small tablets; from
+  768 px up the views stay tabs.
 - The new editor is now on by default; turn it off in Settings › Preferences to
   use the classic designer.
 - Decision tables open in a spreadsheet grid that fills the step's Parameters

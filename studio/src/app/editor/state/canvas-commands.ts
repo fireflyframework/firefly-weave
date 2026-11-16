@@ -83,22 +83,7 @@ export const STEP_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
   ],
 );
 
-/**
- * Whether a key or clipboard event's target is where someone types: a
- * field, anything inside one, or editable text (contenteditable in any of
- * its forms, plaintext-only included, and every element inside it).
- */
-export function typingIn(target: unknown): boolean {
-  if (!target || typeof target !== "object") return false;
-  const element = target as {
-    isContentEditable?: boolean;
-    closest?: (selector: string) => unknown;
-  };
-  return (
-    element.isContentEditable === true ||
-    !!element.closest?.("input, textarea, select")
-  );
-}
+export { typingIn } from "./typing";
 
 /** Cmd keys on macOS and iPadOS, Ctrl elsewhere. */
 export function keyPlatform(
@@ -195,5 +180,18 @@ export function canvasSheet(platform: KeyPlatform): SheetSection[] {
       ...PANEL_COMMANDS,
       ...RUN_LOG_COMMANDS,
     ]),
+  });
+}
+
+/** Every key the Runs tab's list handles. */
+export const RUNS_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
+  ["previousRun", "nextRun", "firstRun", "lastRun", "showRun", "showShortcuts"],
+);
+
+/** The "?" sheet in the Runs tab's list. */
+export function runsSheet(platform: KeyPlatform): SheetSection[] {
+  return shortcutSheet(platform, {
+    surfaces: ["runs"],
+    available: RUNS_COMMANDS,
   });
 }

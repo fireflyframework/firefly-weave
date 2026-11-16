@@ -28,6 +28,7 @@ import {
   insertStep,
   newWorkflow,
   offline,
+  viewSwitcher,
 } from "./support";
 import { DesignerPage } from "./designer-po";
 
@@ -332,11 +333,15 @@ test("on a narrow screen a workflow opens on its outline, with the canvas a clic
   await expect(
     page.getByText("Editing on the canvas works best on a wider screen."),
   ).toBeVisible();
-  await expect(
-    page.getByRole("tab", { name: "Outline", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  // At 360 px the view switcher stands for the tabs and names the view.
+  await expect(viewSwitcher(page)).toHaveAccessibleName(
+    "Workflow view: Outline",
+  );
   await page.getByRole("button", { name: "Show canvas" }).click();
   await expect(new DesignerPage(page).canvas).toBeVisible();
+  await expect(viewSwitcher(page)).toHaveAccessibleName(
+    "Workflow view: Designer",
+  );
   await expect(
     page.getByText("Editing on the canvas works best on a wider screen."),
   ).toHaveCount(0);

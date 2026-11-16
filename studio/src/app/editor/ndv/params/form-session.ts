@@ -1352,7 +1352,11 @@ export class FormSession {
         };
       }
     }
-    if (reason) return { kind: "reason", text: reason };
+    // In run mode one note above the form says why nothing changes.
+    const runNote = this.controller.run()
+      ? this.controller.readOnlyReason(this.target)
+      : null;
+    if (reason && reason !== runNote) return { kind: "reason", text: reason };
     if (spec.type === "connection")
       return { kind: "hint", text: spec.hint ?? SLOT_HINT };
     return spec.hint

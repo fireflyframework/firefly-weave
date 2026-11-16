@@ -1376,6 +1376,66 @@ then pauses before it, and the run log offers **Next**, **Continue** and
 **Keys.** Press **?** in step details or on the canvas to list them, including
 **Ctrl+Enter** / **Cmd+Enter**, **L**, **I**, **O** and **F9**.
 
+### Read a workflow's runs and debug them
+
+When you are connected, the **Runs** tab of a workflow lists its runs in the
+environment you work in, newest first, and draws the run you choose on the
+workflow's canvas. It reads runs with your own session, so you need
+`run.read` in that environment; without it the tab says so and shows nothing
+of any run.
+
+**The list.** Each row shows the run's status, how long it took, the version
+it used and how it started (**Webhook**, **Test**, **Retry of** _run_, **Called
+by run** _run_). **Filters** narrow it by status, version and how it started;
+**Include test runs** shows or hides runs started from Studio's tests. The
+list refreshes every few seconds while the tab is open. Use **Up** and **Down**
+to choose a run, **Home** and **End** for the first and last, and **Enter** to
+show it on the canvas.
+
+**The run on the canvas.** The canvas is read-only on the Runs tab: each step
+shows what happened in the run (finished, failed with its code, still running,
+not reached), and the header names the run, its status, the version it used
+and when it started. When the run used another version than the draft, a
+banner says so ("This run used 1.2.0; you're editing the draft of 1.3.0.");
+on a phone it folds into one line with **Details**. Steps changed since the
+run say "Changed since this run", and steps new in the draft say "New in this
+draft". A run that is still going is followed until it ends, for at most
+30 minutes.
+
+**A step in the run.** Open a step (double-click it, or press **Enter** on it)
+to see its step details read-only: Output shows what the step returned in this
+run; Input's **What it received** shows the step's input, worked out again from
+the run's data; **Step logs** shows the step's log lines once the platform
+serves them. A value the platform keeps classified shows as "This output is
+classified as secret." and never as its value.
+
+**Debug in editor** (a failed run) and **Copy to editor** (any other run) turn
+the run's data into the draft's test data, then execute the workflow with it:
+
+- Studio copies the run's input, the output of each step it can't work out by
+  itself (actions, AI tasks, calls to other workflows), the people's answers
+  and the signals the run received. Other steps, such as transforms, are worked
+  out again from the copied data. Each entry is marked as data from a run in
+  that environment, so only people who can read those runs can open it.
+- Studio leaves out what it must not keep and names it in the message it shows
+  afterwards: a value marked secret, a value the platform left out, or a step
+  not in the draft. Who answered a task, task IDs and worker IDs are never
+  copied.
+- When the draft already has test data, Studio asks: **Merge** keeps the
+  entries of steps the run didn't reach, **Replace** removes them, and
+  **Cancel** changes nothing. The message shown afterwards offers **Undo**,
+  which puts the test data back as it was.
+- **Execute workflow** then runs every step with the run's data alone. For a
+  failed run it stops at the step that failed: step details open on its
+  Output with "In run 1c0d7f8a, this step failed: SMTP_REJECTED." and the
+  ways to go on, **Set test output** and **Generate sample**.
+
+Debug in editor needs a draft kept on the platform and the roles to change its
+test data (`run.read`, `simulate` and `definition.write`); otherwise the
+button says why it is unavailable. A link to a run
+(`/workflows/<draft>/designer?tab=runs&run=<run>`) opens the Runs tab on that
+run and never changes test data.
+
 ### Simulate a run
 
 This section describes the classic editor. In the new editor (on by default),

@@ -62,14 +62,27 @@ export function printsOf(
   model: StructuredCanvasAdapter,
   testInput: Json | undefined,
 ): Map<string, StepFingerprints> {
+  return runPrints(model.definition, testInput, model);
+}
+
+/**
+ * The fingerprints of `workflow` (a run's version) with `input` (its input),
+ * reading contracts the way the draft open in `model` does: pins copied from
+ * a run carry these, so a step changed since the run reads as out of date.
+ */
+export function runPrints(
+  workflow: Workflow,
+  input: Json | undefined,
+  model: StructuredCanvasAdapter,
+): Map<string, StepFingerprints> {
   return fingerprints({
-    workflow: model.definition,
-    testInput,
+    workflow,
+    testInput: input,
     contractOf: (step) =>
       contractOf(step, {
         owned: (uses) => ownedContract(model.canvas, uses),
         profiles:
-          (model.definition.spec["llmProfiles"] as
+          (workflow.spec["llmProfiles"] as
             | Record<string, unknown>
             | undefined) ?? {},
       }),

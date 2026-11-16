@@ -73,6 +73,8 @@ export interface Platform {
   refuseCanvas?: { status: number; json: unknown }[];
   /** The draft's workflow, when not `definition`. */
   document?: unknown;
+  /** Answers every read of the test data with this status and body instead. */
+  refuseRead?: { status: number; json: unknown };
 }
 
 export async function platform(page: Page, state: Platform) {
@@ -140,6 +142,8 @@ export async function platform(page: Page, state: Platform) {
     const request = route.request();
     const kind = request.url().split("/").pop()!;
     const kept = state.documents.get(kind);
+    if (request.method() === "GET" && kind === "test-data" && state.refuseRead)
+      return route.fulfill(state.refuseRead);
     if (request.method() === "GET")
       return kept
         ? route.fulfill({ json: envelope(kind, kept.revision, kept.document) })

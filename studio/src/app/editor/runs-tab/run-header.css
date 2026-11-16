@@ -1,0 +1,380 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The chosen run's column head: tokens only. */
+:host {
+  display: contents;
+}
+.run-back {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 0 var(--space-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.run-back button {
+  min-height: var(--control-touch);
+  padding: 0 var(--space-2);
+}
+/* While no run is chosen: a raised note over the draft, centered at the top. */
+.run-note {
+  position: absolute;
+  left: 50%;
+  top: var(--space-4);
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: max-content;
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  text-align: center;
+}
+.run-note strong {
+  font: var(--type-title-sm);
+}
+.run-note span {
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* The run's header: one 60 px row from 1100 px; two rows below. */
+.run-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.run-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.run-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.run-title h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+}
+button.icon-button.run-copy {
+  width: var(--control-sm);
+  min-height: var(--control-sm);
+  margin: -4px -4px -4px -6px;
+  color: var(--muted);
+}
+.run-pill {
+  flex: none;
+}
+.run-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--type-caption);
+  color: var(--text);
+}
+.run-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 4px var(--live-glow);
+  flex: none;
+}
+.run-follow-caption {
+  display: none;
+}
+/* Below 480 px the title line keeps the run's ID, Copy run ID and the
+   status; "Following this run" leads the caption line instead. */
+@media (max-width: 479px) {
+  .run-title .run-follow {
+    display: none;
+  }
+  .run-caption .run-follow-caption {
+    display: inline-flex;
+  }
+}
+/* One line that ends in an ellipsis when it doesn't fit. */
+.run-caption {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.run-caption > * {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.run-caption
+  > span:not(.run-version, .run-test)
+  + span:not(.run-version, .run-test)::before {
+  content: "·";
+  margin-right: 4px;
+  color: var(--subtle);
+}
+.run-failed-at {
+  color: var(--danger-ink);
+}
+.run-version,
+.run-test {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  font: var(--type-caption);
+  font-weight: 600;
+  line-height: 16px;
+  flex: none;
+}
+.run-version {
+  background: var(--hover);
+  color: var(--text);
+}
+.run-version[data-older] {
+  background: var(--info-bg);
+  color: var(--info-ink);
+  box-shadow: inset 0 0 0 1px var(--info-bd);
+}
+.run-test {
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.run-actions .run-more {
+  display: none;
+}
+/* More stands with the buttons beside it: 36 px and bordered. */
+.run-actions ::ng-deep .run-more .row-menu-toggle {
+  width: var(--control-md);
+  min-height: var(--control-md);
+  border-color: var(--border);
+}
+@media (max-width: 1099px) {
+  .run-who {
+    flex-basis: 100%;
+  }
+  .run-actions .run-widest {
+    display: none;
+  }
+  .run-actions .run-more {
+    display: inline-flex;
+  }
+}
+@media (max-width: 767px) {
+  .run-actions .run-wide {
+    display: none;
+  }
+}
+
+/* Loading: the run's ID with its facts still to come. */
+.run-sk {
+  display: block;
+  height: 10px;
+  border-radius: var(--radius-xs);
+  background: var(--skeleton);
+}
+.run-sk-pill {
+  width: 56px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+}
+.run-sk-line {
+  width: 220px;
+  max-width: 100%;
+  margin-top: var(--space-1);
+}
+
+/* Under the header: following stopped, a very large run, another version. */
+.run-note-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--type-small);
+  color: var(--muted);
+  flex: none;
+}
+.run-note-row button {
+  margin-left: auto;
+}
+.run-banner {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--info-bd);
+  border-radius: var(--radius-md);
+  background: var(--info-bg);
+  color: var(--text);
+  font: var(--type-small);
+  flex: none;
+}
+.run-banner > weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--info-ink);
+}
+.run-banner[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+}
+.run-banner[data-tone="warning"] > weave-icon {
+  color: var(--warning-ink);
+}
+.run-banner-lines {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-4);
+  min-width: 0;
+}
+.run-banner-details {
+  min-width: 0;
+  flex: 1;
+}
+.run-banner-details summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+}
+.run-banner-details summary::-webkit-details-marker {
+  display: none;
+}
+/* On its own line Details is a full 44 px tap target. */
+.run-banner-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-touch);
+  color: var(--link);
+  text-decoration: underline;
+}
+.run-banner-details[open] .run-banner-more {
+  display: none;
+}
+.run-banner-details .run-banner-lines {
+  flex-direction: column;
+  padding-top: var(--space-2);
+}
+.run-banner button {
+  margin-left: auto;
+  align-self: center;
+}
+
+/* A run Studio can't draw: the message takes the canvas's place. */
+.run-problem {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  background: var(--canvas);
+  text-align: center;
+}
+.run-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--muted);
+}
+.run-ring[data-tone="warning"] {
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.run-problem strong {
+  font: var(--type-title-sm);
+}
+.run-problem p {
+  margin: 0;
+  max-width: 40ch;
+  font: var(--type-small);
+  color: var(--muted);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .run-actions button,
+  .run-actions ::ng-deep .run-more .row-menu-toggle,
+  button.icon-button.run-copy {
+    min-height: var(--control-touch);
+  }
+  .run-actions ::ng-deep .run-more .row-menu-toggle {
+    width: var(--control-touch);
+  }
+  button.icon-button.run-copy {
+    width: var(--control-touch);
+    margin: -10px -10px -10px -8px;
+  }
+}
+
+/* Why the run's data can't become test data here, under the header. */
+.run-refusal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--type-small);
+  color: var(--muted);
+  flex: none;
+}
+.run-refusal weave-icon {
+  flex: none;
+}

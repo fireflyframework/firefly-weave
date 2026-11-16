@@ -36,9 +36,15 @@ export interface TileFacts extends StepFacts {
   selected: boolean;
   /** The run is a simulation Studio played back, not a real run. */
   simulated?: boolean;
+  /** On the Runs tab: the step differs from the version the run used. */
+  changed?: boolean;
+  /** On the Runs tab: the step isn't in the version the run used. */
+  added?: boolean;
 }
 export type BadgeKind =
   | "failed"
+  | "changed"
+  | "added"
   | "error"
   | "setup"
   | "warning"
@@ -70,6 +76,20 @@ export function tileBadge(facts: TileFacts): TileBadge | null {
       text: detail ? `Failed: ${detail}` : "Failed",
     };
   }
+  if (facts.changed)
+    return {
+      kind: "changed",
+      tone: "info",
+      icons: ["stale"],
+      text: "Changed since this run",
+    };
+  if (facts.added)
+    return {
+      kind: "added",
+      tone: "info",
+      icons: ["plus"],
+      text: "New in this draft",
+    };
   if (facts.errors.length)
     return {
       kind: "error",

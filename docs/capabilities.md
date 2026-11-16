@@ -61,7 +61,8 @@ environment as a test run; connects kind and k3d clusters on this computer
 to a local platform as Kubernetes targets; and lets Weave AI explain a worker,
 an incident, the platform's health or a change request through the API and the
 SDK, without sending logs, host names, people or record IDs to the model. In Studio, the new editor is on by
-default and decision tables open in a spreadsheet grid. Alpha18 adds two migrations and the `step_tester` role, described in the
+default, its **Runs** tab draws a run on its workflow's canvas and turns the
+run's data into test data, and decision tables open in a spreadsheet grid. Alpha18 adds two migrations and the `step_tester` role, described in the
 [upgrade procedure](operations/upgrades.md#what-changes-in-alpha18). Alpha17
 moved to schema revision `0038_operations_statistics` and adds run metrics under
 **Operate › Metrics**, reviewed change requests for every infrastructure

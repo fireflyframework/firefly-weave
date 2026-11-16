@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // does (real clicks, drags and keys, never `force`) and works at desktop and
 // narrow layouts, where the palette and inspector become popovers.
 import { expect, Locator, Page } from "@playwright/test";
-import { closeSheet } from "./support";
+import { closeSheet, foldsViews, showView, viewSwitcher } from "./support";
 
 export type StepKind =
   | "action"
@@ -85,8 +85,10 @@ export class DesignerPage {
 
   /** Opens the Designer view of the current workflow. */
   async open() {
-    const tab = this.page.getByRole("tab", { name: "Designer", exact: true });
-    if (await tab.isVisible()) await tab.click();
+    const control = foldsViews(this.page)
+      ? viewSwitcher(this.page)
+      : this.page.getByRole("tab", { name: "Designer", exact: true });
+    if (await control.isVisible()) await showView(this.page, "Designer");
     await expect(this.canvas).toBeVisible();
   }
 
@@ -269,7 +271,7 @@ export class DesignerPage {
 
   /** Reads the workflow source from the Source tab and returns to the Designer. */
   async source(): Promise<string> {
-    await this.page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(this.page, "Source");
     const text = await this.page
       .getByRole("textbox", { name: "Workflow source" })
       .inputValue();
@@ -279,7 +281,7 @@ export class DesignerPage {
 
   /** Replaces the workflow source by typing it in the Source tab and applying it. */
   async setSource(text: string) {
-    await this.page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(this.page, "Source");
     const box = this.page.getByRole("textbox", { name: "Workflow source" });
     await box.fill(text);
     await this.page
