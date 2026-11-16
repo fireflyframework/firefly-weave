@@ -204,9 +204,13 @@ export class RunHeader {
           environment: app.profile?.environmentId ?? "",
         };
         // The tab may not read runs here: nothing asked for starts later.
+        // The refusal already leaves the run (refuse() calls leave(), which
+        // forgets the request); this stays as a second line of defense.
         if (access) return dropDebug();
         if (!chosen) return;
         // The run's read ended in an error: the request is taken, unused.
+        // Choosing another run (show()) or leaving this one (leave()) forgets
+        // it as well; this stays as a second line of defense.
         if (chosen.error) return void takeDebug(app.draftId, chosen.id, fence);
         if (!chosen.record || !view || view.loading) return;
         // The draft's test data still opening: wait for it, as it may lift
