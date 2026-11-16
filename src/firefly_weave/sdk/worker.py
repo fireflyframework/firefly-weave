@@ -14,9 +14,14 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Bounded polling, lease heartbeats and draining shutdown for remote workers."""
+"""Bounded polling, lease heartbeats and draining shutdown for remote workers.
+
+A claim that cannot reach the platform, for example while its API restarts, is made again after a wait that doubles
+up to ``max_claim_retry_seconds``; any other failed claim ends ``run()`` with its error.
+"""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC
@@ -26,7 +31,13 @@ from uuid import UUID, uuid4
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import CompletionAcknowledgment, LeaseProof, TaskError, TaskLease
+from firefly_weave.sdk._retry import kind, raise_if_cancelled, retry_delay, unavailable
 from firefly_weave.sdk._settlement import lease_settlement
+
+LOG = logging.getLogger(__name__)
+# The longest wait before claiming again after an outage: a longer one would leave a worker idle long after the
+# platform answers again.
+LONGEST_CLAIM_RETRY_SECONDS = 300.0
 
 TaskHandler = Callable[[TaskLease], Awaitable[JsonValue]]
 
@@ -39,10 +50,24 @@ class Transport(Protocol):
 
 
 class Worker:
-    def __init__(self, client: Transport, handlers: dict[str, TaskHandler], concurrency: int) -> None:
+    def __init__(
+        self,
+        client: Transport,
+        handlers: dict[str, TaskHandler],
+        concurrency: int,
+        *,
+        claim_retry_seconds: float = 0.5,
+        max_claim_retry_seconds: float = 10.0,
+    ) -> None:
         if not 1 <= concurrency <= 100:
             raise ValueError("Concurrency must be 1..100")
+        # The chained comparison also refuses infinity and NaN.
+        if not 0 < claim_retry_seconds <= max_claim_retry_seconds <= LONGEST_CLAIM_RETRY_SECONDS:
+            raise ValueError(
+                "The first claim retry wait must be positive and no longer than the longest, which is at most 300 s"
+            )
         self.client, self.handlers, self.concurrency = client, dict(handlers), concurrency
+        self.claim_retry_seconds, self.max_claim_retry_seconds = claim_retry_seconds, max_claim_retry_seconds
         self.stopping = asyncio.Event()
         self.active: set[asyncio.Task[None]] = set()
         self.running = False
@@ -54,10 +79,34 @@ class Worker:
         if self.running:
             raise RuntimeError("Worker is already running")
         self.running = True
+        loop = asyncio.get_running_loop()
+        # Claims in a row that could not reach the platform, and when the next claim may go out.
+        failures, retry_at = 0, 0.0
         try:
             while not self.stopping.is_set():
-                if len(self.active) < self.concurrency:
-                    leases = await self.client.claim(self.concurrency - len(self.active))
+                if len(self.active) < self.concurrency and loop.time() >= retry_at:
+                    try:
+                        leases = await self.client.claim(self.concurrency - len(self.active))
+                    except Exception as error:
+                        raise_if_cancelled(error)
+                        # Only waiting fixes an unreachable platform, for example while its API restarts. Any other
+                        # failure, such as 401, 403 or a refused release, ends run() with that error.
+                        if not unavailable(error):
+                            raise
+                        failures += 1
+                        delay = retry_delay(failures, self.claim_retry_seconds, self.max_claim_retry_seconds)
+                        retry_at = loop.time() + delay
+                        LOG.warning(
+                            "A claim could not reach the platform (%s, %d in a row); claiming again in %.1f s",
+                            kind(error),
+                            failures,
+                            delay,
+                        )
+                        leases = []
+                    else:
+                        if failures:
+                            LOG.info("Claims reach the platform again after %d that could not", failures)
+                        failures = 0
                     if len(leases) > self.concurrency - len(self.active):
                         raise RuntimeError("Server exceeded requested capacity")
                     for lease in leases:
@@ -69,8 +118,12 @@ class Worker:
                     for task in done:
                         task.result()
                 else:
+                    # Idle: poll again shortly, or, after a claim that could not reach the platform, when its wait
+                    # ends. stop() ends either wait at once.
                     with suppress(TimeoutError):
-                        await asyncio.wait_for(self.stopping.wait(), 0.25)
+                        await asyncio.wait_for(
+                            self.stopping.wait(), max(0.0, retry_at - loop.time()) if failures else 0.25
+                        )
             if self.active:
                 await asyncio.gather(*self.active)
         finally:

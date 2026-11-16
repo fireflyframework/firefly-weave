@@ -221,6 +221,11 @@ their own loopback relay; the runner signs in on loopback. `weave platform stop`
 stops the fixture workers first, giving each up to 240 seconds to finish its
 tasks, then the platform.
 
+The fixture workers keep claiming while the API restarts, for example after
+`weave platform ai enable`. A worker that stops on its own, such as after it
+lost a task's lease, starts again; one that `weave platform stop` or a change
+request stopped stays stopped.
+
 ## If something goes wrong
 
 | What you see | What to do |

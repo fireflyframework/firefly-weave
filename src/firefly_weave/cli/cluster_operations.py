@@ -198,20 +198,37 @@ def check(config: Path) -> None:
 @runner.command("run")
 @click.option("--config", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
 @click.option("--once", is_flag=True, help="Register, claim at most one job, and exit.")
-def run(config: Path, once: bool) -> None:
+@click.pass_context
+def run(ctx: click.Context, config: Path, once: bool) -> None:
     """Poll Weave over HTTPS and execute only leased, approved local operations."""
     import asyncio
 
     from firefly_weave import private_origins
+    from firefly_weave.cli import EXIT_INVALID, EXIT_REMOTE, emit_result, error_result
     from firefly_weave.deployment_runner.application import load_configuration, serve
+    from firefly_weave.sdk._retry import kind, unavailable
+    from firefly_weave.sdk.errors import WeaveError
 
     try:
         private_origins.install(private_origins.load())
         settings = load_configuration(config)
-        asyncio.run(serve(settings, once=once))
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        return
     except Exception:
+        # A configuration this host cannot load is a usage error (exit 2): fix the file, then start again.
         raise click.ClickException(
             "Runner stopped. Inspect identity, API access, destination policy, and the job receipt before restarting."
         ) from None
+    try:
+        asyncio.run(serve(settings, once=once))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        return
+    except Exception as error:
+        # The runner was invoked correctly and stopped while it ran, so this is not a usage error. Only the failure's
+        # kind and code are printed: its text can carry API data, addresses or local paths.
+        message = (
+            f"Runner stopped after {kind(error)}. "
+            "Inspect identity, API access, destination policy, and the job receipt before restarting."
+        )
+        emit_result(error_result("WV-RUNNER-STOPPED", message), "text")
+        # Exit codes mean what they mean for every command: 3 when the platform could not be reached or failed.
+        remote = unavailable(error) or (isinstance(error, WeaveError) and error.status >= 500)
+        ctx.exit(EXIT_REMOTE if remote else EXIT_INVALID)

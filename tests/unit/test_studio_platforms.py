@@ -891,6 +891,16 @@ def test_remove_forgets_the_platform_and_optionally_its_credentials(platforms, s
     assert any(platforms.credentials.glob("*.json")) is not sign_out
 
 
+def test_a_platform_that_redirects_the_identity_check_is_reported_as_incompatible(platforms):
+    # The API never redirects, so the saved address points somewhere else: not a gateway failure to try again later.
+    with platforms.client() as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        platforms.identity_status = 307
+        response = browser.post("/studio/connection/test", headers=headers)
+    assert (response.status_code, response.json()["code"]) == (502, "WV-STUDIO-IDENTITY")
+
+
 def test_an_unlinked_account_is_explained_with_its_hint(platforms):
     with platforms.client() as browser:
         headers = pair(browser)

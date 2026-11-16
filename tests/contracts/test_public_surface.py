@@ -307,6 +307,28 @@ async def test_sdk_rejects_wire_version_before_decoding_body(unknown):
         assert failure.value.code == "WV-WIRE-VERSION"
 
 
+async def test_sdk_refuses_a_redirect_as_outside_the_contract_but_not_a_gateway_502():
+    """The API never redirects, so a redirect is refused like any answer outside the contract; a 502 from a gateway
+    stays a plain error that a caller may retry."""
+    from firefly_weave.sdk.errors import ContractError, WeaveError
+
+    failures = []
+    for answer in (
+        httpx.Response(308, headers={"Location": "https://elsewhere.example/"}),
+        httpx.Response(502, text="<html>bad gateway</html>"),
+    ):
+        async with client_type()(
+            "https://api.example",
+            lambda: "access",
+            Scope(tenant_id=uuid4(), project_id=uuid4()),
+            transport=httpx.MockTransport(lambda _, answer=answer: answer),
+        ) as sdk:
+            with pytest.raises(WeaveError) as failure:
+                await sdk.capabilities()
+            failures.append((type(failure.value), failure.value.code, failure.value.status))
+    assert failures == [(ContractError, "WV-HTTP", 502), (WeaveError, "WV-HTTP", 502)]
+
+
 def test_optional_empty_request_bodies_retain_schema_without_requiring_presence():
     from firefly_weave.contracts.openapi import export_openapi
 

@@ -128,3 +128,38 @@ def test_runner_check_and_run_load_the_private_origin_policy_before_the_configur
     monkeypatch.delenv(po.ENV_FILE)
     refused = CliRunner().invoke(cli, ["operations", "runner", "check", "--config", str(config)])
     assert refused.exit_code != 0 and observed == [True]
+
+
+def test_a_runner_that_stops_while_running_says_why_instead_of_reporting_a_usage_error(tmp_path, monkeypatch):
+    """`runner run` was invoked correctly and stopped while it ran, so it never answers WV-CLI-USAGE (exit 2). It
+    names the failure's kind and code, never its text, and exits as every command does: 3 when the platform could
+    not be reached or failed, 1 when it refused, or for a failure on this host."""
+    import httpcore
+
+    from firefly_weave import private_origins as po
+    from firefly_weave.contracts.public import Problem
+    from firefly_weave.deployment_runner import application
+    from firefly_weave.sdk.errors import TransportError, WeaveError
+
+    config = tmp_path / "runner.json"
+    config.write_text("{}")
+    failures = [
+        (TransportError(Problem(status=503, code="WV-TRANSPORT", message="m")), 3, "WV-TRANSPORT (HTTP 503)"),
+        (httpcore.ConnectError("refused http://10.0.0.1:8000"), 3, "ConnectError"),
+        (WeaveError(Problem(status=500, code="WV-INTERNAL", message="m")), 3, "WV-INTERNAL (HTTP 500)"),
+        (WeaveError(Problem(status=403, code="WV-FORBIDDEN", message="m")), 1, "WV-FORBIDDEN (HTTP 403)"),
+        (RuntimeError("token=do-not-echo /srv/weave/runner.lock"), 1, "RuntimeError"),
+    ]
+    monkeypatch.setattr(po, "_installed", po.PrivateOrigins.empty())
+    monkeypatch.delenv(po.ENV_FILE, raising=False)
+    monkeypatch.setattr(application, "load_configuration", lambda path: object())
+    for error, status, kind in failures:
+
+        async def serve(settings, *, once, error=error):
+            raise error
+
+        monkeypatch.setattr(application, "serve", serve)
+        result = CliRunner().invoke(cli, ["operations", "runner", "run", "--config", str(config)])
+        assert (result.exit_code, "WV-CLI-USAGE" in result.output) == (status, False), result.output
+        assert f"WV-RUNNER-STOPPED: Runner stopped after {kind}." in result.output
+        assert "do-not-echo" not in result.output and "10.0.0.1" not in result.output

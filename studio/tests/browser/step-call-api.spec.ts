@@ -24,9 +24,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { AddStepPanel, addStepSearch } from "./add-step-po";
 import { parse, stringify } from "yaml";
 import {
-  builtinActions,
   hasPython,
   localAuthoring,
+  routeBuiltinActions,
   stopLocalAuthoring,
 } from "./local-authoring";
 import {
@@ -56,10 +56,7 @@ test.afterAll(() => stopLocalAuthoring());
 
 /** Offline Studio whose host builds API actions and lists its built-in actions. */
 async function authoring(page: Page) {
-  await localAuthoring(page);
-  await page.route("**/studio/contracts/connector-actions", (route) =>
-    route.fulfill({ json: builtinActions() }),
-  );
+  await Promise.all([localAuthoring(page), routeBuiltinActions(page)]);
   await offline(page);
 }
 
@@ -588,6 +585,34 @@ for (const size of sizes)
       ]);
     });
   });
+
+// The built-in email and file actions come from the repository's Python,
+// whose start takes seconds on a slow machine.
+test.describe("on a slow machine", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.afterEach(() => {
+    delete process.env["WEAVE_TEST_HELPER_START_DELAY"];
+    stopLocalAuthoring();
+  });
+
+  test("the first email step in a worker opens its details with its fields", async ({
+    page,
+  }) => {
+    // A worker that hasn't read the built-in actions yet, and a start longer
+    // than an expectation waits.
+    stopLocalAuthoring();
+    process.env["WEAVE_TEST_HELPER_START_DELAY"] = "6";
+    const details = await openStepFixture(page, stepFixture, authoring);
+    await addCommonStep(page, "Send email");
+    await expect(details.dialogFor("send-email")).toBeVisible();
+    await expect(labels(details)).toHaveText([
+      "Connection",
+      "To",
+      "Subject",
+      "Message",
+    ]);
+  });
+});
 
 test.describe("inserting from Add a step with the platform", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
