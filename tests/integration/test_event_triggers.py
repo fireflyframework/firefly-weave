@@ -709,3 +709,24 @@ async def test_fan_out_holds_the_outbox_lock_it_counts_under(platform, monkeypat
             {"high": key >> 32, "low": key & 0xFFFFFFFF},
         )
     assert holding == 1
+
+
+async def test_a_public_start_cannot_take_an_event_starts_key(platform, monkeypatch):
+    activation = await platform.publish(reaction())
+    trigger = await platform.bind(activation)
+    with held(monkeypatch):
+        await in_doubt(platform)
+    [row] = await starts(platform)
+    [stored] = await platform.query("SELECT payload FROM event_trigger_payloads")
+    # The trigger's owner starts the workflow by hand, with the key an event start uses and another input.
+    public = await platform.runtime.start(
+        platform.actor,
+        platform.scope,
+        StartRunRequest(activation_id=activation.id, input={**stored["payload"], "type": "transaction.completed"}),
+        f"event:{trigger.id}:{row['event_id']}",
+        context=AuditContext(),
+    )
+    await platform.scan()
+    [row] = await starts(platform)
+    assert row["status"] == "started" and row["run_id"] != public.id
+    assert [reacted["run_id"] for reacted in await reactions(platform)] == [row["run_id"]]
