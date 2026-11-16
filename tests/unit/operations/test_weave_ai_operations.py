@@ -1268,3 +1268,58 @@ def test_the_scanned_service_graph_builds_weave_ai_with_its_explainer():
     weave_ai = container.resolve(LumiService)
     assert isinstance(weave_ai.operations, OperationsExplainer)
     assert set(weave_ai.operations.explainers) == EXPLAINED_KINDS
+
+
+# A fixed-value field holds one of its contract's values; a record built without validation can hold anything, and a
+# token-shaped stray value would pass the name check, so each builder checks membership and sends null otherwise.
+STRAY = "canary-stray-7f3a"
+
+
+def test_a_worker_sends_null_for_a_fixed_value_outside_its_set():
+    record = worker()
+    identity = record.identity.model_copy(update={"runtime": STRAY, "platform_hint": STRAY})
+    data = worker_context(record.model_copy(update={"presence": STRAY, "identity": identity})).data
+    assert (data["presence"], data["runtime"], data["platform_hint"]) == (None, None, None)
+    assert STRAY not in json.dumps(data)
+
+
+def test_an_incident_sends_null_for_a_fixed_value_outside_its_set():
+    view = incident_view()
+    resolution = view.resolution.model_copy(update={"kind": STRAY})
+    stray = view.model_copy(update={"status": STRAY, "run_status": STRAY, "resolution": resolution})
+    data = incident_context(incident_facts(stray)).data
+    assert (data["status"], data["run_status"], data["resolution"]) == (None, None, None)
+    assert STRAY not in json.dumps(data)
+
+
+def test_the_environment_sends_null_for_a_fixed_value_outside_its_set():
+    summary = summary_of()
+    health = [item.model_copy(update={"component": STRAY, "state": STRAY}) for item in summary.health]
+    attention = [item.model_copy(update={"kind": STRAY}) for item in summary.attention]
+    compatibility = summary.api.compatibility.model_copy(update={"mode": STRAY})
+    api = summary.api.model_copy(update={"compatibility": compatibility})
+    stray = summary.model_copy(update={"health": health, "attention": attention, "api": api})
+    data = environment_context(summary_facts(stray)).data
+    assert {(item["component"], item["state"]) for item in data["health"]} == {(None, None)}
+    assert [(item["kind"], item["title"]) for item in data["attention"]] == [(None, None), (None, None)]
+    assert data["api"]["compatibility"]["mode"] is None
+    assert STRAY not in json.dumps(data)
+
+
+def test_a_change_request_sends_null_for_a_fixed_value_outside_its_set():
+    record = change_request()
+    history = [item.model_copy(update={"state": STRAY}) for item in record.history]
+    drain = record.drain.model_copy(update={"mode": STRAY})
+    stray = record.model_copy(update={"intent": STRAY, "state": STRAY, "history": history, "drain": drain})
+    applied = job()
+    receipt = applied.receipt.model_copy(update={"code": STRAY})
+    data = change_request_context(
+        stray,
+        plan().model_copy(update={"risks": [STRAY, "worker_drain"]}),
+        applied.model_copy(update={"receipt": receipt}),
+        observed_at=NOW,
+    ).data
+    assert (data["intent"], data["state"], data["drain"]["mode"], data["receipt"]["code"]) == (None,) * 4
+    assert [item["state"] for item in data["history"]] == [None, None]
+    assert data["risks"] == [None, "worker_drain"]
+    assert STRAY not in json.dumps(data)

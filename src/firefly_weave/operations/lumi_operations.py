@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Final, Protocol, get_args
+from typing import Final, Literal, Protocol, TypeAliasType, get_args, get_origin
 from uuid import UUID
 
 from pyfly.container import service
@@ -40,14 +40,28 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
-from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan, PlanIntent
+from firefly_weave.contracts.deployments import (
+    ChangeHistory,
+    ChangeRequest,
+    DeploymentJob,
+    DeploymentPlan,
+    DrainSetting,
+    PlanIntent,
+    SafeDeploymentReceipt,
+)
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
 from firefly_weave.contracts.language import STEP_KINDS
-from firefly_weave.contracts.operations import IncidentView
-from firefly_weave.contracts.operations_summary import ForbiddenSection, UnavailableSection
+from firefly_weave.contracts.operations import IncidentView, RecordedResolution
+from firefly_weave.contracts.operations_summary import (
+    AttentionItem,
+    CompatibilitySummary,
+    ForbiddenSection,
+    HealthComponent,
+    UnavailableSection,
+)
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import JsonObject, JsonValue
-from firefly_weave.contracts.workers import WorkerStatus
+from firefly_weave.contracts.workers import WorkerIdentity, WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_service import ChangeRequestService
 from firefly_weave.deployments.service import DeploymentService
@@ -85,6 +99,28 @@ def key_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and len(value) <= KEY_LENGTH and KEY_TOKEN.fullmatch(value) else None
 
 
+def _literals(annotation: object) -> frozenset[str]:
+    """The string literals inside an annotation, through type aliases, unions (an optional field) and list items."""
+    if isinstance(annotation, TypeAliasType):
+        return _literals(annotation.__value__)
+    if get_origin(annotation) is Literal:
+        return frozenset(value for value in get_args(annotation) if isinstance(value, str))
+    return frozenset().union(*(_literals(arm) for arm in get_args(annotation)))
+
+
+def values_of(model: type[ContractModel], field: str) -> frozenset[str]:
+    """The fixed values a contract field accepts."""
+    found = _literals(model.model_fields[field].annotation)
+    if not found:
+        raise TypeError(f"{model.__name__}.{field} has no fixed values")
+    return found
+
+
+def one_of(value: object, allowed: frozenset[str]) -> str | None:
+    """A fixed-value field as sent: one of its contract's values, or None for anything a record should not hold."""
+    return value if isinstance(value, str) and value in allowed else None
+
+
 def age_seconds(at: datetime | None, observed_at: datetime) -> int | None:
     """Whole seconds from ``at`` to the read's own clock; never negative, never a timestamp."""
     return None if at is None else max(0, int((observed_at - at).total_seconds()))
@@ -118,6 +154,9 @@ class Explainer:
     shorten: Shorten
 
 
+PRESENCE: Final = values_of(WorkerStatus, "presence")
+RUNTIMES: Final = values_of(WorkerIdentity, "runtime")
+PLATFORM_HINTS: Final = values_of(WorkerIdentity, "platform_hint")
 WORKER_FIELDS: Final = frozenset(
     {
         "/presence",
@@ -144,15 +183,15 @@ def worker_context(status: WorkerStatus) -> Explained:
     placement = status.placement
     task_types: list[JsonValue] = [name_or_none(item) for item in status.task_types[:TASK_TYPES]]
     data: JsonObject = {
-        "presence": status.presence,
+        "presence": one_of(status.presence, PRESENCE),
         "last_contact_seconds": age_seconds(status.last_seen_at, status.observed_at),
         "draining": status.draining,
         "capacity": status.capacity,
         "active_leases": status.active_leases,
         "task_types": task_types,
         "more_task_types": max(0, len(status.task_types) - TASK_TYPES),
-        "runtime": identity.runtime if identity else None,
-        "platform_hint": identity.platform_hint if identity else None,
+        "runtime": one_of(identity.runtime, RUNTIMES) if identity else None,
+        "platform_hint": one_of(identity.platform_hint, PLATFORM_HINTS) if identity else None,
         "sdk_version": name_or_none(identity.sdk_version) if identity else None,
         "placement": (
             {"target": name_or_none(placement.target_name), "component": name_or_none(placement.component)}
@@ -167,6 +206,9 @@ def worker_context(status: WorkerStatus) -> Explained:
 
 # The step kinds a workflow can declare; a stored kind outside them is not sent.
 STEP_KIND_NAMES: Final = frozenset(kind.kind for kind in STEP_KINDS)
+INCIDENT_STATUSES: Final = values_of(IncidentView, "status")
+RUN_STATUSES: Final = values_of(IncidentView, "run_status")
+RESOLUTIONS: Final = values_of(RecordedResolution, "kind")
 UNKNOWN_CODE_NOTE: Final = "No description for this code."
 INCIDENT_FIELDS: Final = frozenset(
     {
@@ -218,7 +260,7 @@ def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:
     data: JsonObject = {
         "code": code,
         "origin_code": code_or_none(view.origin_code),
-        "status": view.status,
+        "status": one_of(view.status, INCIDENT_STATUSES),
         "node_id": key_or_none(view.node_id),
         "instance_key": key_or_none(view.instance_key) if view.instance_key else None,
         "step_kind": step_kind if step_kind == "withheld" or step_kind in STEP_KIND_NAMES else None,
@@ -227,11 +269,11 @@ def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:
         "workflow": (
             {"name": name_or_none(workflow.name), "version": name_or_none(workflow.version)} if workflow else None
         ),
-        "run_status": view.run_status,
+        "run_status": one_of(view.run_status, RUN_STATUSES),
         "recent_events": events,
         "more_recent_events": None if withheld else facts.more_events,
         "other_events": None if withheld else facts.other_events,
-        "resolution": view.resolution.kind if view.resolution else None,
+        "resolution": one_of(view.resolution.kind, RESOLUTIONS) if view.resolution else None,
         "external_effects_may_continue": view.external_effects_may_continue,
         "glossary": _glossary(view, code),
     }
@@ -261,6 +303,10 @@ ATTENTION_TITLES: Final[Mapping[str, re.Pattern[str]]] = MappingProxyType(
 UNTITLED_KINDS: Final[frozenset[str]] = frozenset()
 # Kinds whose title names a workflow only when the caller may see the run.
 WORKFLOW_TITLED: Final = frozenset({"incident", "run"})
+HEALTH_COMPONENTS: Final = values_of(HealthComponent, "component")
+HEALTH_STATES: Final = values_of(HealthComponent, "state")
+ATTENTION_KINDS: Final = values_of(AttentionItem, "kind")
+COMPATIBILITY_MODES: Final = values_of(CompatibilitySummary, "mode")
 HEALTH_ITEMS: Final = 16
 ATTENTION_ITEMS: Final = 20
 LOAD_COUNTS: Final = (
@@ -344,8 +390,8 @@ def environment_context(facts: SummaryFacts) -> Explained:
     api = summary.api
     health: list[JsonValue] = [
         {
-            "component": item.component,
-            "state": item.state,
+            "component": one_of(item.component, HEALTH_COMPONENTS),
+            "state": one_of(item.state, HEALTH_STATES),
             "last_ok_seconds": age_seconds(item.last_ok_at, observed_at),
             "consecutive_failures": item.consecutive_failures,
         }
@@ -360,7 +406,7 @@ def environment_context(facts: SummaryFacts) -> Explained:
         items: list[JsonValue] = []
         for item in summary.attention[:ATTENTION_ITEMS]:
             found = _match(item.kind, item.title)
-            entry: JsonObject = {"kind": item.kind, "title": item.title if found else None}
+            entry: JsonObject = {"kind": one_of(item.kind, ATTENTION_KINDS), "title": item.title if found else None}
             if found is not None and item.kind in WORKFLOW_TITLED and found.groupdict().get("name"):
                 named.add(f"named:{item.id}")
             if item.kind == "approval":
@@ -373,7 +419,10 @@ def environment_context(facts: SummaryFacts) -> Explained:
         "api": {
             "version": name_or_none(api.version),
             "uptime_seconds": int(api.uptime_seconds),
-            "compatibility": {"mode": api.compatibility.mode, "findings": api.compatibility.findings},
+            "compatibility": {
+                "mode": one_of(api.compatibility.mode, COMPATIBILITY_MODES),
+                "findings": api.compatibility.findings,
+            },
         },
         "health": health,
         "more_health": max(0, len(summary.health) - HEALTH_ITEMS),
@@ -398,6 +447,12 @@ async def read_environment(request: ExplainRequest) -> Explained:
     return environment_context(facts)
 
 
+CHANGE_INTENTS: Final = values_of(ChangeRequest, "intent")
+CHANGE_STATES: Final = values_of(ChangeRequest, "state")
+HISTORY_STATES: Final = values_of(ChangeHistory, "state")
+PLAN_RISKS: Final = values_of(DeploymentPlan, "risks")
+DRAIN_MODES: Final = values_of(DrainSetting, "mode")
+RECEIPT_CODES: Final = values_of(SafeDeploymentReceipt, "code")
 COMPONENTS: Final = 20
 HISTORY: Final = 20
 WARNINGS: Final = 10
@@ -458,16 +513,17 @@ def change_request_context(
                 entry["image_digest"] = digest
         components.append(entry)
     history: list[JsonValue] = [
-        {"state": item.state, "age_seconds": age_seconds(item.at, observed_at)} for item in record.history[-HISTORY:]
+        {"state": one_of(item.state, HISTORY_STATES), "age_seconds": age_seconds(item.at, observed_at)}
+        for item in record.history[-HISTORY:]
     ]
     receipt = job.receipt if job is not None else None
-    risks: list[JsonValue] = list(plan.risks) if plan is not None else []
+    risks: list[JsonValue] = [one_of(risk, PLAN_RISKS) for risk in plan.risks] if plan is not None else []
     data: JsonObject = {
-        "intent": record.intent,
-        "state": record.state,
+        "intent": one_of(record.intent, CHANGE_INTENTS),
+        "state": one_of(record.state, CHANGE_STATES),
         "components": components,
         "more_components": max(0, len(record.components) - COMPONENTS),
-        "drain": {"mode": record.drain.mode, "timeout_seconds": record.drain.timeout_seconds},
+        "drain": {"mode": one_of(record.drain.mode, DRAIN_MODES), "timeout_seconds": record.drain.timeout_seconds},
         "drain_set_size": len(record.drain_set),
         "four_eyes": record.approval_policy.distinct_approver,
         "plan_expires_in_seconds": (
@@ -480,7 +536,7 @@ def change_request_context(
         "more_history": max(0, len(record.history) - HISTORY),
         "receipt": (
             {
-                "code": receipt.code,
+                "code": one_of(receipt.code, RECEIPT_CODES),
                 "external_effects_may_continue": receipt.external_effects_may_continue,
                 "changed_resource_count": len(receipt.changed_resources),
             }
