@@ -71,10 +71,11 @@ export interface DebugFence {
 }
 /**
  * Debug in editor or Copy to editor asked for from Operate, kept for the
- * Runs tab of that draft until the run it names has loaded there, under the
- * account and environment of the click. In memory only, taken once, and
- * forgotten when the tab is left, the account or environment changes, or the
- * run can't be read.
+ * Runs tab of that draft until the first run there loads or fails, under the
+ * account and environment of the click. In memory only and taken once: it
+ * starts only when that first run is the one it names, and it is forgotten
+ * when another run is chosen or loads first, the tab or its run is left, the
+ * account or environment changes, or the run can't be read.
  */
 let asked: {
   draftId: string;
@@ -104,8 +105,10 @@ export function takeDebug(
     asked = null;
     return null;
   }
-  if (asked.draftId !== draftId || asked.run !== run) return null;
-  const { intent } = asked;
+  if (asked.draftId !== draftId) return null;
+  // The first run that loads in the draft takes the request: another run
+  // forgets it, so a later choice of the run it names starts nothing.
+  const intent = asked.run === run ? asked.intent : null;
   asked = null;
   return intent;
 }

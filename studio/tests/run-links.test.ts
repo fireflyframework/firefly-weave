@@ -89,10 +89,15 @@ describe("a Debug request from Operate", () => {
     expect(takeDebug("d-1", RUN, A)).toBeNull();
   });
 
-  it("is taken once by the click's own account and environment, and only for its run", () => {
+  it("is taken once by the click's own account and environment", () => {
+    handOverDebug("d-1", RUN, "debug", A);
+    expect(takeDebug("d-1", RUN, A)).toBe("debug");
+    expect(takeDebug("d-1", RUN, A)).toBeNull();
+  });
+
+  it("is forgotten when another run loads first in its draft", () => {
     handOverDebug("d-1", RUN, "debug", A);
     expect(takeDebug("d-1", "another-run", A)).toBeNull();
-    expect(takeDebug("d-1", RUN, A)).toBe("debug");
     expect(takeDebug("d-1", RUN, A)).toBeNull();
   });
 });

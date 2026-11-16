@@ -43,6 +43,7 @@ import {
 } from "../../operate/run-contracts";
 import { RunData } from "./run-data";
 import { OVERLAY_FACTS_LIMIT, overlayOf, type RunOverlay } from "./run-overlay";
+import { dropDebug } from "./run-links";
 import { readRunRecord, type RunRecord } from "./run-record";
 import {
   defaultRunsTabFilters,
@@ -319,8 +320,9 @@ export class RunsTabState {
     });
     if (!ended(read.record.status)) void this.follow(id, false);
   }
-  /** Back to the list: forgets the run and its data. */
+  /** Back to the list: forgets the run, its data and a Debug request for it. */
   leave(): void {
+    dropDebug();
     this.runGeneration++;
     this.stopFollowing();
     this.chosen.set(null);

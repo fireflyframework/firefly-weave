@@ -15,8 +15,13 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { ApiError } from "../src/app/api";
+import {
+  dropDebug,
+  handOverDebug,
+  takeDebug,
+} from "../src/app/editor/runs-tab/run-links";
 import {
   FOLLOW_LIMIT_MS,
   OTHER_WORKFLOW,
@@ -622,6 +627,16 @@ describe("the chosen run", () => {
     });
     expect(state.chosen()?.data).toBeNull();
     expect(state.chosen()?.overlay).toBeNull();
+  });
+
+  it("going back to the list forgets a Debug request from Operate", async () => {
+    onTestFinished(() => dropDebug());
+    const { state } = await started();
+    const fence = { scope: "3:principal-a", environment: ENVIRONMENT_ID };
+    handOverDebug("d-1", fixtureIds.failed, "debug", fence);
+    void state.choose(fixtureIds.failed);
+    state.leave();
+    expect(takeDebug("d-1", fixtureIds.failed, fence)).toBeNull();
   });
 
   it("draws nothing of an unlisted run whose version can't be read", async () => {

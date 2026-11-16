@@ -143,6 +143,8 @@ export class RunsView implements DoCheck {
   private key = "";
   /** The run a link to this tab names, chosen once the tab can read runs. */
   private linked: string | null = null;
+  /** The run the link named, for as long as the tab is open. */
+  private linkedRun: string | null = null;
   /** The link was read: only when the tab opens, never again. */
   private linkRead = false;
   /** The newest run was shown for this list once: opening the tab shows it. */
@@ -224,6 +226,7 @@ export class RunsView implements DoCheck {
         takeLinkedRun(app.draftId) ??
         parseRunsLink(location.search)?.run ??
         null;
+      this.linkedRun = this.linked;
     }
     const mode = runsTabMode({
       profile: app.profile,
@@ -246,6 +249,9 @@ export class RunsView implements DoCheck {
   show(id: string): void {
     const state = this.state();
     if (!state) return;
+    // A Debug request from Operate is for the linked run only: another run
+    // chosen first forgets it.
+    if (id !== this.linkedRun) dropDebug();
     this.selected.set(id);
     if (state.chosen()?.id !== id) void state.choose(id);
     if (this.narrow()) this.front.set("canvas");

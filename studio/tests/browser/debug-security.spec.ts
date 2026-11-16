@@ -454,3 +454,33 @@ test("a Debug request is forgotten when the platform refuses its run", async ({
   await choose(page, runs, RUN_IDS.failed);
   await noDebugStarted(page, platform, kept);
 });
+
+test("a Debug request is forgotten when another run is chosen before its run loads", async ({
+  page,
+}) => {
+  let release = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  const { runs, platform, kept } = await debugFromOperate(
+    page,
+    async (route) => {
+      await held;
+      await route.fallback();
+    },
+  );
+  // While the run Debug asked for loads, the person chooses another run,
+  // which is still loading too when they choose the first one again.
+  let releaseOther = () => {};
+  const other = new Promise<void>((done) => (releaseOther = done));
+  await page.route(new RegExp(`/runs/${RUN_IDS.retry}$`), async (route) => {
+    await other;
+    await route.fallback();
+  });
+  await runs.row(RUN_IDS.retry).click();
+  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
+    `Run ${RUN_IDS.retry.slice(0, 8)}`,
+  );
+  release();
+  await choose(page, runs, RUN_IDS.failed);
+  await noDebugStarted(page, platform, kept);
+  releaseOther();
+});
