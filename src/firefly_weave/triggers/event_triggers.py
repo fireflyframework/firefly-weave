@@ -58,12 +58,16 @@ TRIGGER_COLUMNS = (
 START_COLUMNS = "id,trigger_id,event_id,event_type,source_run_id,depth,status,code,cause,run_id,requested_at,started_at"
 
 
-def binding_problem(declared: EventTriggerSpec | None, request: EventTriggerRequest) -> str | None:
-    """Why a binding asks for more than its workflow declares, or None when the workflow accepts it."""
+def binding_problem(declared: EventTriggerSpec | None, request: EventTriggerRequest, workflow: str) -> str | None:
+    """Why a binding asks for more than its workflow (named ``workflow``) declares, or None when it accepts it."""
     if declared is None or not set(request.events) <= set(declared.events):
         return "WV-TRIGGER-EVENTS"
     sources, allowed = request.source_workflows, declared.source_workflows
     if sources is not None and allowed is not None and not set(sources) <= set(allowed):
+        return "WV-TRIGGER-EVENTS"
+    # A workflow reacts to its own events only when its author named it in from: a binding can't add that, since
+    # the trigger stores its sources and fan-out reads them alone.
+    if sources is not None and allowed is None and workflow in sources:
         return "WV-TRIGGER-EVENTS"
     return None
 
@@ -130,7 +134,7 @@ class EventTriggerService:
             )
             version = await DefinitionRepository(tx).version(activation.request.version_id)
             declared = declaration(version)
-            problem = binding_problem(declared, request)
+            problem = binding_problem(declared, request, version["name"])
             if problem is not None:
                 raise refused(problem, 422)
             repository = RuntimeRepository(tx)

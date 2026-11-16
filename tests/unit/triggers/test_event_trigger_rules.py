@@ -42,6 +42,8 @@ from firefly_weave.workers.repository import WorkerRepository
 from firefly_weave.workers.service import WorkerService
 
 IN_DOUBT, COMPENSATED, COMPLETED = "transaction.in_doubt", "transaction.compensated", "transaction.completed"
+# The workflow of the bound activation.
+BOUND = "notify-team"
 
 
 def declared(*events: str, sources: list[str] | None = None) -> EventTriggerSpec:
@@ -69,6 +71,8 @@ def request(*events: str, sources: list[str] | None = None) -> EventTriggerReque
         (declared(IN_DOUBT, COMPENSATED), request(COMPENSATED), None),
         (declared(IN_DOUBT, sources=["move", "other"]), request(IN_DOUBT, sources=["other"]), None),
         (declared(IN_DOUBT), request(IN_DOUBT, sources=["any-workflow"]), None),
+        (declared(IN_DOUBT), request(IN_DOUBT, sources=["move", BOUND]), "WV-TRIGGER-EVENTS"),
+        (declared(IN_DOUBT, sources=["move", BOUND]), request(IN_DOUBT, sources=[BOUND]), None),
     ],
     ids=[
         "no declaration",
@@ -79,10 +83,12 @@ def request(*events: str, sources: list[str] | None = None) -> EventTriggerReque
         "a subset of the events",
         "a subset of the sources",
         "any source when from is omitted",
+        "its own workflow when from is omitted",
+        "its own workflow when from names it",
     ],
 )
 def test_a_binding_may_ask_only_for_what_the_workflow_declares(definition, binding, problem):
-    assert binding_problem(definition, binding) == problem
+    assert binding_problem(definition, binding, BOUND) == problem
 
 
 def test_a_bindings_sources_are_its_own_else_the_workflows_else_any():
