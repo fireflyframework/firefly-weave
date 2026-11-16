@@ -15,17 +15,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """The alert loop's traversal under a fake clock: how long a cycle may start environments, what a failing one does
-to the rest, how often it runs, and what it tells the health registry. Evaluation itself runs on PostgreSQL."""
+to the rest, how often it runs, and what it tells the health registry. A fake unit of work checks that signals are
+read with no unit holding the project's lock open; evaluation itself runs on PostgreSQL."""
 
 import asyncio
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
 
 from firefly_weave.access.models import Grant, Principal
+from firefly_weave.access.scheduler import _CATALOG_AUTHORITY, _SchedulerScope
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.operations_summary import IncidentsSection
 from firefly_weave.operations import alert_loop
 from firefly_weave.operations.alert_loop import (
     CYCLE_START_SECONDS,
@@ -35,6 +41,7 @@ from firefly_weave.operations.alert_loop import (
     readable_targets,
 )
 from firefly_weave.operations.loop_health import LoopHealth
+from firefly_weave.persistence.uow import Transaction
 from firefly_weave.settings import Settings
 
 NOW = datetime(2026, 11, 16, 9, 30, tzinfo=UTC)
@@ -191,3 +198,141 @@ async def test_mail_goes_out_every_10_seconds_for_environments_evaluated_in_the_
     assert await loop.deliver_cycle() is False
     assert notifier.visited == [recent, broken]
     assert DELIVER_SECONDS == 10.0
+
+
+class Result:
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+
+    def mappings(self) -> "Result":
+        return self
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def all(self) -> list[dict]:
+        return list(self.rows)
+
+    def scalar_one(self):
+        return next(iter(self.rows[0].values()))
+
+
+class Units:
+    """A unit of work that answers the evaluator's statements for one rule and keeps which units are open.
+
+    A unit is (mutation, admission); an admitted mutation is the one that holds the project's operation lock.
+    """
+
+    def __init__(self, rule: dict) -> None:
+        self.rule = rule
+        self.opened: list[tuple[bool, bool]] = []
+        self.open_now: list[tuple[bool, bool]] = []
+
+    def admitted(self) -> bool:
+        return any(mutation and admission for mutation, admission in self.open_now)
+
+    @asynccontextmanager
+    async def open(self, scope, *, mutation=True, admission=True):
+        unit = (mutation, admission)
+        self.opened.append(unit)
+        self.open_now.append(unit)
+        try:
+            yield Transaction(cast(Any, Session(self, scope)), scope)
+        finally:
+            self.open_now.remove(unit)
+
+
+class Session:
+    def __init__(self, units: Units, scope: Scope) -> None:
+        self.units, self.scope = units, scope
+
+    def get_transaction(self):
+        return SimpleNamespace(is_active=True)
+
+    def begin_nested(self):
+        return nullcontext()
+
+    async def scalar(self, statement, params=None):
+        return str(self.scope.tenant_id) if "current_setting('weave.tenant_id'" in str(statement) else None
+
+    async def execute(self, statement, params=None) -> Result:
+        sql = str(statement)
+        if "pg_try_advisory_xact_lock" in sql:
+            return Result([{"locked": True}])
+        if sql.startswith("SELECT r.id,r.name"):
+            return Result([self.units.rule])
+        if "count(*) AS n FROM alert_rules" in sql:
+            return Result([{"n": 1}])
+        if "RETURNING revision" in sql:
+            return Result([{"revision": self.units.rule["state_revision"] + 1}])
+        return Result([])
+
+
+def incidents_rule() -> dict:
+    """Weave's own kind of rule (no editor), firing at once when an incident is open, in its state row."""
+    return {
+        "id": uuid4(),
+        "name": "Incidents are open",
+        "enabled": True,
+        "signal": "incidents.active",
+        "selector": {},
+        "comparator": "gt",
+        "threshold": 0,
+        "window_seconds": None,
+        "for_seconds": 0,
+        "min_samples": 1,
+        "severity": "critical",
+        "channel_ids": [],
+        "renotify_seconds": 0,
+        "preset_id": None,
+        "revision": 1,
+        "created_at": NOW,
+        "updated_at": NOW,
+        "updated_by": None,
+        "state": "ok",
+        "since": NOW,
+        "pending_since": None,
+        "clear_since": None,
+        "last_value": None,
+        "evaluated_at": None,
+        "error_code": None,
+        "error_at": None,
+        "alert_id": None,
+        "state_revision": 1,
+        "last_notified_at": None,
+        "acknowledged_at": None,
+        "repeat_count": 0,
+    }
+
+
+async def test_no_unit_holding_the_project_lock_is_open_while_signals_are_read(monkeypatch):
+    units = Units(incidents_rule())
+    reads: list[tuple[str, bool]] = []
+
+    class Source:
+        def __init__(self, reader, now) -> None:
+            pass
+
+        async def incidents(self) -> IncidentsSection:
+            reads.append(("source", units.admitted()))
+            return IncidentsSection(active=1, opened_24h=1)
+
+    measure = alert_loop.measure
+
+    async def measured(*args, **kwargs):
+        reads.append(("measure", units.admitted()))
+        return await measure(*args, **kwargs)
+
+    monkeypatch.setattr(alert_loop, "DatabaseSource", Source)
+    monkeypatch.setattr(alert_loop, "measure", measured)
+    loop = AlertLoop(
+        Settings(database_url=DATABASE, scheduler_enabled=False),
+        cast(Any, units),
+        LoopHealth(lambda: NOW),
+        clock=lambda: NOW,
+    )
+    here = scope()
+    await loop.evaluate(_SchedulerScope(here, _CATALOG_AUTHORITY))
+    assert reads == [("measure", False), ("source", False)]
+    # The rule fired, so a unit holding the project's lock did open, after the reads.
+    assert (True, True) in units.opened
