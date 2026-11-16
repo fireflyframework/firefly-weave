@@ -20,10 +20,12 @@ Mail is sent outside any evaluation transaction, as the channel's owner and thro
 one message per recipient so no recipient sees another's address. At every send the owner's access, each member's
 grant and saved address, and each outside address's domain and opt-in are checked again. Messages are counted per
 recipient against the budgets: one alert message per rule and channel every 15 minutes, 40 per rule and 60 per
-environment an hour, and 20 per recipient an hour. A message whose outcome is unclear is never sent again; a send that
-reached nobody is tried again after 1, 5 and 15 minutes, and only to the recipients it didn't reach. Each recipient's
-request is keyed by their address, so a delivery that stopped after sending reads what went out instead of sending it
-again. The text is fixed: no link, no user text but the rule name, and the value the notification was queued with.
+environment an hour, and 20 per recipient an hour. Test messages, limited per channel, count toward these budgets for
+other test and approval messages, never for alert mail. A message whose outcome is unclear is never sent again; a send
+that reached nobody is tried again after 1, 5 and 15 minutes, and only to the recipients it didn't reach. Each
+recipient's request is keyed by their address, so a delivery that stopped after sending reads what went out instead of
+sending it again. The text is fixed: no link, no user text but the rule name, and the value the notification was
+queued with.
 """
 
 import json
@@ -506,6 +508,13 @@ class AlertNotifier:
         self, tx: Transaction, notification: Mapping[str, Any], rule_id: UUID | None, now: datetime
     ) -> Usage:
         counted = "state<>'rejected' AND notification_id<>:notification"
+        if notification["kind"] in ALERT_KINDS:
+            # Test messages have their own limit per channel, so they never spend the budgets alert mail needs.
+            counted += (
+                " AND NOT EXISTS(SELECT 1 FROM alert_notifications n WHERE n.tenant_id=alert_messages.tenant_id "
+                "AND n.project_id=alert_messages.project_id AND n.environment_id=alert_messages.environment_id "
+                "AND n.id=alert_messages.notification_id AND n.kind='test')"
+            )
         repository = AlertRuleRepository(tx)
         hour = now - timedelta(hours=1)
         environment = await repository.rows(

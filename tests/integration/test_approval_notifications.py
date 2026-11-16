@@ -408,3 +408,21 @@ async def test_test_messages_leave_alert_mail_its_budget(mail):
     await case.loop.evaluate(case.authority)
     await deliver(case)
     assert [(row["state"], row["code"]) for row in await notifications(case, kind="firing")] == [("sent", None)]
+
+
+async def test_test_messages_on_two_channels_leave_alert_mail_the_environment_budget(mail):
+    case = mail
+    targets = [await channel(case, *({"member": member.id} for member in case.members)) for _ in range(2)]
+    for target in targets:
+        for index in range(3):
+            await case.channels.test(case.owner_a, case.scope, target.id, f"{target.id}-{index}", context=CONTEXT)
+    await deliver(case)
+    # Six tests to ten members each: the environment's 60 messages of the hour.
+    assert len(case.server.sent) == 60
+    run = await case.start("alert-after-two-channels-of-tests")
+    await add_incident(case, run.id, "first")
+    await create(case, draft(name="Incidents are open", channel_ids=[str(targets[0].id)]))
+    await case.loop.evaluate(case.authority)
+    await deliver(case)
+    assert [(row["state"], row["code"]) for row in await notifications(case, kind="firing")] == [("sent", None)]
+    assert len(case.server.sent) == 70

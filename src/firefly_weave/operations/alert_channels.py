@@ -596,10 +596,10 @@ class AlertChannelService:
     async def test(
         self, actor: Principal, scope: Scope, channel_id: UUID, idempotency_key: str, *, context: AuditContext
     ) -> AlertNotificationView:
-        """Queue one test message; the next delivery sends it, and it counts toward the mail budgets.
+        """Queue one test message; the next delivery sends it.
 
-        A channel takes at most three test messages an hour, so tests never spend the budget firing and resolved
-        mail needs.
+        A channel takes at most three test messages an hour. They count toward the budgets of other test and
+        approval messages, never toward those of alert mail.
         """
         self._require(actor, scope, ("alert.manage",), context)
         async with self.uow.open(scope) as tx:

@@ -334,7 +334,8 @@ each one needs.
 - **Budgets.** At most one alert message per rule and channel every 15 minutes,
   40 messages per rule and 60 per environment an hour, and 20 per recipient an
   hour, counted per recipient. A channel takes at most 3 test messages an hour,
-  so tests leave the budget to alerts. A message over a budget is skipped and
+  and test messages never count toward the budgets of alert messages. A
+  message over a budget is skipped and
   shows `skipped_limit`. A message whose outcome is unclear is never sent
   again, and a retry goes only to the recipients the earlier attempts didn't
   reach.
