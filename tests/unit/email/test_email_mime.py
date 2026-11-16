@@ -15,11 +15,13 @@
 # limitations under the License.
 """Owned local mail fixtures verify validation and durable boundaries."""
 
+import base64
+from email import message_from_bytes, policy
 from uuid import UUID
 
 import pytest
 
-from firefly_weave.contracts.email import EmailSendRequest
+from firefly_weave.contracts.email import EmailAttachment, EmailSendRequest
 from firefly_weave.email.mime import build_message, parse_message, reply_headers
 
 
@@ -130,3 +132,29 @@ def test_an_ascii_text_body_is_sent_as_it_is():
     )
     assert b"Content-Transfer-Encoding: 7bit" in raw
     assert b"\r\n\r\nRule: Run failure rate\r\nValue: 4.2 %\r\n" in raw
+
+
+def test_a_non_ascii_html_body_builds_an_ascii_message_that_reads_back_the_same():
+    html = "<p>Fallo de ejecución › paso</p>\n"
+    request = request_with("Fallo de ejecución\n").model_copy(update={"html": html})
+    raw = build_message(request, "sender@example.com", "<one@example.com>")
+    raw.decode("ascii")
+    parsed = message_from_bytes(raw, policy=policy.default)
+    html_part = parsed.get_body(preferencelist=("html",))
+    assert html_part is not None and html_part.get_content().replace("\r\n", "\n") == html
+
+
+def test_an_ascii_html_body_is_sent_as_it_is():
+    request = request_with("Rule: Run failure rate\n").model_copy(update={"html": "<p>Rule: Run failure rate</p>\n"})
+    raw = build_message(request, "sender@example.com", "<one@example.com>")
+    assert b"\r\n\r\n<p>Rule: Run failure rate</p>\r\n" in raw
+
+
+def test_an_attachment_with_a_non_ascii_name_and_text_builds_an_ascii_message():
+    content = base64.b64encode("Fallo de ejecución\n".encode()).decode()
+    attachment = EmailAttachment(filename="informe-ñ.txt", content_type="text/plain", content_base64=content)
+    request = request_with("hi\n").model_copy(update={"attachments": (attachment,)})
+    raw = build_message(request, "sender@example.com", "<one@example.com>")
+    raw.decode("ascii")
+    (part,) = message_from_bytes(raw, policy=policy.default).iter_attachments()
+    assert (part.get_filename(), part.get_payload(decode=True)) == ("informe-ñ.txt", "Fallo de ejecución\n".encode())

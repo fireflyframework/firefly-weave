@@ -115,6 +115,11 @@ def reply_headers(parent: NormalizedEmail) -> tuple[str, tuple[str, ...]]:
     return parent.message_id, references
 
 
+def _transfer(body: str) -> str | None:
+    """The transfer encoding that keeps a body ASCII: the default for ASCII, quoted-printable otherwise."""
+    return None if body.isascii() else "quoted-printable"
+
+
 def build_message(
     request: EmailSendRequest,
     sender: str,
@@ -140,10 +145,10 @@ def build_message(
     if parent:
         in_reply_to, references = reply_headers(parent)
         message["In-Reply-To"], message["References"] = in_reply_to, " ".join(references)
-    # Queued and sent messages are ASCII: text that isn't is quoted-printable, and ASCII text keeps its bytes.
-    message.set_content(request.text, cte=None if request.text.isascii() else "quoted-printable")
+    # Queued and sent messages are ASCII: a body that isn't is quoted-printable, and an ASCII body keeps its bytes.
+    message.set_content(request.text, cte=_transfer(request.text))
     if request.html is not None:
-        message.add_alternative(request.html, subtype="html")
+        message.add_alternative(request.html, subtype="html", cte=_transfer(request.html))
     for attachment in request.attachments:
         main, sub = attachment.content_type.split("/")
         message.add_attachment(
