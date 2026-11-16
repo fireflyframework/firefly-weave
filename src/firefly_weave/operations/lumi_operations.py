@@ -36,8 +36,14 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
+from firefly_weave.contracts.language import STEP_KINDS
+from firefly_weave.contracts.operations import IncidentView
+from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import WorkerStatus
+from firefly_weave.operations.incident_codes import INCIDENT_CODES
+from firefly_weave.operations.incidents import IncidentFacts
+from firefly_weave.runtime.transactions import HELD_INCIDENT
 
 if TYPE_CHECKING:
     from firefly_weave.operations.summary import OperationsSummaryService
@@ -51,6 +57,7 @@ KEY_TOKEN: Final = re.compile(INSTANCE_KEY_PATTERN)
 KEY_LENGTH: Final = 512
 # Each list a builder sends is capped; the rest is counted, never sent.
 TASK_TYPES: Final = 20
+EVENT_TYPES: Final = 20
 
 EXPLAINED_KINDS: Final = frozenset({"worker", "incident", "environment", "change-request"})
 
@@ -146,4 +153,80 @@ def worker_context(status: WorkerStatus) -> Explained:
         "registered_seconds": age_seconds(status.registered_at, status.observed_at),
     }
     reach = frozenset({f"placement:{placement.target_id}"}) if placement else frozenset()
+    return Explained(data, reach)
+
+
+# The step kinds a workflow can declare; a stored kind outside them is not sent.
+STEP_KIND_NAMES: Final = frozenset(kind.kind for kind in STEP_KINDS)
+UNKNOWN_CODE_NOTE: Final = "No description for this code."
+INCIDENT_FIELDS: Final = frozenset(
+    {
+        "/status",
+        "/code",
+        "/origin_code",
+        "/node_id",
+        "/instance_key",
+        "/step_kind",
+        "/generation",
+        "/opened_seconds",
+        "/workflow",
+        "/workflow/name",
+        "/workflow/version",
+        "/run_status",
+        "/recent_events",
+        "/more_recent_events",
+        "/other_events",
+        "/resolution",
+        "/external_effects_may_continue",
+        "/glossary",
+        "/glossary/meaning",
+        "/glossary/decisions",
+        "/glossary/note",
+        "/glossary_note",
+    }
+)
+
+
+def _glossary(view: IncidentView, code: str | None) -> JsonObject | None:
+    entry = INCIDENT_CODES.get(code) if code is not None else None
+    if entry is None:
+        return None
+    # A held incident refuses every resolution but terminate, whatever its code allows elsewhere.
+    decisions: list[JsonValue] = ["terminate"] if view.incident_key == HELD_INCIDENT else list(entry.decisions)
+    return {"meaning": entry.meaning, "decisions": decisions, "note": entry.note}
+
+
+def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:
+    """An incident's code, step, state and recent event types: never its reason, output, evidence, people or IDs."""
+    if isinstance(facts, UnavailableResource):
+        return Explained({"status": "unavailable"}, frozenset())
+    view = facts.view
+    code = code_or_none(view.code)
+    workflow = view.workflow
+    withheld = facts.events == "withheld"
+    step_kind = facts.step_kind
+    events: JsonValue = "withheld" if facts.events == "withheld" else list(facts.events[-EVENT_TYPES:])
+    data: JsonObject = {
+        "code": code,
+        "origin_code": code_or_none(view.origin_code),
+        "status": view.status,
+        "node_id": key_or_none(view.node_id),
+        "instance_key": key_or_none(view.instance_key) if view.instance_key else None,
+        "step_kind": step_kind if step_kind == "withheld" or step_kind in STEP_KIND_NAMES else None,
+        "generation": view.generation,
+        "opened_seconds": age_seconds(view.opened_at, facts.observed_at),
+        "workflow": (
+            {"name": name_or_none(workflow.name), "version": name_or_none(workflow.version)} if workflow else None
+        ),
+        "run_status": view.run_status,
+        "recent_events": events,
+        "more_recent_events": None if withheld else facts.more_events,
+        "other_events": None if withheld else facts.other_events,
+        "resolution": view.resolution.kind if view.resolution else None,
+        "external_effects_may_continue": view.external_effects_may_continue,
+        "glossary": _glossary(view, code),
+    }
+    if data["glossary"] is None:
+        data["glossary_note"] = UNKNOWN_CODE_NOTE
+    reach = frozenset({"available", "run"}) if facts.run_read else frozenset({"available"})
     return Explained(data, reach)

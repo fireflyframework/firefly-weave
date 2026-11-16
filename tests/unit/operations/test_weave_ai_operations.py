@@ -25,15 +25,23 @@ from hypothesis import strategies as st
 
 from firefly_weave.contracts.definitions import NAME_PATTERN
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
+from firefly_weave.contracts.operations import IncidentView
+from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.workers import WorkerStatus
+from firefly_weave.operations.incident_codes import INCIDENT_CODES
+from firefly_weave.operations.incidents import IncidentFacts
 from firefly_weave.operations.lumi_operations import (
+    INCIDENT_FIELDS,
     NAME_TOKEN,
     WORKER_FIELDS,
+    Explained,
     code_or_none,
+    incident_context,
     key_or_none,
     name_or_none,
     worker_context,
 )
+from firefly_weave.runtime.transactions import HELD_INCIDENT
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
 WORKER_ID = UUID("00000000-0000-4000-8000-0000000000a1")
@@ -197,3 +205,158 @@ def test_each_contract_name_pattern_is_a_name_token(value):
 @given(st.from_regex(INSTANCE_KEY_PATTERN, fullmatch=True).filter(lambda v: len(v) <= 512))
 def test_each_instance_key_is_a_key_token(value):
     assert key_or_none(value) == value
+
+
+INCIDENT_ID = UUID("00000000-0000-4000-8000-0000000000b1")
+RUN_ID = UUID("00000000-0000-4000-8000-0000000000b2")
+ACTOR_ID = UUID("00000000-0000-4000-8000-0000000000b3")
+RECEIPT_ID = UUID("00000000-0000-4000-8000-0000000000b4")
+INCIDENT_CANARIES = ("canary-reason-7f3a", "canary-output-7f3a", "canary-evidence-7f3a", "canary-business-7f3a")
+
+
+def incident_view(**changes):
+    data = {
+        "id": str(INCIDENT_ID),
+        "run_id": str(RUN_ID),
+        "incident_key": "charge:1",
+        "node_id": "charge",
+        "generation": 1,
+        "origin_code": "WV-TASK-LEASE-EXPIRED",
+        "code": "WV-TASK-AMBIGUOUS",
+        "status": "resolved",
+        "revision": 2,
+        "actor_id": str(ACTOR_ID),
+        "resolved_at": (NOW - timedelta(seconds=60)).isoformat(),
+        "resolution": {
+            "receipt_id": str(RECEIPT_ID),
+            "kind": "accept_reconciled_result",
+            "reason": "canary-reason-7f3a",
+            "output": {"value": "canary-output-7f3a"},
+            "evidence_reference": "canary-evidence-7f3a",
+        },
+        "external_effects_may_continue": False,
+        "instance_key": "charge[2]",
+        "opened_at": (NOW - timedelta(seconds=600)).isoformat(),
+        "workflow": {"name": "support-inbox", "version": "1.2.0"},
+        "run_status": "suspended",
+        "transaction": {
+            "instance_key": "charge",
+            "state": "in_doubt",
+            "business_key": "canary-business-7f3a",
+            "participants": [],
+            "pending": [],
+        },
+    }
+    return IncidentView.model_validate_json(json.dumps(data | changes))
+
+
+def incident_facts(view=None, **changes):
+    values = {
+        "view": view or incident_view(),
+        "step_kind": "action",
+        "events": ("started", "task_failed", "incident_opened"),
+        "more_events": False,
+        "other_events": 0,
+        "run_read": True,
+        "observed_at": NOW,
+    }
+    return IncidentFacts(**(values | changes))
+
+
+def test_an_incident_sends_only_its_allowlisted_paths():
+    explained = incident_context(incident_facts())
+    assert set(keys(explained.data)) <= INCIDENT_FIELDS
+    text = json.dumps(explained.data)
+    for canary in (*INCIDENT_CANARIES, str(INCIDENT_ID), str(RUN_ID), str(ACTOR_ID), str(RECEIPT_ID), "charge:1"):
+        assert canary not in text
+
+
+def test_an_incident_sends_its_facts_and_glossary():
+    data = incident_context(incident_facts(incident_view(status="active", resolution=None, resolved_at=None))).data
+    entry = INCIDENT_CODES["WV-TASK-AMBIGUOUS"]
+    assert data == {
+        "code": "WV-TASK-AMBIGUOUS",
+        "origin_code": "WV-TASK-LEASE-EXPIRED",
+        "status": "active",
+        "node_id": "charge",
+        "instance_key": "charge[2]",
+        "step_kind": "action",
+        "generation": 1,
+        "opened_seconds": 600,
+        "workflow": {"name": "support-inbox", "version": "1.2.0"},
+        "run_status": "suspended",
+        "recent_events": ["started", "task_failed", "incident_opened"],
+        "more_recent_events": False,
+        "other_events": 0,
+        "resolution": None,
+        "external_effects_may_continue": False,
+        "glossary": {"meaning": entry.meaning, "decisions": list(entry.decisions), "note": entry.note},
+    }
+
+
+def test_the_resolution_is_its_kind_only():
+    assert incident_context(incident_facts()).data["resolution"] == "accept_reconciled_result"
+
+
+def test_an_incident_with_access_to_its_run_reaches_both():
+    assert incident_context(incident_facts()).reach == frozenset({"available", "run"})
+
+
+def test_an_incident_without_run_read_sends_withheld_run_facts_and_reaches_the_incident_only():
+    explained = incident_context(incident_facts(step_kind="withheld", events="withheld", run_read=False))
+    assert explained.data["recent_events"] == "withheld"
+    assert explained.data["step_kind"] == "withheld"
+    assert explained.data["more_recent_events"] is None and explained.data["other_events"] is None
+    assert explained.reach == frozenset({"available"})
+
+
+def test_an_unavailable_incident_says_unavailable_and_its_reach_is_empty():
+    explained = incident_context(UnavailableResource(id=INCIDENT_ID, omissions=[]))
+    assert explained == Explained({"status": "unavailable"}, frozenset())
+
+
+def test_a_held_incident_offers_only_terminate():
+    view = incident_view(incident_key=HELD_INCIDENT, code="WV-TASK-FAILED", status="active", resolution=None)
+    assert INCIDENT_CODES["WV-TASK-FAILED"].decisions != ("terminate",)
+    assert incident_context(incident_facts(view)).data["glossary"]["decisions"] == ["terminate"]
+
+
+def test_twenty_one_events_send_twenty_and_say_there_are_more():
+    events = tuple(["started"] + ["task_failed"] * 19)
+    data = incident_context(incident_facts(events=events, more_events=True)).data
+    assert data["recent_events"] == list(events)
+    assert data["more_recent_events"] is True
+
+
+def test_an_unknown_code_has_a_null_glossary_and_its_note():
+    data = incident_context(incident_facts(incident_view(code="WV-SOMETHING-NEW"))).data
+    assert data["glossary"] is None
+    assert data["glossary_note"] == "No description for this code."
+
+
+def test_a_code_outside_its_token_is_null():
+    view = incident_view().model_copy(update={"code": "free text code", "origin_code": "WV-OK\n"})
+    data = incident_context(incident_facts(view)).data
+    assert (data["code"], data["origin_code"], data["glossary"]) == (None, None, None)
+
+
+def test_a_step_kind_outside_the_step_kinds_is_null():
+    assert incident_context(incident_facts(step_kind="canary-kind-7f3a")).data["step_kind"] is None
+    assert incident_context(incident_facts(step_kind=None)).data["step_kind"] is None
+
+
+def test_an_agent_turn_incident_keeps_its_instance_key():
+    view = incident_view(node_id="support", instance_key="support#2.1", incident_key="support#2.1:1", transaction=None)
+    data = incident_context(incident_facts(view)).data
+    assert (data["node_id"], data["instance_key"]) == ("support", "support#2.1")
+
+
+def test_a_control_step_incident_keeps_its_step_id():
+    view = incident_view(node_id="@join", instance_key="", transaction=None)
+    data = incident_context(incident_facts(view)).data
+    assert (data["node_id"], data["instance_key"]) == ("@join", None)
+
+
+def test_ten_thousand_events_send_twenty():
+    facts = incident_facts(events=tuple(["started"] * 10_000), more_events=True)
+    assert len(incident_context(facts).data["recent_events"]) == 20
