@@ -16,7 +16,7 @@
 
 """Ephemeral Studio assistance: fixed replies, explicit resource attachments."""
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -114,6 +114,22 @@ class LumiMessage(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
 
 
+# Records Weave AI may only explain: a request with any of them carries no draft and no authoring attachment.
+OPERATIONS_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        "deployment-target",
+        "deployment",
+        "deployment-observation",
+        "deployment-plan",
+        "deployment-job",
+        "worker",
+        "incident",
+        "environment",
+        "change-request",
+    }
+)
+
+
 class LumiAttachment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
     kind: Literal[
@@ -125,6 +141,10 @@ class LumiAttachment(BaseModel):
         "deployment-observation",
         "deployment-plan",
         "deployment-job",
+        "worker",
+        "incident",
+        "environment",
+        "change-request",
     ]
     id: UUID
 
@@ -156,7 +176,7 @@ class LumiAskRequest(BaseModel):
 
     @property
     def explanation_only(self) -> bool:
-        return any(item.kind.startswith("deployment") for item in self.attachments)
+        return any(item.kind in OPERATIONS_KINDS for item in self.attachments)
 
     @model_validator(mode="after")
     def fix_names_its_proposal(self) -> Self:
@@ -167,7 +187,7 @@ class LumiAskRequest(BaseModel):
     @model_validator(mode="after")
     def separate_operations_context(self) -> Self:
         if self.explanation_only and (
-            self.draft is not None or any(not item.kind.startswith("deployment") for item in self.attachments)
+            self.draft is not None or any(item.kind not in OPERATIONS_KINDS for item in self.attachments)
         ):
             raise ValueError("Operations explanations accept only Operations attachments")
         return self

@@ -17,11 +17,13 @@
 """Revision-fenced operational decisions over the shared accepted-event runtime."""
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any, Final, Literal, cast, get_args
 from uuid import UUID, uuid4
 
 from pyfly.container import service
+from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
@@ -78,6 +80,30 @@ def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None
     )
     fields.update(transaction_facts(held))
     return IncidentView.model_validate_json(json.dumps(fields, default=str))
+
+
+# The event types the runtime writes; a stored type outside them is counted, never passed on.
+RUNTIME_EVENT_TYPES: Final[frozenset[str]] = frozenset(get_args(RuntimeEvent.model_fields["type"].annotation))
+# The newest event types an explanation reads; one more is read only to tell whether there are more.
+EXPLAINED_EVENTS: Final = 20
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentFacts:
+    """An incident as an explanation reads it, with its run's facts when the caller may read the run.
+
+    ``step_kind`` and ``events`` are ``"withheld"`` without ``run.read``. ``events`` holds runtime event types only,
+    oldest first; ``other_events`` counts the stored types among the newest that are not. ``observed_at`` is the
+    read's own clock.
+    """
+
+    view: IncidentView
+    step_kind: str | None | Literal["withheld"]
+    events: tuple[str, ...] | Literal["withheld"]
+    more_events: bool
+    other_events: int
+    run_read: bool
+    observed_at: datetime
 
 
 @service
@@ -438,6 +464,56 @@ class IncidentService:
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
             return incident_of(rows[0])
+
+    async def explanation_facts(
+        self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext
+    ) -> IncidentFacts | UnavailableResource:
+        """One incident for an explanation, with its step kind and recent event types when the caller may read its
+        run, all from one read transaction with that transaction's clock.
+
+        ``run.read`` only shapes what is returned: it is checked with ``allows`` on the token and the stored
+        principal, and recorded as allowed only when both have it, as the operations summary's sections are.
+        """
+        self.runtime.require(actor, scope, "incident.read", context)
+        async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
+            current = await self.access.load_principal(actor.id, tx=tx)
+            self.runtime.require(current, scope, "incident.read", context)
+            reads = FactReadRepository(tx)
+            rows = await reads.incident_details([identifier])
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
+            view = incident_of(rows[0])
+            if isinstance(view, UnavailableResource):
+                return view
+            run_read = self._permitted((actor, current), scope, "run.read", context)
+            step_kind: str | None | Literal["withheld"] = "withheld"
+            events: tuple[str, ...] | Literal["withheld"] = "withheld"
+            more = False
+            other = 0
+            if run_read:
+                step_kind = (
+                    await reads.incident_step_kind(view.run_id, view.node_id, view.instance_key)
+                    if view.node_id is not None
+                    else None
+                )
+                stored = await reads.recent_event_types(view.run_id, EXPLAINED_EVENTS + 1)
+                more = len(stored) > EXPLAINED_EVENTS
+                newest = stored[-EXPLAINED_EVENTS:]
+                events = tuple(value for value in newest if value in RUNTIME_EVENT_TYPES)
+                other = len(newest) - len(events)
+            observed_at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+            return IncidentFacts(view, step_kind, events, more, other, run_read, observed_at)
+
+    def _permitted(
+        self, principals: tuple[Principal, Principal], scope: Scope, capability: str, context: AuditContext
+    ) -> bool:
+        """Whether both principals hold ``capability``; recorded as allowed when they do, and not at all otherwise."""
+        authorization = self.runtime.definitions.authorization
+        if not all(authorization.allows(principal, scope, capability) for principal in principals):
+            return False
+        for principal in principals:
+            authorization.require(principal, scope, capability, context=context)
+        return True
 
     async def _force_end_in_sql(
         self, repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent, actor: Principal

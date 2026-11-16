@@ -199,6 +199,36 @@ cloud state. Changing the selected record or environment clears the selected
 context and conversation. To change a deployment, return to its normal review,
 approval, and apply controls.
 
+### Explain workers, incidents, health and change requests through the API
+
+The API and the SDK also explain a worker, an incident, the environment's
+platform health and a change request. Attach each record by its kind and ID; for
+platform health, attach the environment itself:
+
+```python
+from firefly_weave.contracts.lumi import LumiAskRequest
+
+answer = await client.ask_lumi(
+    LumiAskRequest(
+        message="Which resolution is safe for this incident?",
+        attachments=[{"kind": "incident", "id": incident_id}],
+    )
+)
+print(answer.answer)
+```
+
+Each attachment needs `lumi.use` and the record's own read: `status.read` for a
+worker and for platform health, `incident.read` for an incident (with `run.read`
+for its recent event types), and `deployment.read` on a change request's target.
+The [API reference](../reference/api.md#weave-ai-explanations-of-operations-records)
+lists what each kind sends.
+
+Weave AI never receives logs, host names, people, record IDs or what runs carry.
+It receives codes, states, counts, ages in seconds and the names of workflows,
+targets, components and task types. Names are sent as written, so keep host names
+and personal data out of them. Access is read again after the reply, and a
+reply built from wider access than the second read sees is discarded.
+
 ## Deploy the private gateway
 
 The Weave API remains on its existing Python runtime. The model gateway uses the
@@ -366,6 +396,16 @@ HTTP disconnects cancel and await owned model work. Cancellation or an ambiguous
 network failure can still incur provider cost; the API deliberately does not
 retry or replay a request. Operators should also apply provider-side quotas and
 network egress controls. No live-provider availability is implied by local tests.
+
+Two things to weigh before you choose a cloud model endpoint for Operations
+explanations:
+
+- The facts an explanation sends, such as workflow, target and component names,
+  codes, counts and ages, go to that provider.
+- Workers choose their own task type names. A worker's operator can put any text
+  that passes the name format into a task type, and Weave AI receives it as a
+  name: at most 20 of them, each up to 253 characters. The reply can mislead but
+  can't change anything, since explanations carry no proposals.
 
 ## Confirm setup without sharing sensitive source
 

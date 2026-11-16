@@ -87,6 +87,8 @@ class LumiController:
                 request_scope(request, environment=True),
                 body,
                 context=request.state.audit_context,
+                # Lifespan-owned, not a bean: absent until the application has started it.
+                summary=getattr(request.app.state, "operations_summary", None),
             ),
             request.receive,
         )

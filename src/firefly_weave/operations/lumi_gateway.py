@@ -218,8 +218,9 @@ class LumiGatewayClient:
             timeout = configuration.profile.timeout_seconds
             body = {
                 "profile": configuration.profile.model_dump(mode="json", by_alias=True, exclude_none=True),
-                # The shaped draft travels in the attachments; `fix` only changes how the API shapes it.
-                "request": request.model_dump(mode="json", by_alias=True, exclude={"draft", "fix"}),
+                # The shaped draft and records travel in the attachments, records by position only, so the request
+                # leaves out the draft and the attachment IDs; `fix` only changes how the API shapes the draft.
+                "request": request.model_dump(mode="json", by_alias=True, exclude={"draft", "fix", "attachments"}),
                 "attachments": attachments,
                 "endpoint": connection_config["endpoint"],
                 "api_version": connection_config.get("apiVersion"),
