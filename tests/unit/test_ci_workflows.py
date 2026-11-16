@@ -32,6 +32,8 @@ WORKFLOWS = ROOT / ".github/workflows"
 USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(.*?)\s*$")
 # owner/repo[/path]@<full commit SHA> # <version>: the comment is what Dependabot reads and moves with the SHA.
 PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40} # v?\d+(?:\.\d+)*")
+# An action Dependabot never moves is pinned by hand, and its comment names the branch its SHA was taken from.
+HAND_PINNED_ACTION = re.compile(r"(?P<action>[\w.-]+/[\w.-]+)@[0-9a-f]{40} # [\w.-]+")
 XPLAT_SPECS = (
     "shell.spec.ts",
     "shell-navigation.spec.ts",
@@ -56,6 +58,16 @@ def test_no_workflow_uses_a_floating_ubuntu_image():
         assert "ubuntu-latest" not in path.read_text(encoding="utf-8"), path.name
 
 
+def actions_dependabot_ignores():
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
+    return {
+        rule["dependency-name"]
+        for update in config["updates"]
+        if update["package-ecosystem"] == "github-actions"
+        for rule in update.get("ignore", [])
+    }
+
+
 def test_every_action_is_pinned_to_a_full_commit_with_its_version():
     # A tag can be moved to other code; a full commit SHA cannot. Actions in this repository (./) need no pin.
     references = [
@@ -65,7 +77,28 @@ def test_every_action_is_pinned_to_a_full_commit_with_its_version():
         if (match := USES.match(line)) and not match[1].startswith("./")
     ]
     assert references
-    assert [reference for reference in references if not PINNED_ACTION.fullmatch(reference[2])] == []
+    by_hand = actions_dependabot_ignores()
+
+    def pinned(reference):
+        hand = HAND_PINNED_ACTION.fullmatch(reference)
+        return bool(PINNED_ACTION.fullmatch(reference) or (hand and hand["action"] in by_hand))
+
+    assert [reference for reference in references if not pinned(reference[2])] == []
+
+
+def test_every_rust_toolchain_step_installs_the_same_exact_release():
+    # The action's master branch installs only the toolchain its input names, and fails without one.
+    steps = [
+        (path.name, step)
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for job in jobs(path.name).values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+    ]
+    assert {name for name, _ in steps} == {"desktop.yml", "desktop-notarized.yml"}
+    toolchains = {str(step.get("with", {}).get("toolchain")) for _, step in steps}
+    assert len(toolchains) == 1
+    assert re.fullmatch(r"\d+\.\d+\.\d+", toolchains.pop())
 
 
 def test_linux_check_and_documentation_jobs_run_on_ubuntu_24_04():

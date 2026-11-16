@@ -32,5 +32,6 @@ updates:
         update-types: [minor, patch]
     commit-message:
       prefix: ci
-    # The pin follows the 1.96.0 branch and the toolchain is bumped by hand; its only tag, v1, needs a toolchain input and would break the build.
+    # The pin follows the action's master branch and is moved by hand, and each step names its toolchain release;
+    # the action's only tag, v1, does not follow master, so Dependabot would offer older code.
     ignore: [{dependency-name: dtolnay/rust-toolchain}]
