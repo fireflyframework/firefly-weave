@@ -102,6 +102,7 @@ from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingCon
 from firefly_weave.operations.ai_connections import AIConnectionService, GatewayConnectionTester
 from firefly_weave.operations.ai_models import AIModelService
 from firefly_weave.operations.ai_policy import APIAIPolicy
+from firefly_weave.operations.alert_loop import AlertLoop
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
@@ -274,6 +275,7 @@ def make_app(
         kafka_loop = None
         provider_loop = None
         operations_loop = None
+        alert_loop = None
         effects_open = False
         compatibility = None
         # One registry for this process's background loops; every loop reports into it.
@@ -422,11 +424,12 @@ def make_app(
                 app.state.recovery_loop = recovery_loop
 
             async def open_effects() -> None:
-                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, effects_open
+                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, alert_loop, effects_open
                 if effects_open:
                     return
                 if any(
-                    loop is not None for loop in (outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop)
+                    loop is not None
+                    for loop in (outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, alert_loop)
                 ):
                     await close_effects()
                 await open_control_loop(required=True)
@@ -468,6 +471,9 @@ def make_app(
                     operations_loop = OperationsLoop(settings, pyfly.context.get_bean(UnitOfWork), health)
                     await operations_loop.open()
                     app.state.operations_loop = operations_loop
+                    alert_loop = AlertLoop(settings, pyfly.context.get_bean(UnitOfWork), health)
+                    await alert_loop.open()
+                    app.state.alert_loop = alert_loop
                 except BaseException:
                     try:
                         await close_effects()
@@ -477,11 +483,19 @@ def make_app(
                 effects_open = True
 
             async def close_effects() -> None:
-                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, effects_open
+                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, alert_loop, effects_open
                 effects_open = False
-                # The operations loop opened last, so it closes first.
+                # The alert evaluator opened last, so it closes first.
                 remaining = [operations_loop, provider_loop, kafka_loop, dispatcher, outbox_loop]
                 cleanup_error: BaseException | None = None
+                if alert_loop is not None:
+                    try:
+                        await alert_loop.close()
+                    except BaseException as error:
+                        cleanup_error = error
+                    else:
+                        alert_loop = None
+                app.state.alert_loop = alert_loop
                 for index, name in enumerate(
                     ("operations_loop", "provider_loop", "kafka_loop", "dispatcher", "outbox_loop")
                 ):
@@ -517,6 +531,11 @@ def make_app(
             if compatibility is not None:
                 try:
                     await compatibility.close()
+                except BaseException as error:
+                    cleanup_error = error
+            if alert_loop is not None:
+                try:
+                    await alert_loop.close()
                 except BaseException as error:
                     cleanup_error = error
             if operations_loop is not None:

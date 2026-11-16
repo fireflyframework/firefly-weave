@@ -215,6 +215,22 @@ def test_a_rule_this_server_cant_evaluate_reads_as_unsupported_and_is_never_eval
         assert view.state.unit is None
 
 
+def test_a_rule_weave_installed_from_a_preset_reads_without_an_updater():
+    row = stored(
+        name="A platform component is degraded",
+        signal="health.degraded",
+        threshold=0,
+        window_seconds=None,
+        min_samples=1,
+        for_seconds=300,
+        preset_id="platform-degraded",
+        updated_by=None,
+    )
+    view = rule_view(row, state_row(last_value=0.0))
+    assert (view.preset_id, view.updated_by, view.state.state) == ("platform-degraded", None, "ok")
+    assert "updated_by" not in view.model_dump(mode="json")
+
+
 def test_a_supported_rule_is_evaluated_as_stored():
     channel = uuid4()
     rule = evaluable(stored(selector={"workflow": "orders"}, channel_ids=[channel], for_seconds=120))

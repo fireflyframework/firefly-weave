@@ -190,7 +190,8 @@ class AlertRuleView(_AlertRuleFields):
     preset_id: PresetId | None = Field(default=None, exclude_if=lambda value: value is None)
     created_at: AwareDatetime
     updated_at: AwareDatetime
-    updated_by: UUID
+    # None for a rule Weave installed from a preset and nobody has changed since.
+    updated_by: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     state: AlertRuleState
 
 

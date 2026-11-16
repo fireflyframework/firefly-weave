@@ -1,0 +1,304 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""The alert loop on real PostgreSQL: claiming due environments, one evaluator per environment, a firing written in
+one transaction, repeats and resolves, failed reads, revoked target access, the default preset, test runs and
+pruning."""
+
+import asyncio
+import json
+from datetime import timedelta
+from typing import Any
+from uuid import uuid4
+
+import pytest
+from test_alert_rules_api import add_channel
+from test_operations_statistics import owner, place, started_runs
+from test_operations_summary import add_incident
+from test_worker_fleet_facts import add_target, clock, principal_with
+
+from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.models import Grant
+from firefly_weave.access.scheduler import due_alert_scopes
+from firefly_weave.contracts.alerts import AlertRuleDraft
+from firefly_weave.operations import alert_loop, alert_signals
+from firefly_weave.operations.alert_loop import AlertLoop
+from firefly_weave.operations.alert_rules import AlertRuleService
+from firefly_weave.operations.loop_health import LoopHealth
+from firefly_weave.operations.outbox import OutboxService
+from firefly_weave.persistence.uow import UnitOfWork
+from firefly_weave.settings import Settings
+
+pytestmark = pytest.mark.integration
+CONTEXT = AuditContext()
+
+
+def draft(**changes: Any) -> AlertRuleDraft:
+    base: dict[str, Any] = {
+        "name": "Incidents are open",
+        "signal": "incidents.active",
+        "comparator": "gt",
+        "threshold": 0,
+        "severity": "critical",
+    }
+    base.update(changes)
+    return AlertRuleDraft.model_validate_json(json.dumps(base, default=str))
+
+
+@pytest.fixture
+async def evaluator(operations_case, services):
+    case = operations_case
+    case.rules = services(case.sessions).resolve(AlertRuleService)
+    case.manager = await principal_with(
+        case, Grant(role="alert_manager", scope=case.scope), Grant(role="viewer", scope=case.scope)
+    )
+    case.now = await clock(case)
+    case.uow = UnitOfWork(case.sessions)
+    settings = Settings(database_url=case.url.render_as_string(hide_password=False), scheduler_enabled=False)
+
+    def loop() -> AlertLoop:
+        return AlertLoop(settings, case.uow, LoopHealth(), clock=lambda: case.now)
+
+    case.loop = loop
+    (case.authority,) = await due_alert_scopes(case.uow, case.scope.tenant_id, case.now)
+    return case
+
+
+async def create(case, rule: AlertRuleDraft, actor=None):
+    return await case.rules.create(actor or case.manager, case.scope, rule, str(uuid4()), context=CONTEXT)
+
+
+async def at(case, seconds: float) -> None:
+    """Evaluate the environment as of ``seconds`` after the test's start."""
+    loop = case.loop()
+    loop.clock = lambda: case.now + timedelta(seconds=seconds)
+    await loop.evaluate(case.authority)
+
+
+async def state(case, rule_id) -> dict:
+    (row,) = await owner(
+        case,
+        "SELECT state,since,pending_since,clear_since,last_value,evaluated_at,error_code,error_at,alert_id,revision "
+        "FROM alert_rule_state WHERE rule_id=:rule",
+        rule=rule_id,
+    )
+    return row
+
+
+async def rows(case, sql: str, **values) -> list[dict]:
+    return await owner(case, sql, **values)
+
+
+async def test_an_environment_is_claimed_at_most_every_30_seconds(evaluator):
+    case = evaluator
+    assert case.authority.scope == case.scope
+    await at(case, 0)
+    later = case.now + timedelta(seconds=29)
+    assert await due_alert_scopes(case.uow, case.scope.tenant_id, case.now) == []
+    assert await due_alert_scopes(case.uow, case.scope.tenant_id, later) == []
+    due = case.now + timedelta(seconds=30)
+    assert [authority.scope for authority in await due_alert_scopes(case.uow, case.scope.tenant_id, due)] == [
+        case.scope
+    ]
+    # The claim moved it on before any work: a second claim at the same time finds nothing.
+    assert await due_alert_scopes(case.uow, case.scope.tenant_id, due) == []
+
+
+async def test_two_evaluators_for_one_environment_write_one_transition(evaluator):
+    case = evaluator
+    run = await case.start("alert-two-evaluators")
+    await add_incident(case, run.id, "first")
+    rule = await create(case, draft())
+    await asyncio.gather(case.loop().evaluate(case.authority), case.loop().evaluate(case.authority))
+    alerts = await rows(case, "SELECT state FROM alerts WHERE rule_id=:rule", rule=rule.id)
+    events = await rows(case, "SELECT kind FROM alert_events WHERE rule_id=:rule", rule=rule.id)
+    assert (alerts, events) == ([{"state": "firing"}], [{"kind": "firing"}])
+
+
+async def test_a_firing_writes_the_alert_its_event_notifications_and_one_change_event_in_one_transaction(
+    evaluator, monkeypatch
+):
+    case = evaluator
+    run = await case.start("alert-one-transaction")
+    await add_incident(case, run.id, "first")
+    channels = [await add_channel(case), await add_channel(case)]
+    rule = await create(case, draft(channel_ids=[str(channel) for channel in channels]))
+
+    async def fail(self, tx, event):
+        raise RuntimeError("the outbox failed after the history event was written")
+
+    monkeypatch.setattr(OutboxService, "append", fail)
+    with pytest.raises(RuntimeError):
+        await at(case, 0)
+    nothing = "SELECT count(*) AS n FROM {table} WHERE tenant_id=:tenant"
+    for table in ("alerts", "alert_events", "alert_notifications"):
+        assert (await rows(case, nothing.format(table=table)))[0]["n"] == 0, table
+    assert (await state(case, rule.id))["evaluated_at"] is None
+    monkeypatch.undo()
+    await at(case, 0)
+    (alert,) = await rows(case, "SELECT id,state,value_at_start FROM alerts WHERE rule_id=:rule", rule=rule.id)
+    assert (alert["state"], alert["value_at_start"]) == ("firing", 1.0)
+    notified = await rows(
+        case, "SELECT channel_id,kind,sequence,state FROM alert_notifications WHERE alert_id=:id", id=alert["id"]
+    )
+    assert sorted(row["channel_id"] for row in notified) == sorted(channels)
+    assert {(row["kind"], row["sequence"], row["state"]) for row in notified} == {("firing", 0, "pending")}
+    events = await rows(
+        case,
+        "SELECT payload FROM integration_events WHERE tenant_id=:tenant AND payload->>'type'='alert.transition'",
+    )
+    assert len(events) == 1 and events[0]["payload"]["resource_id"] == str(alert["id"])
+    current = await state(case, rule.id)
+    assert (current["state"], current["alert_id"], current["last_value"]) == ("firing", alert["id"], 1.0)
+
+
+async def test_a_rule_fires_repeats_and_resolves(evaluator):
+    case = evaluator
+    run = await case.start("alert-lifecycle")
+    incident = await add_incident(case, run.id, "first")
+    channel = await add_channel(case)
+    rule = await create(case, draft(channel_ids=[str(channel)], renotify_seconds=900))
+    await at(case, 0)
+    await at(case, 900)
+    (alert,) = await rows(case, "SELECT id,repeat_count,last_notified_at FROM alerts WHERE rule_id=:r", r=rule.id)
+    assert alert["repeat_count"] == 1 and alert["last_notified_at"] == case.now + timedelta(seconds=900)
+    await owner(case, "UPDATE incidents SET status='resolved' WHERE id=:id", id=incident)
+    await at(case, 930)
+    assert (await state(case, rule.id))["clear_since"] == case.now + timedelta(seconds=930)
+    await at(case, 990)
+    (resolved,) = await rows(case, "SELECT state,resolved_reason,last_value FROM alerts WHERE id=:id", id=alert["id"])
+    assert (resolved["state"], resolved["resolved_reason"], resolved["last_value"]) == ("resolved", "threshold", 0.0)
+    kinds = await rows(
+        case, "SELECT kind,sequence FROM alert_notifications WHERE alert_id=:id ORDER BY created_at", id=alert["id"]
+    )
+    assert [(row["kind"], row["sequence"]) for row in kinds] == [("firing", 0), ("repeat", 1), ("resolved", 0)]
+    events = await rows(case, "SELECT kind FROM alert_events WHERE alert_id=:id ORDER BY at", id=alert["id"])
+    assert [row["kind"] for row in events] == ["firing", "resolved"]
+    assert (await state(case, rule.id))["state"] == "ok"
+
+
+async def test_a_failed_read_changes_no_state(evaluator, monkeypatch):
+    case = evaluator
+    runs = await started_runs(case, 2)
+    for run in runs:
+        ended = case.now - timedelta(seconds=30)
+        await place(case, run, started=ended - timedelta(seconds=1), ended=ended, status="failed")
+    rule = await create(case, draft(signal="run.failures", window_seconds=900, for_seconds=120, name="Failures"))
+    await at(case, 0)
+    pending = await state(case, rule.id)
+    assert (pending["state"], pending["pending_since"]) == ("pending", case.now)
+    # More runs than the direct read takes, and no current statistics: the read fails.
+    monkeypatch.setattr(alert_signals, "RECENT_LIMIT", 1)
+    await at(case, 30)
+    failed = await state(case, rule.id)
+    assert (failed["error_code"], failed["error_at"]) == ("signal_unavailable", case.now + timedelta(seconds=30))
+    unchanged = ("state", "since", "pending_since", "clear_since", "last_value", "evaluated_at", "alert_id")
+    assert {key: failed[key] for key in unchanged} == {key: pending[key] for key in unchanged}
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
+
+
+async def test_a_revoked_target_grant_stops_the_rule(evaluator):
+    case = evaluator
+    target = await add_target(case, "alpha")
+    watcher = await principal_with(
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="deployment_reader", scope=case.scope, resources=(str(target),)),
+    )
+    rule = await create(
+        case,
+        draft(signal="targets.runner_offline", comparator="gte", selector={"target_id": str(target)}),
+        actor=watcher,
+    )
+    (binding,) = await owner(
+        case,
+        "SELECT id FROM role_bindings WHERE principal_id=:principal AND role='deployment_reader'",
+        principal=watcher.id,
+    )
+    await case.access.revoke_grant(case.admin, case.scope, binding["id"])
+    await at(case, 0)
+    assert (await state(case, rule.id))["state"] == "unauthorized"
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
+    view = await case.rules.read(case.manager, case.scope, rule.id, context=CONTEXT)
+    assert view.state.state == "unauthorized"
+
+
+async def test_the_default_preset_is_installed_once_and_never_again_after_deletion(evaluator):
+    case = evaluator
+    await at(case, 0)
+    (installed,) = await rows(case, "SELECT id,name,preset_id,updated_by FROM alert_rules WHERE tenant_id=:tenant")
+    assert (installed["name"], installed["preset_id"], installed["updated_by"]) == (
+        "A platform component is degraded",
+        "platform-degraded",
+        None,
+    )
+    assert await rows(case, "SELECT preset_id,version,rule_id FROM alert_preset_installs") == [
+        {"preset_id": "platform-degraded", "version": 1, "rule_id": installed["id"]}
+    ]
+    view = await case.rules.read(case.manager, case.scope, installed["id"], context=CONTEXT)
+    assert (view.state.state, view.state.value, view.updated_by) == ("ok", 0.0, None)
+    await case.rules.delete(case.manager, case.scope, installed["id"], 1, context=CONTEXT)
+    await at(case, 30)
+    assert await rows(case, "SELECT id FROM alert_rules WHERE tenant_id=:tenant") == []
+
+
+async def test_test_runs_never_fire_a_rule(evaluator):
+    case = evaluator
+    runs = await started_runs(case, 3)
+    for run in runs:
+        ended = case.now - timedelta(seconds=30)
+        await place(case, run, started=ended - timedelta(seconds=1), ended=ended, status="failed", test=True)
+    rule = await create(case, draft(signal="run.failures", window_seconds=300, name="Failures"))
+    await at(case, 0)
+    current = await state(case, rule.id)
+    assert (current["state"], current["last_value"]) == ("ok", 0.0)
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
+
+
+async def test_events_older_than_30_days_and_beyond_the_cap_are_pruned(evaluator, monkeypatch):
+    case = evaluator
+    monkeypatch.setattr(alert_loop, "EVENTS_KEPT", 3)
+    rule = uuid4()
+    for days in (40, 31, 3, 2, 1, 0):
+        await owner(
+            case,
+            "INSERT INTO alert_events(tenant_id,project_id,environment_id,id,rule_id,rule_revision,at,kind) "
+            "VALUES(:tenant,:project,:environment,:id,:rule,1,:at,'acknowledged')",
+            id=uuid4(),
+            rule=rule,
+            at=case.now - timedelta(days=days),
+        )
+    for days, status in ((31, "resolved"), (1, "resolved"), (31, "firing")):
+        resolved = case.now - timedelta(days=days)
+        await owner(
+            case,
+            "INSERT INTO alerts(tenant_id,project_id,environment_id,id,rule_id,rule_name,rule_revision,signal,severity,"
+            "comparator,threshold,unit,state,started_at,resolved_at,resolved_reason,value_at_start) VALUES(:tenant,"
+            ":project,:environment,:id,:rule,'Old',1,'incidents.active','info','gt',0,'count',:status,:started,"
+            ":resolved,:reason,1)",
+            id=uuid4(),
+            rule=uuid4(),
+            status=status,
+            started=resolved - timedelta(hours=1),
+            resolved=resolved if status == "resolved" else None,
+            reason="threshold" if status == "resolved" else None,
+        )
+    async with case.tx() as tx:
+        assert await alert_loop.prune(tx, case.now) == 4
+    kept = await rows(case, "SELECT at FROM alert_events WHERE rule_id=:rule ORDER BY at", rule=rule)
+    assert [row["at"] for row in kept] == [case.now - timedelta(days=days) for days in (2, 1, 0)]
+    alerts = await rows(case, "SELECT state FROM alerts WHERE tenant_id=:tenant ORDER BY state")
+    assert [row["state"] for row in alerts] == ["firing", "resolved"]

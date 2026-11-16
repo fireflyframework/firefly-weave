@@ -51,6 +51,9 @@ RECENT_CYCLES = 20
 # The outbox, provider and broker traversals poll every second; the operations loop every minute.
 TRAVERSAL_SECONDS = 1.0
 OPERATIONS_SECONDS = 60.0
+# The alert evaluator runs every 30 seconds and starts no environment after 20 seconds of a cycle.
+ALERTS_SECONDS = 30.0
+ALERTS_BUDGET_SECONDS = 20.0
 # How long one healthy cycle may take. A cycle still running within its budget is on time, however many poll
 # intervals that is. Outbox and broker traversals time out after 5 s, a recovery cycle scans up to 16 tenants, and a
 # provider cycle can wait on one mailbox poll.
@@ -243,8 +246,7 @@ def register_background_loops(health: LoopHealth, settings: Settings) -> None:
     )
     # Its cycles finish well within three of its one-minute intervals.
     health.register("operations_loop", OPERATIONS_SECONDS, enabled=scheduled)
-    # Alert evaluation does not exist yet.
-    health.register("alert_evaluator", OPERATIONS_SECONDS, enabled=False)
+    health.register("alert_evaluator", ALERTS_SECONDS, enabled=scheduled, budget_seconds=ALERTS_BUDGET_SECONDS)
 
 
 def track(health: LoopHealth, task: "asyncio.Task[None]", *names: str) -> None:

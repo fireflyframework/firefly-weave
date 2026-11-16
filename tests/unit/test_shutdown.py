@@ -201,7 +201,26 @@ def recovery_loop(value: Settings, health: LoopHealth, monkeypatch):
     return RecoveryLoop(value, None, None, None, health=health)  # type: ignore[arg-type]
 
 
-LOOPS = [operations_loop, provider_loop, kafka_loop, outbox_loop, recovery_loop]
+def alert_evaluator(value: Settings, health: LoopHealth, monkeypatch):
+    from firefly_weave.operations import alert_loop as alerts
+
+    monkeypatch.setattr(alerts, "EVALUATE_SECONDS", 0.01)
+
+    class Evaluator(alerts.AlertLoop):
+        # These tests drive every loop through poll() and cycle().
+        async def poll(self) -> None:
+            await self.evaluate_poll()
+
+        async def evaluate_cycle(self) -> bool:
+            return await self.cycle()
+
+        async def cycle(self) -> bool:
+            return await alerts.AlertLoop.evaluate_cycle(self)
+
+    return Evaluator(value, None, health)  # type: ignore[arg-type]
+
+
+LOOPS = [operations_loop, provider_loop, kafka_loop, outbox_loop, recovery_loop, alert_evaluator]
 
 
 class Stubborn:

@@ -320,17 +320,21 @@ class AlertRuleRepository:
     async def target_exists(self, target: UUID) -> bool:
         return bool(await self.rows(f"SELECT 1 FROM deployment_targets WHERE {SCOPED} AND id=:id", id=target))
 
-    async def insert(self, rule_id: UUID, rule: AlertRuleDraft, actor: UUID, now: datetime) -> None:
+    async def insert(
+        self, rule_id: UUID, rule: AlertRuleDraft, actor: UUID | None, now: datetime, *, preset_id: str | None = None
+    ) -> None:
+        """A new rule and its state row; ``actor`` is None only for a rule Weave installs from ``preset_id``."""
         await self.execute(
             "INSERT INTO alert_rules(tenant_id,project_id,environment_id,id,name,enabled,signal,selector,comparator,"
-            "threshold,window_seconds,for_seconds,min_samples,severity,channel_ids,renotify_seconds,revision,"
-            "created_at,updated_at,updated_by) VALUES(:tenant,:project,:environment,:id,:name,:enabled,:signal,"
-            "cast(:selector AS jsonb),:comparator,:threshold,:window_seconds,:for_seconds,:min_samples,:severity,"
-            "cast(:channel_ids AS uuid[]),:renotify_seconds,1,:now,:now,:actor)",
+            "threshold,window_seconds,for_seconds,min_samples,severity,channel_ids,renotify_seconds,preset_id,"
+            "revision,created_at,updated_at,updated_by) VALUES(:tenant,:project,:environment,:id,:name,:enabled,"
+            ":signal,cast(:selector AS jsonb),:comparator,:threshold,:window_seconds,:for_seconds,:min_samples,"
+            ":severity,cast(:channel_ids AS uuid[]),:renotify_seconds,:preset,1,:now,:now,:actor)",
             **self._values(rule),
             id=rule_id,
             now=now,
             actor=actor,
+            preset=preset_id,
         )
         await self.start_state(rule_id, now, insert=True)
 
@@ -398,6 +402,34 @@ def event_id(alert_id: UUID, kind: str, sequence: int) -> UUID:
     return uuid5(NAMESPACE_URL, f"weave-alert:{alert_id}:{kind}:{sequence}")
 
 
+async def queue_notifications(
+    tx: Transaction,
+    alert_id: UUID,
+    channel_ids: Iterable[UUID],
+    kind: Literal["firing", "resolved", "repeat"],
+    sequence: int,
+    at: datetime,
+) -> None:
+    """One pending notification per channel that still exists; the sender checks recipients and budgets later.
+
+    A notification is unique per alert, channel, kind and sequence, so a retried evaluation queues nothing twice.
+    """
+    channels = list(channel_ids)
+    if not channels:
+        return
+    await AlertRuleRepository(tx).execute(
+        "INSERT INTO alert_notifications(tenant_id,project_id,environment_id,id,alert_id,channel_id,kind,sequence,"
+        "recipients_count,state,created_at) SELECT tenant_id,project_id,environment_id,gen_random_uuid(),:alert,"
+        f"id,:kind,:sequence,jsonb_array_length(recipients),'pending',:at FROM alert_channels WHERE {SCOPED} "
+        "AND id=ANY(:channels) ON CONFLICT DO NOTHING",
+        alert=alert_id,
+        kind=kind,
+        sequence=sequence,
+        channels=channels,
+        at=at,
+    )
+
+
 async def record_transition(
     tx: Transaction,
     outbox: OutboxService,
@@ -427,19 +459,7 @@ async def record_transition(
         value=value,
         reason=reason,
     )
-    channels = list(channel_ids)
-    if channels:
-        # One notification per channel that still exists; the sender checks recipients and budgets when it sends.
-        await repository.execute(
-            "INSERT INTO alert_notifications(tenant_id,project_id,environment_id,id,alert_id,channel_id,kind,sequence,"
-            "recipients_count,state,created_at) SELECT tenant_id,project_id,environment_id,gen_random_uuid(),:alert,"
-            f"id,:kind,0,jsonb_array_length(recipients),'pending',:at FROM alert_channels WHERE {SCOPED} "
-            "AND id=ANY(:channels) ON CONFLICT DO NOTHING",
-            alert=alert["id"],
-            kind=kind,
-            channels=channels,
-            at=at,
-        )
+    await queue_notifications(tx, alert["id"], channel_ids, kind, 0, at)
     facts = AlertEventFacts(
         state=kind, severity=alert["severity"], signal=alert["signal"], value=value, threshold=alert["threshold"]
     )

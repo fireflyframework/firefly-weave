@@ -87,7 +87,10 @@ def secure_tenant(table: str, grants: str) -> None:
 
 
 def rules() -> None:
-    """Rules, each with one evaluation state row that goes with it."""
+    """Rules, each with one evaluation state row that goes with it.
+
+    A rule Weave installed from a default preset has no updater until a person changes it; every other rule has one.
+    """
     op.execute(f"""CREATE TABLE alert_rules(
         {SCOPE_COLUMNS},id uuid NOT NULL,name text NOT NULL CHECK(char_length(name) BETWEEN 1 AND 120),
         enabled boolean NOT NULL,signal text NOT NULL {SIGNAL},
@@ -103,7 +106,7 @@ def rules() -> None:
         renotify_seconds integer NOT NULL DEFAULT 0 CHECK(renotify_seconds=0 OR renotify_seconds BETWEEN 900 AND 86400),
         preset_id text CHECK(preset_id ~ '^[a-z0-9][a-z0-9-]{{0,63}}$'),
         revision integer NOT NULL CHECK(revision>0),created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,
-        updated_by uuid NOT NULL REFERENCES principals(id),
+        updated_by uuid REFERENCES principals(id),CHECK(updated_by IS NOT NULL OR preset_id IS NOT NULL),
         PRIMARY KEY({KEY},id),{ENVIRONMENT})""")
     # Unauthorized is stored by the evaluator when the rule's target grant is gone; unsupported is decided on read.
     op.execute(f"""CREATE TABLE alert_rule_state(

@@ -372,6 +372,23 @@ async def test_a_rule_row_keeps_the_contract_limits(upgraded, column, value):
     assert sqlstate(refused.value) == "23514"
 
 
+async def test_only_a_rule_weave_installed_from_a_preset_has_no_updater(upgraded):
+    engine, ids = upgraded
+    async with engine.begin() as connection:
+        await seed_alerts(connection, ids)
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        installed = await connection.execute(
+            text("UPDATE alert_rules SET preset_id='platform-degraded',updated_by=NULL")
+        )
+        assert installed.rowcount == 1
+    with pytest.raises(DBAPIError) as refused:
+        async with engine.begin() as connection:
+            await scope_as_app(connection, ids)
+            await connection.execute(text("UPDATE alert_rules SET preset_id=NULL"))
+    assert sqlstate(refused.value) == "23514"
+
+
 async def test_the_role_check_accepts_the_alert_manager(upgraded):
     engine, ids = upgraded
     statement = text(
