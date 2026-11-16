@@ -721,3 +721,38 @@ async def test_the_request_the_gateway_receives_is_one_it_accepts(tmp_path, aske
     # The gateway validates this part as the same request type; the shaped draft travels in the attachments.
     assert LumiAskRequest.model_validate(forwarded).message == request.message
     assert "draft" not in forwarded and "fix" not in forwarded
+
+
+async def test_the_gateway_request_leaves_the_record_ids_out(tmp_path):
+    # The shaped context names each record by its position; the request itself must not carry the IDs beside it.
+    records = [uuid4() for _ in range(4)]
+    bodies = []
+
+    def respond(request):
+        bodies.append(request.content.decode())
+        return httpx.Response(200, json={"answer": "Ready", "proposals": [], "followUps": []})
+
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=service_token(tmp_path)),
+        transport=httpx.MockTransport(respond),
+    )
+    configuration = LumiConfiguration(
+        revision=1,
+        connection_revision_id=uuid4(),
+        profile={
+            "provider": "openai-chat",
+            "model": "fixture",
+            "options": {"max_tokens": 100},
+            "outputSchema": LUMI_REPLY_SCHEMA,
+        },
+    )
+    kinds = ("worker", "incident", "environment", "change-request")
+    request = LumiAskRequest(
+        message="What needs my attention?",
+        attachments=[{"kind": kind, "id": str(record)} for kind, record in zip(kinds, records, strict=True)],
+    )
+    await client.ask(configuration, request, {"resources": []}, {"endpoint": "https://api.openai.com/v1"}, None)
+    [body] = bodies
+    assert json.loads(body)["request"] == {"message": "What needs my attention?", "history": []}
+    for record in records:
+        assert str(record) not in body and record.hex not in body

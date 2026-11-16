@@ -29,7 +29,7 @@ import {
   type RunsPage,
 } from "./runs-po";
 import { sizes, StepDetailsPage } from "./step-details-po";
-import { tokenColor } from "./support";
+import { showView, tokenColor } from "./support";
 
 /** The Runs tab with `id` chosen and drawn. */
 async function chooseRun(page: Page, runs: RunsPage, id: string) {
@@ -182,9 +182,9 @@ for (const size of sizes)
         if (request.url().includes("/studio/local/debug/"))
           executions.push(request.url());
       });
-      await runs.tabs.getByRole("tab", { name: "Source" }).click();
+      await showView(page, "Source");
       const before = await sourceOf(page);
-      await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+      await showView(page, "Runs");
       const canvas = await chooseRun(page, runs, RUN_IDS.failed);
       // The run is framed on the step that failed.
       await canvas.tileBody("send").click();
@@ -216,7 +216,7 @@ for (const size of sizes)
         }),
       ).toHaveCount(0);
       await details.close();
-      await runs.tabs.getByRole("tab", { name: "Source" }).click();
+      await showView(page, "Source");
       expect(await sourceOf(page)).toBe(before);
       expect(executions).toEqual([]);
       // The run was read, never written.
@@ -238,9 +238,11 @@ for (const size of sizes)
         .or(page.getByRole("menuitem", { name: "Back to editing" }))
         .first()
         .click();
-      await expect(
-        runs.tabs.getByRole("tab", { name: "Designer" }),
-      ).toHaveAttribute("aria-selected", "true");
+      // The Designer shows (its tab names the view at every width).
+      await expect(page.locator("#editor-view")).toHaveAttribute(
+        "aria-labelledby",
+        "view-tab-designer",
+      );
       // The draft is drawn without the run, and editable again.
       await expect(canvas.root.locator('[data-badge="failed"]')).toHaveCount(0);
       await canvas.tileBody("check").click();

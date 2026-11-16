@@ -61,6 +61,7 @@ import {
   type RunRow,
   type RunsTabFilters,
 } from "./runs-list-model";
+import type { App } from "../../app";
 import { environmentName, type RunsView } from "./runs-view";
 
 /** A status's icon in a row, beside its label. */
@@ -80,6 +81,26 @@ const shortVersion = (version: string) => version.split("+")[0];
 /** Newest version first: 1.10.0 before 1.9.0. */
 const byVersion = (a: string, b: string) =>
   b.localeCompare(a, undefined, { numeric: true });
+
+/**
+ * The Version menu's choices, newest first: the workflow's published
+ * versions, the versions its runs used, and the one chosen. Reads the
+ * shell's count of changes to the versions, so a computed follows them.
+ */
+export function versionChoices(
+  app: Pick<App, "workflowVersions" | "workflowVersionsChanged">,
+  name: string,
+  used: readonly string[],
+  chosen: string | null,
+): string[] {
+  app.workflowVersionsChanged();
+  const seen = new Set<string>();
+  for (const version of app.workflowVersions.values())
+    if (version.name === name && version.version) seen.add(version.version);
+  for (const version of used) seen.add(shortVersion(version));
+  if (chosen) seen.add(chosen);
+  return [...seen].sort(byVersion);
+}
 
 export interface ShownRow extends RunRow {
   icon: string;
@@ -208,17 +229,14 @@ export class RunsList {
     ];
   });
   /** The workflow's published versions and the versions its runs used. */
-  readonly versions = computed(() => {
-    const name = this.workflow().name;
-    const seen = new Set<string>();
-    for (const version of this.app().workflowVersions.values())
-      if (version.name === name && version.version) seen.add(version.version);
-    for (const row of this.rows())
-      if (!row.unavailable && !row.test && row.version) seen.add(row.version);
-    const filter = this.filters().version;
-    if (filter) seen.add(filter);
-    return [...seen].sort(byVersion);
-  });
+  readonly versions = computed(() =>
+    versionChoices(
+      this.app(),
+      this.workflow().name,
+      this.state()?.usedVersions() ?? [],
+      this.filters().version,
+    ),
+  );
   readonly empty = computed(() =>
     emptyText(this.workflow().name, this.filters()),
   );

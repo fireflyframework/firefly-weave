@@ -1351,3 +1351,53 @@ async def test_a_thinking_model_that_fails_on_an_older_ollama_answers_with_an_up
 def test_the_gateway_counts_a_newline_and_an_indent_as_a_token_each():
     assert conservative_tokens("word\nword") == 2 + 1 + 2
     assert conservative_tokens("word\n    word") == 2 + 1 + 1 + 2
+
+
+async def test_the_prompt_ignores_the_requests_own_attachment_ids(tmp_path):
+    # The platform sends records in the shaped attachments by position and leaves the request's own attachment list
+    # out; the model must see exactly the same prompt either way.
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    prompts = []
+
+    def respond(messages, info):
+        prompts.append(
+            json.dumps(
+                [
+                    [getattr(message, "instructions", None)]
+                    + [[part.part_kind, getattr(part, "content", None)] for part in message.parts]
+                    for message in messages
+                ],
+                default=str,
+            ).encode()
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name, {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
+                )
+            ]
+        )
+
+    app = create_app(
+        WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+        token,
+        model_builder=lambda *_: FunctionModel(respond),
+    )
+    shaped = {
+        "purpose": "explain-operations",
+        "resources": [{"kind": "worker", "ref": 1, "data": {"presence": "stale"}}],
+    }
+    with_ids = payload() | {"attachments": shaped}
+    with_ids["request"] = {
+        "message": "Why is this worker offline?",
+        "attachments": [{"kind": "worker", "id": "00000000-0000-4000-8000-0000000000a1"}],
+    }
+    without_ids = with_ids | {"request": {"message": "Why is this worker offline?"}}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://gateway") as client:
+        for body in (with_ids, without_ids):
+            answer = await client.post("/v1/lumi", json=body, headers={"Authorization": "Bearer service-token"})
+            assert answer.status_code == 200, answer.text
+    first, second = prompts
+    assert first == second and b"presence" in first
+    assert b"00000000-0000-4000-8000-0000000000a1" not in first

@@ -32,7 +32,7 @@ import {
   type RunsPlatform,
 } from "./runs-po";
 import { sizes, StepDetailsPage } from "./step-details-po";
-import { tokenColor } from "./support";
+import { showView, tokenColor } from "./support";
 
 /** The Runs tab with `id` chosen, its run drawn. */
 async function choose(page: Page, runs: RunsPage, id: string) {
@@ -272,7 +272,7 @@ test.describe("step details in run mode", () => {
     const { runs } = await openRunsTab(page);
     await expect(runs.rows.first()).toBeVisible();
     // Pin a sample of fetch in the draft first.
-    await runs.tabs.getByRole("tab", { name: "Designer" }).click();
+    await showView(page, "Designer");
     // The editable canvas, not the Runs tab's, is on screen.
     await expect(page.locator(".canvas-v2")).not.toHaveClass(/viewing-runs/);
     await expect(page.locator(".canvas-v2")).toHaveAttribute("data-ready", "");
@@ -289,7 +289,7 @@ test.describe("step details in run mode", () => {
       if (request.method() !== "GET" && /test-?data/i.test(request.url()))
         saves.push(`${request.method()} ${request.url()}`);
     });
-    await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const details = await choose(page, runs, RUN_IDS.failed);
     await details.openWithKeyboard("fetch");
     const output = outputRegion(details);
@@ -463,9 +463,11 @@ test.describe("step details in run mode", () => {
     await expect(output.locator(".pane-json")).toContainText(marker);
     await details.close();
     await runs.canvas.getByRole("button", { name: "Back to editing" }).click();
-    await expect(
-      runs.tabs.getByRole("tab", { name: "Designer" }),
-    ).toHaveAttribute("aria-selected", "true");
+    // The Designer shows (its tab names the view at every width).
+    await expect(page.locator("#editor-view")).toHaveAttribute(
+      "aria-labelledby",
+      "view-tab-designer",
+    );
     const kept = await page.evaluate(async () => {
       const found: string[] = [location.href];
       for (const store of [localStorage, sessionStorage])

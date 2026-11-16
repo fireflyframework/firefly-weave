@@ -32,7 +32,13 @@ import {
   yamlFile,
   type StepDetailsPage,
 } from "./step-details-po";
-import { allCapabilities, closeSheet, connected, sourceText } from "./support";
+import {
+  allCapabilities,
+  closeSheet,
+  connected,
+  showView,
+  sourceText,
+} from "./support";
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 
@@ -213,12 +219,12 @@ export async function ownedPlatform(page: Page, options: PlatformOptions) {
 /** Replaces the workflow source in Source and applies it. */
 export async function applySource(page: Page, text: string) {
   await closeSheet(page);
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   await page.getByRole("textbox", { name: "Workflow source" }).fill(text);
   await page
     .getByRole("button", { name: "Apply changes", exact: true })
     .click();
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await showView(page, "Designer");
 }
 
 /**

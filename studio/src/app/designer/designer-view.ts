@@ -31,7 +31,7 @@ import { FFlowModule } from "@foblex/flow";
 import { Icon } from "../icon";
 import { StepDetailsMount } from "../editor/ndv/step-details-mount";
 import { ModalSheet } from "../modal-sheet";
-import { RowMenu } from "../row-menu";
+import { RowMenu, type RowMenuItem } from "../row-menu";
 import { StepPropertyGrid } from "../property-grid";
 import { PaletteIntegrations } from "../integrations/palette-integrations";
 import { ConnectionSlotList } from "../integrations/connection-slot-list";
@@ -110,34 +110,35 @@ import type { App } from "../app";
         border: 0;
         border-radius: 0;
       }
-      /* Four views: 44 px tabs on touch and below 768 px. Below 480 px the
-         Runs tab, which has no command row, gives them a full-width row of
-         their own, so the workflow's name keeps its room; the other tabs keep
-         their height for the canvas. */
+      /* Four views: 44 px tabs on touch. At 767 px and below they fold into
+         one menu button on the name's line, on every view: the name keeps
+         its room, the settings gear its 44 px target, and the bar its
+         height. */
       @media (max-width: 767px), (pointer: coarse) {
         .editor-views button {
           min-height: var(--control-touch);
         }
       }
-      @media (max-width: 480px) {
-        .runs-on .editor-views {
-          grid-column: 1 / -1;
-          display: grid;
-          grid-template-columns: repeat(var(--views, 4), minmax(0, 1fr));
+      .editor-view-switcher {
+        display: none;
+      }
+      @media (max-width: 767px) {
+        .editor-views {
+          display: none;
         }
-        .runs-on .editor-views button {
-          padding: 0 4px;
-        }
-        /* With the tabs on their own row the name has the whole first row. */
-        .runs-on .editor-identity h1 {
-          max-width: none;
+        /* At the top of the name's row, not centered on the two-line
+           heading: one center line with the name, the gear and the status,
+           and no move when the view changes. */
+        .editor-view-switcher {
+          display: inline-flex;
+          align-self: start;
         }
       }
     `,
   ],
   template: `@let h = host();
     <!-- Identity and views above an aligned command row. -->
-    <div class="editor-bar" [class.runs-on]="h.tab === 'Runs'">
+    <div class="editor-bar">
       <div class="editor-heading">
         <div class="editor-identity">
           <button
@@ -208,7 +209,6 @@ import type { App } from "../app";
         class="editor-views"
         role="tablist"
         aria-label="Workflow views"
-        [style.--views]="h.editorViews.length"
         (keydown)="h.viewKey($event)"
       >
         @for (t of h.editorViews; track t) {
@@ -228,6 +228,16 @@ import type { App } from "../app";
           </button>
         }
       </div>
+      <!-- At 767 px and below: the tabs above, folded into one menu button
+           that names the view shown. -->
+      <weave-row-menu
+        class="editor-view-switcher"
+        icon="chevronDown"
+        [iconSize]="16"
+        [text]="h.tab"
+        [label]="'Workflow view: ' + h.tab"
+        [items]="viewItems()"
+      />
       <!-- Every command edits, checks or executes the draft: the Runs tab,
            which reads runs that happened, draws none of them. -->
       @if (h.tab !== "Runs") {
@@ -1463,6 +1473,29 @@ export class DesignerView implements DoCheck {
     if (h.tab !== "Runs") void h.selectTab("Runs");
   }
   readonly canvas = viewChild(CanvasView);
+  private viewMenu: { key: string; items: RowMenuItem[] } | null = null;
+  /**
+   * The view switcher's menu: the views, the one shown checked. Built again
+   * only when the view or the list of views changes. Picking the view shown
+   * only closes the menu.
+   */
+  viewItems(): RowMenuItem[] {
+    const h = this.host();
+    const views = h.editorViews;
+    const key = `${h.tab}|${views.join()}`;
+    if (this.viewMenu?.key !== key)
+      this.viewMenu = {
+        key,
+        items: views.map((view) => ({
+          label: view,
+          checked: view === h.tab,
+          run: () => {
+            if (view !== h.tab) void h.selectTab(view);
+          },
+        })),
+      };
+    return this.viewMenu.items;
+  }
   closeHelp(details: HTMLDetailsElement, event: Event) {
     details.open = false;
     details.querySelector("summary")?.focus();

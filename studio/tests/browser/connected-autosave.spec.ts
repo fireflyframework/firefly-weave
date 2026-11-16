@@ -20,8 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 // when. Unsaved changes survive a reload as a recovery copy on this computer.
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { CanvasPage, useNewEditor } from "./canvas-po";
-import { StepDetailsPage } from "./step-details-po";
+import { settingsGear, StepDetailsPage } from "./step-details-po";
 import { box, intersects } from "./step-geometry";
+import { viewSwitcher } from "./support";
 
 const tenant = "0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11";
 const project = "5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f";
@@ -283,4 +284,14 @@ for (const size of [
       Math.abs(button.y + button.height / 2 - (title.y + title.height / 2)),
     ).toBeLessThanOrEqual(1);
     expect(intersects(button, title)).toBe(false);
+    if (size.width <= 480) {
+      // Beside the gear, the retry button and the view switcher, the name
+      // keeps room for a few characters.
+      const gear = await box(settingsGear(page));
+      const switcher = await box(viewSwitcher(page));
+      expect([gear.width, gear.height]).toEqual([44, 44]);
+      expect(title.width).toBeGreaterThanOrEqual(64);
+      for (const other of [button, gear, title])
+        expect(intersects(other, switcher)).toBe(false);
+    }
   });

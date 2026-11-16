@@ -694,8 +694,16 @@ export class App implements CanvasHost {
   storageNotice = false;
   private storageNoticeShown = false;
   private localTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Published versions by ID: the name and version a run belongs to. */
+  /**
+   * Published versions by ID: the name and version a run belongs to.
+   * Changed only through changeWorkflowVersions.
+   */
   workflowVersions = new Map<string, { name: string; version: string }>();
+  /**
+   * Counts the changes to the published versions, so a computed view that
+   * lists them (the Runs tab's Version menu) lists them again.
+   */
+  readonly workflowVersionsChanged = signal(0);
   /** Runs read in this workspace, by ID: the workflow behind a task. */
   knownRuns = new Map<string, Record<string, unknown>>();
   private versionsScope: unknown = null;
@@ -6722,9 +6730,7 @@ export class App implements CanvasHost {
     try {
       const page = await this.api.page("workflows", false);
       if (scope !== this.profile) return;
-      for (const item of page.items) this.rememberVersion(item);
-      // A new map, so views that read it as an input see the change.
-      this.workflowVersions = new Map(this.workflowVersions);
+      this.rememberVersions(page.items);
       this.cdr.markForCheck();
     } catch {
       // Runs then show their workflow name without the version.
@@ -6735,12 +6741,28 @@ export class App implements CanvasHost {
     for (const run of runs)
       if (typeof run["id"] === "string") this.knownRuns.set(run["id"], run);
   }
-  private rememberVersion(item: Record<string, unknown>) {
-    if (typeof item["id"] === "string" && typeof item["name"] === "string")
-      this.workflowVersions.set(item["id"], {
-        name: item["name"],
-        version: String(item["version"] ?? ""),
-      });
+  /** Keeps the name and version of each published version listed. */
+  private rememberVersions(items: Record<string, unknown>[]) {
+    this.changeWorkflowVersions((versions) => {
+      for (const item of items)
+        if (typeof item["id"] === "string" && typeof item["name"] === "string")
+          versions.set(item["id"], {
+            name: item["name"],
+            version: String(item["version"] ?? ""),
+          });
+    });
+  }
+  /**
+   * Every change to the published versions: in a new map, so views that
+   * take it as an input see the change, and counted, so computed views do.
+   */
+  private changeWorkflowVersions(
+    change: (versions: Map<string, { name: string; version: string }>) => void,
+  ) {
+    const versions = new Map(this.workflowVersions);
+    change(versions);
+    this.workflowVersions = versions;
+    this.workflowVersionsChanged.update((count) => count + 1);
   }
   /** Activations by published version ID, for the Workflows status column. */
   activationsByVersion = new Map<string, Record<string, unknown>>();
@@ -6811,7 +6833,7 @@ export class App implements CanvasHost {
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
       if (this.view === "workflows" && this.libraryCollection === "workflows")
-        for (const item of result.items) this.rememberVersion(item);
+        this.rememberVersions(result.items);
       this.error = "";
     } catch (e) {
       this.fail(e);
@@ -7107,11 +7129,14 @@ export class App implements CanvasHost {
           this.runCanvas = canvas;
           this.runCanvasVersion = versionId;
           const metadata = exported.document?.metadata;
-          if (metadata?.name)
-            this.workflowVersions.set(versionId, {
-              name: metadata.name,
-              version: metadata.version ?? "",
-            });
+          const name = metadata?.name;
+          if (name)
+            this.changeWorkflowVersions((versions) =>
+              versions.set(versionId, {
+                name,
+                version: metadata.version ?? "",
+              }),
+            );
         }
         void this.findRunTask(detail);
       }
@@ -9396,7 +9421,7 @@ export class App implements CanvasHost {
     this.homeAttention = [];
     this.homeDrafts = [];
     this.knownRuns.clear();
-    this.workflowVersions.clear();
+    this.changeWorkflowVersions((versions) => versions.clear());
     this.versionsScope = null;
     this.activationsByVersion = new Map();
     this.runTask = null;

@@ -37,7 +37,7 @@ import {
 } from "./step-geometry";
 import { httpWorkflow, openHttpStep } from "./step-http";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
-import { sourceText, tokenColor } from "./support";
+import { showView, sourceText, tokenColor } from "./support";
 
 /** The sections of the visible Settings tab, in order. */
 const sections = (details: StepDetailsPage) =>
@@ -763,13 +763,13 @@ test.describe("an owned API action's settings", () => {
           "Settings, changed",
         );
         await details.close();
-        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        await showView(page, "Source");
         const source = page.getByRole("textbox", { name: "Workflow source" });
         await source.fill(`${await source.inputValue()}\n  broken: [`);
         await page
           .getByRole("button", { name: "Apply changes", exact: true })
           .click();
-        await page.getByRole("tab", { name: "Designer", exact: true }).click();
+        await showView(page, "Designer");
         await details.openWithKeyboard("get-customer-orders");
         await details.tab("Settings").click();
         await expect(

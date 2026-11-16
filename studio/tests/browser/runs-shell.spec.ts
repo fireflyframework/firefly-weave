@@ -21,7 +21,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
 import { sizes } from "./step-details-po";
-import { allCapabilities, connected, newWorkflow } from "./support";
+import {
+  allCapabilities,
+  connected,
+  newWorkflow,
+  showView,
+  viewSwitcher,
+} from "./support";
 
 const source = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -125,7 +131,7 @@ test("Execute workflow isn't offered on the Runs tab", async ({ page }) => {
   await expect(execute).toBeVisible();
 });
 
-test("on a phone, the Runs tab gives the view tabs their own row and offers no Execute workflow", async ({
+test("on a phone, the Runs tab keeps the view switcher on the name's row and offers no Execute workflow", async ({
   page,
 }) => {
   const tabs = await openWorkflow(page, {
@@ -139,7 +145,7 @@ test("on a phone, the Runs tab gives the view tabs their own row and offers no E
     page.getByRole("menuitem", { name: /^Execute workflow/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await tabs.getByRole("tab", { name: "Runs" }).click();
+  await showView(page, "Runs");
   await expect(toolbar).toHaveCount(0);
   await expect(
     page.getByRole("menuitem", { name: /^Execute workflow/ }),
@@ -152,10 +158,14 @@ test("on a phone, the Runs tab gives the view tabs their own row and offers no E
         .evaluate((name) => name.scrollWidth <= name.clientWidth),
     )
     .toBe(true);
-  // Four 44 px tabs on a row of their own, as wide as the bar.
-  const bar = await page.locator(".editor-bar").boundingBox();
-  const list = await tabs.boundingBox();
-  expect(list!.width).toBeGreaterThan(bar!.width - 40);
-  for (const tab of await tabs.getByRole("tab").all())
-    expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  // No row of tabs: one 44 px switcher, on the name's row, names the view.
+  await expect(tabs).toBeHidden();
+  const switcher = viewSwitcher(page);
+  await expect(switcher).toHaveAccessibleName("Workflow view: Runs");
+  const toggle = (await switcher.boundingBox())!;
+  const name = (await page.locator(".editor-identity h1").boundingBox())!;
+  expect(toggle.height).toBeGreaterThanOrEqual(44);
+  const middle = name.y + name.height / 2;
+  expect(middle).toBeGreaterThan(toggle.y);
+  expect(middle).toBeLessThan(toggle.y + toggle.height);
 });

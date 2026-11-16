@@ -51,16 +51,26 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a17`**, with PyFly 26.9.15 and database schema revision
-`0038_operations_statistics`. Alpha17 adds run metrics under **Operate ›
-Metrics**, reviewed change requests for every infrastructure change, Operations
-that work out of the box on the local Docker platform, transactions in the
-workflow language (compiled and checked, but not offered by the platform yet),
-simulated calls between workflows, test data and **Execute step** in the new
-editor, platform drafts that save themselves, and Weave AI on a local Ollama
-model with requests sized to the model's context; it adds five migrations and
-the `transaction_reconciler` role, described in the
-[upgrade procedure](operations/upgrades.md#what-changes-in-alpha17). Alpha16
+**`0.1.0a18`**, with PyFly 26.9.15 and database schema revision
+`0040_editor_step_tests`. Alpha18 runs workflow transactions, which stop behind
+an in-doubt incident for a person to resolve when Weave can't tell what
+happened; lets steps handle their own failures (**On error**); runs AI agent
+steps, which call their tools turn by turn and wait for a person's review of
+every call that changes data; runs one step of a draft for real in an
+environment as a test run; connects kind and k3d clusters on this computer
+to a local platform as Kubernetes targets; and lets Weave AI explain a worker,
+an incident, the platform's health or a change request through the API and the
+SDK, without sending logs, host names, people or record IDs to the model. In Studio, the new editor is on by
+default, its **Runs** tab draws a run on its workflow's canvas and turns the
+run's data into test data, and decision tables open in a spreadsheet grid. Alpha18 adds two migrations and the `step_tester` role, described in the
+[upgrade procedure](operations/upgrades.md#what-changes-in-alpha18). Alpha17
+moved to schema revision `0038_operations_statistics` and adds run metrics under
+**Operate › Metrics**, reviewed change requests for every infrastructure
+change, Operations that work out of the box on the local Docker platform,
+transactions in the workflow language, simulated calls between workflows, test
+data and **Execute step** in the new editor, platform drafts that save
+themselves, and Weave AI on a local Ollama model with requests sized to the
+model's context. Alpha16
 moved to schema revision `0033_language_workflow_calls` and adds loops over
 items and calls between workflows, Studio's Operate area with its Overview,
 Runs, Incidents, Workers and Clusters pages, the new editor's canvas, step
@@ -177,7 +187,7 @@ is retained as evidence; it is not counted as a successful model run.
 | [WhatsApp Cloud API](connectors/whatsapp.md) | Implemented | Wire fixtures, status history, and owned PostgreSQL; composed provider gate passed | Not run | Account policies, templates, and live delivery need separate verification |
 | [Telegram webhook text](connectors/telegram.md) | Implemented | Local TLS fixtures and owned PostgreSQL; composed provider gate passed | Not run | Source-local deduplication; bot and group permissions are provider prerequisites |
 | [Operational limits](operations/configuration.md), [telemetry](operations/observability.md), [retention](operations/retention.md), and [compatibility](operations/upgrades.md) | Implemented | Policy, accounting, contention, telemetry, retention, and upgrade suites | Not applicable | Logical accounting is separate from physical storage; compatibility checks gate readiness |
-| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners; alpha17 adds change requests that plan, wait for approval, drain the workers they remove, apply and follow the runner, and a runner on the local Docker platform | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Weave AI adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
+| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners; alpha17 adds change requests that plan, wait for approval, drain the workers they remove, apply and follow the runner, and a runner on the local Docker platform; alpha18 connects kind and k3d clusters on this computer to a local platform as Kubernetes targets, and Kubernetes runners take scale-downs that remove exactly the reviewed pods and restart workers | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios; on a kind cluster, connect, scale with drain, restart, network rules, the runner's permissions, two namespaces, and reconnect | Azure alpha12: complete three-application observation and reviewed same-image Weave AI adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped; kind and k3d clusters are for development, and pods in a connected cluster's other namespaces can reach the platform |
 | [Deployment](operations/deployment.md), [backup and restore](operations/backup-restore.md), and distribution | Implemented | Installed-package, container, process recovery, restore, and queue suites | Not applicable | Restore ownership, grants, schema compatibility, and external systems must be checked in each environment |
 | [AWS, Azure, and GCP deployment recipes](operations/cloud-deployment.md) | Reference guides and Kubernetes manifests | Source review and offline Kubernetes object-shape validation | A separate Azure Container Apps deployment has been exercised; these Kubernetes recipes and AWS/GCP remain unverified | Operator-provisioned infrastructure; database migrations, identity, networking, and recovery need acceptance in the target |
 | Slack and Salesforce | Deferred | Not run | Not run | Not part of this delivery |
@@ -185,12 +195,13 @@ is retained as evidence; it is not counted as a successful model run.
 ## What is not included
 
 - **BPMN.** Weave does not import or export BPMN files. Error boundary events
-  are not part of the workflow language. **Loop over items** and **Call a
-  workflow** cover repeated work and subprocesses, and **Transaction** declares
-  how each step is undone. This version compiles and checks transactions and
-  includes the runtime that runs them, but the platform does not offer them
-  yet: it refuses to publish, import or activate a workflow with a transaction
-  (`WV-IR-UNSUPPORTED`; see [Transactions](contracts.md#transactions)).
+  are not part of the workflow language; **On error** lets a step handle its
+  own failure instead. **Loop over items** and **Call a workflow** cover
+  repeated work and subprocesses, and **Transaction** declares how each step is
+  undone. Since alpha18, the platform runs transactions instead of refusing
+  them: it confirms reservations, undoes what went through when a step fails,
+  and stops behind an incident for a person to resolve when it can't tell what
+  happened (see [Transactions](contracts.md#transactions)).
   [Coming from BPM/BPMN](concepts.md#coming-from-bpmbpmn) lists the alternatives.
 - **Named enterprise adapters.** SAP and Oracle are not offered as executable
   named adapters. Reaching a system through a generic connector does not certify

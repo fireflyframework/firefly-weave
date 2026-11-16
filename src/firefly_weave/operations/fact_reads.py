@@ -536,6 +536,27 @@ class FactReadRepository(FactRepository):
             raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
         return rows
 
+    async def recent_event_types(self, run_id: UUID, limit: int) -> list[str]:
+        """The newest ``limit`` event types of one run, oldest first: the type column only, never data or evidence."""
+        rows = await self.rows(
+            "SELECT type FROM run_events WHERE tenant_id=:tenant AND project_id=:project "
+            "AND environment_id=:environment AND run_id=:run ORDER BY sequence DESC LIMIT :limit",
+            run=run_id,
+            limit=limit,
+        )
+        return [str(row["type"]) for row in reversed(rows)]
+
+    async def incident_step_kind(self, run_id: UUID, node_id: str, instance_key: str) -> str | None:
+        """The kind of the step instance an incident stopped at, from its step facts."""
+        rows = await self.rows(
+            "SELECT kind FROM step_facts WHERE tenant_id=:tenant AND project_id=:project "
+            "AND environment_id=:environment AND run_id=:run AND node_id=:node AND instance_key=:key",
+            run=run_id,
+            node=node_id,
+            key=instance_key,
+        )
+        return str(rows[0]["kind"]) if rows else None
+
     async def run_exists(self, run_id: UUID) -> bool:
         return bool(
             await self.tx.session.scalar(

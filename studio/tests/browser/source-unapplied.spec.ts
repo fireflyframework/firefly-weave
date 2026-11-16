@@ -25,7 +25,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openStepFixture } from "./step-details-po";
 import { box, boxes, clippedText, expectAligned } from "./step-geometry";
 import { parse } from "yaml";
-import { command, sourceText } from "./support";
+import { command, showView, sourceText } from "./support";
 
 const QUESTION = "Apply the changes typed in Source?";
 /** The text selected in Source, from its end back to its start. */
@@ -48,7 +48,7 @@ const viewTab = (page: Page, name: string): Locator =>
  * left selected backward, and the text is scrolled down when it can be.
  */
 async function typeInSource(page: Page, parses = true) {
-  await viewTab(page, "Source").click();
+  await showView(page, "Source");
   const source = sourceBox(page);
   const original = await source.inputValue();
   const typed = parses
@@ -571,7 +571,7 @@ for (const size of [
     test("lines up and fits the window", async ({ page }) => {
       await openStepFixture(page);
       await typeInSource(page);
-      await viewTab(page, "Designer").click();
+      await showView(page, "Designer");
       const dialog = question(page);
       await expect(dialog).toBeVisible();
       const panel = await box(dialog);

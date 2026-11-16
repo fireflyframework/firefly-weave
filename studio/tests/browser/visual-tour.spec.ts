@@ -41,6 +41,7 @@ import {
   newWorkflow,
   offline,
   runSummaries,
+  showView,
   workerAction,
   type CatalogEntry,
 } from "./support";
@@ -1753,10 +1754,10 @@ async function pinSample(details: StepDetailsPage, id: string) {
 /** score reads another field of lookup: notify's pin goes out of date. */
 async function changeScoreMapping(page: Page) {
   await closeSheet(page);
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   const box = page.getByRole("textbox", { name: "Workflow source" });
   const source = await box.inputValue();
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await showView(page, "Designer");
   await applySource(
     page,
     source.replace(
@@ -2584,12 +2585,12 @@ ${paths}
   },
   async "source-unapplied"({ page, shot }) {
     await openStepFixture(page);
-    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(page, "Source");
     const source = page.getByRole("textbox", { name: "Workflow source" });
     await source.fill(
       (await source.inputValue()).replace("version: 1.0.0", "version: 1.0.1"),
     );
-    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await showView(page, "Designer");
     await expect(
       page.getByRole("dialog", { name: "Apply the changes typed in Source?" }),
     ).toBeVisible();
@@ -3479,7 +3480,7 @@ spec:
     await expect(designer.diagnostics).toContainText("2 errors");
     await designer.fit();
     await shot("46-diagnostics-errors");
-    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(page, "Source");
     await expect(
       page.getByRole("textbox", { name: "Workflow source" }),
     ).toBeVisible();
@@ -4995,7 +4996,7 @@ spec:
     await shot("190-runs-debug-stopped", { tabs: 0 });
     await page.locator(".toast-dismiss").click();
     await details.close();
-    await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     await chooseRun(page, runs, RUN_IDS.failed);
     await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
     await expect(

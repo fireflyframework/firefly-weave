@@ -28,7 +28,7 @@ import {
 import { hasPython, localAuthoring } from "./local-authoring";
 import { withOwnedSteps } from "./owned-actions";
 import { openStepFixture, yamlFile } from "./step-details-po";
-import { command } from "./support";
+import { command, showView } from "./support";
 
 test.skip(!hasPython, "Create the Python development environment first.");
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -141,7 +141,7 @@ spec:
     ),
   );
   const calls = await localAuthoring(page);
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   const box = page.getByRole("textbox", { name: "Workflow source" });
   await box.fill((await box.inputValue()).replace("literal: 1", "literal: 2"));
   const question = page.getByRole("dialog", {
