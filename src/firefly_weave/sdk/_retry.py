@@ -22,6 +22,7 @@ and waiting is the only fix; a refusal such as 401, 403 or a refused release is 
 
 import asyncio
 import random as _random
+import ssl
 from collections.abc import Callable
 
 from firefly_weave.sdk.errors import ContractError, TransportError, WeaveError
@@ -30,12 +31,27 @@ from firefly_weave.sdk.errors import ContractError, TransportError, WeaveError
 RETRY_LATER = frozenset({429, 502, 503, 504})
 
 
+def _chain(error: BaseException) -> list[BaseException]:
+    """``error``, then each error it was raised from or while handling, innermost last."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and not any(current is seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def unavailable(error: BaseException) -> bool:
     """Whether ``error`` says the platform could not be reached, or asked to be called again later."""
     # Imported here so that the worker module stays importable without an HTTP client installed.
     import httpcore
     import httpx
 
+    # httpx and httpcore raise a certificate they cannot verify as a ConnectError raised from it. Waiting never makes
+    # the certificate trusted, so it is a wrong address or an interception, not an outage. Other TLS errors, such as
+    # an unexpected end of the stream, also happen while an API restarts.
+    if any(isinstance(link, ssl.SSLCertVerificationError) for link in _chain(error)):
+        return False
     if isinstance(error, httpx.HTTPStatusError):
         return error.response.status_code in RETRY_LATER
     if isinstance(error, ContractError):

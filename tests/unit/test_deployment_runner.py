@@ -639,6 +639,67 @@ async def test_the_runner_stops_on_a_claim_its_own_client_refused(monkeypatch, r
     assert claims == ["deployment_runners.claim"]
 
 
+async def untrusted_api(folder, received):
+    """A real HTTPS server on 127.0.0.1 whose self-signed certificate nobody trusts; `received` gets every byte a
+    request sends it."""
+    import ipaddress
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(hours=1))
+        .not_valid_after(now + timedelta(hours=1))
+        # The address matches, so the only fault is that nobody vouches for the certificate.
+        .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), False)
+        .sign(key, hashes.SHA256())
+    )
+    pem = folder / "api.pem"
+    pem.write_bytes(
+        certificate.public_bytes(serialization.Encoding.PEM)
+        + key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(pem)
+
+    async def answer(reader, writer):
+        received.extend(await reader.read(65536))
+        writer.close()
+
+    return await asyncio.start_server(answer, "127.0.0.1", 0, ssl=context)
+
+
+async def test_the_runner_stops_on_a_certificate_it_cannot_verify(monkeypatch, tmp_path):
+    """Waiting never makes a certificate trusted: the runner stops at once instead of retrying, and no claim, with
+    its token, ever reached that server."""
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import TransportError
+
+    received = bytearray()
+    server = await untrusted_api(tmp_path, received)
+    claims = through_the_client(monkeypatch, None)
+    try:
+        with pytest.raises(TransportError):
+            await asyncio.wait_for(
+                serve(runner_configuration(f"https://127.0.0.1:{server.sockets[0].getsockname()[1]}")), 2
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert claims == ["deployment_runners.claim"] and not received
+
+
 async def test_a_cancellation_that_a_failed_runner_claim_hid_still_stops_the_runner(monkeypatch):
     import httpcore
 
