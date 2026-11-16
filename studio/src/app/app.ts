@@ -10154,19 +10154,50 @@ export class App implements CanvasHost {
       (this.signInEnded || this.platformSignedOut)
     );
   }
+  /**
+   * Why the active platform's account can't be used, as the Runs tab reads
+   * it: the banner's reason while it shows, otherwise how the last check of
+   * who is signed in failed, so dismissing the banner changes nothing. A
+   * sign-in or a check still under way answers for itself.
+   */
+  get identityProblem(): IdentityFailure | null {
+    if (!this.profile || this.loginWatcher.pending) return null;
+    const kind = this.platformNotice?.kind;
+    if (
+      kind === "expired" ||
+      kind === "not-linked" ||
+      kind === "offline" ||
+      kind === "store"
+    )
+      return kind;
+    const failure = this.checkingIdentity ? null : this.identityFailure;
+    // An account the platform refuses outranks one held from before; a
+    // platform out of reach matters only while there is no account.
+    if (failure === "expired" || failure === "not-linked") return failure;
+    return this.identity ? null : failure;
+  }
   get platformStatusText() {
     if (!this.profile) return "Local authoring";
     if (this.loginWatcher.pending) return "Signing in";
-    const kind = this.platformNotice?.kind;
-    if (kind === "expired") return "Session expired";
-    if (kind === "not-linked") return "Account not recognized";
-    if (kind === "offline") return "Can't reach the platform";
-    if (kind === "store") return "Credential store unavailable";
-    if (this.identity) return "Signed in";
+    const problem = this.identityProblem;
+    if (problem === "not-linked") return "Account not recognized";
+    if (problem === "offline") return "Can't reach the platform";
+    if (problem === "store") return "Credential store unavailable";
     const status = this.connectionStatus;
-    return status?.profile?.name === this.profile.name
-      ? stateLabel(platformState(status.profile, status))
-      : "Not signed in";
+    const state =
+      status?.profile?.name === this.profile.name
+        ? platformState(status.profile, status)
+        : null;
+    if (problem === "expired")
+      // Once the banner is gone, a sign-out the host reports still reads as
+      // one; a host still holding a sign-in the platform refused doesn't.
+      return this.platformNotice?.kind === "expired" ||
+        !state ||
+        state === "signed_in"
+        ? "Session expired"
+        : stateLabel(state);
+    if (this.identity) return "Signed in";
+    return state ? stateLabel(state) : "Not signed in";
   }
   /** Workspace names for the selected scope, from the identity or the saved profile. */
   get workspaceNames() {
@@ -10273,10 +10304,18 @@ export class App implements CanvasHost {
    */
   get indicatorWord() {
     if (!this.profile || this.indicatorConnecting) return "";
-    const kind = this.platformNotice?.kind;
-    if (kind === "offline" || kind === "store") return "Offline";
-    if (!this.signedIn) return "Sign in";
-    return "";
+    if (this.loginWatcher.pending) return "Signing in";
+    switch (this.identityProblem) {
+      case "not-linked":
+        return "Not linked";
+      case "expired":
+        return "Sign in";
+      case "offline":
+        return "Offline";
+      case "store":
+        return "Keychain";
+    }
+    return this.signedIn ? "" : "Sign in";
   }
   /** The platform menu's second line: "Payments / Production · jane@acme.example". */
   get platformMenuDetail() {
