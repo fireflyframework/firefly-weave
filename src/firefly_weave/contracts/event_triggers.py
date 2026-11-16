@@ -127,8 +127,9 @@ class EventTriggerStart(ContractModel):
     event_id: UUID
     event_type: PlatformEventType
     source_run_id: UUID
-    # The event that began this start's chain of reactions, which the chain's budget of starts counts by.
-    root_event_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The event that began this start's chain of reactions, which the chain's budget of starts counts by: the event
+    # itself for a first reaction.
+    root_event_id: UUID
     # The started run's place in a chain of reactions: 1 for a run started by an event of a run no event started.
     depth: int = Field(ge=1)
     status: EventStartStatus

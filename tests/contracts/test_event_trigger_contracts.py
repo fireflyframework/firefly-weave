@@ -49,6 +49,7 @@ STARTED = {
     "event_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c03",
     "event_type": "transaction.in_doubt",
     "source_run_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c04",
+    "root_event_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c07",
     "depth": 1,
     "status": "started",
     "run_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c05",
@@ -132,12 +133,11 @@ def test_an_event_trigger_start_reports_its_outcome_without_values():
             wire(EventTriggerStart, refused)
 
 
-def test_a_start_names_the_event_that_began_its_chain_when_known():
-    root = "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c07"
-    named = wire(EventTriggerStart, {**STARTED, "root_event_id": root})
-    assert named.model_dump(mode="json")["root_event_id"] == root
-    assert "root_event_id" not in wire(EventTriggerStart, STARTED).model_dump(mode="json")
-    assert "root_event_id" not in EventTriggerStart.model_json_schema().get("required", [])
+def test_a_start_always_names_the_event_that_began_its_chain():
+    assert wire(EventTriggerStart, STARTED).model_dump(mode="json")["root_event_id"] == STARTED["root_event_id"]
+    assert "root_event_id" in EventTriggerStart.model_json_schema()["required"]
+    with pytest.raises(ValidationError):
+        wire(EventTriggerStart, {key: value for key, value in STARTED.items() if key != "root_event_id"})
 
 
 def test_recovery_reports_event_starts_and_resolutions_only_when_nonzero():
