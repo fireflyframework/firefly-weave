@@ -1503,18 +1503,40 @@ test.describe("another person on the same environment", () => {
       .getByRole("dialog", { name: "Drain 3 workers?" })
       .getByRole("button", { name: "Drain" })
       .click();
+    // After the sign-in, Studio reads the host's connection before it checks
+    // who is signed in; that read stays out until the first drain's answer
+    // is on screen.
+    let answerStatus: () => void = () => undefined;
+    const statusHeld = new Promise<void>((resolve) => (answerStatus = resolve));
+    let reading: () => void = () => undefined;
+    const statusOut = new Promise<void>((resolve) => (reading = resolve));
+    await page.route(
+      (url) => url.pathname === "/studio/connection",
+      async (r) => {
+        if (people.person() === "john") {
+          reading();
+          await statusHeld;
+        }
+        await r.fallback().catch(() => undefined);
+      },
+    );
     // The first drain is on its way when John turns out to be signed in.
     await out;
     await people.switch();
+    await statusOut;
     release();
+    const results = page.getByRole("region", { name: "Drain workers" });
+    await expect(results).toContainText("Draining.");
+    // Nothing else goes out while Studio doesn't know who is signed in.
+    await page.waitForTimeout(300);
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+    answerStatus();
     await expect
       .poll(() => people.lists.filter((item) => item.person === "john").length)
       .toBeGreaterThan(0);
     await page.waitForTimeout(500);
     expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
-    await expect(
-      page.getByRole("region", { name: "Drain workers" }),
-    ).toHaveCount(0);
+    await expect(results).toHaveCount(0);
   });
 
   test("a change refused for capacity is not sent again once another person is signed in", async ({

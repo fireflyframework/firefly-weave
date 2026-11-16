@@ -9875,8 +9875,12 @@ export class App implements CanvasHost {
     }
   }
   private async afterBackgroundSignIn() {
-    await this.refreshConnectionStatus();
-    await this.checkPlatform();
+    // The host already holds the new sign-in while Studio still has the
+    // account from before: commands wait from now until the check answers,
+    // not only once the connection's status has been read.
+    await this.trackIdentity(
+      this.refreshConnectionStatus().then(() => this.checkPlatform()),
+    );
     await this.refresh();
   }
   /**
