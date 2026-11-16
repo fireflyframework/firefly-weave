@@ -15,7 +15,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Alert evaluation next to a project's own changes on real PostgreSQL: the signal reads hold no project lock, an
-evaluation that changes no rule's state never waits for one, and a full environment's writes fit their budget."""
+evaluation that changes no rule's state never waits for one, a firing on a busy project waits for the next cycle, and
+a full environment's writes fit their budget."""
 
 import asyncio
 import time
@@ -78,6 +79,35 @@ async def test_an_evaluation_that_changes_no_state_never_waits_for_the_project_l
         await holder
     evaluated = await state(case, rule.id)
     assert (evaluated["state"], evaluated["evaluated_at"], evaluated["last_value"]) == ("ok", case.now, 0.0)
+
+
+async def test_a_firing_on_a_busy_project_waits_for_the_next_cycle(evaluator):  # noqa: F811
+    case = evaluator
+    run = await case.start("alert-busy-project")
+    await add_incident(case, run.id, "first")
+    rule = await create(case, draft())
+    before = await state(case, rule.id)
+    holding, done = asyncio.Event(), asyncio.Event()
+
+    async def hold() -> None:
+        # A project change holds the project's operation lock while the rule should fire.
+        async with case.tx():
+            holding.set()
+            await done.wait()
+
+    holder = asyncio.create_task(hold())
+    await asyncio.wait_for(holding.wait(), 10)
+    try:
+        await at(case, 0)
+        assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:r", r=rule.id) == []
+        assert await state(case, rule.id) == before
+    finally:
+        done.set()
+        await holder
+    await at(case, 30)
+    alerts = await rows(case, "SELECT state FROM alerts WHERE rule_id=:r", r=rule.id)
+    events = await rows(case, "SELECT kind FROM alert_events WHERE rule_id=:r", r=rule.id)
+    assert (alerts, events) == ([{"state": "firing"}], [{"kind": "firing"}])
 
 
 async def test_a_hundred_rules_are_written_well_within_the_write_budget(evaluator, monkeypatch):  # noqa: F811
