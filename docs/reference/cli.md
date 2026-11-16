@@ -110,7 +110,7 @@ platform; the others need the `client` extra and either a
 | Claim or complete human tasks | `human-tasks`, `human-assignments`, `human-groups` | [Human tasks](../guides/human-tasks.md) |
 | Transfer and inspect workflow files | `files upload`, `download`, `list`, `read`, `delete` | `file_manager` to upload/manage; `file_reader` to read; [file tutorial](../guides/files.md) |
 | Read or reply to email conversations | `email` | An email connection; [email workflow](../guides/email.md) |
-| Start runs from webhooks, schedules, or messages | `triggers` (with `schedules`), `broker-triggers`, `provider-sources`, `provider-receipts` | `trigger.manage`; [schedules](schedules-and-timers.md), [Kafka](../connectors/kafka.md), [provider sources](provider-sources.md) |
+| Start runs from webhooks, schedules, messages, or platform events | `triggers` (with `schedules` and `events`), `broker-triggers`, `provider-sources`, `provider-receipts` | `trigger.manage`; [schedules](schedules-and-timers.md), [Kafka](../connectors/kafka.md), [provider sources](provider-sources.md), [platform events](../guides/transactions.md#6-react-to-a-transaction) |
 | Send workflow events to other systems | `subscriptions`, `deliveries`, `source-bindings`, `teams-references`, `whatsapp-statuses` | [Outbound integration events](integration-events.md) |
 | Register workers and their releases | `workers` (with `releases`), `worker package`, `worker deploy` | [Worker guide](../guides/workers.md) |
 | Administer tenants, people, and grants | `remote access create-tenant`, `create-project`, `create-environment`, `environment`, `grant`, `principals`, `members` | `platform_admin` for tenants, principals, and platform grants; `tenant_admin` for projects, environments, and members; [create your team's workspace](../guides/people-and-access.md#create-your-teams-workspace), [People and access](../guides/people-and-access.md) |
@@ -505,7 +505,7 @@ Commands that call a platform are thin adapters over the typed SDK and use the
 canonical `/api/v1/tenants/...` paths. The public families are `remote`,
 `definitions` (with `drafts` and `activations`), `connections`, `runs` (with
 `incidents` and `debug`), `workers` (with `releases`), `triggers` (with
-`schedules`), `operations` (with `change-requests`, `targets`, `deployments`,
+`schedules` and `events`), `operations` (with `change-requests`, `targets`, `deployments`,
 `plans`, `jobs` and `runners`), and the integration, human-work, email, and
 administration families listed [above](#pick-the-command-family). Install the `client` extra.
 

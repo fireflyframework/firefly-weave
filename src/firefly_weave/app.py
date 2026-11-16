@@ -52,6 +52,7 @@ from firefly_weave.api.connections import ConnectionController
 from firefly_weave.api.connector_descriptors import ConnectorDescriptorController
 from firefly_weave.api.debug import DebugController
 from firefly_weave.api.definitions import DefinitionController
+from firefly_weave.api.event_triggers import EventTriggerController
 from firefly_weave.api.files import FileController
 from firefly_weave.api.health import HealthController
 from firefly_weave.api.human_files import HumanFileController
@@ -359,6 +360,7 @@ def make_app(
                 TaskService,
                 WebhookService,
                 TriggerController,
+                EventTriggerController,
                 ConnectionBindingPort,
                 WorkerAdmissionPort,
                 AuthenticationFilter,

@@ -40,7 +40,16 @@ from firefly_weave.contracts.language_features import (
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
-    {"ai.agent", "flow.callWorkflow", "flow.forEach", "flow.onError", "flow.transaction", "text.concat", "text.join"}
+    {
+        "ai.agent",
+        "flow.callWorkflow",
+        "flow.eventTrigger",
+        "flow.forEach",
+        "flow.onError",
+        "flow.transaction",
+        "text.concat",
+        "text.join",
+    }
 )
 
 # Expression positions per step kind; blocks are walked separately.

@@ -120,6 +120,7 @@ from firefly_weave.contracts.email import (
     EmailSubmission,
     EmailTokenRequest,
 )
+from firefly_weave.contracts.event_triggers import EventTrigger, EventTriggerRequest, EventTriggerStart
 from firefly_weave.contracts.file_workers import WorkerFileAccess, WorkerFileChunk, WorkerFileCreate, WorkerFileRead
 from firefly_weave.contracts.files import FileChunk, FileChunkRead, FileCommand, FileCreate, FileUpload
 from firefly_weave.contracts.human_files import HumanFileChunk, HumanFileCommand, HumanFileCreate, HumanFileRead
@@ -2213,6 +2214,43 @@ OPERATIONS = {
         Operation("triggers.read", ENVIRONMENT + "/triggers/{identifier}", "GET", Trigger, "trigger.manage"),
         Operation(
             "triggers.disable", ENVIRONMENT + "/triggers/{identifier}/disable", "POST", Disabled, "trigger.manage"
+        ),
+        # Creating one also needs run.start and run.read, and transaction.reconcile when it may resolve transactions.
+        Operation(
+            "event_triggers.create",
+            ENVIRONMENT + "/event-triggers",
+            "POST",
+            EventTrigger,
+            "trigger.manage",
+            EventTriggerRequest,
+            (201,),
+        ),
+        Operation(
+            "event_triggers.list",
+            ENVIRONMENT + "/event-triggers",
+            "GET",
+            Page[EventTrigger],
+            "trigger.manage",
+            page=True,
+        ),
+        Operation(
+            "event_triggers.read", ENVIRONMENT + "/event-triggers/{identifier}", "GET", EventTrigger, "trigger.manage"
+        ),
+        Operation(
+            "event_triggers.disable",
+            ENVIRONMENT + "/event-triggers/{identifier}/disable",
+            "POST",
+            EventTrigger,
+            "trigger.manage",
+        ),
+        # Reading what a trigger started also needs run.read: runs, event types and refusal causes.
+        Operation(
+            "event_triggers.starts",
+            ENVIRONMENT + "/event-triggers/{identifier}/starts",
+            "GET",
+            Page[EventTriggerStart],
+            "trigger.manage",
+            page=True,
         ),
         Operation(
             "webhooks.receive",

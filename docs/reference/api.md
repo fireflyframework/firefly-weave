@@ -1346,6 +1346,11 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `triggers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers` | trigger.manage |
 | `triggers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{identifier}` | trigger.manage |
 | `triggers.disable` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{identifier}/disable` | trigger.manage |
+| `event_triggers.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers` | trigger.manage |
+| `event_triggers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers` | trigger.manage |
+| `event_triggers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}` | trigger.manage |
+| `event_triggers.disable` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/disable` | trigger.manage |
+| `event_triggers.starts` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/starts` | trigger.manage |
 | `webhooks.receive` | `POST /webhooks/{identifier}` | signed webhook and pinned principal authority |
 | `schedules.save` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules` | trigger.manage and run.start |
 | `schedules.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules` | run.read |
@@ -1398,6 +1403,13 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `deployment_change_requests.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/cancel` | deployment.plan |
 | `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
+
+`event_triggers.create` also requires `run.start` and `run.read`, and `transaction.reconcile` when the request
+sets `may_reconcile`, which lets the trigger's runs resolve their transaction once workflows can resolve
+transactions; until then it has no effect. Each run a trigger starts receives the transaction facts of its event,
+such as business keys and failure codes, so the trigger's owner must still hold `run.start` and `run.read` when
+the run starts. `event_triggers.starts` also requires `run.read`: it shows the runs a trigger started, event types
+and refusal causes.
 
 ## Deployment Operations authority
 

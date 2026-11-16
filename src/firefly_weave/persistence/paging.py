@@ -40,6 +40,7 @@ TABLES = frozenset(
         "worker_releases",
         "worker_instances",
         "trigger_routes",
+        "event_triggers",
         "incidents",
     }
 )

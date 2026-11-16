@@ -231,10 +231,11 @@ POSITIONS = [
 ]
 
 
-def test_text_loops_calls_and_transactions_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
+def test_text_loops_calls_transactions_and_triggers_compile_and_nothing_is_advertised_that_is_not_compiled():
     assert set(COMPILED_FEATURES) == {
         "ai.agent",
         "flow.callWorkflow",
+        "flow.eventTrigger",
         "flow.forEach",
         "flow.onError",
         "flow.transaction",

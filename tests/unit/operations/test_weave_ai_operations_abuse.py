@@ -140,6 +140,7 @@ IDS = {
     "incident run_id": uid(12),
     "incident actor_id": uid(13),
     "incident receipt_id": uid(14),
+    "incident workflow_run_id": uid(15),
     "summary api instance": uid(21),
     "attention item id": uid(22),
     "approval item id": uid(23),
@@ -221,6 +222,8 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
         incident_key=TEXT["incident dedupe handle"],
         resolution={
             "receipt_id": str(IDS["incident receipt_id"]),
+            # The workflow run that resolved the incident, when a triggered workflow did.
+            "workflow_run_id": str(IDS["incident workflow_run_id"]),
             "kind": "accept_reconciled_result",
             "reason": free_text(variant, "incident resolution reason"),
             "output": {"value": free_text(variant, "incident resolution output")},

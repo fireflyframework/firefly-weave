@@ -135,6 +135,7 @@ def test_features_are_what_the_target_runs():
     assert ADVERTISED_FEATURES == (
         "ai.agent",
         "flow.callWorkflow",
+        "flow.eventTrigger",
         "flow.forEach",
         "flow.onError",
         "flow.transaction",
@@ -144,6 +145,7 @@ def test_features_are_what_the_target_runs():
     assert language_manifest().features == [
         "ai.agent",
         "flow.callWorkflow",
+        "flow.eventTrigger",
         "flow.forEach",
         "flow.onError",
         "flow.transaction",

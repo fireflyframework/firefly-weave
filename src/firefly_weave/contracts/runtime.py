@@ -121,6 +121,10 @@ class RecoveryReport(ContractModel):
     calls_cancelled: int = Field(default=0, exclude_if=lambda v: not v)
     # Final task failures that the step's onError setting took instead of an incident.
     handled_failures: int = Field(default=0, exclude_if=lambda v: not v)
+    # Runs started by platform events, starts that could not start, and resolutions the platform ran for workflows.
+    event_starts: int = Field(default=0, exclude_if=lambda v: not v)
+    event_starts_rejected: int = Field(default=0, exclude_if=lambda v: not v)
+    resolutions: int = Field(default=0, exclude_if=lambda v: not v)
 
 
 class UnavailableRunAcknowledgment(ContractModel):

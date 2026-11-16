@@ -27,6 +27,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
@@ -50,6 +51,8 @@ class RecordedResolution(ContractModel):
     reason: str = Field(min_length=1, max_length=2000)
     output: JsonData = None
     evidence_reference: str | None = Field(default=None, min_length=1, max_length=2000)
+    # The workflow run whose resolve step applied this resolution; only the platform sets it.
+    workflow_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("reason", "evidence_reference")
     @classmethod
@@ -62,6 +65,16 @@ class RecordedResolution(ContractModel):
 class IncidentResolution(RecordedResolution):
     """A resolution request. An unset `output` is left out (the API refuses any output, null included, for
     retry_safe and terminate); an explicit null is sent, as accepting a null result needs."""
+
+    # Never part of a request: only the platform names the workflow run that resolved an incident.
+    workflow_run_id: SkipJsonSchema[None] = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_workflow_run(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "workflow_run_id" in data:
+            raise ValueError("Only the platform names the workflow run that resolved an incident")
+        return data
 
     @model_serializer(mode="wrap")
     def _unset_output_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

@@ -47,6 +47,20 @@ SPDX-License-Identifier: Apache-2.0
   so alert email works out of the box.
 - The retention periods of operations records can be read
   (`operations_retention.read`).
+- Workflows can start from platform events. Declare `eventTrigger` with the
+  transaction events a workflow accepts and give it
+  `inputSchema: {$ref: weave.platform-event-v1}`, then bind it with
+  `weave triggers events create`, which needs `trigger.manage`, `run.start`,
+  and `run.read`. Each event starts each matching trigger's workflow once, as
+  the trigger's owner; a chain of reactions stops at three deep and at 64
+  starts per first event, and runs started this way show the origin Platform
+  event. Disabling a trigger stops its starts at once. Migration
+  `0041_language_event_triggers` adds the trigger tables.
+- Before you upgrade, note that the schema name `weave.platform-event-v1` is now
+  the platform's: while a catalog has its own schema under that name, compiles
+  against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
+  use it, until the schema is renamed. Run views gain the origin `event`, so
+  clients that read run origins strictly need the new value.
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
   claim can't reach the platform (the connection is refused, drops or times

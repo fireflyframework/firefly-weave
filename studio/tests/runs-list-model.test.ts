@@ -217,6 +217,10 @@ describe("a run as a list row", () => {
 
     const succeeded = runRow(summary(fixtureIds.succeeded), now);
     expect(succeeded.origin).toEqual({ label: "Webhook", icon: "webhook" });
+    // A run a platform event started.
+    expect(
+      runRow({ ...summary(fixtureIds.succeeded), origin: "event" }, now).origin,
+    ).toEqual({ label: "Platform event", icon: "signal" });
     // An older run that doesn't say how it started.
     expect(
       runRow({ ...summary(fixtureIds.succeeded), origin: null }, now).origin,

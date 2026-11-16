@@ -12,6 +12,7 @@
     "features": [
       "ai.agent",
       "flow.callWorkflow",
+      "flow.eventTrigger",
       "flow.forEach",
       "flow.onError",
       "flow.transaction",
