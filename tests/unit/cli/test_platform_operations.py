@@ -181,6 +181,15 @@ def test_operations_enable_is_resumable_stage_by_stage(operations):
     assert [name for name, _ in case.api.calls[calls:]] == ["deployment_runners.list"]
 
 
+def test_local_workers_start_again_after_they_stop_on_their_own(operations):
+    # A worker ends run() on a lost lease or a token it could not renew, for example while the platform restarts.
+    # Docker starts it again; one that `weave platform stop` or a change request stopped stays stopped.
+    enable(operations)
+    workers = json.loads((operations.directory / "operations" / "workers" / "compose.json").read_text())
+    (service,) = workers["services"].values()
+    assert service.get("restart") == "unless-stopped"
+
+
 def test_the_workers_project_and_runner_service_are_exactly_what_the_receipt_says(operations):
     case = operations
     enable(case)

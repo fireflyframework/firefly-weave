@@ -353,6 +353,9 @@ class WeaveClient:
                             message="Remote request failed",
                             request_id=response.headers.get("X-Weave-Request-ID"),
                         )
+                    if response.status_code < 400:
+                        # The API never redirects: a redirect is an answer outside the contract, not one to retry.
+                        raise ContractError(problem)
                     raise (PreconditionFailed if problem.status == 412 else WeaveError)(problem)
                 if response.status_code not in spec.statuses:
                     raise ValueError("Unexpected response status")

@@ -25,6 +25,7 @@ import {
   builtinActions,
   hasPython,
   localAuthoring,
+  routeBuiltinActions,
   stopLocalAuthoring,
 } from "./local-authoring";
 import {
@@ -170,9 +171,9 @@ async function workflowPublished(page: Page) {
   await toast.getByRole("button", { name: "Dismiss notification" }).click();
 }
 /** Send email's action as someone else published it, with other content. */
-function takenEmail(): Definition {
+async function takenEmail(): Promise<Definition> {
   const send = (
-    builtinActions() as {
+    (await builtinActions()) as {
       actions: {
         connector: string;
         action: string;
@@ -349,7 +350,7 @@ for (const size of sizes)
       page,
     }) => {
       const { platform } = await withOwnedSteps(page, {
-        taken: [takenEmail()],
+        taken: [await takenEmail()],
       });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
@@ -479,7 +480,7 @@ for (const size of sizes)
     });
 
     test("a taken action's new name is announced", async ({ page }) => {
-      await withOwnedSteps(page, { taken: [takenEmail()] });
+      await withOwnedSteps(page, { taken: [await takenEmail()] });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
       await expect(
@@ -527,7 +528,7 @@ for (const size of sizes)
       page,
     }) => {
       const { platform } = await withOwnedSteps(page, {
-        taken: [takenEmail()],
+        taken: [await takenEmail()],
       });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
@@ -562,7 +563,7 @@ for (const size of sizes)
       page,
     }) => {
       const { platform } = await withOwnedSteps(page, {
-        taken: [takenEmail()],
+        taken: [await takenEmail()],
       });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
@@ -820,10 +821,7 @@ test.describe("a workflow kept on this computer, opened again once connected", (
       page,
       yamlFile("order-intake.yaml", ownedWorkflow),
       async (p) => {
-        await localAuthoring(p);
-        await p.route("**/studio/contracts/connector-actions", (route) =>
-          route.fulfill({ json: builtinActions() }),
-        );
+        await Promise.all([localAuthoring(p), routeBuiltinActions(p)]);
         await offline(p);
       },
     );
