@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // on the platform or the role can't change it; a refused read shows nothing
 // of the run; signing out forgets the run and the run's data kept on this
 // computer; and the run's error is said by its code only.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
 import { hasPython, localAuthoring } from "./local-authoring";
@@ -39,8 +39,10 @@ import {
   runsPage,
   runsWorkflow,
   WORKER_CATALOG,
+  type KeptDrafts,
   type RunFixture,
   type RunsPage,
+  type RunsPlatform,
 } from "./runs-po";
 import { StepDetailsPage } from "./step-details-po";
 import {
@@ -330,13 +332,19 @@ test("the run's error is said by its code, never the platform's message", async 
   await expect(page.locator("body")).not.toContainText("ada@example.com");
 });
 
-test("a Debug request whose run didn't load never starts Debug later", async ({
-  page,
-}) => {
-  // Debug in editor starts only from a click: a request from Operate whose
-  // run didn't load in the editor never starts Debug when the run is chosen
-  // later for another reason.
-  const draft = "00000003-1111-4111-8111-111111111111";
+// Debug in editor starts only from a click: a request from Operate whose run
+// didn't load in the editor never starts Debug when that run is chosen later
+// for another reason.
+const DEBUG_DRAFT = "00000003-1111-4111-8111-111111111111";
+/**
+ * The failed run's workflow as a draft on the platform, and Debug in editor
+ * clicked in Operate's detail of that run. The editor's first read of the
+ * run goes to `editorRead`; Operate's own read before it goes through.
+ */
+async function debugFromOperate(
+  page: Page,
+  editorRead: (route: Route) => Promise<void>,
+) {
   await page.clock.install({ time: new Date(NOW) });
   await useNewEditor(page);
   await connected(page, {
@@ -348,35 +356,58 @@ test("a Debug request whose run didn't load never starts Debug later", async ({
   });
   const platform = await routeRuns(page, listedKinds.map(runFixture));
   const kept = await keepDrafts(page, [
-    { id: draft, revision: 5, document: runsWorkflow },
+    { id: DEBUG_DRAFT, revision: 5, document: runsWorkflow },
   ]);
-  // The editor's own read of the run fails once (Operate's read before it
-  // succeeds): the run doesn't load where Debug was handed over.
-  let failed = false;
+  let first = true;
   await page.route(new RegExp(`/runs/${RUN_IDS.failed}$`), async (route) => {
     if (
       route.request().method() === "GET" &&
-      !failed &&
+      first &&
       page.url().includes("/workflows/")
     ) {
-      failed = true;
-      return route.fulfill({
-        status: 500,
-        contentType: "application/problem+json",
-        body: JSON.stringify({ code: "WV-INTERNAL", message: "Try again." }),
-      });
+      first = false;
+      return editorRead(route);
     }
     return route.fallback();
   });
   await localAuthoring(page);
-
   await page.goto(`/operate/runs/${RUN_IDS.failed}`);
   await page
     .locator(".record-detail")
     .getByRole("button", { name: "Debug in editor" })
     .click();
-  await expect(page).toHaveURL(new RegExp(`/workflows/${draft}/designer`));
-  const runs = runsPage(page);
+  await expect(page).toHaveURL(
+    new RegExp(`/workflows/${DEBUG_DRAFT}/designer`),
+  );
+  return { runs: runsPage(page), platform, kept };
+}
+/** Answers a run read with this problem. */
+const refuseRead =
+  (status: number, code: string, message: string) => (route: Route) =>
+    route.fulfill({
+      status,
+      contentType: "application/problem+json",
+      body: JSON.stringify({ code, message }),
+    });
+/** Long enough for Debug to copy, execute and say so if it started: it didn't. */
+async function noDebugStarted(
+  page: Page,
+  platform: RunsPlatform,
+  kept: KeptDrafts,
+) {
+  await page.clock.runFor(11_000);
+  expect(outputReads(platform.requests)).toEqual([]);
+  expect(kept.saved).toEqual([]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
+test("a Debug request whose run didn't load never starts Debug later", async ({
+  page,
+}) => {
+  const { runs, platform, kept } = await debugFromOperate(
+    page,
+    refuseRead(500, "WV-INTERNAL", "Try again."),
+  );
   await expect(
     page.getByText("Studio can't show this run's data."),
   ).toBeVisible();
@@ -386,17 +417,40 @@ test("a Debug request whose run didn't load never starts Debug later", async ({
   await runs.tabs.getByRole("tab", { name: "Runs" }).click();
   await expect(runs.rows).toHaveCount(listedKinds.length + 1);
   await expect(runs.canvas.locator(".run-header .run-caption")).toBeVisible();
-  await runs.row(RUN_IDS.failed).click();
-  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
-    `Run ${RUN_IDS.failed.slice(0, 8)}`,
-  );
-  // Long enough for Debug to copy, execute and say so if it started.
-  await page.clock.runFor(11_000);
-  expect(outputReads(platform.requests)).toEqual([]);
-  expect(kept.saved).toEqual([]);
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await choose(page, runs, RUN_IDS.failed);
+  await noDebugStarted(page, platform, kept);
   await expect(runs.tabs.getByRole("tab", { name: "Runs" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+});
+
+test("a Debug request whose run didn't load is used up without leaving the tab", async ({
+  page,
+}) => {
+  const { runs, platform, kept } = await debugFromOperate(
+    page,
+    refuseRead(500, "WV-INTERNAL", "Try again."),
+  );
+  await expect(
+    page.getByText("Studio can't show this run's data."),
+  ).toBeVisible();
+  // On the same tab: another run, then the run Debug asked for.
+  await choose(page, runs, RUN_IDS.retry);
+  await choose(page, runs, RUN_IDS.failed);
+  await noDebugStarted(page, platform, kept);
+});
+
+test("a Debug request is forgotten when the platform refuses its run", async ({
+  page,
+}) => {
+  const { runs, platform, kept } = await debugFromOperate(
+    page,
+    refuseRead(403, "WV-FORBIDDEN", "Not allowed."),
+  );
+  await expect(runs.panel).toContainText("You need run.read in development.");
+  // Allowed again: Refresh lists the runs, and the person chooses the run.
+  await runs.panel.getByRole("button", { name: "Refresh runs" }).click();
+  await choose(page, runs, RUN_IDS.failed);
+  await noDebugStarted(page, platform, kept);
 });
