@@ -18,17 +18,20 @@
 """The platform-event trigger migration: scoped trigger and start records, run chain depth, and safe controls."""
 
 import json
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from operations_support import assert_usage, scope_as_app, seed_prior_head
+from operations_support import AT, assert_usage, scope_as_app, seed_prior_head, seed_worker_source
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_incident_migration import upgrade
 from test_transaction_migration import insert_transaction
 
+from firefly_weave.contracts.transaction_resolve import RESOLVE_TASK_TYPE
 from firefly_weave.persistence.migrations import SCHEMA_VERSION, check_schema
+from firefly_weave.runtime.models import TaskIntent
 
 pytestmark = pytest.mark.integration
 PRIOR_HEAD = "0040_editor_step_tests"
@@ -285,6 +288,54 @@ async def test_a_start_written_while_its_source_run_settles_at_full_quota_spends
         await connection.execute(text("SELECT weave_control_finish()"))
     async with engine.begin() as owner:
         assert await owner.scalar(text("SELECT count(*) FROM event_trigger_starts")) == 1
+
+
+async def test_platform_tasks_are_never_pinned_to_a_worker_release(upgraded):
+    engine, ids = upgraded
+    insert = text(
+        "INSERT INTO task_intents VALUES(:id,:tenant,:project,:environment,:active_run,:node,"
+        "cast(:payload AS jsonb),:release,:key,'ready')"
+    )
+
+    def task(node: str, task_type: str, release: UUID | None) -> dict:
+        intent = TaskIntent(
+            node_id=node,
+            action_digest="a" * 64,
+            action_reference=f"{node}@1.0.0",
+            input=3,
+            connection_slot=None,
+            task_type=task_type,
+            task_version="1.0.0",
+            deadline=AT + timedelta(hours=1),
+        )
+        return {
+            **ids,
+            "id": uuid4(),
+            "node": node,
+            "payload": intent.model_dump_json(),
+            "release": release,
+            "key": node,
+        }
+
+    async with engine.begin() as connection:
+        await seed_worker_source(connection, ids)
+        for task_type in (RESOLVE_TASK_TYPE, "weave-platform.anything"):
+            savepoint = await connection.begin_nested()
+            with pytest.raises(IntegrityError, match="task_intents_platform_unpinned"):
+                await connection.execute(insert, task("pinned", task_type, ids["release"]))
+            await savepoint.rollback()
+        await connection.execute(insert, task("resolve", RESOLVE_TASK_TYPE, None))
+        await connection.execute(insert, task("echo", "echo", ids["release"]))
+        assert (
+            await connection.scalar(text("SELECT count(*) FROM task_intents WHERE node_id IN ('resolve','echo')")) == 2
+        )
+        definition = await connection.scalar(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname='task_intents_platform_ready'")
+        )
+        assert definition.endswith(
+            "(tenant_id, project_id, environment_id, id) WHERE ((status = 'ready'::text) AND "
+            "((payload ->> 'task_type'::text) = 'weave-platform.transaction-resolve'::text))"
+        )
 
 
 async def test_the_schema_is_at_the_event_trigger_version(upgraded):
