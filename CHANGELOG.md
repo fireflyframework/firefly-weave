@@ -325,9 +325,12 @@ SPDX-License-Identifier: Apache-2.0
   worker has no other change.
 - Security: aiohttp is updated to 3.14.4 (CVE-2026-111064, CVE-2026-111066,
   CVE-2026-123817) in the Teams extra and the Agentic worker.
-- Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
-  filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
-  CVE-2026-119197).
+- Security: the Agentic worker updates dnspython to 2.9.2 (CVE-2026-114605,
+  CVE-2026-128089), filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5
+  (CVE-2026-119194 to CVE-2026-119197).
+- Security: the Agentic worker updates temporalio to 1.35.0, whose bundled Rust
+  extension no longer includes zip 8.6.0 (CVE-2026-115905, CVE-2026-115907 to
+  CVE-2026-115909); the worker never loaded that code.
 - Schema revision becomes `0040_editor_step_tests`, with two new migrations:
   `0039_transactions_reserve` and `0040_editor_step_tests`. One role is added,
   `step_tester`, which `weave platform up` grants to the local owner in the
