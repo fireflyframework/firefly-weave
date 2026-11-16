@@ -52,6 +52,36 @@ body = {}
 # Without an AI worker (the pr profile installs none) publishing the AI setup is refused by its own precondition.
 answers = [{ status = 422, code = "WV-AI-WORKER-MISSING" }]
 
+# Alert rules: reads need alert.read; changes and previews need alert.manage (a preview also needs status.read, which
+# every person here who holds alert.manage has). A permitted create names a random channel, so it answers 422
+# WV-ALERT-CHANNEL and stores nothing; a random rule answers 404.
+[operations."alert_presets.list"]
+capability = "alert.read"
+
+[operations."alert_rules.create"]
+capability = "alert.manage"
+body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info", channel_ids = ["random"] }
+
+[operations."alert_rules.delete"]
+capability = "alert.manage"
+identifier = "random"
+
+[operations."alert_rules.list"]
+capability = "alert.read"
+
+[operations."alert_rules.preview"]
+capability = "alert.manage"
+body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
+
+[operations."alert_rules.read"]
+capability = "alert.read"
+identifier = "random"
+
+[operations."alert_rules.update"]
+capability = "alert.manage"
+identifier = "random"
+body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
+
 [operations."bindable_connections.list"]
 capability = "connection.bind"
 

@@ -1102,6 +1102,13 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `run_statistics.series` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/series` | status.read |
 | `run_statistics.workflows` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/workflows` | status.read |
 | `run_statistics.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/steps` | status.read |
+| `alert_rules.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.read |
+| `alert_rules.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.read |
+| `alert_rules.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.manage |
+| `alert_rules.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
+| `alert_rules.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
+| `alert_rules.preview` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/preview` | alert.manage |
+| `alert_presets.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-presets` | alert.read |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |

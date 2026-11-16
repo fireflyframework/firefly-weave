@@ -39,6 +39,7 @@ from firefly_weave.contracts.ai import (
     AISetupGrantResult,
     AISetupPublishResult,
 )
+from firefly_weave.contracts.alerts import AlertPreset, AlertPreview, AlertRuleDraft, AlertRuleView
 from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
@@ -950,6 +951,62 @@ OPERATIONS = {
             "status.read",
             query=StatisticsStepsQuery,
         ),
+        Operation(
+            "alert_rules.list",
+            ENVIRONMENT + "/alert-rules",
+            "GET",
+            Page[AlertRuleView],
+            "alert.read",
+            page=True,
+        ),
+        Operation(
+            "alert_rules.read",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "GET",
+            AlertRuleView,
+            "alert.read",
+            etag=True,
+        ),
+        Operation(
+            "alert_rules.create",
+            ENVIRONMENT + "/alert-rules",
+            "POST",
+            AlertRuleView,
+            "alert.manage",
+            AlertRuleDraft,
+            (201,),
+            idempotency=True,
+            etag=True,
+        ),
+        Operation(
+            "alert_rules.update",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "PUT",
+            AlertRuleView,
+            "alert.manage",
+            AlertRuleDraft,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "alert_rules.delete",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "DELETE",
+            Revoked,
+            "alert.manage",
+            revision="required",
+            request_required=False,
+        ),
+        Operation(
+            # Also needs status.read: a preview reveals operations figures.
+            "alert_rules.preview",
+            ENVIRONMENT + "/alert-rules/preview",
+            "POST",
+            AlertPreview,
+            "alert.manage",
+            AlertRuleDraft,
+        ),
+        Operation("alert_presets.list", ENVIRONMENT + "/alert-presets", "GET", list[AlertPreset], "alert.read"),
         Operation(
             "retention.plan",
             PROJECT + "/operations/retention/plans",
