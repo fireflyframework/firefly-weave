@@ -127,8 +127,8 @@ def validate_rule(rule: AlertRuleDraft) -> None:
         raise _refuse("min_samples")
 
 
-# A 60-second window reads ended runs directly, up to this many; beyond it the five-minute statistics answer.
-RECENT_WINDOW_SECONDS = 60
+# A window reads the runs that ended in it directly while at most this many did; beyond it the five-minute statistics
+# answer. The bound is on every run that ended in the environment, so a selector never makes the scan longer.
 RECENT_LIMIT = 10_000
 _SCOPE = "r.tenant_id=:tenant AND r.project_id=:project AND r.environment_id=:environment"
 # Withheld runs count only toward the environment's total, never toward a workflow, as in run statistics.
@@ -137,14 +137,16 @@ _SHOWN_IN = (
     "AND NOT EXISTS(SELECT 1 FROM run_policy_blocks b WHERE b.tenant_id=r.tenant_id AND b.project_id=r.project_id "
     "AND b.environment_id=r.environment_id AND b.run_id=r.run_id)"
 )
+_COUNTED = "NOT r.test AND r.status IN ('succeeded','failed','cancelled','timed_out')"
 _RECENT_RUNS = (
-    "SELECT count(*) AS runs,count(*) FILTER (WHERE status='succeeded') AS succeeded,"
-    "count(*) FILTER (WHERE status='failed') AS failed,count(*) FILTER (WHERE status='cancelled') AS cancelled,"
-    "count(*) FILTER (WHERE status='timed_out') AS timed_out,"
-    "weave_histogram((extract(epoch FROM ended_at-started_at)*1000000)::bigint) AS duration_hist "
-    "FROM (SELECT r.status,r.started_at,r.ended_at FROM run_facts r WHERE "
-    f"{_SCOPE} AND NOT r.test AND r.ended_at IS NOT NULL AND r.ended_at>=:since AND r.ended_at<=:until "
-    "AND r.status IN ('succeeded','failed','cancelled','timed_out') {workflow} LIMIT :limit) r"
+    "SELECT count(*) AS scanned,count(*) FILTER (WHERE counted AND status='succeeded') AS succeeded,"
+    "count(*) FILTER (WHERE counted AND status='failed') AS failed,"
+    "count(*) FILTER (WHERE counted AND status='cancelled') AS cancelled,"
+    "count(*) FILTER (WHERE counted AND status='timed_out') AS timed_out,"
+    "weave_histogram((extract(epoch FROM ended_at-started_at)*1000000)::bigint) FILTER (WHERE counted) "
+    "AS duration_hist FROM (SELECT r.status,r.started_at,r.ended_at,"
+    f"({_COUNTED}{{workflow}}) AS counted FROM run_facts r WHERE {_SCOPE} AND r.ended_at IS NOT NULL "
+    "AND r.ended_at>=:since AND r.ended_at<=:until LIMIT :limit) r"
 )
 _BUCKET_RUNS = (
     "SELECT coalesce(sum(succeeded),0) AS succeeded,coalesce(sum(failed),0) AS failed,"
@@ -170,7 +172,7 @@ class SignalSource(Protocol):
     """The figures signals are computed from, all read in the rule's environment."""
 
     async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
-        """Runs that ended in [since, until], or None when more than RECENT_LIMIT did."""
+        """Runs that ended in [since, until], or None when more than RECENT_LIMIT runs ended in the environment."""
         ...
 
     async def bucket_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes:
@@ -192,7 +194,7 @@ class SignalSource(Protocol):
         ...
 
 
-class _Database:
+class DatabaseSource:
     """The figures read with one section's reader, each statement under what is left of its budget."""
 
     def __init__(self, reader: SectionReader, now: datetime) -> None:
@@ -200,18 +202,19 @@ class _Database:
 
     async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
         row = await self.reader.row(
-            _RECENT_RUNS.format(workflow="" if workflow is None else f"AND {_SHOWN_IN}"),
+            _RECENT_RUNS.format(workflow="" if workflow is None else f" AND {_SHOWN_IN}"),
             since=since,
             until=until,
             limit=RECENT_LIMIT + 1,
             workflow=workflow,
             policy=admission.POLICY,
         )
-        return None if int(row["runs"]) > RECENT_LIMIT else Outcomes().add(row)
+        return None if int(row["scanned"]) > RECENT_LIMIT else Outcomes().add(row)
 
     async def bucket_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes:
         rolled = await self.reader.rows(_ROLLED)
-        # The rollup recomputes the last WINDOW of buckets every visit; a cursor older than that is behind for good.
+        # Only a busy environment gets here. The rollup recomputes the last WINDOW of buckets every visit; a cursor
+        # older than that is behind for good, and its buckets would read as zero.
         if not rolled or rolled[0]["rolled_until"] is None or rolled[0]["rolled_until"] < self.now - statistics.WINDOW:
             raise SignalUnavailable()
         row = await self.reader.row(
@@ -252,10 +255,9 @@ async def _runs(source: SignalSource, rule: AlertRuleDraft, now: datetime) -> Ou
     if rule.window_seconds is None:
         raise ValueError("A run signal needs a window")
     since = now - timedelta(seconds=rule.window_seconds)
-    if rule.window_seconds == RECENT_WINDOW_SECONDS:
-        recent = await source.recent_runs(rule.selector.workflow, since, now)
-        if recent is not None:
-            return recent
+    recent = await source.recent_runs(rule.selector.workflow, since, now)
+    if recent is not None:
+        return recent
     return await source.bucket_runs(rule.selector.workflow, since, now)
 
 
@@ -406,7 +408,7 @@ async def read_signal(
     """
 
     async def read(budget: Budget) -> Value:
-        return await measure(_Database(SectionReader(tx, now, budget), now), health, rule, now, targets=targets)
+        return await measure(DatabaseSource(SectionReader(tx, now, budget), now), health, rule, now, targets=targets)
 
     value = await read_section(tx, read, monotonic=monotonic)
     if isinstance(value, UnavailableSection):

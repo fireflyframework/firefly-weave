@@ -18,17 +18,27 @@
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 
 from firefly_weave.contracts.alerts import AlertRuleDraft
 from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
-from firefly_weave.operations.alert_signals import ALERT_SIGNALS, READERS, SignalUnavailable, Value, measure
+from firefly_weave.operations import statistics
+from firefly_weave.operations.alert_signals import (
+    ALERT_SIGNALS,
+    READERS,
+    RECENT_LIMIT,
+    DatabaseSource,
+    SignalUnavailable,
+    Value,
+    measure,
+)
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.operations.statistics_histogram import histogram
 from firefly_weave.operations.statistics_reads import Outcomes
+from firefly_weave.operations.summary import SectionReader
 
 NOW = datetime(2026, 11, 15, 12, 7, 30, tzinfo=UTC)
 
@@ -50,8 +60,8 @@ def rule(signal: str, **changes: Any) -> AlertRuleDraft:
 class Source:
     """Answers each read from fixed figures and records what was asked."""
 
-    def __init__(self, *, recent: Outcomes | None = None, buckets: Outcomes | None = None, stale: bool = False):
-        self.recent, self.buckets, self.stale = recent, buckets or Outcomes(), stale
+    def __init__(self, *, recent: Outcomes | None = None, buckets: Outcomes | None = None):
+        self.recent, self.buckets = recent, buckets or Outcomes()
         self.asked: list[tuple[Any, ...]] = []
 
     async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
@@ -60,8 +70,6 @@ class Source:
 
     async def bucket_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes:
         self.asked.append(("buckets", workflow, since, until))
-        if self.stale:
-            raise SignalUnavailable()
         return self.buckets
 
     async def load(self) -> LoadSection:
@@ -108,35 +116,89 @@ def test_every_signal_has_a_reader():
 
 async def test_the_failure_rate_is_failed_and_timed_out_runs_over_ended_runs():
     outcomes = Outcomes(succeeded=6, failed=2, cancelled=1, timed_out=1)
-    source = Source(buckets=outcomes)
-    assert await read("run.failure_rate", source, min_samples=10) == Value(0.3, 10)
-    assert await read("run.failures", Source(buckets=outcomes)) == Value(3.0, 10)
-    assert source.asked == [("buckets", None, NOW - timedelta(seconds=900), NOW)]
+    assert await read("run.failure_rate", Source(recent=outcomes), min_samples=10) == Value(0.3, 10)
+    assert await read("run.failures", Source(recent=outcomes)) == Value(3.0, 10)
     # No ended run: no rate, and the failure count is a known zero.
-    assert await read("run.failure_rate", Source()) == Value(None, 0)
-    assert await read("run.failures", Source()) == Value(0.0, 0)
+    assert await read("run.failure_rate", Source(recent=Outcomes())) == Value(None, 0)
+    assert await read("run.failures", Source(recent=Outcomes())) == Value(0.0, 0)
 
 
 async def test_the_duration_percentile_is_in_seconds():
     durations = [1_000_000] * 19 + [30_000_000]
     outcomes = Outcomes(succeeded=20, hist=histogram(durations))
-    value = await read("run.duration_p95", Source(buckets=outcomes))
+    value = await read("run.duration_p95", Source(recent=outcomes))
     assert value.samples == 20 and value.value is not None and 0.7 <= value.value <= 1.42
 
 
-async def test_a_60_second_window_reads_ended_runs_and_falls_back_to_statistics_above_10000():
+@pytest.mark.parametrize("window", [60, 300, 900, 3600])
+async def test_every_window_reads_ended_runs_and_falls_back_to_statistics_above_10000(window):
     recent = Outcomes(succeeded=3, failed=1)
     source = Source(recent=recent, buckets=Outcomes(succeeded=1))
-    assert await read("run.failure_rate", source, window_seconds=60, selector={"workflow": "orders"}) == Value(0.25, 4)
-    assert source.asked == [("recent", "orders", NOW - timedelta(seconds=60), NOW)]
+    narrowed = await read("run.failure_rate", source, window_seconds=window, selector={"workflow": "orders"})
+    assert narrowed == Value(0.25, 4)
+    assert source.asked == [("recent", "orders", NOW - timedelta(seconds=window), NOW)]
     crowded = Source(recent=None, buckets=Outcomes(succeeded=9, failed=1))
-    assert await read("run.failure_rate", crowded, window_seconds=60) == Value(0.1, 10)
+    assert await read("run.failure_rate", crowded, window_seconds=window) == Value(0.1, 10)
     assert [entry[0] for entry in crowded.asked] == ["recent", "buckets"]
 
 
-async def test_stale_statistics_fail_the_read_instead_of_reading_as_zero():
+class Reader:
+    """Answers the database source's statements: ended runs, the rollup cursor and the five-minute statistics."""
+
+    def __init__(self, *, scanned: int, rolled_until: datetime | None, cursor: bool = True):
+        self.scanned, self.rolled_until, self.cursor = scanned, rolled_until, cursor
+        self.statements: list[str] = []
+
+    async def rows(self, sql: str, **values: Any) -> list[dict[str, Any]]:
+        if "operations_statistics_cursors" in sql:
+            self.statements.append("cursor")
+            return [{"rolled_until": self.rolled_until}] if self.cursor else []
+        if "run_stat_buckets" in sql:
+            self.statements.append("buckets")
+            return [{"succeeded": 9, "failed": 1, "cancelled": 0, "timed_out": 0, "duration_hist": None}]
+        assert "run_facts" in sql and values["limit"] == RECENT_LIMIT + 1
+        self.statements.append("runs")
+        found = min(self.scanned, values["limit"])
+        return [{"scanned": found, "succeeded": 3, "failed": 1, "cancelled": 0, "timed_out": 0, "duration_hist": None}]
+
+    async def row(self, sql: str, **values: Any) -> dict[str, Any]:
+        return (await self.rows(sql, **values))[0]
+
+
+async def database_read(reader: Reader, window: int = 900) -> Value:
+    source = DatabaseSource(cast(SectionReader, reader), NOW)
+    return await measure(source, LoopHealth(), rule("run.failure_rate", window_seconds=window), NOW)
+
+
+@pytest.mark.parametrize("window", [300, 900, 3600])
+async def test_runs_are_read_without_a_rollup_while_few_ended(window):
+    for reader in (
+        Reader(scanned=4, rolled_until=None, cursor=False),
+        Reader(scanned=4, rolled_until=None),
+        Reader(scanned=RECENT_LIMIT, rolled_until=NOW - timedelta(hours=2)),
+    ):
+        assert await database_read(reader, window) == Value(0.25, 4)
+        assert reader.statements == ["runs"]
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        Reader(scanned=RECENT_LIMIT + 1, rolled_until=None, cursor=False),
+        Reader(scanned=RECENT_LIMIT + 1, rolled_until=None),
+        Reader(scanned=RECENT_LIMIT + 1, rolled_until=NOW - statistics.WINDOW - timedelta(seconds=1)),
+    ],
+)
+async def test_above_10000_runs_stale_statistics_fail_the_read_instead_of_reading_as_zero(reader):
     with pytest.raises(SignalUnavailable):
-        await read("run.failures", Source(stale=True))
+        await database_read(reader)
+    assert reader.statements == ["runs", "cursor"]
+
+
+async def test_above_10000_runs_current_statistics_answer():
+    reader = Reader(scanned=RECENT_LIMIT + 1, rolled_until=NOW - statistics.WINDOW)
+    assert await database_read(reader) == Value(0.1, 10)
+    assert reader.statements == ["runs", "cursor", "buckets"]
 
 
 async def test_gauges_read_the_environment_summary_figures():

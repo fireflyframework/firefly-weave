@@ -29,7 +29,8 @@ from test_worker_fleet_facts import add_target, add_workers, clock, principal_wi
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Grant
 from firefly_weave.contracts.alerts import AlertRuleDraft
-from firefly_weave.operations.alert_signals import Value, read_signal
+from firefly_weave.operations import alert_signals
+from firefly_weave.operations.alert_signals import SignalUnavailable, Value, read_signal
 from firefly_weave.operations.loop_health import LoopHealth
 
 pytestmark = pytest.mark.integration
@@ -78,6 +79,34 @@ async def test_a_60_second_window_reads_runs_that_ended_in_the_last_minute(opera
     # No rollup ran: the last minute is read from the runs themselves.
     failure_rate = rule("run.failure_rate", window_seconds=60)
     assert await signal(operations_case, failure_rate) == Value(0.25, 4)
+
+
+@pytest.mark.parametrize("window", [300, 900])
+async def test_every_window_reads_the_runs_when_no_rollup_ran(operations_case, window):
+    await seed_runs(operations_case, total=10, failing=3, tests=2, ended=NOW - timedelta(seconds=120))
+    assert await signal(operations_case, rule("run.failure_rate", window_seconds=window)) == Value(0.3, 10)
+    assert await signal(operations_case, rule("run.failures", window_seconds=window)) == Value(3.0, 10)
+
+
+@pytest.mark.parametrize("window", [300, 900])
+async def test_a_rollup_older_than_the_window_never_reads_as_zero(operations_case, window):
+    # The operations loop last rolled this environment up a minute before the window began.
+    await rollup(operations_case, NOW - timedelta(seconds=window + 60))
+    await seed_runs(operations_case, total=10, failing=3, tests=2, ended=NOW - timedelta(seconds=120))
+    assert await signal(operations_case, rule("run.failure_rate", window_seconds=window)) == Value(0.3, 10)
+    assert await signal(operations_case, rule("run.failures", window_seconds=window)) == Value(3.0, 10)
+
+
+async def test_above_the_run_limit_only_current_statistics_answer(operations_case, monkeypatch):
+    # Five ended runs stand for more than 10,000: the read falls back to the five-minute statistics.
+    monkeypatch.setattr(alert_signals, "RECENT_LIMIT", 3)
+    failures = rule("run.failures", window_seconds=900)
+    await rollup(operations_case, NOW - timedelta(minutes=16))
+    await seed_runs(operations_case, total=5, failing=2, tests=0, ended=NOW - timedelta(seconds=120))
+    with pytest.raises(SignalUnavailable):
+        await signal(operations_case, failures)
+    await rollup(operations_case)
+    assert await signal(operations_case, failures) == Value(2.0, 5)
 
 
 async def test_the_selector_narrows_to_one_workflow(operations_case):
