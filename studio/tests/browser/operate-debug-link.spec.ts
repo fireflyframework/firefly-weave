@@ -316,30 +316,26 @@ test("another environment while the drafts are read opens nothing", async ({
   });
   await routeRuns(page, listedKinds.map(runFixture));
   const kept = await keepDrafts(page, DRAFTS);
-  // Only the drafts read that Debug in editor starts waits until released.
-  // Home lists drafts too, when the page opens and after a workspace switch,
-  // and those reads go through.
+  // Only the search for the run's draft, 100 drafts a page, waits until
+  // released. Home lists drafts too, 50 a page, when the page opens and
+  // after a workspace switch, and those reads go through.
   let release = () => {};
   const held = new Promise<void>((done) => (release = done));
-  let holding = false;
-  const reads = { held: [] as URL[], answered: 0 };
+  const reads = { held: 0, answered: 0 };
   await page.route(
-    (url) => /\/projects\/[^/]+\/drafts$/.test(url.pathname),
+    (url) =>
+      /\/projects\/[^/]+\/drafts$/.test(url.pathname) &&
+      url.searchParams.get("limit") === "100",
     async (route) => {
-      if (!holding) return route.fallback();
-      holding = false;
-      reads.held.push(new URL(route.request().url()));
+      reads.held++;
       await held;
       await route.fallback();
       reads.answered++;
     },
   );
   const detail = await openDetail(page, RUN_IDS.failed);
-  holding = true;
   await detail.getByRole("button", { name: "Debug in editor" }).click();
-  // The search for the run's draft: 100 drafts a page.
-  await expect.poll(() => reads.held.length).toBe(1);
-  expect(reads.held[0].searchParams.get("limit")).toBe("100");
+  await expect.poll(() => reads.held).toBe(1);
   await page.locator(".platform-indicator").click();
   await page.getByRole("button", { name: "Switch workspace" }).click();
   await page.getByRole("radio", { name: "Acme / Payments / Staging" }).check();
