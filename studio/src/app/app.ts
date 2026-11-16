@@ -9869,14 +9869,23 @@ export class App implements CanvasHost {
   }
   /**
    * A sign-in ended without an account, and the host keeps the credential it
-   * had: one it can still use (a session it renews, or the account a
-   * cancelled switch left) is checked; otherwise sign in again. A reason
-   * recorded earlier (offline, a locked store) stays.
+   * had. An account Studio already has (a canceled switch) stays, and the
+   * outcome says so; one it can still use (a session it renews, or the
+   * account a canceled switch left before a reload) is checked; otherwise
+   * sign in again. A reason recorded earlier (offline, a locked store) stays.
    */
   private async afterBackgroundSignInEnded() {
     await this.refreshConnectionStatus();
-    if (this.identity) return;
-    if (!sessionUsable(this.connectionStatus?.authentication)) {
+    const usable = sessionUsable(this.connectionStatus?.authentication);
+    if (this.identity) {
+      const notice = this.platformNotice;
+      if (usable && notice?.kind === "sign-in-failed") {
+        this.platformNotice = { ...notice, kept: true };
+        this.cdr.markForCheck();
+      }
+      return;
+    }
+    if (!usable) {
       this.identityFailure ??= "expired";
       return;
     }
@@ -9888,8 +9897,10 @@ export class App implements CanvasHost {
       this.identity &&
       ended?.kind === "sign-in-failed" &&
       !this.platformNotice
-    )
+    ) {
       this.platformNotice = { ...ended, kept: true };
+      this.cdr.markForCheck();
+    }
   }
   /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {

@@ -612,6 +612,34 @@ test.describe("the Runs list's states", () => {
       );
     });
 
+  test("an account switch canceled in the background, without a reload, says the account is still signed in", async ({
+    page,
+  }) => {
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+    });
+    const indicator = page.locator(".platform-indicator");
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Switch account on Acme" }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("cancelled");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText(
+      "Sign-in canceled. You're still signed in to Acme as jane@acme.example.",
+      { timeout: 15_000 },
+    );
+    await expect(banner.getByRole("button")).toHaveCount(1);
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+  });
+
   const unreachable: Reply = {
     status: 503,
     json: {
