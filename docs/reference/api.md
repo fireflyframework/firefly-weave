@@ -496,13 +496,14 @@ kinds are `deployment-target`, `deployment`, `deployment-observation`,
 draft and no `run`, `draft` or `simulation` attachment (422 otherwise), and the
 reply's `proposals` is always empty.
 
-Each attachment needs `lumi.use` and the read its owning service decides, checked
-on both the token and the stored principal:
+Each attachment needs `lumi.use`, checked on the token's principal, and the read
+its owning service decides, checked as the caller's stored principal, which is
+loaded again for each question:
 
 | Kind | `id` | Read it needs | What Weave AI receives |
 | --- | --- | --- | --- |
 | `worker` | The worker's ID | `status.read`; placement only for targets with `deployment.read` | Presence, last contact age, draining, capacity, active leases, up to 20 task types, runtime, platform hint, SDK version, placement target and component, registration age |
-| `incident` | The incident's ID | `incident.read`; `run.read` for the step kind and event types | Code, origin code, status, step ID, instance key, generation, age, workflow name and version, run status, the last 20 event types, resolution kind, whether external effects may continue, and the code's meaning and fitting decisions |
+| `incident` | The incident's ID | `incident.read`; `run.read` for the step kind and event types | Code, origin code, status, step ID, step kind, instance key, generation, age, workflow name and version, run status, the last 20 event types, resolution kind, whether external effects may continue, and the code's meaning and fitting decisions |
 | `environment` | The path's environment ID | `status.read`, and each summary section's own capability | API version and uptime, compatibility, up to 16 health components, load, workers, targets, incidents, runs in the last 24 hours, and up to 20 attention items |
 | `change-request` | The change request's ID | `deployment.read` on its target, its plan and its apply job | Intent, state, up to 20 components with desired values and image digests, drain mode and timeout, drain set size, four-eyes, plan time left, plan risks, up to 20 history states with ages, receipt code, failure code and warnings |
 
@@ -525,9 +526,11 @@ Weave AI never receives:
   (`"ref": 1` to `4`) and its data. Build digests, incident keys and plan digests stay out too.
 - Typed text: change request titles and reasons, failure messages and comments.
 
-Every string sent is a fixed value, a code, a name, a step ID or instance key,
-an attention title that matches the summary's own wording, or a server sentence;
-anything else is sent as `null`. Times are sent as ages in whole seconds.
+For the `worker`, `incident`, `environment` and `change-request` kinds, every
+string sent is a fixed value, a code, a name, a step ID or instance key, an
+attention title that matches the summary's own wording, or a server sentence;
+anything else is sent as `null`, and times are sent as ages in whole seconds. The
+deployment kinds send their records' saved times as they are.
 
 The API reads each attachment as the caller before the model call and again after
 it. A refusal on the second read discards the reply with that read's own error.

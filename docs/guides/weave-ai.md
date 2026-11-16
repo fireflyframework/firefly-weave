@@ -225,7 +225,8 @@ lists what each kind sends.
 
 Weave AI never receives logs, host names, people, record IDs or what runs carry.
 It receives codes, states, counts, ages in seconds and the names of workflows,
-targets, components and task types. Access is read again after the reply, and a
+targets, components and task types. Names are sent as written, so keep host names
+and personal data out of them. Access is read again after the reply, and a
 reply built from wider access than the second read sees is discarded.
 
 ## Deploy the private gateway
