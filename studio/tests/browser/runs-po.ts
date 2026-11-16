@@ -37,6 +37,7 @@ import {
   connected,
   lookupAction,
   newWorkflow,
+  showView,
   workerAction,
   type CatalogEntry,
 } from "./support";
@@ -715,11 +716,10 @@ export async function openRunsTab(
   await new DesignerPage(page).setSource(
     JSON.stringify(options.workflow ?? runsWorkflow, null, 2),
   );
-  const tabs = page.getByRole("tablist", { name: "Workflow views" });
-  await tabs.getByRole("tab", { name: "Runs" }).click();
-  await expect(tabs.getByRole("tab", { name: "Runs" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  await showView(page, "Runs");
+  await expect(page.locator("#editor-view")).toHaveAttribute(
+    "aria-labelledby",
+    "view-tab-runs",
   );
   return { runs: runsPage(page), platform };
 }
