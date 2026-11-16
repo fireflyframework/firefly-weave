@@ -688,7 +688,8 @@ class AlertLoop:
             revision=before.revision,
         )
         if not saved:
-            # The rule changed while it was read; its state started over, and the next cycle reads it again.
+            # The rule was saved while it was read: nothing read before the change is written, and the next cycle
+            # reads the changed rule.
             return
         value = reading.value if isinstance(reading, Value) else None
         if step.transition == "fired" and value is not None:

@@ -360,8 +360,14 @@ class AlertRuleRepository:
 
     async def lock_state(self, rule_id: UUID) -> None:
         """Take the rule's state row before its alert, the order the evaluator writes them in, so a change and an
-        evaluation of the same rule wait for each other instead of each holding what the other needs."""
-        await self.execute(f"SELECT 1 FROM alert_rule_state WHERE {SCOPED} AND rule_id=:id FOR UPDATE", id=rule_id)
+        evaluation of the same rule wait for each other instead of each holding what the other needs.
+
+        Its revision moves on, so an evaluation that read the rule before this change writes nothing of it; the next
+        cycle reads the changed rule.
+        """
+        await self.execute(
+            f"UPDATE alert_rule_state SET revision=revision+1 WHERE {SCOPED} AND rule_id=:id", id=rule_id
+        )
 
     async def delete(self, rule_id: UUID, expected: int) -> bool:
         deleted = await self.rows(

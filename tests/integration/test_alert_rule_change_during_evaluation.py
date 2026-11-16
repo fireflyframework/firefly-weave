@@ -14,8 +14,9 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Changing or deleting a firing rule while the evaluator writes it, on real PostgreSQL: both take the rule's state
-row before its alert, so neither waits on the other in the opposite order, and the alert ends resolved."""
+"""Changing or deleting a rule while the evaluator works on it, on real PostgreSQL: both take the rule's state row
+before its alert, so neither waits on the other in the opposite order, and the alert ends resolved; a rule saved
+between the evaluator's read and its write gets nothing written from that read."""
 
 import asyncio
 import time
@@ -28,6 +29,7 @@ from test_operations_statistics import owner
 from test_operations_summary import add_incident
 
 from firefly_weave.operations import alert_loop
+from firefly_weave.operations.alert_loop import AlertLoop
 
 pytestmark = pytest.mark.integration
 
@@ -97,3 +99,33 @@ async def test_deleting_a_firing_rule_while_the_evaluator_writes_it_resolves_its
     (resolved,) = await rows(case, "SELECT state,resolved_reason FROM alerts WHERE id=:id", id=alert)
     assert resolved == {"state": "resolved", "resolved_reason": "rule_deleted"}
     assert await rows(case, "SELECT rule_id FROM alert_rule_state WHERE rule_id=:r", r=rule.id) == []
+
+
+async def test_a_rule_saved_with_a_longer_for_time_while_it_is_read_does_not_fire(evaluator, monkeypatch):  # noqa: F811
+    case = evaluator
+    run = await case.start("alert-change-after-read")
+    await add_incident(case, run.id, "first")
+    rule = await create(case, draft())
+    planned, release = asyncio.Event(), asyncio.Event()
+    original = AlertLoop._plan
+
+    async def paused(self, authority, now):
+        decided = await original(self, authority, now)
+        planned.set()
+        await release.wait()
+        return decided
+
+    monkeypatch.setattr(AlertLoop, "_plan", paused)
+    # The read decided to fire (For 0, one incident open); the rule is saved with For 300 before anything is written.
+    evaluation = asyncio.create_task(at(case, 0))
+    await asyncio.wait_for(planned.wait(), 10)
+    saved = await case.rules.update(case.manager, case.scope, rule.id, draft(for_seconds=300), 1, context=CONTEXT)
+    release.set()
+    await evaluation
+    assert (saved.revision, saved.for_seconds) == (2, 300)
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:r", r=rule.id) == []
+    # The next evaluation reads the saved For time and waits instead of firing.
+    monkeypatch.setattr(AlertLoop, "_plan", original)
+    await at(case, 30)
+    assert (await state(case, rule.id))["state"] == "pending"
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:r", r=rule.id) == []
