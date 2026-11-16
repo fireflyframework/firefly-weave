@@ -816,3 +816,20 @@ source = "Firefly Brand Kit 2.0.0 (private) icon(), 16 and 24 px solid and 32 to
 reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
 copyright = "Copyright 2026 Firefly Software Solutions Inc."
 license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "tests/fixtures/weave_ai_explanations/records.json"
+kind = "commentless"
+reason = "Strict JSON fixture records and evaluation case definitions for Weave AI operations explanations; JSON can't carry a comment header."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/agentic/tests/live/explain_eval/cases.json"
+kind = "generated"
+source = "tests/unit/operations/test_weave_ai_explain_cases.py"
+reason = "Golden gateway requests the platform's builders produce for the explanation evaluation; regenerate with WEAVE_UPDATE_EXPLAIN_CASES=1, never by hand."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
