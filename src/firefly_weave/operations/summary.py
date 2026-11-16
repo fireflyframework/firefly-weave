@@ -45,6 +45,7 @@ from firefly_weave.access.authorization import AccessDenied, AuthorizationServic
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.alerts import AlertsSection
 from firefly_weave.contracts.operations_summary import (
     ATTENTION_LIMIT,
     COMPATIBILITY_ITEM,
@@ -84,8 +85,9 @@ TELEMETRY_INTERVALS_RECENT = 3
 # Query failures a section reports as unavailable: a cancelled or timed-out statement, a lock timeout, a
 # serialization conflict, a deadlock and exhausted database resources. Every other error propagates.
 _TRANSIENT = ("57014", "55P03", "40001", "40P01", "53")
-# Priority of each attention kind; critical alerts (1) arrive with alert storage.
+# Priority of each attention kind: critical firing alerts first.
 PRIORITY: dict[str, int] = {
+    "alert": 1,
     "job": 2,
     "approval": 3,
     "worker": 4,
@@ -330,6 +332,7 @@ class _Reach:
     runs: bool
     targets: tuple[UUID, ...] | None
     approvals: tuple[UUID, ...] | None
+    alerts: bool = False
 
 
 def _intersect(left: tuple[UUID, ...] | None, right: tuple[UUID, ...] | None) -> tuple[UUID, ...] | None:
@@ -436,6 +439,15 @@ async def read_runners_offline(reader: SectionReader, targets: tuple[UUID, ...] 
     return int(row["offline"])
 
 
+async def read_alerts(reader: SectionReader) -> AlertsSection:
+    """Firing alerts, and how many of them are critical."""
+    row = await reader.row(
+        "SELECT count(*) AS firing,count(*) FILTER (WHERE severity='critical') AS critical FROM alerts "
+        f"WHERE {_SCOPE.format(alias='')} AND state='firing'"
+    )
+    return AlertsSection(firing=int(row["firing"]), critical=int(row["critical"]))
+
+
 async def read_incidents(reader: SectionReader) -> IncidentsSection:
     """Incidents of test runs are left out; an incident without facts predates test runs and counts.
 
@@ -502,6 +514,9 @@ class OperationsSummaryService:
             incidents: IncidentsSection | ForbiddenSection | UnavailableSection = (
                 await section(self._incidents) if reach.incidents else ForbiddenSection(state="forbidden")
             )
+            alerts: AlertsSection | ForbiddenSection | UnavailableSection = (
+                await section(read_alerts) if reach.alerts else ForbiddenSection(state="forbidden")
+            )
             attention = await section(lambda reader: self._attention(reader, reach))
             # The last day's runs from run statistics: status.read is all it needs.
             runs_24h = await section(lambda reader: last_day(reader.tx, observed_at))
@@ -515,6 +530,7 @@ class OperationsSummaryService:
             incidents=incidents,
             attention=attention,
             runs_24h=runs_24h,
+            alerts=alerts,
         )
 
     async def telemetry(self, actor: Principal, scope: Scope, *, context: AuditContext) -> OperationsTelemetry:
@@ -559,6 +575,7 @@ class OperationsSummaryService:
             runs=permitted("run.read"),
             targets=readable,
             approvals=_intersect(readable, approvable),
+            alerts=permitted("alert.read"),
         )
 
     def _api(self, scope: Scope) -> ApiSection:
@@ -612,6 +629,14 @@ class OperationsSummaryService:
         """Up to 20 items per kind the caller may read, ranked together; alerts join once they are stored."""
         candidates: list[Candidate] = []
         limit = ATTENTION_LIMIT
+        if reach.alerts:
+            # Titled with the rule's name alone; only critical firing alerts need attention here.
+            for row in await reader.rows(
+                f"SELECT id,rule_name,started_at FROM alerts WHERE {_SCOPE.format(alias='')} AND state='firing' "
+                "AND severity='critical' ORDER BY started_at,id LIMIT :limit",
+                limit=limit,
+            ):
+                candidates.append(Candidate("alert", row["id"], row["rule_name"], row["started_at"]))
         if reach.targets != ():
             for row in await reader.rows(
                 "SELECT j.id,t.payload->>'name' AS target_name,"

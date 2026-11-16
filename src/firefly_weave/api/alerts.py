@@ -28,10 +28,19 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import etag, page_request, page_response, parse_revision
+from firefly_weave.api.transport import (
+    decode_cursor_v2,
+    etag,
+    page_request,
+    page_response,
+    parse_query,
+    parse_revision,
+)
 from firefly_weave.contracts.alerts import (
     AlertChannel,
     AlertChannelDraft,
+    AlertEventQuery,
+    AlertQuery,
     AlertRecipientConsentDraft,
     AlertRuleDraft,
     AlertRuleView,
@@ -46,8 +55,10 @@ from firefly_weave.operations.alert_channels import (
     AlertRecipientConsentService,
     AlertSettingsService,
 )
-from firefly_weave.operations.alert_rules import AlertRuleService
+from firefly_weave.operations.alert_rules import AlertRuleService, AlertService
+from firefly_weave.operations.fact_positions import run_position
 from firefly_weave.operations.loop_health import LoopHealth
+from firefly_weave.operations.retention_periods import RetentionPeriodService
 
 
 def _revision(request: Request) -> int | None:
@@ -79,9 +90,11 @@ class AlertController:
         settings: AlertSettingsService,
         consents: AlertRecipientConsentService,
         addresses: AlertAddressService,
+        alerts: AlertService,
+        retention: RetentionPeriodService,
     ) -> None:
         self.rules, self.channels, self.settings = rules, channels, settings
-        self.consents, self.addresses = consents, addresses
+        self.consents, self.addresses, self.alerts, self.retention = consents, addresses, alerts, retention
 
     @operation("alert_rules.list")
     async def rules_list(self, request: Request) -> JSONResponse:
@@ -290,3 +303,58 @@ class AlertController:
             context=request.state.audit_context,
         )
         return JSONResponse(address.model_dump(mode="json"))
+
+    @operation("alerts.list")
+    async def alerts_list(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        query = parse_query(request.query_params, AlertQuery)
+        position = run_position(decode_cursor_v2(query.cursor, scope, query.cursor_collection("alerts")))
+        result = await self.alerts.list(
+            request.state.principal,
+            scope,
+            query,
+            None if position is None or position.at is None else (position.at, position.id),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result)
+
+    @operation("alerts.read")
+    async def alerts_read(self, request: Request) -> JSONResponse:
+        alert = await self.alerts.read(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(alert.model_dump(mode="json"))
+
+    @operation("alerts.acknowledge")
+    async def alerts_acknowledge(self, request: Request) -> JSONResponse:
+        alert = await self.alerts.acknowledge(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(alert.model_dump(mode="json"))
+
+    @operation("alert_events.list")
+    async def alert_events_list(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        query = parse_query(request.query_params, AlertEventQuery)
+        position = run_position(decode_cursor_v2(query.cursor, scope, query.cursor_collection("alert-events")))
+        result = await self.alerts.events(
+            request.state.principal,
+            scope,
+            query,
+            None if position is None or position.at is None else (position.at, position.id),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result)
+
+    @operation("operations_retention.read")
+    async def retention_read(self, request: Request) -> JSONResponse:
+        periods = await self.retention.read(
+            request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+        )
+        return JSONResponse(periods.model_dump(mode="json"))

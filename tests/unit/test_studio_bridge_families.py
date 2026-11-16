@@ -260,6 +260,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "step_tests.answer",
         "test_policy.read",
         "test_policy.save",
+        *ALERT_AND_ADMINISTRATION_OPERATIONS,
         *(
             "deployment_change_requests." + verb
             for verb in (
@@ -314,7 +315,61 @@ def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):
         "releases.usage",
         "operations_summary.read",
         "operations_telemetry.read",
+        "operations_retention.read",
     }
+
+
+# Alerts and Settings › Administration: every alert operation, the retention periods, compatibility, retention plans,
+# and the webhook subscriptions and deliveries that receive alert changes.
+ALERT_AND_ADMINISTRATION_OPERATIONS = frozenset(
+    {
+        *(f"alert_rules.{verb}" for verb in ("list", "read", "create", "update", "delete", "preview")),
+        "alert_presets.list",
+        *(f"alert_channels.{verb}" for verb in ("list", "read", "create", "update", "delete", "test")),
+        "alerts.list",
+        "alerts.read",
+        "alerts.acknowledge",
+        "alert_events.list",
+        "alert_settings.read",
+        "alert_settings.update",
+        "alert_recipient_consents.list",
+        "alert_recipient_consents.create",
+        "alert_recipient_consents.revoke",
+        "alert_addresses.read_mine",
+        "alert_addresses.save_mine",
+        "operations_retention.read",
+        "compatibility.read",
+        "compatibility.check",
+        "retention.plan",
+        "retention.read",
+        "retention.apply",
+        *(f"subscriptions.{verb}" for verb in ("save", "list", "read", "disable")),
+        *(f"deliveries.{verb}" for verb in ("read", "retry", "list", "history")),
+    }
+)
+
+
+def test_studio_may_call_the_alert_administration_and_webhook_families(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+    from firefly_weave.studio.service import STUDIO_FAMILIES
+
+    families = {identifier.split(".")[0] for identifier in ALERT_AND_ADMINISTRATION_OPERATIONS}
+    assert families <= STUDIO_FAMILIES
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        crossing = {
+            identifier
+            for identifier, operation in OPERATIONS.items()
+            if identifier.split(".")[0] in families
+            and studio.check_scope(
+                operation.canonical_path.format(
+                    tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
+                ),
+                operation.method,
+            )
+            == 200
+        }
+    assert crossing == ALERT_AND_ADMINISTRATION_OPERATIONS
 
 
 def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):

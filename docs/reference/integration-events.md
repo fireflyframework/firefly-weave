@@ -59,6 +59,13 @@ workflow evidence.
 | `transaction.completed`, `transaction.compensated`, `transaction.cancelled` | A workflow transaction finished: it went through, or what it did was undone (`cancelled` when nothing needed undoing) | The run's environment |
 | `transaction.in_doubt` | A transaction is in doubt and waits for a person's decision | The run's environment |
 | `transaction.reconciled`, `transaction.force_ended` | A person marked a transaction in doubt as reconciled, or ended it by force | The run's environment |
+| `alert.transition` | An alert starts firing or resolves | The alert's environment |
+
+An `alert.transition` event's `resource_id` is the alert and its `correlation_id`
+the rule. Its payload carries `alert`: the new `state` (`firing` or `resolved`),
+the `severity`, the `signal`, the `value` and the `threshold`; the run fields
+`status`, `sequence` and `revision` are present and `null`. It never carries the
+rule's name, its selector or any recipient. Subscribing to it needs `alert.read`.
 
 A `change_request.transition` event carries the change request's ID and, in its
 payload, `change_state` and `revision`; the payload's run fields `status` and

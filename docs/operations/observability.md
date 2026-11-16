@@ -292,6 +292,44 @@ failed cycles in a row or 3 among its last 20 (see the
 that, for example once every 10 cycles, leaves the loop `ok`; its
 `recent_failures` still shows it.
 
+## Alerts
+
+An alert rule compares one signal of an environment with a threshold. The
+scheduler evaluates each environment's enabled rules every 30 seconds and
+reports as `alert_evaluator` in health. People with the `alert_manager` role
+create rules, email channels and recipients' opt-ins; the
+[API reference](../reference/api.md) lists the operations.
+
+- **Signals.** Run signals (`run.failure_rate`, `run.failures`,
+  `run.duration_p95`) count the runs that ended in the rule's window of 1, 5,
+  15 or 60 minutes, read from the runs themselves up to 10,000 runs and from
+  the five-minute run statistics above that. Test runs never count. Queue,
+  worker, outbox, incident, target and platform health signals read the
+  current value, as the environment summary shows it.
+- **For and resolving.** A rule fires once its condition has held for its For
+  time (at once when it is 0) and resolves only after it has been clear for
+  its For time or a minute, whichever is longer. A failed read changes nothing,
+  and the first reading after a gap of more than a minute starts both waits
+  again.
+- **Repeats.** A firing alert notifies again after its repeat interval (at
+  least 15 minutes) until someone acknowledges it.
+- **Email.** A channel sends as the person who last saved it, one message per
+  recipient. Recipients are project members, at the address each one saved for
+  themselves, or outside addresses whose domain an administrator allowed and
+  whose opt-in an administrator recorded. Both are checked again at every
+  send. The text is fixed, with no link.
+- **Budgets.** At most one alert message per rule and channel every 15 minutes,
+  40 messages per rule and 60 per environment an hour, and 20 per recipient an
+  hour, counted per recipient. A message over a budget is skipped and shows
+  `skipped_limit`; a message whose outcome is unclear is never sent again.
+- **Presets.** Every environment gets the rule "A platform component is
+  degraded" once; deleting it doesn't bring it back. Five suggested rules are
+  offered to start from.
+- **Webhooks.** Signed subscriptions to `alert.transition` receive each firing
+  and resolve; see [integration events](../reference/integration-events.md).
+- **Retention.** Alert history and resolved alerts are kept 30 days, and at
+  most 200,000 history events per environment.
+
 ## Next steps
 
 - Look up the other server settings in [configuration](configuration.md).

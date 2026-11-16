@@ -42,17 +42,23 @@ from firefly_weave.contracts.ai import (
 from firefly_weave.contracts.alerts import (
     AlertChannel,
     AlertChannelDraft,
+    AlertEvent,
+    AlertEventQuery,
     AlertNotificationView,
+    AlertPage,
     AlertPreset,
     AlertPreview,
+    AlertQuery,
     AlertRecipientConsent,
     AlertRecipientConsentDraft,
     AlertRuleDraft,
     AlertRuleView,
     AlertSettings,
     AlertSettingsUpdate,
+    AlertView,
     MyAlertAddress,
     MyAlertAddressUpdate,
+    RetentionPeriods,
 )
 from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
@@ -1124,6 +1130,31 @@ OPERATIONS = {
             AlertRecipientConsent,
             "alert.manage",
             request_required=False,
+        ),
+        Operation("alerts.list", ENVIRONMENT + "/alerts", "GET", AlertPage, "alert.read", query=AlertQuery),
+        Operation("alerts.read", ENVIRONMENT + "/alerts/{identifier}", "GET", AlertView, "alert.read"),
+        Operation(
+            "alerts.acknowledge",
+            ENVIRONMENT + "/alerts/{identifier}/acknowledge",
+            "POST",
+            AlertView,
+            "alert.manage",
+            request_required=False,
+        ),
+        Operation(
+            "alert_events.list",
+            ENVIRONMENT + "/alert-events",
+            "GET",
+            Page[AlertEvent],
+            "alert.read",
+            query=AlertEventQuery,
+        ),
+        Operation(
+            "operations_retention.read",
+            ENVIRONMENT + "/operations/retention-periods",
+            "GET",
+            RetentionPeriods,
+            "status.read",
         ),
         # About the signed-in person only: any person with a grant in the tenant, never a machine.
         Operation(

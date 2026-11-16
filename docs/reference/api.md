@@ -1120,6 +1120,11 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `alert_recipient_consents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.read |
 | `alert_recipient_consents.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.manage |
 | `alert_recipient_consents.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents/{identifier}/revoke` | alert.manage |
+| `alerts.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts` | alert.read |
+| `alerts.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}` | alert.read |
+| `alerts.acknowledge` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}/acknowledge` | alert.manage |
+| `alert_events.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-events` | alert.read |
+| `operations_retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/operations/retention-periods` | status.read |
 | `alert_addresses.read_mine` | `GET /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
 | `alert_addresses.save_mine` | `PUT /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |

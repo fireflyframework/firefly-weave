@@ -113,6 +113,23 @@ STUDIO_FAMILIES = frozenset(
         "operations_telemetry",
         # Run statistics are environment reads; status.read is checked server-side.
         "run_statistics",
+        # Alerts, their rules, channels, settings and opt-ins, and each person's own alert address; every
+        # operation checks alert.read, alert.manage, environment.manage or the caller server-side.
+        "alert_rules",
+        "alert_presets",
+        "alert_channels",
+        "alerts",
+        "alert_events",
+        "alert_settings",
+        "alert_recipient_consents",
+        "alert_addresses",
+        # Settings › Administration: retention periods, compatibility and retention plans, each authorized
+        # server-side; subscriptions and deliveries let Studio count and list the webhooks that receive alerts.
+        "operations_retention",
+        "compatibility",
+        "retention",
+        "subscriptions",
+        "deliveries",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
         # Draft canvases and test data: capabilities, run data and secrets are checked server-side.

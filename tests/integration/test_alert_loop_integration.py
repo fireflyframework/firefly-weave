@@ -27,16 +27,19 @@ from uuid import uuid4
 import pytest
 from test_alert_rules_api import add_channel
 from test_operations_statistics import owner, place, started_runs
-from test_operations_summary import add_incident
+from test_operations_summary import add_incident, summary_service
 from test_worker_fleet_facts import add_target, clock, principal_with
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Grant
 from firefly_weave.access.scheduler import due_alert_scopes
-from firefly_weave.contracts.alerts import AlertRuleDraft
+from firefly_weave.api.transport import decode_cursor_v2
+from firefly_weave.contracts.alerts import AlertEventQuery, AlertQuery, AlertRuleDraft, AlertsSection
+from firefly_weave.contracts.operations_summary import ForbiddenSection
 from firefly_weave.operations import alert_loop, alert_signals
 from firefly_weave.operations.alert_loop import AlertLoop
-from firefly_weave.operations.alert_rules import AlertRuleService
+from firefly_weave.operations.alert_rules import AlertRuleService, AlertService
+from firefly_weave.operations.fact_positions import run_position
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.uow import UnitOfWork
@@ -302,3 +305,74 @@ async def test_events_older_than_30_days_and_beyond_the_cap_are_pruned(evaluator
     assert [row["at"] for row in kept] == [case.now - timedelta(days=days) for days in (2, 1, 0)]
     alerts = await rows(case, "SELECT state FROM alerts WHERE tenant_id=:tenant ORDER BY state")
     assert [row["state"] for row in alerts] == ["firing", "resolved"]
+
+
+async def fire_two(case):
+    """A critical and a warning rule, both firing, a second apart."""
+    run = await case.start("alert-reads")
+    await add_incident(case, run.id, "first")
+    critical = await create(case, draft(name="Incidents are open"))
+    warning = await create(case, draft(name="Incidents, quietly", severity="warning"))
+    await at(case, 0)
+    return critical, warning
+
+
+async def test_alerts_list_newest_first_and_count_what_is_firing(evaluator, services):
+    case = evaluator
+    alerts = services(case.sessions).resolve(AlertService)
+    critical, warning = await fire_two(case)
+    page = await alerts.list(case.manager, case.scope, AlertQuery(), None, context=CONTEXT)
+    assert (page["firing"], page["critical"], page["next_cursor"]) == (2, 1, None)
+    assert {item["rule_id"] for item in page["items"]} == {str(critical.id), str(warning.id)}
+    query = AlertQuery(limit=1)
+    first = await alerts.list(case.manager, case.scope, query, None, context=CONTEXT)
+    assert first["next_cursor"] is not None and len(first["items"]) == 1
+    position = run_position(decode_cursor_v2(first["next_cursor"], case.scope, query.cursor_collection("alerts")))
+    assert position is not None and position.at is not None
+    second = await alerts.list(case.manager, case.scope, query, (position.at, position.id), context=CONTEXT)
+    assert second["next_cursor"] is None
+    assert {item["id"] for item in first["items"] + second["items"]} == {item["id"] for item in page["items"]}
+    only = await alerts.list(
+        case.manager,
+        case.scope,
+        AlertQuery.model_validate_json(json.dumps({"severity": "critical"})),
+        None,
+        context=CONTEXT,
+    )
+    assert [item["rule_name"] for item in only["items"]] == ["Incidents are open"]
+    assert (only["firing"], only["critical"]) == (1, 1)
+
+
+async def test_acknowledging_stops_repeats_and_is_recorded_once(evaluator, services):
+    case = evaluator
+    alerts = services(case.sessions).resolve(AlertService)
+    run = await case.start("alert-acknowledge")
+    await add_incident(case, run.id, "first")
+    channel = await add_channel(case)
+    rule = await create(case, draft(channel_ids=[str(channel)], renotify_seconds=900))
+    await at(case, 0)
+    (alert,) = await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id)
+    first = await alerts.acknowledge(case.manager, case.scope, alert["id"], context=CONTEXT)
+    again = await alerts.acknowledge(case.manager, case.scope, alert["id"], context=CONTEXT)
+    assert first == again and first.acknowledged_by == case.manager.id
+    await at(case, 900)
+    kinds = await rows(case, "SELECT kind FROM alert_notifications WHERE alert_id=:id", id=alert["id"])
+    assert [row["kind"] for row in kinds] == ["firing"]
+    events = await alerts.events(case.manager, case.scope, AlertEventQuery(), None, context=CONTEXT)
+    assert [item["kind"] for item in events["items"]] == ["acknowledged", "firing"]
+    audits = await rows(case, "SELECT count(*) AS n FROM access_audit WHERE action='alert.acknowledge'")
+    assert audits == [{"n": 1}]
+
+
+async def test_the_summary_shows_firing_alerts_to_alert_readers_critical_first(evaluator):
+    case = evaluator
+    await fire_two(case)
+    service = summary_service(case)
+    summary = await service.read(case.manager, case.scope, context=CONTEXT)
+    assert summary.alerts == AlertsSection(firing=2, critical=1)
+    assert isinstance(summary.attention, list)
+    assert (summary.attention[0].kind, summary.attention[0].title) == ("alert", "Incidents are open")
+    viewer = await principal_with(case, Grant(role="viewer", scope=case.scope))
+    hidden = await service.read(viewer, case.scope, context=CONTEXT)
+    assert hidden.alerts == ForbiddenSection(state="forbidden")
+    assert isinstance(hidden.attention, list) and all(item.kind != "alert" for item in hidden.attention)

@@ -39,16 +39,21 @@ from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.api.transport import encode_cursor_v2
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.alerts import (
+    AlertEvent,
     AlertEventFacts,
+    AlertEventQuery,
     AlertPreset,
     AlertPreview,
+    AlertQuery,
     AlertRuleDraft,
     AlertRuleError,
     AlertRuleState,
     AlertRuleView,
     AlertSelector,
+    AlertView,
 )
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
 from firefly_weave.contracts.public import Revoked
@@ -751,3 +756,221 @@ class AlertRuleService:
         return tuple(
             preset.model_copy(update={"installed_rule_id": installed.get(preset.id)}) for preset in ALERT_PRESETS
         )
+
+
+_ALERT = (
+    "id,rule_id,rule_name,rule_revision,signal,severity,state,started_at,resolved_at,resolved_reason,comparator,"
+    "threshold,unit,value_at_start,last_value,acknowledged_at,acknowledged_by"
+)
+_NOTIFIED = 20
+
+
+def alert_view(row: Mapping[str, Any], notifications: Iterable[Mapping[str, Any]] = ()) -> AlertView:
+    """An alert with its newest notifications: channel, kind, state and a fixed code, never a recipient."""
+    document = {name: row[name] for name in AlertView.model_fields if name != "notifications"}
+    document["notifications"] = [
+        {
+            "channel_id": item["channel_id"],
+            "kind": item["kind"],
+            "state": item["state"],
+            "code": item["code"],
+            "at": item["attempted_at"] or item["created_at"],
+        }
+        for item in notifications
+    ]
+    return AlertView.model_validate_json(json.dumps(document, default=_wire))
+
+
+def _after(position: tuple[datetime, UUID] | None) -> dict[str, Any]:
+    if position is None:
+        return {}
+    return {"after_at": position[0], "after_id": position[1]}
+
+
+@service
+class AlertService:
+    """Alerts and their history in one environment, newest first; acknowledging stops repeat notifications."""
+
+    def __init__(self, uow: UnitOfWork, authorization: AuthorizationService) -> None:
+        self.uow, self.authorization = uow, authorization
+
+    def _require(self, principal: Principal, scope: Scope, capability: str, context: AuditContext) -> None:
+        if scope.environment_id is None:
+            raise CatalogError(422, "WV-SCOPE", "Alerts require an environment")
+        self.authorization.require(principal, scope, capability, context=context)
+
+    async def _current(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> None:
+        self._require(await load_principal(tx.session, actor.id), tx.scope, capability, context)
+
+    async def _notifications(
+        self, repository: AlertRuleRepository, ids: list[UUID]
+    ) -> dict[UUID, list[dict[str, Any]]]:
+        found: dict[UUID, list[dict[str, Any]]] = {identifier: [] for identifier in ids}
+        if not ids:
+            return found
+        for row in await repository.rows(
+            "SELECT alert_id,channel_id,kind,state,code,attempted_at,created_at FROM (SELECT n.*,row_number() OVER "
+            "(PARTITION BY alert_id ORDER BY created_at DESC,id DESC) AS position FROM alert_notifications n "
+            f"WHERE {SCOPED} AND alert_id=ANY(:ids)) n WHERE position<=:limit ORDER BY created_at DESC,id DESC",
+            ids=ids,
+            limit=_NOTIFIED,
+        ):
+            found[row["alert_id"]].append(row)
+        return found
+
+    async def list(
+        self,
+        actor: Principal,
+        scope: Scope,
+        query: AlertQuery,
+        position: tuple[datetime, UUID] | None,
+        *,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        """A page of alerts newest first, and how many of those the query matches are firing and critical."""
+        self._require(actor, scope, "alert.read", context)
+        filters, values = _filters(query)
+        if query.state is not None:
+            filters += " AND state=:state"
+            values["state"] = query.state
+        if query.severity is not None:
+            filters += " AND severity=:severity"
+            values["severity"] = query.severity
+        async with self.uow.open(scope, mutation=False) as tx:
+            await self._current(tx, actor, "alert.read", context)
+            repository = AlertRuleRepository(tx)
+            after = (
+                ""
+                if position is None
+                else " AND (started_at,id)<(cast(:after_at AS timestamptz),cast(:after_id AS uuid))"
+            )
+            rows = await repository.rows(
+                f"SELECT {_ALERT} FROM alerts WHERE {SCOPED}{filters}{after} ORDER BY started_at DESC,id DESC "
+                "LIMIT :limit",
+                **values,
+                **_after(position),
+                limit=query.limit + 1,
+            )
+            counts = await repository.rows(
+                "SELECT count(*) FILTER (WHERE state='firing') AS firing,"
+                "count(*) FILTER (WHERE state='firing' AND severity='critical') AS critical "
+                f"FROM alerts WHERE {SCOPED}{filters}",
+                **values,
+            )
+            page = rows[: query.limit]
+            notified = await self._notifications(repository, [row["id"] for row in page])
+        last = page[-1] if len(rows) > query.limit else None
+        return {
+            "items": [alert_view(row, notified[row["id"]]).model_dump(mode="json") for row in page],
+            "next_cursor": None
+            if last is None
+            else encode_cursor_v2(
+                scope, query.cursor_collection("alerts"), last["started_at"].isoformat(), str(last["id"])
+            ),
+            "firing": int(counts[0]["firing"]),
+            "critical": int(counts[0]["critical"]),
+        }
+
+    async def read(self, actor: Principal, scope: Scope, alert_id: UUID, *, context: AuditContext) -> AlertView:
+        self._require(actor, scope, "alert.read", context)
+        async with self.uow.open(scope, mutation=False) as tx:
+            await self._current(tx, actor, "alert.read", context)
+            return await self._view(AlertRuleRepository(tx), alert_id)
+
+    async def _view(self, repository: AlertRuleRepository, alert_id: UUID, *, lock: bool = False) -> AlertView:
+        found = await repository.rows(
+            f"SELECT {_ALERT} FROM alerts WHERE {SCOPED} AND id=:id" + (" FOR UPDATE" if lock else ""), id=alert_id
+        )
+        if not found:
+            raise CatalogError(404, "WV-NOT-FOUND", "Alert not found")
+        return alert_view(found[0], (await self._notifications(repository, [alert_id]))[alert_id])
+
+    async def acknowledge(self, actor: Principal, scope: Scope, alert_id: UUID, *, context: AuditContext) -> AlertView:
+        """Stop repeat notifications until the alert resolves; acknowledging twice, or a resolved alert, changes
+        nothing and is recorded once."""
+        self._require(actor, scope, "alert.manage", context)
+        async with self.uow.open(scope) as tx:
+            await self._current(tx, actor, "alert.manage", context)
+            repository = AlertRuleRepository(tx)
+            alert = await self._view(repository, alert_id, lock=True)
+            if alert.state != "firing" or alert.acknowledged_at is not None:
+                return alert
+            now = await repository.now()
+            await repository.execute(
+                f"UPDATE alerts SET acknowledged_at=:now,acknowledged_by=:actor WHERE {SCOPED} AND id=:id",
+                now=now,
+                actor=actor.id,
+                id=alert_id,
+            )
+            await repository.execute(
+                "INSERT INTO alert_events(tenant_id,project_id,environment_id,id,alert_id,rule_id,rule_revision,at,"
+                "kind,value) VALUES(:tenant,:project,:environment,:id,:alert,:rule,:revision,:now,'acknowledged',"
+                ":value) ON CONFLICT DO NOTHING",
+                id=event_id(alert_id, "acknowledged", 0),
+                alert=alert_id,
+                rule=alert.rule_id,
+                revision=alert.rule_revision,
+                now=now,
+                value=alert.last_value,
+            )
+            await audit(
+                tx.session,
+                actor,
+                "alert.acknowledge",
+                str(alert_id),
+                scope=scope,
+                capability="alert.manage",
+                context=context,
+                details={"rule_id": str(alert.rule_id)},
+            )
+            return await self._view(repository, alert_id)
+
+    async def events(
+        self,
+        actor: Principal,
+        scope: Scope,
+        query: AlertEventQuery,
+        position: tuple[datetime, UUID] | None,
+        *,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        """The history of alerts: firing, resolved and acknowledged, newest first."""
+        self._require(actor, scope, "alert.read", context)
+        filters, values = _filters(query, column="at")
+        async with self.uow.open(scope, mutation=False) as tx:
+            await self._current(tx, actor, "alert.read", context)
+            after = "" if position is None else " AND (at,id)<(cast(:after_at AS timestamptz),cast(:after_id AS uuid))"
+            rows = await AlertRuleRepository(tx).rows(
+                f"SELECT id,alert_id,rule_id,rule_revision,at,kind,value,reason FROM alert_events WHERE {SCOPED}"
+                f"{filters}{after} ORDER BY at DESC,id DESC LIMIT :limit",
+                **values,
+                **_after(position),
+                limit=query.limit + 1,
+            )
+        page = rows[: query.limit]
+        last = page[-1] if len(rows) > query.limit else None
+        return {
+            "items": [
+                AlertEvent.model_validate_json(json.dumps(row, default=_wire)).model_dump(mode="json") for row in page
+            ],
+            "next_cursor": None
+            if last is None
+            else encode_cursor_v2(
+                scope, query.cursor_collection("alert-events"), last["at"].isoformat(), str(last["id"])
+            ),
+        }
+
+
+def _filters(query: AlertQuery | AlertEventQuery, *, column: str = "started_at") -> tuple[str, dict[str, Any]]:
+    filters = ""
+    values: dict[str, Any] = {}
+    if query.rule_id is not None:
+        filters += " AND rule_id=:rule"
+        values["rule"] = query.rule_id
+    if query.from_ is not None:
+        filters += f" AND {column}>=:from_at"
+        values["from_at"] = query.from_
+    if query.to is not None:
+        filters += f" AND {column}<:to_at"
+        values["to_at"] = query.to
+    return filters, values

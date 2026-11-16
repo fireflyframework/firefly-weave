@@ -109,6 +109,25 @@ capability = "alert.read"
 capability = "alert.manage"
 body = { recipient_domains = [], approval_channel_ids = ["random"] }
 
+# Alerts and their history need alert.read; acknowledging one needs alert.manage, and a random alert answers 404.
+[operations."alert_events.list"]
+capability = "alert.read"
+
+[operations."alerts.acknowledge"]
+capability = "alert.manage"
+identifier = "random"
+
+[operations."alerts.list"]
+capability = "alert.read"
+
+[operations."alerts.read"]
+capability = "alert.read"
+identifier = "random"
+
+# The retention periods of operations records are an environment status read.
+[operations."operations_retention.read"]
+capability = "status.read"
+
 # Alert rules: reads need alert.read; changes and previews need alert.manage (a preview also needs status.read, which
 # every person here who holds alert.manage has). A permitted create names a random channel, so it answers 422
 # WV-ALERT-CHANNEL and stores nothing; a random rule answers 404.

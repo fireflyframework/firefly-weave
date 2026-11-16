@@ -23,14 +23,15 @@ never a rule name, a selector value or a recipient.
 """
 
 import unicodedata
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, AwareDatetime, Field, field_validator, model_validator
+from pydantic import AfterValidator, AwareDatetime, ConfigDict, Field, field_validator, model_validator
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName
 from firefly_weave.contracts.email import address
-from firefly_weave.contracts.run_views import Cursor
+from firefly_weave.contracts.run_views import Cursor, _digest, utc_time
 from firefly_weave.contracts.values import UnicodeString
 
 # The signals this server evaluates; firefly_weave.operations.alert_signals.ALERT_SIGNALS describes each one. A
@@ -371,3 +372,64 @@ class AlertEventFacts(ContractModel):
 class AlertsSection(ContractModel):
     firing: Count
     critical: Count
+
+
+class _AlertHistoryQuery(ContractModel):
+    """A list of alerts or of their history, newest first; the cursor is bound to every filter."""
+
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", validate_by_name=True, validate_by_alias=True, serialize_by_alias=True
+    )
+
+    rule_id: UUID | None = None
+    from_: AwareDatetime | None = Field(default=None, alias="from")
+    to: AwareDatetime | None = None
+    limit: Annotated[int, Field(ge=1, le=PAGE_LIMIT)] = 50
+    cursor: Cursor | None = None
+
+    @field_validator("from_", "to", mode="before")
+    @classmethod
+    def utc(cls, value: object) -> datetime | None:
+        return utc_time(value)
+
+    @model_validator(mode="after")
+    def ordered(self) -> "_AlertHistoryQuery":
+        if self.from_ is not None and self.to is not None and self.from_ >= self.to:
+            raise ValueError("from must be earlier than to")
+        return self
+
+    def cursor_collection(self, name: str) -> str:
+        filters = self.model_dump(mode="json", exclude={"limit", "cursor"})
+        return f"{name}:{_digest(filters)}"
+
+
+class AlertQuery(_AlertHistoryQuery):
+    state: Literal["firing", "resolved"] | None = None
+    severity: Severity | None = None
+
+
+class AlertEventQuery(_AlertHistoryQuery):
+    pass
+
+
+type RetainedRecord = Literal[
+    "run_statistics_5m",
+    "run_statistics_1h",
+    "run_statistics_1d",
+    "samples_1m",
+    "samples_1h",
+    "change_requests",
+    "alert_events",
+    "alerts",
+]
+
+
+class RetentionPeriod(ContractModel):
+    record: RetainedRecord
+    seconds: Annotated[int, Field(ge=1)]
+
+
+class RetentionPeriods(ContractModel):
+    """How long the platform keeps each kind of operations record."""
+
+    items: list[RetentionPeriod] = Field(max_length=32)
