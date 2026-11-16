@@ -451,7 +451,9 @@ export class CanvasView implements OnInit, DoCheck {
     const selected = this.host().model.selected;
     if (selected !== this.seenSelected) {
       this.seenSelected = selected;
-      if (!selected) this.selection = NO_SELECTION;
+      // The Runs tab keeps no selection: the step step details show there
+      // isn't drawn as selected, so Escape and keys never act on it.
+      if (!selected || this.viewingRuns()) this.selection = NO_SELECTION;
       else if (!this.selection.ids.includes(selected))
         this.selection = only(selected);
       else if (this.selection.focus !== selected)
@@ -985,6 +987,14 @@ export class CanvasView implements OnInit, DoCheck {
   private async openTile(id: string, event: MouseEvent) {
     const h = this.host();
     if (id.startsWith("$trigger:") || id === "$end") return;
+    // The Runs tab keeps no selection of its own; the click still marks the
+    // step the editor shows next.
+    if (this.viewingRuns()) {
+      this.seenSelected = id;
+      this.pointed = id;
+      await h.selectStep(id, false);
+      return;
+    }
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggledCovering(this.selection, id, this.places());
       this.seenSelected = this.selection.focus ?? "";

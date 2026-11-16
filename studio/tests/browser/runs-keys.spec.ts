@@ -50,9 +50,13 @@ test("the list, the canvas and step details work by keyboard", async ({
   await page.keyboard.press("Escape");
   await expect(details.dialog).toHaveCount(0);
   await expect(details.node("send")).toBeFocused();
-  // Escape on the canvas first clears the selection, then returns to the
-  // chosen row.
+  // The Runs canvas keeps no selection of its own: one Escape on it returns
+  // to the chosen row.
   await page.keyboard.press("Escape");
+  await expect(chosen).toBeFocused();
+  // So too after a double-click and step details closed with Close.
+  await details.open("send");
+  await details.close();
   await expect(details.node("send")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(chosen).toBeFocused();
