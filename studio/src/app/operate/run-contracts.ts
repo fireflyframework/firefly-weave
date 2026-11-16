@@ -47,6 +47,7 @@ export const runOrigins = [
   "retry",
   "call",
   "test",
+  "event",
 ] as const;
 export type RunOrigin = (typeof runOrigins)[number];
 export const runSummaryOrders = [

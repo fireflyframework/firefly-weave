@@ -163,6 +163,14 @@ def test_a_run_start_carries_its_chain_depth():
             RunStartFacts(origin="manual", event_depth=depth)  # type: ignore[arg-type]
 
 
+def test_an_event_start_sits_deeper_than_its_source():
+    root = UUID(int=7)
+    started = RunStartFacts(origin="event", event_depth=1, root_event_id=root)
+    assert (started.origin, started.event_depth, started.root_event_id) == ("event", 1, root)
+    with pytest.raises(ValueError, match="platform event"):
+        RunStartFacts(origin="event")
+
+
 def test_a_run_in_a_chain_names_the_event_that_started_the_chain():
     root = UUID(int=7)
     assert RunStartFacts(origin="manual").root_event_id is None

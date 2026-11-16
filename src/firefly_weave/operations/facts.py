@@ -175,6 +175,8 @@ class RunStartFacts:
             raise ValueError("Chain depth must be a non-negative integer")
         if (self.event_depth == 0) != (self.root_event_id is None) or not isinstance(self.root_event_id, UUID | None):
             raise ValueError("A run in a chain of reactions names the event that began the chain, and only such a run")
+        if self.origin == "event" and self.event_depth < 1:
+            raise ValueError("A run a platform event starts sits one reaction deeper than the run that emitted it")
         if (
             type(self.test) is not bool
             or (self.origin == "test" and not self.test)
