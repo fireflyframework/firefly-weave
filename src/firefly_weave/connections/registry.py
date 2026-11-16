@@ -26,7 +26,7 @@ from firefly_weave.connections.models import unavailable
 from firefly_weave.connectors.builtin_catalog import BUILTIN_DECLARATIONS, BuiltinPackageMetadata
 from firefly_weave.connectors.packages import ConnectorPackage, PackageMetadata
 from firefly_weave.contracts.connectors import ConnectorAdapter
-from firefly_weave.contracts.transaction_resolve import PLATFORM_TASK_PREFIX
+from firefly_weave.contracts.transaction_resolve import platform_task
 from firefly_weave.definitions.models import CatalogError
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ class ConnectorRegistry:
         from firefly_weave.compiler.catalog import CatalogSnapshot
 
         # Only the platform runs its own task types, so no worker release may offer one.
-        if any(c.task_type.startswith(PLATFORM_TASK_PREFIX) for c in request.capabilities):
+        if any(platform_task(c.task_type) for c in request.capabilities):
             raise CatalogError(409, "WV-CAPABILITY-CONFLICT", "Task types starting with weave-platform. are reserved")
         bindings = request.connector_bindings
         refs = [b.task_reference for b in bindings]

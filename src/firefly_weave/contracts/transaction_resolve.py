@@ -32,6 +32,13 @@ RESOLVE_VERSION: Final = "1.0.0"
 # No worker release may offer a task type with this prefix: only the platform runs these tasks.
 PLATFORM_TASK_PREFIX: Final = "weave-platform."
 RESOLVE_TASK_TYPE: Final = PLATFORM_TASK_PREFIX + "transaction-resolve"
+
+
+def platform_task(task_type: str) -> bool:
+    """Whether the platform reserves a task type for itself, however its prefix is capitalized (names allow it)."""
+    return task_type.lower().startswith(PLATFORM_TASK_PREFIX)
+
+
 # The catalog name under which workflows read the platform event as their input schema.
 PLATFORM_EVENT_SCHEMA: Final = "weave.platform-event-v1"
 # The resolution kinds a person may choose, in the order the incident's resolution lists them.

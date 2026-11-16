@@ -131,18 +131,22 @@ def test_no_worker_release_may_offer_a_platform_task_type():
         )
 
     platform = resolve_task_capability()
-    for task_type in (platform["taskType"], "weave-platform.anything"):
+    # Task type names allow capital letters, and the reservation holds however the prefix is written.
+    for task_type in (platform["taskType"], "weave-platform.anything", "Weave-Platform.anything", "WEAVE-PLATFORM.X"):
         with pytest.raises(CatalogError) as refused:
             registry.validate_release(release({**platform, "taskType": task_type}))
         assert (refused.value.status, refused.value.code) == (409, "WV-CAPABILITY-CONFLICT")
     registry.validate_release(release({**platform, "taskType": "record-event"}))
 
 
-def test_no_activation_may_pin_a_worker_release_for_a_platform_task_type(monkeypatch):
+@pytest.mark.parametrize("task_type", ["weave-platform.transaction-resolve", "Weave-Platform.Transaction-Resolve"])
+def test_no_activation_may_pin_a_worker_release_for_a_platform_task_type(monkeypatch, task_type):
     """A release registered before the platform reserved its task types can still offer one: admission refuses the
     pin, so no run ever creates a pinned platform task."""
-    capability = resolve_task_capability()
+    capability = {**resolve_task_capability(), "taskType": task_type}
     reference = f"{capability['taskType']}@{capability['taskVersion']}"
+    action = resolve_action_definition()
+    action["spec"]["implementation"]["taskType"] = task_type
     release = WorkerRelease.model_validate_json(
         json.dumps({"id": str(uuid4()), "image_digest": "sha256:" + "a" * 64, "capabilities": [capability]})
     )
@@ -151,7 +155,7 @@ def test_no_activation_may_pin_a_worker_release_for_a_platform_task_type(monkeyp
     executable = {
         "graph": {"nodes": []},
         "dependencies": [
-            {"kind": "Action", "reference": "weave.transaction-resolve@1.0.0", "document": resolve_action_definition()},
+            {"kind": "Action", "reference": "weave.transaction-resolve@1.0.0", "document": action},
             {"kind": "TaskCapability", "reference": reference, "digest": offered.digest},
         ],
     }

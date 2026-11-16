@@ -237,7 +237,7 @@ def platform_tasks() -> None:
     # Only the platform runs these tasks, so none may be pinned to a worker release: no worker can claim them.
     op.execute(
         "ALTER TABLE task_intents ADD CONSTRAINT task_intents_platform_unpinned "
-        "CHECK(payload->>'task_type' NOT LIKE 'weave-platform.%' OR worker_release_id IS NULL) NOT VALID"
+        "CHECK(lower(payload->>'task_type') NOT LIKE 'weave-platform.%' OR worker_release_id IS NULL) NOT VALID"
     )
     op.execute(
         f"CREATE INDEX task_intents_platform_ready ON task_intents({SCOPE_KEY},id) "

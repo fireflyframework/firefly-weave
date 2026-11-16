@@ -438,7 +438,8 @@ async def test_platform_tasks_are_never_pinned_to_a_worker_release(upgraded):
 
     async with engine.begin() as connection:
         await seed_worker_source(connection, ids)
-        for task_type in (RESOLVE_TASK_TYPE, "weave-platform.anything"):
+        # Task type names allow capital letters; the reservation holds however the prefix is written.
+        for task_type in (RESOLVE_TASK_TYPE, "weave-platform.anything", "Weave-Platform.Anything"):
             savepoint = await connection.begin_nested()
             with pytest.raises(IntegrityError, match="task_intents_platform_unpinned"):
                 await connection.execute(insert, task("pinned", task_type, ids["release"]))
