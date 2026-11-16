@@ -16,6 +16,7 @@
 
 """Owned subprocess limits and correlated signals use real local processes."""
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -39,15 +40,19 @@ async def test_output_budget_kills_only_owned_child(tmp_path):
 
 
 async def test_output_budget_holds_when_the_child_group_exited_before_the_kill(tmp_path, monkeypatch):
-    # Under load the child can exit before the budget check kills its group, and macOS then answers killpg with
-    # EPERM, not ESRCH, for a group with no live process left.
-    def exited_group(pid, sig):
+    # macOS can answer killpg with EPERM, not ESRCH, once every process of the group has exited. The child keeps
+    # running after its output, so the budget always kills its group; the kill works, then answers EPERM.
+    killpg = module.os.killpg
+
+    def macos(pid, sig):
+        killpg(pid, sig)
         raise PermissionError(1, "Operation not permitted")
 
-    monkeypatch.setattr(module.os, "killpg", exited_group)
+    monkeypatch.setattr(module.os, "killpg", macos)
     owner = module.ProcessOwner(tmp_path, limit=1024)
+    child = "import sys, time; sys.stdout.write('x' * 10000); sys.stdout.flush(); time.sleep(30)"
     with pytest.raises(module.ProcessFailure, match="output"):
-        await owner.command(sys.executable, "-I", "-c", "print('x' * 10000)")
+        await asyncio.wait_for(owner.command(sys.executable, "-I", "-c", child), 10)
     assert owner.processes and all(p.returncode is not None for p in owner.processes)
 
 
