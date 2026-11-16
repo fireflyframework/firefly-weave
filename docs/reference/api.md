@@ -1321,6 +1321,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
 
+`event_triggers.create` also requires `run.start`, and `transaction.reconcile` when the request sets
+`may_reconcile`.
+
 ## Deployment Operations authority
 
 Follow [Manage container deployments](../operations/cluster-management.md)

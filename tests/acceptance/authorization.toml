@@ -102,26 +102,23 @@ identifier = "random"
 [operations."event_triggers.create"]
 capability = "trigger.manage"
 body = { name = "probe", activation_id = "random", events = ["transaction.in_doubt"] }
-answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
+# Creating a trigger also needs run.start, which a person holding only trigger.manage lacks.
+answers = [{ status = 403, code = "WV-FORBIDDEN" }]
 
 [operations."event_triggers.disable"]
 capability = "trigger.manage"
 identifier = "random"
-answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
 
 [operations."event_triggers.list"]
 capability = "trigger.manage"
-answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
 
 [operations."event_triggers.read"]
 capability = "trigger.manage"
 identifier = "random"
-answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
 
 [operations."event_triggers.starts"]
 capability = "trigger.manage"
 identifier = "random"
-answers = [{ status = 501, code = "WV-UNAVAILABLE" }]
 
 [operations."incidents.read"]
 capability = "incident.read"

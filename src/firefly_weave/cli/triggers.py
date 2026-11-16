@@ -20,3 +20,4 @@ from firefly_weave.cli.remote import family
 
 triggers = family("triggers", "triggers")
 triggers.add_command(family("schedules", "schedules"))
+triggers.add_command(family("events", "event_triggers"))

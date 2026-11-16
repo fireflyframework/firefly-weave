@@ -24,14 +24,8 @@ from uuid import UUID, uuid4
 import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
-from starlette.requests import Request
 
-from firefly_weave.access.audit import AuditContext
-from firefly_weave.access.authorization import AccessDenied, AuthorizationService
-from firefly_weave.access.models import Grant, Principal
-from firefly_weave.api.event_triggers import EventTriggerController
 from firefly_weave.compiler.catalog import TaskCapability
-from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.event_triggers import EventTrigger, EventTriggerRequest, EventTriggerStart
 from firefly_weave.contracts.operations import IncidentResolution, RecordedResolution
@@ -46,7 +40,6 @@ from firefly_weave.contracts.transaction_resolve import (
     resolve_output_schema,
     resolve_task_capability,
 )
-from firefly_weave.definitions.models import CatalogError
 
 ACTIVATION = "5b0f3c0e-8f0e-4b8a-9c39-3c1f7c0b8a11"
 REQUEST = {"name": "notify", "activation_id": ACTIVATION, "events": ["transaction.in_doubt"], "may_reconcile": False}
@@ -218,7 +211,7 @@ PUBLISHED = {
 }
 
 
-def test_event_trigger_operations_are_published_before_they_are_served():
+def test_event_trigger_operations_are_served_with_their_published_shapes():
     for identifier, expected in PUBLISHED.items():
         operation = OPERATIONS[identifier]
         actual = (
@@ -230,56 +223,5 @@ def test_event_trigger_operations_are_published_before_they_are_served():
             operation.statuses,
         )
         assert actual == expected, identifier
-        assert operation.served is False, identifier
+        assert operation.served is True, identifier
         assert operation.page is identifier.endswith((".list", ".starts")), identifier
-
-
-SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
-DEPLOYER = Principal(id=uuid4(), kind="human", grants=(Grant(role="deployer", scope=SCOPE),))
-VIEWER = Principal(id=uuid4(), kind="human", grants=(Grant(role="viewer", scope=SCOPE),))
-
-
-def request(actor, body=None, identifier=None):
-    payload = b"" if body is None else json.dumps(body).encode()
-    params = {
-        "tenant": str(SCOPE.tenant_id),
-        "project": str(SCOPE.project_id),
-        "environment": str(SCOPE.environment_id),
-    }
-    if identifier is not None:
-        params["identifier"] = str(identifier)
-
-    async def receive():
-        return {"type": "http.request", "body": payload, "more_body": False}
-
-    return Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/event-triggers",
-            "headers": [],
-            "query_string": b"",
-            "path_params": params,
-            "state": {"principal": actor, "audit_context": AuditContext()},
-        },
-        receive,
-    )
-
-
-@pytest.mark.parametrize(
-    ("handler", "body", "identifier"),
-    [
-        ("create", REQUEST, None),
-        ("list", None, None),
-        ("read", None, uuid4()),
-        ("disable", None, uuid4()),
-        ("starts", None, uuid4()),
-    ],
-)
-async def test_event_trigger_operations_answer_unavailable_to_trigger_managers_until_served(handler, body, identifier):
-    controller = EventTriggerController(AuthorizationService())
-    with pytest.raises(CatalogError) as unserved:
-        await getattr(controller, handler)(request(DEPLOYER, body, identifier))
-    assert (unserved.value.status, unserved.value.code) == (501, "WV-UNAVAILABLE")
-    with pytest.raises(AccessDenied):
-        await getattr(controller, handler)(request(VIEWER, body, identifier))

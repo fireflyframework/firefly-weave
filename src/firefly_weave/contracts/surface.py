@@ -2003,7 +2003,6 @@ OPERATIONS = {
             "trigger.manage",
             EventTriggerRequest,
             (201,),
-            served=False,
         ),
         Operation(
             "event_triggers.list",
@@ -2012,15 +2011,9 @@ OPERATIONS = {
             Page[EventTrigger],
             "trigger.manage",
             page=True,
-            served=False,
         ),
         Operation(
-            "event_triggers.read",
-            ENVIRONMENT + "/event-triggers/{identifier}",
-            "GET",
-            EventTrigger,
-            "trigger.manage",
-            served=False,
+            "event_triggers.read", ENVIRONMENT + "/event-triggers/{identifier}", "GET", EventTrigger, "trigger.manage"
         ),
         Operation(
             "event_triggers.disable",
@@ -2028,7 +2021,6 @@ OPERATIONS = {
             "POST",
             EventTrigger,
             "trigger.manage",
-            served=False,
         ),
         Operation(
             "event_triggers.starts",
@@ -2037,7 +2029,6 @@ OPERATIONS = {
             Page[EventTriggerStart],
             "trigger.manage",
             page=True,
-            served=False,
         ),
         Operation(
             "webhooks.receive",
