@@ -1223,15 +1223,21 @@ export class CanvasView implements OnInit, DoCheck {
         }
       : facts;
   }
-  /** Pin output or Unpin in a step's menu; the canvas never makes data, so without output it says how. */
-  private pinItem(id: string): RowMenuItem {
+  /**
+   * Pin output or Unpin in a step's menu; the canvas never makes data, so
+   * without output it says how. Pins are the draft's test data: while the
+   * canvas is locked, the menu refuses them as P does, for the same reason.
+   */
+  private pinItem(id: string, locked: boolean): RowMenuItem {
     const h = this.host();
     const pinned = h.pinStates().has(id);
-    const blocked = pinned
-      ? null
-      : !this.pinnable(id)
-        ? "This step's output can't be pinned."
-        : NO_PIN_YET;
+    const blocked =
+      (locked ? this.lockedReason() : null) ??
+      (pinned
+        ? null
+        : !this.pinnable(id)
+          ? "This step's output can't be pinned."
+          : NO_PIN_YET);
     return {
       label: pinned ? "Unpin" : "Pin output",
       disabled: !!blocked,
@@ -1262,7 +1268,7 @@ export class CanvasView implements OnInit, DoCheck {
         run: () => void h.openStep(id, "rename"),
       },
       { label: "Copy", run: () => void this.copyIds([id], false) },
-      this.pinItem(id),
+      this.pinItem(id, locked),
       {
         label: "Duplicate",
         disabled: locked,
