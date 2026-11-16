@@ -687,6 +687,11 @@ export class App implements CanvasHost {
   private localTimer: ReturnType<typeof setTimeout> | null = null;
   /** Published versions by ID: the name and version a run belongs to. */
   workflowVersions = new Map<string, { name: string; version: string }>();
+  /**
+   * Counts each read of the published versions, so a computed view that
+   * lists them (the Runs tab's Version menu) lists them again.
+   */
+  readonly workflowVersionsRead = signal(0);
   /** Runs read in this workspace, by ID: the workflow behind a task. */
   knownRuns = new Map<string, Record<string, unknown>>();
   private versionsScope: unknown = null;
@@ -6716,6 +6721,7 @@ export class App implements CanvasHost {
       for (const item of page.items) this.rememberVersion(item);
       // A new map, so views that read it as an input see the change.
       this.workflowVersions = new Map(this.workflowVersions);
+      this.workflowVersionsRead.update((count) => count + 1);
       this.cdr.markForCheck();
     } catch {
       // Runs then show their workflow name without the version.
