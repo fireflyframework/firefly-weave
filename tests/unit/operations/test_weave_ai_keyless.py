@@ -97,7 +97,7 @@ def service(secrets, gateway=None):
         yield SimpleNamespace(scope=SCOPE)
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=secrets)
-    return LumiService(connections, None, None, gateway, None, NO_POLICY, None)
+    return LumiService(connections, None, None, gateway, None, NO_POLICY, None, None)
 
 
 def test_a_keyless_local_connection_is_accepted_without_a_secret():
@@ -134,11 +134,13 @@ async def test_asking_on_a_keyless_connection_sends_no_credential(monkeypatch):
         connection = revision()
         weave_ai._require = AsyncMock(return_value=actor)
         weave_ai._read = AsyncMock(return_value=configuration(connection.id))
-        weave_ai._attachments = AsyncMock(return_value={"resources": []})
+        weave_ai._attachments = AsyncMock(return_value=module.Attachments([], frozenset()))
         monkeypatch.setattr(
             module, "ConnectionRepository", lambda tx: SimpleNamespace(revision=AsyncMock(return_value=connection))
         )
-        result = await weave_ai.ask(actor, SCOPE, LumiAskRequest(message="Explain"), context=AuditContext())
+        result = await weave_ai.ask(
+            actor, SCOPE, LumiAskRequest(message="Explain"), context=AuditContext(), summary=None
+        )
     assert result.answer == reply.answer
     assert gateway.ask.await_args.args[4] is None
     assert secrets.resolved == []
