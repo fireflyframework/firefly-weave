@@ -320,15 +320,20 @@ export type IdentityFailure =
   | "not-linked"
   | "expired";
 /**
+ * Studio refusing its own request: an out-of-date window, or one opened at
+ * another address. Reloading Studio is the fix. Other WV-STUDIO- codes report
+ * the platform's side (no answer, a timeout), which Try again can fix.
+ */
+const STUDIO_REFUSALS = new Set(["WV-STUDIO-CSRF", "WV-STUDIO-ORIGIN"]);
+/**
  * A check of who is signed in that failed for a reason other than the
- * account: a locked credential store says so, Studio's own refusal (its
- * WV-STUDIO- codes) asks to reload Studio, and anything else (no answer, a
- * 5xx, an unexpected refusal) reads as a platform Studio couldn't reach,
- * which offers Try again.
+ * account: a locked credential store says so, Studio's own refusal asks to
+ * reload Studio, and anything else (no answer, a 5xx, an unexpected refusal)
+ * reads as a platform Studio couldn't reach, which offers Try again.
  */
 function unreadIdentity(plain: PlainError): "store" | "studio" | "offline" {
   if (plain.code === "WV-AUTH-STORE") return "store";
-  return plain.code.startsWith("WV-STUDIO-") ? "studio" : "offline";
+  return STUDIO_REFUSALS.has(plain.code) ? "studio" : "offline";
 }
 interface ConnectionSlot {
   name: string;
