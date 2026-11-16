@@ -9552,11 +9552,16 @@ export class App implements CanvasHost {
       this.draftAfterIdentity();
       this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
+      const notice = this.platformNotice;
       this.platformNotice = result.workspace_revoked
         ? { kind: "revoked", name }
-        : this.profile?.environmentId
-          ? null
-          : { kind: "workspace", name };
+        : !this.profile?.environmentId
+          ? { kind: "workspace", name }
+          : notice?.kind === "sign-in-failed"
+            ? // A sign-in that failed while the account this check confirms
+              // still works: the outcome stays, without asking to sign in.
+              { ...notice, kept: true }
+            : null;
     } catch (e) {
       if (generation !== this.platformGeneration) return;
       const plain = describeError(e);
@@ -9871,8 +9876,10 @@ export class App implements CanvasHost {
    * A sign-in ended without an account, and the host keeps the credential it
    * had. An account Studio already has (a canceled switch) stays, and the
    * outcome says so; one it can still use (a session it renews, or the
-   * account a canceled switch left before a reload) is checked; otherwise
-   * sign in again. A reason recorded earlier (offline, a locked store) stays.
+   * account a canceled switch left before a reload) is checked, and the check
+   * words the outcome the same way unless the person dismissed it or
+   * something replaced it meanwhile; otherwise sign in again. A reason
+   * recorded earlier (offline, a locked store) stays.
    */
   private async afterBackgroundSignInEnded() {
     await this.refreshConnectionStatus();
@@ -9889,18 +9896,7 @@ export class App implements CanvasHost {
       this.identityFailure ??= "expired";
       return;
     }
-    const ended = this.platformNotice;
     await this.checkPlatform();
-    // The switch didn't happen and the account from before still works: the
-    // outcome stays on screen, without asking to sign in again.
-    if (
-      this.identity &&
-      ended?.kind === "sign-in-failed" &&
-      !this.platformNotice
-    ) {
-      this.platformNotice = { ...ended, kept: true };
-      this.cdr.markForCheck();
-    }
   }
   /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {

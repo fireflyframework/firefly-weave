@@ -640,6 +640,42 @@ test.describe("the Runs list's states", () => {
     await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
   });
 
+  test("a sign-in outcome dismissed while the account is checked stays dismissed", async ({
+    page,
+  }) => {
+    const { host, runs } = await runsDuringSignIn(
+      page,
+      acmePlatform({ signedIn: false, refreshable: true }),
+    );
+    // The check after the sign-in ends waits until the banner is dismissed.
+    let checking = false;
+    let release = () => undefined as void;
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/studio/connection/test", async (route) => {
+      checking = true;
+      await held;
+      await host.handle(route);
+    });
+    host.finish("failed", "WV-AUTH-DENIED");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    await expect.poll(() => checking).toBe(true);
+    await banner
+      .getByRole("button", { name: "Dismiss platform message" })
+      .click();
+    await expect(banner).toHaveCount(0);
+    release();
+    await expect(
+      runs.panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("No runs of invoice-approval yet.");
+    // Another screen draws the shell again: still no banner.
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await expect(page.locator("weave-home-dashboard")).toBeVisible();
+    await expect(banner).toHaveCount(0);
+  });
+
   const unreachable: Reply = {
     status: 503,
     json: {
