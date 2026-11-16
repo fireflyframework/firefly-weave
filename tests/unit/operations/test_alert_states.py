@@ -98,14 +98,34 @@ def test_a_firing_rule_resolves_only_after_the_condition_stays_clear_for_a_minut
     assert steps[1].state.clear_since == at(30)
     assert (steps[3].reason, steps[3].state.since, steps[3].state.clear_since) == ("threshold", at(90), None)
     # With For 300 the condition must stay clear for 300 seconds.
-    slow = play(rule(for_seconds=300), [(0, 0.3), (300, 0.3), (330, 0.05), (600, 0.05), (630, 0.05)])
-    assert transitions(slow) == [
-        ("pending", None),
-        ("firing", "fired"),
-        ("firing", None),
-        ("firing", None),
-        ("ok", "resolved"),
+    held = [(seconds, 0.3) for seconds in range(0, 330, 30)]
+    cleared = [(seconds, 0.05) for seconds in range(330, 660, 30)]
+    slow = play(rule(for_seconds=300), held + cleared)
+    assert transitions(slow) == [("pending", None)] * 10 + [("firing", "fired")] + [("firing", None)] * 10 + [
+        ("ok", "resolved")
     ]
+    assert slow[-1].state.since == at(630)
+
+
+def test_after_a_gap_a_pending_rule_waits_its_for_time_again():
+    # Nothing was read for four minutes: the first reading after the gap starts the wait anew.
+    readings = [(0, 0.3), (30, 0.3), (270, 0.3), (300, 0.3), (330, 0.3), (360, 0.3), (390, 0.3)]
+    steps = play(rule(for_seconds=120), readings)
+    assert transitions(steps) == [("pending", None)] * 6 + [("firing", "fired")]
+    assert steps[2].state.pending_since == at(270)
+
+
+def test_after_a_gap_a_clearing_alert_stays_clear_a_full_minute_again():
+    steps = play(rule(), [(0, 0.3), (30, 0.05), (200, 0.05), (230, 0.05), (260, 0.05)])
+    assert transitions(steps) == [("firing", "fired")] + [("firing", None)] * 3 + [("ok", "resolved")]
+    assert steps[2].state.clear_since == at(200)
+    # Failed reads during an outage leave the last evaluation where it was, so they count as a gap too.
+    firing, clearing = play(rule(), [(0, 0.3), (30, 0.05)])
+    failing = advance(clearing.state, rule(), ReadFailed("SignalUnavailable"), at(150))
+    after = advance(failing.state, rule(), Value(0.05, 50), at(180))
+    assert (after.state.state, after.transition, after.state.clear_since) == ("firing", None, at(180))
+    # Two cycles apart is no gap: the wait holds.
+    assert transitions(play(rule(), [(0, 0.3), (30, 0.05), (90, 0.05)]))[-1] == ("ok", "resolved")
 
 
 def test_a_firing_rule_whose_condition_returns_starts_the_clear_wait_again():

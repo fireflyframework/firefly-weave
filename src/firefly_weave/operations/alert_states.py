@@ -20,7 +20,9 @@ A rule moves ``ok → pending → firing → ok``. It fires once its condition h
 For is 0), and resolves only after the condition has stayed clear for ``max(For, 60)`` seconds, so a flapping signal
 neither floods notifications nor resolves and fires every cycle. No data, or fewer ended runs than the rule's
 ``min_samples``, counts as clear. A failed read changes nothing but the recorded error: an outage never fires or
-resolves an alert. Everything here is pure; the caller supplies the time and writes the state.
+resolves an alert. A reading more than two evaluation cycles after the last one restarts both waits, because nothing
+is known about the time between: the first reading after an outage neither fires a pending rule nor resolves a
+clearing one. Everything here is pure; the caller supplies the time and writes the state.
 """
 
 import operator
@@ -35,6 +37,9 @@ from firefly_weave.operations.alert_signals import ALERT_SIGNALS, Value
 
 # A firing rule resolves only after its condition has been clear at least this long, whatever its For time.
 MIN_CLEAR_SECONDS = 60
+# Rules are evaluated this often; a reading more than two cycles after the last evaluation restarts the waits.
+CYCLE_SECONDS = 30
+_GAP = timedelta(seconds=2 * CYCLE_SECONDS)
 
 _COMPARE: dict[str, Callable[[float, float], bool]] = {
     "gt": operator.gt,
@@ -109,6 +114,7 @@ def advance(state: RuleState, rule: AlertRuleDraft, reading: Reading, now: datet
     )
     reason: Literal["threshold", "no_data"] = "no_data" if no_data else "threshold"
     hold = timedelta(seconds=rule.for_seconds)
+    gap = state.evaluated_at is not None and now - state.evaluated_at > _GAP
     if state.state == "ok":
         if not met:
             return Advance(evaluated, no_data=no_data)
@@ -118,13 +124,15 @@ def advance(state: RuleState, rule: AlertRuleDraft, reading: Reading, now: datet
     if state.state == "pending":
         if not met:
             return Advance(replace(evaluated, state="ok", since=now, pending_since=None), no_data=no_data)
+        if gap:
+            return Advance(replace(evaluated, pending_since=now), no_data=no_data)
         if now - (state.pending_since or state.since) >= hold:
             return _fire(evaluated, now, no_data=no_data)
         return Advance(evaluated, no_data=no_data)
     if met:
         firing = replace(evaluated, clear_since=None)
         return Advance(firing, repeat_due=_repeat_due(firing, rule, now), no_data=no_data)
-    clear_since = state.clear_since or now
+    clear_since = now if gap else state.clear_since or now
     if now - clear_since >= timedelta(seconds=max(rule.for_seconds, MIN_CLEAR_SECONDS)):
         resolved = replace(
             evaluated,
