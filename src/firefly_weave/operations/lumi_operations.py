@@ -587,21 +587,28 @@ async def read_change_request(changes: ChangeReads, deployments: DeploymentReads
 
 
 # One sentence per kind, sent once for each kind present, after the deployment kinds' sentence.
+# Sent with every operations explanation: the records hold no logs or free text, and the answer should say so.
+NOT_IN_RECORDS: Final = "Say when a fact, such as a log, is not in these records."
 LIMITATIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "worker": (
             "Worker facts are the platform's last observation of its registration and contact; "
-            "they don't show the container's own health."
+            "they don't show the container's own health. Name its presence, and its component when it is placed."
         ),
         "incident": (
             "Incident facts include no inputs, outputs, reasons or logs; "
-            "the decisions listed are the ones that can apply to this code."
+            "the decisions listed are the ones that can apply to this code. "
+            "Name the incident's code and the decisions you mean."
         ),
         "environment": (
             "Platform health is a summary for this caller; "
-            "a section marked forbidden or unavailable is unknown, not zero."
+            "a section marked forbidden or unavailable is unknown, not zero. "
+            "Give the counts and component names you rely on."
         ),
-        "change-request": "Change request facts show its state and plan, not who requested or approved it.",
+        "change-request": (
+            "Change request facts show its state and plan, not who requested or approved it. "
+            "Name the state it is in and the risks its plan lists."
+        ),
     }
 )
 
@@ -691,6 +698,8 @@ def explanation_for(kinds: Iterable[str]) -> Explanation:
     present = set(kinds)
     sentences = [LIMITATION] if present & set(COLLECTIONS) else []
     sentences += [LIMITATIONS[kind] for kind in LIMITATIONS if kind in present]
+    if present & set(LIMITATIONS):
+        sentences.append(NOT_IN_RECORDS)
     return Explanation(limitations=tuple(sentences), shorten=SHORTENERS)
 
 

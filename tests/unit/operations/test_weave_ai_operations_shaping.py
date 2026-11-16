@@ -17,10 +17,13 @@
 """Explanations get the room an absent draft would use, send positions instead of record IDs, and trim by kind."""
 
 import json
+import re
 import sys
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
+
+import pytest
 
 from firefly_weave.contracts.operations_summary import AttentionItem
 from firefly_weave.operations.lumi_context import (
@@ -33,6 +36,7 @@ from firefly_weave.operations.lumi_context import (
 from firefly_weave.operations.lumi_deployments import LIMITATION
 from firefly_weave.operations.lumi_operations import (
     LIMITATIONS,
+    NOT_IN_RECORDS,
     SHORTENERS,
     change_request_context,
     environment_context,
@@ -247,10 +251,24 @@ def test_limitations_name_each_kind_present_once_in_order():
         ]
     ).context
     assert context["limitations"] == " ".join(
-        (LIMITATION, LIMITATIONS["worker"], LIMITATIONS["environment"], EXPLAIN_ONLY)
+        (LIMITATION, LIMITATIONS["worker"], LIMITATIONS["environment"], NOT_IN_RECORDS, EXPLAIN_ONLY)
     )
     assert context["purpose"] == "explain-operations"
     assert "guide" not in context and "authoringSchemas" not in context
+
+
+@pytest.mark.parametrize("kind", ["worker", "incident", "environment", "change-request"])
+def test_an_operations_explanation_says_what_to_cite_and_to_say_what_is_missing(kind):
+    built = {
+        "worker": lambda: worker_context(worker()).data,
+        "incident": lambda: incident_context(incident_facts()).data,
+        "environment": lambda: environment_context(summary_facts()).data,
+        "change-request": lambda: change_request_context(change_request(), None, None, observed_at=NOW).data,
+    }[kind]()
+    limitations = shaped([attachment(kind, built)]).context["limitations"]
+    # Each kind's sentence asks for the facts an answer should name; the records never carry logs or free text.
+    assert re.search(r"\b(Name|Give)\b", LIMITATIONS[kind])
+    assert limitations == " ".join((LIMITATIONS[kind], NOT_IN_RECORDS, EXPLAIN_ONLY))
 
 
 def test_a_deployment_only_explanations_limitations_string_is_unchanged():
