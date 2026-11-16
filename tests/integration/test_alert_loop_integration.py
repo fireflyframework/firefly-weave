@@ -251,10 +251,12 @@ async def test_the_default_preset_is_installed_once_and_never_again_after_deleti
     assert await rows(case, "SELECT preset_id,version,rule_id FROM alert_preset_installs") == [
         {"preset_id": "platform-degraded", "version": 1, "rule_id": installed["id"]}
     ]
+    # Installed after the first visit's reads, it is read from the next visit on.
+    await at(case, 30)
     view = await case.rules.read(case.manager, case.scope, installed["id"], context=CONTEXT)
     assert (view.state.state, view.state.value, view.updated_by) == ("ok", 0.0, None)
     await case.rules.delete(case.manager, case.scope, installed["id"], 1, context=CONTEXT)
-    await at(case, 30)
+    await at(case, 60)
     assert await rows(case, "SELECT id FROM alert_rules WHERE tenant_id=:tenant") == []
 
 

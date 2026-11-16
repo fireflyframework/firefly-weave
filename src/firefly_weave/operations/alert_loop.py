@@ -17,20 +17,23 @@
 """The lifespan-owned alert evaluator: every 30 seconds it evaluates the alert rules of the environments that are due.
 
 It pages tenants with its own cursor and claims up to eight due environments per tenant, moving each one's next
-evaluation on before any work. Each environment is evaluated in one transaction under an advisory try-lock, so a
-second scheduler replica skips an environment another one is evaluating. An environment's signal reads share a
-two-second budget, and a figure two rules need is read once; a read that fails changes no rule's state. Every firing,
-resolve and repeat is written in that transaction with its history event, notifications and alert change event. A
-cycle starts no environment after 20 seconds; the rest are due again on the next cycle. The evaluator never sends
-mail and grants no execution authority.
+evaluation on before any work. An environment's rules and signals are read in a read-only snapshot that holds no
+project lock, so a slow read never delays a run start or any other change to the project. The reads share a
+two-second budget, and a figure two rules need is read once; a read that fails changes no rule's state. What changed
+is then written without admission, and only firings and resolves, whose alert change events go through the outbox,
+are written in a short unit under the project's operation lock, each with its history event and notifications. An
+advisory try-lock keeps a second scheduler replica out of each of these units, and every state row is written under
+the revision it was read at. A cycle starts no environment after 20 seconds; the rest are due again on the next
+cycle. The evaluator never sends mail and grants no execution authority.
 """
 
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import Context
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
@@ -46,6 +49,7 @@ from firefly_weave.access.scheduler import _SchedulerScope, due_alert_scopes, te
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.alerts import AlertRuleDraft
 from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.operations.alert_channels import principal_here
 from firefly_weave.operations.alert_notifications import AlertNotifier, scan_approvals
 from firefly_weave.operations.alert_rules import (
@@ -65,7 +69,7 @@ from firefly_weave.operations.alert_signals import (
     Value,
     measure,
 )
-from firefly_weave.operations.alert_states import ReadFailed, Reading, RuleState, advance
+from firefly_weave.operations.alert_states import Advance, ReadFailed, Reading, RuleState, advance
 from firefly_weave.operations.loop import QuantumIncomplete
 from firefly_weave.operations.loop_health import (
     ALERTS_BUDGET_SECONDS,
@@ -92,9 +96,11 @@ DELIVER_TIMEOUT_SECONDS = 60.0
 # A cycle starts no environment after this long, so it ends well within its interval.
 CYCLE_START_SECONDS = ALERTS_BUDGET_SECONDS
 ENVIRONMENTS_PER_TENANT = 8
-# One environment's signal reads share this budget; its writes get their own after them.
+# One environment's signal reads share this budget; its writes get their own after them, and firings and resolves,
+# written under the project's operation lock, a short one of their own.
 READ_SECONDS = 2.0
 WRITE_SECONDS = 2.0
+ANNOUNCE_SECONDS = 0.5
 # The wall-clock guard waits this much longer, so the database's own timeout normally ends a slow statement.
 CANCEL_GRACE_SECONDS = 0.25
 # Alert history and resolved alerts are kept 30 days; events also at most this many per environment.
@@ -288,6 +294,28 @@ def _rule_state(row: Mapping[str, Any]) -> RuleState:
     )
 
 
+@dataclass(frozen=True)
+class Planned:
+    """One rule's reading and the step it makes, decided in the read snapshot before anything is written."""
+
+    row: Mapping[str, Any]
+    rule: AlertRuleDraft
+    # None when the access the rule needs is gone: it is stored unauthorized and nothing was read.
+    step: Advance | None
+    reading: Reading | None = None
+
+    @property
+    def announces(self) -> bool:
+        """A firing or a resolve: its alert change event goes through the outbox, under the project's lock."""
+        return self.step is not None and self.step.transition is not None
+
+
+async def _locked(tx: Transaction, authority: _SchedulerScope) -> bool:
+    """Take the environment's evaluation try-lock for this transaction; False when another evaluator holds it."""
+    key = f"alerts:{authority.scope.environment_id}"
+    return bool((await tx.session.execute(text(_LOCK), {"key": key})).scalar_one())
+
+
 class AlertLoop:
     def __init__(
         self,
@@ -455,25 +483,32 @@ class AlertLoop:
         return healthy
 
     async def evaluate(self, authority: _SchedulerScope) -> None:
-        """Evaluate one environment's enabled rules in one transaction, then prune it at most once an hour."""
+        """Evaluate one environment's enabled rules, then prune it at most once an hour.
+
+        The reads hold no project lock. What changed is written without admission; firings and resolves follow in a
+        short unit under the project's operation lock, because their change events go through the outbox, which
+        counts toward the project's usage. When the project is busy with a change of its own, they wait for the next
+        cycle, which reads those rules again.
+        """
         now = self.clock()
-        deadline = self.monotonic() + READ_SECONDS + WRITE_SECONDS
-        async with asyncio.timeout(READ_SECONDS + WRITE_SECONDS + CANCEL_GRACE_SECONDS):
-            # Alert tables are serialized by the environment's try-lock. The unit is admitted like any project change,
-            # because alert change events go through the outbox, which counts toward the project's usage.
-            async with scoped_unit(self.uow, authority, deadline, self.monotonic, mutation=True) as tx:
-                key = f"alerts:{authority.scope.environment_id}"
-                if not (await tx.session.execute(text(_LOCK), {"key": key})).scalar_one():
-                    # Another evaluator has this environment now.
-                    return
-                await AlertRuleRepository(tx).execute(
-                    "INSERT INTO alert_environments(tenant_id,project_id,environment_id,next_at) "
-                    "VALUES(:tenant,:project,:environment,:next) ON CONFLICT DO NOTHING",
-                    next=now + timedelta(seconds=EVALUATE_SECONDS),
-                )
-                await install_presets(tx, now)
-                await self._rules(tx, now)
-                await scan_approvals(tx, now)
+        async with asyncio.timeout(READ_SECONDS + WRITE_SECONDS + ANNOUNCE_SECONDS + 3 * CANCEL_GRACE_SECONDS):
+            planned = await self._plan(authority, now)
+            if planned is None:
+                # Another evaluator has this environment now.
+                return
+            if not await self._record(authority, now, [item for item in planned if not item.announces]):
+                return
+            announced = [item for item in planned if item.announces]
+            if announced:
+                try:
+                    await self._record(authority, now, announced, admitted=True)
+                except CatalogError as error:
+                    raise_if_cancelled(error)
+                    if not capacity_rejected(error):
+                        raise
+                    logging.getLogger(__name__).warning(
+                        "Alert changes wait for the next cycle: the project is busy with a change (%s)", error.code
+                    )
         self.seen(authority)
         environment = cast(UUID, authority.scope.environment_id)
         if self.monotonic() - self.pruned.get(environment, -PRUNE_EVERY_SECONDS) >= PRUNE_EVERY_SECONDS:
@@ -493,43 +528,73 @@ class AlertLoop:
                 raise_if_cancelled(error)
                 logging.getLogger(__name__).error("Alert history pruning failed (%s)", failure_cause(error))
 
-    async def _rules(self, tx: Transaction, now: datetime) -> None:
-        repository = AlertRuleRepository(tx)
-        # A rule written without its state row (an older server, a restore) starts from ok.
-        await repository.execute(
-            "INSERT INTO alert_rule_state(tenant_id,project_id,environment_id,rule_id,state,since,revision) "
-            f"SELECT tenant_id,project_id,environment_id,id,'ok',:now,1 FROM alert_rules r WHERE {SCOPED} "
-            "AND NOT EXISTS(SELECT 1 FROM alert_rule_state s WHERE s.tenant_id=r.tenant_id AND "
-            "s.project_id=r.project_id AND s.environment_id=r.environment_id AND s.rule_id=r.id)",
-            now=now,
-        )
-        rows = await repository.rows(_RULES)
-        reads = SharedReads(
-            DatabaseSource(SectionReader(tx, now, Budget(tx.session, int(READ_SECONDS * 1000), self.monotonic)), now)
-        )
-        owners: dict[UUID | None, Principal | None] = {None: None}
-        planned: list[tuple[Mapping[str, Any], AlertRuleDraft, Reading | None]] = []
-        for row in rows:
-            rule = evaluable(row)
-            if rule is None:
-                # A signal or selector this server doesn't know: never evaluated, never changed.
-                continue
-            if row["updated_by"] not in owners:
-                owners[row["updated_by"]] = await principal_here(tx, row["updated_by"])
-            owner = owners[row["updated_by"]]
-            target = rule.selector.target_id
-            # A rule on one target is read only while the person who last set it may still read that target.
-            if target is not None and (
-                owner is None or not self.authorization.allows(owner, tx.scope, "deployment.read", resource=str(target))
-            ):
-                planned.append((row, rule, None))
-                continue
-            planned.append((row, rule, await self._read(tx, reads, rule, now, readable_targets(owner, tx.scope))))
-        await tx.session.execute(
-            text("SELECT set_config('statement_timeout',:limit,true)"), {"limit": f"{int(WRITE_SECONDS * 1000)}ms"}
-        )
-        for stored, rule, reading in planned:
-            await self._write(tx, stored, rule, reading, now)
+    async def _plan(self, authority: _SchedulerScope, now: datetime) -> list[Planned] | None:
+        """Read every enabled rule and its signal in one read-only snapshot; None when another evaluator has it."""
+        deadline = self.monotonic() + READ_SECONDS
+        async with scoped_unit(self.uow, authority, deadline, self.monotonic, mutation=False) as tx:
+            if not await _locked(tx, authority):
+                return None
+            rows = await AlertRuleRepository(tx).rows(_RULES)
+            reads = SharedReads(
+                DatabaseSource(
+                    SectionReader(tx, now, Budget(tx.session, int(READ_SECONDS * 1000), self.monotonic)), now
+                )
+            )
+            owners: dict[UUID | None, Principal | None] = {None: None}
+            planned: list[Planned] = []
+            for row in rows:
+                rule = evaluable(row)
+                if rule is None:
+                    # A signal or selector this server doesn't know: never evaluated, never changed.
+                    continue
+                if row["updated_by"] not in owners:
+                    owners[row["updated_by"]] = await principal_here(tx, row["updated_by"])
+                owner = owners[row["updated_by"]]
+                target = rule.selector.target_id
+                # A rule on one target is read only while the person who last set it may still read that target.
+                if target is not None and (
+                    owner is None
+                    or not self.authorization.allows(owner, tx.scope, "deployment.read", resource=str(target))
+                ):
+                    planned.append(Planned(row, rule, None))
+                    continue
+                reading = await self._read(tx, reads, rule, now, readable_targets(owner, tx.scope))
+                planned.append(Planned(row, rule, advance(_rule_state(row), rule, reading, now), reading))
+        return planned
+
+    async def _record(
+        self, authority: _SchedulerScope, now: datetime, planned: Sequence[Planned], *, admitted: bool = False
+    ) -> bool:
+        """Write what the reads decided; False when another evaluator has the environment now.
+
+        The unit without admission also keeps the schedule, installs the default rules, starts missing state rows and
+        queues approval mail; the admitted one holds only firings and resolves, so it holds the project's lock briefly.
+        """
+        deadline = self.monotonic() + (ANNOUNCE_SECONDS if admitted else WRITE_SECONDS)
+        async with scoped_unit(self.uow, authority, deadline, self.monotonic, mutation=True, admission=admitted) as tx:
+            if not await _locked(tx, authority):
+                return False
+            repository = AlertRuleRepository(tx)
+            if not admitted:
+                await repository.execute(
+                    "INSERT INTO alert_environments(tenant_id,project_id,environment_id,next_at) "
+                    "VALUES(:tenant,:project,:environment,:next) ON CONFLICT DO NOTHING",
+                    next=now + timedelta(seconds=EVALUATE_SECONDS),
+                )
+                await install_presets(tx, now)
+                # A rule written without its state row (an older server, a restore) starts from ok; it is read next.
+                await repository.execute(
+                    "INSERT INTO alert_rule_state(tenant_id,project_id,environment_id,rule_id,state,since,revision) "
+                    f"SELECT tenant_id,project_id,environment_id,id,'ok',:now,1 FROM alert_rules r WHERE {SCOPED} "
+                    "AND NOT EXISTS(SELECT 1 FROM alert_rule_state s WHERE s.tenant_id=r.tenant_id AND "
+                    "s.project_id=r.project_id AND s.environment_id=r.environment_id AND s.rule_id=r.id)",
+                    now=now,
+                )
+            for item in planned:
+                await self._write(tx, item, now)
+            if not admitted:
+                await scan_approvals(tx, now)
+        return True
 
     async def _read(
         self, tx: Transaction, reads: SharedReads, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
@@ -551,11 +616,10 @@ class AlertLoop:
             logging.getLogger(__name__).error("An alert signal read failed (%s)", failure_cause(error))
             return ReadFailed("read_failed")
 
-    async def _write(
-        self, tx: Transaction, row: Mapping[str, Any], rule: AlertRuleDraft, reading: Reading | None, now: datetime
-    ) -> None:
+    async def _write(self, tx: Transaction, planned: Planned, now: datetime) -> None:
         repository = AlertRuleRepository(tx)
-        if reading is None:
+        row, rule, step, reading = planned.row, planned.rule, planned.step, planned.reading
+        if step is None:
             # The access the rule's target needs is gone: nothing is evaluated or sent until it returns.
             if row["state"] != "unauthorized":
                 await repository.execute(
@@ -567,7 +631,6 @@ class AlertLoop:
                 )
             return
         before = _rule_state(row)
-        step = advance(before, rule, reading, now)
         after = step.state
         alert_id = uuid4() if step.transition == "fired" else after.alert_id
         saved = await repository.rows(
