@@ -124,12 +124,10 @@ STUDIO_FAMILIES = frozenset(
         "alert_recipient_consents",
         "alert_addresses",
         # Settings › Administration: retention periods, compatibility and retention plans, each authorized
-        # server-side; subscriptions and deliveries let Studio count and list the webhooks that receive alerts.
+        # server-side.
         "operations_retention",
         "compatibility",
         "retention",
-        "subscriptions",
-        "deliveries",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
         # Draft canvases and test data: capabilities, run data and secrets are checked server-side.
@@ -138,8 +136,19 @@ STUDIO_FAMILIES = frozenset(
     }
 )
 # Single read operations from families that otherwise stay operator-only: releases.create
-# registers image identities and remains a CLI/operator step.
-STUDIO_OPERATIONS = frozenset({"releases.list", "releases.read", "releases.usage"})
+# registers image identities and remains a CLI/operator step. Studio counts and lists the webhook subscriptions and
+# deliveries that receive alerts, and never saves, disables or retries them.
+STUDIO_OPERATIONS = frozenset(
+    {
+        "releases.list",
+        "releases.read",
+        "releases.usage",
+        "subscriptions.list",
+        "subscriptions.read",
+        "deliveries.list",
+        "deliveries.read",
+    }
+)
 CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors", "decision-tables"})
 
 
