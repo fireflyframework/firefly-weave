@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Email whose text or HTML isn't ASCII, such as a name with an accent, is sent;
+  it failed before it was queued.
 - An operator's command, such as resuming a drained worker, no longer answers
   429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
   both of the API's slots for changes. A request that finds every slot of its
