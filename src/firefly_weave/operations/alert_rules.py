@@ -358,6 +358,11 @@ class AlertRuleRepository:
         )
         return bool(updated)
 
+    async def lock_state(self, rule_id: UUID) -> None:
+        """Take the rule's state row before its alert, the order the evaluator writes them in, so a change and an
+        evaluation of the same rule wait for each other instead of each holding what the other needs."""
+        await self.execute(f"SELECT 1 FROM alert_rule_state WHERE {SCOPED} AND rule_id=:id FOR UPDATE", id=rule_id)
+
     async def delete(self, rule_id: UUID, expected: int) -> bool:
         deleted = await self.rows(
             f"DELETE FROM alert_rules WHERE {SCOPED} AND id=:id AND revision=:expected RETURNING id",
@@ -659,6 +664,7 @@ class AlertRuleService:
             if before["revision"] != expected_revision:
                 raise _changed()
             await self._check(repository, rule)
+            await repository.lock_state(rule_id)
             now = await repository.now()
             stored = evaluable(before)
             reason: Literal["rule_changed", "rule_disabled"] | None = None
@@ -702,6 +708,7 @@ class AlertRuleService:
                 raise _missing()
             if before["revision"] != expected_revision:
                 raise _changed()
+            await repository.lock_state(rule_id)
             now = await repository.now()
             await resolve_firing(tx, self.outbox, rule_id, "rule_deleted", before["channel_ids"] or (), now)
             if not await repository.delete(rule_id, expected_revision):
