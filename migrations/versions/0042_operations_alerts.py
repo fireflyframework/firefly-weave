@@ -40,6 +40,8 @@ RESOLVED_REASONS = "'threshold','no_data','rule_changed','rule_disabled','rule_d
 NOTIFICATION_KINDS = "'firing','resolved','repeat','test','approval','approval_moved'"
 SIGNAL = "CHECK(signal ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$' AND char_length(signal)<=100)"
 THRESHOLD = "CHECK(threshold>=0 AND threshold<=1e9)"
+# Roles that machines hold, as the alert services count them: a grant of only these makes no person of a tenant.
+SERVICE_ROLES = ("worker", "deployment_runner")
 ROLES = (
     "platform_admin",
     "tenant_admin",
@@ -214,6 +216,22 @@ def recipients() -> None:
         tenant_id uuid NOT NULL REFERENCES tenants(id),principal_id uuid NOT NULL REFERENCES principals(id),
         address text NOT NULL {address},updated_at timestamptz NOT NULL,PRIMARY KEY(tenant_id,principal_id))""")
     secure_tenant("alert_member_addresses", "SELECT,INSERT,UPDATE,DELETE")
+    # A person's alert address goes with their last grant in the tenant other than a machine's role; the evaluator's
+    # hourly prune removes any a path without this trigger left behind.
+    service = ",".join(f"'{role}'" for role in SERVICE_ROLES)
+    op.execute(f"""CREATE FUNCTION weave_alert_address_forget() RETURNS trigger LANGUAGE plpgsql
+      SET search_path=pg_catalog,public AS $$ BEGIN
+        IF OLD.tenant_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.role_bindings WHERE tenant_id=OLD.tenant_id
+            AND principal_id=OLD.principal_id AND role NOT IN ({service})) THEN
+          DELETE FROM public.alert_member_addresses WHERE tenant_id=OLD.tenant_id AND principal_id=OLD.principal_id;
+        END IF;
+        RETURN NULL;
+      END $$""")
+    op.execute("REVOKE ALL ON FUNCTION weave_alert_address_forget() FROM PUBLIC")
+    op.execute(
+        "CREATE TRIGGER alert_address_forget AFTER DELETE ON role_bindings FOR EACH ROW "
+        "EXECUTE FUNCTION weave_alert_address_forget()"
+    )
     # The key that hashes addresses in audit records is created once per tenant and never changes.
     op.execute("""CREATE TABLE alert_hash_keys(
         tenant_id uuid PRIMARY KEY REFERENCES tenants(id),key bytea NOT NULL CHECK(octet_length(key)=32),

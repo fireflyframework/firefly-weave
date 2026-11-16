@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 from test_operations_statistics import owner
-from test_worker_fleet_facts import principal_with
+from test_worker_fleet_facts import clock, principal_with
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, AuthorizationService
@@ -51,6 +51,7 @@ from firefly_weave.operations.alert_channels import (
     address_hash,
     resolve_recipients,
 )
+from firefly_weave.operations.alert_loop import prune
 from firefly_weave.operations.alert_rules import AlertRuleService
 
 pytestmark = pytest.mark.integration
@@ -414,3 +415,33 @@ async def test_a_person_reads_and_sets_only_their_own_alert_address(authenticate
     # A tenant the person has no grant in.
     elsewhere = f"/api/v1/tenants/{scopes[1].tenant_id}/my-alert-address"
     assert (await client.get(elsewhere, headers=one)).status_code == 403
+
+
+async def test_a_persons_alert_address_goes_with_their_last_grant_in_the_tenant(mail):
+    case = mail
+    person = await principal_with(
+        case, Grant(role="viewer", scope=case.scope), Grant(role="file_reader", scope=case.scope)
+    )
+    await save_address(case, person, "leaving@example.org")
+    bindings = await owner(case, "SELECT id FROM role_bindings WHERE principal_id=:p ORDER BY role", p=person.id)
+    saved = "SELECT principal_id FROM alert_member_addresses WHERE principal_id=:p"
+    await case.access.revoke_grant(case.admin, case.scope, bindings[0]["id"])
+    assert await owner(case, saved, p=person.id) == [{"principal_id": person.id}]
+    await case.access.revoke_grant(case.admin, case.scope, bindings[1]["id"])
+    assert await owner(case, saved, p=person.id) == []
+
+
+async def test_the_hourly_prune_removes_alert_addresses_nobody_with_a_grant_holds(mail):
+    case = mail
+    gone = await case.access.create_principal(case.admin, "human")
+    await owner(
+        case,
+        "INSERT INTO alert_member_addresses(tenant_id,principal_id,address,updated_at) "
+        "VALUES(:tenant,:p,'orphan@example.org',clock_timestamp())",
+        p=gone,
+    )
+    await save_address(case, case.ana, "ana@example.org")
+    async with case.tx() as tx:
+        await prune(tx, await clock(case))
+    left = await owner(case, "SELECT principal_id FROM alert_member_addresses WHERE tenant_id=:tenant")
+    assert left == [{"principal_id": case.ana.id}]

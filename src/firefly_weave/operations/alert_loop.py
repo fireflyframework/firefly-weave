@@ -50,7 +50,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.alerts import AlertRuleDraft
 from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
-from firefly_weave.operations.alert_channels import principal_here
+from firefly_weave.operations.alert_channels import SERVICE_ROLES, principal_here
 from firefly_weave.operations.alert_notifications import AlertNotifier, scan_approvals
 from firefly_weave.operations.alert_rules import (
     ALERT_PRESETS,
@@ -252,7 +252,8 @@ async def install_presets(tx: Transaction, now: datetime) -> int:
 
 
 async def prune(tx: Transaction, now: datetime) -> int:
-    """Delete alert history and resolved alerts older than 30 days, and events beyond the cap, a batch at a time."""
+    """Delete alert history and resolved alerts older than 30 days, events beyond the cap, and alert addresses of
+    people with no grant left in the tenant, a batch at a time."""
     repository = AlertRuleRepository(tx)
     cutoff = now - RETENTION
     statements = (
@@ -266,10 +267,19 @@ async def prune(tx: Transaction, now: datetime) -> int:
         f"{SCOPED} AND state<>'pending' AND created_at<:cutoff ORDER BY created_at LIMIT :batch) RETURNING id",
         f"DELETE FROM alert_messages WHERE {SCOPED} AND id IN (SELECT id FROM alert_messages WHERE {SCOPED} "
         "AND sent_at<:cutoff ORDER BY sent_at LIMIT :batch) RETURNING id",
+        # Removing a person's last grant removes their alert address; this catches any a path left behind.
+        "DELETE FROM alert_member_addresses WHERE tenant_id=:tenant AND principal_id IN (SELECT principal_id FROM "
+        "alert_member_addresses a WHERE tenant_id=:tenant AND NOT EXISTS(SELECT 1 FROM role_bindings b WHERE "
+        "b.tenant_id=a.tenant_id AND b.principal_id=a.principal_id AND b.role<>ALL(:service)) LIMIT :batch) "
+        "RETURNING principal_id AS id",
     )
     deleted = 0
     for statement in statements:
-        deleted += len(await repository.rows(statement, cutoff=cutoff, kept=EVENTS_KEPT, batch=PRUNE_BATCH))
+        deleted += len(
+            await repository.rows(
+                statement, cutoff=cutoff, kept=EVENTS_KEPT, batch=PRUNE_BATCH, service=sorted(SERVICE_ROLES)
+            )
+        )
     return deleted
 
 
