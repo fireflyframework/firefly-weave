@@ -105,8 +105,9 @@ class ProcessOwner:
         return self.process_logs[process.pid].read_text()
 
     def kill_group(self, process):
-        # start_new_session assigns a group exclusively owned by this process tree.
-        with suppress(ProcessLookupError):
+        # start_new_session assigns a group exclusively owned by this process tree. Once every process of the group
+        # has exited, macOS can answer EPERM instead of ESRCH, so both mean the group is already gone.
+        with suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
 
     async def close(self):

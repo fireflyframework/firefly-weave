@@ -38,6 +38,19 @@ async def test_output_budget_kills_only_owned_child(tmp_path):
     assert all(p.stat().st_size <= 1024 for p in tmp_path.glob("*.log"))
 
 
+async def test_output_budget_holds_when_the_child_group_exited_before_the_kill(tmp_path, monkeypatch):
+    # Under load the child can exit before the budget check kills its group, and macOS then answers killpg with
+    # EPERM, not ESRCH, for a group with no live process left.
+    def exited_group(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(module.os, "killpg", exited_group)
+    owner = module.ProcessOwner(tmp_path, limit=1024)
+    with pytest.raises(module.ProcessFailure, match="output"):
+        await owner.command(sys.executable, "-I", "-c", "print('x' * 10000)")
+    assert owner.processes and all(p.returncode is not None for p in owner.processes)
+
+
 async def test_command_timeout_is_failure_and_retains_log(tmp_path):
     owner = module.ProcessOwner(tmp_path)
     with pytest.raises(module.ProcessFailure, match="timed out"):
