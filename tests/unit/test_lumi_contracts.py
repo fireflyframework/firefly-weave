@@ -20,7 +20,13 @@ import pytest
 from pydantic import ValidationError
 
 from firefly_weave.compiler.schemas import validate_payload
-from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfigurationRequest, LumiReply
+from firefly_weave.contracts.lumi import (
+    LUMI_REPLY_SCHEMA,
+    OPERATIONS_KINDS,
+    LumiAskRequest,
+    LumiConfigurationRequest,
+    LumiReply,
+)
 
 
 def profile():
@@ -93,9 +99,20 @@ def test_configuration_schema_publishes_the_same_fixed_reply_schema_as_validatio
     assert schema["$defs"]["LumiProfile"]["properties"]["outputSchema"]["const"] == LUMI_REPLY_SCHEMA
 
 
-@pytest.mark.parametrize(
-    "kind", ["deployment-target", "deployment", "deployment-observation", "deployment-plan", "deployment-job"]
-)
+OPERATIONS = [
+    "deployment-target",
+    "deployment",
+    "deployment-observation",
+    "deployment-plan",
+    "deployment-job",
+    "worker",
+    "incident",
+    "environment",
+    "change-request",
+]
+
+
+@pytest.mark.parametrize("kind", OPERATIONS)
 def test_operations_context_is_identifier_only_and_explanation_only(kind):
     from uuid import uuid4
 
@@ -107,6 +124,30 @@ def test_operations_context_is_identifier_only_and_explanation_only(kind):
         LumiAskRequest(message="Explain", attachments=[attachment], draft={"format": "yaml", "source": "private"})
     with pytest.raises(ValidationError):
         LumiAskRequest(message="Explain", attachments=[attachment, {"kind": "run", "id": str(uuid4())}])
+
+
+def test_the_operations_kinds_are_the_deployment_and_operate_records():
+    assert set(OPERATIONS) == OPERATIONS_KINDS
+
+
+@pytest.mark.parametrize("kind", ["incident", "environment"])
+@pytest.mark.parametrize("other", ["run", "draft", "simulation"])
+def test_an_operations_attachment_refuses_an_authoring_attachment_beside_it(kind, other):
+    from uuid import uuid4
+
+    with pytest.raises(ValidationError, match="accept only Operations attachments"):
+        LumiAskRequest(
+            message="Explain", attachments=[{"kind": kind, "id": str(uuid4())}, {"kind": other, "id": str(uuid4())}]
+        )
+
+
+def test_authoring_attachments_alone_are_not_an_explanation():
+    from uuid import uuid4
+
+    request = LumiAskRequest(
+        message="Why?", attachments=[{"kind": "draft", "id": str(uuid4())}, {"kind": "run", "id": str(uuid4())}]
+    )
+    assert request.explanation_only is False
 
 
 def test_a_fix_request_is_marked_and_carries_the_proposal_as_its_draft():
