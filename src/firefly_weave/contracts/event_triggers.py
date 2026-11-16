@@ -30,7 +30,14 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from firefly_weave.contracts.definitions import CallerNames, ContractModel, OmissionOnly, ResourceName
+from firefly_weave.contracts.definitions import (
+    CallerNames,
+    ContractModel,
+    OmissionOnly,
+    ResourceName,
+    _is_absent,
+    _omit_absent_default,
+)
 from firefly_weave.contracts.platform_events import EventCode
 from firefly_weave.contracts.transactions import PlatformEventType
 
@@ -64,7 +71,9 @@ class EventTriggerRequest(ContractModel):
     name: ResourceName
     activation_id: UUID
     events: list[PlatformEventType] = Field(min_length=1, max_length=12, json_schema_extra={"uniqueItems": True})
-    source_workflows: OmissionOnly[CallerNames] = Field(default=None, exclude_if=lambda value: value is None)
+    source_workflows: OmissionOnly[CallerNames] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
     # Lets runs of this trigger resolve their transaction; setting it needs transaction.reconcile.
     may_reconcile: bool = False
 

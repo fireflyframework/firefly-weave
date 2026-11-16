@@ -92,6 +92,12 @@ def test_an_event_trigger_request_names_events_and_sources():
             wire(EventTriggerRequest, refused)
 
 
+def test_an_omitted_source_list_publishes_no_null_default():
+    # A null default would tell clients they may send null, which the request refuses.
+    sources = EventTriggerRequest.model_json_schema()["properties"]["source_workflows"]
+    assert "default" not in sources
+
+
 def test_an_event_trigger_is_its_request_plus_who_bound_it():
     bound = {
         **REQUEST,
