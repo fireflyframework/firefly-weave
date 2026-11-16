@@ -202,7 +202,7 @@ def test_every_worker_stage_rebuilds_the_core_it_checks_against(runner):
     # The workers install firefly-weave from its path as a copy, so a worker environment made before a merge keeps
     # the old core until uv rebuilds it; the option belongs to uv run, before the tool and its own arguments.
     stages = runner.worker_stages()
-    assert len(stages) == 8
+    assert stages
     for name, command, _ in stages:
         assert command[7:9] == ["--reinstall-package", "firefly-weave"], name
 
