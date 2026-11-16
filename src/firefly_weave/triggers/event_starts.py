@@ -28,6 +28,7 @@ import json
 from datetime import datetime
 from typing import Any, Final
 
+from pydantic import ValidationError
 from sqlalchemy.exc import DBAPIError
 
 from firefly_weave.access.audit import AuditContext
@@ -119,10 +120,14 @@ class EventStartService:
         trigger = triggers[0]
         if trigger["disabled"]:
             return await self._end(repository, row, "skipped", "WV-TRIGGER-DISABLED")
-        [stored] = await repository.rows(
+        stored = await repository.rows(
             f"SELECT payload FROM event_trigger_payloads WHERE {SCOPE} AND event_id=:event", event=row["event_id"]
         )
-        event = PlatformEvent.model_validate_json(json.dumps(stored["payload"]))
+        try:
+            event = PlatformEvent.model_validate_json(json.dumps(stored[0]["payload"]))
+        except (IndexError, ValidationError):
+            # Missing, or no longer a platform event: this start can never run, and the starts behind it still can.
+            return await self._end(repository, row, "rejected", "WV-TRIGGER-START", "WV-RUNTIME-INPUT")
         failures = capacity_failures.get()
         marked = list(failures) if failures is not None else None
         candidate = tx.session.info.get("weave_runtime_candidate")
@@ -136,7 +141,7 @@ class EventStartService:
                     tx.scope,
                     StartRunRequest(
                         activation_id=trigger["activation_id"],
-                        input=stored["payload"],
+                        input=stored[0]["payload"],
                         business_key=event.transaction.business_key,
                     ),
                     f"event:{row['trigger_id']}:{row['event_id']}",

@@ -294,9 +294,9 @@ async def test_the_starts_listing_pages_newest_first_without_payloads(platform):
 MOVE = ("move", [transaction(hold(), add(), submit())])
 
 
-async def in_doubt(platform, move: str = "M-1"):
+async def in_doubt(platform, move: str = "M-1", activation=None):
     """Drive a run whose undo is refused, so its transaction ends in doubt and emits transaction.in_doubt."""
-    run = await platform.start(await platform.publish(workflow(*MOVE)), move)
+    run = await platform.start(activation or await platform.publish(workflow(*MOVE)), move)
     await platform.complete(await platform.lease("hold"))
     await platform.fail(await platform.lease("add"), "UNAVAILABLE")
     await platform.scan()
@@ -730,3 +730,25 @@ async def test_a_public_start_cannot_take_an_event_starts_key(platform, monkeypa
     [row] = await starts(platform)
     assert row["status"] == "started" and row["run_id"] != public.id
     assert [reacted["run_id"] for reacted in await reactions(platform)] == [row["run_id"]]
+
+
+async def test_a_start_whose_stored_event_is_unreadable_is_rejected_alone(platform, monkeypatch):
+    await platform.bind(await platform.publish(reaction()))
+    mover = await platform.publish(workflow(*MOVE))
+    with held(monkeypatch):
+        first = await in_doubt(platform, "M-1", mover)
+        second = await in_doubt(platform, "M-2", mover)
+    broken = (await outbox_event(platform, first, "transaction.in_doubt"))["event_id"]
+    readable = (await outbox_event(platform, second, "transaction.in_doubt"))["event_id"]
+    # An event stored by another version of the platform, or damaged: it no longer reads as a platform event.
+    await platform.execute(
+        "UPDATE event_trigger_payloads SET payload=cast(:payload AS jsonb) WHERE event_id=:event",
+        event=broken,
+        payload=json.dumps({"version": "weave/platform-event-v0"}),
+    )
+    await platform.scan()
+    outcomes = {str(row["event_id"]): (row["status"], row["code"], row["cause"]) for row in await starts(platform)}
+    assert outcomes == {
+        broken: ("rejected", "WV-TRIGGER-START", "WV-RUNTIME-INPUT"),
+        readable: ("started", None, None),
+    }
