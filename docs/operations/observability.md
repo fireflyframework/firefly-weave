@@ -323,7 +323,7 @@ each one needs.
   environment within five minutes for about 160 tenants, or about 80 when
   tenants have nine or more environments. Beyond that, revisits come more than
   five minutes apart, so both waits start over at every reading, and the server
-  logs the warning "Alert evaluation is behind".
+  logs a warning that starts with `Alert evaluation is behind`.
 - **Repeats.** A firing alert notifies again after its repeat interval (at
   least 15 minutes) until someone acknowledges it. An acknowledgement made
   while that cycle is being evaluated can still let one repeat through.
