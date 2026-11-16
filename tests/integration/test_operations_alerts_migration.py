@@ -421,6 +421,35 @@ async def test_the_alert_tenant_page_is_for_the_scheduler_only(upgraded):
     assert sqlstate(refused.value) == "42501"
 
 
+@pytest.mark.parametrize("column", ["tenant_id", "project_id", "environment_id"])
+async def test_a_claim_changes_only_the_schedule_and_the_approval_position(upgraded, column):
+    engine, ids = upgraded
+    async with engine.begin() as connection:
+        await seed_alerts(connection, ids)
+    async with engine.begin() as connection:
+        await connection.execute(text("SET LOCAL ROLE weave_app"))
+        await connection.execute(
+            text("SELECT set_config('weave.tenant_id',:tenant,true)"), {"tenant": str(ids["tenant"])}
+        )
+        moved = await connection.execute(
+            text(
+                "UPDATE alert_environments SET next_at=now(),approval_after_at=now(),approval_after_id=:id "
+                "WHERE environment_id=:environment"
+            ),
+            {"id": uuid4(), "environment": ids["environment"]},
+        )
+        assert moved.rowcount == 1
+    # Within a tenant, a request may move another environment's schedule, never the row itself.
+    with pytest.raises(DBAPIError) as refused:
+        async with engine.begin() as connection:
+            await connection.execute(text("SET LOCAL ROLE weave_app"))
+            await connection.execute(
+                text("SELECT set_config('weave.tenant_id',:tenant,true)"), {"tenant": str(ids["tenant"])}
+            )
+            await connection.execute(text(f"UPDATE alert_environments SET {column}={column}"))
+    assert sqlstate(refused.value) == "42501"
+
+
 async def test_the_alert_loop_claims_due_environments_of_a_tenant(upgraded):
     engine, ids = upgraded
     async with engine.begin() as connection:

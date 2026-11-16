@@ -265,7 +265,8 @@ def delivery() -> None:
     secure("alert_settings", "SELECT,INSERT,UPDATE,DELETE")
     secure("alert_preset_installs", "SELECT,INSERT")
     # The evaluator claims due environments with only the tenant set, then works inside each one; a row is created
-    # and removed only from inside its own environment.
+    # and removed only from inside its own environment. A claim may change the schedule and the approval scan
+    # position, never which environment a row belongs to.
     op.execute("ALTER TABLE alert_environments ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE alert_environments FORCE ROW LEVEL SECURITY")
     op.execute(f"CREATE POLICY tenant_read ON alert_environments FOR SELECT TO weave_app USING ({TENANT})")
@@ -275,7 +276,8 @@ def delivery() -> None:
     )
     op.execute(f"CREATE POLICY exact_insert ON alert_environments FOR INSERT TO weave_app WITH CHECK ({EXACT})")
     op.execute(f"CREATE POLICY exact_delete ON alert_environments FOR DELETE TO weave_app USING ({EXACT})")
-    op.execute("GRANT SELECT,INSERT,UPDATE,DELETE ON alert_environments TO weave_app")
+    op.execute("GRANT SELECT,INSERT,DELETE ON alert_environments TO weave_app")
+    op.execute("GRANT UPDATE(next_at,approval_after_at,approval_after_id) ON alert_environments TO weave_app")
 
 
 def tenant_page() -> None:
