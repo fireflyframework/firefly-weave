@@ -777,7 +777,8 @@ export async function signInWaiting(
   let finished = false;
   await page.route(/\/studio\/connection\/login\/login-\d+$/, async (route) => {
     if (!finished) await new Promise<void>((resolve) => held.push(resolve));
-    await route.fallback();
+    // A poll the page gave up on while it was held has nobody to answer.
+    await route.fallback().catch(() => undefined);
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
