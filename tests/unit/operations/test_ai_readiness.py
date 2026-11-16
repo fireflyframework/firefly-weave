@@ -35,6 +35,7 @@ from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
 from firefly_weave.contracts.connectors import ConnectionRevision
 from firefly_weave.contracts.definitions import load_definition
@@ -45,6 +46,8 @@ from firefly_weave.workers.models import observed_worker
 
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
 REFERENCE = "weave-agentic.generate@1.0.0"
+# An AI agent's model turn: required once the platform runs agents.
+TURN = "weave-agentic.turn@1.0.0"
 IDS = [
     "worker_installed",
     "actions_published",
@@ -86,8 +89,8 @@ def release(**changes):
     values = dict(
         id=uuid4(),
         image_digest="sha256:" + "a" * 64,
-        capabilities=[task_capability()],
-        credential_capabilities=[REFERENCE],
+        capabilities=[task_capability(), turn_capability()],
+        credential_capabilities=[REFERENCE, TURN],
     )
     values.update(changes)
     return WorkerRelease(**values)
@@ -123,12 +126,17 @@ def test_builtin_publication_uses_normalized_definition_digests():
     assert [(row.kind, row.reference) for row in builtins] == [
         ("Connector", "weave-agentic-provider@1.0.0"),
         ("Action", "weave-agentic-generate@1.0.0"),
+        ("Action", "weave-agentic-turn@1.0.0"),
     ]
-    expected = [load_definition(AGENTIC_DESCRIPTOR.manifest.value), load_definition(action_definition())]
+    expected = [
+        load_definition(AGENTIC_DESCRIPTOR.manifest.value),
+        load_definition(action_definition()),
+        load_definition(turn_action_definition()),
+    ]
     assert [row.definition_digest for row in builtins] == [
         FrozenDocument.from_value(row.model_dump(by_alias=True)).digest for row in expected
     ]
-    assert facts.required_ai_capabilities() == frozenset({REFERENCE})
+    assert facts.required_ai_capabilities() == frozenset({REFERENCE, TURN})
 
 
 @pytest.fixture
@@ -147,7 +155,9 @@ def ready(monkeypatch):
         ),
     )
     conn, rel = revision(), release()
-    worker = WorkerInstance(id=uuid4(), release_id=rel.id, principal_id=uuid4(), task_types=[REFERENCE], capacity=1)
+    worker = WorkerInstance(
+        id=uuid4(), release_id=rel.id, principal_id=uuid4(), task_types=[REFERENCE, TURN], capacity=1
+    )
     state = SimpleNamespace(
         scope=scope,
         project=project,
@@ -157,7 +167,7 @@ def ready(monkeypatch):
         connections=[conn],
         releases=[rel],
         tests={conn.id: good_test()},
-        grants={(rel.id, conn.id, REFERENCE)},
+        grants={(rel.id, conn.id, REFERENCE), (rel.id, conn.id, TURN)},
         workers=[worker.id],
         worker=worker,
         seen=NOW,
@@ -461,6 +471,9 @@ async def test_all_release_capability_connection_grants_are_required(ready):
     ready.releases.append(release(image_digest="sha256:" + "b" * 64))
     assert by_id(await read(ready))["connection_authorized"].detail == "authorization_missing"
     ready.grants.add((ready.releases[1].id, ready.connections[0].id, REFERENCE))
+    # Each task needs its own grant: the agent's turn is still missing.
+    assert by_id(await read(ready))["connection_authorized"].detail == "authorization_missing"
+    ready.grants.add((ready.releases[1].id, ready.connections[0].id, TURN))
     assert by_id(await read(ready))["connection_authorized"].status == "done"
     ready.releases = [release(credential_capabilities=[])]
     assert by_id(await read(ready))["connection_authorized"].status == "action"
@@ -803,7 +816,7 @@ async def test_grants_are_scoped_unrevoked_typed_and_bounded():
             "capability=ANY(:capabilities)",
         ]:
             assert clause in sql
-        assert params["capabilities"] == [REFERENCE]
+        assert params["capabilities"] == [REFERENCE, TURN]
         assert "UUID[]" in str(statement.compile(dialect=postgresql.asyncpg.dialect()))
 
 

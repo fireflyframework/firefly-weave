@@ -32,12 +32,23 @@ from firefly_weave.access.authorization import AccessDenied, AuthorizationServic
 from firefly_weave.access.models import Grant, Principal
 from firefly_weave.ai_policy import AIPolicy, PolicyEndpoint, from_pairs, render
 from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.compiler.ir import ActionNode, TransformNode
+from firefly_weave.compiler.ir import (
+    ActionNode,
+    AgentNode,
+    AgentToolIR,
+    Dependency,
+    Participation,
+    TransformNode,
+    UndoPhaseNode,
+    WorkflowIR,
+)
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import (
     AGENTIC_DESCRIPTOR,
     AgenticConnectionAdapter,
@@ -210,6 +221,151 @@ def test_every_ai_step_is_checked():
     assert refused.value.code == "WV-ACTIVATION-AI-MODEL"
 
 
+def agent_node(model="chosen", provider="openai-chat", connection="ai"):
+    return AgentNode.model_construct(
+        id="support", connection=connection, llm_profile=LLMProfile.model_construct(provider=provider, model=model)
+    )
+
+
+def test_an_agent_on_another_providers_connection_is_refused_at_activation():
+    with pytest.raises(CatalogError) as refused:
+        validator()([agent_node()], {"ai": bound(provider="openai-responses")}, approving("chosen"))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-PROVIDER")
+
+
+def test_an_agents_model_must_be_approved_for_its_connection():
+    validator()([agent_node()], {"ai": bound()}, approving("chosen"))
+    with pytest.raises(CatalogError) as refused:
+        validator()([agent_node(model="unlisted")], {"ai": bound()}, approving("chosen"))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
+
+
+def reserved():
+    return importlib.import_module("firefly_weave.definitions.ai").validate_ai_reserved
+
+
+def agent_ir() -> WorkflowIR:
+    return WorkflowIR.model_validate(compiled(agent_workflow()).executable)
+
+
+def with_nodes(ir: WorkflowIR, nodes) -> WorkflowIR:
+    return ir.model_copy(update={"graph": ir.graph.model_copy(update={"nodes": nodes})})
+
+
+def test_an_ir_that_runs_the_turn_task_outside_an_agent_is_refused_at_activation():
+    ir = agent_ir()
+    reserved()(ir)
+    turn = next(node for node in ir.graph.nodes if isinstance(node, AgentNode)).dependency
+    # An action step pinned to the platform's turn action would run the model without the agent's guards.
+    stray = ActionNode.model_construct(id="turn", dependency=turn, connection="ai", llm_profile=None)
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, [*ir.graph.nodes, stray]))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
+def test_an_agent_whose_turn_action_isnt_the_platforms_is_refused_at_activation():
+    ir = agent_ir()
+    nodes = [
+        node.model_copy(update={"dependency": "sha256:" + "0" * 64}) if isinstance(node, AgentNode) else node
+        for node in ir.graph.nodes
+    ]
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, nodes))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
+@pytest.mark.parametrize("task", ["turn", "generate"])
+def test_an_agent_tool_pinned_to_an_ai_task_is_refused_at_activation(task):
+    ir = agent_ir()
+    agent = next(node for node in ir.graph.nodes if isinstance(node, AgentNode))
+    generate = next(
+        dependency
+        for dependency in WorkflowIR.model_validate(compiled(ai_workflow()).executable).dependencies
+        if dependency.kind == "Action"
+    )
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, generate]})
+    # A model must never start another model through a tool: that call would skip the agent's token cap.
+    tool = AgentToolIR.model_construct(
+        name="ask_model", target="action", dependency=agent.dependency if task == "turn" else generate.digest
+    )
+    lookup = AgentToolIR.model_construct(name="lookup", target="human", dependency=None)
+
+    def with_tools(*tools):
+        armed = agent.model_copy(update={"tools": list(tools)})
+        return with_nodes(ir, [armed if node is agent else node for node in ir.graph.nodes])
+
+    reserved()(with_tools(lookup))
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_tools(lookup, tool))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
+def plain_action() -> Dependency:
+    """An Action that runs no model: it undoes a change through a connector."""
+    document = deepcopy(action_definition())
+    document["metadata"]["name"] = "remove-quantity"
+    document["spec"]["implementation"] = {"kind": "connector", "uses": "inventory@1.0.0", "action": "remove"}
+    return Dependency.model_construct(
+        kind="Action", reference="remove-quantity@1.0.0", digest=canonical_digest(document), document=document
+    )
+
+
+def undone(step: str, undo: str) -> ActionNode:
+    """A step of a transaction pinned to ``step``, compensated by an action pinned to ``undo``."""
+    phase = UndoPhaseNode.model_construct(kind="action", dependency=undo, input={"literal": {}}, connection="ai")
+    txn = Participation.model_construct(owner="move", mode="compensate", phases={"compensate": phase})
+    return ActionNode.model_construct(id="add", dependency=step, connection=None, llm_profile=None, txn=txn)
+
+
+@pytest.mark.parametrize("where", ["tool", "step", "undo"])
+def test_a_pinned_document_activation_cannot_read_is_refused_rather_than_assumed_safe(where):
+    plain = plain_action()
+    ir = agent_ir()
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, plain]})
+    reserved()(with_nodes(ir, [*ir.graph.nodes, undone(plain.digest, plain.digest)]))
+    agent = next(node for node in ir.graph.nodes if isinstance(node, AgentNode))
+    # A digest the IR carries no document for: what it runs can't be checked, so it may be the model turn.
+    unknown = "sha256:" + "1" * 64
+    if where == "tool":
+        tool = AgentToolIR.model_construct(name="lookup", target="action", dependency=unknown)
+        nodes = [agent.model_copy(update={"tools": [tool]}) if node is agent else node for node in ir.graph.nodes]
+    elif where == "step":
+        nodes = [
+            *ir.graph.nodes,
+            ActionNode.model_construct(id="act", dependency=unknown, connection="ai", llm_profile=None),
+        ]
+    else:
+        nodes = [*ir.graph.nodes, undone(plain.digest, unknown)]
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, nodes))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert str(refused.value) == "The workflow pins a document it doesn't carry, so what that runs can't be checked"
+
+
+@pytest.mark.parametrize("task", ["turn", "generate"])
+def test_an_undo_action_that_runs_a_model_task_is_refused_at_activation(task):
+    plain = plain_action()
+    generate = next(
+        dependency
+        for dependency in WorkflowIR.model_validate(compiled(ai_workflow()).executable).dependencies
+        if dependency.kind == "Action"
+    )
+    ir = agent_ir()
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, plain, generate]})
+    turn = next(node for node in ir.graph.nodes if isinstance(node, AgentNode)).dependency
+    reserved()(with_nodes(ir, [*ir.graph.nodes, undone(plain.digest, plain.digest)]))
+    # An undo runs after the step with none of an agent's guards: no token cap, data notice or reviewed transcript.
+    model = undone(plain.digest, turn if task == "turn" else generate.digest)
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, [*ir.graph.nodes, model]))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert str(refused.value) == "Only an AI agent step runs the platform's model turn"
+
+
 # Activation: real definition, connection and authorization services over an in-memory environment.
 
 
@@ -268,6 +424,34 @@ def ai_workflow():
     }
 
 
+def agent_workflow(model="chosen"):
+    """An AI agent with no tools on one AI connection: only the model's own checks apply."""
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "support-desk", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": INPUT_SCHEMA,
+            "outputSchema": {},
+            "connections": {"ai": {"connector": CONNECTOR}},
+            "llmProfiles": {"support": profile(model)},
+            "steps": [
+                {
+                    "id": "support",
+                    "kind": "agent",
+                    "uses": "weave-agentic-turn@1.0.0",
+                    "profile": "support",
+                    "connection": "ai",
+                    "instructions": {"literal": "You answer order questions."},
+                    "prompt": {"ref": "/input/text"},
+                    "tools": [],
+                }
+            ],
+            "output": {"literal": None},
+        },
+    }
+
+
 def plain_workflow():
     return {
         "apiVersion": "weave/v1alpha1",
@@ -284,8 +468,12 @@ def plain_workflow():
 
 def compiled(document):
     catalog = CatalogSnapshot.from_definitions(
-        [load_definition(AGENTIC_DESCRIPTOR.manifest.value), load_definition(action_definition())],
-        tasks=[task_capability()],
+        [
+            load_definition(AGENTIC_DESCRIPTOR.manifest.value),
+            load_definition(action_definition()),
+            load_definition(turn_action_definition()),
+        ],
+        tasks=[task_capability(), turn_capability()],
         adapters=["weave-agentic-provider"],
     )
     result = compile_source(document, format="object", catalog=catalog)
@@ -596,6 +784,22 @@ async def test_policy_refusal_writes_no_activation_connection_audit_or_replay(en
     assert not env.audits and not env.events and not env.saved
 
 
+@pytest.mark.parametrize(
+    ("refusal", "code"),
+    [("provider", "WV-ACTIVATION-AI-PROVIDER"), ("model", "WV-ACTIVATION-AI-MODEL")],
+)
+async def test_an_agent_step_with_an_unknown_provider_or_model_is_refused_at_activation(env, refusal, code):
+    if refusal == "provider":
+        env.ai = revision(env, "ai", provider="openai-responses")
+    agent = workflow_version(env, agent_workflow("unlisted" if refusal == "model" else "chosen"))
+
+    with pytest.raises(CatalogError) as refused:
+        await activate(env, version=agent, slots={"ai": env.ai.id})
+
+    assert (refused.value.status, refused.value.code) == (422, code)
+    assert not inserts(env) and not env.activations
+
+
 async def test_a_replay_returns_the_committed_activation_without_a_new_policy_admission(env):
     first = await activate(env)
     use_policy(env, approving())
@@ -681,6 +885,48 @@ async def test_activation_without_ai_steps_never_reads_the_policy(env):
     activation = await activate(env, version=version, slots={})
     assert "policy" not in env.trace and "validate" not in env.trace
     assert [row["id"] for row in env.activations] == [activation.id]
+
+
+def stray_turn_version(env):
+    """A stored workflow whose only step is an action step pinned to the platform's turn action, rehashed.
+
+    The compiler refuses such a step, so the version is forged after compilation: activation is the last line.
+    """
+    document = agent_workflow()
+    value = json.loads(compiled(document).to_bytes())
+    nodes = value["executable"]["graph"]["nodes"]
+    agent = next(node for node in nodes if node["kind"] == "agent")
+    stray = {key: agent[key] for key in ("id", "path", "scope", "connection", "dependency")}
+    stray.update(kind="action", **{"with": {"object": {"prompt": agent["prompt"]}}})
+    nodes[nodes.index(agent)] = stray
+    # Without the agent the graph uses no language feature, so it is the version that AI tasks compile to.
+    del value["executable"]["features"]
+    value["executable"]["irVersion"] = "weave/ir-v1alpha3"
+    value["digest"] = canonical_digest(value["executable"])
+    identifier = uuid4()
+    env.versions[identifier] = {
+        "id": identifier,
+        "kind": "Workflow",
+        "name": document["metadata"]["name"],
+        "version": document["metadata"]["version"],
+        "digest": value["digest"],
+        "document": document,
+        "artifact": value,
+        "retired": False,
+    }
+    return identifier, value["digest"]
+
+
+async def test_activation_refuses_an_action_step_that_runs_the_turn_task_even_without_a_policy(env):
+    use_policy(env, None)
+    version = stray_turn_version(env)
+
+    with pytest.raises(CatalogError) as refused:
+        await activate(env, version=version, slots={"ai": env.ai.id})
+
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert "insert" not in env.trace and not inserts(env) and not env.activations and not env.bound
+    assert not env.audits and not env.events and not env.saved
 
 
 def write_policy(path, models, *, url=ENDPOINT, credential="required"):

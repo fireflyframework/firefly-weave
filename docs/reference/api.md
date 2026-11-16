@@ -229,6 +229,7 @@ safe `message`, a `request_id`, and `diagnostics`. Quote the `request_id`
 | --- | --- | --- |
 | HTTP 401, `WV-UNAUTHENTICATED` | The token is missing, malformed, or expired, was issued for another API, or its sign-in is not linked to a Weave person or application | Get a new token. If it still fails, ask an administrator to link your identity ([People and access](../guides/people-and-access.md)) |
 | HTTP 403, `WV-FORBIDDEN` | You are known but hold no current grant with the required capability in that scope | Check the IDs in the path, then ask for the role you need |
+| HTTP 403, `WV-REVIEW-DISTINCT` | The human task reviews an AI agent's tool call, and its step asks for a reviewer other than the person who started the run: you | Ask another person assigned to the review; see [AI agent reviews](ai-agents.md#reviews) |
 | HTTP 404, `WV-NOT-FOUND` | No resource with that ID exists in the scope of the path | Check every ID in the path, including the environment |
 | HTTP 409, `WV-IDEMPOTENCY-CONFLICT` | You reused an `Idempotency-Key` with a different request body | Use a new key for a new request; reuse a key only for an exact retry |
 | HTTP 412, `WV-ETAG` | Your `If-Match` revision is no longer the current one | Read the resource again, merge your change, and resend with the new revision |
@@ -732,6 +733,38 @@ takes a long time; see [Upgrades](../operations/upgrades.md#runs-that-need-a-new
 In `runs.list`, only a recorded policy block withholds a run before its own read
 classifies it.
 
+**Agent log.** `runs.agent_log` (`GET …/runs/{identifier}/agents/{key}/log`)
+shows what an AI agent did, turn by turn. It checks `run.read` on both the token
+and the current principal, like `runs.steps`. `key` is the agent step's ID or
+one activation's instance key:
+
+- A step ID, such as `support`, pages through the step's activations in
+  iteration order, outer loop first. Outside a loop, the page has the one
+  activation. A step that hasn't run yet answers `200` with an empty page.
+- An activation key, such as `support[2]`, reads that activation. Encode its
+  brackets in the path: `support%5B2%5D`.
+- `limit` is 1 to 20 activations (20 by default). `cursor` continues a page
+  and is bound to the run and the key. The last page has no `next_cursor`.
+- A key that names a turn, a tool call, a review or a loop yield (`support#1`,
+  `each~1`) answers `422` with `WV-VALIDATION` before anything is read. A
+  step that isn't an AI agent, or an activation that hasn't run, answers `404`
+  with `WV-NOT-FOUND`.
+- The values on one page (tool arguments, tool outputs and final answers) are
+  limited to 8 MiB in total. Each turn's arguments and final answer come
+  before tool outputs, and the smallest come first. A value that doesn't fit
+  in the room the shown values leave is left out with the omission
+  `resource_limit`, and its turn still lists its calls and tokens; a smaller
+  value after it can still be shown. A smaller `limit` leaves room for more
+  values.
+
+Each activation lists its turns with their tokens and times, and each turn
+lists the tool calls the model asked for. Arguments, outputs and the final
+answer follow the run views' rules: each is classified by the tool's or the
+step's schema, and a value that can't be shown is left out with its omission
+reason. The log is assembled from the run's step facts, step outputs and turn
+inputs on each read; nothing extra is stored. See
+[AI agent steps](ai-agents.md#agent-log) for the fields.
+
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read
 incident facts after checking both token and current permissions; they never
 load run payloads. `incidents.read` (`GET …/incidents/{identifier}`) reads one
@@ -1188,6 +1221,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
 | `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
+| `runs.agent_log` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/agents/{key}/log` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
 | `incidents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}` | incident.read |

@@ -22,6 +22,7 @@ from typing import cast
 
 from pydantic import Field, TypeAdapter
 
+from firefly_weave.compiler.agents import lower_agent
 from firefly_weave.compiler.analyzer import AnalysisResult, AnalyzedStep
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import measure_value
@@ -242,6 +243,19 @@ class _Lowerer:
                             "connection": value["connection"],
                             "llmProfile": profile,
                         }
+                    )
+                elif step.kind == "agent":
+                    assert self.result.definition is not None and step.agent is not None
+                    spec = cast(JsonObject, self.result.definition.value["spec"])
+                    profile = cast(JsonObject, cast(JsonObject, spec["llmProfiles"])[cast(str, value["profile"])])
+                    base["dependency"] = self.actions[cast(str, value["uses"])]
+                    base.update(
+                        lower_agent(
+                            value,
+                            step.agent.value,
+                            profile,
+                            lambda schema: self.schema(FrozenDocument.from_value(schema)),
+                        )
                     )
                 elif step.kind == "action":
                     base.update(

@@ -161,6 +161,9 @@ class TaskFact(ContractModel):
     action_digest: Digest
     release_id: UUID
     deadline: AwareDatetime
+    # An AI agent's turn task records the digest of its input, so replay can tell when the transcript it rebuilds gives
+    # the model something else. Other tasks leave it out, and their facts keep their bytes.
+    input_digest: Digest | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class TaskTiming(ContractModel):

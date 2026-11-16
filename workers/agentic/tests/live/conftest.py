@@ -18,7 +18,8 @@
 
 WEAVE_LIVE_OLLAMA_URL is the endpoint's origin, such as http://127.0.0.1:11434, with an IP address host. Start
 Ollama with OLLAMA_CONTEXT_LENGTH=32768 (WEAVE_LIVE_OLLAMA_CONTEXT if different). WEAVE_LIVE_OLLAMA_MODELS lists the
-models to evaluate, comma separated (qwen3:4b by default); each must already be pulled, since a check never pulls.
+models to evaluate, comma separated (qwen3:4b-instruct-2507-q4_K_M by default); each must already be pulled, since
+a check never pulls.
 """
 
 import os
@@ -38,7 +39,11 @@ def ollama_url() -> str:
 
 @pytest.fixture
 def ollama_models() -> list[str]:
-    return [name.strip() for name in os.environ.get("WEAVE_LIVE_OLLAMA_MODELS", "qwen3:4b").split(",") if name.strip()]
+    return [
+        name.strip()
+        for name in os.environ.get("WEAVE_LIVE_OLLAMA_MODELS", "qwen3:4b-instruct-2507-q4_K_M").split(",")
+        if name.strip()
+    ]
 
 
 @pytest.fixture

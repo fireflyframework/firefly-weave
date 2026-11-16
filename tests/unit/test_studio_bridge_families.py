@@ -231,9 +231,10 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     # The AI setup operations add exactly these six, direct incident reads join the incidents
     # family, stale-worker retirement joins the workers family, and the environment summary,
     # telemetry settings and release usage join as reads, change requests join as their own family, and a
-    # draft's studio documents join with their own family, and run statistics join as their own family of reads;
-    # every earlier crossing stays as it was.
+    # draft's studio documents join with their own family, and run statistics join as their own family of reads,
+    # and an AI agent's log joins through the runs family; every earlier crossing stays as it was.
     approved_additions = {
+        "runs.agent_log",
         "run_statistics.series",
         "run_statistics.workflows",
         "run_statistics.steps",

@@ -280,10 +280,10 @@ def _kind(
     return ManifestStepKind.model_validate(value)
 
 
-# AI steps add the agent entry with AgentStep: kind "agent", group "ai", label "AI agent", studio "pending".
 STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
     _kind("action", "ActionStep", "actions", "Action"),
     _kind("llm", "LLMStep", "ai", "AI task"),
+    _kind("agent", "AgentStep", "ai", "AI agent", studio="pending"),
     _kind("transform", "TransformStep", "data", "Transform"),
     _kind("decisionTable", "DecisionTableStep", "data", "Decision table"),
     _kind("switch", "SwitchStep", "flow", "Decision", blocks=[("default", "/default", "Otherwise")]),

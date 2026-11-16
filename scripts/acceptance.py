@@ -74,7 +74,9 @@ FIXTURE_ORIGIN = "http://acme.acceptance.test:8080"
 # Approved too, and answered by Keycloak (whose network namespace the API shares) only while J9.3 gives it this alias:
 # the control-plane rule must refuse it although its entry exists.
 IDENTITY_ORIGIN = "http://identity.acceptance.test:8080"
-FIXTURE_ORIGINS = (FIXTURE_ORIGIN, IDENTITY_ORIGIN)
+# The orders fixture of the AI agent journeys, which start it on the egress network themselves.
+ORDERS_ORIGIN = "http://orders.acceptance.test:8080"
+FIXTURE_ORIGINS = (FIXTURE_ORIGIN, IDENTITY_ORIGIN, ORDERS_ORIGIN)
 ACME_IMAGE = "weave-acc/acme-api:local"
 # J0.14 compares image content, not image IDs: with the containerd image store an ID is the
 # manifest-index digest, and BuildKit's provenance attestation gives each cache-hit rebuild a new one.

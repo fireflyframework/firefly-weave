@@ -589,6 +589,32 @@ def _payload(
         return (_issue("RESOURCE_LIMIT"),)
 
 
+def payload_issues(
+    schema: JsonObject, value: JsonValue, bundle: dict[str, JsonObject], *, limits: SchemaLimits = _DEFAULT_LIMITS
+) -> list[tuple[str, str]] | None:
+    """Where ``value`` breaks ``schema`` and which keyword it breaks, as (JSON pointer, keyword), never the values.
+
+    None when the schema or the value can't be checked within the limits.
+    """
+    try:
+        prepared, registry = _prepare(schema, bundle, limits)
+        _measure(
+            value,
+            byte_limit=limits.max_payload_bytes,
+            node_limit=limits.max_document_nodes,
+            depth_limit=limits.max_depth,
+        )
+        validator = _validator(_Budget(limits))(prepared, registry=registry, format_checker=_FORMATS)
+        found: list[tuple[str, str]] = []
+        for error in validator.iter_errors(_ordered(value)):
+            found.append((_safe_path(error.absolute_path, error.absolute_schema_path), str(error.validator)))
+            if len(found) >= 32:
+                break
+        return sorted(set(found))
+    except (_Failure, RecursionError, ArithmeticError):
+        return None
+
+
 def validate_payload(
     schema: JsonObject,
     value: JsonValue,

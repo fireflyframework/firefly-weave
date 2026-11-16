@@ -644,14 +644,19 @@ def test_the_studio_harness_registers_each_person_before_signing_in():
     assert order == sorted(order)
 
 
-def test_platform_up_approves_the_acme_service_and_the_identity_alias():
+def test_platform_up_approves_the_acme_service_the_identity_alias_and_the_orders_fixture():
     # The identity alias names the control plane (Keycloak, whose network namespace the API shares) by an approved
     # origin, so J9.3 sees the control-plane rule refuse it although its entry exists. Acme stays first: the
-    # Studio suites read it as the Acme origin.
+    # Studio suites read it as the Acme origin. The agent journeys answer the orders origin with their own fixture.
     from firefly_weave.sdk.platform_origins import fixture_origin
 
-    assert acceptance.FIXTURE_ORIGINS == (acceptance.FIXTURE_ORIGIN, acceptance.IDENTITY_ORIGIN)
+    assert acceptance.FIXTURE_ORIGINS == (
+        acceptance.FIXTURE_ORIGIN,
+        acceptance.IDENTITY_ORIGIN,
+        acceptance.ORDERS_ORIGIN,
+    )
     assert acceptance.IDENTITY_ORIGIN == "http://identity.acceptance.test:8080"
+    assert acceptance.ORDERS_ORIGIN == "http://orders.acceptance.test:8080"
     assert [fixture_origin(origin) for origin in acceptance.FIXTURE_ORIGINS] == list(acceptance.FIXTURE_ORIGINS)
 
 

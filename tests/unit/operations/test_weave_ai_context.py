@@ -34,6 +34,7 @@ from firefly_weave.operations.lumi_context import (
     input_budget,
     outline,
     output_tokens,
+    runnable_workflow_schema,
     shape,
     untitled,
 )
@@ -104,15 +105,15 @@ def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget()
     from firefly_weave.operations.lumi_context import ENVELOPE_TOKENS, GUIDE_TOKENS
 
     # Measured on llama3.2:3b, qwen3:4b and qwen2.5:1.5b: the gateway's instructions and reply format at most 488
-    # tokens, this guide at most 498 (raw prompt evaluation on Ollama). A change to the guide must be measured again
-    # before these numbers move.
+    # tokens, this guide at most 498 (raw prompt evaluation on Ollama; version 3, which names the agent kind, counts
+    # 498, 497 and 497). A change to the guide must be measured again before these numbers move.
     assert GATEWAY_RESERVE_TOKENS == 640 and GUIDE_TOKENS == 512
-    assert len(GUIDE) == 1827 and GUIDE.startswith("Weave workflow guide (version 2).")
+    assert len(GUIDE) == 1816 and GUIDE.startswith("Weave workflow guide (version 3).")
     # The gateway recognizes this exact guide by its digest (GUIDE_SHA256 in the gateway) to count it as the reserve.
     import hashlib
 
     assert (
-        hashlib.sha256(GUIDE.encode()).hexdigest() == "d780e245a4c859c83402f481535038a4618b51f395ccf8d56dc7b131e06a4b9e"
+        hashlib.sha256(GUIDE.encode()).hexdigest() == "deaa930e8879c898064a536681be3f1484b5303e6e65220c50332b70620aef6b"
     )
     assert GATEWAY_RESERVE_TOKENS + GUIDE_TOKENS + ENVELOPE_TOKENS <= COMPACT_INPUT_TOKENS / 3
 
@@ -130,7 +131,7 @@ def test_the_guide_shows_a_whole_workflow_the_platform_accepts_without_a_warning
         example.append(line[2:])
     assert example[:2] == ["apiVersion: weave/v1alpha1", "kind: Workflow"]
     assert list(validate_authoring("\n".join(example) + "\n", format="yaml").diagnostics) == []
-    assert GUIDE_VERSION == 2
+    assert GUIDE_VERSION == 3
 
 
 def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
@@ -149,8 +150,187 @@ def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
         selected_step=None,
         schemas={"workflow": workflow},
     )
-    assert shaped.context["authoringSchemas"] == {"workflow": untitled(workflow)}
+    assert shaped.context["authoringSchemas"] == {"workflow": untitled(runnable_workflow_schema(workflow))}
     assert sent_tokens(shaped, message) <= budget
+
+
+def _step_kinds(schema):
+    return {item["$ref"].rpartition("/")[2] for item in schema["$defs"]["Step"]["oneOf"]}
+
+
+def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
+    from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    # A platform that doesn't run agents: the kind goes, with what only it used.
+    runnable = runnable_workflow_schema(workflow, tuple(name for name in ADVERTISED_FEATURES if name != "ai.agent"))
+    with_agents = runnable_workflow_schema(workflow, ADVERTISED_FEATURES)
+
+    assert "AgentStep" not in _step_kinds(runnable) and "AgentStep" not in runnable["$defs"]
+    assert "AgentTool" not in runnable["$defs"] and "AgentMemory" not in runnable["$defs"]
+    assert {"ActionStep", "LLMStep", "ForEachStep", "TransactionStep"} <= _step_kinds(runnable)
+    assert "AgentStep" in _step_kinds(with_agents)
+    # Only the agent kind and the definitions it alone used go; everything else is the exported schema, byte for byte.
+    removed = set(workflow["$defs"]) - set(runnable["$defs"])
+    assert {"AgentStep", "AgentTool", "AgentMemory", "AgentLimits", "ToolName"} <= removed
+    assert all(name.startswith(("Agent", "OmissionOnly_", "MemoryTtl", "ToolName")) for name in removed)
+    assert {name: value for name, value in runnable["$defs"].items() if name != "Step"} == {
+        name: value for name, value in workflow["$defs"].items() if name not in removed | {"Step"}
+    }
+    assert {key: value for key, value in runnable.items() if key != "$defs"} == {
+        key: value for key, value in workflow.items() if key != "$defs"
+    }
+
+
+def test_weave_ai_writes_agents_from_a_compact_schema_the_compiler_accepts():
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    full = workflow["$defs"]["AgentStep"]
+    compact = runnable_workflow_schema(workflow)["$defs"]["AgentStep"]
+
+    # The step's own fields, its tools and who reviews them; limits, memory and the error path keep their defaults.
+    assert set(compact["properties"]) == {
+        "id",
+        "kind",
+        "uses",
+        "profile",
+        "connection",
+        "instructions",
+        "prompt",
+        "context",
+        "tools",
+        "review",
+    }
+    assert set(compact["properties"]) <= set(full["properties"]) and compact["required"] == full["required"]
+    assert compact["additionalProperties"] is False
+    tool = compact["properties"]["tools"]["items"]
+    assert set(tool["properties"]) == {"name", "description", "action", "workflow", "connection", "review"}
+    assert set(tool["properties"]) <= set(workflow["$defs"]["AgentTool"]["properties"])
+
+
+def test_weave_ai_can_ask_for_a_different_reviewer_and_by_default_does_not():
+    from firefly_weave.contracts.definitions import AgentReview
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    review = runnable_workflow_schema(workflow)["$defs"]["AgentReview"]
+
+    # Who reviews, and whether the person who started the run may answer; the review's expiry keeps its default.
+    assert set(review["properties"]) == {"assignment", "distinctReviewer"} and review["required"] == ["assignment"]
+    assert review["properties"]["distinctReviewer"] == {"type": "boolean", "default": False}
+    assert set(review["properties"]) <= set(workflow["$defs"]["AgentReview"]["properties"])
+    assert AgentReview.model_validate({"assignment": "support"}).distinct_reviewer is False
+
+
+def agent_draft():
+    """A draft whose agent has settings the compact schema leaves out: fixed arguments, a forced review and limits."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
+    from test_agent_workflows import LOOKUP, agent, workflow
+
+    tool = {**LOOKUP, "approval": "required", "review": {"assignment": "support-leads", "expirySeconds": 3600}}
+    return workflow(agent(tools=[tool], limits={"maxIterations": 4, "maxTotalTokens": 20000}, onError="continue"))
+
+
+def request_for(profile, document, tokens=16384):
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    budget = input_budget(profile, tokens, 1024)
+    shaped = shape(
+        profile,
+        budget,
+        message="Rename the support step",
+        history=HISTORY,
+        resources=[RUN],
+        draft=("yaml", yaml.safe_dump(document)),
+        selected_step=None,
+        schemas={"workflow": export_schemas()["workflow"]},
+    )
+    return shaped, budget
+
+
+def test_an_existing_agent_is_edited_from_a_schema_that_never_tells_weave_ai_to_drop_its_settings():
+    import jsonschema
+
+    document = agent_draft()
+    shaped, budget = request_for("standard", document)
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step = sent["$defs"]["AgentStep"]
+    tool, review = step["properties"]["tools"]["items"], sent["$defs"]["AgentReview"]
+    # The compact shape stays within budget; it no longer forbids the fields it leaves out.
+    assert "limits" not in step["properties"]
+    assert all("additionalProperties" not in schema for schema in (step, tool, review))
+    # Change requests send the whole draft back: an edit that keeps the agent's settings fits what Weave AI was sent.
+    jsonschema.validate(document, sent)
+    assert sent_tokens(shaped, "Rename the support step") <= budget == 15360
+
+
+def test_an_agent_only_an_attached_draft_has_is_edited_from_the_open_schema():
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    attached = {"kind": "draft", "id": "d", "data": {"document": agent_draft(), "revision": 3}}
+    shaped = shape(
+        "standard",
+        input_budget("standard", 16384, 1024),
+        message="Rename the support step",
+        history=[],
+        resources=[RUN, attached],
+        draft=("yaml", draft(5)),
+        selected_step=None,
+        schemas={"workflow": export_schemas()["workflow"]},
+    )
+
+    step = shaped.context["authoringSchemas"]["workflow"]["$defs"]["AgentStep"]
+    assert "additionalProperties" not in step and "limits" not in step["properties"]
+
+
+def test_a_new_agent_is_written_from_the_closed_compact_schema():
+    shaped, _ = request_for("standard", yaml.safe_load(draft(5)))
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step = sent["$defs"]["AgentStep"]
+    assert step["additionalProperties"] is False and "limits" not in step["properties"]
+    assert set(sent["$defs"]["AgentReview"]["properties"]) == {"assignment", "distinctReviewer"}
+
+
+def test_the_full_profile_sends_the_whole_agent_schema():
+    import jsonschema
+
+    document = agent_draft()
+    shaped, _ = request_for("full", document, tokens=131072)
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step, tool = sent["$defs"]["AgentStep"], sent["$defs"]["AgentTool"]
+    assert {"limits", "memory", "onError", "errorPath"} <= set(step["properties"])
+    assert {"fixed", "approval", "human", "review"} <= set(tool["properties"])
+    assert {"expirySeconds", "distinctReviewer"} <= set(sent["$defs"]["AgentReview"]["properties"])
+    jsonschema.validate(document, sent)
+    # A new agent gets the whole schema too: the full profile has room for it.
+    new, _ = request_for("full", yaml.safe_load(draft(5)), tokens=131072)
+    assert "AgentTool" in new.context["authoringSchemas"]["workflow"]["$defs"]
+
+
+def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():
+    # "default" is a property name here, not the keyword, so the definition under it is still in use.
+    schema = {
+        "$ref": "#/$defs/Step",
+        "$defs": {
+            "Step": {"oneOf": [{"$ref": "#/$defs/ActionStep"}, {"$ref": "#/$defs/AgentStep"}]},
+            "ActionStep": {"type": "object", "properties": {"default": {"$ref": "#/$defs/Branch"}}},
+            "AgentStep": {"type": "object", "properties": {"tools": {"$ref": "#/$defs/AgentTool"}}},
+            "AgentTool": {"type": "object"},
+            "Branch": {"type": "object", "properties": {"steps": {"type": "array"}}},
+        },
+    }
+
+    runnable = runnable_workflow_schema(schema, ())
+
+    assert set(runnable["$defs"]) == {"Step", "ActionStep", "Branch"}
 
 
 def test_a_standard_request_sends_schemas_without_titles_but_keeps_properties_named_title():

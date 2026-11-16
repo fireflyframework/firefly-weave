@@ -52,7 +52,7 @@ from firefly_weave.contracts.public import (
 )
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.workers import ConnectorExecutionPin
-from firefly_weave.definitions.ai import validate_ai_bindings
+from firefly_weave.definitions.ai import validate_ai_bindings, validate_ai_reserved
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.repository import DefinitionRepository
@@ -550,15 +550,17 @@ class DefinitionService:
                 request.workflow_activation_ids,
                 lambda identifier: pinned_callee(repository, scope, identifier),
             )
-            from firefly_weave.compiler.ir import ActionNode, HumanTaskNode
+            from firefly_weave.compiler.ir import ActionNode, AgentNode, HumanTaskNode
             from firefly_weave.human_tasks.service import pin_assignments
+            from firefly_weave.runtime.agent_tools import assignment_slots
             from firefly_weave.runtime.kernel import workflow
 
             nodes = workflow(artifact).graph.nodes
             assignment_pins = await pin_assignments(
                 tx,
                 request.assignment_binding_ids,
-                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)},
+                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)}
+                | assignment_slots(workflow(artifact)),
             )
             requirements = spec.get("connections", {})
             required = {slot for slot, requirement in requirements.items() if requirement.get("required", True)}
@@ -580,9 +582,14 @@ class DefinitionService:
             )
             current = rows[0]["revision"] if rows else None
             check_revision(current, expected_revision)
+            # Only an AI agent step runs the model turn, on the platform's turn action, policy or not.
+            validate_ai_reserved(workflow(artifact))
             # New activations only: the policy is read now, after every binding passed current authority,
             # and only for workflows with AI steps, so other activations never depend on it.
-            if any(isinstance(node, ActionNode) and node.llm_profile is not None for node in nodes):
+            if any(
+                isinstance(node, AgentNode) or (isinstance(node, ActionNode) and node.llm_profile is not None)
+                for node in nodes
+            ):
                 validate_ai_bindings(nodes, bindings, self.ai_policy.current())
             activation = Activation(
                 id=uuid4(),

@@ -40,13 +40,14 @@ from firefly_weave.contracts.language_features import (
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
-    {"flow.callWorkflow", "flow.forEach", "flow.onError", "flow.transaction", "text.concat", "text.join"}
+    {"ai.agent", "flow.callWorkflow", "flow.forEach", "flow.onError", "flow.transaction", "text.concat", "text.join"}
 )
 
 # Expression positions per step kind; blocks are walked separately.
 _EXPRESSIONS: Final[dict[str, tuple[str, ...]]] = {
     "action": ("with",),
     "llm": ("prompt", "context"),
+    "agent": ("instructions", "prompt", "context"),
     "transform": ("value",),
     "decisionTable": ("with",),
     "humanTask": ("title", "context"),
@@ -96,6 +97,8 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
                 for name in _EXPRESSIONS.get(str(kind), ()):
                     if name in step:
                         expressions.append((step[name], f"{location}/{name}"))
+                if kind == "agent":
+                    expressions.extend(_agent_expressions(step, location))
                 fields = (UNDO_FIELDS if kind in UNDO_KINDS else ()) + (ERROR_FIELDS if kind in ERROR_KINDS else ())
                 for name in fields:
                     field_feature = STEP_FIELD_FEATURES[name]
@@ -120,6 +123,19 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
     for expression, path in expressions:
         found.extend(_operators(expression, path))
     return sorted(found, key=lambda use: path_order(use.path))
+
+
+def _agent_expressions(step: JsonObject, path: str) -> list[tuple[JsonValue, str]]:
+    """An AI agent's nested expression positions: each tool's fixed values and a conversation's memory key."""
+    found: list[tuple[JsonValue, str]] = []
+    tools = step.get("tools")
+    for index, tool in enumerate(tools if isinstance(tools, list) else []):
+        if isinstance(tool, dict) and "fixed" in tool:
+            found.append((tool["fixed"], f"{path}/tools/{index}/fixed"))
+    memory = step.get("memory")
+    if isinstance(memory, dict) and isinstance(memory.get("key"), dict):
+        found.append((memory["key"], f"{path}/memory/key"))
+    return found
 
 
 def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:

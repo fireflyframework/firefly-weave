@@ -30,6 +30,18 @@ from firefly_weave.compiler.action_config import (
     ActionConfigIssue,
     ActionConfigValidator,
 )
+from firefly_weave.compiler.agent_tools import runs_model_task
+from firefly_weave.compiler.agents import (
+    MESSAGES as AGENT_MESSAGES,
+)
+from firefly_weave.compiler.agents import (
+    agent_expressions,
+    agent_shape_issues,
+    analyze_agent,
+    runs_turn_task,
+    secret_input,
+    without_agent_shape_issues,
+)
 from firefly_weave.compiler.calls import (
     BUSINESS_KEY_SCHEMA,
     CALL_MESSAGES,
@@ -159,6 +171,8 @@ def reference_available(step_id: str, completed: frozenset[str]) -> bool:
     return step_id in completed
 
 
+# A model runs only in an AI step, which supplies the run's token cap, the data notice and the reviewed transcript.
+UNDO_MODEL_MESSAGE = "An undo action can't run an AI model: only an AI step runs a model, under the run's token cap."
 # What an undo phase reads besides what its step saw: the step's own operation key and outcome, and the transaction.
 UNDO_ROOTS = frozenset({"participant", "transaction"})
 PARTICIPANT_SCHEMA: JsonObject = {
@@ -209,6 +223,8 @@ class AnalyzedStep:
     reachable: bool = True
     # How a step inside a transaction is undone: mode, hold, and each phase with the reference it uses.
     participation: FrozenDocument | None = None
+    # An AI agent's compiled tools, as lowering writes them.
+    agent: FrozenDocument | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +358,8 @@ class _Analyzer:
         # What each step's failure does once it is analyzed, and the steps whose error path is being analyzed.
         self.error_policies: dict[str, str] = {}
         self.error_owners: tuple[str, ...] = ()
+        # Run memory keys of the AI agents analyzed so far: the first agent's scope and key path.
+        self.run_memories: dict[str, tuple[tuple[str, ...], str]] = {}
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -650,6 +668,9 @@ class _Analyzer:
             if kind == "llm":
                 self.count(cast(JsonObject, step["prompt"]), step_path + "/prompt")
                 self.count(cast(JsonObject, step["context"]), step_path + "/context")
+            if kind == "agent":
+                for expression, expression_path in agent_expressions(step, step_path):
+                    self.count(expression, expression_path)
             if kind in {"action", "decisionTable", "transform"}:
                 key = "value" if kind == "transform" else "with"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
@@ -739,6 +760,35 @@ class _Analyzer:
             context["participant"] = PARTICIPANT_SCHEMA
             context["transaction"] = TRANSACTION_SCHEMA
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
+
+    def reference_documents(
+        self, segments: tuple[str, ...], visible: dict[str, JsonObject]
+    ) -> list[tuple[JsonObject, tuple[str, ...]]]:
+        """The schema documents a reference reads, each with the path the reference follows inside it.
+
+        A step's output and the input are separate documents, so a local ``$ref`` in one resolves against its own
+        root. Step errors and the undo phase's platform values are left out: the platform fills them, never an input.
+        """
+        loops: list[tuple[JsonObject, tuple[str, ...]]] = (
+            [(self.loops[-1].item, ()), (loops_schema(self.loops), ())] if self.loops else []
+        )
+        if not segments:
+            return [(self.input_schema, ()), *((output, ()) for output in visible.values()), *loops]
+        root, rest = segments[0], segments[1:]
+        if root == "input":
+            return [(self.input_schema, rest)]
+        if root == "steps":
+            if not rest:
+                return [(output, ()) for output in visible.values()]
+            output = visible.get(rest[0])
+            if output is None or (len(rest) > 1 and rest[1] != "output"):
+                return []
+            return [(output, rest[2:])]
+        if root == "item" and self.loops:
+            return [(self.loops[-1].item, rest)]
+        if root == "loops" and self.loops:
+            return [(loops_schema(self.loops), rest)]
+        return []
 
     def binding(self, step: str, output: JsonObject) -> JsonObject:
         """What ``/steps/<step>`` holds after the step: its output, and the error object when it handles failures."""
@@ -988,6 +1038,7 @@ class _Analyzer:
             completes = kind != "fail"
             # The side effect of the action an action or AI step runs, once the catalog resolves it.
             side_effect: JsonValue = None
+            agent: FrozenDocument | None = None
             if kind == "transform":
                 output = self.expression(cast(JsonObject, step["value"]), location + "/value", visible)
                 self.guard(location + "/value", "transform_output", output)
@@ -997,10 +1048,12 @@ class _Analyzer:
                 profile = cast(JsonObject | None, self.llm_profiles.get(cast(str, step["profile"])))
                 if profile is None:
                     self.issue("LLM_PROFILE", location + "/profile")
-                self.expression(
+                prompt = self.expression(
                     cast(JsonObject, step["prompt"]), location + "/prompt", visible, {"type": "string", "minLength": 1}
                 )
-                self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
+                secret_input(self, cast(JsonObject, step["prompt"]), prompt, location + "/prompt", visible)
+                context = self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
+                secret_input(self, cast(JsonObject, step["context"]), context, location + "/context", visible)
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
                 side_effect = action_spec.get("sideEffect") if action_spec else None
@@ -1019,9 +1072,14 @@ class _Analyzer:
                         )
                 if action_spec is None and step["connection"] not in self.connections:
                     self.issue("CONNECTION", location + "/connection")
+            elif kind == "agent":
+                output, facts = analyze_agent(self, step, location, visible, scope)
+                agent = FrozenDocument.from_value(facts)
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                if action_spec is not None and runs_turn_task(action_spec):
+                    self.issue("AGENT_ACTION", location + "/uses", message=AGENT_MESSAGES["AGENT_ACTION"])
                 side_effect = action_spec.get("sideEffect") if action_spec else None
                 target = cast(JsonObject, action_spec["inputSchema"]) if action_spec else None
                 self.expression(cast(JsonObject, step["with"]), location + "/with", visible, target)
@@ -1144,6 +1202,7 @@ class _Analyzer:
                     completes,
                     reachable,
                     participation,
+                    agent,
                 )
             )
             self.kinds[identifier] = kind
@@ -1493,6 +1552,9 @@ class _Analyzer:
             if undo["kind"] == "action":
                 resource = self.resolve("Action", reference, path + "/uses")
                 spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                if spec is not None and runs_model_task(spec):
+                    # An undo runs with none of an AI step's guards: no token cap, data notice or reviewed transcript.
+                    self.issue("AGENT_ACTION", path + "/uses", message=UNDO_MODEL_MESSAGE)
                 target = cast(JsonObject, spec["inputSchema"]) if spec else None
                 self.expression(expression, path + "/with", scope, target)
                 # The step's connection is the default only for an undo action that needs one.
@@ -1660,10 +1722,15 @@ class _Analyzer:
         for code, path in errors:
             self.issue("CALL_MODE" if code == "ERROR_CALL_MODE" else code, path, message=ERROR_MESSAGES[code])
         document = without_error_shape_issues(document) if errors else document
+        # And AI agent tools and memory settings the definition model rejects.
+        agents = agent_shape_issues(document) if contract == "workflow" else []
+        for code, path in agents:
+            self.issue(code, path, message=AGENT_MESSAGES[code])
+        document = without_agent_shape_issues(document) if agents else document
         issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues or detached or shapes or errors:
+        if issues or detached or shapes or errors or agents:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)

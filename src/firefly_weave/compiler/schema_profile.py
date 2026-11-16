@@ -16,7 +16,10 @@
 
 """Operator-controlled bounds and the published user-schema keyword profile."""
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+
+from firefly_weave.contracts.values import JsonObject, JsonValue
 
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
 SUPPORTED_FORMATS = frozenset({"date-time", "uuid", "uri", "email"})
@@ -24,6 +27,23 @@ REJECTED_KEYWORDS = frozenset({"$dynamicRef", "$dynamicAnchor", "unevaluatedItem
 SCHEMA_MAPS = frozenset({"$defs", "properties", "patternProperties", "dependentSchemas"})
 SCHEMA_ARRAYS = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
 SCHEMA_SINGLE = frozenset({"items", "additionalProperties", "contains", "propertyNames", "not", "if", "then", "else"})
+# Keywords whose values are data, never schemas: a "$ref" or "title" inside them means nothing.
+SCHEMA_DATA = frozenset({"const", "enum", "default", "examples"})
+
+
+def schema_children(schema: JsonObject) -> Iterator[JsonValue]:
+    """The values under a schema object that may hold schemas.
+
+    Data keywords are skipped, and every member of a map of names (``properties``, ``$defs``…) is a schema, even when
+    its name is also a keyword such as ``default``.
+    """
+    for key, value in schema.items():
+        if key in SCHEMA_MAPS and isinstance(value, dict):
+            yield from value.values()
+        elif key not in SCHEMA_DATA:
+            yield value
+
+
 SUPPORTED_KEYWORDS = (
     SCHEMA_MAPS
     | SCHEMA_ARRAYS

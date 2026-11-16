@@ -233,6 +233,7 @@ async def deliver_calls(
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.contracts.transactions import split_phase
     from firefly_weave.files.authority import admit_run_files
+    from firefly_weave.runtime.agent_tools import agent_key
     from firefly_weave.runtime.kernel import called_workflow, error_policy, workflow
     from firefly_weave.runtime.kernel import transition_async as transition
     from firefly_weave.runtime.transactions import in_transaction, shapes
@@ -262,7 +263,18 @@ async def deliver_calls(
             continue
         node = next(n for n in ir.graph.nodes if n.id == node_of(row["node_id"]))
         phase = split_phase(row["node_id"])
-        if phase is None:
+        tool = agent_key(ir, row["node_id"], view.state.agents)
+        if tool is not None:
+            # An AI agent's workflow tool: its target names the pinned callee, and the agent reads the outcome.
+            digest = tool.target.callee(ir, tool.tool) if tool.target is not None and tool.tool is not None else None
+            if digest is None:
+                await _mark(repository, row["id"], "superseded")
+                continue
+            callee = cast(
+                JsonObject,
+                next(d for d in ir.dependencies if d.kind == "Workflow" and d.digest == digest).document["spec"],
+            )
+        elif phase is None:
             assert isinstance(node, CallWorkflowNode)
             callee = called_workflow(ir, node)[1]
         else:

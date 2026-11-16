@@ -39,6 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from firefly_weave import __version__
+from firefly_weave.contracts.agent_log import agent_log_key
 from firefly_weave.contracts.connector_descriptors import ADAPTER
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.operations.ephemeral import until_disconnect
@@ -377,6 +378,14 @@ class StudioService:
             return ADAPTER.fullmatch(value) is not None
         if name == "kind":
             return value in ("canvas", "test-data")
+        if name == "key":
+            # An agent step or one of its activations. The host route decodes the path once ("support[2]") and the
+            # bridge refuses a "%" before matching, so a key is never decoded here.
+            try:
+                agent_log_key(value)
+            except ValueError:
+                return False
+            return True
         try:
             UUID(value)
         except ValueError:

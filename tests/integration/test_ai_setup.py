@@ -39,6 +39,8 @@ pytestmark = pytest.mark.integration
 
 AI_CONNECTOR = "weave-agentic-provider@1.0.0"
 CAPABILITY = "weave-agentic.generate@1.0.0"
+# An AI agent's model turn: an AI worker release runs both tasks.
+TURN = "weave-agentic.turn@1.0.0"
 ENDPOINT = "https://models.example/v1"
 OLLAMA = "http://ollama:11434"
 SECRET_CANARY = "wv-canary-ai-setup-secret-" + uuid4().hex
@@ -83,6 +85,7 @@ async def ai_setup(services, access_db, provisioned, tmp_path, monkeypatch):
     from firefly_weave.connections.registry import ConnectorRegistry
     from firefly_weave.connections.secrets import EnvironmentSecretProvider, ScopedSecrets, SecretGrant
     from firefly_weave.connections.service import ConnectionService
+    from firefly_weave.contracts.agent_turns import turn_capability
     from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, task_capability
     from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionTestResult
     from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
@@ -207,12 +210,13 @@ async def ai_setup(services, access_db, provisioned, tmp_path, monkeypatch):
 
     async def release(index=0, *, target=scope, capability=None, credential=True):
         value = (capability or task_capability()).model_dump(mode="json", by_alias=True)
+        turn = turn_capability().model_dump(mode="json", by_alias=True)
         request = ReleaseRequest.model_validate_json(
             json.dumps(
                 {
                     "image_digest": f"sha256:{index:064x}",
-                    "capabilities": [value],
-                    "credential_capabilities": [CAPABILITY] if credential else [],
+                    "capabilities": [value, turn],
+                    "credential_capabilities": [CAPABILITY, TURN] if credential else [],
                 }
             )
         )
@@ -304,7 +308,7 @@ def items(result):
 # Setup publication and authorization are idempotent and stay in their scope.
 
 
-async def test_repeated_publish_requests_return_the_same_versions_and_exactly_two_definitions(
+async def test_repeated_publish_requests_return_the_same_versions_and_exactly_three_definitions(
     ai_setup, client, headers, env_url
 ):
     env = ai_setup
@@ -319,17 +323,21 @@ async def test_repeated_publish_requests_return_the_same_versions_and_exactly_tw
     published = first.json()
     assert (published["connector"]["name"], [item["name"] for item in published["actions"]]) == (
         "weave-agentic-provider",
-        ["weave-agentic-generate"],
+        ["weave-agentic-generate", "weave-agentic-turn"],
     )
     # Another principal's request reuses the same immutable versions.
     reused = await env.setup.publish(env.operator, env.scope, context=AuditContext())
     assert reused.model_dump(mode="json") == published
     assert await env.rows(
         "SELECT kind,name,version FROM definition_versions WHERE tenant_id=:tenant AND project_id=:project "
-        "ORDER BY kind",
+        "ORDER BY kind,name",
         tenant=env.scope.tenant_id,
         project=env.scope.project_id,
-    ) == [("Action", "weave-agentic-generate", "1.0.0"), ("Connector", "weave-agentic-provider", "1.0.0")]
+    ) == [
+        ("Action", "weave-agentic-generate", "1.0.0"),
+        ("Action", "weave-agentic-turn", "1.0.0"),
+        ("Connector", "weave-agentic-provider", "1.0.0"),
+    ]
     assert await env.scalar("SELECT count(*) FROM access_audit WHERE action='ai.setup.publish'") == 3
 
 
@@ -375,7 +383,8 @@ async def test_repeated_grant_requests_leave_one_active_pair_for_each_of_101_rel
         capability=CAPABILITY,
     )
     assert len(pairs) == 101 and {count for _, count in pairs} == {1}
-    assert await scoped(env, "worker_connection_grants") == 101
+    # One pair for each task of each release: the generate task and the agent's turn.
+    assert await scoped(env, "worker_connection_grants") == 202
     assert await scoped(env, "worker_connection_grants", env.other) == 0
     assert await env.scalar("SELECT count(*) FROM access_audit WHERE action='ai.setup.grant'") == 2
 
@@ -918,4 +927,5 @@ async def test_ai_audit_records_carry_no_secret_prompt_or_provider_text(ai_setup
         )
     }
     assert details["ai.models.refresh"] == {"discovery": "ok", "models": 2}
-    assert details["ai.setup.grant"] == {"not_needed": False, "pairs": 1}
+    # One release, two pairs: its generate task and its agent turn.
+    assert details["ai.setup.grant"] == {"not_needed": False, "pairs": 2}

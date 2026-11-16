@@ -139,9 +139,11 @@ class CatalogConflict(ValueError):
 
 @functools.cache
 def bundled_catalog() -> CatalogSnapshot:
-    """What ships with Weave: the HTTP, email and file connectors and the AI action, so they compile offline."""
+    """What ships with Weave: the HTTP, email and file connectors, the AI action and the AI agent's turn action, so
+    they compile offline."""
     from firefly_weave.connectors import email
     from firefly_weave.contracts import agentic
+    from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
     from firefly_weave.contracts.definitions import ConnectorDefinition
     from firefly_weave.contracts.file_connectors import FILE_DESCRIPTORS
     from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
@@ -156,9 +158,10 @@ def bundled_catalog() -> CatalogSnapshot:
         [
             *(ConnectorDefinition.model_validate(d.manifest.value) for d in descriptors),
             load_definition(agentic.action_definition()),
+            load_definition(turn_action_definition()),
             load_definition(agentic.AGENTIC_DESCRIPTOR.manifest.value),
         ],
-        tasks=[*(task for d in descriptors for task in d.capabilities), agentic.task_capability()],
+        tasks=[*(task for d in descriptors for task in d.capabilities), agentic.task_capability(), turn_capability()],
         adapters=[*adapters, "weave-agentic-provider"],
     )
 
@@ -309,12 +312,6 @@ def _pointer(*parts: str) -> str:
     return "".join("/" + part.replace("~", "~0").replace("/", "~1") for part in parts)
 
 
-def _action_output(catalog: CatalogSnapshot, reference: str) -> object:
-    resource = catalog.resources.get(("Action", reference))
-    spec = resource.definition.value.get("spec") if resource is not None else None
-    return spec.get("outputSchema") if isinstance(spec, dict) else None
-
-
 def classify_test_data(
     document: JsonObject,
     request: SimulationRequest,
@@ -324,12 +321,15 @@ def classify_test_data(
     """Pointers into the request of values a schema marks secret, and of values too large or too deep to classify.
 
     Only typed values are classified, each against its own schema: the input, each step mock by its step's output
-    fields, each action mock by its action's, each mock inside a called workflow by that workflow's step, each signal
-    payload, each person's answer and each saved AI turn's final answer by its profile's output fields. Both lists
-    are refused before anything is simulated.
+    fields, each action mock by its action's, each AI agent tool's mock by every schema of the tool's result and a mock
+    of one agent call for secrets by every tool's, each mock inside a called workflow by that workflow's step, each
+    signal payload, each person's answer, each saved AI turn's final answer by its profile's output fields, and each
+    saved tool call's arguments by its tool's input. Both lists are refused before anything is simulated.
     """
+    from firefly_weave.compiler.agent_tools import offline_input_schema
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
 
     bundle = {name: schema.value for name, schema in catalog.schemas.items()}
@@ -337,23 +337,54 @@ def classify_test_data(
     secret: list[str] = []
     unclassified: list[str] = []
 
-    def check(path: str, schema: object, value: JsonValue) -> None:
+    def check(path: str, schema: object, value: JsonValue, *, secrets_only: bool = False) -> None:
+        # ``secrets_only`` for a schema the value may not fit: only a value it marks secret is counted.
         if not isinstance(schema, dict):
             return
         try:
             classify(schema, value, bundle)
         except _Failure as failure:
-            (secret if failure.code == "SECRET_VALUE" else unclassified).append(path)
+            if failure.code == "SECRET_VALUE":
+                secret.append(path)
+            elif not secrets_only:
+                unclassified.append(path)
         except (RecursionError, ArithmeticError):
-            unclassified.append(path)
+            if not secrets_only:
+                unclassified.append(path)
+
+    tools_of = _agent_tools
 
     def mocks_of(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> None:
         for key, value in mocks.items():
             if key.startswith("node:"):
-                step = step_at(workflow, key.removeprefix("node:"))
-                check(_pointer(*prefix, key), output_target(workflow, step, catalog), value)
+                instance = key.removeprefix("node:")
+                tools = _call_tools(workflow, instance, catalog)
+                if tools is None:
+                    check(_pointer(*prefix, key), output_target(workflow, step_at(workflow, instance), catalog), value)
+                # A mock of one call is checked for secrets by every schema of every tool, whether it fits that tool
+                # or not, since the saved turns decide which tool the call runs.
+                for schema in (schema for schemas in tools or [] for schema in schemas):
+                    found = len(secret)
+                    check(_pointer(*prefix, key), schema, value, secrets_only=True)
+                    if len(secret) > found:
+                        break
             elif key.startswith("action:"):
-                check(_pointer(*prefix, key), _action_output(catalog, key.removeprefix("action:")), value)
+                # Like a live run: by the Action's output and its connector action's or worker task's output.
+                for schema in _action_outputs(catalog, key.removeprefix("action:")):
+                    found = len(secret) + len(unclassified)
+                    check(_pointer(*prefix, key), schema, value)
+                    if len(secret) + len(unclassified) > found:
+                        break
+            elif key.startswith("tool:"):
+                activation, _, name = key.removeprefix("tool:").rpartition("/")
+                tool = tools_of(step_at(workflow, activation)).get(name)
+                returned = _tool_outputs(tool, catalog) if tool is not None else []
+                for item in tool_values(value):
+                    for schema in returned:
+                        found = len(secret) + len(unclassified)
+                        check(_pointer(*prefix, key), schema, item)
+                        if len(secret) + len(unclassified) > found:
+                            break
 
     check("/input", cast(JsonObject, spec).get("inputSchema"), request.input)
     mocks_of(document, request.mocks, "mocks")
@@ -374,10 +405,75 @@ def classify_test_data(
         step = step_at(document, key) or {}
         profile = profiles.get(cast(str, step.get("profile"))) if isinstance(profiles, dict) else None
         schema = profile.get("outputSchema") if isinstance(profile, dict) else None
+        tools = tools_of(step)
         for index, turn in enumerate(entry.turns):
             if "final" in turn:
                 check(_pointer("scripts", "aiTurns", key, "turns", str(index), "final"), schema, turn["final"])
+            for number, call in enumerate(cast(list[JsonValue], turn.get("toolCalls", []))):
+                tool = tools.get(cast(str, call.get("name"))) if isinstance(call, dict) else None
+                if tool is not None:
+                    pointer = _pointer("scripts", "aiTurns", key, "turns", str(index), "toolCalls", str(number))
+                    arguments = cast(JsonObject, call).get("arguments")
+                    check(pointer + "/arguments", offline_input_schema(tool, catalog), arguments)
     return secret, unclassified
+
+
+def _agent_tools(step: JsonObject | None) -> dict[str, JsonObject]:
+    """An AI agent step's tools by name; none for any other step."""
+    tools = step.get("tools") if step is not None and step.get("kind") == "agent" else None
+    listed = tools if isinstance(tools, list) else []
+    return {cast(str, tool["name"]): tool for tool in listed if isinstance(tool, dict) and "name" in tool}
+
+
+def _action_outputs(catalog: CatalogSnapshot, reference: str) -> list[JsonObject]:
+    """What a live run checks an Action's result with: the Action's output, and its connector action's or its worker
+    task's output (``action_schemas``)."""
+    resource = catalog.resources.get(("Action", reference))
+    spec = resource.definition.value.get("spec") if resource is not None else None
+    if not isinstance(spec, dict):
+        return []
+    schemas = [spec.get("outputSchema")]
+    implementation = spec.get("implementation")
+    if isinstance(implementation, dict) and implementation.get("kind") == "worker":
+        task = f"{implementation.get('taskType')}@{implementation.get('taskVersion')}"
+        capability = catalog.resources.get(("TaskCapability", task))
+        schemas.append(capability.definition.value.get("outputSchema") if capability is not None else None)
+    elif isinstance(implementation, dict) and isinstance(implementation.get("uses"), str):
+        connector = catalog.resources.get(("Connector", cast(str, implementation["uses"])))
+        connector_spec = connector.definition.value.get("spec") if connector is not None else None
+        actions = connector_spec.get("actions") if isinstance(connector_spec, dict) else None
+        name = implementation.get("action")
+        action = actions.get(name) if isinstance(actions, dict) and isinstance(name, str) else None
+        schemas.append(action.get("outputSchema") if isinstance(action, dict) else None)
+    return [schema for schema in schemas if isinstance(schema, dict)]
+
+
+def _tool_outputs(tool: JsonObject, catalog: CatalogSnapshot) -> list[JsonObject]:
+    """Every schema a live run checks an AI agent tool's result with: what the tool returns and, for a tool that runs
+    an Action, the schemas of that Action's result."""
+    from firefly_weave.compiler.agent_tools import offline_output_schema
+
+    schemas = [schema] if (schema := offline_output_schema(tool, catalog)) is not None else []
+    action = tool.get("action")
+    return schemas + (_action_outputs(catalog, action) if isinstance(action, str) else [])
+
+
+def _call_tools(workflow: JsonObject, instance: str, catalog: CatalogSnapshot) -> list[list[JsonObject]] | None:
+    """For a mock of one AI agent call (``node:support#1.1``), the schemas of each of the agent's tools, the way
+    ``_tool_outputs`` reads them; None when ``instance`` isn't a call of an agent with tools."""
+    from firefly_weave.compiler.test_data import step_at
+    from firefly_weave.runtime.agents import parse_agent_key
+
+    called = parse_agent_key(instance)
+    tools = _agent_tools(step_at(workflow, instance)) if called is not None and called.call is not None else {}
+    return [_tool_outputs(tool, catalog) for tool in tools.values()] or None
+
+
+def _fits_a_tool(tools: list[list[JsonObject]], value: JsonValue, bundle: dict[str, JsonObject]) -> bool:
+    """Whether a call's value fits, by its shape alone, every schema of one of the agent's tools at least."""
+    from firefly_weave.compiler.schemas import payload_issues
+
+    return any(schemas and all(payload_issues(schema, value, bundle) == [] for schema in schemas) for schemas in tools)
 
 
 def secret_paths(document: JsonObject, request: SimulationRequest, catalog: CatalogSnapshot) -> list[str]:
@@ -524,6 +620,15 @@ def _in_slice(document: JsonObject, whole: JsonObject, mocks: Mapping[str, JsonV
         elif key.startswith("action:"):
             reference = key.removeprefix("action:")
             if reference in all_actions and reference not in kept_actions:
+                continue
+        elif key.startswith(("agent:", "tool:")):
+            # An AI agent's saved turns or tool mock, by the agent they belong to.
+            activation = key.partition(":")[2].rpartition("/")[0] if key.startswith("tool:") else key[6:]
+            try:
+                step = node_of(activation)
+            except InvalidInstanceKey:
+                step = activation
+            if step in all_ids and step not in kept_ids:
                 continue
         out[key] = value
     return out
@@ -765,16 +870,22 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if blocked is None and missing is not None:
         last = next(reversed(data.inputs), None) if data.inputs else None
         if last is not None and last not in data.outputs:
+            from firefly_weave.runtime.agents import parse_agent_key
+
             step = node_of(last)
+            called = parse_agent_key(last)
+            if "node:" + last in misfits and called is not None and called.call is not None:
+                # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
+                message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
+            elif {"node:" + last, "node:" + step} & misfits:
+                message = f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
+            else:
+                message = f"Step {step} needs test data."
             blocked = Blocked(
                 reason="missing_mock",
                 nodeId=step,
                 instanceKey="" if last == step else last,
-                message=(
-                    f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
-                    if {"node:" + last, "node:" + step} & misfits
-                    else f"Step {step} needs test data."
-                ),
+                message=message,
             )
     if blocked is None and target.mode != "workflow" and view.status not in {"paused"} and not view.diagnostics:
         step = cast(str, target.stepId)
@@ -870,6 +981,22 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
                     simulator.advance_time(int(entry["afterSeconds"]))
                 simulator.signal(node.name, entry.get("payload"))
                 moved = True
+            elif key in data.asks:
+                # A task an AI agent gave a person: a call's review, or a tool's question. Only its own key answers it.
+                script = scripts.humans.get(key)
+                if script is None:
+                    title = cast(dict[str, Any], data.inputs.get(key) or {}).get("title")
+                    return Blocked(
+                        reason="human",
+                        nodeId=node_of(key),
+                        instanceKey=key,
+                        message=title if isinstance(title, str) and title else f"Decide for {key}",
+                    )
+                entry = script.model_dump(mode="json", by_alias=True)
+                if entry.get("outcome") == "expire":
+                    continue
+                simulator.human_decision(key, {"decision": entry["decision"], "data": entry.get("data", {})})
+                moved = True
             elif isinstance(node, human_node):
                 script = scripts.humans.get(key) or scripts.humans.get(node.id)
                 if script is None:
@@ -905,6 +1032,12 @@ def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catal
     misfits = set()
     for key, value in mocks.items():
         if not key.startswith("node:"):
+            continue
+        tools = _call_tools(document, key.removeprefix("node:"), catalog)
+        if tools is not None:
+            # A mock of one AI agent call is a tool's result, not the agent's output: it fits a tool's or misfits.
+            if not _fits_a_tool(tools, value, bundle):
+                misfits.add(key)
             continue
         target = output_target(document, step_at(document, key.removeprefix("node:")), catalog)
         if isinstance(target, dict) and validate_payload(target, value, bundle):

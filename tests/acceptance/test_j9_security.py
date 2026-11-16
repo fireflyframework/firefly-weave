@@ -75,6 +75,7 @@ async def probe(client: Any, row: Any, materialize: Any) -> tuple[int, str]:
             identifier=uuid4() if row.identifier else None,
             collection=row.collection,
             kind=row.kind,
+            key=row.key,
             body=body,
             query=query,
             # An operation that needs a precondition names revision 1 of the random target.

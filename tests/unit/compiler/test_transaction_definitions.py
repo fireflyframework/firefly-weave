@@ -247,6 +247,7 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
                 "humanTask",
                 "signal",
                 "transaction",
+                "agent",
             ],
             "values": ["stop", "continue", "errorOutput"],
             "path": "/onError",

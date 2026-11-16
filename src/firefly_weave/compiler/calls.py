@@ -167,12 +167,17 @@ def workflow_steps(document: JsonValue) -> Iterator[tuple[JsonObject, str]]:
 def called_references(document: JsonValue) -> list[str]:
     """The exact workflow references a workflow definition calls, in document order.
 
-    Call steps count, and so do the workflows a step inside a transaction calls to confirm, cancel or reverse it.
+    Call steps count, and so do the workflows a step inside a transaction calls to confirm, cancel or reverse it, and
+    the workflows an AI agent may call as tools.
     """
     found: list[str] = []
     for step, _ in workflow_steps(document):
         if step.get("kind") == "callWorkflow" and isinstance(step.get("uses"), str):
             found.append(cast(str, step["uses"]))
+        if step.get("kind") == "agent" and isinstance(step.get("tools"), list):
+            for tool in cast(list[JsonValue], step["tools"]):
+                if isinstance(tool, dict) and isinstance(tool.get("workflow"), str):
+                    found.append(cast(str, tool["workflow"]))
         for name in ("confirm", "cancel", "compensate"):
             undo = step.get(name)
             if isinstance(undo, dict) and undo.get("kind") == "callWorkflow" and isinstance(undo.get("uses"), str):

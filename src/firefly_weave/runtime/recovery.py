@@ -72,14 +72,17 @@ async def attempt_history(
     return generations, attempt_outcomes(generations, {report["generation"]: report["outcome"] for report in reports})
 
 
-def side_effect(ir: Any, node_id: str) -> str:
-    """The declared side effect of the action a step instance runs."""
+def side_effect(ir: Any, node_id: str, action: str | None = None) -> str:
+    """The declared side effect of the action a step instance runs; ``action`` names that action's digest when the
+    step runs more than one (an AI agent's turns and tools)."""
     from firefly_weave.compiler.ir import ActionNode
     from firefly_weave.contracts.instance_keys import node_of
 
-    node = next(n for n in ir.graph.nodes if n.id == node_of(node_id))
-    assert isinstance(node, ActionNode)
-    dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+    if action is None:
+        node = next(n for n in ir.graph.nodes if n.id == node_of(node_id))
+        assert isinstance(node, ActionNode)
+        action = node.dependency
+    dependency = next(d for d in ir.dependencies if d.digest == action and d.kind == "Action")
     return str(dependency.document["spec"]["sideEffect"])
 
 
@@ -191,7 +194,11 @@ class RecoveryService:
                 ir = workflow(artifact)
                 if (
                     inside
-                    or final_failure(error_policy(ir, task["node_id"]), side_effect(ir, task["node_id"]), outcome)
+                    or final_failure(
+                        error_policy(ir, task["node_id"]),
+                        side_effect(ir, task["node_id"], task["payload"]["action_digest"]),
+                        outcome,
+                    )
                     == "handled"
                 ):
                     kind = "step_failed"

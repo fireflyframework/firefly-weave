@@ -248,6 +248,7 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     revision=options.get("revision"),
                     idempotency_key=options.get("idempotency_key"),
                     query=query or None,
+                    **({"key": options["key"]} if options.get("key") is not None else {}),
                 )
                 if operation_id.startswith("connections."):
                     from firefly_weave.cli.connections import plain_http_notice
@@ -348,6 +349,20 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 required=True,
             )
         )
+    if "{key}" in operation.path:
+        params.append(
+            click.Option(
+                ["--key"],
+                required=True,
+                callback=_agent_log_key,
+                help="The AI agent step's ID, or one activation's key such as support[2].",
+            )
+        )
+    if operation_id == "runs.agent_log":
+        params += [
+            click.Option(["--limit"], type=click.IntRange(1, 20), help="Activations per page (default 20)."),
+            click.Option(["--cursor"]),
+        ]
     if operation.request is not None:
         params.append(
             click.Option(["--request", "request_path"], type=click.Path(exists=True, path_type=Path), required=True)
@@ -424,6 +439,18 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
         callback=execute,
         help=operation.id + ": " + operation.capability,
     )
+
+
+def _agent_log_key(ctx: click.Context, parameter: click.Parameter, value: str | None) -> str | None:
+    """Refuse a key that names no AI agent step or activation before anything is sent."""
+    from firefly_weave.contracts.agent_log import agent_log_key
+
+    if value is None:
+        return None
+    try:
+        return agent_log_key(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error)) from None
 
 
 def family(name: str, prefix: str, *, include: tuple[str, ...] = ()) -> click.Group:

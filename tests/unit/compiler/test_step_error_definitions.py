@@ -57,6 +57,15 @@ STEPS = {
         "steps": [{"id": "t", "kind": "transform", "value": {"literal": 1}}],
         "output": {"literal": None},
     },
+    "agent": {
+        "id": "s",
+        "kind": "agent",
+        "uses": "turn@1.0.0",
+        "profile": "answer",
+        "connection": "ai",
+        "instructions": {"literal": "Answer."},
+        "prompt": {"literal": "Hi"},
+    },
 }
 INELIGIBLE = {
     "switch": {
@@ -113,6 +122,13 @@ def test_an_error_path_goes_with_error_output_and_nothing_else(kind):
         STEP.validate_python({**STEPS[kind], "onError": "retry"})
 
 
+def test_an_ai_agent_says_what_its_failure_does():
+    step = STEP.validate_python({**STEPS["agent"], "onError": "errorOutput", "errorPath": PATH})
+
+    assert "agent" in ERROR_KINDS
+    assert (step.on_error, step.error_path.steps[0].id) == ("errorOutput", "alert")
+
+
 @pytest.mark.parametrize("kind", sorted(INELIGIBLE))
 def test_containers_waits_and_fail_steps_take_no_setting(kind):
     STEP.validate_python(INELIGIBLE[kind])
@@ -157,7 +173,17 @@ def test_the_feature_and_its_fields_are_named_once():
     assert entry.model_dump(mode="json") == {
         "name": "onError",
         "feature": "flow.onError",
-        "kinds": ["action", "llm", "transform", "decisionTable", "callWorkflow", "humanTask", "signal", "transaction"],
+        "kinds": [
+            "action",
+            "llm",
+            "transform",
+            "decisionTable",
+            "callWorkflow",
+            "humanTask",
+            "signal",
+            "transaction",
+            "agent",
+        ],
         "values": ["stop", "continue", "errorOutput"],
         "path": "/onError",
         "default": "stop",

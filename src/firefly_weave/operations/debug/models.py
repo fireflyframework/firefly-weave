@@ -18,7 +18,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, ConfigDict, Field, field_validator
@@ -127,6 +127,19 @@ class FrameState(ContractModel):
     generation: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
 
 
+class PersonTask(ContractModel):
+    """A task an AI agent gave a person in a session: the review of a call, or a tool's question for a person.
+
+    A person answers with one of ``decisions`` and data that fits ``form_schema``. A review's answer carries
+    ``input_digest``, the digest of the stored input under review, which the session copies from the task as the
+    task service does, so an answer never names the input it approves.
+    """
+
+    decisions: list[str] = Field(min_length=1)
+    form_schema: JsonObjectData
+    input_digest: str | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
 class DebugState(ContractModel):
     model_config = ConfigDict(frozen=False)
     version: Literal[1] = 1
@@ -159,6 +172,11 @@ class DebugState(ContractModel):
     # Steps and phases whose result never arrives in this session, keyed like mocks and sorted. Named apart from
     # ``pending``, the queue of events; omitted when none, so stored sessions keep their bytes.
     pending_keys: list[str] = Field(default_factory=list, max_length=MAX_PENDING_KEYS, exclude_if=lambda v: not v)
+    # How many values of each mock sequence the session gave out, by mock key, prefixed with the frame key inside
+    # called workflows. Omitted when none, so stored sessions keep their bytes.
+    consumed: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # The tasks AI agents gave people that nobody has answered yet, by instance key, prefixed like ``inputs``.
+    asks: dict[str, PersonTask] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 class TransactionDebugView(ContractModel):

@@ -30,7 +30,7 @@ from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode
+from firefly_weave.compiler.ir import ActionNode, AgentNode, CallWorkflowNode
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.incident_queries import IncidentQuery
@@ -45,7 +45,8 @@ from firefly_weave.operations.fact_positions import RunPosition
 from firefly_weave.operations.fact_reads import FactReadRepository, incident_of, transaction_facts
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
-from firefly_weave.runtime.kernel import error_policy, validate_action, workflow
+from firefly_weave.runtime.agent_tools import reconciled_schema
+from firefly_weave.runtime.kernel import error_policy, validate, validate_action, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
@@ -194,13 +195,30 @@ class IncidentService:
                 )
             elif request.kind != "terminate" and isinstance(node, CallWorkflowNode):
                 call = await self._call_resolution(repository, ir, node, previous.id, incident, request, previous)
+            elif (
+                request.kind == "retry_safe"
+                and isinstance(node, AgentNode)
+                and incident["code"] == "WV-AGENT-BUDGET"
+                and "#" not in incident["node_id"]
+            ):
+                # A budget stop runs no task: the kernel grants the agent one forced final turn.
+                if incident["incident_key"] not in previous.state.incidents:
+                    raise CatalogError(409, "WV-RUNTIME-STATE", "Incident is no longer active")
             elif request.kind != "terminate":
-                if not isinstance(node, ActionNode) or incident["incident_key"] not in previous.state.incidents:
+                # An AI agent's turn and tool tasks resolve like an action's: by the action the task runs, and an
+                # accepted output must fit the turn's output or the tool's.
+                agent_schema = (
+                    reconciled_schema(ir, incident["node_id"], previous.state.agents)
+                    if isinstance(node, AgentNode)
+                    else None
+                )
+                if (
+                    not (isinstance(node, ActionNode) or agent_schema is not None)
+                    or incident["incident_key"] not in previous.state.incidents
+                ):
                     raise CatalogError(
                         409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Unclassified incident can only terminate"
                     )
-                dependency = next(d for d in ir.dependencies if d.kind == "Action" and d.digest == node.dependency)
-                definition = cast(ActionDefinition, load_definition(dependency.document))
                 tasks = await repository.rows(
                     f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node FOR UPDATE",
                     run=previous.id,
@@ -209,6 +227,9 @@ class IncidentService:
                 if not tasks or tasks[0]["status"] not in {"failed", "incident"}:
                     raise CatalogError(409, "WV-RUNTIME-STATE", "No failed task matches this incident")
                 task = tasks[0]
+                digest = task["payload"]["action_digest"]
+                dependency = next(d for d in ir.dependencies if d.kind == "Action" and d.digest == digest)
+                definition = cast(ActionDefinition, load_definition(dependency.document))
                 if request.kind == "accept_reconciled_failure":
                     if error_policy(ir, incident["node_id"]) == "stop":
                         raise CatalogError(
@@ -240,7 +261,10 @@ class IncidentService:
                             409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Reconciled output and evidence are required"
                         )
                     try:
-                        validate_action(ir, definition, "output", request.output, node=node)
+                        if agent_schema is not None:
+                            validate(ir, agent_schema, request.output)
+                        else:
+                            validate_action(ir, definition, "output", request.output, node=cast(ActionNode, node))
                     except ValueError as error:
                         raise CatalogError(
                             422, "WV-RUNTIME-OUTPUT", "Reconciled output violates the pinned schema"

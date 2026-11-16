@@ -26,15 +26,19 @@ out from the last, then the oldest messages), and the trimming is listed in ``tr
 it did not see. Nothing is cut mid-value.
 """
 
+import copy
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.parser import parse_source
+from firefly_weave.compiler.schema_profile import SCHEMA_DATA, SCHEMA_MAPS, schema_children
+from firefly_weave.contracts.language import STEP_KINDS
+from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
 from firefly_weave.contracts.lumi import LumiMessage
 from firefly_weave.contracts.run_views import RunSummary, StepFact
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -72,19 +76,20 @@ OUTLINE_KEYS = ("id", "kind", "uses")
 # A fix request too large to send whole lists at most this many problems and the top-level steps they name.
 FIX_PROBLEMS = 10
 STEP_PATH = re.compile(r"^/spec/steps/(\d+)(?:/|$)")
-GUIDE_VERSION = 2
+GUIDE_VERSION = 3
 GUIDE = """\
-Weave workflow guide (version 2).
+Weave workflow guide (version 3).
 A workflow is YAML: apiVersion weave/v1alpha1, kind Workflow, metadata {name, version}, spec {inputSchema,
-outputSchema, steps, output}. Each step has a unique id (lowercase letters, digits, hyphens) and a kind:
-`action` (uses name@version, with, connection), `llm` (an AI task: uses weave-agentic-generate@1.0.0, profile,
-prompt, context, connection), `transform` (value), `decisionTable` (uses, with), `switch` (cases with when, then
+outputSchema, steps, output}. Each step has a unique id (lowercase, digits, hyphens) and a kind:
+`action` (uses name@version, with, connection), `llm` (uses weave-agentic-generate@1.0.0, profile, prompt,
+context, connection), `transform` (value), `decisionTable` (uses, with), `switch` (cases with when, then
 default), `parallel` (branches), `forEach` (items, body), `callWorkflow` (uses, with), `wait` (durationSeconds),
 `signal` (name, timeoutSeconds, payloadSchema), `humanTask` (assignment, title, context, formSchema) and `fail`
-(code, message). Nested steps sit in a block: {steps, output}.
-`transaction` (businessKey, steps, output) groups steps that change other systems so they are undone together.
-Each step inside it that changes data says how it is undone: confirm and cancel (it reserves), compensate (an
-action or workflow reverses it), or irreversible: true (it can't be undone). That last kind of step comes last.
+(code, message). Nested steps sit in {steps, output}.
+`agent` (uses weave-agentic-turn@1.0.0, profile, connection, instructions, prompt, tools [{name, description,
+action and connection or workflow, review: {assignment} if it changes data}]).
+`transaction` (businessKey, steps, output) undoes its steps together. Each that changes data has confirm and
+cancel, compensate (an action or workflow undoing it) or irreversible: true (last).
 Expressions: {literal: 1}, {ref: /input/name}, {ref: /steps/<id>/output/field}, {object: {key: expr}},
 {array: [expr]}, {op: {name, args}}.
 Example of a whole workflow document:
@@ -99,7 +104,7 @@ Example of a whole workflow document:
         kind: transform
         value: {object: {text: {ref: /input/name}}}
     output: {ref: /steps/greet/output}
-Versions are semantic (1.0.0). A proposal is a whole document of kind workflow, decisionTable, action or
+A proposal is a whole document of kind workflow, decisionTable, action or
 connector, never a fragment. Say what you could not see when the context lists trimmed parts.
 """
 
@@ -388,10 +393,6 @@ def _parsed(format: str, source: str) -> JsonValue | None:
         return None
 
 
-# Schema keywords whose values are data, not schemas: an object there may hold a "title" that means something.
-_SCHEMA_DATA = frozenset({"const", "enum", "default", "examples"})
-
-
 def untitled(schema: JsonValue) -> JsonValue:
     """A JSON schema without its ``title`` annotations; property names and data values stay as they are."""
     if isinstance(schema, list):
@@ -402,13 +403,143 @@ def untitled(schema: JsonValue) -> JsonValue:
     for key, value in schema.items():
         if key == "title" and isinstance(value, str):
             continue
-        if key in _SCHEMA_DATA:
+        if key in SCHEMA_DATA:
             result[key] = value
-        elif key in {"properties", "patternProperties", "$defs", "dependentSchemas"} and isinstance(value, dict):
+        elif key in SCHEMA_MAPS and isinstance(value, dict):
             result[key] = {name: untitled(child) for name, child in value.items()}
         else:
             result[key] = untitled(value)
     return result
+
+
+type AgentSchema = Literal["compact", "open", "whole"]
+# The agent kind as Weave AI sees it: what a first agent needs, in a few hundred tokens instead of four thousand.
+_AGENT_FIELDS: Final = ("id", "kind", "uses", "profile", "connection", "instructions", "prompt", "context")
+_ASSIGNMENT: Final[JsonObject] = {
+    "type": "object",
+    "properties": {
+        "assignment": {"$ref": "#/$defs/ResourceName"},
+        # True when the person who started the run must not answer the review.
+        "distinctReviewer": {"type": "boolean", "default": False},
+    },
+    "required": ["assignment"],
+    "additionalProperties": False,
+}
+
+
+def compact_agent(definition: JsonObject) -> JsonObject:
+    """An AI agent step in the shape Weave AI writes it: the step's own fields, its tools by name, description and
+    target, and who reviews them. Limits, memory and the error path are left out, so their defaults apply; the full
+    schema stays the compiler's, and a draft written to this one passes it."""
+    properties = cast(JsonObject, definition.get("properties", {}))
+    tool: JsonObject = {
+        "type": "object",
+        "properties": {
+            # The compiler checks the name's pattern and the description's length.
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "action": {"$ref": "#/$defs/VersionedReference"},
+            "workflow": {"$ref": "#/$defs/VersionedReference"},
+            "connection": {"$ref": "#/$defs/ResourceName"},
+            "review": {"$ref": "#/$defs/AgentReview"},
+        },
+        "required": ["name", "description"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            **{name: properties[name] for name in _AGENT_FIELDS if name in properties},
+            "tools": {"type": "array", "items": tool, "maxItems": 32},
+            "review": {"$ref": "#/$defs/AgentReview"},
+        },
+        "required": definition.get("required", []),
+        "additionalProperties": False,
+    }
+
+
+def runnable_workflow_schema(
+    schema: JsonValue, features: Collection[str] = ADVERTISED_FEATURES, *, agent: AgentSchema = "compact"
+) -> JsonValue:
+    """The workflow schema without the step kinds a platform running ``features`` can't run.
+
+    Weave AI must never write a step the platform would refuse, so a kind behind an unadvertised feature leaves the
+    ``Step`` union, and so do the definitions only it used. ``agent`` says how the agent kind is shown: ``compact``
+    for a new agent, ``open`` (compact, but no longer forbidding the fields it leaves out) for a draft that already
+    has one, so an edit is never told to drop its fixed arguments, forced reviews or limits, and ``whole``.
+    """
+    if not isinstance(schema, dict) or not isinstance(schema.get("$defs"), dict):
+        return schema
+    hidden = {
+        "#" + entry.schema_ref.partition("#")[2]
+        for entry in STEP_KINDS
+        if entry.feature is not None and entry.feature not in features
+    }
+    compact = agent != "whole" and isinstance(cast(JsonObject, schema["$defs"]).get("AgentStep"), dict)
+    if not hidden and not compact:
+        return schema
+    result = copy.deepcopy(schema)
+    definitions = cast(JsonObject, result["$defs"])
+    if compact:
+        step_schema = compact_agent(cast(JsonObject, definitions["AgentStep"]))
+        # Who reviews a tool's calls and whether the run's starter may; the review's expiry keeps its default.
+        review = copy.deepcopy(_ASSIGNMENT)
+        if agent == "open":
+            tool = cast(JsonObject, cast(JsonObject, cast(JsonObject, step_schema["properties"])["tools"])["items"])
+            for closed in (step_schema, tool, review):
+                closed.pop("additionalProperties", None)
+        definitions["AgentStep"], definitions["AgentReview"] = step_schema, review
+    step = definitions.get("Step")
+    if isinstance(step, dict) and isinstance(step.get("oneOf"), list):
+        step["oneOf"] = [
+            item
+            for item in cast(list[JsonValue], step["oneOf"])
+            if not (isinstance(item, dict) and item.get("$ref") in hidden)
+        ]
+    # Keep only the definitions the rest of the schema still reaches.
+    reached: set[str] = set()
+    pending: list[JsonValue] = [{key: value for key, value in result.items() if key != "$defs"}]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            reference = node.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                name = reference.removeprefix("#/$defs/")
+                if name not in reached and name in definitions:
+                    reached.add(name)
+                    pending.append(definitions[name])
+            pending.extend(schema_children(node))
+    result["$defs"] = {name: value for name, value in definitions.items() if name in reached}
+    return result
+
+
+def _has_agent(document: JsonValue) -> bool:
+    """Whether a workflow document holds an AI agent step anywhere in its steps."""
+    pending: list[JsonValue] = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if node.get("kind") == "agent":
+                return True
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    return False
+
+
+def _drafts_an_agent(draft: tuple[str, str] | None, resources: Sequence[JsonValue]) -> bool:
+    """Whether the draft, inline or attached, already has an agent step that an edit must keep whole."""
+    if draft is not None and _has_agent(_parsed(*draft)):
+        return True
+    return any(
+        isinstance(resource, dict)
+        and resource.get("kind") == "draft"
+        and isinstance(resource.get("data"), dict)
+        and _has_agent(cast(JsonObject, resource["data"]).get("document"))
+        for resource in resources
+    )
 
 
 def shape(
@@ -436,6 +567,12 @@ def shape(
         if profile != "full":
             context["guide"] = GUIDE
         wanted = {name: schemas[name] for name in SCHEMAS[profile] if name in schemas}
+        if "workflow" in wanted:
+            # The full profile has room for the whole agent schema; standard edits an existing agent from an open one.
+            agent: AgentSchema = (
+                "whole" if profile == "full" else "open" if _drafts_an_agent(draft, resources) else "compact"
+            )
+            wanted["workflow"] = runnable_workflow_schema(wanted["workflow"], agent=agent)
         if profile == "standard":
             # A standard context sends the workflow schema whole; its titles repeat the property names.
             wanted = {name: untitled(value) for name, value in wanted.items()}

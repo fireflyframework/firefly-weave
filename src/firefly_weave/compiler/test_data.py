@@ -24,11 +24,15 @@ task profile's, a called workflow's), a signal payload against ``payloadSchema``
 entry's result; the platform's studio documents refuse secrets and entries it can't classify.
 """
 
+import copy
 from collections.abc import Iterator
 from typing import Any, Literal, cast
 
+from firefly_weave.compiler.agent_tools import model_parameters, offline_input_schema
+from firefly_weave.compiler.agents import agent_output_schema
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.llm import llm_output_schema
+from firefly_weave.compiler.schema_profile import schema_children
 from firefly_weave.compiler.schemas import _Failure, validate_payload
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.studio_documents import StudioTestData
@@ -127,11 +131,88 @@ def output_target(workflow: JsonObject, step: JsonObject | None, catalog: Catalo
             return _NOTHING
         schema = _spec(_document(catalog, "Workflow", step.get("uses"))).get("outputSchema")
         return schema if isinstance(schema, dict) else UNRESOLVED
-    # An AI agent's output schema comes from its own step settings, published with that step kind.
     if kind == "agent":
-        return UNRESOLVED
+        profile = _profile(workflow, step)
+        return agent_output_schema(profile) if profile is not None else UNRESOLVED
     # Other kinds compute their output from their input: nothing to pin.
     return SCHEMA
+
+
+def _profile(workflow: JsonObject, step: JsonObject) -> JsonObject | None:
+    profiles = _spec(workflow).get("llmProfiles")
+    name = step.get("profile")
+    profile = profiles.get(name) if isinstance(profiles, dict) and isinstance(name, str) else None
+    if not isinstance(profile, dict) or not isinstance(profile.get("outputSchema"), dict):
+        return None
+    return profile
+
+
+def _embedded(schema: JsonObject, at: str) -> JsonObject:
+    """``schema`` placed at the pointer ``at`` of a larger schema: its local references follow it there."""
+    result = copy.deepcopy(schema)
+    pending: list[JsonValue] = [result]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            reference = node.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#"):
+                node["$ref"] = "#" + at + reference[1:]
+            pending.extend(schema_children(node))
+    return result
+
+
+def _tool_parameters(tool: JsonValue, catalog: CatalogSnapshot) -> JsonObject | None:
+    """What the model may send a tool: its target's input without the fixed fields; None when it can't be read."""
+    if not isinstance(tool, dict):
+        return None
+    source = offline_input_schema(tool, catalog)
+    if source is None:
+        return None
+    fixed = tool.get("fixed")
+    names = (
+        cast(JsonObject, fixed["object"]) if isinstance(fixed, dict) and isinstance(fixed.get("object"), dict) else {}
+    )
+    return model_parameters(source, list(names))
+
+
+def agent_turns_target(workflow: JsonObject, step: JsonObject, catalog: CatalogSnapshot) -> JsonObject | None:
+    """The schema an AI agent's recorded turns fit: calls to its tools only, and a final that fits its result."""
+    profile = _profile(workflow, step)
+    tools = step.get("tools", [])
+    if profile is None or not isinstance(tools, list):
+        return None
+    calls: list[JsonValue] = []
+    base = "/properties/turns/items/anyOf/0/properties/toolCalls/items/anyOf"
+    for tool in tools:
+        parameters = _tool_parameters(tool, catalog)
+        # A draft tool may not have its name yet; its calls can't be checked until it does.
+        name = cast(JsonObject, tool).get("name")
+        if parameters is None or not isinstance(name, str):
+            return None
+        calls.append(
+            {
+                "type": "object",
+                "required": ["name", "arguments"],
+                "properties": {
+                    "name": {"const": name},
+                    "arguments": _embedded(parameters, f"{base}/{len(calls)}/properties/arguments"),
+                },
+            }
+        )
+    final = _embedded(cast(JsonObject, profile["outputSchema"]), "/properties/turns/items/anyOf/1/properties/final")
+    call_turn: JsonObject = {
+        "type": "object",
+        "required": ["toolCalls"],
+        "properties": {"toolCalls": {"type": "array", "items": {"anyOf": calls} if calls else False}},
+    }
+    final_turn: JsonObject = {"type": "object", "required": ["final"], "properties": {"final": final}}
+    return {
+        "type": "object",
+        "required": ["turns"],
+        "properties": {"turns": {"type": "array", "items": {"anyOf": [call_turn, final_turn]}}},
+    }
 
 
 # The module's own callers keep the short names.
@@ -202,9 +283,14 @@ def _targets(
             else UNRESOLVED
         )
         yield f"/humans/{_escape(key)}", target, answer["data"]
-    # Recorded AI turns are checked against the agent's turn schema, which comes with the AI steps.
+    # An AI agent's recorded turns may call only its tools, with arguments that fit them, and end with an answer that
+    # fits its result fields. An AI task's recorded turns are not checked here.
     for key, turns in cast(dict[str, Any], document.get("aiTurns", {})).items():
-        yield f"/aiTurns/{_escape(key)}", UNRESOLVED, turns
+        step = _step(workflow, key)
+        recorded = (
+            agent_turns_target(workflow, step, catalog) if step is not None and step.get("kind") == "agent" else None
+        )
+        yield f"/aiTurns/{_escape(key)}", recorded or UNRESOLVED, turns
     for reference, callee in cast(dict[str, Any], document.get("workflows", {})).items():
         called = _document(catalog, "Workflow", reference)
         for key, mock in cast(dict[str, Any], callee["mocks"]).items():

@@ -14,10 +14,13 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The turn evaluation against a real Ollama: every turn case once per model, no retries, results to build/agent-eval.
+"""The evaluation against a real Ollama: every case once per model, no retries, one results file per model.
 
-This records a baseline; it fails only when a case could not be scored or a model is missing. Pass counts, tokens
-and seconds per turn are in the results file and the printed summary.
+Only the structural guarantees fail the test: every abuse case holds, a turn sends at most two requests, and the
+turn count is never below the model's own prompt count. Pass counts, tokens and seconds per turn are compared with
+their targets in the results file and the printed summary; a missed quality bar is a finding to rule on, not a
+failure to retry. WEAVE_LIVE_EVAL_CATEGORIES runs only the cases of those categories (comma separated, such as
+abuse) and writes them to their own results file, so a partial run never replaces a whole one.
 """
 
 import asyncio
@@ -27,12 +30,13 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agent_eval_runner import Endpoint, load_cases, loop_cases, run_case, summary, turn_cases
+from agent_eval_loop import evaluate
+from agent_eval_runner import Endpoint, headline, load_cases, report
 
 ROOT = Path(__file__).resolve().parents[4]
 
 
-async def evaluate(url: str, models: list[str], context: int, mode: str) -> list[dict]:
+async def run_models(url: str, models: list[str], context: int, mode: str, categories: list[str]) -> list[dict]:
     async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as client:
         served = {item["name"] for item in (await client.get(url + "/api/tags")).json()["models"]}
     missing = [model for model in models if model not in served]
@@ -41,33 +45,53 @@ async def evaluate(url: str, models: list[str], context: int, mode: str) -> list
     reports = []
     for model in models:
         endpoint = Endpoint(url=url, model=model, output_mode=mode, context_tokens=context)
-        results = [await run_case(document, case, endpoint) for case in turn_cases(document)]
-        assert len(results) == len(turn_cases(document))
-        reports.append(summary(model, results, [case["id"] for case in loop_cases(document)]))
+        cases = [case for case in document["cases"] if not categories or case["category"] in categories]
+        results = [await evaluate(document, case, endpoint) for case in cases]
+        reports.append(report(model, results))
     return reports
 
 
+def show(summary: dict) -> None:
+    print(f"\n{headline(summary)}")
+    for target in summary["targets"]:
+        verdict = "n/a" if target["met"] is None else "met" if target["met"] else "MISSED"
+        print(f"  {target['measure']}: {target['value']} against {target['bar']} {verdict}")
+    for result in summary["results"]:
+        outcome = "pass" if result["passed"] else "FAIL"
+        print(
+            f"  {outcome} {result['id']} turns {result['turns']} {result['seconds']}s "
+            f"tokens {result['input_tokens'] + result['output_tokens']} {'; '.join(result['reasons'])}"
+        )
+        if result["reviews"] or result["control_outcomes"]:
+            reviews = ", ".join(f"{item['key']} {item['tool']} {item['decision']}" for item in result["reviews"])
+            ran = ", ".join(f"{item['key']} {item['name']}" for item in result["dispatched"])
+            print(f"    reviews: {reviews or 'none'}; ran: {ran or 'none'}; {result['control_outcomes']}")
+
+
 @pytest.mark.live_ollama
-def test_the_turn_cases_against_ollama(ollama_url, ollama_models, ollama_context):
+def test_the_evaluation_against_ollama(ollama_url, ollama_models, ollama_context):
     mode = os.environ.get("WEAVE_LIVE_EVAL_OUTPUT_MODE", "native")
-    reports = asyncio.run(evaluate(ollama_url, ollama_models, ollama_context, mode))
+    categories = [name.strip() for name in os.environ.get("WEAVE_LIVE_EVAL_CATEGORIES", "").split(",") if name.strip()]
+    reports = asyncio.run(run_models(ollama_url, ollama_models, ollama_context, mode, categories))
     output = Path(os.environ.get("WEAVE_LIVE_EVAL_OUTPUT", ROOT / "build" / "agent-eval"))
     output.mkdir(parents=True, exist_ok=True)
-    for report in reports:
-        name = report["model"].replace(":", "-")
-        (output / f"eval-{name}-turn.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"\n{report['model']}: {report['passed']} of {report['cases']} turn cases passed")
-        for result in report["results"]:
-            outcome = "pass" if result["passed"] else "FAIL"
-            print(
-                f"  {outcome} {result['id']} {result['seconds']}s counted {result['counted_tokens']} "
-                f"model {result['input_tokens']} {'; '.join(result['reasons'])}"
-            )
+    for summary in reports:
+        name = "-".join([summary["model"].replace(":", "-"), *categories])
+        (output / f"eval-{name}.json").write_text(json.dumps(summary, indent=2) + "\n")
+        show(summary)
+    structural = {"abuse", "requests_per_turn"}
+    missed = [
+        (summary["model"], target["measure"], target["value"])
+        for summary in reports
+        for target in summary["targets"]
+        if target["measure"] in structural and not target["met"]
+    ]
+    assert not missed, f"A structural guarantee failed: {missed}"
     # One request carries the turn input alone, so the model's prompt count can never exceed the contract's.
     below = [
-        (report["model"], result["id"], result["counted_tokens"], result["input_tokens"])
-        for report in reports
-        for result in report["results"]
-        if result["requests"] == 1 and result["input_tokens"] > result["counted_tokens"]
+        (summary["model"], result["id"], result["counted_tokens"], result["input_tokens"])
+        for summary in reports
+        for result in summary["results"]
+        if result["counted_tokens"] and result["requests"] == 1 and result["input_tokens"] > result["counted_tokens"]
     ]
     assert not below, f"The turn count fell below the model's prompt count: {below}"

@@ -32,7 +32,7 @@ RANDOM = "random"
 # The demo environment's scope (tenant, project and environment IDs); without one, three new UUIDs.
 DEMO_SCOPE = "demo-scope"
 TABLES = ("operations", "controls")
-KEYS = {"capability", "identifier", "query", "body", "collection", "kind", "answers"}
+KEYS = {"capability", "identifier", "query", "body", "collection", "kind", "key", "answers"}
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,8 @@ class Row:
     answers: tuple[Mapping[str, Any], ...] = ()
     # The studio document kind of operations whose path has one.
     kind: str | None = None
+    # The AI agent step or activation of operations whose path has a key.
+    key: str | None = None
 
 
 def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
@@ -59,7 +61,7 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
         for operation, row in data[table].items():
             if set(row) - KEYS or "capability" not in row or row.get("identifier", RANDOM) != RANDOM:
                 raise ValueError(
-                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection, kind'
+                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection, kind, key'
                     " and answers"
                 )
             for answer in row.get("answers", ()):
@@ -76,6 +78,7 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
                     row.get("collection"),
                     tuple(row.get("answers", ())),
                     row.get("kind"),
+                    row.get("key"),
                 )
             )
     return ROOT / data["baseline"], rows

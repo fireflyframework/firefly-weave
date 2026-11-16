@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Discriminator, Field, Tag, TypeAdapter, model_validator
 from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
@@ -53,6 +53,9 @@ type ResourceName = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTERN}$")
 type VersionedReference = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTERN}@{SEMVER_PATTERN}$")]
 type JsonPointer = Annotated[UnicodeString, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]
 type PositiveInt = Annotated[int, Field(gt=0, le=MAX_SAFE_INTEGER)]
+# A tool name an AI model can call: a letter first, as model providers require.
+TOOL_NAME_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+type ToolName = Annotated[UnicodeString, Field(pattern=TOOL_NAME_PATTERN)]
 type SideEffect = Literal["read_only", "idempotent", "idempotency_key", "non_idempotent"]
 # A worker or connector failure code, as TaskError reports it.
 type FailureCode = Annotated[UnicodeString, Field(pattern=r"^[A-Z][A-Z0-9_-]{0,63}$")]
@@ -337,6 +340,151 @@ class LLMStep(ContractModel):
         return self
 
 
+# The fields of an AI agent tool that name what it runs; a tool sets exactly one.
+TOOL_TARGET_FIELDS: Final = ("action", "workflow", "human")
+# The name a structured final answer is given through; no tool may use it.
+RESERVED_TOOL_NAME: Final = "final_result"
+
+
+class AgentReview(ContractModel):
+    """Who reviews an AI agent's tool calls that change data, and for how long the review stays open."""
+
+    assignment: ResourceName
+    expiry_seconds: int = Field(default=86400, gt=0, le=604800, alias="expirySeconds")
+    # "Require a different reviewer": the person who started the run can't answer the review.
+    distinct_reviewer: bool = Field(default=False, alias="distinctReviewer")
+
+
+class AgentHumanTool(ContractModel):
+    """An "Ask a person" tool: what the model may ask, and the form the person answers."""
+
+    question_schema: JsonObjectData = Field(alias="questionSchema")
+    form_schema: JsonObjectData = Field(alias="formSchema")
+    assignment: ResourceName
+
+
+class AgentTool(ContractModel):
+    name: ToolName
+    description: Annotated[UnicodeString, Field(min_length=1, max_length=1024)]
+    # A published or HTTP action, run on the workflow's connection slot.
+    action: OmissionOnly[VersionedReference] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    connection: OmissionOnly[ResourceName] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    # A callable workflow, run as a child run that the agent waits for.
+    workflow: OmissionOnly[VersionedReference] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    human: OmissionOnly[AgentHumanTool] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    # Input fields the model can't set: hidden from it, and merged last so they always win.
+    fixed: OmissionOnly[ObjectExpression] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    # Omitted means the target's default: tools that change data are reviewed.
+    approval: OmissionOnly[Literal["auto", "required"]] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    review: OmissionOnly[AgentReview] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def one_target(self) -> AgentTool:
+        if sum(getattr(self, field) is not None for field in TOOL_TARGET_FIELDS) != 1:
+            raise ValueError("A tool names exactly one of action, workflow or human")
+        return self
+
+
+# How long a conversation is kept after its last exchange: an hour to a year.
+type MemoryTtlSeconds = Annotated[int, Field(ge=3600, le=31536000)]
+
+
+class AgentMemory(ContractModel):
+    """What an AI agent remembers: its own transcript (step), the run's exchanges under a name (run), or a
+    conversation kept across runs under an expression's value (conversation)."""
+
+    scope: Literal["step", "run", "conversation"] = "step"
+    key: OmissionOnly[ResourceName | Expression] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    # Messages kept in the transcript and loaded from memory.
+    window: int = Field(default=24, ge=2, le=200)
+    ttl_seconds: OmissionOnly[MemoryTtlSeconds] = Field(
+        default=None, alias="ttlSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    context_tokens: int = Field(default=8192, ge=512, le=262144, alias="contextTokens")
+
+    @model_validator(mode="after")
+    def key_follows_scope(self) -> AgentMemory:
+        if self.scope == "step" and self.key is not None:
+            raise ValueError("Step memory takes no key")
+        if self.scope == "run" and not isinstance(self.key, str):
+            raise ValueError("Run memory needs a name as its key")
+        if self.scope == "conversation" and (self.key is None or isinstance(self.key, str)):
+            raise ValueError("Conversation memory needs an expression as its key")
+        if self.ttl_seconds is not None and self.scope != "conversation":
+            raise ValueError("ttlSeconds applies only to conversation memory")
+        return self
+
+
+class AgentLimits(ContractModel):
+    max_iterations: int = Field(default=6, ge=1, le=32, alias="maxIterations")
+    max_tool_calls: int = Field(default=12, ge=0, le=64, alias="maxToolCalls")
+    parallel_tool_calls: int = Field(default=4, ge=1, le=8, alias="parallelToolCalls")
+    max_total_tokens: int = Field(default=60000, ge=1, le=2000000, alias="maxTotalTokens")
+    timeout_seconds: int = Field(default=900, ge=1, le=604800, alias="timeoutSeconds")
+    # What a tool's final failure does: the model reads the error, or the agent step fails.
+    on_tool_error: Literal["return_to_model", "incident"] = Field(default="return_to_model", alias="onToolError")
+
+
+class AgentStep(ContractModel):
+    """An AI agent: the model works in turns and calls only the tools the step declares."""
+
+    id: ResourceName
+    kind: Literal["agent"]
+    uses: VersionedReference
+    profile: ResourceName
+    connection: ResourceName
+    instructions: Expression
+    prompt: Expression
+    context: OmissionOnly[Expression] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    tools: list[AgentTool] = Field(default_factory=list, max_length=32)
+    # Defaults are materialized in the canonical document, like retry.
+    memory: AgentMemory = Field(default_factory=AgentMemory)
+    limits: AgentLimits = Field(default_factory=AgentLimits)
+    # Who reviews the tools that need a review and set none of their own.
+    review: OmissionOnly[AgentReview] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    # What the agent's final failure does; omitted means stop. An effect that may have happened keeps its incident.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> AgentStep:
+        _error_handling(self)
+        return self
+
+    @model_validator(mode="after")
+    def unique_tools(self) -> AgentStep:
+        names = [tool.name for tool in self.tools]
+        if len(set(names)) != len(names):
+            raise ValueError("Tool names must be unique")
+        if RESERVED_TOOL_NAME in names:
+            raise ValueError(f"{RESERVED_TOOL_NAME} is reserved for the agent's final answer")
+        return self
+
+
 class TransformStep(ContractModel):
     id: ResourceName
     kind: Literal["transform"]
@@ -612,6 +760,7 @@ class TransactionStep(ContractModel):
 type Step = Annotated[
     ActionStep
     | LLMStep
+    | AgentStep
     | TransformStep
     | DecisionTableStep
     | SwitchStep
@@ -627,9 +776,10 @@ type Step = Annotated[
 ]
 
 
-# The steps that accept onError. An AI agent step joins them when it is added.
+# The steps that accept onError.
 type ErrorHandlingStep = (
     ActionStep
+    | AgentStep
     | LLMStep
     | TransformStep
     | DecisionTableStep

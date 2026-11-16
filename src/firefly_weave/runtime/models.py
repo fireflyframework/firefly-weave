@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
@@ -180,6 +180,66 @@ class RunEnding(ContractModel):
     output: JsonData = Field(default=None, exclude_if=lambda v: v is None)
 
 
+class CallRecord(ContractModel):
+    """One tool call of an AI agent's turn, as the kernel accepted it: its key, the tool, the merged input and its
+    state. ``input`` and ``digest`` are what a review approves and what runs after it."""
+
+    key: str
+    turn: int = Field(ge=1)
+    index: int = Field(ge=1)
+    name: str
+    input: JsonData = None
+    digest: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    status: Literal["queued", "review", "running", "done"]
+    # A person approved this call's stored input: it runs when there is room, without another review.
+    approved: bool = Field(default=False, exclude_if=lambda v: not v)
+
+
+class AgentUsage(ContractModel):
+    # Written by the wire names it is read by, so the run state keeps an agent's usage when it is stored and read back.
+    model_config = ConfigDict(**ContractModel.model_config, serialize_by_alias=True)
+
+    requests: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0, alias="inputTokens")
+    output_tokens: int = Field(default=0, ge=0, alias="outputTokens")
+
+
+class AgentFailure(ContractModel):
+    """How an agent failed, kept while a call it may have applied waits for a person: the code and the step error."""
+
+    code: str = Field(min_length=1, max_length=128)
+    error: JsonObjectData
+
+
+class AgentState(ContractModel):
+    """One running AI agent activation. Everything a turn input is built from is here or in the pinned IR."""
+
+    # The version of the rules that shape each turn input, copied from the IR at activation.
+    rules: int = Field(ge=1)
+    turn: int = Field(ge=1)
+    phase: Literal["memory", "turn", "tools", "done"]
+    # The instructions and each tool's fixed values, evaluated once at activation.
+    instructions: str
+    fixed: dict[str, JsonObjectData] = Field(default_factory=dict)
+    messages: list[JsonObjectData]
+    calls: list[CallRecord] = Field(default_factory=list)
+    # Tool results by call key, in the shape the model reads them.
+    results: dict[str, JsonObjectData] = Field(default_factory=dict)
+    usage: AgentUsage = Field(default_factory=AgentUsage)
+    tool_calls: int = Field(default=0, ge=0)
+    # Times each tool was called with the same canonical arguments in this activation.
+    seen: dict[str, int] = Field(default_factory=dict)
+    deadline: AwareDatetime
+    # The context the turns fit: the smaller of the author's and the AI policy's, fixed at activation.
+    context_tokens: int = Field(ge=1)
+    forced: bool = False
+    # One forced final turn granted after the budget stopped the agent.
+    granted: bool = False
+    # The agent failed while calls that change data and are never retried were running: each holds its own incident,
+    # and this failure reaches the step's onError setting once a person has settled them all.
+    failure: AgentFailure | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
 class RunState(ContractModel):
     manual_paused: bool = Field(default=False, exclude_if=lambda v: not v)
     control_revision: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
@@ -206,6 +266,12 @@ class RunState(ContractModel):
     # Steps a barrier stopped in the middle of an event; they continue when it lifts.
     parked: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
     ending: RunEnding | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Running AI agents by instance key; an agent's state goes when it ends.
+    agents: dict[str, AgentState] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # Run memory of AI agents by key: what earlier activations were asked and answered.
+    memories: dict[str, list[JsonObjectData]] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # Tokens every AI agent of the run has used, loops included.
+    agent_tokens: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
 
 
 class TerminalControl(ContractModel):
@@ -252,6 +318,8 @@ class HumanTaskIntent(ContractModel):
     decisions: list[str]
     due_at: datetime | None = None
     expires_at: datetime | None = None
+    # "Require a different reviewer": the task's creation pins the run's starting principal as excluded.
+    exclude_run_starter: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class CallIntent(ContractModel):

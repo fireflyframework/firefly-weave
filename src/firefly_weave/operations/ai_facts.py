@@ -28,6 +28,7 @@ from sqlalchemy.sql.elements import TextClause
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.connections.diagnostics import is_agentic_revision
 from firefly_weave.contracts import language_features
+from firefly_weave.contracts.agent_turns import turn_action_definition
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, action_definition, task_capability
 from firefly_weave.contracts.catalog import DefinitionKind
 from firefly_weave.contracts.connectors import ConnectionRevision
@@ -56,7 +57,8 @@ class BuiltinAI:
 
 def builtin_ai_definitions() -> tuple[BuiltinAI, ...]:
     result = []
-    for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition()):
+    # The connector first, then the Actions: an AI task's generate and an AI agent's model turn.
+    for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition(), turn_action_definition()):
         model = load_definition(value)
         document = model.model_dump(by_alias=True)
         result.append(
@@ -190,7 +192,8 @@ class AIFacts:
             values=values,
             size="octet_length(to_jsonb(candidate)::text)",
             order="v.kind,v.name,v.version",
-            limit=2,
+            # At most one version of each built-in.
+            limit=len(definitions),
         )
         result = {}
         for row in rows:

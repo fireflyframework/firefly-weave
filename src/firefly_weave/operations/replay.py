@@ -25,7 +25,16 @@ from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
-from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HandlesErrors, HumanTaskNode, IRNode, SignalNode
+from firefly_weave.compiler.canonical import canonical_digest
+from firefly_weave.compiler.ir import (
+    ActionNode,
+    CallWorkflowNode,
+    HandlesErrors,
+    HumanTaskNode,
+    IRNode,
+    SignalNode,
+    WorkflowIR,
+)
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
@@ -48,16 +57,26 @@ from firefly_weave.operations.exports import (
     transition_digest,
 )
 from firefly_weave.operations.redaction import project
+from firefly_weave.runtime.agent_tools import agent_key, agent_output_schemas
 from firefly_weave.runtime.kernel import (
     called_workflow,
     deadline_order,
     duration_steps,
+    error_policy,
     transition,
     validate,
     validate_action,
     workflow,
 )
-from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import (
+    CallIntent,
+    Deadline,
+    HumanTaskIntent,
+    RunState,
+    RuntimeEvent,
+    TaskIntent,
+    Transition,
+)
 from firefly_weave.runtime.step_failures import continuation_steps
 from firefly_weave.runtime.transactions import HELD_CODE, HELD_NODE, in_transaction, shapes, split_deadline
 
@@ -189,12 +208,34 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             node_id = str(event.data.get("node_id", ""))
             node = event_node(nodes, node_id)
             phase = phase_step(node, node_id)
+            # An AI agent's turn runs a task, and each tool call runs what its target completes with.
+            agent = agent_key(ir, node_id, state.agents)
+            completes = (
+                None
+                if agent is None or agent.key.review
+                else "task_completed"
+                if agent.key.call is None
+                else agent.target.completion
+                if agent.target is not None
+                else None
+            )
             # A confirm, cancel or undo runs its own action or called workflow at its phase key.
-            runs_call = phase.kind == "callWorkflow" if phase is not None else isinstance(node, CallWorkflowNode)
-            runs_task = phase.kind == "action" if phase is not None else isinstance(node, ActionNode)
+            runs_call = (
+                phase.kind == "callWorkflow"
+                if phase is not None
+                else isinstance(node, CallWorkflowNode) or completes == "call_completed"
+            )
+            runs_task = (
+                phase.kind == "action"
+                if phase is not None
+                else isinstance(node, ActionNode) or completes == "task_completed"
+            )
             receipt_id = UUID(str(event.data["receipt_id"])) if event.type == "incident_resolved" else event.id
             require(receipt_id not in accepted_receipts, "WV-REPLAY-DUPLICATE-RECEIPT")
-            handles = isinstance(node, HandlesErrors) and node.on_error is not None
+            # An agent's turn and tool failures go to the agent, as the kernel's error policy says.
+            handles = (isinstance(node, HandlesErrors) and node.on_error is not None) or (
+                agent is not None and error_policy(ir, node_id) != "stop"
+            )
             inside = event.type == "step_failed" and in_transaction(transactions, node_id)
             if event.type == "step_failed":
                 # A step's own setting takes its failure, or its transaction does.
@@ -309,7 +350,10 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                         and event.data.get("attempts") == len(started[node_id]),
                         "WV-REPLAY-EVENT",
                     )
-                if event.type == "task_completed":
+                if event.type == "task_completed" and agent is not None:
+                    require("output" in event.data, "WV-REPLAY-EVENT")
+                    agent_output(ir, event, evidence, state)
+                elif event.type == "task_completed":
                     require("output" in event.data, "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode | CallWorkflowNode)
                     digest = phase.dependency if phase is not None else node.dependency
@@ -346,7 +390,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                         handles
                         and prior is not None
                         and confirmable(node_id, prior.code)
-                        and isinstance(node, ActionNode)
+                        and runs_task
                         and type(attempted) is int
                         and attempted >= 0
                         and "output" in event.data
@@ -402,6 +446,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     output = called_workflow(ir, node)[1]["outputSchema"]
                     schema = call_output_schema(node.mode, node.on_failure, output)  # type: ignore[arg-type]
                     validate(ir, schema, event.data["output"])
+                elif kind == "accept_reconciled_result" and agent is not None:
+                    require("output" in event.data, "WV-REPLAY-EVENT")
+                    agent_output(ir, event, evidence, state)
                 elif kind == "accept_reconciled_result":
                     require("output" in event.data and isinstance(node, ActionNode), "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode)
@@ -414,7 +461,10 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 human_receipt = evidence.human_receipt
                 require(human_receipt is not None, "WV-REPLAY-HUMAN-RECEIPT", missing=True)
                 assert human_receipt is not None
-                require(isinstance(node, HumanTaskNode) and node_id in state.active, "WV-REPLAY-HUMAN-EVENT")
+                person = agent is not None and (agent.key.review or completes == "human_completed")
+                require(
+                    (isinstance(node, HumanTaskNode) or person) and node_id in state.active, "WV-REPLAY-HUMAN-EVENT"
+                )
                 require(
                     human_tasks.get(node_id) == human_receipt.task
                     and str(human_receipt.task.task_id) == event.data.get("task_id")
@@ -429,6 +479,10 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 if node_id in deadlines:
                     require(event.timestamp < deadlines[node_id].deadline, "WV-REPLAY-HUMAN-EXPIRED")
                     deadlines.pop(node_id)
+                if person:
+                    # A review's decision or a person's answer to an agent fits the form the task offered.
+                    require("output" in event.data, "WV-REPLAY-EVENT")
+                    agent_output(ir, event, evidence, state)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
                 _verify_wait(event, evidence, deadlines, nodes, duration_nodes, continuations)
                 if event.type == "signal_received":
@@ -439,6 +493,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             fact = event.model_copy(update={"evidence": None})
             result = transition(state, fact, artifact)
             require(bounded_size(result, MAX_BYTES - 1024) is not None, "WV-REPLAY-STATE-LIMIT", missing=True)
+            turn_inputs(ir, result, evidence)
             require(transition_digest(result) == evidence.expected_transition_digest, "WV-REPLAY-TRANSITION")
             human_commands = [c for c in result.commands if isinstance(c, HumanTaskIntent)]
             require(len(human_commands) == len(evidence.issued_human_tasks), "WV-REPLAY-HUMAN-ISSUANCE", missing=True)
@@ -526,6 +581,32 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
         last_verified_sequence=verified,
         diagnostics=[ReplayDiagnostic(code="WV-REPLAY-OPEN-PREFIX", sequence=verified)],
     )
+
+
+def agent_output(ir: WorkflowIR, event: RuntimeEvent, evidence: RecordedEvidence, state: RunState) -> None:
+    """A recorded output at an agent's key fits what it ran: the turn's pinned guard, or the tool the run's agent
+    recorded for the call (a person's resolution carries no task receipt to name it)."""
+    schemas = agent_output_schemas(
+        ir, event.data.get("node_id"), event.type, event.data, evidence.model_dump(mode="json"), state.agents
+    )
+    require(bool(schemas), "WV-REPLAY-EVENT")
+    for schema in schemas or []:
+        validate(ir, schema, event.data["output"])
+
+
+def turn_inputs(ir: WorkflowIR, result: Transition, evidence: RecordedEvidence) -> None:
+    """Each turn a transition sends gives the model exactly the input its recorded turn task was given: a transcript
+    rebuilt differently (rules, trimming, the order of results) is reported as such, before the transition's digest."""
+    issued = {fact.node_id: fact for fact in evidence.issued_tasks}
+    for command in result.commands:
+        if not isinstance(command, TaskIntent):
+            continue
+        reference = agent_key(ir, command.node_id)
+        fact = issued.get(command.node_id)
+        if reference is None or reference.key.call is not None or fact is None:
+            continue
+        require(fact.input_digest is not None, "WV-REPLAY-AGENT-INPUT", missing=True)
+        require(fact.input_digest == canonical_digest(cast(dict[str, Any], command.input)), "WV-REPLAY-AGENT-INPUT")
 
 
 def retry_seconds(ir: Any, node: ActionNode | CallWorkflowNode, key: str) -> int:

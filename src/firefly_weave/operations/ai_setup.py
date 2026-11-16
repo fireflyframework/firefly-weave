@@ -27,11 +27,12 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
-from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
+from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument, TaskCapability
 from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, is_agentic_revision, keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_turns import TURN_CAPABILITY, turn_capability
 from firefly_weave.contracts.agentic import TASK_TYPE, TASK_VERSION, task_capability
 from firefly_weave.contracts.ai import AISetupGrantRequest, AISetupGrantResult, AISetupPublishResult
 from firefly_weave.contracts.workers import CredentialGrantRequest, WorkerRelease
@@ -53,8 +54,13 @@ def publication_key(item: BuiltinAI) -> str:
     return f"weave-ai-{item.kind}-{item.definition_digest}"
 
 
+def _ai_tasks() -> dict[str, TaskCapability]:
+    """The worker tasks the built-in AI Actions run: an AI task's generate and an AI agent's turn."""
+    return {f"{TASK_TYPE}@{TASK_VERSION}": task_capability(), TURN_CAPABILITY: turn_capability()}
+
+
 def credential_pairs(releases: list[WorkerRelease]) -> tuple[tuple[UUID, str], ...]:
-    known = {f"{TASK_TYPE}@{TASK_VERSION}": task_capability()}
+    known = _ai_tasks()
     digests = {key: FrozenDocument.from_value(value.model_dump(by_alias=True)).digest for key, value in known.items()}
     pairs = set()
     for release in releases:
@@ -70,11 +76,14 @@ def credential_pairs(releases: list[WorkerRelease]) -> tuple[tuple[UUID, str], .
 
 
 def _action_task_available(catalog: CatalogSnapshot) -> bool:
-    """Whether a compiler catalog resolves the built-in Action's worker task to the exact shipped contract."""
-    reference = f"{TASK_TYPE}@{TASK_VERSION}"
-    expected = CatalogSnapshot.from_definitions([], tasks=[task_capability()]).resolve("TaskCapability", reference)
-    resolved = catalog.resolve("TaskCapability", reference)
-    return expected is not None and resolved is not None and resolved.digest == expected.digest
+    """Whether a compiler catalog resolves every built-in Action's worker task to the exact shipped contract."""
+    shipped = CatalogSnapshot.from_definitions([], tasks=list(_ai_tasks().values()))
+    for reference in _ai_tasks():
+        expected = shipped.resolve("TaskCapability", reference)
+        resolved = catalog.resolve("TaskCapability", reference)
+        if expected is None or resolved is None or resolved.digest != expected.digest:
+            return False
+    return True
 
 
 def _limit() -> CatalogError:

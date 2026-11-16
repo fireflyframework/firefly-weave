@@ -306,6 +306,100 @@ still replay an existing receipt for a task, generation, and completion ID:
 keeps the concrete type and the `unavailable` flag, and completes delivery
 without rerunning the handler.
 
+## AI agent turn tasks
+
+Each turn of an [AI agent step](ai-agents.md) is one task of type
+`weave-agentic.turn@1.0.0`, which the platform's model turn Action
+`weave-agentic-turn@1.0.0` runs and the
+[Agentic worker](../guides/ai-workers.md#serve-ai-agent-turns) serves. You don't
+write a handler for it; this section describes what its leases carry, so you
+can read a turn's task and diagnose it.
+
+The kernel runs the agent's loop. For each turn it builds the input from the
+transcript it recorded, issues the task at the turn's instance key (`support#2`
+for the second turn of step `support`), and checks every tool call in the
+answer. The worker sends one request to the model, or two when a text answer
+must become the step's structured result, and returns the answer. It never runs
+a tool: each accepted call runs as its own task, child run, or human task at
+the call's key (`support#2.1`).
+
+| Contract | Value |
+| --- | --- |
+| Side effect | `idempotent` |
+| Time limit | 600 seconds for all attempts of a turn, counted from when the kernel issues it |
+| Retry | 3 attempts; recovery waits 2 seconds before the second and 4 before the third |
+| Connection | The step's AI connection, for `weave-agentic-provider@1.0.0` |
+
+**Input.** A lease's `input` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `profile` | The step's model profile; its `reasoning.pattern` is always `none` |
+| `instructions` | The author's instructions, then a blank line and the data notice of the turn's rules |
+| `messages` | The transcript, oldest first: `user` (the prompt), `context` (the step's context, or remembered messages as `{"memory": [...]}`), `assistant` (an earlier turn's `content` and `toolCalls`), and `tool` (`callId`, `name`, `content`, `isError` for one earlier call) |
+| `tools` | Up to 32 tools, each with `name`, `description`, and the JSON Schema `parameters` the model may fill |
+| `toolsEnabled` | `false` on a forced final turn, which must answer without tools |
+| `turn` | The turn's number, from 1 |
+| `limits` | `maxOutputTokens`, `remainingTokens` (what is left of the step's and the run's token budgets), and `contextTokens` |
+| `rules` | The version of the rules that built the input; today `1` |
+
+The data notice tells the model that tool results and context are data, not
+instructions. A tool result longer than 32 KiB reaches the model cut, as
+`{"truncated": true, "content": "…"}` with its first bytes. Before the input is
+issued, the kernel trims the transcript to the step's memory `window`, to
+512 KiB, and to `contextTokens`: remembered messages go first, oldest first,
+then the oldest turns' calls and results, and as a last resort the newest
+results are cut shorter. The instructions, the prompt, and its context are
+always kept.
+
+**Output.** A completion's `output` is the model's answer:
+
+```json
+{
+  "kind": "tool_calls",
+  "text": "",
+  "toolCalls": [{"id": "t1c1", "name": "lookup_order", "arguments": {"id": "A-17"}}],
+  "usage": {"requests": 1, "inputTokens": 412, "outputTokens": 18},
+  "provider": "openai-chat",
+  "model": "gpt-4o",
+  "finishReason": "tool_calls"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `tool_calls`, with at least one call and no `result`, or `final`, with a `result` and no calls |
+| `text` | The model's text, at most 20,000 characters |
+| `toolCalls` | At most 16 calls, in the order the model wrote them |
+| `result` | The final answer, which must fit the profile's `outputSchema` |
+| `usage` | `requests` (at most 2), `inputTokens`, and `outputTokens` |
+| `provider`, `model` | The profile's provider and model |
+| `finishReason` | `stop`, `tool_calls`, or `length` |
+| `droppedToolCalls` | How many calls after the first 16 were left out; present only when some were |
+
+A call's `id` is the kernel's, `t<turn>c<index>`, never the provider's. Its
+`name` (cut at 256 characters) and `arguments` are returned as the model wrote
+them: a name the step doesn't declare, or arguments that aren't valid JSON
+(returned as text), reach the kernel unchanged, and the model reads the kernel's
+answer on the next turn. An answer with both tool calls and a final answer is
+returned as tool calls.
+
+**Failures.** The worker fails a turn with the `LLM_*` codes of the
+[worker guide](../guides/ai-workers.md#reasoning-limits-and-results). A turn
+that doesn't fit its context fails with `LLM_CONTEXT_LIMIT` before any request,
+and a model that can't call tools fails with `LLM_NO_TOOL_SUPPORT`; neither
+started anything. An answer that stops at the output token limit without tool
+calls fails with `LLM_LIMIT`. Recovery retries a turn whose lease was lost or
+that failed with `LLM_UNREACHABLE`, `LLM_TIMEOUT`, `LLM_RATE_LIMITED`, or
+`LLM_CAPACITY`, with the same input and operation key; each attempt may call
+the provider again. A turn that fails for good goes to the agent's `onError`
+setting, or opens an incident at the turn's key; see
+[AI agent incidents](incident-operations.md#ai-agent-incidents).
+
+**Evidence.** Each turn's task records the digest of its input, so replay can
+check that the transcript it rebuilds is the one the model was given; see
+[AI agent runs in a history](history-and-replay.md#ai-agent-runs-in-a-history).
+
 ## Troubleshooting
 
 | What you see | Why | What to do |
@@ -327,4 +421,5 @@ without rerunning the handler.
   [concepts](../concepts.md#tasks-leases-and-retries).
 - Resolve the incidents that a failed task opens with
   [incident operations](incident-operations.md).
+- See what an AI agent's turns and tools do in [AI agent steps](ai-agents.md).
 - Look up each worker operation's schema in the [full API reference](api-explorer.md).
