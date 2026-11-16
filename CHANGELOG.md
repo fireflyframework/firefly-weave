@@ -18,6 +18,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- A worker keeps running when the platform's API restarts, for example after
+  `weave platform ai enable`, and claims again once the API answers. When a
+  claim can't reach the platform (the connection is refused, drops or times
+  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` waits half
+  a second, doubling up to 10 seconds (`claim_retry_seconds`,
+  `max_claim_retry_seconds`), and `stop()` ends the wait at once; 401, 403, a
+  refused release and every other failed claim still stop it with that error.
+
 ## 0.1.0a18
 
 ### Workflow language

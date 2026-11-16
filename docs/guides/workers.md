@@ -188,7 +188,19 @@ await worker.run()
 
 This is a wiring excerpt; use the complete example for authentication,
 registration, and shutdown. `Worker` handles claims, heartbeats, and completion
-delivery around the handler. A **lease** is temporary permission to execute one
+delivery around the handler.
+
+A worker keeps running while the platform's API restarts. When a claim can't
+reach the platform—the connection is refused, drops, or times out, or the API
+answers 429, 502, 503, or 504—`run()` waits and claims again. The wait starts
+at half a second and doubles up to 10 seconds; `stop()` ends it at once. Any
+other failed claim, such as 401, 403, or a refused release, ends `run()` with
+that error, because claiming again can't fix it. A lost lease or a completion
+whose delivery failed also ends `run()`, without running the task again, so run
+the worker under a supervisor or a container restart policy that starts it
+again.
+
+A **lease** is temporary permission to execute one
 task attempt. Its generation changes when recovery issues a new attempt; an old
 generation cannot complete the new one. Never print the lease's secret proof.
 
