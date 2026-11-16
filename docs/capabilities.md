@@ -57,8 +57,10 @@ an in-doubt incident for a person to resolve when Weave can't tell what
 happened; lets steps handle their own failures (**On error**); runs AI agent
 steps, which call their tools turn by turn and wait for a person's review of
 every call that changes data; runs one step of a draft for real in an
-environment as a test run; and connects kind and k3d clusters on this computer
-to a local platform as Kubernetes targets. In Studio, the new editor is on by
+environment as a test run; connects kind and k3d clusters on this computer
+to a local platform as Kubernetes targets; and lets Weave AI explain a worker,
+an incident, the platform's health or a change request through the API and the
+SDK, without sending logs, host names, people or record IDs to the model. In Studio, the new editor is on by
 default and decision tables open in a spreadsheet grid. Alpha18 adds two migrations and the `step_tester` role, described in the
 [upgrade procedure](operations/upgrades.md#what-changes-in-alpha18). Alpha17
 moved to schema revision `0038_operations_statistics` and adds run metrics under
