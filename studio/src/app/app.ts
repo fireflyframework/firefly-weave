@@ -10152,8 +10152,13 @@ export class App implements CanvasHost {
   }
   /** Informational notices use calm colors; problems keep the warning style. */
   get noticeCalm() {
-    const kind = this.platformNotice?.kind;
-    return kind === "revocation" || kind === "signing-in";
+    const notice = this.platformNotice;
+    return (
+      notice?.kind === "revocation" ||
+      notice?.kind === "signing-in" ||
+      // A sign-in that failed while the account from before still works.
+      (notice?.kind === "sign-in-failed" && !!notice.kept)
+    );
   }
   get noticeText() {
     const notice = this.platformNotice;

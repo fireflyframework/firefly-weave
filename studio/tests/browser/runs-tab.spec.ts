@@ -604,6 +604,12 @@ test.describe("the Runs list's states", () => {
       await expect(
         banner.getByRole("button", { name: "Dismiss platform message" }),
       ).toBeVisible();
+      // Information, not a problem: the calm style, with the account's icon.
+      await expect(banner).toHaveClass(/\bcalm\b/);
+      await expect(banner.locator(":scope > weave-icon")).toHaveAttribute(
+        "data-icon",
+        "user",
+      );
     });
 
   const unreachable: Reply = {
@@ -736,9 +742,15 @@ test.describe("the Runs list's states", () => {
       acmePlatform({ signedIn: false, expired: true }),
     );
     host.finish("failed", "WV-AUTH-DENIED");
-    await expect(page.locator(".platform-banner")).toContainText(
-      "Sign-in was declined.",
-      { timeout: 15_000 },
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    // Without an account to fall back on, the outcome stays a warning.
+    await expect(banner).toHaveClass(/\bwarning\b/);
+    await expect(banner.locator(":scope > weave-icon")).toHaveAttribute(
+      "data-icon",
+      "warning",
     );
     const message = runs.panel.locator(".runs-body .runs-message");
     await expect(message.locator("strong")).toHaveText(

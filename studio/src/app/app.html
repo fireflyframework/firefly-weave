@@ -272,7 +272,7 @@ SPDX-License-Identifier: Apache-2.0
               [name]="
                 platformNotice.kind === 'revocation'
                   ? 'logout'
-                  : platformNotice.kind === 'signing-in'
+                  : platformNotice.kind === 'signing-in' || platformNotice.kept
                     ? 'user'
                     : 'warning'
               "
