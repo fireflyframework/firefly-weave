@@ -108,24 +108,34 @@ def test_a_firing_rule_resolves_only_after_the_condition_stays_clear_for_a_minut
 
 
 def test_after_a_gap_a_pending_rule_waits_its_for_time_again():
-    # Nothing was read for four minutes: the first reading after the gap starts the wait anew.
-    readings = [(0, 0.3), (30, 0.3), (270, 0.3), (300, 0.3), (330, 0.3), (360, 0.3), (390, 0.3)]
+    # Nothing was read for five and a half minutes: the first reading after the gap starts the wait anew.
+    readings = [(0, 0.3), (30, 0.3), (360, 0.3), (390, 0.3), (420, 0.3), (450, 0.3), (480, 0.3)]
     steps = play(rule(for_seconds=120), readings)
     assert transitions(steps) == [("pending", None)] * 6 + [("firing", "fired")]
-    assert steps[2].state.pending_since == at(270)
+    assert steps[2].state.pending_since == at(360)
 
 
 def test_after_a_gap_a_clearing_alert_stays_clear_a_full_minute_again():
-    steps = play(rule(), [(0, 0.3), (30, 0.05), (200, 0.05), (230, 0.05), (260, 0.05)])
+    steps = play(rule(), [(0, 0.3), (30, 0.05), (360, 0.05), (390, 0.05), (420, 0.05)])
     assert transitions(steps) == [("firing", "fired")] + [("firing", None)] * 3 + [("ok", "resolved")]
-    assert steps[2].state.clear_since == at(200)
+    assert steps[2].state.clear_since == at(360)
     # Failed reads during an outage leave the last evaluation where it was, so they count as a gap too.
     firing, clearing = play(rule(), [(0, 0.3), (30, 0.05)])
-    failing = advance(clearing.state, rule(), ReadFailed("SignalUnavailable"), at(150))
-    after = advance(failing.state, rule(), Value(0.05, 50), at(180))
-    assert (after.state.state, after.transition, after.state.clear_since) == ("firing", None, at(180))
+    failing = advance(clearing.state, rule(), ReadFailed("SignalUnavailable"), at(300))
+    after = advance(failing.state, rule(), Value(0.05, 50), at(340))
+    assert (after.state.state, after.transition, after.state.clear_since) == ("firing", None, at(340))
     # Two cycles apart is no gap: the wait holds.
     assert transitions(play(rule(), [(0, 0.3), (30, 0.05), (90, 0.05)]))[-1] == ("ok", "resolved")
+
+
+@pytest.mark.parametrize("cadence", [62, 90])
+def test_a_rule_fires_and_resolves_when_routine_evaluations_are_more_than_a_minute_apart(cadence):
+    # A busy evaluator revisits an environment later than every 30 seconds; that is no gap in what is known.
+    held = play(rule(for_seconds=60), [(0, 0.3), (cadence, 0.3)])
+    assert transitions(held) == [("pending", None), ("firing", "fired")]
+    cleared = play(rule(for_seconds=60), [(2 * cadence, 0.05), (3 * cadence, 0.05)], held[-1].state)
+    assert transitions(cleared) == [("firing", None), ("ok", "resolved")]
+    assert cleared[0].state.clear_since == at(2 * cadence)
 
 
 def test_a_firing_rule_whose_condition_returns_starts_the_clear_wait_again():

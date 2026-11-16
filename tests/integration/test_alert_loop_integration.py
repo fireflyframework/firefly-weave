@@ -378,3 +378,49 @@ async def test_the_summary_shows_firing_alerts_to_alert_readers_critical_first(e
     hidden = await service.read(viewer, case.scope, context=CONTEXT)
     assert hidden.alerts == ForbiddenSection(state="forbidden")
     assert isinstance(hidden.attention, list) and all(item.kind != "alert" for item in hidden.attention)
+
+
+async def test_every_environment_of_a_tenant_with_nine_is_evaluated_within_two_cycles(evaluator):
+    case = evaluator
+    others = [uuid4() for _ in range(8)]
+    for other in others:
+        await owner(
+            case, "INSERT INTO environments VALUES(:other,:tenant,:project,:name)", other=other, name=f"alerts-{other}"
+        )
+    visited: list = []
+
+    class Cycle(AlertLoop):
+        async def tenants(self):
+            return [case.scope.tenant_id]
+
+        async def evaluate(self, authority):
+            visited.append(authority.scope.environment_id)
+            await super().evaluate(authority)
+
+    settings = Settings(database_url=case.url.render_as_string(hide_password=False), scheduler_enabled=False)
+    loop = Cycle(settings, case.uow, LoopHealth(), clock=lambda: case.now)
+    assert await loop.evaluate_cycle() is True
+    loop.clock = lambda: case.now + timedelta(seconds=30)
+    assert await loop.evaluate_cycle() is True
+    assert set(visited) == {case.scope.environment_id, *others}
+
+
+async def test_a_claim_takes_no_more_due_environments_than_its_limit(evaluator):
+    case = evaluator
+    others = [uuid4() for _ in range(8)]
+    for other in others:
+        await owner(
+            case, "INSERT INTO environments VALUES(:other,:tenant,:project,:name)", other=other, name=f"alerts-{other}"
+        )
+    await owner(
+        case,
+        "INSERT INTO alert_environments(tenant_id,project_id,environment_id,next_at) SELECT tenant_id,project_id,id,"
+        ":due FROM environments WHERE tenant_id=:tenant",
+        due=case.now,
+    )
+    first = await due_alert_scopes(case.uow, case.scope.tenant_id, case.now, limit=4)
+    second = await due_alert_scopes(case.uow, case.scope.tenant_id, case.now, limit=4)
+    third = await due_alert_scopes(case.uow, case.scope.tenant_id, case.now, limit=4)
+    claimed = [authority.scope.environment_id for authority in (*first, *second, *third)]
+    assert (len(first), len(second), len(third)) == (4, 4, 1)
+    assert sorted(claimed) == sorted([case.scope.environment_id, *others])

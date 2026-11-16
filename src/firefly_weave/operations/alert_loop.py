@@ -425,7 +425,9 @@ class AlertLoop:
                 self.engine = None
 
     async def evaluate_poll(self) -> None:
+        """Start a cycle every 30 seconds, however long the last one took; one that overran starts the next at once."""
         while True:
+            started = self.monotonic()
             self.health.started("alert_evaluator")
             try:
                 healthy = await self.evaluate_cycle()
@@ -442,7 +444,7 @@ class AlertLoop:
             else:
                 self.health.failed("alert_evaluator")
             raise_if_cancelled()
-            await asyncio.sleep(EVALUATE_SECONDS)
+            await asyncio.sleep(max(0.0, started + EVALUATE_SECONDS - self.monotonic()))
 
     async def tenants(self) -> list[UUID]:
         assert self.engine is not None
@@ -456,15 +458,19 @@ class AlertLoop:
             )
 
     async def evaluate_cycle(self) -> bool:
-        """One traversal; True only when every claimed environment was evaluated in time and without failure."""
-        started = self.monotonic()
+        """One traversal; True only when every claimed environment was evaluated in time and without failure.
+
+        Every claim is made as of the cycle's start, so an environment claimed late in this cycle is due again when
+        the next one starts, 30 seconds later.
+        """
+        started, cycle = self.monotonic(), self.clock()
         healthy = True
         log = logging.getLogger(__name__)
         for tenant in await self.tenants():
             if self.monotonic() - started >= CYCLE_START_SECONDS:
                 return False
             try:
-                authorities = await self.due(tenant, self.clock())
+                authorities = await self.due(tenant, cycle)
             except Exception as error:
                 raise_if_cancelled(error)
                 log.error("Alert environments of a tenant could not be claimed (%s)", failure_cause(error))

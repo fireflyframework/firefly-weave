@@ -20,9 +20,10 @@ A rule moves ``ok → pending → firing → ok``. It fires once its condition h
 For is 0), and resolves only after the condition has stayed clear for ``max(For, 60)`` seconds, so a flapping signal
 neither floods notifications nor resolves and fires every cycle. No data, or fewer ended runs than the rule's
 ``min_samples``, counts as clear. A failed read changes nothing but the recorded error: an outage never fires or
-resolves an alert. A reading more than two evaluation cycles after the last one restarts both waits, because nothing
-is known about the time between: the first reading after an outage neither fires a pending rule nor resolves a
-clearing one. Everything here is pure; the caller supplies the time and writes the state.
+resolves an alert. A reading more than five minutes after the last one restarts both waits, because nothing is known
+about the time between: the first reading after an outage neither fires a pending rule nor resolves a clearing one. A
+busy evaluator routinely comes back later than every 30 seconds; that is no gap. Everything here is pure; the caller
+supplies the time and writes the state.
 """
 
 import operator
@@ -37,9 +38,11 @@ from firefly_weave.operations.alert_signals import ALERT_SIGNALS, Value
 
 # A firing rule resolves only after its condition has been clear at least this long, whatever its For time.
 MIN_CLEAR_SECONDS = 60
-# Rules are evaluated this often; a reading more than two cycles after the last evaluation restarts the waits.
-CYCLE_SECONDS = 30
-_GAP = timedelta(seconds=2 * CYCLE_SECONDS)
+# Rules are evaluated every 30 seconds, but a busy evaluator comes back later: a tenant waits for its page of the
+# tenant list, and a cycle starts no environment after 20 seconds. Only a reading more than this long after the last
+# evaluation restarts the waits.
+GAP_SECONDS = 300
+_GAP = timedelta(seconds=GAP_SECONDS)
 
 _COMPARE: dict[str, Callable[[float, float], bool]] = {
     "gt": operator.gt,

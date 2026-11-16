@@ -125,6 +125,29 @@ async def test_the_evaluator_reports_its_health_and_runs_every_30_seconds(monkey
     assert (snapshot.last_ok_at, snapshot.consecutive_failures) == (NOW, 1)
 
 
+async def test_cycles_start_every_30_seconds_however_long_each_one_takes(monkeypatch):
+    loop = Traversal({})
+    durations = iter([12.0, 35.0, 5.0])
+    waits: list[float] = []
+
+    async def cycle():
+        loop.monotonic_clock.seconds += next(durations)
+        return True
+
+    async def sleep(seconds):
+        waits.append(seconds)
+        loop.monotonic_clock.seconds += seconds
+        if len(waits) == 3:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(loop, "evaluate_cycle", cycle)
+    monkeypatch.setattr(alert_loop.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await loop.evaluate_poll()
+    # A cycle of 12 s waits 18 s; one that overran its 30 s starts the next at once.
+    assert waits == [18.0, 0.0, 25.0]
+
+
 def test_a_rule_reads_the_targets_its_owner_may_read():
     here = scope()
     target, other = uuid4(), uuid4()
