@@ -376,6 +376,53 @@ test.describe("at 360 px the word beside the dot", () => {
   });
 });
 
+test("a check of the account that succeeds after a refused call reads as signed in", async ({
+  page,
+}) => {
+  const host = new PlatformHost({
+    platforms: [acmePlatform()],
+    active: "Acme",
+  });
+  await page.route(
+    (url) => url.pathname.startsWith("/studio/"),
+    (route) => host.handle(route),
+  );
+  // The check of the account waits; meanwhile the workflow list is refused.
+  let release = () => undefined as void;
+  const held = new Promise<void>((done) => (release = done));
+  await page.route("**/studio/connection/test", async (route) => {
+    await held;
+    await host.handle(route);
+  });
+  let refusing = true;
+  await page.route(
+    (url) =>
+      url.pathname.startsWith("/studio/api/") &&
+      url.pathname.endsWith("/workflows"),
+    (route) =>
+      refusing
+        ? route.fulfill({
+            status: 401,
+            json: {
+              status: 401,
+              code: "WV-AUTH-REQUIRED",
+              message: "Your sign-in has ended. Sign in again to continue.",
+            },
+          })
+        : host.handle(route),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await expect(page.locator(".platform-banner")).toContainText(
+    "Your session for Acme expired.",
+  );
+  refusing = false;
+  release();
+  await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+    "Platform: Acme · Signed in as jane@acme.example · Workspace Payments / Production",
+  );
+});
+
 test("a toast sits bottom-left beside the sidebar and pauses while hovered", async ({
   page,
 }) => {

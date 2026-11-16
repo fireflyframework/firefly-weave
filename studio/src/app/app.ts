@@ -9518,6 +9518,8 @@ export class App implements CanvasHost {
       }
       this.api.adopt(result.session);
       this.identity = result.identity;
+      // A refusal recorded while the check ran is answered by its success.
+      this.identityFailure = null;
       this.catalogAfterIdentity();
       this.draftAfterIdentity();
       this.refreshRunTaskAfterIdentity();
