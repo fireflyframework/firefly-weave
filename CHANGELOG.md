@@ -45,11 +45,21 @@ SPDX-License-Identifier: Apache-2.0
 - `WeaveClient` raises a redirect from the API as `ContractError`, with the same
   code (`WV-HTTP`) and status (502) as before, because the API never redirects;
   Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
-- The HTTP connector reports a destination name that doesn't resolve as
-  `UNAVAILABLE` with the outcome `not_started`, instead of `HTTP_FAILED` with
-  the outcome `unknown`: the lookup fails before the request is sent. In a
-  cluster, the operations runner keeps claiming while the API's name doesn't
-  resolve or its connection times out, as it does while the API restarts.
+- The pinned HTTP client that connectors use raises a destination name that
+  doesn't resolve as `httpcore.ConnectError`, and a connection that doesn't open
+  within the client's connect timeout as `httpcore.ConnectTimeout`, as it
+  already did for a refused connection, instead of `socket.gaierror` and
+  `TimeoutError`. The HTTP connector therefore reports a name that doesn't
+  resolve as `UNAVAILABLE` with the outcome `not_started`, instead of
+  `HTTP_FAILED` with the outcome `unknown`: the lookup fails before the request
+  is sent. A connection that never opens is unchanged for the HTTP, HTTP
+  profile, Telegram and WhatsApp connectors: each gives the client its whole
+  remaining deadline, so its own deadline ends first and it still reports a
+  timeout with the outcome `unknown`. Only a client whose connect timeout is
+  shorter than the deadline now reports it as `UNAVAILABLE` with
+  `not_started`. In a cluster, the operations runner keeps claiming while the
+  API's name doesn't resolve or its connection times out, as it does while the
+  API restarts.
 
 ## 0.1.0a18
 

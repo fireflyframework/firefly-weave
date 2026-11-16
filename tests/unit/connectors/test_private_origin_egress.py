@@ -16,6 +16,7 @@
 
 """HTTP connector actions, HTTP profiles and signed webhooks reach private origins only through C8."""
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -54,7 +55,7 @@ class Wire:
         return self.responses.pop(0)
 
 
-def v1_context(base, auth="none"):
+def v1_context(base, auth="none", seconds=10):
     async def credentials(slot):
         return ResolvedSecret(value="token-value")
 
@@ -79,7 +80,7 @@ def v1_context(base, auth="none"):
         max_request_bytes=1024,
         max_response_bytes=1024,
     )
-    return ActionContext("operation", datetime.now(UTC) + timedelta(seconds=10), credentials, invocation)
+    return ActionContext("operation", datetime.now(UTC) + timedelta(seconds=seconds), credentials, invocation)
 
 
 def test_an_approved_origin_is_reachable_only_inside_its_network():
@@ -194,6 +195,32 @@ async def test_a_destination_name_that_does_not_resolve_fails_a_connector_as_una
     with pytest.raises(ConnectorFailure) as failure:
         await HttpConnector(Client(), HttpPolicy(origins=acme_policy())).execute({}, v1_context(ACME))
     assert (failure.value.code, failure.value.outcome) == ("UNAVAILABLE", "not_started")
+
+
+@pytest.mark.parametrize(
+    "deadline, connect, failure",
+    [
+        # The connector gives the client its whole remaining deadline, so its own deadline, set first, ends first.
+        pytest.param(0.3, None, ("TIMEOUT", "unknown"), id="connect-timeout-as-long-as-the-deadline"),
+        # A client whose connect timeout ends first reports a connection that was never made.
+        pytest.param(5, 0.05, ("UNAVAILABLE", "not_started"), id="connect-timeout-shorter-than-the-deadline"),
+    ],
+)
+async def test_how_a_connector_reports_a_connection_that_never_opens_depends_on_which_deadline_ends_first(
+    deadline, connect, failure
+):
+    async def hanging(host, port):
+        await asyncio.Event().wait()
+
+    class Client(SecureHttpClient):
+        async def request_bounded(self, method, url, **kwargs):
+            if connect is not None:
+                kwargs["timeout"] = httpx.Timeout(kwargs["timeout"], connect=connect)
+            return await super().request_bounded(method, url, resolver=hanging, **kwargs)
+
+    with pytest.raises(ConnectorFailure) as raised:
+        await HttpConnector(Client(), HttpPolicy(origins=acme_policy())).execute({}, v1_context(ACME, seconds=deadline))
+    assert (raised.value.code, raised.value.outcome) == failure
 
 
 async def test_an_approved_development_origin_never_follows_redirects():
