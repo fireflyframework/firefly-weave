@@ -18,7 +18,8 @@
 
 The registry is closed: a signal is added here, with its reader, and never renamed or given another meaning. Adding a
 signal, a selector key a signal accepts, or a preset is additive; a stored rule whose signal this server doesn't know
-reads as unsupported and is never evaluated. Test runs never contribute to any signal.
+reads as unsupported and is never evaluated. No run signal or incident count includes test runs; the queue and worker
+gauges count every task, as the environment summary does.
 """
 
 import time
