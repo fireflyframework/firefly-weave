@@ -237,6 +237,7 @@ export class RunsView implements DoCheck {
       profile: app.profile,
       identity: app.identity,
       signedOut: app.signInToRead,
+      notLinked: app.platformNotice?.kind === "not-linked",
       name: app.model.definition.metadata.name ?? "",
     });
     const key = [

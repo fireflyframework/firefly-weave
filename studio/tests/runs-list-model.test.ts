@@ -130,6 +130,19 @@ describe("what the Runs tab can list", () => {
       "signed-out",
     );
   });
+  it("says the account isn't linked, where signing in again won't help", () => {
+    // The platform signed the person in but doesn't know the account: the
+    // sign-in counts as ended, yet only an administrator can link it.
+    expect(
+      runsTabMode({
+        profile,
+        identity: null,
+        signedOut: true,
+        notLinked: true,
+        name: "a",
+      }),
+    ).toBe("not-linked");
+  });
 });
 
 describe("a run as a list row", () => {

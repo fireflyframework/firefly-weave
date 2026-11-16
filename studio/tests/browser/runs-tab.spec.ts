@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
+import { acmeOption, acmePlatform, platformHost } from "./platform-host";
 import {
   listedKinds,
   olderRuns,
@@ -327,6 +328,45 @@ test.describe("the Runs list's states", () => {
     await expect(
       runs.panel.getByRole("button", { name: "Choose environment" }),
     ).toBeVisible();
+  });
+
+  test("an account the platform doesn't know says so, as Records does, not sign in", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => ({
+        status: 401,
+        json: {
+          status: 401,
+          code: "WV-AUTH-NOT-LINKED",
+          message: "You signed in, but this platform does not know you.",
+          account: {
+            provider_id: "acme",
+            issuer: acmeOption.issuer,
+            subject: "00u9-new",
+            display_name: "new.person@acme.example",
+          },
+        },
+      }),
+    });
+    await expect(page.locator(".platform-banner")).toContainText(
+      "doesn't recognize your account yet",
+    );
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    const message = runsPage(page).panel.locator(".runs-body .runs-message");
+    await expect(message.locator("strong")).toHaveText(
+      "Your account isn't linked yet.",
+    );
+    await expect(message.locator("p")).toHaveText(
+      "Acme doesn't recognize your account yet. Ask your administrator to link it; you can keep working locally.",
+    );
+    // Signing in again would meet the same refusal.
+    await expect(message.getByRole("button")).toHaveCount(0);
   });
 
   test("a refused list shows who can grant access and no run", async ({

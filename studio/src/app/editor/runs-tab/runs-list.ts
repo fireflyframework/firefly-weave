@@ -233,6 +233,11 @@ export class RunsList {
     this.tab().mode();
     return untracked(() => environmentName(this.app()));
   });
+  /** The platform's name, as Records says it for an account it doesn't know. */
+  readonly platform = computed(() => {
+    this.tab().mode();
+    return untracked(() => this.app().profile?.name ?? "");
+  });
 
   constructor() {
     const ticker = setInterval(() => {

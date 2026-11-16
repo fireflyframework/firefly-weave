@@ -186,6 +186,16 @@ SPDX-License-Identifier: Apache-2.0
         </button>
       </div>
     }
+    @case ("not-linked") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>
+        <strong>Your account isn't linked yet.</strong>
+        <p>
+          {{ platform() }} doesn't recognize your account yet. Ask your
+          administrator to link it; you can keep working locally.
+        </p>
+      </div>
+    }
     @case ("signed-out") {
       <div class="runs-message">
         <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>

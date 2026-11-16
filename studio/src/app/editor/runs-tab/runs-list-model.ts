@@ -59,25 +59,32 @@ export const filterCount = (filters: RunsTabFilters): number =>
 export type RunsTabMode =
   | "offline"
   | "no-environment"
+  | "not-linked"
   | "signed-out"
   | "pending"
   | "unnamed"
   | "ready";
 /**
- * What the Runs tab can list: nothing without a platform, an environment, a
- * sign-in or the account's identity; nothing for a workflow without a name
- * either, whose query would name no workflow and list every run in the
- * environment.
+ * What the Runs tab can list: nothing without a platform, an environment, an
+ * account the platform knows, a sign-in or the account's identity; nothing for
+ * a workflow without a name either, whose query would name no workflow and
+ * list every run in the environment.
  */
 export function runsTabMode(facts: {
   profile: { environmentId?: string | null } | null;
   identity: unknown;
   /** Nobody is signed in to the platform, or the sign-in ended. */
   signedOut: boolean;
+  /**
+   * The platform signed the person in but doesn't know the account: signing
+   * in again meets the same refusal, so this outranks `signedOut`.
+   */
+  notLinked?: boolean;
   name: string;
 }): RunsTabMode {
   if (!facts.profile) return "offline";
   if (!facts.profile.environmentId) return "no-environment";
+  if (facts.notLinked) return "not-linked";
   if (facts.signedOut) return "signed-out";
   if (!facts.identity) return "pending";
   return facts.name.trim() ? "ready" : "unnamed";
