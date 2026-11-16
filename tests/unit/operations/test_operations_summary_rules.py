@@ -453,3 +453,60 @@ def test_section_probes_never_write_deny_records(monkeypatch, caplog):
         ("run.read", "allow"),
         ("run.read", "allow"),
     ]
+
+
+class ClockUnits(Units):
+    """A unit of work whose sections the test answers and whose clock is fixed."""
+
+    async def scalar(self, statement, values=None):
+        assert "clock_timestamp()" in str(statement)
+        return AT
+
+
+def summarizer(monkeypatch, stored: Principal) -> tuple[OperationsSummaryService, ClockUnits]:
+    async def unavailable(tx, read, *, monotonic=None):
+        return UnavailableSection(state="unavailable")
+
+    monkeypatch.setattr(summary, "read_section", unavailable)
+    units = ClockUnits(stored)
+    reader = service(monkeypatch, units)
+    reader.compatibility = SimpleNamespace(report=CompatibilityReport(mode="ready", findings=[]), ready=True)  # type: ignore[assignment]
+    reader.monotonic = lambda: 100.0
+    return reader, units
+
+
+async def test_explanation_facts_return_what_read_returns_with_its_reach(monkeypatch):
+    caller = principal(Grant(role="viewer", scope=PROJECT), Grant(role="operator", scope=PROJECT))
+    reader, units = summarizer(monkeypatch, caller)
+    facts = await reader.explanation_facts(caller, SCOPE, context=AuditContext())
+    assert facts.summary == await reader.read(caller, SCOPE, context=AuditContext())
+    assert facts.reach == frozenset({"incidents", "runs"})
+    assert units.opened == 2
+
+
+async def test_the_reach_of_a_caller_without_incident_read_lacks_incidents(monkeypatch):
+    viewer = principal(Grant(role="viewer", scope=PROJECT))
+    reader, _ = summarizer(monkeypatch, viewer)
+    facts = await reader.explanation_facts(viewer, SCOPE, context=AuditContext())
+    assert facts.reach == frozenset({"runs"})
+    assert facts.summary.incidents.model_dump() == {"state": "forbidden"}
+
+
+async def test_the_reach_names_every_target_or_each_target_the_caller_may_read(monkeypatch):
+    first, second = uuid4(), uuid4()
+    everywhere = principal(
+        Grant(role="viewer", scope=PROJECT),
+        Grant(role="deployment_reader", scope=PROJECT),
+        Grant(role="deployment_approver", scope=PROJECT, resources=(str(second),)),
+    )
+    reader, _ = summarizer(monkeypatch, everywhere)
+    facts = await reader.explanation_facts(everywhere, SCOPE, context=AuditContext())
+    assert facts.reach == frozenset({"runs", "targets:*", f"approvals:{second}"})
+    some = principal(
+        Grant(role="viewer", scope=PROJECT),
+        Grant(role="deployment_reader", scope=PROJECT, resources=(str(first), str(second))),
+        Grant(role="deployment_approver", scope=PROJECT, resources=(str(second),)),
+    )
+    reader, _ = summarizer(monkeypatch, some)
+    facts = await reader.explanation_facts(some, SCOPE, context=AuditContext())
+    assert facts.reach == frozenset({"runs", f"targets:{first}", f"targets:{second}", f"approvals:{second}"})

@@ -26,27 +26,30 @@ caller compares the reach of the read after the reply with the first one and dis
 """
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Final
+from types import MappingProxyType
+from typing import Final, get_args
 from uuid import UUID
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.deployments import PlanIntent
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
 from firefly_weave.contracts.language import STEP_KINDS
 from firefly_weave.contracts.operations import IncidentView
+from firefly_weave.contracts.operations_summary import ForbiddenSection, UnavailableSection
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import WorkerStatus
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
 from firefly_weave.operations.incidents import IncidentFacts
+from firefly_weave.operations.summary import OperationsSummaryService, SummaryFacts
 from firefly_weave.runtime.transactions import HELD_INCIDENT
-
-if TYPE_CHECKING:
-    from firefly_weave.operations.summary import OperationsSummaryService
 
 # The union of the resource, deployment, component, task-type and SDK-version name patterns. Always fullmatched.
 NAME_TOKEN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@/+#\[\]-]{0,252}")
@@ -93,7 +96,7 @@ class ExplainRequest:
     scope: Scope
     id: UUID
     context: AuditContext
-    summary: "OperationsSummaryService | None"
+    summary: OperationsSummaryService | None
 
 
 type Reader = Callable[[ExplainRequest], Awaitable[Explained]]
@@ -230,3 +233,160 @@ def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:
         data["glossary_note"] = UNKNOWN_CODE_NOTE
     reach = frozenset({"available", "run"}) if facts.run_read else frozenset({"available"})
     return Explained(data, reach)
+
+
+_NAME = r"(?P<name>\S+)"
+_INTENTS = "|".join(re.escape(intent.replace("_", " ")) for intent in get_args(PlanIntent.__value__))
+# The titles the operations summary writes, one anchored template per attention kind. A title is sent only when it
+# fullmatches its kind's template and its name slot is a name token; anything else, a truncated title included, is
+# sent as null with its kind. Every attention kind is either here or in UNTITLED_KINDS.
+ATTENTION_TITLES: Final[Mapping[str, re.Pattern[str]]] = MappingProxyType(
+    {
+        "job": re.compile(rf"Deployment job on {_NAME} needs reconciliation"),
+        "approval": re.compile(rf"Approve the plan to (?P<intent>{_INTENTS}) on {_NAME}"),
+        "worker": re.compile(r"Offline worker still holds (?P<count>[0-9]{1,9}) active leases?"),
+        "incident": re.compile(rf"Active incident(?: in {_NAME})?"),
+        "runner": re.compile(rf"No runner is online for {_NAME}"),
+        "compatibility": re.compile(r"Execution compatibility is restricted"),
+        "run": re.compile(rf"A run(?: of {_NAME})? failed"),
+    }
+)
+# Attention kinds whose titles are never sent, such as titles a person writes.
+UNTITLED_KINDS: Final[frozenset[str]] = frozenset()
+# Kinds whose title names a workflow only when the caller may see the run.
+WORKFLOW_TITLED: Final = frozenset({"incident", "run"})
+HEALTH_ITEMS: Final = 16
+ATTENTION_ITEMS: Final = 20
+LOAD_COUNTS: Final = (
+    "runs_active",
+    "tasks_ready",
+    "tasks_leased",
+    "waits_active",
+    "waits_overdue",
+    "outbox_pending",
+    "provider_pending",
+    "sources_enabled",
+)
+LOAD_SECONDS: Final = ("oldest_ready_seconds", "oldest_overdue_seconds", "outbox_oldest_seconds")
+WORKER_COUNTS: Final = ("online", "offline", "draining", "capacity", "active_leases")
+TARGET_COUNTS: Final = ("total", "runner_online", "busy", "reconciliation_required", "awaiting_approval")
+INCIDENT_COUNTS: Final = ("active", "opened_24h")
+RUN_COUNTS: Final = ("started", "succeeded", "failed", "failure_rate")
+
+
+def _section_paths(name: str, fields: tuple[str, ...]) -> set[str]:
+    return {f"/{name}", f"/{name}/state"} | {f"/{name}/{field}" for field in fields}
+
+
+ENVIRONMENT_FIELDS: Final = frozenset(
+    {
+        "/api",
+        "/api/version",
+        "/api/uptime_seconds",
+        "/api/compatibility",
+        "/api/compatibility/mode",
+        "/api/compatibility/findings",
+        "/health",
+        "/health/*/component",
+        "/health/*/state",
+        "/health/*/last_ok_seconds",
+        "/health/*/consecutive_failures",
+        "/more_health",
+        "/attention",
+        "/attention/state",
+        "/attention/*/kind",
+        "/attention/*/title",
+        "/attention/*/expires_in_seconds",
+        "/more_attention",
+    }
+    | _section_paths("load", LOAD_COUNTS + LOAD_SECONDS)
+    | _section_paths("workers", WORKER_COUNTS)
+    | _section_paths("targets", TARGET_COUNTS)
+    | _section_paths("incidents", INCIDENT_COUNTS)
+    | _section_paths("runs_24h", RUN_COUNTS)
+)
+
+
+def _match(kind: str, title: str) -> re.Match[str] | None:
+    template = ATTENTION_TITLES.get(kind)
+    found = template.fullmatch(title) if template is not None and kind not in UNTITLED_KINDS else None
+    if found is None or ("name" in found.groupdict() and found["name"] is not None and not name_or_none(found["name"])):
+        return None
+    return found
+
+
+def title_or_none(kind: str, title: str) -> str | None:
+    """The summary's title when it is its kind's template with token names; otherwise None."""
+    return title if _match(kind, title) is not None else None
+
+
+def _whole(value: float | None) -> int | None:
+    return None if value is None else int(value)
+
+
+def _counts(section: ContractModel, counts: tuple[str, ...], seconds: tuple[str, ...] = ()) -> JsonObject:
+    if isinstance(section, ForbiddenSection | UnavailableSection):
+        return {"state": section.state}
+    picked: JsonObject = {name: getattr(section, name) for name in counts}
+    return picked | {name: _whole(getattr(section, name)) for name in seconds}
+
+
+def environment_context(facts: SummaryFacts) -> Explained:
+    """Platform health as the summary computed it for this caller: counts, states, ages and checked titles only."""
+    summary = facts.summary
+    observed_at = summary.observed_at
+    api = summary.api
+    health: list[JsonValue] = [
+        {
+            "component": item.component,
+            "state": item.state,
+            "last_ok_seconds": age_seconds(item.last_ok_at, observed_at),
+            "consecutive_failures": item.consecutive_failures,
+        }
+        for item in summary.health[:HEALTH_ITEMS]
+    ]
+    named: set[str] = set()
+    attention: JsonValue
+    more_attention: int | None
+    if isinstance(summary.attention, UnavailableSection):
+        attention, more_attention = {"state": summary.attention.state}, None
+    else:
+        items: list[JsonValue] = []
+        for item in summary.attention[:ATTENTION_ITEMS]:
+            found = _match(item.kind, item.title)
+            entry: JsonObject = {"kind": item.kind, "title": item.title if found else None}
+            if found is not None and item.kind in WORKFLOW_TITLED and found.groupdict().get("name"):
+                named.add(f"named:{item.id}")
+            if item.kind == "approval":
+                entry["expires_in_seconds"] = (
+                    None if item.expires_at is None else max(0, int((item.expires_at - observed_at).total_seconds()))
+                )
+            items.append(entry)
+        attention, more_attention = items, max(0, len(summary.attention) - ATTENTION_ITEMS)
+    data: JsonObject = {
+        "api": {
+            "version": name_or_none(api.version),
+            "uptime_seconds": int(api.uptime_seconds),
+            "compatibility": {"mode": api.compatibility.mode, "findings": api.compatibility.findings},
+        },
+        "health": health,
+        "more_health": max(0, len(summary.health) - HEALTH_ITEMS),
+        "load": _counts(summary.load, LOAD_COUNTS, LOAD_SECONDS),
+        "workers": _counts(summary.workers, WORKER_COUNTS),
+        "targets": _counts(summary.targets, TARGET_COUNTS),
+        "incidents": _counts(summary.incidents, INCIDENT_COUNTS),
+        "attention": attention,
+        "more_attention": more_attention,
+        "runs_24h": None if summary.runs_24h is None else _counts(summary.runs_24h, RUN_COUNTS),
+    }
+    return Explained(data, facts.reach | named)
+
+
+async def read_environment(request: ExplainRequest) -> Explained:
+    """The environment's summary read as the caller; another environment's ID is not found, and nothing is read."""
+    if request.id != request.scope.environment_id:
+        raise CatalogError(404, "WV-NOT-FOUND", "Environment not found")
+    if request.summary is None:
+        raise CatalogError(503, "WV-UNAVAILABLE", "The platform summary is not available yet")
+    facts = await request.summary.explanation_facts(request.actor, request.scope, context=request.context)
+    return environment_context(facts)
