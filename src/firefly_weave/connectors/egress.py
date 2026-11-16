@@ -182,18 +182,27 @@ class PinnedBackend(httpcore.AsyncNetworkBackend):
     ) -> httpcore.AsyncNetworkStream:
         if (host, port) != origin(self.url)[1:]:
             raise EgressDenied()
-        async with asyncio.timeout(timeout):
-            addresses = await self.resolver(host, port)
-            self.policy.validate(self.url, addresses)
-            # One literal connection only: neither fallback DNS nor a hidden retry can send a second write.
-            stream = await self.backend.connect_tcp(addresses[0], port, timeout, local_address, socket_options)
-            checked = _CheckedStream(stream, self.policy, self.url, addresses[0])
-            try:
-                checked.check()
-            except BaseException:
-                await stream.aclose()
-                raise
-            return checked
+        # The resolver and this deadline run outside httpcore's own backend, which maps its errors to httpcore's; map
+        # theirs the same way, so that a name that does not resolve or a connection that times out reads as one that
+        # could not be made. A refusal by the policy is a ValueError and stays one. The original error stays the cause.
+        try:
+            async with asyncio.timeout(timeout):
+                addresses = await self.resolver(host, port)
+                self.policy.validate(self.url, addresses)
+                # One literal connection only: neither fallback DNS nor a hidden retry can send a second write.
+                stream = await self.backend.connect_tcp(addresses[0], port, timeout, local_address, socket_options)
+                checked = _CheckedStream(stream, self.policy, self.url, addresses[0])
+                try:
+                    checked.check()
+                except BaseException:
+                    await stream.aclose()
+                    raise
+                return checked
+        except TimeoutError as error:
+            # Before OSError: TimeoutError is one, and asyncio.timeout raises it as the block above exits.
+            raise httpcore.ConnectTimeout("Connecting to the destination timed out") from error
+        except OSError as error:
+            raise httpcore.ConnectError("Connecting to the destination failed") from error
 
 
 class _ResponseStream(httpx.AsyncByteStream):

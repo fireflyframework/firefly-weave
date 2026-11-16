@@ -265,6 +265,10 @@ def workers_document(state: dict[str, Any], value: dict[str, Any]) -> dict[str, 
             COMPONENT: {
                 "image": value["worker_image"],
                 "deploy": {"replicas": 0},
+                # A worker ends on a lost lease or a token it could not renew, for example while the platform
+                # restarts; Docker starts it again, as Kubernetes does a worker pod. A worker that `weave platform
+                # stop` or a change request stopped stays stopped.
+                "restart": "unless-stopped",
                 "stop_grace_period": STOP_GRACE,
                 "read_only": True,
                 "cap_drop": ["ALL"],
