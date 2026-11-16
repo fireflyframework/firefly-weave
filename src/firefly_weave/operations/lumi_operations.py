@@ -66,7 +66,7 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_service import ChangeRequestService
 from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
-from firefly_weave.operations.incidents import IncidentFacts, IncidentService
+from firefly_weave.operations.incidents import RUNTIME_EVENT_TYPES, IncidentFacts, IncidentService
 from firefly_weave.operations.lumi_context import Explanation, Shorten, estimate_tokens
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, LIMITATION
 from firefly_weave.operations.summary import OperationsSummaryService, SummaryFacts
@@ -256,7 +256,11 @@ def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:
     workflow = view.workflow
     withheld = facts.events == "withheld"
     step_kind = facts.step_kind
-    events: JsonValue = "withheld" if facts.events == "withheld" else list(facts.events[-EVENT_TYPES:])
+    events: JsonValue = (
+        "withheld"
+        if facts.events == "withheld"
+        else [one_of(event, RUNTIME_EVENT_TYPES) for event in facts.events[-EVENT_TYPES:]]
+    )
     data: JsonObject = {
         "code": code,
         "origin_code": code_or_none(view.origin_code),
@@ -307,6 +311,7 @@ HEALTH_COMPONENTS: Final = values_of(HealthComponent, "component")
 HEALTH_STATES: Final = values_of(HealthComponent, "state")
 ATTENTION_KINDS: Final = values_of(AttentionItem, "kind")
 COMPATIBILITY_MODES: Final = values_of(CompatibilitySummary, "mode")
+SECTION_STATES: Final = values_of(ForbiddenSection, "state") | values_of(UnavailableSection, "state")
 HEALTH_ITEMS: Final = 16
 ATTENTION_ITEMS: Final = 20
 LOAD_COUNTS: Final = (
@@ -378,7 +383,7 @@ def _whole(value: float | None) -> int | None:
 
 def _counts(section: ContractModel, counts: tuple[str, ...], seconds: tuple[str, ...] = ()) -> JsonObject:
     if isinstance(section, ForbiddenSection | UnavailableSection):
-        return {"state": section.state}
+        return {"state": one_of(section.state, SECTION_STATES)}
     picked: JsonObject = {name: getattr(section, name) for name in counts}
     return picked | {name: _whole(getattr(section, name)) for name in seconds}
 
@@ -401,7 +406,7 @@ def environment_context(facts: SummaryFacts) -> Explained:
     attention: JsonValue
     more_attention: int | None
     if isinstance(summary.attention, UnavailableSection):
-        attention, more_attention = {"state": summary.attention.state}, None
+        attention, more_attention = {"state": one_of(summary.attention.state, SECTION_STATES)}, None
     else:
         items: list[JsonValue] = []
         for item in summary.attention[:ATTENTION_ITEMS]:

@@ -42,7 +42,12 @@ from firefly_weave.contracts.lumi import (
     LumiReply,
 )
 from firefly_weave.contracts.operations import IncidentView
-from firefly_weave.contracts.operations_summary import AttentionItem, AttentionKind, OperationsSummary
+from firefly_weave.contracts.operations_summary import (
+    AttentionItem,
+    AttentionKind,
+    OperationsSummary,
+    UnavailableSection,
+)
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.workers import WorkerStatus
 from firefly_weave.definitions.models import CatalogError
@@ -1360,3 +1365,20 @@ def test_a_change_request_sends_null_for_a_fixed_value_outside_its_set():
     assert [item["state"] for item in data["history"]] == [None, None]
     assert data["risks"] == [None, "worker_drain"]
     assert STRAY not in json.dumps(data)
+
+
+def test_a_section_state_outside_its_set_is_null():
+    summary = summary_of()
+    stray = summary.model_copy(
+        update={
+            "targets": summary.targets.model_copy(update={"state": STRAY}),
+            "attention": UnavailableSection(state="unavailable").model_copy(update={"state": STRAY}),
+        }
+    )
+    data = environment_context(summary_facts(stray)).data
+    assert (data["targets"], data["attention"]) == ({"state": None}, {"state": None})
+
+
+def test_an_event_type_outside_the_runtimes_is_null():
+    data = incident_context(incident_facts(events=("started", STRAY, ""))).data
+    assert data["recent_events"] == ["started", None, None]
