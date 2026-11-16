@@ -75,3 +75,51 @@ test("the list, the canvas and step details work by keyboard", async ({
   await expect(sheet.getByRole("heading", { name: "Runs" })).toBeVisible();
   await expect(sheet).toContainText("Show the run on the canvas");
 });
+
+test("keys and a box on the Runs canvas select nothing Escape or Enter would act on", async ({
+  page,
+}) => {
+  const { runs } = await openRunsTab(page);
+  const chosen = runs.row(RUN_IDS.failed);
+  await chosen.click();
+  await expect(chosen).toHaveAttribute("aria-selected", "true");
+  const details = new StepDetailsPage(page);
+  const canvas = runs.canvas.getByRole("group", { name: "Workflow canvas" });
+
+  // An arrow key moves to the next step; one Escape still returns to the row.
+  await details.node("check").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(details.node("approve")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(chosen).toBeFocused();
+
+  // Shift+arrow moves too, and adds nothing to Escape's work.
+  await details.node("check").focus();
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(details.node("approve")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(chosen).toBeFocused();
+
+  // Select all on the canvas selects nothing: Enter then opens no step, and
+  // one Escape returns to the row.
+  await canvas.focus();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await expect(chosen).toBeFocused();
+  await expect(details.dialog).toHaveCount(0);
+
+  // A box drawn over two steps selects nothing either.
+  const from = (await details.node("check").boundingBox())!;
+  const to = (await details.node("approve").boundingBox())!;
+  await page.mouse.move(from.x - 16, from.y - 24);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width - 8, to.y + to.height / 2, {
+    steps: 12,
+  });
+  await expect(runs.canvas.locator(".f-selection-area")).toBeVisible();
+  await page.mouse.up();
+  await canvas.focus();
+  await page.keyboard.press("Escape");
+  await expect(chosen).toBeFocused();
+});

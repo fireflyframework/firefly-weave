@@ -2051,11 +2051,7 @@ export class CanvasView implements OnInit, DoCheck {
       // The next box starts from nothing: what it adds comes from this
       // selection, not from steps the library still holds.
       this.flow()?.clearSelection();
-      this.selection = next;
-      this.seenSelected = next.focus ?? "";
-      const h = this.host();
-      if (next.focus) void h.selectStep(next.focus, false);
-      else void h.deselect();
+      this.choose(next);
       this.cdr.markForCheck();
     });
   }
@@ -2286,9 +2282,14 @@ export class CanvasView implements OnInit, DoCheck {
       ? this.selection
       : only(step);
   }
-  /** Makes a selection the canvas's, and its focus the editor's selected step. */
+  /**
+   * Makes a selection the canvas's, and its focus the editor's selected step.
+   * The Runs tab keeps no selection of its own, as for a click: the keys and
+   * a box only mark the step the editor shows, so Escape and Enter never act
+   * on a selection nobody can see.
+   */
   private choose(next: Selection) {
-    this.selection = next;
+    this.selection = this.viewingRuns() ? NO_SELECTION : next;
     this.seenSelected = next.focus ?? "";
     const h = this.host();
     if (next.focus) void h.selectStep(next.focus, false);
