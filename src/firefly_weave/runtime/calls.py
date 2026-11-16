@@ -522,7 +522,7 @@ class CallService:
             raise CatalogError(422, "WV-READINESS-CALL", "The call names an activation its caller does not pin")
         identity = instance_view(row["node_id"])
         facts = await RuntimeRepository(tx).rows(
-            f"SELECT test FROM run_facts WHERE {SCOPE} AND run_id=:run", run=row["caller_run_id"]
+            f"SELECT test,event_depth FROM run_facts WHERE {SCOPE} AND run_id=:run", run=row["caller_run_id"]
         )
         start_facts = RunStartFacts(
             origin="call",
@@ -530,6 +530,8 @@ class CallService:
             caller=RunSummaryCaller(
                 run_id=row["caller_run_id"], node_id=identity.node_id, instance_key=identity.instance_key
             ),
+            # A called run sits where its caller sits in a chain of reactions, so the chain can't restart there.
+            event_depth=facts[0]["event_depth"] if facts else 0,
         )
         request = StartRunRequest(
             activation_id=row["activation_id"],

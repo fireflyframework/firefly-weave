@@ -26,6 +26,7 @@ from pyfly.container import service
 from sqlalchemy import text
 
 from firefly_weave.contracts.integration_events import IntegrationEvent
+from firefly_weave.operations.event_fanout import fan_out
 from firefly_weave.persistence.idempotency import lock
 from firefly_weave.persistence.uow import Transaction
 
@@ -67,6 +68,9 @@ class OutboxService:
             text("INSERT INTO integration_events VALUES(:id,:tenant,:project,:environment,cast(:payload AS jsonb))"),
             {**params, "payload": json.dumps(body)},
         )
+        if event.payload.transaction is not None:
+            # Only a new event reaches here, so a re-emitted event never requests its starts twice.
+            await fan_out(tx, event)
         rows = (
             (
                 await tx.session.execute(

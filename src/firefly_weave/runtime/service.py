@@ -57,7 +57,7 @@ from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import KernelError, action_schemas, validate, validate_action, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TerminalControl
-from firefly_weave.runtime.repository import RuntimeRepository
+from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
 if TYPE_CHECKING:
     from firefly_weave.runtime.calls import ChildStart
@@ -833,6 +833,10 @@ class RuntimeService:
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Only a terminal run can create a linked retry")
             # Retry replay is owned by the outer receipt; the nested start gets a fresh identity.
             start_key = str(uuid4())
+            # A retry keeps its source's place in a chain of reactions.
+            source = await repository.rows(
+                f"SELECT event_depth FROM run_facts WHERE {SCOPE} AND run_id=:run", run=run_id
+            )
             view = await self.start(
                 current,
                 scope,
@@ -840,7 +844,9 @@ class RuntimeService:
                 start_key,
                 context=context,
                 tx=tx,
-                start_facts=RunStartFacts(origin="retry", retried_from_run_id=run_id),
+                start_facts=RunStartFacts(
+                    origin="retry", retried_from_run_id=run_id, event_depth=source[0]["event_depth"] if source else 0
+                ),
             )
             await repository.execute(
                 "INSERT INTO run_retry_links VALUES(:tenant,:project,:environment,:run,:parent)",

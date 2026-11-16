@@ -1,0 +1,137 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Which triggers a transaction event reaches, how deep the started runs sit in a chain, and what they receive."""
+
+import json
+from uuid import UUID
+
+import pytest
+
+from firefly_weave.contracts.integration_events import IntegrationEvent
+from firefly_weave.contracts.platform_events import PlatformEvent
+from firefly_weave.contracts.run_views import RunSummaryCaller
+from firefly_weave.operations.event_fanout import SourceFacts, TriggerMatch, event_payload, start_rows
+from firefly_weave.operations.facts import RunStartFacts
+
+RUN = UUID("0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c04")
+IN_DOUBT, COMPENSATED = "transaction.in_doubt", "transaction.compensated"
+
+
+def event(kind: str = IN_DOUBT, *, workflow: str = "move-between-systems", test: bool = False) -> IntegrationEvent:
+    scope = {
+        "tenant_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c0a",
+        "project_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c0b",
+        "environment_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c0c",
+    }
+    facts = {
+        "workflow": {"name": workflow, "version": "1.0.0"},
+        "run_id": str(RUN),
+        "instance_key": "move",
+        "business_key": "M-1",
+        "state": kind.removeprefix("transaction."),
+        "steps": {"done": [{"step": "hold", "instance_key": "hold", "how": "reserve"}]},
+        "test": test,
+    }
+    return IntegrationEvent.model_validate_json(
+        json.dumps(
+            {
+                "event_id": "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c03",
+                "type": kind,
+                "scope": scope,
+                "resource_id": str(RUN),
+                "correlation_id": str(RUN),
+                "emitted_at": "2026-11-15T10:00:00Z",
+                "payload": {"transaction": facts},
+            }
+        )
+    )
+
+
+def trigger(number: int, events=(IN_DOUBT,), *, workflow: str = "notify-team", sources=None) -> TriggerMatch:
+    return TriggerMatch(id=UUID(int=number), workflow_name=workflow, events=tuple(events), source_workflows=sources)
+
+
+def source(*, workflow: str = "move-between-systems", depth: int = 0, test: bool = False) -> SourceFacts:
+    return SourceFacts(run_id=RUN, workflow_name=workflow, depth=depth, test=test)
+
+
+def offered(triggers, incoming=None, origin=None) -> list[tuple[int, str, int, str | None]]:
+    rows = start_rows(triggers, incoming or event(), origin or source())
+    return [(row.trigger_id.int, row.status, row.depth, row.code) for row in rows]
+
+
+def test_a_trigger_accepts_only_its_event_types():
+    triggers = [trigger(2, (COMPENSATED,)), trigger(1, (IN_DOUBT, COMPENSATED)), trigger(3, (IN_DOUBT,))]
+    assert offered(triggers) == [(1, "requested", 1, None), (3, "requested", 1, None)]
+    assert offered(triggers, event(COMPENSATED)) == [(1, "requested", 1, None), (2, "requested", 1, None)]
+
+
+def test_a_trigger_limited_to_source_workflows_ignores_other_workflows():
+    triggers = [trigger(1, sources=["restock"]), trigger(2, sources=["move-between-systems", "restock"])]
+    assert offered(triggers) == [(2, "requested", 1, None)]
+    assert offered(triggers, origin=source(workflow="restock")) == [
+        (1, "requested", 1, None),
+        (2, "requested", 1, None),
+    ]
+
+
+def test_a_trigger_ignores_its_own_workflow_unless_from_names_it():
+    own = source(workflow="notify-team")
+    assert offered([trigger(1)], origin=own) == []
+    assert offered([trigger(1, sources=["notify-team"])], origin=own) == [(1, "requested", 1, None)]
+
+
+def test_events_of_test_runs_start_nothing():
+    assert offered([trigger(1)], event(test=True), source(test=True)) == []
+
+
+def test_events_from_a_run_three_reactions_deep_are_recorded_as_skipped():
+    assert offered([trigger(1), trigger(2)], origin=source(depth=2)) == [
+        (1, "requested", 3, None),
+        (2, "requested", 3, None),
+    ]
+    assert offered([trigger(1), trigger(2)], origin=source(depth=3)) == [
+        (1, "skipped", 4, "WV-TRIGGER-EVENT-DEPTH"),
+        (2, "skipped", 4, "WV-TRIGGER-EVENT-DEPTH"),
+    ]
+
+
+def test_the_start_payload_is_the_platform_event():
+    incoming = event()
+    payload = event_payload(incoming)
+    assert isinstance(payload, PlatformEvent)
+    dumped = payload.model_dump(mode="json")
+    assert set(dumped) == {"version", "event_id", "type", "emitted_at", "transaction"}
+    assert (payload.event_id, payload.type, payload.emitted_at) == (
+        incoming.event_id,
+        incoming.type,
+        incoming.emitted_at,
+    )
+    assert dumped["transaction"] == incoming.payload.model_dump(mode="json")["transaction"]
+    with pytest.raises(ValueError, match="transaction"):
+        event_payload(
+            incoming.model_copy(update={"payload": incoming.payload.model_copy(update={"transaction": None})})
+        )
+
+
+def test_a_run_start_carries_its_chain_depth():
+    assert RunStartFacts(origin="manual").event_depth == 0
+    caller = RunSummaryCaller(run_id=RUN, node_id="notify", instance_key="")
+    assert RunStartFacts(origin="call", caller=caller, event_depth=2).event_depth == 2
+    for depth in (-1, True, "1"):
+        with pytest.raises(ValueError, match="depth"):
+            RunStartFacts(origin="manual", event_depth=depth)  # type: ignore[arg-type]

@@ -14,7 +14,8 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Platform-event triggers on real PostgreSQL: binding an activation, disabling it, and reading what it started."""
+"""Platform-event triggers on real PostgreSQL: binding an activation, offering it transaction events, and reading what
+it started."""
 
 import asyncio
 import json
@@ -22,13 +23,17 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from transaction_platform import build, reaction, workflow
+from transaction_platform import add, build, hold, reaction, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
 from firefly_weave.contracts.event_triggers import MAX_EVENT_TRIGGERS, EventTriggerStart
+from firefly_weave.contracts.integration_events import IntegrationEvent
+from firefly_weave.contracts.platform_events import PlatformEvent
+from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.outbox import OutboxService
 
 pytestmark = pytest.mark.integration
 # Every byte the project uses now is its limit: growth outside a reserve is refused.
@@ -247,3 +252,121 @@ async def test_the_starts_listing_pages_newest_first_without_payloads(platform):
             "WV-TRIGGER-START",
             "WV-FORBIDDEN",
         )
+
+
+MOVE = ("move", [transaction(hold(), add(), submit())])
+
+
+async def in_doubt(platform, move: str = "M-1"):
+    """Drive a run whose undo is refused, so its transaction ends in doubt and emits transaction.in_doubt."""
+    run = await platform.start(await platform.publish(workflow(*MOVE)), move)
+    await platform.complete(await platform.lease("hold"))
+    await platform.fail(await platform.lease("add"), "UNAVAILABLE")
+    await platform.scan()
+    await platform.fail(await platform.lease("add#undo"), "REJECTED", outcome="failed")
+    await platform.scan()
+    return run
+
+
+async def outbox_event(platform, run, kind: str) -> dict:
+    [row] = await platform.query(
+        "SELECT payload FROM integration_events WHERE payload->>'type'=:kind AND payload->>'resource_id'=:run",
+        kind=kind,
+        run=str(run.id),
+    )
+    return row["payload"]
+
+
+async def starts(platform) -> list[dict]:
+    return await platform.query("SELECT * FROM event_trigger_starts ORDER BY trigger_id")
+
+
+async def test_an_in_doubt_transaction_requests_one_start_per_matching_trigger_with_its_event(platform):
+    activation = await platform.publish(reaction(events=("transaction.in_doubt", "transaction.completed")))
+    accepted = sorted([(await platform.bind(activation, name=name)).id for name in ("notify", "page")])
+    await platform.bind(activation, name="done", events=["transaction.completed"])
+    run = await in_doubt(platform)
+    event = await outbox_event(platform, run, "transaction.in_doubt")
+    rows = await starts(platform)
+    assert [(row["trigger_id"], row["status"], row["depth"], row["code"]) for row in rows] == [
+        (identifier, "requested", 1, None) for identifier in accepted
+    ]
+    assert {(str(row["event_id"]), row["event_type"], row["source_run_id"]) for row in rows} == {
+        (event["event_id"], "transaction.in_doubt", run.id)
+    }
+    [stored] = await platform.query("SELECT * FROM event_trigger_payloads")
+    assert (str(stored["event_id"]), stored["source_run_id"]) == (event["event_id"], run.id)
+    assert stored["payload"] == PlatformEvent.model_validate_json(
+        json.dumps(
+            {
+                "version": "weave/platform-event-v1",
+                "event_id": event["event_id"],
+                "type": "transaction.in_doubt",
+                "emitted_at": event["emitted_at"],
+                "transaction": event["payload"]["transaction"],
+            }
+        )
+    ).model_dump(mode="json")
+
+
+async def test_a_retried_projection_never_fans_out_twice(platform):
+    activation = await platform.publish(reaction())
+    for name in ("notify", "page"):
+        await platform.bind(activation, name=name)
+    run = await in_doubt(platform)
+    stored = IntegrationEvent.model_validate_json(json.dumps(await outbox_event(platform, run, "transaction.in_doubt")))
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await OutboxService().append(tx, stored)
+    assert len(await starts(platform)) == 2
+    assert len(await platform.query("SELECT event_id FROM event_trigger_payloads")) == 1
+
+
+async def test_a_disabled_trigger_gets_no_start(platform):
+    activation = await platform.publish(reaction())
+    enabled = await platform.bind(activation)
+    disabled = await platform.bind(activation, name="paused")
+    await platform.event_triggers.disable(platform.actor, platform.scope, disabled.id, context=AuditContext())
+    await in_doubt(platform)
+    assert [row["trigger_id"] for row in await starts(platform)] == [enabled.id]
+
+
+async def test_a_stop_at_a_full_quota_records_its_starts(platform):
+    activation = await platform.publish(reaction(events=("transaction.cancelled",)))
+    for name in ("notify", "page"):
+        await platform.bind(activation, name=name, events=["transaction.cancelled"])
+    run = await platform.start(await platform.publish(workflow(*MOVE)))
+    await platform.complete(await platform.lease("hold"))
+    await platform.execute(SATURATE, project=platform.scope.project_id)
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    await platform.scan()
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert [row["status"] for row in await starts(platform)] == ["requested", "requested"]
+    assert len(await platform.query("SELECT event_id FROM event_trigger_payloads")) == 1
+
+
+async def test_a_called_run_and_a_retry_keep_their_chain_depth(platform):
+    called = await platform.publish(workflow("callee", [], callable_=True))
+    step = {"id": "call", "kind": "callWorkflow", "uses": "callee@1.0.0", "with": {"ref": "/input"}}
+    caller = await platform.start(await platform.publish(workflow("caller", [step]), callee=called.id))
+    # A run that a platform event started: one reaction deep.
+    await platform.execute("UPDATE run_facts SET event_depth=1 WHERE run_id=:run", run=caller.id)
+    await platform.scan()
+    [child] = await platform.query("SELECT run_id,event_depth FROM run_facts WHERE caller_run_id=:run", run=caller.id)
+    assert child["event_depth"] == 1
+    assert (await platform.state(caller.id))["status"] == "succeeded"
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        retry = await platform.runtime.retry_run(
+            tx,
+            caller.id,
+            StartRunRequest(activation_id=caller.activation.id, input={"moveId": "M-1", "quantity": 2}),
+            str(uuid4()),
+            actor=platform.actor,
+            scope=platform.scope,
+            context=AuditContext(),
+        )
+    [facts] = await platform.query("SELECT origin,event_depth FROM run_facts WHERE run_id=:run", run=retry.id)
+    assert (facts["origin"], facts["event_depth"]) == ("retry", 1)
