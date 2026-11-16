@@ -22,6 +22,7 @@ and waiting is the only fix; a refusal such as 401, 403 or a refused release is 
 
 import asyncio
 import random as _random
+import re
 import ssl
 from collections.abc import Callable
 
@@ -29,6 +30,9 @@ from firefly_weave.sdk.errors import ContractError, TransportError, WeaveError
 
 # Statuses that ask a caller to come back later: rate limiting, or a gateway or API that is not serving yet.
 RETRY_LATER = frozenset({429, 502, 503, 504})
+# A problem code as the platform mints it, such as WV-TRANSPORT or WV-WIRE-VERSION, and how long it may be.
+CODE = re.compile(r"WV-[A-Z0-9]+(?:-[A-Z0-9_]+)*")
+LONGEST_CODE = 64
 
 
 def _chain(error: BaseException) -> list[BaseException]:
@@ -86,7 +90,10 @@ def kind(error: BaseException) -> str:
     if isinstance(error, httpx.HTTPStatusError):
         return f"{type(error).__name__} (HTTP {error.response.status_code})"
     if isinstance(error, WeaveError):
-        return f"{error.code} (HTTP {error.status})"
+        # The code comes from the server and is printed in logs and terminals, where a newline or an escape sequence
+        # could forge a line: anything the platform would not mint is printed as WV-HTTP.
+        code = error.code if len(error.code) <= LONGEST_CODE and CODE.fullmatch(error.code) else "WV-HTTP"
+        return f"{code} (HTTP {error.status})"
     return type(error).__name__
 
 
