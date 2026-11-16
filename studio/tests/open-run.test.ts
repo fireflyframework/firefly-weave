@@ -93,4 +93,15 @@ describe("Debug in editor from Operate", () => {
     await openRunInEditor(host, RUN, "debug");
     expect(takeDebug(DRAFT, RUN, FENCE)).toBeNull();
   });
+
+  it("forgets the request when opening the Runs tab fails, and says so", async () => {
+    const { host, notified } = editorWith(async () => {
+      throw Error("The view couldn't open.");
+    });
+    await openRunInEditor(host, RUN, "debug");
+    expect(takeDebug(DRAFT, RUN, FENCE)).toBeNull();
+    expect(notified).toEqual([
+      "Studio couldn't open run 1c0d7f8a in the editor: The view couldn't open.",
+    ]);
+  });
 });

@@ -150,6 +150,9 @@ export async function openRunInEditor(
     // The tab didn't open: nothing may start from this click later.
     if (!(await host.selectTab("Runs"))) dropDebug();
   } catch (error) {
+    // A failure on the way, the Runs tab's opening included: nothing may
+    // start from this click later.
+    dropDebug();
     if (holds()) refuse(describeError(error).message);
   }
 }
