@@ -184,6 +184,40 @@ test("the workflow open in the editor is used when it is the run's", async ({
   expect(kept.listed).toBe(listed);
 });
 
+test("Debug in editor works when the editor was left on its Runs tab", async ({
+  page,
+}) => {
+  await platform(page);
+  await localAuthoring(page);
+  // The editor's Runs tab shows the newest run, a running one.
+  await page.goto(`/workflows/${draft(2)}/designer?tab=runs`);
+  const runs = runsPage(page);
+  await expect(runs.canvas.locator(".run-header h2")).toHaveText(
+    `Run ${RUN_IDS.running.slice(0, 8)}`,
+  );
+  // To Operate and back: the editor opens on its Runs tab again, before
+  // Debug hands it the run.
+  await page.getByRole("button", { name: "Runs", exact: true }).click();
+  await page
+    .getByRole("table", { name: "Runs" })
+    .locator(".run-row")
+    .filter({ hasText: "Failed" })
+    .locator(".row-open")
+    .first()
+    .click();
+  const detail = page.locator(".record-detail");
+  await expect(detail.locator("#record-detail-title")).toHaveText(
+    "invoice-approval",
+  );
+  await detail.getByRole("button", { name: "Debug in editor" }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${draft(2)}/designer`));
+  const details = new StepDetailsPage(page);
+  await expect(details.dialogFor("send")).toBeVisible();
+  await expect(details.dialog).toContainText(
+    "In run 1c0d7f8a, this step failed: SMTP_REJECTED.",
+  );
+});
+
 test("a reader without catalog.read sees neither button", async ({ page }) => {
   await platform(page, DRAFTS, ["run.read"]);
   const detail = await openDetail(page, RUN_IDS.failed);

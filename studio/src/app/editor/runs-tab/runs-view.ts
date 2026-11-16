@@ -227,6 +227,11 @@ export class RunsView implements DoCheck {
         parseRunsLink(location.search)?.run ??
         null;
       this.linkedRun = this.linked;
+    } else {
+      // A run handed over after the tab opened (Debug in editor from
+      // Operate, with the editor already on this tab) is taken as on opening.
+      const handed = takeLinkedRun(app.draftId);
+      if (handed) this.linked = this.linkedRun = handed;
     }
     const mode = runsTabMode({
       profile: app.profile,
@@ -240,9 +245,11 @@ export class RunsView implements DoCheck {
       app.model.definition.metadata.name,
       mode === "ready" && app.can("run.read"),
     ].join("\n");
-    if (key === this.key) return;
-    this.key = key;
-    this.restart(mode);
+    if (key !== this.key) {
+      this.key = key;
+      return this.restart(mode);
+    }
+    if (this.linked && this.state()) untracked(() => this.showLinked());
   }
 
   /** Chooses a run: marks its row, reads it and draws it on the canvas. */
@@ -286,14 +293,16 @@ export class RunsView implements DoCheck {
       const state = new RunsTabState(tabHost(this.host()));
       this.state.set(state);
       state.start();
-      // A link's run, once: it is shown rather than the newest.
-      const linked = this.linked;
-      if (linked) {
-        this.linked = null;
-        this.opened = true;
-        this.show(linked);
-      }
+      this.showLinked();
     });
+  }
+  /** A link's run, once: it is shown rather than the newest. */
+  private showLinked() {
+    const linked = this.linked;
+    if (!linked) return;
+    this.linked = null;
+    this.opened = true;
+    this.show(linked);
   }
   /** The open workflow's address, without a query. */
   private path(): string {
