@@ -249,6 +249,39 @@ test("back on the Runs tab, the canvas shows only the run, with all its room", a
   expect(await right("weave-runs-view")).toBe(await right(".canvas-panel"));
 });
 
+test("on the Runs tab, keys never act on the Designer's selection or pins", async ({
+  page,
+}) => {
+  const { runs, saved } = await openDraftRuns(page);
+  await localAuthoring(page);
+  await choose(page, runs, RUN_IDS.failed);
+  await runs.canvas.getByRole("button", { name: "Debug in editor" }).click();
+  const details = new StepDetailsPage(page);
+  await expect(details.dialogFor("send")).toBeVisible();
+  await details.close();
+  // The Designer keeps send selected, and the run's data pinned fetch.
+  await expect.poll(() => savedPins(saved).at(-1)).toContain("fetch");
+  const saves = saved.length;
+  await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+  await choose(page, runs, RUN_IDS.failed);
+  // The first Escape on the canvas goes back to the run's row.
+  await details.node("send").focus();
+  await page.keyboard.press("Escape");
+  await expect(runs.row(RUN_IDS.failed)).toBeFocused();
+  // P on a pinned step changes none of the draft's test data from the
+  // read-only tab: it says why, and nothing is saved (a change saves after
+  // 800 ms).
+  await details.node("fetch").focus();
+  await page.keyboard.press("p");
+  await expect(
+    toast(page).filter({
+      hasText: "Go back to editing to change the workflow.",
+    }),
+  ).toBeVisible();
+  await page.clock.runFor(3_000);
+  expect(saved.length).toBe(saves);
+});
+
 test("Copy to editor runs a succeeded run to its end", async ({ page }) => {
   const { runs } = await openDraftRuns(page);
   const calls = await localAuthoring(page);

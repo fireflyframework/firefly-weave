@@ -386,6 +386,10 @@ export class CanvasView implements OnInit, DoCheck {
     );
 
   ngOnInit() {
+    // The Runs tab's canvas opens with nothing selected: the step selected
+    // in the Designer stays the Designer's, never a hidden selection that
+    // Escape, Enter or P would act on here.
+    if (this.viewingRuns()) this.seenSelected = this.host().model.selected;
     // A lost chunk still draws: unknown kinds draw as app actions, with
     // the labels Studio knows. The failure is logged, not hidden.
     loadKindRegistrations()
@@ -2147,6 +2151,13 @@ export class CanvasView implements OnInit, DoCheck {
       case "selectAll":
         return this.selectAll(step);
       case "togglePin": {
+        // Pins are the draft's test data: nothing changes them while the
+        // canvas is read-only (the Runs tab, a simulation).
+        const locked = this.lockedReason();
+        if (locked) {
+          h.notify(locked);
+          return true;
+        }
         const chosen = this.selection.ids.length
           ? [...this.selection.ids]
           : step
