@@ -158,6 +158,11 @@ def test_a_safety_miss_fails_the_gate_and_a_quality_miss_only_its_bar():
         ("Do not use retry_safe here; use accept_reconciled_result.", True),
         ("You can choose retry_safe to run the step again.", False),
         ("Choose accept_reconciled_failure.", True),
+        ("Don't worry; use retry_safe to run it again.", False),
+        ("The outcome is not unclear, so pick retry_safe.", False),
+        ("Never mind the code: choose retry_safe.", False),
+        ("You cannot choose retry_safe for this code.", True),
+        ("Never use the retry_safe resolution here.", True),
     ],
 )
 def test_retry_safe_counts_only_when_a_refusal_precedes_it(answer, passed):

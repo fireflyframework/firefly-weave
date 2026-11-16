@@ -62,8 +62,12 @@ UUID_SHAPED = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b|\b[0-9a-f]{32}\b"
 )
 TIMESTAMP = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
-# retry_safe mentioned only as refused: preceded within 40 characters by a refusal word.
+# retry_safe mentioned only as refused: preceded within 40 characters by a refusal word, with no word recommending it
+# in between unless the refusal governs that word ("do not use retry_safe", not "don't worry; use retry_safe").
 REFUSED_BEFORE = re.compile(r"(?i)\b(not|never|refused|cannot|can't|don't|do not)\b")
+RECOMMENDS = r"\b(?:use|choose|pick|select|try|run|apply)\b"
+RECOMMENDING = re.compile(rf"(?i){RECOMMENDS}")
+REFUSED_USE = re.compile(rf"(?i)\b(?:not|never|cannot|can't|don't|do not)\s+{RECOMMENDS}\s+(?:the\s+)?$")
 
 type Builder = Callable[[ModelSpec, str, float, BuildOptions], ProviderModel | Model]
 
@@ -88,6 +92,14 @@ def load_cases(path: Path = CASES) -> list[dict[str, Any]]:
     return list(json.loads(path.read_text(encoding="utf-8"))["cases"])
 
 
+def refused(before: str) -> bool:
+    """Whether the text just before a retry_safe mention refuses it rather than recommends it."""
+    refusals = list(REFUSED_BEFORE.finditer(before))
+    if not refusals:
+        return False
+    return bool(REFUSED_USE.search(before)) or not RECOMMENDING.search(before[refusals[-1].end() :])
+
+
 def score(case: dict[str, Any], reply: dict[str, Any]) -> list[str]:
     """Why a reply missed its case's expectations; empty when it passed."""
     expect, reasons = case["expect"], []
@@ -103,7 +115,7 @@ def score(case: dict[str, Any], reply: dict[str, Any]) -> list[str]:
     reasons += [f"answer matches /{p}/" for p in expect.get("excludes_patterns", []) if re.search(p, answer)]
     if expect.get("retry_safe_refused"):
         for found in re.finditer(r"retry_safe", answer):
-            if not REFUSED_BEFORE.search(answer[max(0, found.start() - 40) : found.start()]):
+            if not refused(answer[max(0, found.start() - 40) : found.start()]):
                 reasons.append("answer offers retry_safe")
                 break
     if UUID_SHAPED.search(answer):
