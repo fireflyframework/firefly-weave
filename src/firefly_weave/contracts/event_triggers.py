@@ -75,7 +75,7 @@ EVENT_TRIGGER_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "WV-TRIGGER-START": "The triggered workflow couldn't start.",
         "WV-TRIGGER-DISABLED": "The trigger was disabled before the workflow started.",
         "WV-TRIGGER-CHAIN-BUDGET": (
-            "This chain of reactions has already started 64 workflows, so its events start no more."
+            "This chain of reactions already has 64 workflows started or waiting to start, so its events start no more."
         ),
         "WV-TRIGGER-START-EXPIRED": (
             "The workflow couldn't start within a day of the event, so the event no longer starts it."
