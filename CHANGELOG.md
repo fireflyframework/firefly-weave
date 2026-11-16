@@ -28,6 +28,8 @@ SPDX-License-Identifier: Apache-2.0
   the answer carries no proposals. Deployment explanations now send each record
   by its position instead of its ID, and the gateway request no longer lists
   attachment IDs.
+- Email whose text or HTML isn't ASCII, such as a name with an accent, is sent;
+  it failed before it was queued.
 - An operator's command, such as resuming a drained worker, no longer answers
   429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
   both of the API's slots for changes. A request that finds every slot of its
