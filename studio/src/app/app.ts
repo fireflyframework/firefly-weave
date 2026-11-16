@@ -9852,7 +9852,14 @@ export class App implements CanvasHost {
         this.platformNotice = { kind: "signing-in", name };
       return;
     }
-    if (this.platformNotice?.kind === "signing-in") this.platformNotice = null;
+    // The waiting notice goes; a success also ends an earlier sign-in's
+    // outcome, which the check after it would otherwise word as kept.
+    const shown = this.platformNotice?.kind;
+    if (
+      shown === "signing-in" ||
+      (event.kind === "authenticated" && shown === "sign-in-failed")
+    )
+      this.platformNotice = null;
     if (event.kind === "authenticated") {
       // Signed in again: an earlier failure is no longer why nothing is read.
       this.identityFailure = null;
