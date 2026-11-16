@@ -608,6 +608,19 @@ async def test_the_runner_stops_on_a_claim_the_api_refuses_once_it_answers(monke
         assert refused.value.status == status and len(claims) == 2
 
 
+async def test_a_runner_asked_to_claim_once_never_claims_again(monkeypatch):
+    # `--once` checks one claim and reports how it went, so even a claim that could not reach the API ends it.
+    import httpx
+
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import TransportError
+
+    claims = through_the_client(monkeypatch, answering(httpx.ConnectError("refused")))
+    with pytest.raises(TransportError):
+        await asyncio.wait_for(serve(runner_configuration("https://weave.example"), once=True), 2)
+    assert claims == ["deployment_runners.claim"]
+
+
 def client_refusals():
     import httpx
 
