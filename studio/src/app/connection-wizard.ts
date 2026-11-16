@@ -1524,6 +1524,12 @@ export class ConnectionWizard implements OnInit, OnDestroy {
    * ended): the shell forgets the identity it held for the previous account.
    */
   accountProblem = output<"not-linked" | "expired">();
+  /**
+   * The check of the account failed for another reason (the platform can't
+   * be reached, the credential store is locked, an unexpected error): the
+   * shell records why it holds no account.
+   */
+  checkFailed = output<unknown>();
   heading = viewChild<ElementRef<HTMLElement>>("heading");
 
   steps = progress;
@@ -2559,6 +2565,7 @@ export class ConnectionWizard implements OnInit, OnDestroy {
           hint: plain.message,
           code: plain.code,
         };
+        this.checkFailed.emit(error);
       }
     } finally {
       this.cdr.markForCheck();

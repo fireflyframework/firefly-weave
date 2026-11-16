@@ -593,6 +593,73 @@ test.describe("the Runs list's states", () => {
       await expect(runs.panel.getByRole("status")).toHaveCount(0);
     });
 
+  for (const { failure, answer } of [
+    {
+      failure: "can't reach the platform",
+      answer: {
+        status: 502,
+        json: {
+          status: 502,
+          code: "WV-STUDIO-UPSTREAM",
+          message: "The platform didn't answer.",
+        },
+      },
+    },
+    {
+      failure: "fails with a 500",
+      answer: {
+        status: 500,
+        json: { status: 500, code: "WV-UNEXPECTED", message: "Failed." },
+      },
+    },
+  ])
+    test(`after a sign-in in the wizard, a workspace check that ${failure} reads as unreachable, not as signed out`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      // The platform refuses the expired session; once the person signs in
+      // again, the wizard's check of the account fails.
+      const host = new PlatformHost({
+        platforms: [acmePlatform({ signedIn: false })],
+        active: "Acme",
+        test: (current) => (current.current?.signedIn ? answer : undefined),
+      });
+      await page.route(
+        (url) => url.pathname.startsWith("/studio/"),
+        (route) => host.handle(route),
+      );
+      await page.route("**/studio/api/api/v1/identity", (route) =>
+        route.fulfill({ status: answer.status, json: answer.json }),
+      );
+      await page.goto("/");
+      await page
+        .locator(".platform-banner")
+        .getByRole("button", { name: "Sign in again" })
+        .click();
+      await page
+        .getByRole("button", { name: "Sign in with your browser" })
+        .click();
+      await expect(
+        page.getByRole("textbox", { name: "Sign-in address" }),
+      ).toBeVisible({ timeout: 15_000 });
+      host.finish("authenticated");
+      await expect(
+        page.getByText("Studio couldn't load your workspaces."),
+      ).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: "Home", exact: true }).click();
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const runs = runsPage(page);
+      const message = runs.panel.locator(".runs-body .runs-message");
+      await expect(message.locator("strong")).toHaveText(
+        "Studio couldn't reach Acme.",
+      );
+      await expect(
+        message.getByRole("button", { name: "Try again" }),
+      ).toBeVisible();
+    });
+
   test("a refused list shows who can grant access and no run", async ({
     page,
   }) => {

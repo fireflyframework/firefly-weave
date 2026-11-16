@@ -9799,9 +9799,20 @@ export class App implements CanvasHost {
     await this.checkPlatform();
     await this.refresh();
   }
+  /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {
     this.connectionStatus = status;
     if (this.platformNotice?.kind === "expired") this.platformNotice = null;
+    this.identityFailure = null;
+    this.cdr.markForCheck();
+  }
+  /**
+   * The wizard's check of the account failed for a reason other than the
+   * account: recorded as the shell's own check records it. The wizard shows
+   * the error itself, so no banner.
+   */
+  wizardCheckFailed(error: unknown) {
+    this.identityFailure = unreadIdentity(describeError(error));
     this.cdr.markForCheck();
   }
   wizardVerified(result: VerifiedPlatform) {
