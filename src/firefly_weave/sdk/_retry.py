@@ -84,7 +84,8 @@ def unavailable(error: BaseException) -> bool:
 
 
 def kind(error: BaseException) -> str:
-    """The failure's type and its HTTP status or problem code, never its message, which can carry a URL."""
+    """The failure's type and its HTTP status or problem code, with the type of the innermost error it came from, for
+    example ``ConnectError (gaierror)``; never a message, which can carry a URL, an address or a token."""
     import httpx
 
     if isinstance(error, httpx.HTTPStatusError):
@@ -93,8 +94,12 @@ def kind(error: BaseException) -> str:
         # The code comes from the server and is printed in logs and terminals, where a newline or an escape sequence
         # could forge a line: anything the platform would not mint is printed as WV-HTTP.
         code = error.code if len(error.code) <= LONGEST_CODE and CODE.fullmatch(error.code) else "WV-HTTP"
-        return f"{code} (HTTP {error.status})"
-    return type(error).__name__
+        # WeaveClient keeps the error of a call that failed as the context of its WV-TRANSPORT or WV-WIRE error.
+        failure = error.__cause__ or error.__context__
+        return f"{code} (HTTP {error.status})" + ("" if failure is None else f" from {kind(failure)}")
+    # A refused connection, a name that does not resolve and a TLS failure all arrive as ConnectError.
+    innermost = _chain(error)[-1]
+    return type(error).__name__ + ("" if innermost is error else f" ({type(innermost).__name__})")
 
 
 def retry_delay(failures: int, first: float, cap: float, *, random: Callable[[], float] = _random.random) -> float:
