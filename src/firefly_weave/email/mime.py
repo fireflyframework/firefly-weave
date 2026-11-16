@@ -140,7 +140,8 @@ def build_message(
     if parent:
         in_reply_to, references = reply_headers(parent)
         message["In-Reply-To"], message["References"] = in_reply_to, " ".join(references)
-    message.set_content(request.text)
+    # Queued and sent messages are ASCII: text that isn't is quoted-printable, and ASCII text keeps its bytes.
+    message.set_content(request.text, cte=None if request.text.isascii() else "quoted-printable")
     if request.html is not None:
         message.add_alternative(request.html, subtype="html")
     for attachment in request.attachments:
