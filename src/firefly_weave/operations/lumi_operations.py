@@ -25,8 +25,9 @@ Each reader also returns the record's *reach*, the access grants that filled the
 caller compares the reach of the read after the reply with the first one and discards a reply built from wider access.
 """
 
+import json
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
@@ -48,6 +49,8 @@ from firefly_weave.contracts.workers import WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
 from firefly_weave.operations.incidents import IncidentFacts
+from firefly_weave.operations.lumi_context import Explanation, Shorten, estimate_tokens
+from firefly_weave.operations.lumi_deployments import COLLECTIONS, LIMITATION
 from firefly_weave.operations.summary import OperationsSummaryService, SummaryFacts
 from firefly_weave.runtime.transactions import HELD_INCIDENT
 
@@ -100,8 +103,6 @@ class ExplainRequest:
 
 
 type Reader = Callable[[ExplainRequest], Awaitable[Explained]]
-# Shortens one attachment's data to fit ``room`` tokens (None: no limit), noting what it left out in ``trimmed``.
-type Shorten = Callable[[JsonObject, int | None, list[str]], JsonObject]
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,3 +518,111 @@ async def read_change_request(changes: ChangeReads, deployments: DeploymentReads
         job if isinstance(job, DeploymentJob) else None,
         observed_at=observed_at,
     )
+
+
+# One sentence per kind, sent once for each kind present, after the deployment kinds' sentence.
+LIMITATIONS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "worker": (
+            "Worker facts are the platform's last observation of its registration and contact; "
+            "they don't show the container's own health."
+        ),
+        "incident": (
+            "Incident facts include no inputs, outputs, reasons or logs; "
+            "the decisions listed are the ones that can apply to this code."
+        ),
+        "environment": (
+            "Platform health is a summary for this caller; "
+            "a section marked forbidden or unavailable is unknown, not zero."
+        ),
+        "change-request": "Change request facts show its state and plan, not who requested or approved it.",
+    }
+)
+
+
+def _fits(data: JsonObject, room: int | None) -> bool:
+    return room is None or estimate_tokens(json.dumps(data, ensure_ascii=False)) <= room
+
+
+def _drop(
+    data: JsonObject,
+    room: int | None,
+    trimmed: list[str],
+    *,
+    items: str,
+    more: str,
+    note: str,
+    oldest: bool,
+    keep: Callable[[JsonValue], bool] = lambda item: False,
+) -> JsonObject:
+    """Leave out list items one at a time (the oldest, or from the end), counting them in ``more``, until the data
+    fits; items ``keep`` names stay. The list is at most twenty long, so this loop is short."""
+    listed = data.get(items)
+    if _fits(data, room) or not isinstance(listed, list):
+        return data
+    remaining = list(listed)
+    order = range(len(remaining)) if oldest else range(len(remaining) - 1, -1, -1)
+    removable = [index for index in order if not keep(remaining[index])]
+    dropped: set[int] = set()
+    shorter = data
+    for index in removable:
+        dropped.add(index)
+        counted = data.get(more)
+        left = [item for position, item in enumerate(remaining) if position not in dropped]
+        if isinstance(counted, bool):
+            extra: JsonValue = True
+        else:
+            extra = (counted if isinstance(counted, int) else 0) + len(dropped)
+        shorter = {**data, items: left, more: extra}
+        if _fits(shorter, room):
+            break
+    if shorter is not data and note not in trimmed:
+        trimmed.append(note)
+    return shorter
+
+
+def _shorter_worker(data: JsonObject, room: int | None, trimmed: list[str]) -> JsonObject:
+    return _drop(data, room, trimmed, items="task_types", more="more_task_types", note="task_types", oldest=False)
+
+
+def _shorter_incident(data: JsonObject, room: int | None, trimmed: list[str]) -> JsonObject:
+    return _drop(
+        data, room, trimmed, items="recent_events", more="more_recent_events", note="incident_events", oldest=True
+    )
+
+
+def _shorter_environment(data: JsonObject, room: int | None, trimmed: list[str]) -> JsonObject:
+    data = _drop(data, room, trimmed, items="attention", more="more_attention", note="attention", oldest=False)
+    return _drop(
+        data,
+        room,
+        trimmed,
+        items="health",
+        more="more_health",
+        note="health",
+        oldest=False,
+        keep=lambda item: not (isinstance(item, dict) and item.get("state") == "ok"),
+    )
+
+
+def _shorter_change_request(data: JsonObject, room: int | None, trimmed: list[str]) -> JsonObject:
+    data = _drop(data, room, trimmed, items="history", more="more_history", note="change_history", oldest=True)
+    return _drop(data, room, trimmed, items="components", more="more_components", note="components", oldest=False)
+
+
+SHORTENERS: Final[Mapping[str, Shorten]] = MappingProxyType(
+    {
+        "worker": _shorter_worker,
+        "incident": _shorter_incident,
+        "environment": _shorter_environment,
+        "change-request": _shorter_change_request,
+    }
+)
+
+
+def explanation_for(kinds: Iterable[str]) -> Explanation:
+    """The limitations of the kinds present, once each and in a fixed order, and every kind's shortening rule."""
+    present = set(kinds)
+    sentences = [LIMITATION] if present & set(COLLECTIONS) else []
+    sentences += [LIMITATIONS[kind] for kind in LIMITATIONS if kind in present]
+    return Explanation(limitations=tuple(sentences), shorten=SHORTENERS)

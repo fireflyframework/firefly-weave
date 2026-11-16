@@ -544,7 +544,7 @@ def test_operations_explanations_send_no_authoring_context():
         draft=None,
         selected_step=None,
         schemas={"workflow": {}},
-        explanation_only=True,
+        explanation=context.Explanation(limitations=(), shorten={}),
     )
     assert "guide" not in shaped.context and "authoringSchemas" not in shaped.context
     assert shaped.context["purpose"] == "explain-operations"

@@ -16,11 +16,13 @@
 
 """Allowlisted deployment snapshots for read-only assistant explanations."""
 
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.values import JsonValue
 
+# What an explanation of deployment records can't see, sent once whichever deployment kinds are attached.
+LIMITATION: Final = "Saved snapshots only, not live cloud state or worker task capacity."
 COLLECTIONS = {
     "deployment-target": "targets",
     "deployment": "deployments",

@@ -76,6 +76,7 @@ from firefly_weave.operations.lumi_context import (
 )
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+from firefly_weave.operations.lumi_operations import explanation_for
 from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.persistence.uow import Transaction
 
@@ -855,7 +856,9 @@ class LumiService:
             draft=(request.draft.format, request.draft.source) if request.draft else None,
             selected_step=request.selected_step,
             schemas=schemas,
-            explanation_only=request.explanation_only,
+            explanation=(
+                explanation_for(item.kind for item in request.attachments) if request.explanation_only else None
+            ),
             fix=request.fix,
         )
 
