@@ -39,7 +39,8 @@ export type KeymapSurface =
   | "formula"
   | "addStep"
   | "decisionGrid"
-  | "runLog";
+  | "runLog"
+  | "runs";
 export type KeymapCommand =
   | "zoomIn"
   | "zoomOut"
@@ -110,7 +111,12 @@ export type KeymapCommand =
   | "searchPane"
   | "moveRowUp"
   | "moveRowDown"
-  | "mapTo";
+  | "mapTo"
+  | "previousRun"
+  | "nextRun"
+  | "firstRun"
+  | "lastRun"
+  | "showRun";
 
 export interface KeymapRow {
   readonly id: string;
@@ -152,6 +158,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       note: "editNote",
       decisionGrid: "editCell",
       stepDetails: "mapTo",
+      runs: "showRun",
     },
   },
   {
@@ -285,6 +292,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       note: "nudgeNoteUp",
       addStep: "panelUp",
       decisionGrid: "cellUp",
+      runs: "previousRun",
     },
   },
   {
@@ -295,8 +303,11 @@ export const KEYMAP: readonly KeymapRow[] = [
       note: "nudgeNoteDown",
       addStep: "panelDown",
       decisionGrid: "cellDown",
+      runs: "nextRun",
     },
   },
+  { id: "first-run", keys: ["Home"], commands: { runs: "firstRun" } },
+  { id: "last-run", keys: ["End"], commands: { runs: "lastRun" } },
   {
     id: "extend-upstream",
     keys: ["Shift+ArrowLeft"],
@@ -393,6 +404,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       canvas: "showShortcuts",
       outline: "showShortcuts",
       stepDetails: "showShortcuts",
+      runs: "showShortcuts",
     },
     n8n: "Not in n8n.",
   },
@@ -508,6 +520,11 @@ export const COMMAND_LABELS: Readonly<Record<KeymapCommand, string>> = {
   moveRowUp: "Move the row up",
   moveRowDown: "Move the row down",
   mapTo: "Map the focused input field to a parameter",
+  previousRun: "Previous run",
+  nextRun: "Next run",
+  firstRun: "First run",
+  lastRun: "Last run",
+  showRun: "Show the run on the canvas",
 };
 
 /** Pointer gestures, shown on the sheet; the canvas handles them itself. */
@@ -649,6 +666,7 @@ const SHEET_SURFACES: readonly [KeymapSurface | "any", string][] = [
   ["addStep", "Add a step panel"],
   ["decisionGrid", "Decision table grid"],
   ["runLog", "Run log"],
+  ["runs", "Runs"],
 ];
 
 /** Ends a phrase with a period, unless it already ends with a sentence mark. */

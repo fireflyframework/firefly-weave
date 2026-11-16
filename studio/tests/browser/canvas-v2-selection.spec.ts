@@ -22,6 +22,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openWorkflow, type CanvasPage } from "./canvas-po";
 import { stepFixture } from "./step-details-po";
 import { clippedText } from "./step-geometry";
+import { showView } from "./support";
 
 const MINIMAP_KEY = "ui:weave.canvas.minimap";
 
@@ -259,13 +260,13 @@ test.describe("selecting steps", () => {
     page,
   }) => {
     const canvas = await openWorkflow(page);
-    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(page, "Source");
     const source = page.getByRole("textbox", { name: "Workflow source" });
     await source.fill(`${await source.inputValue()}\n  broken: [`);
     await page
       .getByRole("button", { name: "Apply changes", exact: true })
       .click();
-    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await showView(page, "Designer");
     await canvas.ready();
     await boxSelect(canvas, "prepare-request", "approval");
     const bar = canvas.root.getByRole("toolbar", { name: "Selected steps" });

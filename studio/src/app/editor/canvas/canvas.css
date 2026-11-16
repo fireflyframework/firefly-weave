@@ -1018,3 +1018,47 @@ weave-canvas-view,
   border-radius: var(--radius-pill);
   transform: translateX(-50%);
 }
+
+/* The Runs tab: nothing to connect, a run's fact under the step, and the
+   Read-only pill at the bottom right, across from the canvas tools. */
+.canvas-v2.viewing-runs .handle {
+  display: none;
+}
+.canvas-v2 .tile-label span.tile-output[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.canvas-v2 .tile-label span.tile-output[data-tone="info"] {
+  color: var(--info-ink);
+}
+.canvas-v2 .canvas-read-only {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--muted);
+  font: var(--type-caption);
+}
+@media (max-width: 767px) {
+  .canvas-v2 .canvas-read-only {
+    width: var(--control-touch);
+    height: var(--control-touch);
+    padding: 0;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+  }
+  .canvas-v2 .canvas-read-only .read-only-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}

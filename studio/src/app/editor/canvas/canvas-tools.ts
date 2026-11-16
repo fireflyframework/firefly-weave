@@ -82,24 +82,26 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
           >Fit view</span
         >
       </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label="Add a sticky note"
-        title="Add a sticky note (Shift+S)"
-        (click)="note.emit()"
-      >
-        <weave-icon name="stickyNote" [size]="16" />
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label="Tidy layout"
-        title="Tidy layout (Shift+Alt+T)"
-        (click)="tidy.emit()"
-      >
-        <weave-icon name="tidy" [size]="16" />
-      </button>
+      @if (editing()) {
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Add a sticky note"
+          title="Add a sticky note (Shift+S)"
+          (click)="note.emit()"
+        >
+          <weave-icon name="stickyNote" [size]="16" />
+        </button>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Tidy layout"
+          title="Tidy layout (Shift+Alt+T)"
+          (click)="tidy.emit()"
+        >
+          <weave-icon name="tidy" [size]="16" />
+        </button>
+      }
       <button
         type="button"
         class="icon-button"
@@ -115,7 +117,7 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
       class="canvas-v2-tools-menu"
       label="Canvas view"
       text="View"
-      [items]="menu"
+      [items]="editing() ? menu : viewMenu"
     />
     <span class="sr-only" aria-live="polite">Zoom {{ percent }}</span>`,
 })
@@ -129,6 +131,8 @@ export class CanvasTools {
   note = output<void>();
   /** Tidy layout (Shift+Alt+T). */
   tidy = output<void>();
+  /** False on a read-only canvas: no sticky notes, no tidying. */
+  editing = input(true);
   /** "Show minimap" keeps the minimap open. */
   minimap = input(false);
   toggleMinimap = output<void>();
@@ -143,4 +147,9 @@ export class CanvasTools {
     { label: "Tidy layout", run: () => this.tidy.emit() },
     { label: "Keyboard shortcuts", run: () => this.shortcuts.emit() },
   ];
+  /** The menu without the tools that change the workflow. */
+  readonly viewMenu = this.menu.filter(
+    (item) =>
+      item.label !== "Add a sticky note" && item.label !== "Tidy layout",
+  );
 }

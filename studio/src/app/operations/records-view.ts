@@ -947,7 +947,8 @@ export class RecordsView {
     const h = this.host();
     const key = [
       h.identity,
-      h.workflowVersions.size,
+      // Every change to the published versions replaces the map, so its identity is the key.
+      h.workflowVersions,
       h.activationsByVersion,
       h.workspaceNames?.environment,
       h.libraryCollection,

@@ -20,6 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Studio's editor has a Runs tab: a workflow's runs in the environment you work
+  in, the chosen run drawn on its canvas, and each step's recorded data in
+  read-only step details.
+- Debug in editor and Copy to editor turn a run's data into the draft's test
+  data and execute the workflow with it, stopping where the run failed; values
+  marked secret are left out and named. Operate's run detail opens a run in its
+  workflow's newest draft, and offers to create one when there is none.
 - Weave AI explains workers, incidents, platform health and change requests
   through the API and the SDK: attach a `worker`, `incident`, `environment` or
   `change-request` to a question. Each needs `lumi.use` and the record's own

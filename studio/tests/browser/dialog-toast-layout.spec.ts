@@ -39,7 +39,13 @@ import {
   showParameters,
   type Box,
 } from "./step-geometry";
-import { command, connected, offline, withClassicDesigner } from "./support";
+import {
+  command,
+  connected,
+  offline,
+  showView,
+  withClassicDesigner,
+} from "./support";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
 import { openActivation, platform } from "./activation-po";
@@ -58,12 +64,12 @@ const sizes = [
 
 /** The question Studio asks on leaving Source with typed text. */
 async function askAboutSource(page: Page): Promise<Locator> {
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   const source = page.getByRole("textbox", { name: "Workflow source" });
   await source.fill(
     (await source.inputValue()).replace("version: 1.0.0", "version: 1.0.1"),
   );
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await showView(page, "Designer");
   const dialog = page.getByRole("dialog", {
     name: "Apply the changes typed in Source?",
   });

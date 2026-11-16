@@ -44,6 +44,8 @@ export interface TileView {
   note: string;
   /** What its data holds, under the label ("3 fields"); "" when it has none. */
   output: string;
+  /** On the Runs tab, the line names the run's fact: a failure's code in danger ink, a change in info ink. */
+  outputTone?: "danger" | "info" | null;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;
@@ -136,9 +138,12 @@ export interface TileView {
           <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
         }
         @if (v.output) {
-          <span class="tile-output" [attr.title]="v.output">{{
-            v.output
-          }}</span>
+          <span
+            class="tile-output"
+            [attr.data-tone]="v.outputTone || null"
+            [attr.title]="v.output"
+            >{{ v.output }}</span
+          >
         }
         @if (v.note) {
           <span class="tile-note" [attr.title]="v.note">{{ v.note }}</span>

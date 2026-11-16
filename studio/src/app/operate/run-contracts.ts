@@ -93,6 +93,15 @@ export type OmissionReason =
   | "uncertain_derived"
   | "confidential_text"
   | "resource_limit";
+/** Why the platform left an output out, as Operate and step details say it. */
+export const OMISSION_WORDS: Readonly<Record<OmissionReason, string>> = {
+  classified_secret: "This output is classified as secret.",
+  classification_unavailable:
+    "Studio can't tell whether this output is safe to show.",
+  uncertain_derived: "This output may be derived from protected data.",
+  confidential_text: "This output holds confidential text.",
+  resource_limit: "This output is too large to show.",
+};
 export interface Omission {
   path: string;
   reason: OmissionReason;

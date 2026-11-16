@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Reproductions of the "Call an action" editor defects, driven with real
 // pointer and keyboard input so hit-testing and focus behave as for a person.
-import { withClassicDesigner, selectChoice } from "./support";
+import { withClassicDesigner, selectChoice, showView } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   connected,
@@ -194,7 +194,7 @@ test("the Fields builder and operator select show the stored value", async ({
     page.getByRole("button", { name: "+ Add field", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Value type", { exact: true })).toHaveCount(0);
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   await page.getByRole("textbox", { name: "Workflow source" }).fill(
     JSON.stringify({
       apiVersion: "weave/v1alpha1",
@@ -222,7 +222,7 @@ test("the Fields builder and operator select show the stored value", async ({
   await page
     .getByRole("button", { name: "Apply changes", exact: true })
     .click();
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await showView(page, "Designer");
   await node(page, "check").click();
   await expect(
     page.getByLabel("Value operator", { exact: true }),
@@ -456,7 +456,7 @@ test("a contract still loading is shown for the next step that uses it", async (
     uses: "sql.lookup@1.0.0",
     with: { literal: { parameters: { customerId: id } } },
   });
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await showView(page, "Source");
   await page.getByRole("textbox", { name: "Workflow source" }).fill(
     JSON.stringify({
       apiVersion: "weave/v1alpha1",
@@ -473,7 +473,7 @@ test("a contract still loading is shown for the next step that uses it", async (
   await page
     .getByRole("button", { name: "Apply changes", exact: true })
     .click();
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await showView(page, "Designer");
   await node(page, "first").click();
   await expect(page.locator(".integration-contract")).toContainText(
     "Loading the action's details",
