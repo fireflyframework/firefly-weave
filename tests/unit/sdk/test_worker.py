@@ -19,6 +19,8 @@
 import asyncio
 from datetime import UTC
 
+import pytest
+
 
 async def test_stop_stops_polling_and_drains():
     from firefly_weave.sdk.worker import Worker
@@ -523,3 +525,81 @@ def test_claim_retry_waits_must_be_positive_and_capped_above_the_first():
     for first, cap in ((0, 1), (-1, 1), (2, 1)):
         with pytest.raises(ValueError, match="claim retry"):
             Worker(object(), {}, 1, claim_retry_seconds=first, max_claim_retry_seconds=cap)
+
+
+async def api(port, claims):
+    """A real HTTP server on 127.0.0.1:`port` (0 picks one) that answers each claim with no work and counts it."""
+
+    async def answer(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        length = next(
+            (int(line.split(b":")[1]) for line in head.split(b"\r\n") if line.lower().startswith(b"content-length:")),
+            0,
+        )
+        await reader.readexactly(length)
+        claims.append(head.split(b" ")[1].decode())
+        writer.write(
+            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n[]"
+        )
+        await writer.drain()
+        writer.close()
+
+    return await asyncio.start_server(answer, "127.0.0.1", port)
+
+
+async def until(condition, seconds=3):
+    async with asyncio.timeout(seconds):
+        while not condition():
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["pinned-transport", "default-transport"])
+async def test_a_worker_outlasts_a_restart_of_the_api_it_claims_from(caplog, pinned):
+    """Real sockets and transports: the API goes away, so its port refuses connections, then comes back on it."""
+    import logging
+    from uuid import uuid4
+
+    import httpx
+
+    from firefly_weave import private_origins as po
+    from firefly_weave.sdk.transport import WorkerTransport
+    from firefly_weave.sdk.worker import Worker
+    from firefly_weave.sdk.worker_auth import private_transport
+
+    caplog.set_level(logging.WARNING, logger="firefly_weave.sdk.worker")
+    before, after = [], []
+    first = await api(0, before)
+    port = first.sockets[0].getsockname()[1]
+    origin = f"http://127.0.0.1:{port}"
+    entry = po.PrivateOrigin(origin=origin, purpose="platform-api", networks=("127.0.0.1/32",), credentials="loopback")
+    second = None
+    with po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry])):
+        # The fixture worker reaches the API through the pinned private-origin transport.
+        transport = private_transport(origin, "platform-api") if pinned else None
+        async with httpx.AsyncClient(base_url=origin, transport=transport, timeout=2) as client:
+            worker = Worker(
+                WorkerTransport(client, "/scope", uuid4()),
+                {},
+                1,
+                claim_retry_seconds=0.02,
+                max_claim_retry_seconds=0.05,
+            )
+            running = asyncio.create_task(worker.run())
+            try:
+                await until(lambda: before or running.done())
+                first.close()
+                await first.wait_closed()
+                await until(lambda: "could not reach the platform" in caplog.text or running.done())
+                second = await api(port, after)
+                await until(lambda: after or running.done())
+                await worker.stop()
+                await asyncio.wait_for(running, 2)
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+                first.close()
+                if second is not None:
+                    second.close()
+                    await second.wait_closed()
+    assert before and after == ["/scope/tasks/claim"] * len(after) and after
+    assert "ConnectError" in caplog.text
