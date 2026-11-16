@@ -79,6 +79,8 @@ from firefly_weave.compiler.loops import (
     output_schema,
 )
 from firefly_weave.compiler.parser import ParsedSource
+from firefly_weave.compiler.platform_catalog import platform_references, platform_schema, platform_schema_digests
+from firefly_weave.compiler.platform_events import check_event_trigger
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
@@ -139,6 +141,7 @@ _MESSAGES = {
     "REFERENCE_PRESENCE": "Reference presence is unproved; runtime validation is required.",
     "UNAVAILABLE_REFERENCE": "Referenced step does not dominate this expression in its lexical scope.",
     "CATALOG_PENDING": "This reference is checked against the project catalog when the definition is compiled.",
+    "RESERVED_SCHEMA": "The platform provides this schema, so a catalog can't bring its own schema under that name.",
     "LOOP_ITEMS": "The items of a loop must be a list.",
     "LOOP_SCOPE": (
         "/item, /index and /loops are available only inside a forEach body, and /loops/ID must name an enclosing loop."
@@ -405,6 +408,19 @@ class _Analyzer:
                 suggestedEdit=edit,
             )
         )
+
+    def platform_schemas(self, document: JsonObject) -> None:
+        """Supply the platform's schemas a definition references; a catalog may not bring its own under their names."""
+        references = platform_references(document)
+        for name, digest in platform_schema_digests().items():
+            brought = self.catalog.schemas.get(name)
+            if brought is not None:
+                if brought.digest != digest:
+                    self.issue("RESERVED_SCHEMA", references.get(name, ""), stage="resolution")
+            elif name in references:
+                supplied = FrozenDocument.from_value(cast(JsonObject, platform_schema(name)))
+                self.bundle[name] = supplied.value
+                self.resolved[("Schema", name)] = CatalogResource("Schema", name, supplied)
 
     def freeze_schema(self, schema: JsonObject) -> FrozenDocument:
         measure_value(
@@ -1745,6 +1761,7 @@ class _Analyzer:
             resource = self.catalog.resolve("Schema", name)
             if resource is not None:
                 self.resolved[("Schema", name)] = resource
+        self.platform_schemas(value)
         # Constructs whose feature is not compiled yet stop here, before budgets and flow analysis read them.
         unsupported = unsupported_uses(value)
         for use in unsupported:
@@ -1771,7 +1788,8 @@ class _Analyzer:
                 cast(JsonObject, cast(JsonObject, profile)["outputSchema"]),
                 pointer_child("/spec/llmProfiles", name) + "/outputSchema",
             )
-        self.schema(self.input_schema, "/spec/inputSchema")
+        if self.schema(self.input_schema, "/spec/inputSchema"):
+            check_event_trigger(self, spec)
         self.schema(cast(JsonObject, spec["outputSchema"]), "/spec/outputSchema")
         try:
             valid = self.preflight(cast(list[JsonObject], spec["steps"]), "/spec/steps")

@@ -102,6 +102,7 @@ async def test_capabilities_list_the_language_features_and_ir_versions_this_plat
         == [
             "ai.agent",
             "flow.callWorkflow",
+            "flow.eventTrigger",
             "flow.forEach",
             "flow.onError",
             "flow.transaction",

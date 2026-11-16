@@ -220,6 +220,10 @@ const compiler: Record<string, Copy> = {
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",
   },
+  RESERVED_SCHEMA: {
+    text: "The platform provides a schema with this name, so the catalog can't bring its own.",
+    hint: "Rename the catalog's schema, or use the platform's.",
+  },
   CONNECTION: {
     text: "This step's connection doesn't match what the action needs.",
     hint: "Choose a connection slot that uses the action's connector.",
