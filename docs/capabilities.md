@@ -51,16 +51,25 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a17`**, with PyFly 26.9.15 and database schema revision
-`0038_operations_statistics`. Alpha17 adds run metrics under **Operate ›
-Metrics**, reviewed change requests for every infrastructure change, Operations
-that work out of the box on the local Docker platform, transactions in the
-workflow language (compiled and checked, but not offered by the platform yet),
-simulated calls between workflows, test data and **Execute step** in the new
-editor, platform drafts that save themselves, and Weave AI on a local Ollama
-model with requests sized to the model's context; it adds five migrations and
-the `transaction_reconciler` role, described in the
-[upgrade procedure](operations/upgrades.md#what-changes-in-alpha17). Alpha16
+**`0.1.0a18`**, with PyFly 26.9.15 and database schema revision
+`0040_editor_step_tests`. Alpha18 runs workflow transactions, which stop behind
+an in-doubt incident for a person to resolve when Weave can't tell what
+happened; lets steps handle their own failures (**On error**); runs AI agent
+steps, which call their tools turn by turn and wait for a person's review of
+every call that changes data; runs one step of a draft for real in an
+environment as a test run; and connects kind and k3d clusters on this computer
+to a local platform as Kubernetes targets. In Studio, the new editor is on by
+default, its **Runs** tab draws a run on its workflow's canvas and turns the
+run's data into test data, and decision tables open in a spreadsheet grid.
+Alpha18 adds two migrations and the `step_tester` role, described in the
+[upgrade procedure](operations/upgrades.md#what-changes-in-alpha18). Alpha17
+moved to schema revision `0038_operations_statistics` and adds run metrics under
+**Operate › Metrics**, reviewed change requests for every infrastructure
+change, Operations that work out of the box on the local Docker platform,
+transactions in the workflow language, simulated calls between workflows, test
+data and **Execute step** in the new editor, platform drafts that save
+themselves, and Weave AI on a local Ollama model with requests sized to the
+model's context. Alpha16
 moved to schema revision `0033_language_workflow_calls` and adds loops over
 items and calls between workflows, Studio's Operate area with its Overview,
 Runs, Incidents, Workers and Clusters pages, the new editor's canvas, step
@@ -187,10 +196,11 @@ is retained as evidence; it is not counted as a successful model run.
 - **BPMN.** Weave does not import or export BPMN files. Error boundary events
   are not part of the workflow language. **Loop over items** and **Call a
   workflow** cover repeated work and subprocesses, and **Transaction** declares
-  how each step is undone. This version compiles and checks transactions and
-  includes the runtime that runs them, but the platform does not offer them
-  yet: it refuses to publish, import or activate a workflow with a transaction
-  (`WV-IR-UNSUPPORTED`; see [Transactions](contracts.md#transactions)).
+  how each step is undone. This version runs transactions: it confirms
+  reservations, undoes what went through when a step fails, and stops behind an
+  incident for a person to resolve when it can't tell what happened (see
+  [Transactions](contracts.md#transactions)). **On error** lets a step handle
+  its own failure.
   [Coming from BPM/BPMN](concepts.md#coming-from-bpmbpmn) lists the alternatives.
 - **Named enterprise adapters.** SAP and Oracle are not offered as executable
   named adapters. Reaching a system through a generic connector does not certify
