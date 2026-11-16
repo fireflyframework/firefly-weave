@@ -23,11 +23,12 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from transaction_platform import add, build, hold, reaction, submit, transaction, workflow
+from transaction_platform import Platform, add, build, hold, reaction, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
+from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.event_triggers import MAX_EVENT_TRIGGERS, EventTriggerStart
 from firefly_weave.contracts.integration_events import IntegrationEvent
 from firefly_weave.contracts.platform_events import PlatformEvent
@@ -322,6 +323,38 @@ async def test_a_retried_projection_never_fans_out_twice(platform):
         await OutboxService().append(tx, stored)
     assert len(await starts(platform)) == 2
     assert len(await platform.query("SELECT event_id FROM event_trigger_payloads")) == 1
+
+
+async def test_a_sibling_environments_trigger_is_out_of_reach(platform, access_db, provisioned):
+    """Environments of one project share no triggers: managing triggers here reads, disables and lists none of a
+    sibling's, even for someone who manages triggers there too, and an event here starts nothing there."""
+    access, admin = access_db[2], provisioned[0]
+    project = Scope(tenant_id=platform.scope.tenant_id, project_id=platform.scope.project_id)
+    environment = await access.create_environment(await access.load_principal(admin.id), project, "sibling")
+    sibling = platform.scope.model_copy(update={"environment_id": environment})
+    for role in ("deployer", "operator"):
+        await access.grant(admin, platform.actor.id, Grant(role=role, scope=sibling))
+    there = Platform(**{**vars(platform), "scope": sibling, "actor": await access.load_principal(platform.actor.id)})
+    theirs = await there.bind(await there.publish(reaction("sibling-team")))
+    ours = await platform.bind(await platform.publish(reaction()))
+    manager = await person(access_db, provisioned, platform, "deployer")
+    service, context = platform.event_triggers, AuditContext()
+    for actor in (manager, there.actor):
+        for call in (
+            service.read(actor, platform.scope, theirs.id, context=context),
+            service.disable(actor, platform.scope, theirs.id, context=context),
+            service.starts(actor, platform.scope, theirs.id, context=context),
+        ):
+            with pytest.raises(CatalogError) as missing:
+                await call
+            assert (missing.value.status, missing.value.code) == (404, "WV-NOT-FOUND")
+        listed = await service.list(actor, platform.scope, context=context)
+        assert [item["id"] for item in listed["items"]] == [str(ours.id)]
+    await in_doubt(platform)
+    assert [row["trigger_id"] for row in await starts(platform)] == [ours.id]
+    assert [(row["id"], row["disabled"]) for row in await triggers(platform) if row["id"] == theirs.id] == [
+        (theirs.id, False)
+    ]
 
 
 async def test_a_disabled_trigger_gets_no_start(platform):
