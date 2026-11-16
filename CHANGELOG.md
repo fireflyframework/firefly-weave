@@ -45,6 +45,11 @@ SPDX-License-Identifier: Apache-2.0
 - `WeaveClient` raises a redirect from the API as `ContractError`, with the same
   code (`WV-HTTP`) and status (502) as before, because the API never redirects;
   Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+- The HTTP connector reports a destination name that doesn't resolve as
+  `UNAVAILABLE` instead of `HTTP_FAILED`, and a connection that times out before
+  it opens as `UNAVAILABLE` instead of `TIMEOUT`; in both cases the request was
+  never sent (`not_started`). In a cluster, the operations runner keeps claiming
+  through both, as it does while the API restarts.
 
 ## 0.1.0a18
 
