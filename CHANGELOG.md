@@ -46,10 +46,10 @@ SPDX-License-Identifier: Apache-2.0
   code (`WV-HTTP`) and status (502) as before, because the API never redirects;
   Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
 - The HTTP connector reports a destination name that doesn't resolve as
-  `UNAVAILABLE` instead of `HTTP_FAILED`, and a connection that times out before
-  it opens as `UNAVAILABLE` instead of `TIMEOUT`; in both cases the request was
-  never sent (`not_started`). In a cluster, the operations runner keeps claiming
-  through both, as it does while the API restarts.
+  `UNAVAILABLE` with the outcome `not_started`, instead of `HTTP_FAILED` with
+  the outcome `unknown`: the lookup fails before the request is sent. In a
+  cluster, the operations runner keeps claiming while the API's name doesn't
+  resolve or its connection times out, as it does while the API restarts.
 
 ## 0.1.0a18
 
