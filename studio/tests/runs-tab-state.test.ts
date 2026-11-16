@@ -359,6 +359,34 @@ describe("the list", () => {
     expect(state.items()).toEqual([]);
   });
 
+  it("keeps the versions its runs used while a filter narrows the list", async () => {
+    const data = structuredClone(runViewsFixture);
+    const older = summaryOf(data, fixtureIds.succeeded);
+    older.workflow = { ...older.workflow, version: "1.2.0" };
+    const { state, env } = await started(data);
+    // Test runs and runs the platform can't show name no version to filter by.
+    expect([...state.usedVersions()].sort()).toEqual(["1.2.0", "1.3.0"]);
+    state.setFilters({
+      status: ["failed"],
+      version: null,
+      origin: null,
+      includeTest: true,
+    });
+    await env.advance(0);
+    expect(state.rows().map((row) => [row.label, row.version])).toEqual([
+      ["Failed", "1.3.0"],
+    ]);
+    expect([...state.usedVersions()].sort()).toEqual(["1.2.0", "1.3.0"]);
+  });
+
+  it("forgets the versions another workflow's runs used", async () => {
+    const { state, host, env } = await started();
+    expect(state.usedVersions()).toEqual(["1.3.0"]);
+    host.setWorkflow("notify-customer");
+    await env.advance(5000);
+    expect(state.usedVersions()).toEqual(["2.0.0"]);
+  });
+
   it("stops at 500 runs and says so", async () => {
     const data = structuredClone(runViewsFixture);
     const base = summaryOf(data, fixtureIds.succeeded);

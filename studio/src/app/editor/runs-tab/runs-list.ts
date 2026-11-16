@@ -213,8 +213,8 @@ export class RunsList {
     const seen = new Set<string>();
     for (const version of this.app().workflowVersions.values())
       if (version.name === name && version.version) seen.add(version.version);
-    for (const row of this.rows())
-      if (!row.unavailable && !row.test && row.version) seen.add(row.version);
+    for (const version of this.state()?.usedVersions() ?? [])
+      seen.add(shortVersion(version));
     const filter = this.filters().version;
     if (filter) seen.add(filter);
     return [...seen].sort(byVersion);

@@ -118,6 +118,14 @@ for (const size of sizes)
       await expect(popover).toBeVisible();
       await popover.getByRole("checkbox", { name: "Failed" }).check();
       await expect.poll(last).toMatchObject({ status: "failed" });
+      // The list narrows to the failed run; Version still offers the version
+      // the other runs used, so the filters combine in any order.
+      await expect(runs.rows).toHaveCount(1);
+      await expect(popover.getByLabel("Version").locator("option")).toHaveText([
+        "All versions",
+        "1.3.0",
+        "1.2.0",
+      ]);
       await popover.getByLabel("Version").selectOption("1.2.0");
       await expect.poll(last).toMatchObject({ version: "1.2.0" });
       await popover.getByLabel("How it started").selectOption("Webhook");

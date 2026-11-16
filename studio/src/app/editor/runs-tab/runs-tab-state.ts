@@ -154,6 +154,12 @@ export class RunsTabState {
   readonly chosen = signal<ChosenRun | null>(null);
   /** Older runs: another page to read, the 500-run limit reached, or none. */
   readonly older = signal<"more" | "limit" | "none">("none");
+  /**
+   * Every version the workflow's listed runs used, test runs aside. A filter
+   * that narrows the list keeps them, so Version still offers them; another
+   * account, environment or workflow starts over.
+   */
+  readonly usedVersions = signal<readonly string[]>([]);
 
   private readonly lister: Poller;
   private follower: Poller | null = null;
@@ -378,6 +384,7 @@ export class RunsTabState {
       return;
     this.seen = now;
     this.versions.clear();
+    this.usedVersions.set([]);
     this.forget(this.destroyed ? this.state() : "idle");
     // Another account or environment may read runs: ask it at once.
     if (this.refused && this.started && !this.destroyed) {
@@ -456,8 +463,14 @@ export class RunsTabState {
     pages: number,
   ) {
     const now = new Date(this.env.now());
+    const rows = items.map((item) => runRow(item, now));
     this.items.set(items);
-    this.rows.set(items.map((item) => runRow(item, now)));
+    this.rows.set(rows);
+    const used = new Set(this.usedVersions());
+    for (const row of rows)
+      if (!row.unavailable && !row.test && row.version) used.add(row.version);
+    if (used.size > this.usedVersions().length)
+      this.usedVersions.set([...used]);
     this.cursor = cursor;
     this.pages = pages;
     this.older.set(
