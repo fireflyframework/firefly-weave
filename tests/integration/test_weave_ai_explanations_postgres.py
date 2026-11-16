@@ -99,11 +99,33 @@ CANARIES = (
     "canary-resolution-7f3a",
     "canary-output-7f3a",
     "canary-incident-handle-7f3a",
+    "canary-resolved-handle-7f3a",
     "canary-title-7f3a",
     "canary-change-reason-7f3a",
     "canary-drain-host-7f3a",
     "canary-failure-7f3a",
 )
+# The table that stores each canary, so the leak test first confirms every one was planted.
+STORED_IN = {
+    HOST: "worker_facts",
+    "canary-node-7f3a": "worker_facts",
+    "canary-namespace-7f3a": "worker_facts",
+    "canary-label-7f3a": "worker_facts",
+    "canary-os-7f3a": "worker_facts",
+    "canary-arch-7f3a": "worker_facts",
+    "canary-language-7f3a": "worker_facts",
+    "canary-event-data-7f3a": "run_events",
+    "canary-evidence-7f3a": "run_event_evidence",
+    "canary-type-7f3a": "run_events",
+    "canary-resolution-7f3a": "incidents",
+    "canary-output-7f3a": "incidents",
+    "canary-incident-handle-7f3a": "incidents",
+    "canary-resolved-handle-7f3a": "incidents",
+    "canary-title-7f3a": "deployment_change_requests",
+    "canary-change-reason-7f3a": "deployment_change_requests",
+    "canary-drain-host-7f3a": "deployment_change_requests",
+    "canary-failure-7f3a": "deployment_change_requests",
+}
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
 
@@ -271,6 +293,7 @@ async def add_change_request(case, target: UUID, deployment: UUID, plan: UUID, e
                 "plan_expires_at": expires.isoformat(),
                 "planned_by": str(case.actor.id),
                 "drain_set": [{"worker_id": str(uuid4()), "host": "canary-drain-host-7f3a", "active_leases": 1}],
+                "failure": {"code": "WV-DRAIN-TIMEOUT", "message": "canary-failure-7f3a"},
                 "warnings": [],
                 "history": [
                     {
@@ -341,7 +364,7 @@ async def seeded(weave_ai, task_service, worker_ids):
     )
     await add_run_events(case, run.id)
     active = await add_incident(case, run.id, "canary-incident-handle-7f3a", opened=now - timedelta(minutes=10))
-    resolved = await add_incident(case, run.id, "resolved-handle", opened=now - timedelta(minutes=20))
+    resolved = await add_incident(case, run.id, "canary-resolved-handle-7f3a", opened=now - timedelta(minutes=20))
     await owner_execute(
         case,
         "UPDATE incidents SET status='resolved',revision=2,resolved_at=clock_timestamp(),actor_id=:actor,"
@@ -400,8 +423,21 @@ FULL = ("lumi_user", "viewer", "operator", "deployment_reader", "deployment_appr
 KINDS = ("worker", "incident", "environment", "change-request")
 
 
+async def rows_holding(case, table: str, canary: str) -> int:
+    """How many rows of a table hold a canary anywhere, read as the owner."""
+    async with case.owner() as session:
+        return await session.scalar(
+            text(f"SELECT count(*) FROM {table} AS stored WHERE strpos(stored::text, :canary) > 0"), {"canary": canary}
+        )
+
+
+def test_every_canary_names_the_table_that_stores_it():
+    assert set(STORED_IN) == set(CANARIES) and len(CANARIES) == len(set(CANARIES))
+
+
 async def test_no_excluded_value_of_a_stored_record_reaches_the_gateway(weave_ai, seeded):
     case = weave_ai.case
+    assert [canary for canary in CANARIES if await rows_holding(case, STORED_IN[canary], canary) == 0] == []
     actor = await reader(case, *FULL)
     ids = dict(seeded.ids)
     ids["incident"] = seeded.resolved
@@ -654,6 +690,9 @@ async def test_each_role_may_explain_exactly_what_its_owning_reads_allow(weave_a
 
 async def test_server_time_per_ask_is_within_its_bound(weave_ai, seeded):
     actor = await reader(weave_ai.case, *FULL)
+    # Warm the pool, the statement caches and the imports first, so the bound measures steady asks only.
+    for _ in range(3):
+        await ask(weave_ai, actor, seeded.ids, *KINDS)
     seconds = []
     for _ in range(50):
         weave_ai.transport.seconds = 0.0
