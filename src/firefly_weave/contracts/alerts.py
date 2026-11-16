@@ -112,6 +112,8 @@ type ChannelName = Annotated[
     UnicodeString, Field(min_length=1, max_length=CHANNEL_NAME_LENGTH), AfterValidator(plain_text)
 ]
 type EmailAddress = Annotated[UnicodeString, Field(min_length=3, max_length=254), AfterValidator(mailbox)]
+# How an outside recipient agreed to get alert mail, as the administrator who records the opt-in states it.
+type ConsentStatement = Annotated[UnicodeString, Field(min_length=1, max_length=200), AfterValidator(plain_text)]
 type WindowSeconds = Literal[60, 300, 900, 3600]
 type ForSeconds = Annotated[int, Field(ge=0, le=3600, multiple_of=30)]
 type MinSamples = Annotated[int, Field(ge=1, le=10_000)]
@@ -276,6 +278,37 @@ class AlertChannel(AlertChannelDraft):
     revision: Revision
     recipient_states: list[AlertRecipientState] = Field(max_length=CHANNEL_RECIPIENTS)
     status: Literal["ok", "owner_unauthorized"]
+
+
+class AlertRecipientConsentDraft(ContractModel):
+    address: EmailAddress
+    statement: ConsentStatement
+
+
+class AlertRecipientConsent(ContractModel):
+    """An outside address's opt-in for one environment; it can only be revoked."""
+
+    id: UUID
+    domain: Domain
+    address: EmailAddress
+    method: Literal["administrator_attested", "recipient_confirmed"]
+    statement: ConsentStatement
+    created_by: UUID
+    created_at: AwareDatetime
+    revoked_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    revoked_by: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class MyAlertAddress(ContractModel):
+    """The address alerts sent to the signed-in person as a project member go to; only they set it."""
+
+    address: EmailAddress | None = Field(default=None, exclude_if=lambda value: value is None)
+    updated_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class MyAlertAddressUpdate(ContractModel):
+    # None removes the address.
+    address: EmailAddress | None = None
 
 
 class AlertSettings(ContractModel):

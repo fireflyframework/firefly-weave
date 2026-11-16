@@ -14,7 +14,10 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Alert operations: rules, previews and presets. Every operation is authorized by its service."""
+"""Alert operations: rules, previews, presets, channels, settings, opt-ins and each person's own alert address.
+
+Every operation is authorized by its service. The person an alert address belongs to is always the signed-in one.
+"""
 
 from uuid import UUID
 
@@ -26,8 +29,23 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import etag, page_request, page_response, parse_revision
-from firefly_weave.contracts.alerts import AlertRuleDraft, AlertRuleView
+from firefly_weave.contracts.alerts import (
+    AlertChannel,
+    AlertChannelDraft,
+    AlertRecipientConsentDraft,
+    AlertRuleDraft,
+    AlertRuleView,
+    AlertSettings,
+    AlertSettingsUpdate,
+    MyAlertAddressUpdate,
+)
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.alert_channels import (
+    AlertAddressService,
+    AlertChannelService,
+    AlertRecipientConsentService,
+    AlertSettingsService,
+)
 from firefly_weave.operations.alert_rules import AlertRuleService
 from firefly_weave.operations.loop_health import LoopHealth
 
@@ -40,17 +58,30 @@ def _revision(request: Request) -> int | None:
         raise CatalogError(422, "WV-ETAG", "If-Match requires a positive revision") from None
 
 
-def _tagged(rule: AlertRuleView, request: Request, status: int = 200) -> JSONResponse:
+def _tagged(record: AlertRuleView | AlertChannel, request: Request, status: int = 200) -> JSONResponse:
     return JSONResponse(
-        rule.model_dump(mode="json"), status_code=status, headers={"ETag": etag(rule.revision, request.url.path)}
+        record.model_dump(mode="json"), status_code=status, headers={"ETag": etag(record.revision, request.url.path)}
     )
+
+
+def _settings(settings: AlertSettings, request: Request) -> JSONResponse:
+    headers = {"ETag": etag(settings.revision, request.url.path)} if settings.revision else {}
+    return JSONResponse(settings.model_dump(mode="json"), headers=headers)
 
 
 @rest_controller
 @request_mapping("")
 class AlertController:
-    def __init__(self, rules: AlertRuleService) -> None:
-        self.rules = rules
+    def __init__(
+        self,
+        rules: AlertRuleService,
+        channels: AlertChannelService,
+        settings: AlertSettingsService,
+        consents: AlertRecipientConsentService,
+        addresses: AlertAddressService,
+    ) -> None:
+        self.rules, self.channels, self.settings = rules, channels, settings
+        self.consents, self.addresses = consents, addresses
 
     @operation("alert_rules.list")
     async def rules_list(self, request: Request) -> JSONResponse:
@@ -126,3 +157,136 @@ class AlertController:
             request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
         )
         return JSONResponse([preset.model_dump(mode="json") for preset in presets])
+
+    @operation("alert_channels.list")
+    async def channels_list(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        limit, cursor = page_request(request, scope, "alert-channels")
+        result = await self.channels.list(
+            request.state.principal, scope, limit=limit, cursor=cursor, context=request.state.audit_context
+        )
+        return JSONResponse(page_response(result, scope, "alert-channels", request.url.path))
+
+    @operation("alert_channels.read")
+    async def channels_read(self, request: Request) -> JSONResponse:
+        channel = await self.channels.read(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            context=request.state.audit_context,
+        )
+        return _tagged(channel, request)
+
+    @operation("alert_channels.create")
+    async def channels_create(self, request: Request) -> JSONResponse:
+        channel = await self.channels.create(
+            request.state.principal,
+            request_scope(request, environment=True),
+            AlertChannelDraft.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            context=request.state.audit_context,
+        )
+        return _tagged(channel, request, 201)
+
+    @operation("alert_channels.update")
+    async def channels_update(self, request: Request) -> JSONResponse:
+        revision = _revision(request)
+        channel = await self.channels.update(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            AlertChannelDraft.model_validate_json(await request.body()),
+            revision,
+            context=request.state.audit_context,
+        )
+        return _tagged(channel, request)
+
+    @operation("alert_channels.delete")
+    async def channels_delete(self, request: Request) -> JSONResponse:
+        revision = _revision(request)
+        revoked = await self.channels.delete(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            revision,
+            context=request.state.audit_context,
+        )
+        return JSONResponse(revoked.model_dump(mode="json"))
+
+    @operation("alert_channels.test")
+    async def channels_test(self, request: Request) -> JSONResponse:
+        queued = await self.channels.test(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            request.headers.get("Idempotency-Key", ""),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(queued.model_dump(mode="json"), status_code=202)
+
+    @operation("alert_settings.read")
+    async def settings_read(self, request: Request) -> JSONResponse:
+        settings = await self.settings.read(
+            request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+        )
+        return _settings(settings, request)
+
+    @operation("alert_settings.update")
+    async def settings_update(self, request: Request) -> JSONResponse:
+        revision = _revision(request)
+        settings = await self.settings.update(
+            request.state.principal,
+            request_scope(request, environment=True),
+            AlertSettingsUpdate.model_validate_json(await request.body()),
+            revision,
+            context=request.state.audit_context,
+        )
+        return _settings(settings, request)
+
+    @operation("alert_recipient_consents.list")
+    async def consents_list(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        limit, cursor = page_request(request, scope, "alert-recipient-consents")
+        result = await self.consents.list(
+            request.state.principal, scope, limit=limit, cursor=cursor, context=request.state.audit_context
+        )
+        return JSONResponse(page_response(result, scope, "alert-recipient-consents", request.url.path))
+
+    @operation("alert_recipient_consents.create")
+    async def consents_create(self, request: Request) -> JSONResponse:
+        consent = await self.consents.create(
+            request.state.principal,
+            request_scope(request, environment=True),
+            AlertRecipientConsentDraft.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(consent.model_dump(mode="json"), status_code=201)
+
+    @operation("alert_recipient_consents.revoke")
+    async def consents_revoke(self, request: Request) -> JSONResponse:
+        consent = await self.consents.revoke(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(consent.model_dump(mode="json"))
+
+    @operation("alert_addresses.read_mine")
+    async def addresses_read_mine(self, request: Request) -> JSONResponse:
+        # The person is the token's, never one named by the path or the body.
+        address = await self.addresses.read_mine(
+            request.state.principal, request_scope(request).tenant_id, context=request.state.audit_context
+        )
+        return JSONResponse(address.model_dump(mode="json"))
+
+    @operation("alert_addresses.save_mine")
+    async def addresses_save_mine(self, request: Request) -> JSONResponse:
+        address = await self.addresses.save_mine(
+            request.state.principal,
+            request_scope(request).tenant_id,
+            MyAlertAddressUpdate.model_validate_json(await request.body()),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(address.model_dump(mode="json"))

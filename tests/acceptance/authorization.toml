@@ -52,6 +52,63 @@ body = {}
 # Without an AI worker (the pr profile installs none) publishing the AI setup is refused by its own precondition.
 answers = [{ status = 422, code = "WV-AI-WORKER-MISSING" }]
 
+# Each person's own alert address: any signed-in person with a grant in the tenant, about themselves only. Saving
+# without an address removes theirs, so the probe changes nothing.
+[operations."alert_addresses.read_mine"]
+capability = "authenticated identity"
+
+[operations."alert_addresses.save_mine"]
+capability = "authenticated identity"
+body = {}
+
+# Alert channels need alert.manage, and creating or saving one also the person's email.send; a permitted save names
+# a random connection, so it answers 422 WV-ALERT-CHANNEL and stores nothing. A random channel answers 404.
+[operations."alert_channels.create"]
+capability = "alert.manage"
+body = { kind = "email", name = "Probe", connection_revision_id = "random", recipients = [{ member = "random" }] }
+
+[operations."alert_channels.delete"]
+capability = "alert.manage"
+identifier = "random"
+
+[operations."alert_channels.list"]
+capability = "alert.read"
+
+[operations."alert_channels.read"]
+capability = "alert.read"
+identifier = "random"
+
+[operations."alert_channels.test"]
+capability = "alert.manage"
+identifier = "random"
+
+[operations."alert_channels.update"]
+capability = "alert.manage"
+identifier = "random"
+body = { kind = "email", name = "Probe", connection_revision_id = "random", recipients = [{ member = "random" }] }
+
+# Opt-ins and settings also need environment.manage, which every person here who holds alert.manage has. A permitted
+# opt-in names a domain no environment allows, so it is refused and stores nothing; a permitted settings save names a
+# random channel (or meets saved settings without If-Match), so it changes nothing.
+[operations."alert_recipient_consents.create"]
+capability = "alert.manage"
+body = { address = "j9-probe@unlisted.invalid", statement = "Probe" }
+answers = [{ status = 422, code = "WV-ALERT-RECIPIENT" }]
+
+[operations."alert_recipient_consents.list"]
+capability = "alert.read"
+
+[operations."alert_recipient_consents.revoke"]
+capability = "alert.manage"
+identifier = "random"
+
+[operations."alert_settings.read"]
+capability = "alert.read"
+
+[operations."alert_settings.update"]
+capability = "alert.manage"
+body = { recipient_domains = [], approval_channel_ids = ["random"] }
+
 # Alert rules: reads need alert.read; changes and previews need alert.manage (a preview also needs status.read, which
 # every person here who holds alert.manage has). A permitted create names a random channel, so it answers 422
 # WV-ALERT-CHANNEL and stores nothing; a random rule answers 404.

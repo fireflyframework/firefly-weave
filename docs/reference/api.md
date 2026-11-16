@@ -1109,6 +1109,19 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `alert_rules.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
 | `alert_rules.preview` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/preview` | alert.manage |
 | `alert_presets.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-presets` | alert.read |
+| `alert_channels.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.read |
+| `alert_channels.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.read |
+| `alert_channels.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.manage |
+| `alert_channels.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage |
+| `alert_channels.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage |
+| `alert_channels.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}/test` | alert.manage |
+| `alert_settings.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.read |
+| `alert_settings.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.manage |
+| `alert_recipient_consents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.read |
+| `alert_recipient_consents.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.manage |
+| `alert_recipient_consents.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents/{identifier}/revoke` | alert.manage |
+| `alert_addresses.read_mine` | `GET /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
+| `alert_addresses.save_mine` | `PUT /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |
