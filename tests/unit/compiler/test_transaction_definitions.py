@@ -201,9 +201,9 @@ def test_existing_examples_gain_no_new_keys():
             assert key not in spec, (path, key)
 
 
-def test_the_features_are_frozen_and_only_transactions_are_advertised():
+def test_the_features_are_frozen_and_transactions_and_platform_event_triggers_are_advertised():
     assert {"flow.transaction", "flow.eventTrigger"} <= set(LANGUAGE_FEATURES)
-    assert "flow.transaction" in ADVERTISED_FEATURES and "flow.eventTrigger" not in ADVERTISED_FEATURES
+    assert "flow.transaction" in ADVERTISED_FEATURES and "flow.eventTrigger" in ADVERTISED_FEATURES
     assert "transaction" in supported_step_kinds()
     assert "transaction" not in supported_step_kinds(["flow.callWorkflow", "flow.forEach"])
 
@@ -260,8 +260,6 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
     assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "pending")
 
 
-def test_a_platform_event_trigger_is_not_compiled_yet():
+def test_a_platform_event_trigger_compiles():
     result = validate_authoring(workflow([], eventTrigger={"events": ["transaction.in_doubt"]}), format="object")
-    assert [(item.code, item.path) for item in result.diagnostics] == [
-        ("WV-COMP-UNSUPPORTED_FEATURE", "/spec/eventTrigger")
-    ]
+    assert [(item.code, item.path) for item in result.diagnostics] == []

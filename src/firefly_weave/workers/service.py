@@ -35,6 +35,7 @@ from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.ir import executable_node_kinds
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import ActivationRequest
+from firefly_weave.contracts.transaction_resolve import platform_task
 from firefly_weave.contracts.worker_queries import (
     ReleaseDeploymentUsage,
     ReleaseUsage,
@@ -330,6 +331,10 @@ class WorkerService(WorkerAdmissionPort):
                 raise CatalogError(
                     422, "WV-READINESS", "Reserved connector capability requires connector implementation"
                 )
+            # Only the platform runs its own task types. A release registered before they were reserved may still
+            # offer one, so pinning it is refused here rather than when a run creates the task.
+            if platform_task(implementation["taskType"]):
+                raise CatalogError(422, "WV-READINESS", "Platform task types are never pinned to a worker release")
             required.setdefault(implementation["taskType"], set()).add(implementation["taskVersion"])
         if set(required) != set(request.worker_release_ids):
             raise CatalogError(422, "WV-READINESS", "Exact worker release pins required")

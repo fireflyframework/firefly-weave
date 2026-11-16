@@ -49,6 +49,7 @@ from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
 from firefly_weave.runtime.step_failures import LEASE_EXPIRED, attempt_outcomes, failure_data, final_failure
 from firefly_weave.runtime.transactions import in_transaction, shapes
 from firefly_weave.runtime.waits import TERMINAL
+from firefly_weave.triggers.event_starts import EventStartService
 from firefly_weave.workers.leases import TaskService
 
 # Failure codes recovery may retry, only for read_only, idempotent and idempotency_key actions.
@@ -94,6 +95,7 @@ class RecoveryService:
         self.runtime, self.tasks, self.deadlines = runtime, tasks, deadlines
         self.access = access
         self.calls = CallService(runtime)
+        self.event_starts = EventStartService(runtime)
 
     async def scan(
         self,
@@ -135,13 +137,18 @@ class RecoveryService:
         totals = {name: 0 for name in RecoveryReport.model_fields}
         # Cancelling the children of ended callers is terminal control, so it also runs while starts are refused, and
         # it runs right after due deadlines: stopping work never waits behind task recovery or call starts.
-        kinds = ("terminal", "cancel") if terminal_only else ("deadline", "cancel", "expired", "retry", "dispatch")
+        # Platform events start their workflows last, behind the work of runs already going.
+        kinds = (
+            ("terminal", "cancel")
+            if terminal_only
+            else ("deadline", "cancel", "expired", "retry", "dispatch", "event_start")
+        )
         for kind in kinds:
             for _ in range(limit):
                 try:
                     async with self.runtime.definitions.transaction(scope, None) as tx:
                         await authorize(tx)
-                        if kind in {"expired", "retry", "dispatch"}:
+                        if kind in {"expired", "retry", "dispatch", "event_start"}:
                             self.runtime.definitions.registry.require_operational()
                         report = await self._recover(tx, kind)
                 except CatalogError as error:
@@ -159,6 +166,9 @@ class RecoveryService:
         if kind == "dispatch":
             started, rejected = await self.calls.dispatch(tx, 10)
             return RecoveryReport(calls_started=started, calls_rejected=rejected)
+        if kind == "event_start":
+            started, rejected = await self.event_starts.dispatch(tx, 10)
+            return RecoveryReport(event_starts=started, event_starts_rejected=rejected)
         if kind == "cancel":
             return RecoveryReport(calls_cancelled=await self.calls.cancel_children(tx, 10))
         deadlines = (

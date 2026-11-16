@@ -139,6 +139,7 @@ export const ORIGIN_ICONS: Readonly<Record<RunOrigin, string>> = {
   retry: "refresh",
   call: "calledTrigger",
   test: "runHistory",
+  event: "signal",
 };
 
 export interface RunRow {

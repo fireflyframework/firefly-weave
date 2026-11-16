@@ -45,7 +45,10 @@ def worker_stages() -> list[tuple[str, list[str], int]]:
     stages = []
     for worker, version in (("agentic", "3.13"), ("files", "3.12")):
         project = f"workers/{worker}"
+        # The worker installs firefly-weave from its path as a copy: rebuild it, or an environment made before the
+        # latest merge checks the worker against the old core, as CI's fresh environment never does.
         command = ["uv", "run", "--locked", "--project", project, "--python", version]
+        command += ["--reinstall-package", "firefly-weave"]
         for gate, arguments in (
             ("tests", ["pytest", f"{project}/tests", "-q", "--tb=short", "--show-capture=no"]),
             ("lint", ["ruff", "check", f"{project}/src", f"{project}/tests"]),

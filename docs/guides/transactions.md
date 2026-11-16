@@ -123,6 +123,124 @@ A reconciler can cancel a run without undoing its open transactions: they end
 weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_undo": true}
 ```
 
+## 6. React to a transaction
+
+A workflow can start when a transaction ends or goes in doubt, for example to
+tell a team that a move is in doubt or to open a ticket. The events are
+`transaction.completed`, `transaction.compensated`, `transaction.cancelled`,
+`transaction.in_doubt`, `transaction.reconciled`, and
+`transaction.force_ended`.
+
+### Declare the events the workflow accepts
+
+The workflow lists the events in `eventTrigger` and takes the platform event as
+its input:
+
+```yaml
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: notify-team, version: 1.0.0}
+spec:
+  inputSchema: {$ref: weave.platform-event-v1}
+  outputSchema: {}
+  eventTrigger:
+    events: [transaction.in_doubt, transaction.compensated]
+    from: [move-between-systems]   # optional: only these source workflows
+  steps: [...]
+  output: {ref: /input/transaction/business_key}
+```
+
+`weave.platform-event-v1` is a schema name the platform reserves and supplies
+to every compile. An input schema the event can't fill fails to compile
+(`WV-COMP-TYPE_MISMATCH` at `/spec/inputSchema`), and one the compiler can't
+prove gets a warning (`WV-COMP-UNKNOWN_COMPATIBILITY`); the run's input is
+checked when it starts either way. A workflow reacts to its own events only
+when its `from` names it.
+
+### Bind it to the events
+
+Activate the workflow, then bind the activation to some or all of the events it
+declares:
+
+```bash
+weave triggers events create --request trigger.json
+```
+
+```json
+{"name": "notify-on-doubt", "activation_id": "<activation id>",
+ "events": ["transaction.in_doubt"], "source_workflows": ["move-between-systems"]}
+```
+
+| Rule | What happens |
+| --- | --- |
+| The binding asks for an event or a source workflow the version doesn't declare, or names the workflow itself when its `from` is omitted | Refused with `422 WV-TRIGGER-EVENTS` |
+| `source_workflows` is omitted | The workflow's `from` applies, or any workflow when it has none |
+| An environment already has 64 enabled triggers | Refused with `409 WV-TRIGGER-LIMIT` |
+| Another enabled trigger has the name | Refused with `409 WV-TRIGGER-CONFLICT` |
+
+Creating a trigger needs `trigger.manage`, `run.start`, and `run.read`, and
+`transaction.reconcile` when the request sets `may_reconcile`, which lets the
+trigger's runs resolve their transaction once workflows can resolve
+transactions; until then it has no effect. Each run starts
+as the trigger's owner, who must still hold `run.start` and `run.read` when it
+starts: the run receives what the event says about a transaction. A trigger
+can't be edited. To change one, disable it with
+`weave triggers events disable "$TRIGGER_ID"` and create another; disabling
+works even when the project's quota is spent, and no run starts after it
+returns.
+
+### What a reaction receives
+
+The run's input is the platform event: its `event_id`, `type` and `emitted_at`,
+and under `transaction` the source workflow and run, the transaction's instance
+key, business key and state, the cause when it left its normal path, its steps
+by key (`done`, `undone`, `pending`) and how each is undone, the incident when
+it is in doubt, and whether the source run was a test. It never carries step
+inputs or outputs. The run's business key is the transaction's, and its origin
+shows as **Platform event** (`event`).
+
+### How often reactions start
+
+Each event starts each matching trigger's workflow once, shortly after the
+event. Events of test runs start nothing. A reaction whose own transaction
+emits events can start further reactions, so the platform bounds each chain:
+
+- **Depth.** A run that a platform event started is one reaction deep; a run it
+  calls, or a retry of it, stays at that depth. Events of a run three
+  reactions deep start nothing (`WV-TRIGGER-EVENT-DEPTH`).
+- **Budget.** A chain makes at most 64 starts in all, counted by the event that
+  began it, so a run that emits E transaction events can cause up to 64 × E
+  reactions. When an event would pass the budget, the triggers with the
+  lowest IDs get the starts left and the rest are skipped
+  (`WV-TRIGGER-CHAIN-BUDGET`).
+- **Outside systems.** A reaction whose effect comes back through another
+  system, as a webhook or a broker message, starts a new chain at depth 0 with
+  a new budget.
+- **Held starts.** A start the platform can't accept yet (a spent quota, a busy
+  lock, capacity) keeps its place in the budget and is tried again for up to
+  24 hours, so later events of the chain may be skipped while it waits, once
+  all 64 places are taken. A chain whose held starts expire can end with fewer
+  than 64 runs.
+
+### Read what a trigger started
+
+`weave triggers events starts "$TRIGGER_ID"` lists each event offered to the
+trigger, newest first, with its status (`requested`, `started`, `rejected` or
+`skipped`), the run it started, and the event that began its chain
+(`root_event_id`). Reading it needs `trigger.manage` and `run.read`. A refused
+start never suspends a run or opens an incident:
+
+| Code | Meaning |
+| --- | --- |
+| `WV-TRIGGER-START` | The run couldn't start. `cause` says why, for example `WV-FORBIDDEN` (the owner lost `run.start` or `run.read`, or was deactivated), `WV-READINESS` (the activation was retired), or `WV-RUNTIME-INPUT` (the event doesn't fit the input schema) |
+| `WV-TRIGGER-DISABLED` | The trigger was disabled before the run started |
+| `WV-TRIGGER-EVENT-DEPTH` | The source run was three reactions deep |
+| `WV-TRIGGER-CHAIN-BUDGET` | The chain already had 64 runs started or waiting to start |
+| `WV-TRIGGER-START-EXPIRED` | The platform couldn't start the run within a day of the event |
+
+The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
+`blocked`).
+
 ## Test a step that takes part in a transaction
 
 A debug session simulates a transaction with mocks for each step and for its
@@ -143,4 +261,5 @@ hand on a test activation:
 - [Workflow language: Transactions](../contracts.md#transactions)
 - [Worker protocol: tasks of a transaction](../reference/worker-protocol.md)
 - [Integration events: transaction events](../reference/integration-events.md)
+- [API reference: platform-event triggers](../reference/api.md)
 - [History and replay](../reference/history-and-replay.md)

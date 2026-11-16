@@ -117,7 +117,7 @@ def executable(result) -> dict:
 
 def test_the_transaction_feature_compiles_and_this_platform_runs_it():
     assert "flow.transaction" in COMPILED_FEATURES and "flow.transaction" in ADVERTISED_FEATURES
-    assert "flow.eventTrigger" not in COMPILED_FEATURES and "flow.eventTrigger" not in ADVERTISED_FEATURES
+    assert "flow.eventTrigger" in COMPILED_FEATURES and "flow.eventTrigger" in ADVERTISED_FEATURES
 
 
 def test_the_example_compiles_to_a_transaction_block_with_its_participants():
