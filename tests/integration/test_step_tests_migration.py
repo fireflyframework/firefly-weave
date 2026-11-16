@@ -192,7 +192,9 @@ async def test_the_role_check_names_every_role_the_code_grants(upgraded):
         )
     from firefly_weave.access.roles import ROLE_CAPABILITIES
 
-    assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES)
+    # Roles that later migrations add are checked by those migrations' tests (alert_manager: 0042_operations_alerts).
+    later = {"alert_manager"}
+    assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES) - later
 
 
 @pytest.mark.parametrize(

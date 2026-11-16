@@ -68,6 +68,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         "transaction_reconciler": frozenset({"transaction.reconcile"}),
         # Running steps for real in an environment; grants nothing else.
         "step_tester": frozenset({"step.test"}),
+        # Operations alerts: rules, channels and acknowledgements; grants nothing else.
+        "alert_manager": frozenset({"alert.read", "alert.manage"}),
         "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
     }
 )
