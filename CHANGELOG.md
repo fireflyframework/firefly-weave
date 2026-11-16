@@ -23,20 +23,28 @@ SPDX-License-Identifier: Apache-2.0
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
   claim can't reach the platform (the connection is refused, drops or times
-  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` waits half
-  a second, doubling up to 10 seconds (`claim_retry_seconds`,
-  `max_claim_retry_seconds`), and `stop()` ends the wait at once; 401, 403, a
-  refused release and every other failed claim still stop it with that error.
-  Workers that local operations deploy now start again when they stop on their
-  own (`restart: unless-stopped`); one that `weave platform stop` or a change
+  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` claims
+  again after a wait that doubles up to 10 seconds, each a random time in its
+  upper half, so the first is 0.25 to 0.5 seconds (`claim_retry_seconds`,
+  `max_claim_retry_seconds`, at most 300 seconds), and `stop()` ends the wait
+  at once; 401, 403, a refused release, a server certificate it can't verify
+  and every other failed claim still stop it with that error. Workers that
+  local operations deploy now start again when they stop on their own
+  (`restart: unless-stopped`); one that `weave platform stop` or a change
   request stopped stays stopped.
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
-  is made again after the same doubling wait as a worker's, and 401, 403 and
-  other refusals still stop it. When it stops, `weave operations runner run`
-  reports `WV-RUNNER-STOPPED` with the failure's kind and code and exits with 3
-  (the API couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE:
-  Invalid invocation` with 2.
+  is made again after the same doubling wait as a worker's, and 401, 403, a
+  redirect, a certificate it can't verify, an answer outside the API contract
+  and other refusals still stop it. When it stops, `weave operations runner
+  run` reports `WV-RUNNER-STOPPED` with the failure's kind, its code, and the
+  type of the error it came from, never its text, and exits with 3 (the API
+  couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE: Invalid
+  invocation` with 2. A code the platform doesn't mint is printed as
+  `WV-HTTP`.
+- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
+  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
+  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
 
 ## 0.1.0a18
 

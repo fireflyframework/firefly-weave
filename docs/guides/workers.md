@@ -192,10 +192,15 @@ delivery around the handler.
 
 A worker keeps running while the platform's API restarts. When a claim can't
 reach the platform—the connection is refused, drops, or times out, or the API
-answers 429, 502, 503, or 504—`run()` waits and claims again. The wait starts
-at half a second and doubles up to 10 seconds; `stop()` ends it at once. Any
-other failed claim, such as 401, 403, or a refused release, ends `run()` with
-that error, because claiming again can't fix it. A lost lease or a completion
+answers 429, 502, 503, or 504—`run()` waits and claims again. The wait doubles
+after each failed claim, up to 10 seconds, and each wait is a random time in
+its upper half, so that workers that lost the platform together don't all claim
+at the same moment: the first wait is 0.25 to 0.5 seconds, and the longest is 5
+to 10 seconds. `claim_retry_seconds` (0.5) and `max_claim_retry_seconds` (10,
+at most 300) set these values, and `stop()` ends a wait at once. Any other
+failed claim, such as 401, 403, a refused release, or a server certificate the
+worker can't verify, ends `run()` with that error, because claiming again can't
+fix it. A lost lease or a completion
 whose delivery failed also ends `run()`, without running the task again, so run
 the worker under a supervisor or a container restart policy that starts it
 again.

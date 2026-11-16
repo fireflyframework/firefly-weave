@@ -154,11 +154,15 @@ diagnostics: it registers, claims at most one job, and exits. It does not wait
 for a future job to arrive.
 
 While the API restarts, the runner keeps running: a claim that can't reach the
-API is made again after a wait that starts at half a second and doubles up to
-10 seconds. Any other failure stops it with `WV-RUNNER-STOPPED`, which names the
-failure's kind and code, such as `WV-TRANSPORT (HTTP 503)`. The exit code is 3
-when the API couldn't be reached or failed, and 1 when it refused the runner or
-the failure is on this host.
+API is made again after a wait that doubles up to 10 seconds, as a worker's
+does; the first wait is 0.25 to 0.5 seconds. Any other failure stops it, such as
+401, 403, a redirect, a server certificate the runner can't verify, or an answer
+outside the API contract. The runner then reports `WV-RUNNER-STOPPED`, which
+names the failure's kind, its code, and the error it came from, but never its
+text: for example, `WV-TRANSPORT (HTTP 503) from ConnectError
+(SSLCertVerificationError)` for a certificate it can't verify. The exit code is
+3 when the API couldn't be reached or failed, and 1 when it refused the runner
+or the failure is on this host.
 
 ## 5. Understand the local policy
 
