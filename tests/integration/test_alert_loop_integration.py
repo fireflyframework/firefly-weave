@@ -394,9 +394,9 @@ async def test_every_environment_of_a_tenant_with_nine_is_evaluated_within_two_c
         async def tenants(self):
             return [case.scope.tenant_id]
 
-        async def evaluate(self, authority):
+        async def evaluate(self, authority, *cycle):
             visited.append(authority.scope.environment_id)
-            await super().evaluate(authority)
+            await super().evaluate(authority, *cycle)
 
     settings = Settings(database_url=case.url.render_as_string(hide_password=False), scheduler_enabled=False)
     loop = Cycle(settings, case.uow, LoopHealth(), clock=lambda: case.now)
@@ -404,6 +404,36 @@ async def test_every_environment_of_a_tenant_with_nine_is_evaluated_within_two_c
     loop.clock = lambda: case.now + timedelta(seconds=30)
     assert await loop.evaluate_cycle() is True
     assert set(visited) == {case.scope.environment_id, *others}
+
+
+async def test_a_new_environment_evaluated_late_in_a_cycle_is_due_when_the_next_cycle_starts(evaluator):
+    case = evaluator
+    visited: list = []
+
+    class Steps:
+        """A clock that moves 5 s each time it is read: a cycle starts, and its environment is evaluated 5 s later."""
+
+        def __init__(self, start) -> None:
+            self.at = start - timedelta(seconds=5)
+
+        def __call__(self):
+            self.at += timedelta(seconds=5)
+            return self.at
+
+    class Cycle(AlertLoop):
+        async def tenants(self):
+            return [case.scope.tenant_id]
+
+        async def evaluate(self, authority, *cycle):
+            visited.append(authority.scope.environment_id)
+            await super().evaluate(authority, *cycle)
+
+    settings = Settings(database_url=case.url.render_as_string(hide_password=False), scheduler_enabled=False)
+    loop = Cycle(settings, case.uow, LoopHealth(), clock=Steps(case.now))
+    assert await loop.evaluate_cycle() is True
+    loop.clock = Steps(case.now + timedelta(seconds=30))
+    assert await loop.evaluate_cycle() is True
+    assert visited == [case.scope.environment_id] * 2
 
 
 async def test_a_claim_takes_no_more_due_environments_than_its_limit(evaluator):

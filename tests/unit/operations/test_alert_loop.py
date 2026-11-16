@@ -85,7 +85,7 @@ class Traversal(AlertLoop):
     async def due(self, tenant, now):
         return list(self.due_by_tenant[tenant])
 
-    async def evaluate(self, authority):
+    async def evaluate(self, authority, cycle=None):
         self.visited.append(authority)
         self.monotonic_clock.seconds += self.seconds_each
         if authority in self.failing:

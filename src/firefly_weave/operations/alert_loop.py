@@ -478,8 +478,8 @@ class AlertLoop:
     async def evaluate_cycle(self) -> bool:
         """One traversal; True only when every claimed environment was evaluated in time and without failure.
 
-        Every claim is made as of the cycle's start, so an environment claimed late in this cycle is due again when
-        the next one starts, 30 seconds later.
+        Every claim is made, and every new environment's schedule started, as of the cycle's start, so an environment
+        evaluated late in this cycle is due again when the next one starts, 30 seconds later.
         """
         started, cycle = self.monotonic(), self.clock()
         healthy = True
@@ -499,28 +499,30 @@ class AlertLoop:
                     # Claimed but not started: due again on the next cycle.
                     return False
                 try:
-                    await self.evaluate(authority)
+                    await self.evaluate(authority, cycle)
                 except Exception as error:
                     raise_if_cancelled(error)
                     log.error("Alert evaluation of an environment failed (%s); others continue", failure_cause(error))
                     healthy = False
         return healthy
 
-    async def evaluate(self, authority: _SchedulerScope) -> None:
+    async def evaluate(self, authority: _SchedulerScope, cycle: datetime | None = None) -> None:
         """Evaluate one environment's enabled rules, then prune it at most once an hour.
 
         The reads hold no project lock. What changed is written without admission; firings and resolves follow in a
         short unit under the project's operation lock, because their change events go through the outbox, which
         counts toward the project's usage. When the project is busy with a change of its own, they wait for the next
-        cycle, which reads those rules again.
+        cycle, which reads those rules again. A new environment is next due 30 seconds after ``cycle``, the start of
+        the cycle that claimed it (by default, now).
         """
         now = self.clock()
+        due = (now if cycle is None else cycle) + timedelta(seconds=EVALUATE_SECONDS)
         async with asyncio.timeout(READ_SECONDS + WRITE_SECONDS + ANNOUNCE_SECONDS + 3 * CANCEL_GRACE_SECONDS):
             planned = await self._plan(authority, now)
             if planned is None:
                 # Another evaluator has this environment now.
                 return
-            if not await self._record(authority, now, [item for item in planned if not item.announces]):
+            if not await self._record(authority, now, [item for item in planned if not item.announces], due=due):
                 return
             announced = [item for item in planned if item.announces]
             if announced:
@@ -624,12 +626,19 @@ class AlertLoop:
         return "target_id" not in ALERT_SIGNALS[rule.signal].selectors or targets != ()
 
     async def _record(
-        self, authority: _SchedulerScope, now: datetime, planned: Sequence[Planned], *, admitted: bool = False
+        self,
+        authority: _SchedulerScope,
+        now: datetime,
+        planned: Sequence[Planned],
+        *,
+        admitted: bool = False,
+        due: datetime | None = None,
     ) -> bool:
         """Write what the reads decided; False when another evaluator has the environment now.
 
-        The unit without admission also keeps the schedule, installs the default rules, starts missing state rows and
-        queues approval mail; the admitted one holds only firings and resolves, so it holds the project's lock briefly.
+        The unit without admission also keeps the schedule (a new environment is next due at ``due``, by default 30
+        seconds from now), installs the default rules, starts missing state rows and queues approval mail; the
+        admitted one holds only firings and resolves, so it holds the project's lock briefly.
         """
         deadline = self.monotonic() + (ANNOUNCE_SECONDS if admitted else WRITE_SECONDS)
         async with scoped_unit(self.uow, authority, deadline, self.monotonic, mutation=True, admission=admitted) as tx:
@@ -640,7 +649,7 @@ class AlertLoop:
                 await repository.execute(
                     "INSERT INTO alert_environments(tenant_id,project_id,environment_id,next_at) "
                     "VALUES(:tenant,:project,:environment,:next) ON CONFLICT DO NOTHING",
-                    next=now + timedelta(seconds=EVALUATE_SECONDS),
+                    next=due or now + timedelta(seconds=EVALUATE_SECONDS),
                 )
                 await install_presets(tx, now)
                 # A rule written without its state row (an older server, a restore) starts from ok; it is read next.

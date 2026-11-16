@@ -121,10 +121,10 @@ async def test_a_hundred_rules_are_written_well_within_the_write_budget(evaluato
     timings: list[tuple[bool, int, float]] = []
     original = AlertLoop._record
 
-    async def timed(self, authority, now, planned, *, admitted=False):
+    async def timed(self, authority, now, planned, *, admitted=False, **options):
         started = time.monotonic()
         try:
-            return await original(self, authority, now, planned, admitted=admitted)
+            return await original(self, authority, now, planned, admitted=admitted, **options)
         finally:
             timings.append((admitted, len(planned), time.monotonic() - started))
 
