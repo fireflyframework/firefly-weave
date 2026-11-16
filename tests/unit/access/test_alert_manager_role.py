@@ -62,6 +62,16 @@ def test_the_local_owner_manages_alerts():
     assert platform._person_grants(("alert_manager",), scope) == [{"role": "alert_manager", "scope": scope}]
 
 
+def test_the_local_owner_can_send_alert_email_as_themselves():
+    # An email channel sends as the person who saved it, so the owner needs email.send to set one up.
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    owner = Principal(
+        id=uuid4(), kind="human", grants=tuple(Grant(role=role, scope=scope) for role in platform.LOCAL_OWNER_ROLES)
+    )
+    assert all(AuthorizationService().allows(owner, scope, capability) for capability in ("alert.manage", "email.send"))
+    assert "email_manager" not in platform.LOCAL_OWNER_ROLES
+
+
 def test_default_accounts_cant_see_alerts_and_administrators_can_grant_it():
     assert "alert_manager" not in platform.DEFAULT_PERSON_ROLES
     assert "alert_manager" in platform.PERSON_ROLES
