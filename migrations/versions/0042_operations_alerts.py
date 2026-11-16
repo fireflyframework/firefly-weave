@@ -27,7 +27,7 @@ the facts tables and ``weave_purge_run`` are unchanged.
 from alembic import op
 
 revision = "0042_operations_alerts"
-down_revision = "0040_editor_step_tests"
+down_revision = "0041_language_event_triggers"
 
 KEY = "tenant_id,project_id,environment_id"
 SCOPE_COLUMNS = "tenant_id uuid NOT NULL,project_id uuid NOT NULL,environment_id uuid NOT NULL"
