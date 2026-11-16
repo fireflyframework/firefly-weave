@@ -214,8 +214,9 @@ SPDX-License-Identifier: Apache-2.0
     }
     @case ("studio") {
       <div class="runs-message">
-        <span class="runs-ring"><weave-icon name="refresh" [size]="16" /></span>
-        <strong>Reload Studio to see this workflow's runs.</strong>
+        <span class="runs-ring"><weave-icon name="stale" [size]="16" /></span>
+        <strong>This Studio window is out of date.</strong>
+        <p>Reload the page to see this workflow's runs.</p>
       </div>
     }
     @case ("signed-out") {

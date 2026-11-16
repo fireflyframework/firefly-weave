@@ -637,8 +637,12 @@ test.describe("the Runs list's states", () => {
     await page.getByRole("tab", { name: "Runs" }).click();
     const runs = runsPage(page);
     const message = runs.panel.locator(".runs-body .runs-message");
+    // The banner's words: the cause in bold, the next step below it.
     await expect(message.locator("strong")).toHaveText(
-      "Reload Studio to see this workflow's runs.",
+      "This Studio window is out of date.",
+    );
+    await expect(message.locator("p")).toHaveText(
+      "Reload the page to see this workflow's runs.",
     );
     await expect(
       message.getByRole("button", { name: "Try again" }),
