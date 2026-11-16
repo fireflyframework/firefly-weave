@@ -76,7 +76,6 @@ from firefly_weave.operations.alert_states import (
     Reading,
     RuleState,
     advance,
-    reading_gap,
 )
 from firefly_weave.operations.loop import QuantumIncomplete
 from firefly_weave.operations.loop_health import (
@@ -310,6 +309,19 @@ def _rule_state(row: Mapping[str, Any]) -> RuleState:
         last_notified_at=row["last_notified_at"],
         acknowledged=row["acknowledged_at"] is not None,
     )
+
+
+def _away(row: Mapping[str, Any], state: RuleState, now: datetime) -> timedelta | None:
+    """How long since the evaluator last visited the rule (read it, or failed to), when that is more than GAP_SECONDS.
+
+    A rule stored unauthorized wasn't read while its editor's access was gone, so its return says nothing about how
+    often the evaluator comes back.
+    """
+    visits = [at for at in (state.evaluated_at, state.error_at) if at is not None]
+    if row["state"] == "unauthorized" or not visits:
+        return None
+    away = now - max(visits)
+    return away if away > timedelta(seconds=GAP_SECONDS) else None
 
 
 @dataclass(frozen=True)
@@ -557,8 +569,8 @@ class AlertLoop:
     async def _plan(self, authority: _SchedulerScope, now: datetime) -> list[Planned] | None:
         """Read every enabled rule and its signal in one read-only snapshot; None when another evaluator has it.
 
-        A reading more than five minutes after a rule's last one restarts its waits; it means the evaluator is behind,
-        so it logs a warning, once for the environment.
+        A reading more than five minutes after the evaluator last visited a rule restarts its waits; it means the
+        evaluator is behind, so it logs a warning, once for the environment.
         """
         deadline = self.monotonic() + READ_SECONDS
         late = timedelta()
@@ -587,13 +599,13 @@ class AlertLoop:
                     continue
                 reading = await self._read(tx, reads, rule, now, targets)
                 state = _rule_state(row)
-                gap = reading_gap(state, now)
-                if isinstance(reading, Value) and gap is not None:
-                    late = max(late, gap)
+                away = _away(row, state, now)
+                if isinstance(reading, Value) and away is not None:
+                    late = max(late, away)
                 planned.append(Planned(row, rule, advance(state, rule, reading, now), reading))
         if late:
             logging.getLogger(__name__).warning(
-                "Alert evaluation is behind: rules were read up to %d s after their last reading, more than %d s, so "
+                "Alert evaluation is behind: rules were read up to %d s after their last visit, more than %d s, so "
                 "their waits start over",
                 late.total_seconds(),
                 GAP_SECONDS,

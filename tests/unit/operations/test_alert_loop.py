@@ -346,19 +346,29 @@ async def test_no_unit_holding_the_project_lock_is_open_while_signals_are_read(m
     assert (True, True) in units.opened
 
 
-async def test_a_reading_more_than_five_minutes_after_the_last_logs_that_evaluation_is_behind(monkeypatch, caplog):
+async def test_a_reading_more_than_five_minutes_after_the_last_visit_logs_that_evaluation_is_behind(
+    monkeypatch, caplog
+):
+    long_ago = NOW - timedelta(seconds=GAP_SECONDS + 100)
     at_gap = incidents_rule() | {"name": "Read at the gap", "evaluated_at": NOW - timedelta(seconds=GAP_SECONDS)}
     past_gap = incidents_rule() | {"name": "Read past it", "evaluated_at": NOW - timedelta(seconds=GAP_SECONDS + 12)}
+    # Visited on time: its reads failed until 30 s ago, or its editor's access was gone until now.
+    failing = incidents_rule() | {
+        "evaluated_at": long_ago,
+        "error_code": "timeout",
+        "error_at": NOW - timedelta(seconds=30),
+    }
+    returning = incidents_rule() | {"evaluated_at": long_ago, "state": "unauthorized"}
     caplog.set_level(logging.WARNING, logger=alert_loop.__name__)
 
     def warnings() -> list[str]:
         return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
 
-    await evaluate_once(Units(at_gap), monkeypatch)
+    await evaluate_once(Units(at_gap, failing, returning), monkeypatch)
     assert warnings() == []
     await evaluate_once(Units(at_gap, past_gap), monkeypatch)
     # One warning for the environment, with the longest delay and no rule name.
     assert warnings() == [
-        "Alert evaluation is behind: rules were read up to 312 s after their last reading, more than 300 s, so "
+        "Alert evaluation is behind: rules were read up to 312 s after their last visit, more than 300 s, so "
         "their waits start over"
     ]
