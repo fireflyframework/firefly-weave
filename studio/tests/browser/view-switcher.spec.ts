@@ -15,17 +15,29 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// At 480 px and below the four view tabs fold into one view switcher on the
-// workflow name's row, on every view: a 44 px menu button that names the
-// view shown and opens the views as radio items. The name gets the room the
-// tabs took, the settings gear keeps its 44 px target, and the bar keeps its
-// height. From 481 px up the tabs stay.
-import { expect, test, type Page } from "@playwright/test";
+// At 767 px and below the four view tabs fold into one view switcher on the
+// workflow name's line, on every view: a 44 px menu button that names the
+// view shown and opens the views as radio items. The name keeps its room,
+// the settings gear its 44 px target, and the bar its height; the name, the
+// gear, the status and the switcher share one center line. From 768 px up
+// the tabs stay.
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
-import { openStepFixture, settingsGear, stepFixture } from "./step-details-po";
-import { box, boxes, intersects } from "./step-geometry";
+import {
+  openStepFixture,
+  settingsGear,
+  stepFixture,
+  yamlFile,
+} from "./step-details-po";
+import {
+  box,
+  boxes,
+  expectAligned,
+  intersects,
+  textBox,
+} from "./step-geometry";
 import {
   allCapabilities,
   connected,
@@ -37,23 +49,58 @@ import {
 
 const VIEWS: WorkflowView[] = ["Designer", "Source", "Outline", "Runs"];
 type Draft = "offline" | "connected";
+/** Longer than any room the bar has, so the name fills the room it gets. */
+const LONG_NAME =
+  "order-intake-for-every-region-with-approvals-and-escalations";
 
-/** A workflow file opened offline, or a platform draft, on the Designer. */
-async function openDraft(page: Page, draft: Draft) {
+/**
+ * The step fixture named `name`, opened offline from a file or as a platform
+ * draft, on the Designer.
+ */
+async function openDraft(page: Page, draft: Draft, name = LONG_NAME) {
+  const text = readFileSync(stepFixture, "utf8").replace(
+    "{name: order-intake,",
+    `{name: ${name},`,
+  );
   if (draft === "offline") {
-    await openStepFixture(page);
+    await openStepFixture(page, yamlFile(`${name}.yaml`, text));
     return;
   }
   await useNewEditor(page);
   await connected(page, { capabilities: [...allCapabilities, "compile"] });
   await newWorkflow(page);
-  await new DesignerPage(page).setSource(readFileSync(stepFixture, "utf8"));
-  // A platform draft shows its status dot on the name's row.
+  await new DesignerPage(page).setSource(text);
+  // A platform draft shows its status on the name's line.
   await expect(page.locator(".editor-identity .status-chip")).toBeVisible();
 }
 
 const tabs = (page: Page) =>
   page.getByRole("tablist", { name: "Workflow views" });
+const workflowName = (page: Page) => page.locator(".editor-identity h1");
+const status = (page: Page) => page.locator(".editor-identity .status-chip");
+
+/** Whether the element itself is what a tap at its center reaches. */
+const atOwnCenter = (locator: Locator) =>
+  locator.evaluate((element) => {
+    const r = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      r.x + r.width / 2,
+      r.y + r.height / 2,
+    );
+    return !!hit && (hit === element || element.contains(hit));
+  });
+
+/** How many lines the lifecycle (Draft → Published → Active) takes. */
+const lifecycleLines = (page: Page) =>
+  page.locator(".editor-heading .workflow-progress").evaluate((list) => {
+    const range = document.createRange();
+    range.selectNodeContents(list);
+    return new Set(
+      [...range.getClientRects()]
+        .filter((r) => r.width > 0 && r.height > 0)
+        .map((r) => Math.round(r.top + r.height / 2)),
+    ).size;
+  });
 
 // The room the UX design gives the name (the bar's content width less the
 // gear, the status dot and a 96 px switcher), and the bar's height on the
@@ -86,12 +133,13 @@ for (const layout of layouts)
     test.describe(`${draft} draft at ${layout.tag}`, () => {
       test.use({ viewport: { width: layout.width, height: layout.height } });
 
-      test("the view switcher shares the name's row on every view; the gear and the name keep their room, the bar its height", async ({
+      test("the view switcher shares the name's line on every view; the gear and the name keep their room, the bar its height", async ({
         page,
       }) => {
         await openDraft(page, draft);
         await expect(tabs(page)).toBeHidden();
         const commandBars: number[] = [];
+        const switcherTops: number[] = [];
         for (const view of VIEWS) {
           await showView(page, view);
           const switcher = viewSwitcher(page);
@@ -99,10 +147,11 @@ for (const layout of layouts)
           await expect(switcher).toHaveText(view);
           const bar = await box(page.locator(".editor-bar"));
           const heading = await box(page.locator(".editor-heading"));
-          const name = await box(page.locator(".editor-identity h1"));
+          const name = await box(workflowName(page));
           const toggle = await box(switcher);
+          switcherTops.push(toggle.y);
 
-          // A whole target, on the name's row, inside the bar's padding.
+          // A whole target, on the name's line, inside the bar's padding.
           expect(toggle.height, `${view}: switcher height`).toBeGreaterThan(
             43.5,
           );
@@ -110,6 +159,11 @@ for (const layout of layouts)
           expect(name.middle).toBeGreaterThan(toggle.y);
           expect(name.middle).toBeLessThan(toggle.bottom);
           expect(toggle.right).toBeLessThanOrEqual(bar.right - 11.5);
+          if (draft === "connected")
+            expectAligned(
+              [name.middle, (await box(status(page))).middle],
+              `${view}: name and status`,
+            );
           // Nothing on the name's row overlaps another.
           const row = await boxes(page.locator(".editor-identity > *"));
           for (const item of row)
@@ -139,20 +193,92 @@ for (const layout of layouts)
           }
           const gear = await box(settingsGear(page));
           expect([gear.width, gear.height], `${view}: gear`).toEqual([44, 44]);
-          expect(Math.abs(gear.middle - name.middle)).toBeLessThanOrEqual(1);
-          // The switcher fits the heading's height: the row grows no taller.
-          expect(toggle.y).toBeGreaterThanOrEqual(heading.y - 0.5);
-          expect(toggle.bottom).toBeLessThanOrEqual(heading.bottom + 0.5);
+          // One center line: the name, the gear and the switcher.
+          expectAligned(
+            [name.middle, gear.middle, toggle.middle],
+            `${view}: name, gear and switcher`,
+          );
           commandBars.push(bar.height);
         }
         // Designer, Source and Outline: the bar as tall as with the tabs.
         for (const height of commandBars)
           expect(Math.abs(height - layout.bar)).toBeLessThanOrEqual(1);
+        // The switcher stays put when the view changes, Runs included.
+        expectAligned(switcherTops, "switcher top on the four views", 0.5);
         expect(
           await page.evaluate(
             () => document.scrollingElement!.scrollWidth === innerWidth,
           ),
         ).toBe(true);
+      });
+    });
+
+// From 481 to 767 px the version, the full status and the whole lifecycle
+// line show beside the switcher.
+for (const width of [481, 600, 767])
+  for (const draft of ["offline", "connected"] as const)
+    test.describe(`${draft} draft at ${width}x800`, () => {
+      test.use({ viewport: { width, height: 800 } });
+
+      test("the view switcher stands for the tabs; the name, the gear and the lifecycle line keep their room", async ({
+        page,
+      }) => {
+        await openDraft(page, draft);
+        await expect(tabs(page)).toBeHidden();
+        const switcher = viewSwitcher(page);
+        await expect(switcher).toHaveAccessibleName("Workflow view: Designer");
+        const name = await box(workflowName(page));
+        const gear = settingsGear(page);
+        const gearBox = await box(gear);
+        const toggle = await box(switcher);
+        expect(name.width, "the name's room").toBeGreaterThanOrEqual(80);
+        expect([gearBox.width, gearBox.height], "gear").toEqual([44, 44]);
+        // Nothing covers the gear: a tap at its center reaches it.
+        expect(await atOwnCenter(gear), "gear at its own center").toBe(true);
+        expect(await lifecycleLines(page), "lifecycle lines").toBe(1);
+        const line = [name.middle, gearBox.middle, toggle.middle];
+        if (draft === "connected") line.push((await box(status(page))).middle);
+        expectAligned(line, "name, gear, status and switcher");
+        expect(
+          await page.evaluate(
+            () => document.scrollingElement!.scrollWidth === innerWidth,
+          ),
+        ).toBe(true);
+      });
+    });
+
+// A short name keeps what follows it (the version from 481 px, the gear,
+// the status) beside it; the room left over lies before the switcher.
+for (const width of [390, 600])
+  for (const draft of ["offline", "connected"] as const)
+    test.describe(`a short name, ${draft}, at ${width}x800`, () => {
+      test.use({ viewport: { width, height: 800 } });
+
+      test("the gear and the status follow the name", async ({ page }) => {
+        await openDraft(page, draft, "order-intake");
+        // The name is drawn whole.
+        expect(
+          await workflowName(page).evaluate(
+            (h1) => h1.scrollWidth <= h1.clientWidth,
+          ),
+        ).toBe(true);
+        // From where the name's text ends, each item follows at 8 px.
+        let previous = await textBox(workflowName(page));
+        const after = await boxes(page.locator(".editor-identity > h1 ~ *"));
+        // The version shows from 481 px, the status on a platform draft.
+        expect(after.length).toBe(
+          1 + (width > 480 ? 1 : 0) + (draft === "connected" ? 1 : 0),
+        );
+        const gear = await box(settingsGear(page));
+        expect(after.some((item) => Math.abs(item.x - gear.x) < 0.5)).toBe(
+          true,
+        );
+        for (const [index, item] of after.entries()) {
+          expectAligned([item.x - previous.right, 8], `item ${index + 1}`);
+          previous = item;
+        }
+        const toggle = await box(viewSwitcher(page));
+        expect(toggle.x - previous.right).toBeGreaterThan(8);
       });
     });
 
@@ -271,12 +397,20 @@ test.describe("the view switcher at 390x844", () => {
     );
     await expect(source).toHaveValue(typed);
   });
+});
 
-  test("the toolbar's More menu keeps its plain items", async ({ page }) => {
+// A menu that sets no checked state looks and works as before: its toggle's
+// 20 px icon, plain items, and focus on the first item when it opens.
+test.describe("the toolbar's More menu at 600x800", () => {
+  test.use({ viewport: { width: 600, height: 800 } });
+
+  test("keeps its 20 px icon and its plain items", async ({ page }) => {
     await openStepFixture(page);
     const more = page
       .getByRole("toolbar", { name: "Workflow commands" })
       .getByRole("button", { name: "More", exact: true });
+    const icon = await box(more.locator("weave-icon"));
+    expect([icon.width, icon.height]).toEqual([20, 20]);
     await more.focus();
     await page.keyboard.press("Enter");
     const menu = page.getByRole("menu", { name: "More" });
@@ -293,8 +427,8 @@ test.describe("the view switcher at 390x844", () => {
 });
 
 for (const size of [
-  { width: 480, folds: true },
-  { width: 481, folds: false },
+  { width: 767, folds: true },
+  { width: 768, folds: false },
 ])
   test.describe(`at ${size.width} px`, () => {
     test.use({ viewport: { width: size.width, height: 800 } });

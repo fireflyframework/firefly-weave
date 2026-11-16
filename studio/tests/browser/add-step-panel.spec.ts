@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { AddStepPanel } from "./add-step-po";
 import { CanvasPage, openNewWorkflow, openWorkflow } from "./canvas-po";
-import { expectHitTarget, newWorkflow } from "./support";
+import { expectHitTarget, newWorkflow, showView } from "./support";
 
 const triggers = [
   "Manual form",
@@ -416,7 +416,7 @@ test.describe("Add a step when the workflow changes under it", () => {
     await page
       .getByRole("button", { name: "Apply changes", exact: true })
       .click();
-    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await showView(page, "Designer");
     await canvas.ready();
     await expect(panel.root).toHaveCount(0);
     await expect(

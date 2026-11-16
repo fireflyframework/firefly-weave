@@ -38,7 +38,13 @@ import {
   runsWorkflow,
 } from "./runs-po";
 import { sizes, StepDetailsPage } from "./step-details-po";
-import { allCapabilities, connected, newWorkflow, offline } from "./support";
+import {
+  allCapabilities,
+  connected,
+  newWorkflow,
+  offline,
+  showView,
+} from "./support";
 
 for (const size of sizes)
   test.describe(`the Runs list at ${size.tag}`, () => {
@@ -310,7 +316,7 @@ test.describe("the Runs list's states", () => {
     await offline(page);
     await newWorkflow(page);
     await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const runs = runsPage(page);
     await expect(runs.panel).toContainText("Runs live on a platform.");
     await expect(runs.panel).toContainText(
@@ -331,7 +337,7 @@ test.describe("the Runs list's states", () => {
     await offline(page);
     await newWorkflow(page);
     await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const details = new StepDetailsPage(page);
     await details.openWithKeyboard("check");
     await expect(details.dialog).not.toContainText("A simulation is running");
@@ -355,7 +361,7 @@ test.describe("the Runs list's states", () => {
     await connected(page, { environmentId: "" });
     await newWorkflow(page);
     await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const runs = runsPage(page);
     await expect(runs.panel).toContainText(
       "Choose an environment to see its runs.",
@@ -392,7 +398,7 @@ test.describe("the Runs list's states", () => {
     );
     await newWorkflow(page);
     await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const message = runsPage(page).panel.locator(".runs-body .runs-message");
     await expect(message.locator("strong")).toHaveText(
       "Your account isn't linked yet.",
@@ -432,7 +438,7 @@ test.describe("the Runs list's states", () => {
     await page
       .getByRole("button", { name: "Dismiss platform message" })
       .click();
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const runs = runsPage(page);
     const message = runs.panel.locator(".runs-body .runs-message");
     await expect(message.locator("strong")).toHaveText(
@@ -501,7 +507,7 @@ test.describe("the Runs list's states", () => {
       await expect(notice).toHaveCount(0);
       await newWorkflow(page);
       await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-      await page.getByRole("tab", { name: "Runs" }).click();
+      await showView(page, "Runs");
       await expect(
         runsPage(page).panel.locator(".runs-body .runs-message strong"),
       ).toHaveText(tab);
@@ -527,7 +533,7 @@ test.describe("the Runs list's states", () => {
     await expect(notice).toContainText(waiting);
     await newWorkflow(page);
     await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     const runs = runsPage(page);
     await expect(runs.panel.getByRole("status")).toHaveText("Loading runs…");
     await expect(runs.panel.locator(".runs-body .runs-message")).toHaveCount(0);

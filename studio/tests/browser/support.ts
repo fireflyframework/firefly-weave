@@ -587,10 +587,10 @@ export async function expectHitTarget(locator: Locator) {
 }
 /** A workflow's views, in the order the tabs show them. */
 export type WorkflowView = "Designer" | "Source" | "Outline" | "Runs";
-/** At 480 px and below the view tabs fold into one view switcher. */
+/** At 767 px and below the view tabs fold into one view switcher. */
 export const foldsViews = (page: Page): boolean =>
-  (page.viewportSize()?.width ?? Infinity) <= 480;
-/** The menu button that stands for the view tabs at 480 px and below. */
+  (page.viewportSize()?.width ?? Infinity) <= 767;
+/** The menu button that stands for the view tabs at 767 px and below. */
 export const viewSwitcher = (page: Page): Locator =>
   page.getByRole("button", { name: /^Workflow view: / });
 /** Shows a view by its tab, or by the view switcher's menu where tabs fold. */

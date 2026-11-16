@@ -2962,7 +2962,7 @@ details.disclosure[open] > summary::before {
   padding: 0 10px;
   white-space: nowrap;
 }
-/* The view switcher (480 px and below): the view tabs' frame around the view
+/* The view switcher (767 px and below): the view tabs' frame around the view
    shown, a chevron after its name, and a 44 px row per view in its menu. */
 .editor-view-switcher .row-menu-toggle {
   width: auto;
@@ -4399,9 +4399,11 @@ kbd {
   .editor-identity .back-link {
     display: none;
   }
+  /* The name takes its own width and no more: the gear and the status
+     follow it, and the room left over lies before the view switcher. */
   .editor-identity h1 {
     max-width: none;
-    flex: 1;
+    flex: 0 1 auto;
   }
   .editor-toolbar .wide-only {
     display: none !important;
@@ -4599,11 +4601,6 @@ kbd {
   .editor-heading .workflow-progress li:not([aria-current="step"]),
   .editor-heading .workflow-progress li::before {
     display: none;
-  }
-  /* The view switcher leaves the name the rest of its row. */
-  .editor-identity h1 {
-    flex: 1 1 auto;
-    max-width: none;
   }
   .editor-identity .status-chip {
     min-width: 18px;

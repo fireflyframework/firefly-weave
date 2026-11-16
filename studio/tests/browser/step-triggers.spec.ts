@@ -38,7 +38,7 @@ import {
   intersects,
   textBox,
 } from "./step-geometry";
-import { sourceText } from "./support";
+import { showView, sourceText } from "./support";
 
 /** The fixture with two more slots no step uses, and a long slot name. */
 function withSpareSlots(long = false) {
@@ -426,7 +426,7 @@ for (const size of sizes)
 
     test("workflow settings say why they are read-only", async ({ page }) => {
       await openStepFixture(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const source = page.getByRole("textbox", { name: "Workflow source" });
       await source.fill(`${await source.inputValue()}\n  broken: [`);
       await page
@@ -474,7 +474,7 @@ test.describe("the gear and unapplied edits", () => {
     }) => {
       await page.setViewportSize({ width: size.width, height: size.height });
       await openStepFixture(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const source = page.getByRole("textbox", { name: "Workflow source" });
       await source.fill(
         (await source.inputValue()).replace(
@@ -502,13 +502,13 @@ test.describe("the gear and unapplied edits", () => {
           height: size.height,
         });
         await openStepFixture(page);
-        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        await showView(page, "Source");
         const source = page.getByRole("textbox", { name: "Workflow source" });
         const original = await source.inputValue();
         await source.fill(
           original.replace("id: check-customer", "id: check-client"),
         );
-        await page.getByRole("tab", { name: view, exact: true }).click();
+        await showView(page, view);
         const question = page.getByRole("dialog", {
           name: "Apply the changes typed in Source?",
         });
@@ -524,7 +524,7 @@ test.describe("the gear and unapplied edits", () => {
           .getByRole("button", { name: "Close", exact: true })
           .click();
         await expect(dialog).toHaveCount(0);
-        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        await showView(page, "Source");
         await expect(source).toHaveValue(original);
         await expect(page.locator(".source-error")).toHaveCount(0);
       });
@@ -535,7 +535,7 @@ test.describe("the gear and unapplied edits", () => {
     }) => {
       await page.setViewportSize({ width: size.width, height: size.height });
       await openStepFixture(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const source = page.getByRole("textbox", { name: "Workflow source" });
       const original = await source.inputValue();
       await source.fill(`${original}\n  broken: [`);
@@ -586,7 +586,7 @@ test.describe("the gear and unapplied edits", () => {
     page,
   }) => {
     await openStepFixture(page);
-    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(page, "Source");
     const source = page.getByRole("textbox", { name: "Workflow source" });
     const typed = `${await source.inputValue()}\n  broken: [`;
     await source.fill(typed);

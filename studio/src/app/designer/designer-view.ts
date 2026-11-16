@@ -110,10 +110,10 @@ import type { App } from "../app";
         border: 0;
         border-radius: 0;
       }
-      /* Four views: 44 px tabs on touch and below 768 px. At 480 px and
-         below they fold into one menu button on the name's row, on every
-         view: the name gets the room the tabs took, the settings gear keeps
-         its 44 px target, and the bar keeps its height. */
+      /* Four views: 44 px tabs on touch. At 767 px and below they fold into
+         one menu button on the name's line, on every view: the name keeps
+         its room, the settings gear its 44 px target, and the bar its
+         height. */
       @media (max-width: 767px), (pointer: coarse) {
         .editor-views button {
           min-height: var(--control-touch);
@@ -122,12 +122,16 @@ import type { App } from "../app";
       .editor-view-switcher {
         display: none;
       }
-      @media (max-width: 480px) {
+      @media (max-width: 767px) {
         .editor-views {
           display: none;
         }
+        /* At the top of the name's row, not centered on the two-line
+           heading: one center line with the name, the gear and the status,
+           and no move when the view changes. */
         .editor-view-switcher {
           display: inline-flex;
+          align-self: start;
         }
       }
     `,
@@ -224,7 +228,7 @@ import type { App } from "../app";
           </button>
         }
       </div>
-      <!-- At 480 px and below: the tabs above, folded into one menu button
+      <!-- At 767 px and below: the tabs above, folded into one menu button
            that names the view shown. -->
       <weave-row-menu
         class="editor-view-switcher"

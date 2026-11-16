@@ -32,6 +32,7 @@ import {
   type RunsPage,
 } from "./runs-po";
 import { StepDetailsPage } from "./step-details-po";
+import { showView } from "./support";
 
 test.skip(
   !hasPython,
@@ -140,7 +141,7 @@ for (const viewport of [
     await expect(page.locator(".toast")).toContainText(
       "Test data now holds run 2d1e8a9b's data.",
     );
-    await runs.tabs.getByRole("tab", { name: "Runs" }).click();
+    await showView(page, "Runs");
     await choose(page, runs, RUN_IDS.older);
     await expect(runs.canvas.locator(".run-banner")).toContainText(
       viewport.width < 768
