@@ -117,6 +117,8 @@ def test_an_event_trigger_start_reports_its_outcome_without_values():
     for code in ("WV-TRIGGER-DISABLED", "WV-TRIGGER-EVENT-DEPTH", "WV-TRIGGER-CHAIN-BUDGET"):
         skipped = {**requested, "status": "skipped", "code": code}
         assert wire(EventTriggerStart, skipped).model_dump(mode="json") == skipped
+    expired = {**requested, "status": "rejected", "code": "WV-TRIGGER-START-EXPIRED"}
+    assert wire(EventTriggerStart, expired).model_dump(mode="json") == expired
     for refused in (
         {**STARTED, "depth": 0},
         {**STARTED, "run_id": None},
@@ -128,6 +130,14 @@ def test_an_event_trigger_start_reports_its_outcome_without_values():
     ):
         with pytest.raises(ValidationError):
             wire(EventTriggerStart, refused)
+
+
+def test_a_start_names_the_event_that_began_its_chain_when_known():
+    root = "0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c07"
+    named = wire(EventTriggerStart, {**STARTED, "root_event_id": root})
+    assert named.model_dump(mode="json")["root_event_id"] == root
+    assert "root_event_id" not in wire(EventTriggerStart, STARTED).model_dump(mode="json")
+    assert "root_event_id" not in EventTriggerStart.model_json_schema().get("required", [])
 
 
 def test_recovery_reports_event_starts_and_resolutions_only_when_nonzero():

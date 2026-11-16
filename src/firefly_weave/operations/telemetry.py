@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 
 from opentelemetry.context import Context
 from opentelemetry.metrics import MeterProvider
@@ -43,6 +43,7 @@ from opentelemetry.trace import (
 from pyfly.container.stereotypes import service
 from pyfly.observability.ports import MetricsRecorder
 
+from firefly_weave.contracts.event_triggers import EventStartCode
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES, TRANSIENT_WORKER_CODES
 
@@ -74,6 +75,9 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "step.continue",
         "step.errorOutput",
         "step.incident",
+        # Platform-event triggers: starting a reaction, and a reaction resolving its transaction.
+        "event.start",
+        "event.resolve",
         "other",
     }
 )
@@ -100,6 +104,8 @@ ERRORS = frozenset(
         # Transaction codes, and the shared worker codes a transaction's cause most often carries.
         *(code for code in TRANSACTION_MESSAGES if code.startswith("WV-TXN-")),
         *TRANSIENT_WORKER_CODES,
+        # Why a platform event started no workflow.
+        *get_args(EventStartCode.__value__),
     }
 )
 COUNTERS = {
@@ -117,6 +123,7 @@ COUNTERS = {
     "transaction": "weave.transactions",
     "transaction_phase": "weave.transaction_phases",
     "step_error": "weave.step_errors",
+    "event_start": "weave.event_starts",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }

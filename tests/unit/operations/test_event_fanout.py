@@ -24,7 +24,14 @@ import pytest
 from firefly_weave.contracts.integration_events import IntegrationEvent
 from firefly_weave.contracts.platform_events import PlatformEvent
 from firefly_weave.contracts.run_views import RunSummaryCaller
-from firefly_weave.operations.event_fanout import SourceFacts, TriggerMatch, event_payload, start_rows
+from firefly_weave.operations.event_fanout import (
+    SourceFacts,
+    StartRow,
+    TriggerMatch,
+    event_payload,
+    record_skips,
+    start_rows,
+)
 from firefly_weave.operations.facts import RunStartFacts
 
 RUN = UUID("0c6f2b55-3a1e-4f63-b1f4-0a7e5e9d1c04")
@@ -134,6 +141,34 @@ def test_a_chain_of_reactions_starts_at_most_64_workflows_then_records_skips():
     assert offered(triggers[-1:], origin=source(depth=3, root=root, spent=64)) == [
         (1, "skipped", 4, "WV-TRIGGER-EVENT-DEPTH")
     ]
+
+
+class Recorder:
+    """What a transaction would count once it commits."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[str, str, str, str, int]] = []
+
+    def record(self, kind: str, operation: str, status: str = "ok", error_code: str = "none", *, amount: int = 1):
+        self.records.append((kind, operation, status, error_code, amount))
+
+
+def test_starts_a_chain_never_makes_are_counted_as_blocked_where_they_are_written():
+    recorder = Recorder()
+    rows = [
+        StartRow(UUID(int=1), 4, "skipped", "WV-TRIGGER-EVENT-DEPTH"),
+        StartRow(UUID(int=2), 2, "requested"),
+        StartRow(UUID(int=3), 2, "skipped", "WV-TRIGGER-CHAIN-BUDGET"),
+        StartRow(UUID(int=4), 2, "skipped", "WV-TRIGGER-CHAIN-BUDGET"),
+    ]
+    record_skips(recorder, rows)  # type: ignore[arg-type]
+    assert sorted(recorder.records) == [
+        ("event_start", "event.start", "blocked", "WV-TRIGGER-CHAIN-BUDGET", 2),
+        ("event_start", "event.start", "blocked", "WV-TRIGGER-EVENT-DEPTH", 1),
+    ]
+    quiet = Recorder()
+    record_skips(quiet, [StartRow(UUID(int=2), 1, "requested")])  # type: ignore[arg-type]
+    assert quiet.records == []
 
 
 def test_the_start_payload_is_the_platform_event():

@@ -49,7 +49,10 @@ EVENTS = (
     "'transaction.reconciled','transaction.force_ended'"
 )
 ORIGINS = "'manual','webhook','schedule','broker','email','provider','retry','call','test','event'"
-START_CODES = "'WV-TRIGGER-START','WV-TRIGGER-DISABLED','WV-TRIGGER-EVENT-DEPTH','WV-TRIGGER-CHAIN-BUDGET'"
+START_CODES = (
+    "'WV-TRIGGER-START','WV-TRIGGER-DISABLED','WV-TRIGGER-EVENT-DEPTH','WV-TRIGGER-CHAIN-BUDGET',"
+    "'WV-TRIGGER-START-EXPIRED'"
+)
 RESOLVE_TASK_TYPE = "weave-platform.transaction-resolve"
 
 

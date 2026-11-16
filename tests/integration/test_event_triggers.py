@@ -19,16 +19,20 @@ it started."""
 
 import asyncio
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 from transaction_platform import Platform, add, build, hold, reaction, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
+from firefly_weave.access.scheduler import _CATALOG_AUTHORITY, _SchedulerScope
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.event_triggers import MAX_CHAIN_STARTS, MAX_EVENT_TRIGGERS, EventTriggerStart
 from firefly_weave.contracts.integration_events import IntegrationEvent
@@ -36,6 +40,7 @@ from firefly_weave.contracts.platform_events import PlatformEvent
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.outbox import OutboxService
+from firefly_weave.triggers.event_starts import EventStartService
 
 pytestmark = pytest.mark.integration
 # Every byte the project uses now is its limit: growth outside a reserve is refused.
@@ -50,6 +55,30 @@ SATURATE = (
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
     return await build(worker_setup, services, access_db, monkeypatch)
+
+
+@contextmanager
+def held(monkeypatch) -> Iterator[None]:
+    """While open, scans pass over requested starts: what fan-out wrote stays as it wrote it."""
+
+    async def passing(self, tx, limit) -> tuple[int, int]:
+        return 0, 0
+
+    with monkeypatch.context() as patch:
+        patch.setattr(EventStartService, "dispatch", passing)
+        yield
+
+
+async def dispatch(platform) -> tuple[int, int]:
+    """One start scan in its own transaction, as one quantum of the recovery loop runs it."""
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        return await platform.recovery.event_starts.dispatch(tx, 10)
+
+
+async def reactions(platform) -> list[dict]:
+    return await platform.query(
+        "SELECT run_id,event_depth,root_event_id,business_key FROM run_facts WHERE origin='event' ORDER BY event_depth"
+    )
 
 
 async def person(access_db, provisioned, platform, *roles: str):
@@ -287,11 +316,12 @@ async def starts(platform) -> list[dict]:
     return await platform.query("SELECT * FROM event_trigger_starts ORDER BY trigger_id")
 
 
-async def test_an_in_doubt_transaction_requests_one_start_per_matching_trigger_with_its_event(platform):
+async def test_an_in_doubt_transaction_requests_one_start_per_matching_trigger_with_its_event(platform, monkeypatch):
     activation = await platform.publish(reaction(events=("transaction.in_doubt", "transaction.completed")))
     accepted = sorted([(await platform.bind(activation, name=name)).id for name in ("notify", "page")])
     await platform.bind(activation, name="done", events=["transaction.completed"])
-    run = await in_doubt(platform)
+    with held(monkeypatch):
+        run = await in_doubt(platform)
     event = await outbox_event(platform, run, "transaction.in_doubt")
     rows = await starts(platform)
     assert [(row["trigger_id"], row["status"], row["depth"], row["code"]) for row in rows] == [
@@ -496,3 +526,163 @@ async def test_a_chain_of_reactions_starts_at_most_64_workflows_per_root_event(p
         root=root,
     )
     assert spent["n"] == MAX_CHAIN_STARTS
+
+
+async def test_an_in_doubt_event_starts_the_reaction_once(platform, access_db, provisioned):
+    owner = await person(access_db, provisioned, platform, "deployer", "operator")
+    await platform.bind(await platform.publish(reaction()), actor=owner)
+    run = await in_doubt(platform)
+    event = await outbox_event(platform, run, "transaction.in_doubt")
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["cause"]) == ("started", None, None)
+    assert row["started_at"] >= row["requested_at"]
+    [reacted] = await reactions(platform)
+    assert reacted["run_id"] == row["run_id"]
+    # One reaction deep, in the chain the event began, carrying the transaction's business key.
+    assert (reacted["event_depth"], str(reacted["root_event_id"]), reacted["business_key"]) == (
+        1,
+        event["event_id"],
+        "M-1",
+    )
+    [started] = await platform.query("SELECT principal_id,request FROM runs WHERE id=:run", run=row["run_id"])
+    [stored] = await platform.query("SELECT payload FROM event_trigger_payloads")
+    assert (started["principal_id"], started["request"]["input"]) == (owner.id, stored["payload"])
+    assert (await platform.state(row["run_id"]))["status"] == "succeeded"
+    await platform.scan()
+    assert len(await reactions(platform)) == 1
+
+
+async def test_two_schedulers_start_the_reaction_exactly_once(platform, monkeypatch):
+    await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        await in_doubt(platform)
+    outcomes = await asyncio.gather(dispatch(platform), dispatch(platform), return_exceptions=True)
+    assert outcomes.count((1, 0)) == 1
+    for outcome in outcomes:
+        # The other scan finds the start taken, or waits too long for the project's operation lock.
+        assert outcome in {(1, 0), (0, 0)} or (
+            isinstance(outcome, CatalogError) and outcome.code == "WV-OPERATION-CAPACITY"
+        )
+    assert [row["status"] for row in await starts(platform)] == ["started"]
+    assert len(await reactions(platform)) == 1
+
+
+async def test_a_trigger_whose_owner_lost_run_start_rejects_its_start_and_suspends_nothing(
+    platform, access_db, provisioned, monkeypatch
+):
+    access, admin = access_db[2], provisioned[0]
+    owner = await person(access_db, provisioned, platform, "deployer")
+    granted = await access.grant(admin, owner.id, Grant(role="operator", scope=platform.scope))
+    await platform.bind(await platform.publish(reaction()), actor=await access.load_principal(owner.id))
+    await access.revoke_grant(admin, platform.scope, granted)
+    with held(monkeypatch):
+        run = await in_doubt(platform)
+    incidents = "SELECT id,status FROM incidents ORDER BY id"
+    before = (await platform.state(run.id), await platform.query(incidents))
+    await platform.scan()
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["cause"], row["run_id"]) == (
+        "rejected",
+        "WV-TRIGGER-START",
+        "WV-FORBIDDEN",
+        None,
+    )
+    assert (await platform.state(run.id), await platform.query(incidents)) == before
+    assert await reactions(platform) == []
+
+
+async def test_a_trigger_disabled_after_the_event_skips_its_start(platform, monkeypatch):
+    trigger = await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        run = await in_doubt(platform)
+    await platform.event_triggers.disable(platform.actor, platform.scope, trigger.id, context=AuditContext())
+    await platform.scan()
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["run_id"]) == ("skipped", "WV-TRIGGER-DISABLED", None)
+    assert await reactions(platform) == []
+    # The listing names the event that began the skipped start's chain: here, the event itself.
+    event = await outbox_event(platform, run, "transaction.in_doubt")
+    page = await platform.event_triggers.starts(platform.actor, platform.scope, trigger.id, context=AuditContext())
+    [item] = page.items
+    assert (item.status, item.code, str(item.root_event_id)) == ("skipped", "WV-TRIGGER-DISABLED", event["event_id"])
+
+
+async def test_a_start_never_commits_while_its_trigger_is_being_disabled(platform, monkeypatch):
+    trigger = await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        await in_doubt(platform)
+    async with platform.sessions() as session, session.begin():
+        # A disable in progress holds the trigger: the start waits for it rather than starting meanwhile.
+        await session.execute(text("SELECT 1 FROM event_triggers WHERE id=:id FOR UPDATE"), {"id": trigger.id})
+        assert await dispatch(platform) == (0, 0)
+        await session.execute(
+            text("UPDATE event_triggers SET disabled=true,disabled_at=now(),revision=2 WHERE id=:id"),
+            {"id": trigger.id},
+        )
+    assert await dispatch(platform) == (0, 1)
+    assert [(row["status"], row["code"]) for row in await starts(platform)] == [("skipped", "WV-TRIGGER-DISABLED")]
+    assert await reactions(platform) == []
+
+
+async def test_a_spent_quota_leaves_the_start_requested(platform, monkeypatch):
+    await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        await in_doubt(platform)
+    [policy] = await platform.query("SELECT limits FROM operation_policy")
+    await platform.execute(SATURATE, project=platform.scope.project_id)
+    assert await dispatch(platform) == (0, 0)
+    assert [row["status"] for row in await starts(platform)] == ["requested"]
+    await platform.execute(
+        "UPDATE operation_policy SET limits=cast(:limits AS jsonb)", limits=json.dumps(policy["limits"])
+    )
+    report = await platform.recovery._scan_scheduled(_SchedulerScope(platform.scope, _CATALOG_AUTHORITY), 10)
+    assert (report.event_starts, report.event_starts_rejected) == (1, 0)
+    assert [row["status"] for row in await starts(platform)] == ["started"]
+
+
+async def test_a_retired_activation_rejects_the_start(platform):
+    activation = await platform.publish(reaction())
+    await platform.bind(activation)
+    await platform.definitions.retire_activation(
+        platform.actor, platform.scope, activation.id, "retire", activation.revision, context=AuditContext()
+    )
+    await in_doubt(platform)
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["cause"]) == ("rejected", "WV-TRIGGER-START", "WV-READINESS")
+    assert await reactions(platform) == []
+
+
+async def test_a_start_put_off_for_a_day_expires(platform, monkeypatch):
+    await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        await in_doubt(platform)
+    await platform.execute("UPDATE event_trigger_starts SET requested_at=requested_at-interval '1 day'")
+    await platform.scan()
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["cause"], row["run_id"]) == (
+        "rejected",
+        "WV-TRIGGER-START-EXPIRED",
+        None,
+        None,
+    )
+    assert await reactions(platform) == []
+
+
+async def test_a_chain_of_reactions_stops_at_three_runs(platform):
+    """A workflow that reacts to its own completed transactions: each reaction's event starts the next, until the
+    event of the third reaction is recorded as skipped."""
+    await platform.bind(await platform.publish(RELAY), name="relay", events=["transaction.completed"])
+    await platform.start(await platform.publish(workflow(*MOVE)), "M-1")
+    await complete_transaction(platform)
+    for _ in range(3):
+        await platform.scan()
+        await complete_transaction(platform)
+    await platform.scan()
+    rows = await platform.query("SELECT depth,status,code FROM event_trigger_starts ORDER BY depth")
+    assert [(row["depth"], row["status"], row["code"]) for row in rows] == [
+        (1, "started", None),
+        (2, "started", None),
+        (3, "started", None),
+        (4, "skipped", "WV-TRIGGER-EVENT-DEPTH"),
+    ]
+    assert [row["event_depth"] for row in await reactions(platform)] == [1, 2, 3]

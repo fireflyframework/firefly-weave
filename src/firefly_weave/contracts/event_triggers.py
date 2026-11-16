@@ -24,6 +24,7 @@ event's values.
 """
 
 from collections.abc import Mapping
+from datetime import timedelta
 from types import MappingProxyType
 from typing import Final, Literal, Self
 from uuid import UUID
@@ -42,10 +43,14 @@ from firefly_weave.contracts.platform_events import EventCode
 from firefly_weave.contracts.transactions import PlatformEventType
 
 type EventStartStatus = Literal["requested", "started", "rejected", "skipped"]
-# Why a start started no run: the start was refused, the trigger was disabled first, the chain was too deep, or the
-# chain had already made all the starts it may make.
+# Why a start started no run: the start was refused, the trigger was disabled first, the chain was too deep, the
+# chain had already made all the starts it may make, or the start kept being put off until it expired.
 type EventStartCode = Literal[
-    "WV-TRIGGER-START", "WV-TRIGGER-DISABLED", "WV-TRIGGER-EVENT-DEPTH", "WV-TRIGGER-CHAIN-BUDGET"
+    "WV-TRIGGER-START",
+    "WV-TRIGGER-DISABLED",
+    "WV-TRIGGER-EVENT-DEPTH",
+    "WV-TRIGGER-CHAIN-BUDGET",
+    "WV-TRIGGER-START-EXPIRED",
 ]
 
 # Enabled platform-event triggers one environment may hold, so one event requests at most this many starts.
@@ -55,6 +60,9 @@ MAX_EVENT_DEPTH: Final = 3
 # Starts one chain of reactions may make, across all its depths: the chain began with one event of a run that no
 # event started, and every run it started, called or retried carries that event's ID.
 MAX_CHAIN_STARTS: Final = 64
+# How long a start may wait for the platform to accept it (a spent quota, a busy lock, capacity): past this, the
+# event no longer starts its workflow, which would otherwise react to a state long gone.
+EVENT_START_EXPIRY: Final = timedelta(hours=24)
 
 # Codes and their product copy. Append-only and value-free: start records and problems embed these messages.
 EVENT_TRIGGER_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
@@ -68,6 +76,9 @@ EVENT_TRIGGER_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "WV-TRIGGER-DISABLED": "The trigger was disabled before the workflow started.",
         "WV-TRIGGER-CHAIN-BUDGET": (
             "This chain of reactions has already started 64 workflows, so its events start no more."
+        ),
+        "WV-TRIGGER-START-EXPIRED": (
+            "The workflow couldn't start within a day of the event, so the event no longer starts it."
         ),
     }
 )
@@ -115,6 +126,8 @@ class EventTriggerStart(ContractModel):
     event_id: UUID
     event_type: PlatformEventType
     source_run_id: UUID
+    # The event that began this start's chain of reactions, which the chain's budget of starts counts by.
+    root_event_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     # The started run's place in a chain of reactions: 1 for a run started by an event of a run no event started.
     depth: int = Field(ge=1)
     status: EventStartStatus

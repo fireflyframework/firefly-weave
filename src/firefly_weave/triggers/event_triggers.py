@@ -55,7 +55,10 @@ TRIGGER_COLUMNS = (
     "id,name,activation_id,workflow_name,events,source_workflows,may_reconcile,principal_id,revision,disabled,"
     "created_at"
 )
-START_COLUMNS = "id,trigger_id,event_id,event_type,source_run_id,depth,status,code,cause,run_id,requested_at,started_at"
+START_COLUMNS = (
+    "id,trigger_id,event_id,event_type,source_run_id,root_event_id,depth,status,code,cause,run_id,requested_at,"
+    "started_at"
+)
 
 
 def binding_problem(declared: EventTriggerSpec | None, request: EventTriggerRequest, workflow: str) -> str | None:

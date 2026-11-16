@@ -24,6 +24,7 @@ starts across all its depths: every run in it carries the event that began it, a
 recorded as skipped. The recovery loop starts the requested records later.
 """
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -104,6 +105,12 @@ def start_rows(triggers: Sequence[TriggerMatch], event: IntegrationEvent, source
         else:
             rows.append(StartRow(trigger.id, depth, "skipped", "WV-TRIGGER-CHAIN-BUDGET"))
     return rows
+
+
+def record_skips(tx: Transaction, starts: Sequence[StartRow]) -> None:
+    """Count the starts an event makes skipped, by why, once the commit that writes them lands."""
+    for code, amount in Counter(start.code for start in starts if start.status == "skipped").items():
+        tx.record("event_start", "event.start", "blocked", code or "other", amount=amount)
 
 
 def event_payload(event: IntegrationEvent) -> PlatformEvent:
@@ -220,4 +227,5 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
                 "code": start.code,
             },
         )
+    record_skips(tx, starts)
     return len(starts)
