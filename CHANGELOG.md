@@ -27,6 +27,9 @@ SPDX-License-Identifier: Apache-2.0
   a second, doubling up to 10 seconds (`claim_retry_seconds`,
   `max_claim_retry_seconds`), and `stop()` ends the wait at once; 401, 403, a
   refused release and every other failed claim still stop it with that error.
+  Workers that local operations deploy now start again when they stop on their
+  own (`restart: unless-stopped`); one that `weave platform stop` or a change
+  request stopped stays stopped.
 
 ## 0.1.0a18
 
