@@ -28,8 +28,9 @@ import { readRunRecord } from "./run-record";
 import { dropDebug, handOverDebug, handOverLinkedRun } from "./run-links";
 import { workflowOf } from "./runs-tab-state";
 
-/** Drafts read a page at a time, five pages at most, for the run's workflow. */
+/** Drafts read a page at a time, for the run's workflow: 100 a page, five pages at most. */
 const DRAFTS_PAGE = 100;
+const DRAFTS_PAGES = 5;
 
 /** What opening a run in the editor needs from Studio's shell. */
 export interface OpenRunHost {
@@ -109,8 +110,10 @@ export async function openRunInEditor(
     // Studio read every page of drafts, or stopped after the first five.
     let complete = true;
     if (!draftId) {
-      const search = await findDraft(name, (cursor) =>
-        api.page("drafts", false, cursor, {}, DRAFTS_PAGE),
+      const search = await findDraft(
+        name,
+        (cursor) => api.page("drafts", false, cursor, {}, DRAFTS_PAGE),
+        DRAFTS_PAGES,
       );
       if (!holds()) return;
       draftId = search.found?.id ?? null;
@@ -119,7 +122,7 @@ export async function openRunInEditor(
     if (!draftId) {
       const none = complete
         ? `${name} has no draft here.`
-        : `Studio didn't find a draft of ${name} among the ${5 * DRAFTS_PAGE} drafts it read.`;
+        : `Studio didn't find a draft of ${name} among the ${DRAFTS_PAGES * DRAFTS_PAGE} drafts it read.`;
       const create = await host.dialogs.confirm({
         title: `Create a draft from ${version.metadata.version}?`,
         message:

@@ -77,7 +77,7 @@ describe("the newest draft of a run's workflow", () => {
         next_cursor: String(n + 1),
       };
     };
-    expect(await findDraft("invoice-approval", page)).toEqual({
+    expect(await findDraft("invoice-approval", page, 5)).toEqual({
       found: null,
       complete: false,
     });
@@ -90,7 +90,11 @@ describe("the newest draft of a run's workflow", () => {
       { items: [item(2, "invoice-approval", "1.3.0", 1)], next_cursor: null },
     ];
     let at = 0;
-    const found = await findDraft("invoice-approval", async () => pages[at++]);
+    const found = await findDraft(
+      "invoice-approval",
+      async () => pages[at++],
+      5,
+    );
     expect(found).toEqual({
       found: {
         id: id(2),

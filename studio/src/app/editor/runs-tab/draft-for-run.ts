@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The draft a run opens in from Operate: the newest draft of the run's
 // workflow (the highest version, then the latest revision), read only from
-// typed drafts and at most five pages of the project's drafts.
+// typed drafts and from no more pages of the project's drafts than its
+// caller allows.
 import { compareVersions } from "../../operate/runs/run-actions";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -78,7 +79,7 @@ export function newestDraft(
 export async function findDraft(
   name: string,
   page: (cursor?: string) => Promise<DraftPage>,
-  maxPages = 5,
+  maxPages: number,
 ): Promise<{ found: DraftCandidate | null; complete: boolean }> {
   const seen: DraftCandidate[] = [];
   let cursor: string | undefined;
