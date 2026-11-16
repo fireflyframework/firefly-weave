@@ -295,10 +295,18 @@ that, for example once every 10 cycles, leaves the loop `ok`; its
 ## Alerts
 
 An alert rule compares one signal of an environment with a threshold. The
-scheduler evaluates each environment's enabled rules every 30 seconds and
-reports as `alert_evaluator` in health. People with the `alert_manager` role
+scheduler starts an evaluation cycle every 30 seconds and reports as
+`alert_evaluator` in health. It reads the signals without holding up the
+project's own changes, such as run starts. People with the `alert_manager` role
 create rules, email channels and recipients' opt-ins; the
-[API reference](../reference/api.md) lists the operations.
+[API reference](../reference/api.md) lists the operations and every capability
+each one needs.
+
+- **Operations figures.** A rule's values and its alerts are operations
+  figures, so saving or previewing a rule also needs `status.read`. A rule is
+  read only while the person who last saved it still holds `status.read` and
+  may read the targets it watches; otherwise it shows `unauthorized` and sends
+  nothing until that access returns.
 
 - **Signals.** Run signals (`run.failure_rate`, `run.failures`,
   `run.duration_p95`) count the runs that ended in the rule's window of 1, 5,
@@ -309,19 +317,27 @@ create rules, email channels and recipients' opt-ins; the
 - **For and resolving.** A rule fires once its condition has held for its For
   time (at once when it is 0) and resolves only after it has been clear for
   its For time or a minute, whichever is longer. A failed read changes nothing,
-  and the first reading after a gap of more than a minute starts both waits
-  again.
+  and the first reading after a gap of more than five minutes starts both
+  waits again.
 - **Repeats.** A firing alert notifies again after its repeat interval (at
-  least 15 minutes) until someone acknowledges it.
+  least 15 minutes) until someone acknowledges it. An acknowledgement made
+  while that cycle is being evaluated can still let one repeat through.
 - **Email.** A channel sends as the person who last saved it, one message per
   recipient. Recipients are project members, at the address each one saved for
   themselves, or outside addresses whose domain an administrator allowed and
-  whose opt-in an administrator recorded. Both are checked again at every
-  send. The text is fixed, with no link.
+  whose opt-in an administrator recorded. Every recipient must also be on the
+  email connection's own list of allowed recipients; an address that isn't is
+  refused and shows `recipient_not_allowed`. All of this is checked again at
+  every send. The text is fixed, with no link, and shows the value the alert
+  had when the message was queued. A person's saved address is deleted when
+  their last grant in the tenant is removed.
 - **Budgets.** At most one alert message per rule and channel every 15 minutes,
   40 messages per rule and 60 per environment an hour, and 20 per recipient an
-  hour, counted per recipient. A message over a budget is skipped and shows
-  `skipped_limit`; a message whose outcome is unclear is never sent again.
+  hour, counted per recipient. A channel takes at most 3 test messages an hour,
+  so tests leave the budget to alerts. A message over a budget is skipped and
+  shows `skipped_limit`. A message whose outcome is unclear is never sent
+  again, and a retry goes only to the recipients the earlier attempts didn't
+  reach.
 - **Presets.** Every environment gets the rule "A platform component is
   degraded" once; deleting it doesn't bring it back. Five suggested rules are
   offered to start from.
