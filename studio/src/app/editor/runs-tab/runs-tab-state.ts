@@ -109,6 +109,10 @@ const UNREADABLE = {
   code: "WV-STUDIO-RUN-UNREADABLE",
   message: "Studio can't read this run's state.",
 };
+const VERSION_UNREADABLE = {
+  code: "WV-STUDIO-RUN-VERSION-UNREADABLE",
+  message: "Studio couldn't read the version this run used.",
+};
 
 interface ListTicket {
   generation: number;
@@ -290,6 +294,12 @@ export class RunsTabState {
       this.updateChosen(ticket, {
         error: { code: OTHER_WORKFLOW, message: definition.metadata.name },
       });
+      return;
+    }
+    // Neither the list nor the version says the run is this workflow's: it
+    // could be another's, its steps matched to these by ID only.
+    if (!definition && !summary) {
+      this.updateChosen(ticket, { error: VERSION_UNREADABLE });
       return;
     }
     const data = new RunData(

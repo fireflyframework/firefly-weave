@@ -624,6 +624,25 @@ describe("the chosen run", () => {
     expect(state.chosen()?.overlay).toBeNull();
   });
 
+  it("draws nothing of an unlisted run whose version can't be read", async () => {
+    // The platform has no export of the version the runs used.
+    const { state, host } = await started();
+    // A listed run is this workflow's: it still draws, over the draft.
+    await state.choose(fixtureIds.failed);
+    expect(state.chosen()?.error).toBeNull();
+    expect(state.chosen()?.data).not.toBeNull();
+    // Unlisted, nothing says whose run it is: it could match this
+    // workflow's steps by ID only.
+    host.setWorkflow("refund-approval");
+    await state.choose(fixtureIds.failed);
+    expect(state.chosen()?.error).toEqual({
+      code: "WV-STUDIO-RUN-VERSION-UNREADABLE",
+      message: "Studio couldn't read the version this run used.",
+    });
+    expect(state.chosen()?.data).toBeNull();
+    expect(state.chosen()?.overlay).toBeNull();
+  });
+
   it("applies an answer only to the run, workflow, account and environment it was asked for", async () => {
     const cases: [string, (ready: Setup) => Promise<void> | void][] = [
       [
@@ -825,6 +844,10 @@ describe("the chosen run", () => {
   it("drops a run whose version arrives after the environment changed", async () => {
     const { state, platform, host } = await started();
     const failed = summaryOf(platform.data, fixtureIds.failed);
+    platform.documents.set(
+      failed.workflow.definition_version_id,
+      workflow("1.3.0", {}),
+    );
     platform.hold = (path) => path.endsWith("/export");
     const pending = state.choose(failed.id);
     await settle();
