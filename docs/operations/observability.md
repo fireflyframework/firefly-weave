@@ -319,6 +319,11 @@ each one needs.
   its For time or a minute, whichever is longer. A failed read changes nothing,
   and the first reading after a gap of more than five minutes starts both
   waits again.
+- **Scale.** At the 30-second cadence, the scheduler comes back to every
+  environment within five minutes for about 160 tenants, or about 80 when
+  tenants have nine or more environments. Beyond that, revisits come more than
+  five minutes apart, so both waits start over at every reading, and the server
+  logs the warning "Alert evaluation is behind".
 - **Repeats.** A firing alert notifies again after its repeat interval (at
   least 15 minutes) until someone acknowledges it. An acknowledgement made
   while that cycle is being evaluated can still let one repeat through.

@@ -102,6 +102,13 @@ def condition_met(rule: AlertRuleDraft, value: float | None, samples: int | None
     return _COMPARE[rule.comparator](value, rule.threshold)
 
 
+def reading_gap(state: RuleState, now: datetime) -> timedelta | None:
+    """The time since the rule's last reading, when a reading at ``now`` comes more than GAP_SECONDS after it."""
+    if state.evaluated_at is None or now - state.evaluated_at <= _GAP:
+        return None
+    return now - state.evaluated_at
+
+
 def advance(state: RuleState, rule: AlertRuleDraft, reading: Reading, now: datetime) -> Advance:
     """The rule's next state after one reading taken at ``now``."""
     if isinstance(reading, ReadFailed):
@@ -117,7 +124,7 @@ def advance(state: RuleState, rule: AlertRuleDraft, reading: Reading, now: datet
     )
     reason: Literal["threshold", "no_data"] = "no_data" if no_data else "threshold"
     hold = timedelta(seconds=rule.for_seconds)
-    gap = state.evaluated_at is not None and now - state.evaluated_at > _GAP
+    gap = reading_gap(state, now) is not None
     if state.state == "ok":
         if not met:
             return Advance(evaluated, no_data=no_data)

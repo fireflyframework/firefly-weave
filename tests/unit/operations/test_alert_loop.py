@@ -16,12 +16,14 @@
 
 """The alert loop's traversal under a fake clock: how long a cycle may start environments, what a failing one does
 to the rest, how often it runs, and what it tells the health registry. A fake unit of work checks that signals are
-read with no unit holding the project's lock open; evaluation itself runs on PostgreSQL."""
+read with no unit holding the project's lock open and that a late reading logs that evaluation is behind; evaluation
+itself runs on PostgreSQL."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -40,6 +42,7 @@ from firefly_weave.operations.alert_loop import (
     AlertLoop,
     readable_targets,
 )
+from firefly_weave.operations.alert_states import GAP_SECONDS
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.settings import Settings
@@ -218,15 +221,17 @@ class Result:
 
 
 class Units:
-    """A unit of work that answers the evaluator's statements for one rule and keeps which units are open.
+    """A unit of work that answers the evaluator's statements for its rules and keeps which units are open.
 
     A unit is (mutation, admission); an admitted mutation is the one that holds the project's operation lock.
+    ``reads`` records each signal read, and whether such a unit was open during it.
     """
 
-    def __init__(self, rule: dict) -> None:
-        self.rule = rule
+    def __init__(self, *rules: dict) -> None:
+        self.rules = rules
         self.opened: list[tuple[bool, bool]] = []
         self.open_now: list[tuple[bool, bool]] = []
+        self.reads: list[tuple[str, bool]] = []
 
     def admitted(self) -> bool:
         return any(mutation and admission for mutation, admission in self.open_now)
@@ -260,12 +265,33 @@ class Session:
         if "pg_try_advisory_xact_lock" in sql:
             return Result([{"locked": True}])
         if sql.startswith("SELECT r.id,r.name"):
-            return Result([self.units.rule])
+            return Result(list(self.units.rules))
         if "count(*) AS n FROM alert_rules" in sql:
-            return Result([{"n": 1}])
+            return Result([{"n": len(self.units.rules)}])
         if "RETURNING revision" in sql:
-            return Result([{"revision": self.units.rule["state_revision"] + 1}])
+            return Result([{"revision": 2}])
         return Result([])
+
+
+async def evaluate_once(units: Units, monkeypatch) -> None:
+    """Evaluate the units' rules once, at NOW, with one incident open."""
+
+    class Source:
+        def __init__(self, reader, now) -> None:
+            pass
+
+        async def incidents(self) -> IncidentsSection:
+            units.reads.append(("source", units.admitted()))
+            return IncidentsSection(active=1, opened_24h=1)
+
+    monkeypatch.setattr(alert_loop, "DatabaseSource", Source)
+    loop = AlertLoop(
+        Settings(database_url=DATABASE, scheduler_enabled=False),
+        cast(Any, units),
+        LoopHealth(lambda: NOW),
+        clock=lambda: NOW,
+    )
+    await loop.evaluate(_SchedulerScope(scope(), _CATALOG_AUTHORITY))
 
 
 def incidents_rule() -> dict:
@@ -307,32 +333,32 @@ def incidents_rule() -> dict:
 
 async def test_no_unit_holding_the_project_lock_is_open_while_signals_are_read(monkeypatch):
     units = Units(incidents_rule())
-    reads: list[tuple[str, bool]] = []
-
-    class Source:
-        def __init__(self, reader, now) -> None:
-            pass
-
-        async def incidents(self) -> IncidentsSection:
-            reads.append(("source", units.admitted()))
-            return IncidentsSection(active=1, opened_24h=1)
-
     measure = alert_loop.measure
 
     async def measured(*args, **kwargs):
-        reads.append(("measure", units.admitted()))
+        units.reads.append(("measure", units.admitted()))
         return await measure(*args, **kwargs)
 
-    monkeypatch.setattr(alert_loop, "DatabaseSource", Source)
     monkeypatch.setattr(alert_loop, "measure", measured)
-    loop = AlertLoop(
-        Settings(database_url=DATABASE, scheduler_enabled=False),
-        cast(Any, units),
-        LoopHealth(lambda: NOW),
-        clock=lambda: NOW,
-    )
-    here = scope()
-    await loop.evaluate(_SchedulerScope(here, _CATALOG_AUTHORITY))
-    assert reads == [("measure", False), ("source", False)]
+    await evaluate_once(units, monkeypatch)
+    assert units.reads == [("measure", False), ("source", False)]
     # The rule fired, so a unit holding the project's lock did open, after the reads.
     assert (True, True) in units.opened
+
+
+async def test_a_reading_more_than_five_minutes_after_the_last_logs_that_evaluation_is_behind(monkeypatch, caplog):
+    at_gap = incidents_rule() | {"name": "Read at the gap", "evaluated_at": NOW - timedelta(seconds=GAP_SECONDS)}
+    past_gap = incidents_rule() | {"name": "Read past it", "evaluated_at": NOW - timedelta(seconds=GAP_SECONDS + 12)}
+    caplog.set_level(logging.WARNING, logger=alert_loop.__name__)
+
+    def warnings() -> list[str]:
+        return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+
+    await evaluate_once(Units(at_gap), monkeypatch)
+    assert warnings() == []
+    await evaluate_once(Units(at_gap, past_gap), monkeypatch)
+    # One warning for the environment, with the longest delay and no rule name.
+    assert warnings() == [
+        "Alert evaluation is behind: rules were read up to 312 s after their last reading, more than 300 s, so "
+        "their waits start over"
+    ]

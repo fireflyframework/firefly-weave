@@ -69,7 +69,15 @@ from firefly_weave.operations.alert_signals import (
     Value,
     measure,
 )
-from firefly_weave.operations.alert_states import Advance, ReadFailed, Reading, RuleState, advance
+from firefly_weave.operations.alert_states import (
+    GAP_SECONDS,
+    Advance,
+    ReadFailed,
+    Reading,
+    RuleState,
+    advance,
+    reading_gap,
+)
 from firefly_weave.operations.loop import QuantumIncomplete
 from firefly_weave.operations.loop_health import (
     ALERTS_BUDGET_SECONDS,
@@ -545,8 +553,13 @@ class AlertLoop:
                 logging.getLogger(__name__).error("Alert history pruning failed (%s)", failure_cause(error))
 
     async def _plan(self, authority: _SchedulerScope, now: datetime) -> list[Planned] | None:
-        """Read every enabled rule and its signal in one read-only snapshot; None when another evaluator has it."""
+        """Read every enabled rule and its signal in one read-only snapshot; None when another evaluator has it.
+
+        A reading more than five minutes after a rule's last one restarts its waits; it means the evaluator is behind,
+        so it logs a warning, once for the environment.
+        """
         deadline = self.monotonic() + READ_SECONDS
+        late = timedelta()
         async with scoped_unit(self.uow, authority, deadline, self.monotonic, mutation=False) as tx:
             if not await _locked(tx, authority):
                 return None
@@ -571,7 +584,18 @@ class AlertLoop:
                     planned.append(Planned(row, rule, None))
                     continue
                 reading = await self._read(tx, reads, rule, now, targets)
-                planned.append(Planned(row, rule, advance(_rule_state(row), rule, reading, now), reading))
+                state = _rule_state(row)
+                gap = reading_gap(state, now)
+                if isinstance(reading, Value) and gap is not None:
+                    late = max(late, gap)
+                planned.append(Planned(row, rule, advance(state, rule, reading, now), reading))
+        if late:
+            logging.getLogger(__name__).warning(
+                "Alert evaluation is behind: rules were read up to %d s after their last reading, more than %d s, so "
+                "their waits start over",
+                late.total_seconds(),
+                GAP_SECONDS,
+            )
         return planned
 
     def _readable(
