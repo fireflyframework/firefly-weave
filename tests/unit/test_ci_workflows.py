@@ -160,7 +160,11 @@ def setup_steps(*actions):
 
 
 def runs_for_a_tag(document, job):
-    """Whether the job can run for a tag: its workflow runs on tag pushes or releases, or the job checks for a tag."""
+    """Whether the job can run for a tag: its workflow runs on tag pushes or releases, or the job checks for a tag.
+
+    A manual run (`workflow_dispatch`) can also start on a tag ref, but it is not counted: the workflows that only a
+    manual run puts on a tag (acceptance and docs) publish nothing from a tag, and a tag run reads only caches that its
+    own ref or the default branch wrote."""
     triggers = document["on"]
     if isinstance(triggers, (str, list)):
         triggers = dict.fromkeys([triggers] if isinstance(triggers, str) else triggers)
