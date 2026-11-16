@@ -335,6 +335,8 @@ class _Analyzer:
         self.resolved: dict[tuple[ResourceKind, str], CatalogResource] = {}
         self.checked: dict[tuple[ResourceKind, str], bool] = {}
         self.bundle = {key: item.value for key, item in catalog.schemas.items()}
+        # Platform schema names already refused because the catalog brought its own schema under them.
+        self.refused_schemas: set[str] = set()
         self.ids: dict[str, str] = {}
         self.signals: dict[str, str] = {}
         self.expression_count = self.step_count = 0
@@ -409,18 +411,30 @@ class _Analyzer:
             )
         )
 
-    def platform_schemas(self, document: JsonObject) -> None:
-        """Supply the platform's schemas a definition references; a catalog may not bring its own under their names."""
-        references = platform_references(document)
+    def platform_schemas(self, schema: JsonObject, path: str) -> None:
+        """Supply the platform schemas a checked schema references; a catalog may not bring its own under their names.
+
+        Every schema the analysis checks passes here, the definition's own and those of the resources it uses, so an
+        artifact carries a platform schema exactly when one of its schemas needs it.
+        """
+        for name, at in platform_references(schema).items():
+            brought = self.catalog.schemas.get(name)
+            if brought is None:
+                if ("Schema", name) not in self.resolved:
+                    supplied = FrozenDocument.from_value(cast(JsonObject, platform_schema(name)))
+                    self.bundle[name] = supplied.value
+                    self.resolved[("Schema", name)] = CatalogResource("Schema", name, supplied)
+            elif brought.digest != platform_schema_digests()[name] and name not in self.refused_schemas:
+                self.refused_schemas.add(name)
+                self.issue("RESERVED_SCHEMA", path + at, stage="resolution")
+
+    def refuse_reserved_schemas(self) -> None:
+        """A catalog that brings its own schema under a platform schema's name is refused even where nothing uses it."""
         for name, digest in platform_schema_digests().items():
             brought = self.catalog.schemas.get(name)
-            if brought is not None:
-                if brought.digest != digest:
-                    self.issue("RESERVED_SCHEMA", references.get(name, ""), stage="resolution")
-            elif name in references:
-                supplied = FrozenDocument.from_value(cast(JsonObject, platform_schema(name)))
-                self.bundle[name] = supplied.value
-                self.resolved[("Schema", name)] = CatalogResource("Schema", name, supplied)
+            if brought is not None and brought.digest != digest and name not in self.refused_schemas:
+                self.refused_schemas.add(name)
+                self.issue("RESERVED_SCHEMA", "", stage="resolution")
 
     def freeze_schema(self, schema: JsonObject) -> FrozenDocument:
         measure_value(
@@ -437,6 +451,7 @@ class _Analyzer:
         self.guards.append(RuntimeGuard(path, purpose, self.freeze_schema(schema)))
 
     def schema(self, schema: JsonObject, path: str) -> bool:
+        self.platform_schemas(schema, path)
         issues = validate_schema(schema, self.bundle, limits=self.schema_limits)
         for issue in issues:
             self.add(issue, path)
@@ -1692,6 +1707,8 @@ class _Analyzer:
         definition: FrozenDocument | None,
         graph: tuple[AnalyzedStep, ...] = (),
     ) -> AnalysisResult:
+        if definition is not None:
+            self.refuse_reserved_schemas()
         self.settle_pending()
         issues = list(self.issues)
         if self.omitted_count:
@@ -1761,7 +1778,6 @@ class _Analyzer:
             resource = self.catalog.resolve("Schema", name)
             if resource is not None:
                 self.resolved[("Schema", name)] = resource
-        self.platform_schemas(value)
         # Constructs whose feature is not compiled yet stop here, before budgets and flow analysis read them.
         unsupported = unsupported_uses(value)
         for use in unsupported:

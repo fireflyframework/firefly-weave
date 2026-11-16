@@ -53,6 +53,9 @@ class EventTriggerChecks(Protocol):
 def _names_the_platform_event(checks: EventTriggerChecks, schema: JsonObject) -> bool:
     """Whether the schema is exactly a reference to the platform's own event view, not a catalog's look-alike."""
     supplied = checks.bundle.get(PLATFORM_EVENT_SCHEMA)
+    # The analysis already refuses a catalog that brings its own schema under this name, so the bundle can only hold
+    # the platform's view here. The digest comparison is defense in depth: the shortcut skips the compatibility check,
+    # so it must never apply to bytes other than the platform's own.
     return (
         schema == {"$ref": PLATFORM_EVENT_SCHEMA}
         and supplied is not None

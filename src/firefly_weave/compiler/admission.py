@@ -21,6 +21,7 @@ from typing import cast
 
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.compiler.platform_catalog import platform_schema_bundle
 from firefly_weave.compiler.schema_profile import SchemaLimits
 from firefly_weave.compiler.schemas import _Failure
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -94,7 +95,9 @@ def admit_authoring(
 ) -> None:
     """Unresolved declarations are editable; ambiguous payload-bearing bindings are not."""
     measure_value(document)
-    bundle = {name: value.value for name, value in catalog.schemas.items()}
+    # Platform schemas resolve here as they do in the analysis; a catalog's own schema under a platform name wins
+    # here and is refused by the analysis.
+    bundle = platform_schema_bundle() | {name: value.value for name, value in catalog.schemas.items()}
 
     def schema(value: JsonValue) -> None:
         if not isinstance(value, dict):

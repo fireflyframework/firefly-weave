@@ -23,7 +23,9 @@ profile, replaced by a length bound. The platform builds and validates the real 
 only has to accept every event the model accepts. Its bytes are frozen: artifacts pin it by digest, so a change to the
 event is a new view under a new name, never an edit.
 
-A definition carries a platform schema only when it references one, so every other artifact keeps its bytes.
+An artifact carries a platform schema only when a schema it checks references one, in the definition itself or in a
+resource it uses (an Action, a task capability, a decision table, a called workflow), so every other artifact keeps
+its bytes.
 """
 
 import json
@@ -99,25 +101,50 @@ def platform_schema(name: str) -> JsonObject | None:
     return None if view is None else view()
 
 
+def platform_schema_bundle() -> dict[str, JsonObject]:
+    """Every platform schema by name, for checks that resolve references before the analysis supplies them.
+
+    Such checks add nothing to an artifact, so giving them every platform schema changes no digest.
+    """
+    return {name: view() for name, view in _SCHEMAS.items()}
+
+
 @cache
 def platform_schema_digests() -> Mapping[str, str]:
     return MappingProxyType({name: FrozenDocument.from_value(view()).digest for name, view in _SCHEMAS.items()})
 
 
-def platform_references(document: JsonValue) -> dict[str, str]:
-    """The platform schemas a definition references, each with the path of its first reference in sorted order."""
+# Keywords whose values are data, never schemas, and keywords whose values map names to schemas.
+_DATA_KEYWORDS: Final = frozenset({"const", "default", "enum", "examples"})
+_SCHEMA_MAPS: Final = frozenset({"$defs", "definitions", "dependentSchemas", "patternProperties", "properties"})
+
+
+def platform_references(schema: JsonValue) -> dict[str, str]:
+    """The platform schemas a schema references, each with the path of its first reference in sorted order.
+
+    Only schema positions count: a value under ``const``, ``default``, ``enum`` or ``examples`` is data, so an object
+    there that looks like a reference references nothing. Paths are relative to the schema.
+    """
     found: dict[str, str] = {}
-    stack: list[tuple[JsonValue, str]] = [(document, "")]
+    stack: list[tuple[JsonValue, str]] = [(schema, "")]
     while stack:
         node, path = stack.pop()
-        if isinstance(node, dict):
+        if isinstance(node, list):
+            stack.extend((value, pointer_child(path, str(index))) for index, value in enumerate(node))
+        elif isinstance(node, dict):
             reference = node.get("$ref")
             if isinstance(reference, str):
                 name = reference.partition("#")[0]
                 if name in _SCHEMAS:
                     candidate = pointer_child(path, "$ref")
                     found[name] = min(found.get(name, candidate), candidate)
-            stack.extend((value, pointer_child(path, key)) for key, value in node.items())
-        elif isinstance(node, list):
-            stack.extend((value, pointer_child(path, str(index))) for index, value in enumerate(node))
+            for key, value in node.items():
+                child = pointer_child(path, key)
+                if key in _DATA_KEYWORDS:
+                    continue
+                if key in _SCHEMA_MAPS and isinstance(value, dict):
+                    # The map's keys are names, so a property called $ref is not a reference.
+                    stack.extend((item, pointer_child(child, name)) for name, item in value.items())
+                else:
+                    stack.append((value, child))
     return found

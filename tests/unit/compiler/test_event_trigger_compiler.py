@@ -21,6 +21,7 @@ import json
 from datetime import timedelta, timezone
 from pathlib import Path
 
+import pytest
 import yaml
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -121,6 +122,98 @@ def test_only_the_platforms_own_event_schema_is_the_platform_event():
     assert ("RESERVED_SCHEMA", "/spec/inputSchema/$ref", "error") in findings(result)
     plain = compiled(workflow({}, output={"literal": None}), catalog)
     assert findings(plain) == [("RESERVED_SCHEMA", "", "error")]
+
+
+def caller(*steps, **spec):
+    """A workflow that never names the platform event itself."""
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "order-intake", "version": "1.0.0"},
+        "spec": {"inputSchema": {}, "outputSchema": {}, "steps": list(steps), "output": {"literal": None}, **spec},
+    }
+
+
+def schema_dependencies(result) -> list[tuple[str, str]]:
+    return [
+        (item["reference"], item["digest"]) for item in executable(result)["dependencies"] if item["kind"] == "Schema"
+    ]
+
+
+def errors(result):
+    return [finding for finding in findings(result) if finding[2] == "error"]
+
+
+def test_a_workflow_can_call_a_workflow_that_platform_events_start():
+    called = workflow(output={"literal": None}, callable={})
+    catalog = CatalogSnapshot.from_definitions([load_definition(called)])
+    step = {"id": "react", "kind": "callWorkflow", "uses": "notify-team@1.0.0", "with": {"ref": "/input"}}
+    result = compiled(caller(step), catalog)
+    assert errors(result) == [] and result.ok
+    assert schema_dependencies(result) == [(PLATFORM_EVENT_SCHEMA, VIEW_DIGEST)]
+
+
+ACTION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Action",
+    "metadata": {"name": "record-event", "version": "1.0.0"},
+    "spec": {
+        "implementation": {"kind": "worker", "taskType": "record-event", "taskVersion": "1.0.0"},
+        "sideEffect": "idempotency_key",
+        "timeoutSeconds": 30,
+        "inputSchema": EVENT,
+        "outputSchema": {},
+    },
+}
+TASK = {
+    "taskType": "record-event",
+    "taskVersion": "1.0.0",
+    "inputSchema": EVENT,
+    "outputSchema": {},
+    "sideEffect": "idempotency_key",
+    "timeoutSeconds": 30,
+}
+TABLE = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "DecisionTable",
+    "metadata": {"name": "route-event", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": EVENT,
+        "outputSchema": {"type": "string"},
+        "hitPolicy": "first",
+        "rules": [{"id": "any", "when": {"literal": True}, "output": {"literal": "notify"}}],
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("definition", "tasks", "kind"),
+    [(ACTION, [TASK], "action"), (TABLE, [], "decisionTable")],
+    ids=["action and task capability", "decision table"],
+)
+def test_a_workflow_can_use_a_step_whose_schema_is_the_platform_event(definition, tasks, kind):
+    catalog = CatalogSnapshot.from_definitions([load_definition(definition)], tasks=tasks)
+    reference = f"{definition['metadata']['name']}@1.0.0"
+    result = compiled(caller({"id": "use", "kind": kind, "uses": reference, "with": {"ref": "/input"}}), catalog)
+    assert errors(result) == [] and result.ok
+    assert schema_dependencies(result) == [(PLATFORM_EVENT_SCHEMA, VIEW_DIGEST)]
+
+
+def test_a_schema_that_fixes_values_can_reference_the_platform_event():
+    schema = {"type": "object", "properties": {"event": EVENT, "mode": {"enum": ["notify", "skip"]}}}
+    result = compiled(caller(outputSchema=schema))
+    assert errors(result) == [] and result.ok
+    assert schema_dependencies(result) == [(PLATFORM_EVENT_SCHEMA, VIEW_DIGEST)]
+
+
+def test_a_platform_event_reference_outside_a_schema_adds_no_dependency():
+    lookalike = {"$ref": PLATFORM_EVENT_SCHEMA}
+    result = compiled(caller(outputSchema={"const": lookalike}, output={"literal": lookalike}))
+    assert result.ok and findings(result) == []
+    assert schema_dependencies(result) == []
+    # A property may be called like a data keyword: its schema is still a schema.
+    named = compiled(caller(outputSchema={"properties": {"default": lookalike}}))
+    assert errors(named) == [] and schema_dependencies(named) == [(PLATFORM_EVENT_SCHEMA, VIEW_DIGEST)]
 
 
 def test_the_platform_advertises_platform_event_triggers():
