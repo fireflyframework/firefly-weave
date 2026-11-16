@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import get_args
 from uuid import UUID
 
+import httpx
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -32,7 +33,14 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import NAME_PATTERN
 from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
-from firefly_weave.contracts.lumi import OPERATIONS_KINDS, LumiAskRequest, LumiAttachment, LumiReply
+from firefly_weave.contracts.lumi import (
+    LUMI_REPLY_SCHEMA,
+    OPERATIONS_KINDS,
+    LumiAskRequest,
+    LumiAttachment,
+    LumiConfiguration,
+    LumiReply,
+)
 from firefly_weave.contracts.operations import IncidentView
 from firefly_weave.contracts.operations_summary import AttentionItem, AttentionKind, OperationsSummary
 from firefly_weave.contracts.public import UnavailableResource
@@ -41,6 +49,7 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
 from firefly_weave.operations.incidents import IncidentFacts
 from firefly_weave.operations.lumi_deployments import COLLECTIONS
+from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
 from firefly_weave.operations.lumi_operations import (
     ATTENTION_TITLES,
     CHANGE_REQUEST_FIELDS,
@@ -1146,14 +1155,42 @@ async def test_two_attachments_reach_never_merges(monkeypatch):
         await ask(service, owners, request)
 
 
-async def test_reach_never_reaches_the_gateway(monkeypatch):
+async def test_reach_never_reaches_the_gateway(monkeypatch, tmp_path):
+    # The gateway client's real request body, recorded at its transport: reach, and the IDs the request was asked
+    # with, appear nowhere in it, the request field included.
     owners = Owners()
     owners.summaries = [summary_facts(reach=frozenset({f"targets:{TARGET_ID}", f"approvals:{ITEM_IDS[18]}"}))]
     service, gateway = asker(monkeypatch, owners)
+    bodies = []
+
+    def respond(request):
+        bodies.append(request.content.decode())
+        return httpx.Response(200, json={"answer": "Ready", "proposals": [], "followUps": []})
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(respond),
+    )
+    configuration = LumiConfiguration(
+        revision=1,
+        connection_revision_id=ITEM_IDS[15],
+        profile={
+            "provider": "openai-chat",
+            "model": "fixture",
+            "options": {"max_tokens": 512},
+            "outputSchema": LUMI_REPLY_SCHEMA,
+        },
+    )
+
+    async def send(_configuration, request, attachments, *_, **__):
+        return await client.ask(configuration, request, attachments, {"endpoint": "https://api.openai.com/v1"}, None)
+
+    gateway.ask.side_effect = send
     await ask(service, owners, ask_request("worker", "environment", "incident"))
-    # What the gateway builds the model's prompt from: the message, the history and the shaped context.
-    _, request, attachments, *_ = gateway.ask.await_args.args
-    body = json.dumps([request.message, [item.model_dump() for item in request.history], attachments])
+    [body] = bodies
+    assert "attachments" not in json.loads(body)["request"]
     for secret in (TARGET_ID, ITEM_IDS[18], WORKER_ID, ENVIRONMENT_ID, INCIDENT_ID):
         assert str(secret) not in body and secret.hex not in body
     assert "placement:" not in body and "targets:" not in body and "named:" not in body
