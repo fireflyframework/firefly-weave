@@ -112,6 +112,12 @@ const sameSteps = (
   (before.size === after.size &&
     [...before.keys()].every((id) => after.has(id)));
 
+export interface ExecuteOptions {
+  /** "none": execute without the project's catalog. */
+  catalog?: "none";
+  /** Only test data feeds the steps: the last results stay out, and are replaced. */
+  fresh?: boolean;
+}
 export class ExecutionService {
   /** The execution running now, or null. */
   readonly running = signal<ExecuteTarget | null>(null);
@@ -186,7 +192,7 @@ export class ExecutionService {
 
   async execute(
     target: ExecuteTarget,
-    options: { catalog?: "none" } = {},
+    options: ExecuteOptions = {},
   ): Promise<ExecuteOutcome> {
     if (this.running()) return { kind: "busy" };
     // Everything the answer is fenced on, before the first await.
@@ -203,7 +209,8 @@ export class ExecutionService {
       this.results.set(null);
       this.last.set(null);
     }
-    const previous = this.results();
+    // Only test data feeds the steps when asked (a run's data reproduced as it was).
+    const previous = options.fresh ? null : this.results();
     const testData = this.host.testData();
     const sampled = testData.input?.value === undefined;
     let definitions: JsonObject[];

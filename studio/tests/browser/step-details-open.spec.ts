@@ -22,6 +22,7 @@ import {
   insertStep,
   newWorkflow,
   offline,
+  showView,
   sourceText,
   withClassicDesigner,
 } from "./support";
@@ -448,7 +449,7 @@ for (const size of sizes) {
       page,
     }) => {
       const details = await openStepFixture(page);
-      await page.getByRole("tab", { name: "Outline", exact: true }).click();
+      await showView(page, "Outline");
       const row = page.locator('[data-outline="lookup"]');
       await row.focus();
       await row.press("Enter");

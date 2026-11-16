@@ -397,6 +397,25 @@ describe("the execution service", () => {
     ).toEqual({});
   });
 
+  it("with only test data, the last results feed no step and aren't kept on", async () => {
+    const { service, sent } = fixture();
+    await service.open("d-1");
+    const first = service.execute({ mode: "workflow" });
+    await settle();
+    sent[0].answer(RESPONSE);
+    await first;
+    expect(Object.keys(service.results()?.steps ?? {}).length).toBeGreaterThan(
+      0,
+    );
+    // A run's data reproduced as it was: no step takes an earlier result.
+    const fresh = service.execute({ mode: "workflow" }, { fresh: true });
+    await settle();
+    expect((sent[1].body as { mocks: object }).mocks).toEqual({});
+    sent[1].answer({ ...RESPONSE, trace: [] });
+    expect((await fresh).kind).toBe("done");
+    expect(service.results()?.steps).toEqual({});
+  });
+
   it("says the host took too long instead of retrying it as busy", async () => {
     const { service, sent } = fixture();
     await service.open("d-1");

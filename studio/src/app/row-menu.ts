@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // A row's "⋯" menu: secondary and destructive row actions. A menu button
 // with arrow keys, Home/End, Escape (focus returns to the button) and Tab
 // (closes). The list is in the top layer, so a scrolling table never
-// clips it. Used by lazily loaded views only.
+// clips it. A menu whose items say whether they are checked is a choice:
+// radio items, a check on the chosen one, and it opens on that one. Used
+// by lazily loaded views only.
 import {
   Component,
   ElementRef,
@@ -29,7 +31,7 @@ import {
   signal,
   viewChild,
 } from "@angular/core";
-import { Icon } from "./icon";
+import { Icon, type IconSize } from "./icon";
 import { AnchoredPopover, pageOptionIndex } from "./forms/ui/anchored-popover";
 
 export interface RowMenuItem {
@@ -39,6 +41,11 @@ export interface RowMenuItem {
   /** Shown in the danger tone; for removals. */
   danger?: boolean;
   disabled?: boolean;
+  /**
+   * Set on every item of a choice: the item is a radio item, and the checked
+   * one shows a check. Left out, the item is a plain menu item.
+   */
+  checked?: boolean;
   run: () => void;
 }
 
@@ -65,7 +72,7 @@ let sequence = 0;
       (click)="toggleMenu()"
       (keydown)="toggleKey($event)"
     >
-      <weave-icon [name]="icon()" [size]="20" />{{ text() }}
+      <weave-icon [name]="icon()" [size]="iconSize()" />{{ text() }}
     </button>
     @if (open()) {
       <div
@@ -81,7 +88,10 @@ let sequence = 0;
         @for (item of items(); track item.label) {
           <button
             type="button"
-            role="menuitem"
+            [attr.role]="
+              item.checked === undefined ? 'menuitem' : 'menuitemradio'
+            "
+            [attr.aria-checked]="item.checked ?? null"
             tabindex="-1"
             [class.danger]="item.danger"
             [attr.aria-disabled]="item.disabled ? 'true' : null"
@@ -90,6 +100,9 @@ let sequence = 0;
             <span>{{ item.label }}</span>
             @if (item.detail) {
               <small>{{ item.detail }}</small>
+            }
+            @if (item.checked) {
+              <weave-icon name="check" [size]="16" />
             }
           </button>
         }
@@ -132,6 +145,20 @@ let sequence = 0;
         font: var(--type-caption);
         color: var(--muted);
       }
+      /* A choice's items keep a 16 px column at the right for the check, so
+         their labels line up whichever is checked. */
+      .row-menu-list button[role="menuitemradio"] {
+        grid-template-columns: minmax(0, 1fr) 16px;
+        align-items: center;
+        column-gap: var(--space-3);
+      }
+      .row-menu-list button[role="menuitemradio"] > :not(weave-icon) {
+        grid-column: 1;
+      }
+      .row-menu-list button[role="menuitemradio"] > weave-icon {
+        grid-column: 2;
+        grid-row: 1;
+      }
       .row-menu-list button.danger {
         color: var(--danger-ink);
       }
@@ -146,6 +173,8 @@ export class RowMenu {
   items = input<RowMenuItem[]>([]);
   /** The icon on the toggle; "more" (⋯) unless a menu needs another. */
   icon = input("more");
+  /** The toggle icon's size: 20 px, or 16 px beside text that names a choice. */
+  iconSize = input<IconSize>(20);
   /** Visible text on the toggle beside the icon; none by default. */
   text = input("");
   tabIndex = input(0);
@@ -158,9 +187,13 @@ export class RowMenu {
   private entries() {
     return [
       ...this.host.nativeElement.querySelectorAll<HTMLElement>(
-        '[role="menuitem"]',
+        '[role="menuitem"], [role="menuitemradio"]',
       ),
     ];
+  }
+  /** The checked item's place in a choice; -1 in a plain menu. */
+  private checkedIndex() {
+    return this.items().findIndex((item) => item.checked);
   }
   private focusItem(index: number) {
     afterNextRender(
@@ -175,13 +208,15 @@ export class RowMenu {
   toggleMenu() {
     if (this.open()) return this.close();
     this.open.set(true);
-    this.focusItem(0);
+    this.focusItem(Math.max(this.checkedIndex(), 0));
   }
   toggleKey(event: KeyboardEvent) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     this.open.set(true);
-    this.focusItem(event.key === "ArrowDown" ? 0 : -1);
+    // A choice opens on what is chosen; a plain menu on its first or last item.
+    const checked = this.checkedIndex();
+    this.focusItem(checked >= 0 ? checked : event.key === "ArrowDown" ? 0 : -1);
   }
   menuKey(event: KeyboardEvent) {
     const entries = this.entries();

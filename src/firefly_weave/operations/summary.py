@@ -334,6 +334,22 @@ class _Reach:
     approvals: tuple[UUID, ...] | None
     alerts: bool = False
 
+    def grants(self) -> frozenset[str]:
+        """The reach as named grants: ``incidents``, ``runs``, and ``targets:*`` or ``targets:<id>`` per target,
+        likewise for ``approvals``. An explanation compares them between its two reads."""
+        names: set[str] = {name for name, held in (("incidents", self.incidents), ("runs", self.runs)) if held}
+        for prefix, ids in (("targets", self.targets), ("approvals", self.approvals)):
+            names |= {f"{prefix}:*"} if ids is None else {f"{prefix}:{identifier}" for identifier in ids}
+        return frozenset(names)
+
+
+@dataclass(frozen=True)
+class SummaryFacts:
+    """The summary as this caller may read it, and the reach that decided which sections it filled."""
+
+    summary: OperationsSummary
+    reach: frozenset[str]
+
 
 def _intersect(left: tuple[UUID, ...] | None, right: tuple[UUID, ...] | None) -> tuple[UUID, ...] | None:
     if left is None:
@@ -488,6 +504,10 @@ class OperationsSummaryService:
         self.native, self.monotonic = native, monotonic
 
     async def read(self, actor: Principal, scope: Scope, *, context: AuditContext) -> OperationsSummary:
+        return (await self.explanation_facts(actor, scope, context=context)).summary
+
+    async def explanation_facts(self, actor: Principal, scope: Scope, *, context: AuditContext) -> SummaryFacts:
+        """The summary as ``read`` returns it, with the reach that decided which sections it filled."""
         if scope.environment_id is None:
             raise AccessDenied()
         self.authorization.require(actor, scope, "status.read", context=context)
@@ -520,7 +540,7 @@ class OperationsSummaryService:
             attention = await section(lambda reader: self._attention(reader, reach))
             # The last day's runs from run statistics: status.read is all it needs.
             runs_24h = await section(lambda reader: last_day(reader.tx, observed_at))
-        return OperationsSummary(
+        summary = OperationsSummary(
             observed_at=observed_at,
             api=self._api(scope),
             health=self._health(latency),
@@ -532,6 +552,7 @@ class OperationsSummaryService:
             runs_24h=runs_24h,
             alerts=alerts,
         )
+        return SummaryFacts(summary, reach.grants())
 
     async def telemetry(self, actor: Principal, scope: Scope, *, context: AuditContext) -> OperationsTelemetry:
         """Whether telemetry is exported and to which collector hosts; never headers, credentials or full endpoints."""

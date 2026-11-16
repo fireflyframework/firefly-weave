@@ -292,3 +292,40 @@ describe("the decision grid's keys", () => {
     }
   });
 });
+
+describe("the runs list's keys", () => {
+  it("binds each runs list key once and lists them under Runs", async () => {
+    const { runsSheet } = await import(
+      "../src/app/editor/state/canvas-commands"
+    );
+    const expected: [string, string][] = [
+      ["ArrowDown", "nextRun"],
+      ["ArrowUp", "previousRun"],
+      ["Home", "firstRun"],
+      ["End", "lastRun"],
+      ["Enter", "showRun"],
+      ["?", "showShortcuts"],
+    ];
+    for (const platform of platforms) {
+      for (const [combo, command] of expected)
+        expect(
+          commandFor(combo, "runs", { platform }),
+          `${platform} ${combo}`,
+        ).toBe(command);
+      const sheet = runsSheet(platform);
+      const runs = sheet.find((section) => section.title === "Runs");
+      const byLabel = (a: { label: string }, b: { label: string }) =>
+        a.label.localeCompare(b.label);
+      expect([...(runs?.entries ?? [])].sort(byLabel)).toEqual(
+        [
+          { keys: ["↑"], label: "Previous run" },
+          { keys: ["↓"], label: "Next run" },
+          { keys: ["Home"], label: "First run" },
+          { keys: ["End"], label: "Last run" },
+          { keys: ["Enter"], label: "Show the run on the canvas" },
+          { keys: ["?"], label: "Show keyboard shortcuts" },
+        ].sort(byLabel),
+      );
+    }
+  });
+});

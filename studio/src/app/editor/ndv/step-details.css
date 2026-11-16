@@ -848,3 +848,128 @@ weave-issues-indicator {
   border-left: 0;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
+
+/* Run mode: the run's chip and its iterations beside the breadcrumb, and
+   the read-only note at the top of Parameters. */
+.sd-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--info-bd);
+  border-radius: var(--radius-pill);
+  background: var(--info-bg);
+  color: var(--info-ink);
+  font: var(--type-caption);
+  white-space: nowrap;
+  flex: none;
+}
+.sd-iteration {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  font: var(--type-label);
+  min-width: 0;
+}
+.sd-iteration select {
+  min-height: var(--control-sm);
+  min-width: 0;
+  font: var(--type-label);
+}
+.sd-run-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin: var(--space-2) var(--space-4) 0;
+  padding: 6px 6px 6px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  font: var(--type-small);
+}
+.sd-run-note > weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.sd-run-note button {
+  margin-left: auto;
+  flex: none;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .sd-iteration select {
+    min-height: var(--control-touch);
+  }
+}
+
+/* On the Runs tab each field reads as its value: no field box, no mode
+   switch, no menu, no chevron; the way it is given reads as text. Mapping
+   pills and their "= value" preview stay, and so does Open. The doubled
+   class outranks the fields' own component styles, which load later. */
+.step-details.step-details[data-run-mode]
+  :is(.param-mode, .param-menu, .choice-field > button) {
+  display: none;
+}
+.step-details.step-details[data-run-mode]
+  :is(
+    .param-input,
+    .choice-field,
+    button.ref-pill-button,
+    .param-json,
+    .formula-control
+  ),
+.step-details.step-details[data-run-mode]
+  :is(.param-input, button.ref-pill-button):disabled {
+  background: var(--sunken);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  opacity: 1;
+  cursor: default;
+}
+.step-details.step-details[data-run-mode] .choice-field input:disabled {
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  cursor: default;
+}
+.step-details.step-details[data-run-mode] .param-resource-modes {
+  border: 0;
+  background: none;
+  padding: 0;
+}
+/* The segments' drawn faces and frame go with the switch. */
+.step-details.step-details[data-run-mode] .param-resource-modes::before,
+.step-details.step-details[data-run-mode] .param-resource-modes button::before,
+.step-details.step-details[data-run-mode] .param-resource-modes button::after {
+  display: none;
+}
+.step-details.step-details[data-run-mode]
+  .param-resource-modes
+  [aria-checked="false"] {
+  display: none;
+}
+.step-details.step-details[data-run-mode]
+  .param-resource-modes
+  [aria-checked="true"]:is(*, :disabled) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font: var(--type-caption);
+}
+/* A run's step opens with focus on its Output pane, ringed whole. The
+   neighbor steps' buttons stay off the panes' edges: Previous and Next in
+   the top bar move between steps. */
+.step-details[data-run-mode] [data-region="output"]:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.step-details[data-run-mode] .sd-neighbors {
+  display: none;
+}

@@ -25,6 +25,7 @@ import {
   sourceText,
   closeSheet,
   lookupAction,
+  showView,
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction } from "./integrations-po";
@@ -113,10 +114,12 @@ for (const viewport of [
         designer.inspector.locator('[data-field="durationSeconds"]'),
       ).toContainText("Enter a positive number of minutes.");
       await closeSheet(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
-      await expect(
-        page.getByRole("tab", { name: "Designer", exact: true }),
-      ).toHaveAttribute("aria-selected", "true");
+      await showView(page, "Source");
+      // Still the Designer (its tab names the view at every width).
+      await expect(page.locator("#editor-view")).toHaveAttribute(
+        "aria-labelledby",
+        "view-tab-designer",
+      );
       await expect(
         page.getByText(
           "Fix the invalid fields before continuing. Your edits are still here.",
@@ -195,7 +198,7 @@ for (const viewport of [
       expect(parse(await sourceText(page)).spec.steps[0].uses).toBe(
         "sql.lookup@1.0.0",
       );
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       await expect(
         page.getByRole("button", { name: "Apply changes", exact: true }),
       ).toBeVisible();

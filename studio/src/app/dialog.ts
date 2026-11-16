@@ -271,6 +271,8 @@ export interface DialogOptions {
    * The dialog then starts on Cancel, as a destructive confirmation does.
    */
   alternateLabel?: string;
+  /** Starts on the main answer even beside an alternate one, when the main answer loses nothing. */
+  startOnConfirm?: boolean;
   danger?: boolean;
   fields?: DialogField[];
 }
@@ -347,9 +349,19 @@ export class DialogService {
         (dismiss)="dialogs.settle(null)"
       >
         <form class="dialog-form" (submit)="submit($event, request)">
-          <p [id]="messageId" class="dialog-message">
-            {{ request.options.message }}
-          </p>
+          <!-- A blank line in the message starts a paragraph. -->
+          @let paragraphs = paragraphsOf(request);
+          @if (paragraphs.length > 1) {
+            <div [id]="messageId" class="dialog-message">
+              @for (paragraph of paragraphs; track $index) {
+                <p>{{ paragraph }}</p>
+              }
+            </div>
+          } @else {
+            <p [id]="messageId" class="dialog-message">
+              {{ request.options.message }}
+            </p>
+          }
           @for (field of request.options.fields ?? []; track field.name) {
             <label
               >{{ field.label }}
@@ -429,8 +441,13 @@ export class DialogHost {
   }
   /** A destructive answer anywhere in a question without fields: start on Cancel. */
   startsOnCancel(request: DialogRequest) {
-    const { fields, danger, alternateLabel } = request.options;
-    return !fields?.length && (!!danger || !!alternateLabel);
+    const { fields, danger, alternateLabel, startOnConfirm } = request.options;
+    return (
+      !fields?.length && (!!danger || (!!alternateLabel && !startOnConfirm))
+    );
+  }
+  paragraphsOf(request: DialogRequest): string[] {
+    return request.options.message.split(/\n\s*\n/);
   }
   hintId(field: DialogField) {
     return `${this.messageId}-${field.name}-hint`;

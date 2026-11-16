@@ -50,9 +50,14 @@ export interface ProfileValidation {
 }
 export class ApiError extends Error {
   readonly plain: PlainError;
+  /**
+   * @param retryAfter the platform's `Retry-After` in seconds, when it sent
+   * one as a number of seconds
+   */
   constructor(
     public status: number,
     public detail: unknown,
+    readonly retryAfter?: number,
   ) {
     const plain = describeResponse(status, detail);
     super(plain.message);
@@ -74,6 +79,11 @@ export const capacityRefusal = (status: number, code: string) =>
 const capacityAttempts = 4;
 /** The longest pause, in seconds, before a rejected request is sent again. */
 const longestPause = 5;
+/** `Retry-After` as a number of seconds; undefined when missing or written another way. */
+const retryAfterSeconds = (header: string | null): number | undefined =>
+  header !== null && /^\s*\d+(?:\.\d+)?\s*$/.test(header)
+    ? Number(header)
+    : undefined;
 /** `Retry-After` in seconds, kept between a quarter second and the longest pause. */
 const retryDelay = (header: string | null) => {
   const seconds = Number(header);
@@ -205,7 +215,11 @@ export class StudioApi {
         scoped?.dispose();
       }
       if (response.ok) return value as T;
-      const error = new ApiError(response.status, value);
+      const error = new ApiError(
+        response.status,
+        value,
+        retryAfterSeconds(response.headers.get("Retry-After")),
+      );
       if (
         safe &&
         attempt < capacityAttempts &&

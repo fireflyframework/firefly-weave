@@ -28,6 +28,23 @@ export interface CanvasRun {
   /** Steps it finished. */
   done: readonly string[];
 }
+/**
+ * A run that happened, drawn on the Runs tab over the open draft: the steps
+ * that differ from the version it used, and why steps failed.
+ */
+export interface RecordedRun extends CanvasRun {
+  mode: "real";
+  /** Steps changed since the run's version. */
+  changed: readonly string[];
+  /** Steps the run's version didn't have. */
+  added: readonly string[];
+  /** Step ID to the error code it failed with. */
+  failures: Readonly<Record<string, string>>;
+  /** Step ID to how long it had been at work when the run was read (ms). */
+  runningFor?: Readonly<Record<string, number>>;
+}
+export const isRecordedRun = (run: CanvasRun | null): run is RecordedRun =>
+  !!run && "failures" in run;
 export type TileRun = "live" | "waiting" | "done" | "failed" | null;
 export type EdgeRun = "idle" | "live" | "taken" | "skipped";
 export const ENDED_STATUSES: readonly string[] = [
@@ -99,10 +116,120 @@ export function edgeRun(
     (edge.leaves === null || reached(edge.leaves)) &&
     (edge.enters === null || here(edge.enters));
   const ended = runEnded(run);
-  return taken ? (ended ? "taken" : "live") : ended ? "skipped" : "idle";
+  if (taken) return ended ? "taken" : "live";
+  if (!ended) return "idle";
+  // A run that happened marks only the ways a finished step didn't take:
+  // edges out of a failed step, or on from a step it never reached, stay
+  // plain. A step new in the draft wasn't there to reach: the run went past
+  // it, so both its edges are dashed. A simulation dashes the whole path it
+  // didn't take.
+  if (
+    run.mode === "real" &&
+    edge.leaves !== null &&
+    !reached(edge.leaves) &&
+    !(isRecordedRun(run) && run.added.includes(edge.leaves))
+  )
+    return "idle";
+  return "skipped";
 }
 
 /** The live pulse plays only while a real run is followed. */
 export function pulses(state: TileRun, run: CanvasRun | null): boolean {
   return run?.mode === "real" && (state === "live" || state === "waiting");
+}
+
+export interface FrameBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/** The zooms the Runs tab tries, largest first: 100% to 60% in 2% steps. */
+const FRAME_ZOOMS = Array.from({ length: 21 }, (_, i) => (100 - 2 * i) / 100);
+/** On a canvas 768 px wide or more, a whole run may go down to 55%. */
+const WIDE_FRAME_ZOOMS = [0.59, 0.58, 0.57, 0.56, 0.55];
+
+/**
+ * How the Runs tab frames a run in the visible canvas area: the largest zoom
+ * from 100% down to 60%, in 2% steps, at which the workflow's outline (all
+ * that is drawn: tiles, badges, the text of their labels) fits with 8 px to
+ * spare on each side, centered across and down; on a canvas 768 px wide or
+ * more, also 59% down to 55%, so a run that misses by a little still shows
+ * whole. The outline may depend on the zoom (labels grow as it shrinks).
+ * When nothing fits, at 60%: each direction where the outline fits is
+ * centered; in a direction where it is larger, `step` is centered and the
+ * pan then stops before either edge of the outline comes inside the area,
+ * so no room is left empty while the workflow goes on beyond the other edge.
+ */
+export function frameRun(
+  workflow: FrameBox | ((zoom: number) => FrameBox),
+  step: FrameBox | null,
+  area: { width: number; height: number },
+): { zoom: number; pan: { x: number; y: number } } {
+  const outlineAt = typeof workflow === "function" ? workflow : () => workflow;
+  const zooms =
+    area.width >= 768 ? [...FRAME_ZOOMS, ...WIDE_FRAME_ZOOMS] : FRAME_ZOOMS;
+  for (const zoom of zooms) {
+    const outline = outlineAt(zoom);
+    // A hair of tolerance: 1,400 × 0.56 is 784.0000000000001 in floating point.
+    if (
+      outline.width * zoom + 16 <= area.width + 1e-6 &&
+      outline.height * zoom + 16 <= area.height + 1e-6
+    )
+      return {
+        zoom,
+        pan: {
+          x: (area.width - outline.width * zoom) / 2 - outline.x * zoom,
+          y: (area.height - outline.height * zoom) / 2 - outline.y * zoom,
+        },
+      };
+  }
+  const zoom = 0.6;
+  const outline = outlineAt(zoom);
+  const axis = (
+    start: number,
+    size: number,
+    focusStart: number,
+    focusSize: number,
+    room: number,
+  ) => {
+    if (size * zoom <= room) return (room - size * zoom) / 2 - start * zoom;
+    const centered = (room - focusSize * zoom) / 2 - focusStart * zoom;
+    // The outline's near edge stays at or before the area's, its far edge at or after.
+    return Math.min(
+      -start * zoom,
+      Math.max(room - (start + size) * zoom, centered),
+    );
+  };
+  const focus = step ?? outline;
+  return {
+    zoom,
+    pan: {
+      x: axis(outline.x, outline.width, focus.x, focus.width, area.width),
+      y: axis(outline.y, outline.height, focus.y, focus.height, area.height),
+    },
+  };
+}
+
+/**
+ * The step a run is framed on: where it failed, else where it is, else the
+ * last step it finished, else the trigger. `tiles` are in the canvas's order.
+ */
+export function framedStep(
+  run: RecordedRun,
+  tiles: readonly string[],
+): string | null {
+  const states = tiles.map((id) => tileRun(id, run));
+  const at = (wanted: (state: TileRun) => boolean) => {
+    const index = states.findIndex(wanted);
+    return index < 0 ? null : tiles[index];
+  };
+  const lastDone = states.lastIndexOf("done");
+  return (
+    at((state) => state === "failed") ??
+    at((state) => state === "live" || state === "waiting") ??
+    (lastDone >= 0 ? tiles[lastDone] : null) ??
+    tiles.find((id) => id.startsWith("$trigger")) ??
+    null
+  );
 }

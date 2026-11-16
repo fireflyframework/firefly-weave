@@ -237,3 +237,29 @@ describe("tile words", () => {
     expect(triggerSubtitle(workflow)).toBe("3 fields");
   });
 });
+
+describe("a run that happened, on the Runs tab", () => {
+  it("a step changed since the run says so, after a failure", () => {
+    expect(tileBadge(facts({ changed: true, run: "done" }))).toEqual({
+      kind: "changed",
+      tone: "info",
+      icons: ["stale"],
+      text: "Changed since this run",
+    });
+    expect(tileBadge(facts({ changed: true, run: "failed" }))?.kind).toBe(
+      "failed",
+    );
+    expect(tileBadge(facts({ changed: true, run: null }))?.kind).toBe(
+      "changed",
+    );
+  });
+
+  it("a step added since the run says it's new in this draft", () => {
+    expect(tileBadge(facts({ added: true }))).toEqual({
+      kind: "added",
+      tone: "info",
+      icons: ["plus"],
+      text: "New in this draft",
+    });
+  });
+});

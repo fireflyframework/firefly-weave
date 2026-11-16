@@ -115,6 +115,59 @@ test("the decision grid stays out of the first page and under its chunk budget",
   expect(gzipped(grid[0])).toBeLessThanOrEqual(GRID_BUDGET);
 });
 
+test("the editor's shortcut table loads with the editor, not with the first page", () => {
+  // A label only the shortcut table holds.
+  const marker = "Extend the selection downstream";
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  const holding = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+  );
+  expect(holding).toHaveLength(1);
+  expect(first).not.toContain(holding[0]);
+});
+
+test("the Runs tab's code stays out of the first page", () => {
+  // Copy only the Runs tab's list holds.
+  const marker = "Runs live on a platform.";
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  const holding = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+  );
+  expect(holding).toHaveLength(1);
+  expect(first).not.toContain(holding[0]);
+});
+
+/** The Runs tab's list chunk, at most (gzip). */
+const RUNS_BUDGET = 40_960;
+
+test("the Runs tab's chunk stays under its budget, out of the first page", () => {
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(
+    (match) => match[1],
+  );
+  // The list's own element name lives only in its chunk.
+  const runs = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes("weave-runs-list"),
+  );
+  expect(runs).toHaveLength(1);
+  expect(first).not.toContain(runs[0]);
+  const size = gzipped(runs[0]);
+  console.log(JSON.stringify({ runsChunkGzip: size }));
+  expect(size).toBeLessThanOrEqual(RUNS_BUDGET);
+});
+
 test("the designer opens once the test data service loads, and step details read it", async ({
   page,
 }) => {

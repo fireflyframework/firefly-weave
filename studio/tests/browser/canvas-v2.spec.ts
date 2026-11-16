@@ -25,7 +25,7 @@ import {
   vendorPayment,
   type CanvasPage,
 } from "./canvas-po";
-import { newWorkflow, offline, withClassicDesigner } from "./support";
+import { newWorkflow, offline, showView, withClassicDesigner } from "./support";
 
 /** A step ID of 60 characters: too long for two lines at any zoom. */
 const SIXTY_CHARACTERS =
@@ -601,9 +601,9 @@ test.describe("the left-to-right canvas", () => {
 
   test("keeps Outline and Source working", async ({ page }) => {
     const canvas = await openWorkflow(page);
-    await page.getByRole("tab", { name: "Outline", exact: true }).click();
+    await showView(page, "Outline");
     await page.getByRole("treeitem", { name: /pay-vendor/ }).click();
-    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await showView(page, "Designer");
     await canvas.ready();
     await expect(canvas.tileBody("pay-vendor")).toHaveAttribute(
       "aria-pressed",

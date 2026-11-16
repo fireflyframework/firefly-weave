@@ -34,6 +34,8 @@ import {
   scaledMs,
 } from "./execute-calibration";
 import { executions, openExecuteWorkflow, pinSample } from "./execute-po";
+import { openRunsTab, runFixture, type RunFixture } from "./runs-po";
+import type { StepFact } from "../../src/app/operate/run-contracts";
 import { withClassicDesigner } from "./support";
 
 /** One frame at 60 Hz, in milliseconds. */
@@ -648,5 +650,139 @@ test(
       contentType: "application/json",
     });
     expect(measurement.scaledMs).toBeLessThanOrEqual(EXECUTE_BUDGET_MS);
+  },
+);
+
+/** Choosing a run of a 200-step workflow to its last step's mark, on a runner as fast as the reference. */
+const RUN_DRAW_BUDGET_MS = 500;
+/** Timed choices after one warm-up; the median is the result. */
+const RUN_DRAW_CHOICES = 6;
+
+test(
+  "a run of a 200-step workflow draws on the canvas quickly",
+  { tag: "@performance" },
+  async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const ids = Array.from({ length: 200 }, (_, index) => `t${index}`);
+    const workflow = {
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "invoice-approval", version: "1.3.0" },
+      spec: {
+        inputSchema: { type: "object" },
+        outputSchema: { type: "object" },
+        steps: ids.map((id, index) => ({
+          id,
+          kind: "transform",
+          value: index
+            ? { ref: `/steps/t${index - 1}/output` }
+            : { literal: { n: 0 } },
+        })),
+        output: { literal: {} },
+      },
+    };
+    const fact = (id: string, status: StepFact["status"]): StepFact => ({
+      node_id: id,
+      instance_key: "",
+      iteration: [],
+      kind: "transform",
+      status,
+      scheduled_at: null,
+      started_at: null,
+      ended_at: null,
+      duration_ms: null,
+      queue_wait_ms: null,
+      attempts: 1,
+      worker_id: null,
+      error_code: status === "failed" ? "BAD_VALUE" : null,
+      child_run_id: null,
+      log_entries: 0,
+      ...(status === "succeeded" ? { output: { n: 0 } } : {}),
+    });
+    // Two runs of it: one finished every step, the other failed at the last.
+    const done = runFixture("retry");
+    const failed = runFixture("failed");
+    const runs: RunFixture[] = [
+      { ...done, facts: ids.map((id) => fact(id, "succeeded")) },
+      {
+        ...failed,
+        summary: {
+          ...failed.summary,
+          failed_step: {
+            node_id: "t199",
+            instance_key: "t199",
+            error_code: "BAD_VALUE",
+          },
+        },
+        facts: ids.map((id) =>
+          fact(id, id === "t199" ? "failed" : "succeeded"),
+        ),
+      },
+    ];
+    const { runs: tab } = await openRunsTab(page, {
+      runs,
+      workflow,
+      before: () =>
+        page.route("**/projects/*/workflows/*/export", (route) =>
+          route.fulfill({ json: { document: workflow } }),
+        ),
+    });
+    await expect(tab.rows).toHaveCount(runs.length + 1);
+    // The runner's speed, by the formula gate's calibration and reference.
+    const calibration = await calibrateFormulaWork(page, {
+      text: "{{ input.customerId }}",
+      context: { input: { customerId: "c-1042" }, steps: {} },
+      features: [],
+      ...FORMULA_CALIBRATION,
+    });
+    expect(calibration.evaluated).toBe(FORMULA_CALIBRATION.rounds);
+    const last = tab.canvas.locator('.tile-node[data-tile="t199"] .tile-badge');
+    const times: number[] = [];
+    for (let choice = 0; choice <= RUN_DRAW_CHOICES; choice++) {
+      const run = runs[choice % 2];
+      const started = await page.evaluate(() => performance.now());
+      await tab.row(run.summary.id).click();
+      await expect(last).toHaveAttribute(
+        "data-tone",
+        choice % 2 ? "danger" : "success",
+        { timeout: 10_000 },
+      );
+      // Drawn means on screen: one painted frame after the mark.
+      await page.evaluate(
+        () =>
+          new Promise<void>((done) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => done())),
+          ),
+      );
+      const ms = (await page.evaluate(() => performance.now())) - started;
+      // The first choice loads the run's code and warms the page.
+      if (choice) times.push(ms);
+    }
+    const sorted = [...times].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const measured = scaledMs(
+      median,
+      calibration.medianMs,
+      FORMULA_CALIBRATION_REFERENCE_MS,
+      FORMULA_MAX_SPEED_ALLOWANCE,
+    );
+    const measurement = {
+      platform: platform(),
+      arch: arch(),
+      cpu: cpus()[0]?.model,
+      steps: 200,
+      timesMs: times.map((ms) => Math.round(ms)),
+      ...measured,
+    };
+    await info.attach("run-draw-measurement", {
+      body: JSON.stringify(measurement),
+      contentType: "application/json",
+    });
+    console.log(JSON.stringify(measurement));
+    expect(
+      measured.scaledMs,
+      "choosing a run to its last step's mark, scaled to the reference runner",
+    ).toBeLessThanOrEqual(RUN_DRAW_BUDGET_MS);
   },
 );

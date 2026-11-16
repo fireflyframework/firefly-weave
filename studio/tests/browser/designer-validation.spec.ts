@@ -27,6 +27,7 @@ import {
   connected,
   newWorkflow,
   offline,
+  showView,
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
@@ -139,7 +140,7 @@ for (const viewport of [
       await expect(panel(page)).toContainText(
         "Checked locally — Validate to check against the project",
       );
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const started = Date.now();
       await page
         .getByRole("textbox", { name: "Workflow source" })
@@ -157,7 +158,7 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Apply changes", exact: true })
         .click();
-      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await showView(page, "Designer");
       await expect(page.locator('[data-step="b"]')).toHaveClass(
         /\bhas-error\b/,
       );
@@ -178,7 +179,7 @@ for (const viewport of [
       const sources = await localChecks(page);
       await newWorkflow(page);
       await expect.poll(() => sources.length).toBe(1);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const box = page.getByRole("textbox", { name: "Workflow source" });
       await box.click();
       await page.keyboard.press("ControlOrMeta+End");
@@ -528,7 +529,7 @@ for (const viewport of [
             },
       );
       await newWorkflow(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       // Typed, never applied: the suggestion belongs to this text.
       await page.getByRole("textbox", { name: "Workflow source" }).fill(
         workflow([

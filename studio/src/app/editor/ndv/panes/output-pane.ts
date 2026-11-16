@@ -59,6 +59,11 @@ import {
 import type { FormSession } from "../params/form-session";
 import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
+import { OMISSION_WORDS } from "../../../operate/run-contracts";
+import { shortId } from "../../../format";
+import { instanceStep } from "../../state/instance-keys";
+import { isRecordedRun } from "../../canvas/run-state";
+import { RunStepLogs } from "./run-step-logs";
 
 @Component({
   selector: "weave-output-pane",
@@ -72,6 +77,7 @@ import { ndvRegistry, type Json } from "../registry";
     PinnedBanner,
     OutputEditor,
     ScriptEditor,
+    RunStepLogs,
   ],
   template: `@let none = noOutput();
     @let pin = pinned();
@@ -121,8 +127,24 @@ import { ndvRegistry, type Json } from "../registry";
       </div>
     }
     @let ran = simulated();
+    @let recorded = runView();
+    @let stop = recorded ? null : stoppedHere();
     <div class="pane-sub">
-      @if (pin) {
+      @if (stop) {
+        <span class="pill" data-tone="warning"
+          ><weave-icon name="schedule" [size]="16" />Stopped here</span
+        >
+        @if (stop.missing) {
+          <span class="pane-stopped-why">{{ stop.step }} needs test data</span>
+        }
+      } @else if (recorded) {
+        <span class="pill" [attr.data-tone]="recorded.tone">{{
+          recorded.pill
+        }}</span>
+        <span class="pill pane-source-tag" data-tone="info">{{
+          recorded.tag
+        }}</span>
+      } @else if (pin) {
         <span class="pill" data-tone="info">Pinned</span>
       } @else if (ran) {
         <span class="pill pane-source-tag">Simulated</span>
@@ -131,7 +153,7 @@ import { ndvRegistry, type Json } from "../registry";
       }
       @let paths = this.paths();
       <span class="pane-count">{{
-        none
+        none || stop || (recorded && recorded.output.kind !== "value")
           ? ""
           : paths
             ? paths.took
@@ -194,6 +216,39 @@ import { ndvRegistry, type Json } from "../registry";
           @if (problem()) {
             <p class="pane-problem" role="alert">{{ problem() }}</p>
           }
+          @if (runFailedHere(); as said) {
+            <div
+              class="notice pane-run-notice pane-run-stopped"
+              data-tone="danger"
+              role="status"
+            >
+              <weave-icon name="critical" [size]="16" />
+              <div>
+                <p>{{ said }}</p>
+                <p>
+                  Execute workflow gave every earlier step the run's data and
+                  stopped here.
+                </p>
+              </div>
+            </div>
+            @if (stop?.missing) {
+              <p class="pane-stopped-text">
+                {{ stop!.step }} has no test output, so the simulation can't run
+                it. Fix the step, then set a test output or generate a sample to
+                go on.
+              </p>
+              @if (canPin && !pin) {
+                <div class="pane-empty-actions">
+                  <button type="button" class="sm" (click)="setOutput()">
+                    Set test output
+                  </button>
+                  <button type="button" class="sm" (click)="generate()">
+                    <weave-icon name="refresh" [size]="16" />Generate sample
+                  </button>
+                </div>
+              }
+            }
+          }
           @if (notice(); as said) {
             <div class="pane-notice" role="status">
               <p class="pane-notice-text">{{ said.message }}</p>
@@ -209,7 +264,76 @@ import { ndvRegistry, type Json } from "../registry";
               }
             </div>
           }
-          @if (none) {
+          @if (recorded) {
+            @if (recorded.changed) {
+              <div class="notice pane-run-notice" data-tone="info">
+                <weave-icon name="stale" [size]="16" />
+                <p>Changed since this run.</p>
+              </div>
+            }
+            @if (recorded.failed) {
+              <div class="notice pane-run-notice" data-tone="danger">
+                <weave-icon name="critical" [size]="16" />
+                <div>
+                  <p>{{ recorded.failed }}</p>
+                  <p>A failed step returns no output.</p>
+                </div>
+              </div>
+            }
+            @switch (recorded.output.kind) {
+              @case ("omitted") {
+                <div class="pane-omitted">
+                  <p class="pane-omitted-top">
+                    <weave-icon name="lock" [size]="16" />{{ recorded.omitted }}
+                  </p>
+                  <p>
+                    The platform keeps classified values out of what Studio
+                    reads, so the output isn't shown here. Formula previews that
+                    read it say so too.
+                  </p>
+                </div>
+              }
+              @case ("none") {
+                @if (!recorded.failed) {
+                  <p class="pane-empty-text">{{ recorded.none }}</p>
+                }
+              }
+              @case ("too-large") {
+                <p class="pane-empty-text">This output is too large to show.</p>
+              }
+              @case ("loading") {
+                <p class="sr-only" role="status">Reading the step's output…</p>
+                <span class="pane-skeleton" aria-hidden="true"></span>
+                <span class="pane-skeleton short" aria-hidden="true"></span>
+              }
+              @case ("error") {
+                <div class="pane-notice" role="status">
+                  <p class="pane-notice-text">{{ recorded.error }}</p>
+                  <button type="button" class="sm" (click)="retryRun()">
+                    Try again
+                  </button>
+                </div>
+              }
+            }
+            @if (recorded.child; as child) {
+              <p class="pane-called-run">
+                Called run {{ child.slice(0, 8) }}
+                <button type="button" class="sm" (click)="openRun(child)">
+                  <weave-icon name="external" [size]="16" />Open in Operate
+                </button>
+              </p>
+            }
+          }
+          @if (loadingRun(); as run) {
+            <p class="pane-empty-text pane-loading-run" role="status">
+              <span class="loading-spinner small" aria-hidden="true"></span
+              >Loading run {{ run }}…
+            </p>
+          } @else if (noRunShown(); as why) {
+            <p class="pane-empty-text">{{ why }}</p>
+          } @else if (recorded && recorded.output.kind !== "value") {
+            <!-- What the run recorded says it all. -->
+          } @else if (none) {
             <p class="pane-empty-text">{{ none }}</p>
           } @else if (returnedNull()) {
             <p class="pane-empty-text">This step returned no data (null).</p>
@@ -240,7 +364,7 @@ import { ndvRegistry, type Json } from "../registry";
                   <span class="loading-spinner small" aria-hidden="true"></span>
                   <h4>Executing…</h4>
                 </div>
-              } @else if (!notice()) {
+              } @else if (!notice() && !stop) {
                 <div class="pane-empty">
                   <span class="pane-empty-icon" aria-hidden="true"
                     ><weave-icon name="execute" [size]="20"
@@ -273,7 +397,7 @@ import { ndvRegistry, type Json } from "../registry";
             }
             @if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
-            } @else {
+            } @else if (!stop) {
               <p class="pane-empty-text">
                 This step's output can be any value.
               </p>
@@ -296,6 +420,16 @@ import { ndvRegistry, type Json } from "../registry";
               </p>
             </div>
           }
+        }
+        @if (recorded) {
+          <weave-run-step-logs
+            [runId]="recorded.runId"
+            [stepId]="session().target"
+            [iterationKey]="recorded.iteration"
+            [api]="session().host.api"
+            [scope]="recorded.scope"
+            (refused)="session().controller.run()?.refused()"
+          />
         }
       </div>
     </div>`,
@@ -351,6 +485,8 @@ export class OutputPane {
    */
   paths(): { rows: PathRow[]; took: string; result: Json | undefined } | null {
     const { controller, target, host } = this.session();
+    // The last local execution's path isn't the run's.
+    if (controller.viewingRuns()) return null;
     const step = controller.step(target);
     if (step?.kind !== "switch" || this.pinned()) return null;
     // The path it took, as kept with its last result (also after a reload).
@@ -376,6 +512,8 @@ export class OutputPane {
   /** Signals and human tasks take a test answer. */
   answerable(): boolean {
     const { controller, target } = this.session();
+    // A run's answers happened: nothing to script here.
+    if (controller.run()) return false;
     const kind = controller.step(target)?.kind as string | undefined;
     return kind === "signal" || kind === "humanTask";
   }
@@ -385,7 +523,73 @@ export class OutputPane {
     if (target.startsWith("$")) return false;
     const data = controller.stepData(target);
     // A decision whose path has no result says so in its path list.
-    return data?.source === "simulated" && data.value === null && !this.paths();
+    return (
+      (data?.source === "simulated" || data?.source === "run") &&
+      data.value === null &&
+      !this.paths()
+    );
+  }
+  /**
+   * In run mode: what the step returned in the run (or why not), its tags,
+   * its failure and whether it changed since; null outside run mode.
+   */
+  runView() {
+    const { controller, target, host } = this.session();
+    const run = controller.run();
+    if (!run || target.startsWith("$")) return null;
+    const output = controller.runOutput(target);
+    const key = controller.runKey(target);
+    const several = run.iterations(target).length > 1;
+    const state = run.state(key);
+    const code = state === "failed" ? run.failure(target) : null;
+    const canvas = host.canvasRun?.() ?? null;
+    const item = /\[(\d+)\]$/.exec(key);
+    return {
+      output,
+      runId: run.runId,
+      iteration: several ? key : null,
+      scope: `${host.stepDataScope ?? ""}|${host.profile?.environmentId ?? ""}`,
+      tag: `From ${run.label()}${several && item ? `, item ${Number(item[1]) + 1}` : ""}`,
+      pill:
+        state === "failed"
+          ? "Failed in this run"
+          : output.kind === "omitted"
+            ? "Not shown"
+            : state === "running"
+              ? "Running in this run"
+              : state === "not-reached"
+                ? "Not reached"
+                : "Finished in this run",
+      tone:
+        state === "failed"
+          ? "danger"
+          : output.kind === "omitted" || state === "not-reached"
+            ? null
+            : "success",
+      failed: code ? `This step failed in ${run.label()}: ${code}.` : null,
+      changed: isRecordedRun(canvas) && canvas.changed.includes(target),
+      child: run.childRun(key),
+      omitted:
+        output.kind === "omitted"
+          ? (OMISSION_WORDS[output.reason] ?? "This output can't be shown.")
+          : "",
+      none:
+        output.kind === "none"
+          ? output.why === "not-reached"
+            ? "This run didn't reach this step."
+            : output.why === "running"
+              ? "This step hasn't finished in this run yet."
+              : "The platform didn't record this step's output."
+          : "",
+      error: output.kind === "error" ? output.message : "",
+    };
+  }
+  retryRun() {
+    const { controller, target } = this.session();
+    controller.retryRunOutput(target);
+  }
+  openRun(id: string) {
+    void this.session().host.viewRun?.({ id });
   }
   /** Execute step from the pane (its empty state, the stale pin's banner). */
   execute() {
@@ -402,6 +606,7 @@ export class OutputPane {
   /** What the last execution said about this step (it needs test data, a path it didn't take…). */
   notice() {
     const { controller, target } = this.session();
+    if (controller.viewingRuns()) return null;
     const notice = controller.executeNotice();
     return notice?.target === target ? notice : null;
   }
@@ -409,7 +614,45 @@ export class OutputPane {
   readonly problem = signal("");
   pinned() {
     const { controller, target } = this.session();
+    // The draft's pin isn't what the run returned.
+    if (controller.viewingRuns()) return null;
     return target.startsWith("$") ? null : controller.pinOfTarget(target);
+  }
+  /** On the Runs tab with no run's data: why Output shows nothing; null otherwise. */
+  noRunShown(): string | null {
+    const { controller, host } = this.session();
+    if (!controller.viewingRuns() || controller.run()) return null;
+    if (this.loadingRun()) return null;
+    return host.runView?.()?.listed
+      ? "Choose a run to see what this step returned."
+      : "There's no run to show here.";
+  }
+  /** After Debug in editor, on the step where Execute stopped as the run failed: the step, and whether it wants test data. */
+  stoppedHere(): { step: string; missing: boolean } | null {
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (!notice || notice.draftId !== host.draftId) return null;
+    if (instanceStep(notice.key) !== instanceStep(target)) return null;
+    return { step: instanceStep(notice.key), missing: notice.missing };
+  }
+  /** After Debug in editor, on the step where the run failed: its error. */
+  runFailedHere(): string | null {
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (!notice || notice.draftId !== host.draftId) return null;
+    if (instanceStep(notice.key) !== instanceStep(target)) return null;
+    return `In run ${shortId(notice.runId)}, this step failed${notice.code ? `: ${notice.code}` : ""}.`;
+  }
+  /** The chosen run's short ID while it loads; null otherwise. */
+  loadingRun(): string | null {
+    const { controller, host } = this.session();
+    const shown = host.runView?.();
+    return controller.viewingRuns() &&
+      !controller.run() &&
+      shown?.loading &&
+      shown.chosen
+      ? shortId(shown.chosen)
+      : null;
   }
   pinnable(): boolean {
     const { controller, target } = this.session();
