@@ -85,15 +85,15 @@ const byVersion = (a: string, b: string) =>
 /**
  * The Version menu's choices, newest first: the workflow's published
  * versions, the versions its runs used, and the one chosen. Reads the
- * shell's count of version reads, so versions that load later show.
+ * shell's count of changes to the versions, so a computed follows them.
  */
 export function versionChoices(
-  app: Pick<App, "workflowVersions" | "workflowVersionsRead">,
+  app: Pick<App, "workflowVersions" | "workflowVersionsChanged">,
   name: string,
   used: readonly string[],
   chosen: string | null,
 ): string[] {
-  app.workflowVersionsRead();
+  app.workflowVersionsChanged();
   const seen = new Set<string>();
   for (const version of app.workflowVersions.values())
     if (version.name === name && version.version) seen.add(version.version);

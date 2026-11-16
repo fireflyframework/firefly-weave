@@ -60,6 +60,7 @@ async function fixture() {
     contractRevision: 0,
     knownRuns: new Map(),
     workflowVersions: new Map(),
+    workflowVersionsChanged: signal(0),
     aiTests: new Map(),
     aiSetupGeneration: 0,
     contractCache: new Map(),

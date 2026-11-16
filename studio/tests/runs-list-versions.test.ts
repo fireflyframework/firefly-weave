@@ -36,7 +36,7 @@ function signedIn(items: Record<string, unknown>[]) {
   Object.assign(shell, {
     versionsScope: null,
     workflowVersions: new Map(),
-    workflowVersionsRead: signal(0),
+    workflowVersionsChanged: signal(0),
     model: {
       definition: {
         metadata: { name: "invoice-approval", version: "1.3.0" },
@@ -66,5 +66,27 @@ describe("the Runs list's Version menu", () => {
     expect(versions()).toEqual([]);
     await shell.loadWorkflowVersions();
     expect(versions()).toEqual(["1.2.0", "1.1.0"]);
+  });
+
+  it("offers none of the versions read for the workspace left behind", async () => {
+    const shell = signedIn([
+      { id: "v-120", name: "invoice-approval", version: "1.2.0" },
+    ]);
+    // What forgetting the platform's state touches besides the versions.
+    Object.assign(shell, {
+      aiTests: new Map(),
+      knownRuns: new Map(),
+      contractCache: new Map(),
+      closeRecord() {},
+      closeSimulation() {},
+    });
+    const versions = computed(() =>
+      versionChoices(shell, "invoice-approval", [], null),
+    );
+    await shell.loadWorkflowVersions();
+    expect(versions()).toEqual(["1.2.0"]);
+    // Another workspace, or the account signed out: nothing read stays.
+    (shell as unknown as { clearPlatformState(): void }).clearPlatformState();
+    expect(versions()).toEqual([]);
   });
 });
