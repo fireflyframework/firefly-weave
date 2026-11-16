@@ -2022,6 +2022,7 @@ OPERATIONS = {
             EventTrigger,
             "trigger.manage",
         ),
+        # Reading what a trigger started also needs run.read: runs, event types and refusal causes.
         Operation(
             "event_triggers.starts",
             ENVIRONMENT + "/event-triggers/{identifier}/starts",

@@ -242,6 +242,18 @@ async def test_event_trigger_reads_need_trigger_manage(platform, access_db, prov
     assert not (await triggers(platform))[0]["disabled"]
 
 
+async def test_reading_what_a_trigger_started_needs_run_read(platform, access_db, provisioned):
+    """The starts listing shows the runs a trigger started, event types and refusal causes: run.read facts."""
+    trigger = await platform.bind(await platform.publish(reaction()))
+    manager = await person(access_db, provisioned, platform, "deployer")
+    service, scope, context = platform.event_triggers, platform.scope, AuditContext()
+    assert (await service.read(manager, scope, trigger.id, context=context)).id == trigger.id
+    with pytest.raises(AccessDenied):
+        await service.starts(manager, scope, trigger.id, context=context)
+    reader = await person(access_db, provisioned, platform, "deployer", "viewer")
+    assert (await service.starts(reader, scope, trigger.id, context=context)).items == []
+
+
 async def test_the_starts_listing_pages_newest_first_without_payloads(platform):
     activation = await platform.publish(reaction())
     trigger = await platform.bind(activation)
@@ -371,7 +383,8 @@ async def test_a_sibling_environments_trigger_is_out_of_reach(platform, access_d
     there = Platform(**{**vars(platform), "scope": sibling, "actor": await access.load_principal(platform.actor.id)})
     theirs = await there.bind(await there.publish(reaction("sibling-team")))
     ours = await platform.bind(await platform.publish(reaction()))
-    manager = await person(access_db, provisioned, platform, "deployer")
+    # Manages triggers here and may read what they started.
+    manager = await person(access_db, provisioned, platform, "deployer", "viewer")
     service, context = platform.event_triggers, AuditContext()
     for actor in (manager, there.actor):
         for call in (

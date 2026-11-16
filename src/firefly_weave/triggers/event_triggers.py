@@ -251,13 +251,17 @@ class EventTriggerService:
         cursor: str | None = None,
         context: AuditContext,
     ) -> Page[EventTriggerStart]:
-        """A trigger's starts, newest first, without the events' payloads."""
+        """A trigger's starts, newest first, without the events' payloads.
+
+        They show the runs started, the event types and the refusal causes, which run.read guards, so reading them
+        needs run.read as well as trigger.manage.
+        """
         if not 1 <= limit <= 100:
             raise CatalogError(422, "WV-PAGE", "A bounded page is required")
         collection = "event_triggers.starts/" + str(identifier)
         position = decode_cursor_v2(cursor, scope, collection)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            await self.readable(tx, actor, scope, context)
+            await self.readable(tx, actor, scope, context, "run.read")
             await self.loaded(tx, identifier)
             after = ""
             values: dict[str, Any] = {}
@@ -283,9 +287,12 @@ class EventTriggerService:
             next_cursor=encode_cursor_v2(scope, collection, last_item.requested_at.isoformat(), str(last_item.id)),
         )
 
-    async def readable(self, tx: Transaction, actor: Principal, scope: Scope, context: AuditContext) -> None:
+    async def readable(
+        self, tx: Transaction, actor: Principal, scope: Scope, context: AuditContext, *also: str
+    ) -> None:
         current = await self.access.load_principal(actor.id, tx=tx)
-        self.runtime.require(current, scope, "trigger.manage", context)
+        for capability in ("trigger.manage", *also):
+            self.runtime.require(current, scope, capability, context)
 
     async def loaded(self, tx: Transaction, identifier: UUID) -> EventTrigger:
         rows = await RuntimeRepository(tx).rows(

@@ -85,7 +85,8 @@ STUDIO_FAMILIES = frozenset(
         "email_tokens",
         "connections",
         "bindable_connections",
-        # Platform-event triggers; trigger.manage, run.start and transaction.reconcile are checked server-side.
+        # Platform-event triggers; trigger.manage, run.start, run.read and transaction.reconcile are checked
+        # server-side.
         "event_triggers",
         # Running one step for real from step details, and whether the environment allows it.
         "step_tests",

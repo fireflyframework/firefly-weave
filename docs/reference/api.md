@@ -1382,6 +1382,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 `event_triggers.create` also requires `run.start` and `run.read`, and `transaction.reconcile` when the request
 sets `may_reconcile`. Each run a trigger starts receives the transaction facts of its event, such as business
 keys and failure codes, so the trigger's owner must still hold `run.start` and `run.read` when the run starts.
+`event_triggers.starts` also requires `run.read`: it shows the runs a trigger started, event types and refusal
+causes.
 
 ## Deployment Operations authority
 

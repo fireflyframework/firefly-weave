@@ -224,7 +224,8 @@ emits events can start further reactions, so the platform bounds each chain:
 `weave triggers events starts "$TRIGGER_ID"` lists each event offered to the
 trigger, newest first, with its status (`requested`, `started`, `rejected` or
 `skipped`), the run it started, and the event that began its chain
-(`root_event_id`). A refused start never suspends a run or opens an incident:
+(`root_event_id`). Reading it needs `trigger.manage` and `run.read`. A refused
+start never suspends a run or opens an incident:
 
 | Code | Meaning |
 | --- | --- |

@@ -119,6 +119,8 @@ identifier = "random"
 [operations."event_triggers.starts"]
 capability = "trigger.manage"
 identifier = "random"
+# Reading what a trigger started also needs run.read, which a person holding only trigger.manage lacks.
+answers = [{ status = 403, code = "WV-FORBIDDEN" }]
 
 [operations."incidents.read"]
 capability = "incident.read"
