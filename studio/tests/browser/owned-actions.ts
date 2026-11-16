@@ -22,9 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, type Page } from "@playwright/test";
 import { parse, stringify } from "yaml";
 import {
-  builtinActions,
   localAuthoring,
   platformCompile,
+  routeBuiltinActions,
 } from "./local-authoring";
 import {
   addCommonStep,
@@ -116,10 +116,7 @@ export async function ownedPlatform(page: Page, options: PlatformOptions) {
   const held = options.hold
     ? new Promise<void>((done) => (release = done))
     : null;
-  await localAuthoring(page);
-  await page.route("**/studio/contracts/connector-actions", (route) =>
-    route.fulfill({ json: builtinActions() }),
-  );
+  await Promise.all([localAuthoring(page), routeBuiltinActions(page)]);
   await connected(page, {
     capabilities: options.capabilities ?? [...allCapabilities, "compile"],
     catalog: [],
