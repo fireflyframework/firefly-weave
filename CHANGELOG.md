@@ -26,6 +26,10 @@ SPDX-License-Identifier: Apache-2.0
   that needs a reload). When a background sign-in is declined or canceled, the
   banner now says so and names the account you're still signed in with,
   instead of disappearing.
+- When a background sign-in finishes as another person, a bulk action on
+  Workers and the resend of a change refused for capacity now wait for Studio
+  to check the new account, so nothing more goes out for the previous person's
+  selection with the new person's credential.
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
   claim can't reach the platform (the connection is refused, drops or times
