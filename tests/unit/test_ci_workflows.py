@@ -32,6 +32,8 @@ WORKFLOWS = ROOT / ".github/workflows"
 USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(.*?)\s*$")
 # owner/repo[/path]@<full commit SHA> # <version>: the comment is what Dependabot reads and moves with the SHA.
 PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40} # v?\d+(?:\.\d+)*")
+# An action Dependabot never moves is pinned by hand, and its comment names the branch its SHA was taken from.
+HAND_PINNED_ACTION = re.compile(r"(?P<action>[\w.-]+/[\w.-]+)@[0-9a-f]{40} # [\w.-]+")
 XPLAT_SPECS = (
     "shell.spec.ts",
     "shell-navigation.spec.ts",
@@ -56,6 +58,16 @@ def test_no_workflow_uses_a_floating_ubuntu_image():
         assert "ubuntu-latest" not in path.read_text(encoding="utf-8"), path.name
 
 
+def actions_dependabot_ignores():
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
+    return {
+        rule["dependency-name"]
+        for update in config["updates"]
+        if update["package-ecosystem"] == "github-actions"
+        for rule in update.get("ignore", [])
+    }
+
+
 def test_every_action_is_pinned_to_a_full_commit_with_its_version():
     # A tag can be moved to other code; a full commit SHA cannot. Actions in this repository (./) need no pin.
     references = [
@@ -65,7 +77,28 @@ def test_every_action_is_pinned_to_a_full_commit_with_its_version():
         if (match := USES.match(line)) and not match[1].startswith("./")
     ]
     assert references
-    assert [reference for reference in references if not PINNED_ACTION.fullmatch(reference[2])] == []
+    by_hand = actions_dependabot_ignores()
+
+    def pinned(reference):
+        hand = HAND_PINNED_ACTION.fullmatch(reference)
+        return bool(PINNED_ACTION.fullmatch(reference) or (hand and hand["action"] in by_hand))
+
+    assert [reference for reference in references if not pinned(reference[2])] == []
+
+
+def test_every_rust_toolchain_step_installs_the_same_exact_release():
+    # The action's master branch installs only the toolchain its input names, and fails without one.
+    steps = [
+        (path.name, step)
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for job in jobs(path.name).values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+    ]
+    assert {name for name, _ in steps} == {"desktop.yml", "desktop-notarized.yml"}
+    toolchains = {str(step.get("with", {}).get("toolchain")) for _, step in steps}
+    assert len(toolchains) == 1
+    assert re.fullmatch(r"\d+\.\d+\.\d+", toolchains.pop())
 
 
 def test_linux_check_and_documentation_jobs_run_on_ubuntu_24_04():
@@ -103,6 +136,88 @@ def test_checks_run_once_per_pull_request_commit_and_never_cancel_main():
     concurrency = document["concurrency"]
     assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
     assert "format('pr-{0}', github.event.pull_request.number) || github.run_id" in concurrency["group"]
+
+
+SETUP_UV = "astral-sh/setup-uv@"
+SETUP_NODE = "actions/setup-node@"
+# `${{ [!]startsWith(github.ref, 'refs/tags/') && '<then>' || '<else>' }}`, the one shape the cache inputs use.
+TAG_SWITCH = re.compile(
+    r"\$\{\{\s*(?P<negated>!?)startsWith\(github\.ref,\s*'refs/tags/'\)\s*&&\s*'(?P<then>[^']*)'\s*"
+    r"\|\|\s*'(?P<otherwise>[^']*)'\s*\}\}"
+)
+
+
+def setup_steps(*actions):
+    """(workflow file, its document, job id, job, step) for every step that uses one of the actions."""
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        document = workflow(path.name)
+        for name, job in document["jobs"].items():
+            for step in job.get("steps", []):
+                if step.get("uses", "").startswith(actions):
+                    found.append((path.name, document, name, job, step))
+    return found
+
+
+def runs_for_a_tag(document, job):
+    """Whether the job can run for a tag: its workflow runs on tag pushes or releases, or the job checks for a tag.
+
+    A manual run (`workflow_dispatch`) can also start on a tag ref, but it is not counted: the workflows that only a
+    manual run puts on a tag (acceptance and docs) publish nothing from a tag, and a tag run reads only caches that its
+    own ref or the default branch wrote."""
+    triggers = document["on"]
+    if isinstance(triggers, (str, list)):
+        triggers = dict.fromkeys([triggers] if isinstance(triggers, str) else triggers)
+    if "release" in triggers or "create" in triggers or "refs/tags/" in str(job.get("if", "")):
+        return True
+    if "push" not in triggers:
+        return False
+    push = triggers["push"] or {}
+    # A push filter that names branches but no tags runs for no tag.
+    return "tags" in push or "tags-ignore" in push or not ("branches" in push or "branches-ignore" in push)
+
+
+def on_a_tag(value):
+    """An input's value on a tag run. GitHub's `a && b || c` gives c when b is empty, so
+    `startsWith(github.ref, 'refs/tags/') && '' || 'npm'` is still 'npm' on a tag."""
+    if not isinstance(value, str) or "${{" not in value:
+        return value
+    switch = TAG_SWITCH.fullmatch(value.strip())
+    assert switch, f"cannot tell what {value!r} is on a tag run"
+    if not switch["negated"] and switch["then"]:
+        return switch["then"]
+    return switch["otherwise"]
+
+
+def test_setup_node_never_turns_an_npm_cache_on_by_itself():
+    # Since setup-node 5 a packageManager field in package.json turns an npm cache on when no cache input is set.
+    steps = setup_steps(SETUP_NODE)
+    assert steps
+    automatic = [
+        (file, name)
+        for file, _, name, _, step in steps
+        if step.get("with", {}).get("package-manager-cache") is not False
+    ]
+    assert automatic == []
+
+
+def test_tag_runs_restore_no_uv_or_npm_cache():
+    # What a tag checks, builds or signs installs from the lockfiles alone, never from a cache another run wrote.
+    reached, caching = set(), []
+    for file, document, name, job, step in setup_steps(SETUP_UV, SETUP_NODE):
+        if not runs_for_a_tag(document, job):
+            continue
+        reached.add(file)
+        inputs = step.get("with", {})
+        if step["uses"].startswith(SETUP_UV):
+            # enable-cache defaults to auto, which turns the cache on on GitHub's runners.
+            cache_on = on_a_tag(inputs.get("enable-cache", "auto")) not in (False, "false")
+        else:
+            cache_on = on_a_tag(inputs.get("cache", "")) != "" or inputs.get("package-manager-cache") is not False
+        if cache_on:
+            caching.append((file, name, step["uses"].split("@")[0]))
+    assert {"ci.yml", "desktop.yml", "desktop-notarized.yml"} <= reached
+    assert caching == []
 
 
 def test_functional_browser_tests_are_sharded_after_a_fresh_production_build():
