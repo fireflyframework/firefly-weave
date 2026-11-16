@@ -568,19 +568,21 @@ test.describe("the Runs list's states", () => {
   }
 
   // A failed or cancelled sign-in leaves the host's earlier credential.
-  for (const { held, platform, end } of [
+  for (const { held, platform, end, outcome } of [
     {
       held: "an expired session it can renew",
       platform: acmePlatform({ signedIn: false, refreshable: true }),
       end: ["failed", "WV-AUTH-DENIED"] as const,
+      outcome: "Sign-in was declined.",
     },
     {
       held: "the account it was signed in with",
       platform: acmePlatform(),
       end: ["cancelled"] as const,
+      outcome: "Sign-in canceled.",
     },
   ])
-    test(`a sign-in that ends in the background while the host keeps ${held} loads the runs`, async ({
+    test(`a sign-in that ends in the background while the host keeps ${held} loads the runs and says the switch didn't happen`, async ({
       page,
     }) => {
       const { host, runs } = await runsDuringSignIn(page, platform);
@@ -591,6 +593,17 @@ test.describe("the Runs list's states", () => {
       await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
         /^Platform: Acme · Signed in/,
       );
+      // The check that confirmed the earlier account keeps the outcome on
+      // screen, and says what still works instead of asking to sign in.
+      const banner = page.locator(".platform-banner");
+      await expect(banner).toContainText(
+        `${outcome} You're still signed in to Acme as jane@acme.example.`,
+      );
+      // Dismiss is its only button: nothing asks to sign in again.
+      await expect(banner.getByRole("button")).toHaveCount(1);
+      await expect(
+        banner.getByRole("button", { name: "Dismiss platform message" }),
+      ).toBeVisible();
     });
 
   const unreachable: Reply = {

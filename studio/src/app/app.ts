@@ -565,6 +565,8 @@ export class App implements CanvasHost {
     server?: string;
     /** A plain sentence about the outcome, for "sign-in-failed". */
     detail?: string;
+    /** For "sign-in-failed": the account from before still works. */
+    kept?: boolean;
   } | null = null;
   lumiOpen = false;
   // A query by name, not by class: the Clusters area stays in its deferred chunk.
@@ -9861,9 +9863,20 @@ export class App implements CanvasHost {
   private async afterBackgroundSignInEnded() {
     await this.refreshConnectionStatus();
     if (this.identity) return;
-    if (sessionUsable(this.connectionStatus?.authentication))
-      await this.checkPlatform();
-    else this.identityFailure ??= "expired";
+    if (!sessionUsable(this.connectionStatus?.authentication)) {
+      this.identityFailure ??= "expired";
+      return;
+    }
+    const ended = this.platformNotice;
+    await this.checkPlatform();
+    // The switch didn't happen and the account from before still works: the
+    // outcome stays on screen, without asking to sign in again.
+    if (
+      this.identity &&
+      ended?.kind === "sign-in-failed" &&
+      !this.platformNotice
+    )
+      this.platformNotice = { ...ended, kept: true };
   }
   /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {
@@ -10155,14 +10168,29 @@ export class App implements CanvasHost {
         return revocationNote;
       case "signing-in":
         return `Studio is waiting for you to finish signing in to ${notice.name}.`;
-      case "sign-in-failed":
-        return `${notice.detail ?? "Sign-in didn't finish."} Sign in to ${notice.name} again to publish, run, and manage work. You can keep working locally.`;
+      case "sign-in-failed": {
+        const outcome = notice.detail ?? "Sign-in didn't finish.";
+        if (!notice.kept)
+          return `${outcome} Sign in to ${notice.name} again to publish, run, and manage work. You can keep working locally.`;
+        const account = this.signedInAccount;
+        return `${outcome} You're still signed in to ${notice.name}${account ? ` as ${account}` : ""}.`;
+      }
     }
+  }
+  /** The signed-in account's name as the top bar shows it; a bare subject is an ID, so none. */
+  private get signedInAccount() {
+    const status = this.connectionStatus;
+    const account = status?.profile?.account?.display_name
+      ? status.profile.account
+      : status?.authentication?.account;
+    return account?.display_name?.trim() ?? "";
   }
   get noticeActionLabel() {
     switch (this.platformNotice?.kind) {
-      case "expired":
       case "sign-in-failed":
+        // Still signed in with the account from before: nothing to do.
+        return this.platformNotice.kept ? "" : "Sign in again";
+      case "expired":
         return "Sign in again";
       case "signing-in":
         return "Show sign-in";
