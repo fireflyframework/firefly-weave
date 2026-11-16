@@ -35,6 +35,7 @@ import {
   acme,
   acmePlatform,
   platformHost,
+  signInWaiting,
   type PlatformHost,
 } from "./platform-host";
 
@@ -878,11 +879,9 @@ test.describe("another person on the same environment", () => {
   test("the summary read for the person before, and a late answer for them, never show for the next one", async ({
     page,
   }) => {
-    // The platform can't be reached at first, so Studio reads the identity
-    // itself (jane); Try again then finds john signed in on the same
-    // environment, while the page stays open.
+    // Jane is signed in with a sign-in waiting in the background; john
+    // finishes it on the same environment while the page stays open.
     let person = "jane";
-    let reachable = false;
     const withStatus = (host: PlatformHost) => ({
       ...host.identity(),
       principal_id: `principal-${person}`,
@@ -894,21 +893,15 @@ test.describe("another person on the same environment", () => {
     const host: PlatformHost = await platformHost(page, {
       platforms: [acmePlatform()],
       active: "Acme",
-      test: (current) =>
-        reachable
-          ? {
-              json: {
-                session: current.session(),
-                identity: withStatus(current),
-                workspaces: current.current?.workspaces ?? [],
-                truncated: false,
-                workspace_revoked: false,
-              },
-            }
-          : {
-              status: 503,
-              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
-            },
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: withStatus(current),
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
     });
     await page.route("**/studio/api/api/v1/identity", (route) =>
       route.fulfill({ json: withStatus(host) }),
@@ -932,10 +925,9 @@ test.describe("another person on the same environment", () => {
         })
         .catch(() => undefined);
     });
-    // The first identity read may have finished before the route above: read
-    // it again so the Operate entries follow the granted capabilities.
-    await page.reload();
-    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    const john = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Overview", exact: true }).click(),
+    );
     const details = page.getByRole("button", {
       name: "API details",
       exact: true,
@@ -950,12 +942,7 @@ test.describe("another person on the same environment", () => {
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect.poll(() => asked.length).toBe(2);
     person = "john";
-    reachable = true;
-    await page
-      .locator(".platform-banner")
-      .getByRole("button", { name: "Try again" })
-      .click();
-    await expect(page.locator(".platform-banner")).toHaveCount(0);
+    await john();
     // Nothing read for jane stays while john's summary is on its way.
     await expect(page.getByText("Loading platform health…")).toBeAttached();
     await expect(details).toHaveCount(0);
