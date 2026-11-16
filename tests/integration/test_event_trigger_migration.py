@@ -29,7 +29,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from test_incident_migration import upgrade
 from test_transaction_migration import insert_transaction
 
+from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.event_triggers import MAX_EVENT_TRIGGERS
+from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
+from firefly_weave.contracts.platform_events import PLATFORM_EVENT_VERSION, PlatformEvent
 from firefly_weave.contracts.transaction_resolve import RESOLVE_TASK_TYPE
+from firefly_weave.contracts.transactions import MAX_TRANSACTION_PARTICIPANTS
 from firefly_weave.persistence.migrations import SCHEMA_VERSION, check_schema
 from firefly_weave.runtime.models import TaskIntent
 
@@ -65,24 +70,58 @@ async def insert_trigger(connection, ids, *, name="notify") -> UUID:
     return identifier
 
 
+async def insert_payload(connection, ids, event, *, source_run_id, payload=PAYLOAD) -> None:
+    await connection.execute(
+        text(
+            "INSERT INTO event_trigger_payloads(tenant_id,project_id,environment_id,event_id,source_run_id,payload) "
+            "VALUES(:tenant,:project,:environment,:event,:source_run_id,cast(:payload AS jsonb)) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {**ids, "event": event, "source_run_id": source_run_id, "payload": json.dumps(payload)},
+    )
+
+
 async def insert_start(connection, ids, trigger, *, status="requested", event=None, **fields) -> None:
     values = {"run_id": None, "code": None, "source_run_id": ids["first_run"]} | fields
+    event = event or uuid4()
+    await insert_payload(connection, ids, event, source_run_id=values["source_run_id"])
     await connection.execute(
         text(
             "INSERT INTO event_trigger_starts(tenant_id,project_id,environment_id,id,trigger_id,event_id,event_type,"
-            "source_run_id,depth,payload,status,code,run_id,requested_at) VALUES(:tenant,:project,:environment,:id,"
-            ":trigger,:event,'transaction.in_doubt',:source_run_id,1,cast(:payload AS jsonb),:status,:code,:run_id,"
-            "now())"
+            "source_run_id,depth,status,code,run_id,requested_at) VALUES(:tenant,:project,:environment,:id,"
+            ":trigger,:event,'transaction.in_doubt',:source_run_id,1,:status,:code,:run_id,now())"
         ),
-        {
-            **ids,
-            **values,
-            "id": uuid4(),
-            "trigger": trigger,
-            "event": event or uuid4(),
-            "payload": json.dumps(PAYLOAD),
-            "status": status,
-        },
+        {**ids, **values, "id": uuid4(), "trigger": trigger, "event": event, "status": status},
+    )
+
+
+def largest_event(run: UUID) -> PlatformEvent:
+    """A transaction event at the contract's limits: every participant pending, each with a 512-character key."""
+    steps = []
+    for index in range(MAX_TRANSACTION_PARTICIPANTS):
+        name = f"step-{index:04d}-" + "x" * 52
+        key = name + "[0]" * ((512 - len(name)) // 3)
+        steps.append({"step": name, "instance_key": key, "how": "compensate", "phase": "undo", "attempts": 99})
+    return PlatformEvent.model_validate_json(
+        json.dumps(
+            {
+                "version": PLATFORM_EVENT_VERSION,
+                "event_id": str(uuid4()),
+                "type": "transaction.in_doubt",
+                "emitted_at": AT.isoformat(),
+                "transaction": {
+                    "workflow": {"name": "move-between-systems", "version": "1.0.0"},
+                    "run_id": str(run),
+                    "instance_key": "move",
+                    "business_key": "b" * 200,
+                    "state": "in_doubt",
+                    "cause": {"code": "WV-TXN-UNDO-STUCK", "step": steps[0]["step"], "origin_code": "E" * 64},
+                    "steps": {"pending": steps},
+                    "incident_id": str(uuid4()),
+                    "test": False,
+                },
+            }
+        )
     )
 
 
@@ -103,7 +142,7 @@ async def fill_quota(engine, ids) -> None:
 async def test_the_upgrade_adds_event_trigger_tables_with_exact_scope(upgraded):
     engine, _ = upgraded
     async with engine.begin() as connection:
-        for table in ("event_triggers", "event_trigger_starts"):
+        for table in ("event_triggers", "event_trigger_starts", "event_trigger_payloads"):
             row = (
                 await connection.execute(
                     text("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE relname=:table"),
@@ -120,6 +159,8 @@ async def test_the_upgrade_adds_event_trigger_tables_with_exact_scope(upgraded):
         writable = {
             "event_triggers": {"disabled", "disabled_at", "revision"},
             "event_trigger_starts": {"status", "code", "cause", "run_id", "started_at"},
+            # An event's payload is written once and never changed.
+            "event_trigger_payloads": set(),
         }
         for table, columns in writable.items():
             granted = (
@@ -132,6 +173,13 @@ async def test_the_upgrade_adds_event_trigger_tables_with_exact_scope(upgraded):
                 )
             ).scalars()
             assert set(granted) == columns, table
+        # Starts carry no copy of the event: the payload is stored once per event.
+        assert not await connection.scalar(
+            text(
+                "SELECT count(*) FROM information_schema.columns WHERE table_name='event_trigger_starts' "
+                "AND column_name='payload'"
+            )
+        )
 
 
 async def test_a_started_start_names_its_run_and_a_refused_one_its_code(upgraded):
@@ -288,6 +336,47 @@ async def test_a_start_written_while_its_source_run_settles_at_full_quota_spends
         await connection.execute(text("SELECT weave_control_finish()"))
     async with engine.begin() as owner:
         assert await owner.scalar(text("SELECT count(*) FROM event_trigger_starts")) == 1
+
+
+async def test_a_stop_at_full_quota_offers_the_largest_event_to_every_trigger(upgraded):
+    """The stop that emits an event at the contract's limits also records its starts within the run's reserve."""
+    engine, ids = upgraded
+    run = ids["active_run"]
+    event = largest_event(run)
+    outbox = IntegrationEvent(
+        event_id=event.event_id,
+        type=event.type,
+        scope=Scope(tenant_id=ids["tenant"], project_id=ids["project"], environment_id=ids["environment"]),
+        resource_id=run,
+        correlation_id=run,
+        emitted_at=event.emitted_at,
+        payload=EventMetadata(transaction=event.transaction),
+    )
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        triggers = [await insert_trigger(connection, ids, name=f"notify-{n}") for n in range(MAX_EVENT_TRIGGERS)]
+    await fill_quota(engine, ids)
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        await connection.execute(text("SELECT weave_control_begin('run',:run)"), {"run": run})
+        await connection.execute(
+            text("INSERT INTO integration_events VALUES(:id,:tenant,:project,:environment,cast(:payload AS jsonb))"),
+            {**ids, "id": event.event_id, "payload": outbox.model_dump_json()},
+        )
+        payload = event.model_dump(mode="json")
+        await insert_payload(connection, ids, event.event_id, source_run_id=run, payload=payload)
+        for trigger in triggers:
+            await insert_start(connection, ids, trigger, event=event.event_id, source_run_id=run)
+        await connection.execute(
+            text("UPDATE runs SET state=jsonb_set(state,'{status}','\"cancelled\"') WHERE id=:run"), {"run": run}
+        )
+        await connection.execute(text("SELECT weave_control_finish()"))
+    async with engine.begin() as owner:
+        assert await owner.scalar(text("SELECT count(*) FROM event_trigger_starts")) == MAX_EVENT_TRIGGERS
+        stored = await owner.scalar(text("SELECT payload FROM event_trigger_payloads"))
+        assert stored == payload
+        assert len(json.dumps(stored)) > 600_000
+        await assert_usage(owner, ids)
 
 
 async def test_platform_tasks_are_never_pinned_to_a_worker_release(upgraded):
