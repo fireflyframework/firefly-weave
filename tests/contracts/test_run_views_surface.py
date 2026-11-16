@@ -30,8 +30,16 @@ EXPECTED = {
     "runs.steps": (ENVIRONMENT + "/runs/{identifier}/steps", StepFactPage),
     "runs.logs": (ENVIRONMENT + "/runs/{identifier}/logs", RunLogPage),
 }
-# Published before it is served, outside run views: answering a waiting AI agent step test.
-UNSERVED_ELSEWHERE = {"step_tests.answer"}
+# Published before they are served, outside run views: answering a waiting AI agent step test, and platform-event
+# triggers.
+UNSERVED_ELSEWHERE = {
+    "step_tests.answer",
+    "event_triggers.create",
+    "event_triggers.list",
+    "event_triggers.read",
+    "event_triggers.disable",
+    "event_triggers.starts",
+}
 
 
 spec = cache(export_openapi)

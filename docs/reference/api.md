@@ -1263,6 +1263,11 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `triggers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers` | trigger.manage |
 | `triggers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{identifier}` | trigger.manage |
 | `triggers.disable` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{identifier}/disable` | trigger.manage |
+| `event_triggers.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers` | trigger.manage |
+| `event_triggers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers` | trigger.manage |
+| `event_triggers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}` | trigger.manage |
+| `event_triggers.disable` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/disable` | trigger.manage |
+| `event_triggers.starts` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/starts` | trigger.manage |
 | `webhooks.receive` | `POST /webhooks/{identifier}` | signed webhook and pinned principal authority |
 | `schedules.save` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules` | trigger.manage and run.start |
 | `schedules.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules` | run.read |
