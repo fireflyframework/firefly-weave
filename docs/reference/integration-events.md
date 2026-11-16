@@ -63,9 +63,9 @@ workflow evidence.
 
 An `alert.transition` event's `resource_id` is the alert and its `correlation_id`
 the rule. Its payload carries `alert`: the new `state` (`firing` or `resolved`),
-the `severity`, the `signal`, the `value` and the `threshold`; the run fields
-`status`, `sequence` and `revision` are present and `null`. It never carries the
-rule's name, its selector or any recipient. Subscribing to it needs `alert.read`.
+the `severity`, the `signal`, the `value`, and the `threshold`; the run fields
+`status`, `sequence`, and `revision` are present and `null`. It never carries the
+rule's name, its selector, or any recipient. Subscribing to it needs `alert.read`.
 
 A `change_request.transition` event carries the change request's ID and, in its
 payload, `change_state` and `revision`; the payload's run fields `status` and

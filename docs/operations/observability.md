@@ -302,9 +302,9 @@ create rules, email channels and recipients' opt-ins; the
 
 - **Signals.** Run signals (`run.failure_rate`, `run.failures`,
   `run.duration_p95`) count the runs that ended in the rule's window of 1, 5,
-  15 or 60 minutes, read from the runs themselves up to 10,000 runs and from
-  the five-minute run statistics above that. Test runs never count. Queue,
-  worker, outbox, incident, target and platform health signals read the
+  15, or 60 minutes, read from the runs themselves up to 10,000 runs and from
+  the five-minute run statistics beyond that. Test runs never count. Queue,
+  worker, outbox, incident, target, and platform health signals read the
   current value, as the environment summary shows it.
 - **For and resolving.** A rule fires once its condition has held for its For
   time (at once when it is 0) and resolves only after it has been clear for
