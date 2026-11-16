@@ -918,8 +918,16 @@ that includes them refuses to start on the previous schema.
   `false` to workflow versions and activations, two empty tables with their
   row-level security, and a function, and backfills nothing. It builds two
   partial indexes over the version and activation tables, and writes to those
-  tables wait while they build. Rehearse the upgrade on a restored copy to
-  measure your own window.
+  tables wait while they build. In a rehearsal on PostgreSQL 17 (4 CPUs, 8 GiB),
+  with one workflow version and one activation per retained run, each migration
+  took:
+
+  | Migration | 10,000 retained runs | 50,000 retained runs |
+  | --- | --- | --- |
+  | `0039_transactions_reserve` | 0.03 s | 0.04 s |
+  | `0040_editor_step_tests` | 0.09 s | 0.22 s |
+
+  Rehearse the upgrade on a restored copy to measure your own window.
 - **Upgrade CLIs, SDKs and Studio together with the server.** This version runs
   workflow transactions and step error handling: earlier clients refuse the
   `transaction.*` event types, the run-view step kind `transaction` and the
