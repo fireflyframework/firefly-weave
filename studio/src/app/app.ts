@@ -9545,9 +9545,14 @@ export class App implements CanvasHost {
         // Without a recorded reason the Runs tab would wait for good and the
         // banner would say nothing: an unexpected error reads as offline.
         const kind = unreadIdentity(plain);
+        const notice = { kind, name };
         this.identityFailure = kind;
-        this.platformNotice = { kind, name };
+        this.platformNotice = notice;
         await this.loadIdentity();
+        // The account loaded through the API after all: the banner this
+        // check showed no longer applies.
+        if (this.identity && this.platformNotice === notice)
+          this.platformNotice = null;
       }
     } finally {
       this.cdr.markForCheck();

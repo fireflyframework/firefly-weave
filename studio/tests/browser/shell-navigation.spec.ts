@@ -423,6 +423,32 @@ test("a check of the account that succeeds after a refused call reads as signed 
   );
 });
 
+for (const { failure, code } of [
+  { failure: "can't reach the platform", code: "WV-AUTH-OFFLINE" },
+  { failure: "can't use the credential store", code: "WV-AUTH-STORE" },
+])
+  test(`a check that says it ${failure} leaves no banner once the account loads anyway`, async ({
+    page,
+  }) => {
+    // The host's check fails; reading the account through the API works.
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => ({
+        status: 503,
+        json: { status: 503, code, message: "The check failed." },
+      }),
+    });
+    // Studio reads the account once the check has failed.
+    await expect
+      .poll(() => host.requests("/studio/api/api/v1/identity", "GET").length)
+      .toBeGreaterThan(0);
+    await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+      "Platform: Acme · Signed in as jane@acme.example · Workspace Payments / Production",
+    );
+    await expect(page.locator(".platform-banner")).toHaveCount(0);
+  });
+
 test("a toast sits bottom-left beside the sidebar and pauses while hovered", async ({
   page,
 }) => {
