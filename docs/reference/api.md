@@ -1379,8 +1379,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
 
-`event_triggers.create` also requires `run.start`, and `transaction.reconcile` when the request sets
-`may_reconcile`.
+`event_triggers.create` also requires `run.start` and `run.read`, and `transaction.reconcile` when the request
+sets `may_reconcile`. Each run a trigger starts receives the transaction facts of its event, such as business
+keys and failure codes, so the trigger's owner must still hold `run.start` and `run.read` when the run starts.
 
 ## Deployment Operations authority
 

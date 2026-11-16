@@ -366,7 +366,7 @@ async def test_a_sibling_environments_trigger_is_out_of_reach(platform, access_d
     project = Scope(tenant_id=platform.scope.tenant_id, project_id=platform.scope.project_id)
     environment = await access.create_environment(await access.load_principal(admin.id), project, "sibling")
     sibling = platform.scope.model_copy(update={"environment_id": environment})
-    for role in ("deployer", "operator"):
+    for role in ("deployer", "operator", "viewer"):
         await access.grant(admin, platform.actor.id, Grant(role=role, scope=sibling))
     there = Platform(**{**vars(platform), "scope": sibling, "actor": await access.load_principal(platform.actor.id)})
     theirs = await there.bind(await there.publish(reaction("sibling-team")))
@@ -531,7 +531,7 @@ async def test_a_chain_of_reactions_starts_at_most_64_workflows_per_root_event(p
 
 
 async def test_an_in_doubt_event_starts_the_reaction_once(platform, access_db, provisioned):
-    owner = await person(access_db, provisioned, platform, "deployer", "operator")
+    owner = await person(access_db, provisioned, platform, "deployer", "operator", "viewer")
     await platform.bind(await platform.publish(reaction()), actor=owner)
     run = await in_doubt(platform)
     event = await outbox_event(platform, run, "transaction.in_doubt")
@@ -569,12 +569,16 @@ async def test_two_schedulers_start_the_reaction_exactly_once(platform, monkeypa
     assert len(await reactions(platform)) == 1
 
 
-async def test_a_trigger_whose_owner_lost_run_start_rejects_its_start_and_suspends_nothing(
-    platform, access_db, provisioned, monkeypatch
+@pytest.mark.parametrize("lost", ["operator", "viewer"], ids=["run.start", "run.read"])
+async def test_a_trigger_whose_owner_lost_a_grant_rejects_its_start_and_suspends_nothing(
+    platform, access_db, provisioned, monkeypatch, lost
 ):
+    """The reaction runs as its owner and receives what the event says about a transaction, so the owner must still
+    hold run.start and run.read when it starts."""
     access, admin = access_db[2], provisioned[0]
-    owner = await person(access_db, provisioned, platform, "deployer")
-    granted = await access.grant(admin, owner.id, Grant(role="operator", scope=platform.scope))
+    kept = {"operator", "viewer"} - {lost}
+    owner = await person(access_db, provisioned, platform, "deployer", *kept)
+    granted = await access.grant(admin, owner.id, Grant(role=lost, scope=platform.scope))
     await platform.bind(await platform.publish(reaction()), actor=await access.load_principal(owner.id))
     await access.revoke_grant(admin, platform.scope, granted)
     with held(monkeypatch):
@@ -688,6 +692,16 @@ async def test_a_chain_of_reactions_stops_at_three_runs(platform):
         (4, "skipped", "WV-TRIGGER-EVENT-DEPTH"),
     ]
     assert [row["event_depth"] for row in await reactions(platform)] == [1, 2, 3]
+
+
+async def test_binding_needs_run_read_since_reactions_see_transaction_facts(platform, access_db, provisioned):
+    activation = await platform.publish(reaction())
+    unreading = await person(access_db, provisioned, platform, "deployer", "operator")
+    with pytest.raises(AccessDenied):
+        await platform.bind(activation, actor=unreading)
+    assert await triggers(platform) == []
+    reading = await person(access_db, provisioned, platform, "deployer", "operator", "viewer")
+    assert (await platform.bind(activation, actor=reading)).principal_id == reading.id
 
 
 async def test_fan_out_holds_the_outbox_lock_it_counts_under(platform, monkeypatch):

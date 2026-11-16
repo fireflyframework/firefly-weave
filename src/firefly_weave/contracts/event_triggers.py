@@ -110,7 +110,8 @@ class EventTrigger(EventTriggerRequest):
     id: UUID
     # The bound activation's workflow: a trigger ignores events of its own workflow unless its sources name it.
     workflow_name: ResourceName
-    # Whose authority starts each run; it must still hold run.start when the run starts.
+    # Whose authority starts each run; it must still hold run.start, and run.read for the transaction facts the run
+    # receives, when the run starts.
     principal_id: UUID
     # 1 when created, 2 once disabled.
     revision: int = Field(ge=1)

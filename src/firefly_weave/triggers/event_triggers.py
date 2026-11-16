@@ -18,9 +18,10 @@
 
 A binding may ask only for events, and source workflows, that the bound version declares in ``eventTrigger``.
 Bindings are immutable: a trigger is created, then disabled; changing one means disabling it and creating another.
-An environment holds at most 64 enabled triggers. Creating one needs ``trigger.manage`` and ``run.start``, and
-``transaction.reconcile`` when its runs may resolve transactions. Disabling one is a safety control: it spends the
-trigger's own reserve, so it works at a full quota.
+An environment holds at most 64 enabled triggers. Creating one needs ``trigger.manage``, ``run.start`` and
+``run.read`` (each run receives what an event says about a transaction), and ``transaction.reconcile`` when its runs
+may resolve transactions. Disabling one is a safety control: it spends the trigger's own reserve, so it works at a
+full quota.
 """
 
 import json
@@ -120,6 +121,8 @@ class EventTriggerService:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
             self.runtime.require(actor, scope, "run.start", context)
+            # Each run receives what an event says about a transaction: business and instance keys, failure codes.
+            self.runtime.require(actor, scope, "run.read", context)
             if request.may_reconcile:
                 self.runtime.require(actor, scope, "transaction.reconcile", context)
             # Refuses a retired, mismatched or test activation, and an activation its runs couldn't start from.

@@ -134,8 +134,10 @@ class EventStartService:
         callbacks = len(tx.session.info.get("weave_after_commit", []))
         try:
             async with tx.session.begin_nested():
-                # The trigger's owner must still hold run.start: the start re-checks it on the principal stored now.
+                # The trigger's owner must still hold run.start, which the start re-checks, and run.read, since the run
+                # receives what the event says about a transaction; both on the principal as stored now.
                 principal = await load_principal(tx.session, trigger["principal_id"])
+                self.runtime.require(principal, tx.scope, "run.read", AuditContext())
                 view = await self.runtime.start(
                     principal,
                     tx.scope,

@@ -1994,7 +1994,7 @@ OPERATIONS = {
         Operation(
             "triggers.disable", ENVIRONMENT + "/triggers/{identifier}/disable", "POST", Disabled, "trigger.manage"
         ),
-        # Creating one also needs run.start, and transaction.reconcile when it may resolve transactions.
+        # Creating one also needs run.start and run.read, and transaction.reconcile when it may resolve transactions.
         Operation(
             "event_triggers.create",
             ENVIRONMENT + "/event-triggers",
