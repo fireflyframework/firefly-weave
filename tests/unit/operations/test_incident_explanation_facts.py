@@ -182,7 +182,12 @@ async def test_both_reads_and_the_clock_share_one_transaction(monkeypatch):
     svc, session, definitions, _ = service(monkeypatch, token=actor)
     await svc.explanation_facts(actor, SCOPE, INCIDENT_ID, context=AuditContext())
     assert definitions.opened == 1
-    assert [sql for sql, _ in session.statements if "run_events" in sql or "step_facts" in sql or "clock" in sql]
+    read = [
+        name
+        for name in ("FROM run_events", "FROM step_facts", "clock_timestamp()")
+        if any(name in sql for sql, _ in session.statements)
+    ]
+    assert read == ["FROM run_events", "FROM step_facts", "clock_timestamp()"]
 
 
 async def test_explanation_facts_on_an_unavailable_run_read_nothing_more(monkeypatch):
