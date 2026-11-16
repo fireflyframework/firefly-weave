@@ -23,8 +23,9 @@ SPDX-License-Identifier: Apache-2.0
 - Studio says why it has no account, and keeps it true: the Runs tab, the
   banner, and the top bar read the same reason (session expired, account not
   recognized, platform unreachable, credential store locked, or a Studio window
-  that needs a reload). A background sign-in that ends checks the sign-in the
-  computer still holds, and a later successful check clears the old reason.
+  that needs a reload). When a background sign-in is declined or canceled, the
+  banner now says so and names the account you're still signed in with,
+  instead of disappearing.
 
 ## 0.1.0a18
 
