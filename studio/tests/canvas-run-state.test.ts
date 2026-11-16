@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   edgeRun,
+  frameRun,
+  framedStep,
   groupsEntered,
   pulses,
   tileRun,
@@ -202,5 +204,146 @@ describe("the groups a run is inside", () => {
         groupsEntered(run({ done: ["deep", "inner"] }), parentOf),
       ),
     ).toBe("taken");
+  });
+});
+
+describe("how the Runs tab frames a run", () => {
+  const workflow = { x: 0, y: 0, width: 1000, height: 200 };
+  const send = { x: 800, y: 0, width: 120, height: 100 };
+
+  it("fits the workflow at the largest zoom from 100% to 60%, centered", () => {
+    // 1000 px wide with 8 px on each side fits a 896 px area at 88%.
+    expect(frameRun(workflow, send, { width: 896, height: 700 })).toEqual({
+      zoom: 0.88,
+      pan: { x: 8, y: 262 },
+    });
+    // Room to spare: never above 100%.
+    expect(frameRun(workflow, send, { width: 2000, height: 700 }).zoom).toBe(1);
+  });
+
+  it("centers one step at 60% when the workflow doesn't fit, its outline filling the width", () => {
+    // At 60% the workflow is 600 px wide: more than a 424 px column. Centered
+    // on send (pan -304), its right edge would sit 128 px inside the column;
+    // the pan stops where that edge meets the column's (424 - 600 = -176).
+    // Down, the 120 px outline fits the 900 px column: it is centered.
+    const framed = frameRun(workflow, send, { width: 424, height: 900 });
+    expect(framed).toEqual({ zoom: 0.6, pan: { x: -176, y: 390 } });
+    // send stays in view: 800 × 0.6 - 176 = 304, its right side at 376.
+    expect(800 * 0.6 + framed.pan.x).toBeGreaterThanOrEqual(0);
+    expect(920 * 0.6 + framed.pan.x).toBeLessThanOrEqual(424);
+  });
+
+  it("centers a step in the middle of a long workflow, both outline edges outside", () => {
+    const long = { x: 0, y: 0, width: 3000, height: 200 };
+    const middle = { x: 1440, y: 0, width: 120, height: 100 };
+    // (424 - 72) / 2 - 1440 × 0.6 = -688: the outline spans -688 to 1112.
+    expect(frameRun(long, middle, { width: 424, height: 900 }).pan.x).toBe(
+      -688,
+    );
+  });
+
+  it("frames the whole run between 55% and 60% on a wide canvas before cropping it", () => {
+    // 1,400 wide: at 56%, 784 + 16 spare fits an 800 px canvas; at 57% it doesn't.
+    const wide = { x: 0, y: 0, width: 1400, height: 200 };
+    const framed = frameRun(wide, send, { width: 800, height: 700 });
+    expect(framed.zoom).toBe(0.56);
+    expect(framed.pan.x).toBeCloseTo(8);
+  });
+
+  it("keeps 60% and the framed step below 768 px, where 55% would read too small", () => {
+    // 680 wide would fit a 400 px column at 56%, but a phone keeps 60%.
+    const short = { x: 0, y: 0, width: 680, height: 200 };
+    expect(frameRun(short, send, { width: 400, height: 700 }).zoom).toBe(0.6);
+  });
+
+  it("measures the outline at each zoom it tries", () => {
+    // Labels grow as the canvas zooms out: the outline widens with them.
+    const outline = (zoom: number) => ({
+      x: 0,
+      y: 0,
+      width: 1000 + (1 - zoom) * 200,
+      height: 200,
+    });
+    // 86%: 1,028 × 0.86 = 884.08 + 16 fits 901; 88%: 1,024 × 0.88 = 901.12 doesn't.
+    const framed = frameRun(outline, send, { width: 901, height: 700 });
+    expect(framed.zoom).toBe(0.86);
+    expect(framed.pan.x).toBeCloseTo((901 - 1028 * 0.86) / 2);
+  });
+
+  it("frames the failed step, else the running one, else the last finished", () => {
+    const tiles = ["$trigger:manual", "fetch", "check", "send"];
+    const recorded = (extra: Partial<CanvasRun>) => ({
+      ...run({ mode: "real", ...extra }),
+      changed: [],
+      added: [],
+      failures: {},
+    });
+    expect(
+      framedStep(
+        recorded({ status: "failed", current: ["send"], done: ["fetch"] }),
+        tiles,
+      ),
+    ).toBe("send");
+    expect(
+      framedStep(
+        recorded({ status: "running", current: ["check"], done: ["fetch"] }),
+        tiles,
+      ),
+    ).toBe("check");
+    expect(
+      framedStep(
+        recorded({ status: "succeeded", done: ["send", "fetch", "check"] }),
+        tiles,
+      ),
+    ).toBe("send");
+    expect(framedStep(recorded({ status: "queued" }), tiles)).toBe(
+      "$trigger:manual",
+    );
+  });
+});
+
+describe("the edges of a run that happened", () => {
+  it("dashes only the ways a finished step didn't take; edges past a failure stay plain", () => {
+    const failed = run({
+      mode: "real",
+      status: "failed",
+      current: ["send"],
+      done: ["fetch", "route"],
+    });
+    // The way route didn't take: skipped.
+    expect(edgeRun({ leaves: "route", enters: "review" }, failed)).toBe(
+      "skipped",
+    );
+    // Out of the failed step, and on from a step the run never reached: idle.
+    expect(edgeRun({ leaves: "send", enters: "$end" }, failed)).toBe("idle");
+    expect(edgeRun({ leaves: "review", enters: "$end" }, failed)).toBe("idle");
+    // A simulation keeps its whole untaken path dashed.
+    expect(
+      edgeRun(
+        { leaves: "review", enters: "$end" },
+        { ...failed, mode: "simulated" },
+      ),
+    ).toBe("skipped");
+  });
+});
+
+describe("a step new in the draft, on a run of an older version", () => {
+  it("dashes both edges around it: the run went past it, not through it", () => {
+    const older = {
+      ...run({
+        mode: "real",
+        status: "succeeded",
+        done: ["fetch", "approve", "send"],
+      }),
+      changed: [],
+      added: ["check"],
+      failures: {},
+    };
+    expect(edgeRun({ leaves: "fetch", enters: "check" }, older)).toBe(
+      "skipped",
+    );
+    expect(edgeRun({ leaves: "check", enters: "approve" }, older)).toBe(
+      "skipped",
+    );
   });
 });

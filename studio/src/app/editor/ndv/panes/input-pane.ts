@@ -58,6 +58,7 @@ import {
 } from "./views";
 import type { FormSession } from "../params/form-session";
 import { ndvRegistry, type Json } from "../registry";
+import { instanceStep } from "../../state/instance-keys";
 
 @Component({
   selector: "weave-input-pane",
@@ -79,13 +80,21 @@ import { ndvRegistry, type Json } from "../registry";
           aria-label="Input view"
           (keydown)="radioKey($event)"
         >
+          @let shownAs =
+            selectedSource() === "received" ? receivedView() : view();
           @for (choice of views; track choice.id) {
+            @let noFields =
+              selectedSource() === "received" && choice.id === "schema";
             <button
               type="button"
               role="radio"
-              [attr.aria-checked]="view() === choice.id"
-              [attr.tabindex]="view() === choice.id ? 0 : -1"
-              (click)="setView(choice.id)"
+              [attr.aria-checked]="shownAs === choice.id"
+              [attr.tabindex]="shownAs === choice.id ? 0 : -1"
+              [attr.aria-disabled]="noFields ? 'true' : null"
+              [attr.title]="
+                noFields ? 'What a step received has no fields to list' : null
+              "
+              (click)="!noFields && setView(choice.id)"
             >
               <weave-icon [name]="choice.icon" [size]="16" />{{ choice.label }}
             </button>
@@ -147,14 +156,43 @@ import { ndvRegistry, type Json } from "../registry";
         >
       }
       <span class="pane-count">{{
-        data !== undefined && shownView() === "table"
-          ? tableCount(data, query())
-          : countLabel(all.length, query() ? shown.length : undefined)
+        chosen === "received"
+          ? ""
+          : data !== undefined && shownView() === "table"
+            ? tableCount(data, query())
+            : countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
     <div class="sd-pane-body">
       <div class="pane-content">
-        @if (!sources.length) {
+        @if (chosen === "received") {
+          @let got = received();
+          @if (got.ok) {
+            @if (receivedView() === "table") {
+              <weave-data-table
+                [value]="got.value"
+                label="What it received"
+                [query]="query()"
+              />
+            } @else {
+              <pre
+                class="pane-json pane-received"
+                tabindex="0"
+                aria-label="What it received"
+                >{{ json(got.value) }}</pre
+              >
+            }
+            <p class="pane-received-note">
+              Studio evaluated {{ got.step }}'s input mapping with this run's
+              data{{ got.version ? " from version " + got.version : "" }}, so
+              this is what the step received.
+            </p>
+          } @else if (got.reason) {
+            <p class="pane-empty-text">{{ got.reason }}</p>
+          } @else {
+            <p class="pane-empty-text">This step's input maps nothing.</p>
+          }
+        } @else if (!sources.length) {
           <p class="pane-empty-text">This step doesn't read data.</p>
         } @else if (data !== undefined && shownView() !== "schema") {
           @if (shownView() === "table") {
@@ -285,6 +323,16 @@ export class InputPane implements OnInit {
   /** The Edit formula dialog opens with the search field shown. */
   ngOnInit() {
     if (this.openSearch()) this.searching.set(true);
+    // Where Debug in editor stopped: what the step was given, as data.
+    const { host, target } = this.session();
+    const notice = host.runNotice;
+    if (
+      !this.compact() &&
+      notice &&
+      notice.draftId === host.draftId &&
+      instanceStep(notice.key) === instanceStep(target)
+    )
+      this.view.set("json");
   }
   readonly source = signal<string | null>(null);
   readonly view = signal<DataView>(savedView("input") ?? "schema");
@@ -337,6 +385,8 @@ export class InputPane implements OnInit {
   }
   private selection: {
     session: FormSession;
+    /** The run open in run mode: another run starts at What it received. */
+    run: string | null;
     requested: string | null;
     chosen: string;
   } | null = null;
@@ -344,7 +394,9 @@ export class InputPane implements OnInit {
     const session = this.session();
     const sources = this.sources();
     const requested = this.source();
-    const changed = this.selection?.session !== session;
+    const run = session.controller.run()?.runId ?? null;
+    const changed =
+      this.selection?.session !== session || this.selection?.run !== run;
     const desired = changed
       ? null
       : requested !== this.selection?.requested
@@ -353,16 +405,62 @@ export class InputPane implements OnInit {
     const chosen = sources.some((source) => source.id === desired)
       ? desired!
       : defaultSource(sources);
-    this.selection = { session, requested, chosen };
+    this.selection = { session, run, requested, chosen };
     return chosen;
   }
   sources() {
     const scope = this.scope();
-    return scope.found ? inputSources(scope) : [];
+    const sources = scope.found ? inputSources(scope) : [];
+    // In run mode the first source is what the step received in that run.
+    const { controller, target } = this.session();
+    return controller.run() && !target.startsWith("$") && !this.compact()
+      ? [
+          {
+            id: "received",
+            label: "What it received",
+            detail: "",
+            icon: "output",
+          },
+          ...sources,
+        ]
+      : sources;
+  }
+  /** What it received shows as Table or JSON: it has no fields to list as Schema. */
+  receivedView(): DataView {
+    const view = this.view();
+    return view === "schema" ? "json" : view;
+  }
+  /** What the step received in the run, recomputed, or why Studio can't say. */
+  received() {
+    const { controller, target } = this.session();
+    const received = controller.runReceived(target);
+    const version = controller.run()?.definitionVersion() ?? null;
+    return received.ok
+      ? {
+          version,
+          ok: true as const,
+          value: received.value as Json,
+          reason: "",
+          step: target,
+        }
+      : {
+          version,
+          ok: false as const,
+          value: undefined,
+          reason: received.reason,
+          step: target,
+        };
   }
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
+    if (source === "received") {
+      const received = controller.runReceived(this.session().target);
+      return received.ok ? (received.value as Json) : undefined;
+    }
+    // On the Runs tab only a run's data shows, never the draft's sample.
+    if (source === "input" && controller.viewingRuns())
+      return controller.testEvent();
     if (source === "input")
       return (
         controller.testEvent() ??
@@ -397,6 +495,9 @@ export class InputPane implements OnInit {
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {
+    const run = this.session().controller.run();
+    if (source === "received") return "Recomputed from the run's data";
+    if (run) return `From ${run.label()}`;
     if (source === "input")
       return this.session().controller.testEvent() === undefined &&
         this.session().host.execution?.sampleUsed() != null

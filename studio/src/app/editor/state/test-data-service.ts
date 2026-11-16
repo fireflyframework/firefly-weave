@@ -36,7 +36,11 @@ import {
   type AccountScope,
   type StoreBackend,
 } from "./browser-store";
-import { checkEntries, type CheckInputs } from "./test-data-check";
+import {
+  checkEntries,
+  type CheckInputs,
+  type EntryVerdict,
+} from "./test-data-check";
 import {
   TEST_DATA_TOO_LARGE,
   emptyTestData,
@@ -47,6 +51,7 @@ import {
   renameEntries,
 } from "./test-data-ops";
 import { canonicalJson } from "../../forms/core/json";
+import type { CheckCode } from "./execution";
 import { readTestData } from "./test-data-read";
 import type { StudioDocument, StudioTestData } from "./test-data";
 
@@ -136,6 +141,26 @@ export type ChangeOutcome =
 
 const UNREADABLE =
   "Studio couldn't read the test data kept for this workflow, so it starts empty.";
+const REFUSED_RUN_DATA =
+  "This workflow's test data includes data from runs you can't read, so Studio didn't load it.";
+
+/** The document without the entry at `pointer` ("/input", "/pins/send"). */
+function withoutEntry(data: StudioTestData, pointer: string): StudioTestData {
+  const [, section, ...rest] = pointer.split("/");
+  if (section === "input" && !rest.length) {
+    const next = { ...data };
+    delete next.input;
+    return next;
+  }
+  const key = rest.join("/").replace(/~1/g, "/").replace(/~0/g, "~");
+  if (section !== "pins" && section !== "humans" && section !== "signals")
+    return data;
+  const entries = { ...(data[section] ?? {}) } as Record<string, unknown>;
+  delete entries[key];
+  const next = { ...data, [section]: entries } as StudioTestData;
+  if (!Object.keys(entries).length) delete next[section];
+  return next;
+}
 const KEEP_MS = 800;
 
 export class TestDataService {
@@ -163,6 +188,8 @@ export class TestDataService {
   private readonly forgotten = new Set<string>();
   /** The platform revision this copy is based on. */
   private platformRevision: number | undefined;
+  /** The platform refused to read this draft's test data: nothing is saved over it. */
+  private saveRefused = false;
 
   constructor(private readonly host: TestDataHost) {
     this.current = emptyTestData(host.now().toISOString());
@@ -216,6 +243,7 @@ export class TestDataService {
     this.where = key ? place : { kind: "memory" };
     this.key = key;
     this.problem = null;
+    this.saveRefused = false;
     this.platformRevision = undefined;
     this.waitingKey =
       key && place.kind === "connected" ? storeKeyFor(key, "local") : null;
@@ -330,6 +358,71 @@ export class TestDataService {
     this.set(next);
     this.keep();
     return { ok: true, previous };
+  }
+  /**
+   * A run's data (Debug in editor, Copy to editor): checks every pointer
+   * once and keeps the document without the entries the check refuses,
+   * listing them. Nothing is kept when it doesn't fit, when the test data
+   * changed while the check was out, or when `holds` (what the caller is
+   * fenced on: account, environment, workflow) no longer does.
+   */
+  async keepFromRun(
+    next: StudioTestData,
+    pointers: readonly string[],
+    holds: () => boolean = () => true,
+  ): Promise<
+    | {
+        ok: true;
+        previous: StudioTestData;
+        version: number;
+        refused: { pointer: string; code: CheckCode }[];
+      }
+    | { ok: false; message: string }
+    | { ok: false; stale: true }
+  > {
+    if (!fitsTestData(next)) return { ok: false, message: TEST_DATA_TOO_LARGE };
+    const opening = this.opened;
+    const previous = this.current;
+    const verdicts = pointers.length
+      ? await checkEntries(
+          this.host.api,
+          next,
+          [...pointers],
+          await this.host.inputs(),
+        )
+      : new Map<string, EntryVerdict>();
+    if (!holds()) return { ok: false, stale: true };
+    if (opening !== this.opened || this.current !== previous)
+      return {
+        ok: false,
+        message: "The test data changed meanwhile. Try again.",
+      };
+    const refused: { pointer: string; code: CheckCode }[] = [];
+    let kept = next;
+    for (const [pointer, verdict] of verdicts)
+      if (!verdict.ok) {
+        refused.push({ pointer, code: verdict.code });
+        kept = withoutEntry(kept, pointer);
+      }
+    this.set(kept);
+    this.keep();
+    return { ok: true, previous, version: this.version(), refused };
+  }
+  /**
+   * The platform refused to read this draft's test data. A 403 means it
+   * holds data from runs this account can't read: it shows as empty, says
+   * so, and nothing is saved over it until the draft opens again.
+   */
+  refuseRead(status: number): void {
+    if (status !== 403) return;
+    this.problem = REFUSED_RUN_DATA;
+    this.saveRefused = true;
+    this.loaded++;
+    this.set(emptyTestData(this.stamp()));
+  }
+  /** Whether the platform's copy may be saved over (false after a refused read of run data). */
+  platformSaveAllowed(): boolean {
+    return !this.saveRefused;
   }
   restore(previous: StudioTestData, ifVersion: number): boolean {
     if (this.version() !== ifVersion) return false;

@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   tabindex="-1"
   [attr.aria-label]="'Step details: ' + name()"
   [attr.data-layout]="layout()"
+  [attr.data-run-mode]="controller().viewingRuns() ? '' : null"
   [attr.data-table]="table() ? '' : null"
   [attr.data-data-folded]="folded('data') ? '' : null"
   (keydown)="key($event)"
@@ -31,6 +32,28 @@ SPDX-License-Identifier: Apache-2.0
   <div class="sd-top">
     @if (crumb(); as where) {
       <span class="sd-crumb" [attr.title]="where">{{ where }}</span>
+    }
+    @if (runChip(); as chip) {
+      <span class="sd-run-chip"
+        ><weave-icon name="runHistory" [size]="16" />{{ chip }} ·
+        read-only</span
+      >
+      @let iterations = runIterations();
+      @if (iterations.length) {
+        <label class="sd-iteration">
+          <span>Iteration</span>
+          <select (change)="chooseIteration($any($event.target).value)">
+            @for (item of iterations; track item.key) {
+              <option
+                [value]="item.key"
+                [selected]="item.key === controller().runKey(target())"
+              >
+                {{ item.label }}
+              </option>
+            }
+          </select>
+        </label>
+      }
     }
     <span class="sd-spacer"></span>
     <button
@@ -221,16 +244,17 @@ SPDX-License-Identifier: Apache-2.0
             <!-- The step's issues sit on its name's line, so they come and
                  go without moving the header. -->
             <div class="sd-name-row">
+              @let fixedName = pseudo() || !!runChip();
               <button
                 type="button"
                 class="sd-name"
-                [disabled]="pseudo()"
+                [disabled]="fixedName"
                 [attr.title]="name()"
-                [attr.aria-label]="pseudo() ? name() : 'Rename ' + name()"
+                [attr.aria-label]="fixedName ? name() : 'Rename ' + name()"
                 (click)="startRename()"
               >
                 <span class="sd-name-text">{{ name() }}</span>
-                @if (!pseudo()) {
+                @if (!fixedName) {
                   <weave-icon name="edit" [size]="16" />
                 }
               </button>
@@ -337,6 +361,15 @@ SPDX-License-Identifier: Apache-2.0
           ><weave-icon name="docs" [size]="16" />Docs</a
         >
       </div>
+      @if (controller().viewingRuns()) {
+        <div class="sd-run-note" role="note">
+          <weave-icon name="lock" [size]="16" />
+          <span>{{ controller().readOnlyReason() }}</span>
+          <button type="button" class="sm" (click)="backToEditing()">
+            Back to editing
+          </button>
+        </div>
+      }
       <div
         class="sd-tabpanel"
         role="tabpanel"

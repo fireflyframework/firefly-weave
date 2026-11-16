@@ -38,6 +38,7 @@ from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.lumi import LumiService
+from firefly_weave.operations.lumi_operations import OperationsExplainer
 from firefly_weave.operations.run_views import RunViewService
 
 pytestmark = pytest.mark.integration
@@ -105,6 +106,7 @@ async def lumi(services, access_db, provisioned, monkeypatch):
         graph.resolve(DeploymentService),
         APIAIPolicy(),
         graph.resolve(RunViewService),
+        graph.resolve(OperationsExplainer),
     )
     config = LumiConfigurationRequest(
         connection_revision_id=revision.id,
@@ -126,7 +128,9 @@ async def test_configuration_cas_scope_and_reply_do_not_persist_conversation(lum
         await service.configure(actor, scope, config, None, context=AuditContext())
     with pytest.raises(AccessDenied):
         await service.status(actor, provisioned[1][1], context=AuditContext())
-    response = await service.ask(actor, scope, LumiAskRequest(message="private-user-prompt"), context=AuditContext())
+    response = await service.ask(
+        actor, scope, LumiAskRequest(message="private-user-prompt"), context=AuditContext(), summary=None
+    )
     assert response.answer == "Review this proposal"
     assert gateway.calls[0][4] == "private-provider-key"
     async with access_db[1]() as connection:
@@ -145,7 +149,7 @@ async def test_lumi_grant_does_not_grant_resource_or_credential_access(lumi, acc
     )
     await access_db[2].grant(provisioned[0], identifier, Grant(role="lumi_user", scope=scope))
     user = await access_db[2].load_principal(identifier)
-    assert (await service.ask(user, scope, LumiAskRequest(message="Help"), context=AuditContext())).answer
+    assert (await service.ask(user, scope, LumiAskRequest(message="Help"), context=AuditContext(), summary=None)).answer
     with pytest.raises(AccessDenied):
         await service.configuration(user, scope, context=AuditContext())
     for kind in ("draft", "run", "simulation"):
@@ -155,6 +159,7 @@ async def test_lumi_grant_does_not_grant_resource_or_credential_access(lumi, acc
                 scope,
                 LumiAskRequest(message="Explain", attachments=[{"kind": kind, "id": uuid4()}]),
                 context=AuditContext(),
+                summary=None,
             )
     assert len(gateway.calls) == 1
 
@@ -168,7 +173,7 @@ async def test_changed_configuration_discards_inflight_reply(lumi):
 
     gateway.callback = disable
     with pytest.raises(CatalogError):
-        await service.ask(actor, scope, LumiAskRequest(message="Help"), context=AuditContext())
+        await service.ask(actor, scope, LumiAskRequest(message="Help"), context=AuditContext(), summary=None)
 
 
 async def test_revoked_lumi_grant_discards_inflight_reply(lumi, access_db):
@@ -183,7 +188,7 @@ async def test_revoked_lumi_grant_discards_inflight_reply(lumi, access_db):
 
     gateway.callback = revoke
     with pytest.raises(AccessDenied):
-        await service.ask(actor, scope, LumiAskRequest(message="Help"), context=AuditContext())
+        await service.ask(actor, scope, LumiAskRequest(message="Help"), context=AuditContext(), summary=None)
 
 
 async def test_native_lumi_routes_require_roles_and_do_not_cache(client, headers, env_url):
@@ -234,6 +239,7 @@ async def test_unsaved_inline_source_does_not_fetch_uris_or_require_catalog_gran
         scope,
         LumiAskRequest(message="Fix this", draft={"format": "yaml", "source": source}),
         context=AuditContext(),
+        summary=None,
     )
     assert response.answer
     assert gateway.calls[0][2]["resources"] == []
@@ -252,7 +258,7 @@ async def test_inline_and_saved_context_share_one_byte_budget(lumi, monkeypatch)
         message="Help", draft={"format": "yaml", "source": "x" * 70000}, attachments=[{"kind": "draft", "id": uuid4()}]
     )
     with pytest.raises(CatalogError) as failure:
-        await service.ask(actor, scope, request, context=AuditContext())
+        await service.ask(actor, scope, request, context=AuditContext(), summary=None)
     assert failure.value.status == 413 and not gateway.calls
 
 
@@ -287,7 +293,7 @@ async def test_operations_attachment_requires_target_read_and_rechecks_it(lumi, 
         message="Explain this saved target", attachments=[{"kind": "deployment-target", "id": target.id}]
     )
     with pytest.raises(AccessDenied):
-        await service.ask(user, scope, request, context=AuditContext())
+        await service.ask(user, scope, request, context=AuditContext(), summary=None)
     assert not gateway.calls
     await access_db[2].grant(admin, user_id, Grant(role="deployment_reader", scope=scope, resources=(str(target.id),)))
     user = await access_db[2].load_principal(user_id)
@@ -302,9 +308,9 @@ async def test_operations_attachment_requires_target_read_and_rechecks_it(lumi, 
 
         gateway.callback = remove_reader
         with pytest.raises(AccessDenied):
-            await service.ask(user, scope, request, context=AuditContext())
+            await service.ask(user, scope, request, context=AuditContext(), summary=None)
     else:
-        result = await service.ask(user, scope, request, context=AuditContext())
+        result = await service.ask(user, scope, request, context=AuditContext(), summary=None)
         assert result.answer and result.proposals == []
     assert len(gateway.calls) == 1
     context = gateway.calls[0][2]

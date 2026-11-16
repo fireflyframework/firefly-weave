@@ -196,6 +196,32 @@ for (const size of sizes)
         0,
       );
     });
+
+    test("while the source doesn't parse, P and the menu both keep a pin and say why", async ({
+      page,
+    }) => {
+      const details = await openTestDataFixture(page);
+      await pin(details, "notify");
+      await applySource(page, `${await sourceText(page)}\n  broken: [`);
+      await fitCanvas(page);
+      const notify = page.locator('[data-step="notify"]').first();
+      await notify.click();
+      await page.keyboard.press("p");
+      await expect(
+        page.locator(".toast").filter({
+          hasText: "Fix the source before changing steps.",
+        }),
+      ).toHaveCount(1);
+      await page.keyboard.press("Escape");
+      await notify.click({ button: "right" });
+      const item = page.getByRole("menuitem", { name: /^Unpin/ });
+      await expect(item).toHaveAttribute("aria-disabled", "true");
+      await expect(item).toContainText("Fix the source before changing steps.");
+      await expect(badgeOf(page, "notify")).toHaveAttribute(
+        "data-badge",
+        "pinned",
+      );
+    });
   });
 
 for (const size of [

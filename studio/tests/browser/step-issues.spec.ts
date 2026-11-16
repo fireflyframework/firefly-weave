@@ -46,7 +46,7 @@ import {
 import { httpWorkflow, openHttpStep } from "./step-http";
 import { caretToEnd, formulaBox, suggestions } from "./formula-po";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
-import { command, sourceText, tokenColor } from "./support";
+import { command, showView, sourceText, tokenColor } from "./support";
 
 /** A diagnostic as live validation reports it. */
 interface Reported {
@@ -284,13 +284,13 @@ for (const size of sizes)
       page,
     }) => {
       const details = await openStepFixture(page);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const source = page.getByRole("textbox", { name: "Workflow source" });
       await source.fill(`${await source.inputValue()}\n  broken: [`);
       await page
         .getByRole("button", { name: "Apply changes", exact: true })
         .click();
-      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await showView(page, "Designer");
       await details.open("check-customer");
       await expect(
         details.dialog.getByRole("button", {
@@ -589,14 +589,14 @@ for (const size of sizes)
         .first()
         .click();
       await expect(kept).toHaveCount(0);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       const source = page.getByRole("textbox", { name: "Workflow source" });
       const good = await source.inputValue();
       await source.fill(`${good}\n  broken: [`);
       await page
         .getByRole("button", { name: "Apply changes", exact: true })
         .click();
-      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await showView(page, "Designer");
       await details.openWithKeyboard("summarize");
       // Read-only: the text that applied, nothing marked or listed.
       await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
@@ -612,12 +612,12 @@ for (const size of sizes)
       ).toEqual([]);
       await details.close();
       await expect(kept).toHaveCount(0);
-      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await showView(page, "Source");
       await source.fill(good);
       await page
         .getByRole("button", { name: "Apply changes", exact: true })
         .click();
-      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await showView(page, "Designer");
       await details.openWithKeyboard("summarize");
       await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
         "data-text",
@@ -1123,7 +1123,7 @@ test.describe("entries not applied yet through a move between twin steps", () =>
             })
             .click();
         } else {
-          await page.getByRole("tab", { name: "Source", exact: true }).click();
+          await showView(page, "Source");
           const source = page.getByRole("textbox", { name: "Workflow source" });
           const text = await source.inputValue();
           const payment = text.indexOf("    - id: wait-for-payment");
@@ -1138,9 +1138,7 @@ test.describe("entries not applied yet through a move between twin steps", () =>
           await page
             .getByRole("button", { name: "Apply changes", exact: true })
             .click();
-          await page
-            .getByRole("tab", { name: "Designer", exact: true })
-            .click();
+          await showView(page, "Designer");
         }
         expect(await rootSteps(page)).not.toEqual(order);
         for (const move of ["Undo", "Redo"] as const) {

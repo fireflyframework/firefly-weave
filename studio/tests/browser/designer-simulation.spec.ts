@@ -30,6 +30,7 @@ import {
   command,
   connected,
   newWorkflow,
+  showView,
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { python, pythonAvailable, repository } from "../python-path";
@@ -537,7 +538,7 @@ test.describe("Simulate over text typed in Source", () => {
     await newWorkflow(page);
     await new DesignerPage(page).setSource(source);
     await closeSheet(page);
-    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    await showView(page, "Source");
     const box = page.getByRole("textbox", { name: "Workflow source" });
     const typed = (await box.inputValue()).replace(
       "name: simulated",

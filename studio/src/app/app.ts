@@ -76,8 +76,10 @@ import type {
 } from "./editor/state/test-data";
 import {
   stepDetailsEnabled,
+  type RunNotice,
   type StepDetailsHost,
 } from "./editor/ndv/step-details-host";
+import { dropDebug } from "./editor/runs-tab/run-links";
 import {
   StepDetailsService,
   openRequest,
@@ -153,6 +155,7 @@ import {
   isAiWorkflow,
 } from "./editor/ndv/kinds/ai-task-setup";
 import type { CanvasRun } from "./editor/canvas/run-state";
+import type { RunViewPort } from "./editor/runs-tab/run-port";
 import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
@@ -263,11 +266,7 @@ import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
-import {
-  canvasSheet,
-  keyPlatform,
-  typingIn,
-} from "./editor/state/canvas-commands";
+import { typingIn } from "./editor/state/typing";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -308,6 +307,12 @@ type PlatformNoticeKind =
   | "signing-in"
   | "sign-in-failed"
   | "revocation";
+/**
+ * Why the last check of who is signed in found no account: the platform
+ * couldn't be reached, the credential store is locked, the platform doesn't
+ * know the account, or the sign-in ended.
+ */
+export type IdentityFailure = "offline" | "store" | "not-linked" | "expired";
 interface ConnectionSlot {
   name: string;
   connector: string;
@@ -408,6 +413,8 @@ const nextPatch = (version: string) => {
 const resourceName = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 /** "/workflows/:id/designer": a workflow open in the designer. */
 const designerPath = /^\/workflows\/([^/]+)\/designer\/?$/;
+const classicEditorViews = ["Designer", "Source", "Outline"];
+const nextEditorViews = [...classicEditorViews, "Runs"];
 const versionedName =
   /^[A-Za-z0-9][A-Za-z0-9_.-]*@(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.+-]*)?$/;
 const placeholderAction = "your-action@1.0.0";
@@ -506,6 +513,11 @@ export class App implements CanvasHost {
   private restoringHistory = false;
   /** Set while Studio steps back to close a run: that popstate needs no reload. */
   private closingRun = false;
+  /**
+   * The query of the designer address Studio opened or went back to
+   * ("?tab=runs&run=…"), read before the workflow is restored.
+   */
+  designerLink = "";
   private injector = inject(Injector);
   dialogs = inject(DialogService);
   crypto = crypto;
@@ -553,6 +565,13 @@ export class App implements CanvasHost {
   get checkingIdentity() {
     return !!this.identityChecks?.size;
   }
+  /**
+   * How the last check of who is signed in failed, recorded where it failed:
+   * it outlives the banner's notice, which the person can dismiss. Cleared
+   * when a check starts, when an identity arrives, and on sign-in or
+   * sign-out; null also while nothing has failed.
+   */
+  identityFailure: IdentityFailure | null = null;
   /** Resolves once no check of who is signed in is still out. */
   async identitySettled() {
     while (this.identityChecks?.size)
@@ -666,8 +685,16 @@ export class App implements CanvasHost {
   storageNotice = false;
   private storageNoticeShown = false;
   private localTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Published versions by ID: the name and version a run belongs to. */
+  /**
+   * Published versions by ID: the name and version a run belongs to.
+   * Changed only through changeWorkflowVersions.
+   */
   workflowVersions = new Map<string, { name: string; version: string }>();
+  /**
+   * Counts the changes to the published versions, so a computed view that
+   * lists them (the Runs tab's Version menu) lists them again.
+   */
+  readonly workflowVersionsChanged = signal(0);
   /** Runs read in this workspace, by ID: the workflow behind a task. */
   knownRuns = new Map<string, Record<string, unknown>>();
   private versionsScope: unknown = null;
@@ -1407,9 +1434,10 @@ export class App implements CanvasHost {
     text: string,
     action?: ToastAction,
     tone: "neutral" | "danger" = "neutral",
+    detail?: string,
   ) {
     this.message = "";
-    this.toasts.show({ text, action, tone });
+    this.toasts.show({ text, detail, action, tone });
     this.cdr.markForCheck();
   }
   async initialize() {
@@ -1432,6 +1460,7 @@ export class App implements CanvasHost {
           1500,
         );
         // A reload or a link to a workflow brings it back first.
+        this.designerLink = location.search;
         if (designer) await this.restoreWorkflow(designer[1]);
         await this.verifyPlatform(true);
         void this.approvalPoller.refresh();
@@ -1829,11 +1858,14 @@ export class App implements CanvasHost {
       return false;
     // After a sign-out the platform refuses calls as expected: Studio stays
     // "Signed out" instead of reporting an expired session.
-    if (plain.code === "WV-AUTH-NOT-LINKED" || !this.platformSignedOut)
+    if (plain.code === "WV-AUTH-NOT-LINKED" || !this.platformSignedOut) {
+      this.identityFailure =
+        plain.code === "WV-AUTH-NOT-LINKED" ? "not-linked" : "expired";
       this.platformNotice = {
-        kind: plain.code === "WV-AUTH-NOT-LINKED" ? "not-linked" : "expired",
+        kind: this.identityFailure,
         name: this.profile.name,
       };
+    }
     this.error = "";
     this.errorCode = "";
     this.message = "";
@@ -2985,9 +3017,9 @@ export class App implements CanvasHost {
         },
       );
     // With the new editor, Execute workflow (simulated on this computer)
-    // takes the classic simulation's place.
+    // takes the classic simulation's place; the Runs tab executes nothing.
     if (this.editorNext && this.execution) {
-      if (narrow)
+      if (narrow && this.tab !== "Runs")
         items.push({
           label: "Execute workflow",
           run: () => this.executeWorkflow(),
@@ -3032,10 +3064,31 @@ export class App implements CanvasHost {
     else this.showInspector = true;
     if (this.showInspector) this.revealSelected();
   }
-  /** Simulating: the workflow can't change until the simulation stops. */
+  /**
+   * Simulating, or reading the workflow's runs: the workflow can't change
+   * until the simulation stops or another view is chosen.
+   */
   get editingLocked() {
-    return !!this.simulationSession;
+    return !!this.simulationSession || this.tab === "Runs";
   }
+  get viewingRuns() {
+    return this.tab === "Runs";
+  }
+  get runData() {
+    return this.runView()?.data ?? null;
+  }
+  /**
+   * After Debug in editor: the step where the run failed, until the next
+   * execution, for the account that read the run only.
+   */
+  get runNotice(): RunNotice | null {
+    const kept = this.keptRunNotice;
+    return kept && kept.scope === this.stepDataScope ? kept.notice : null;
+  }
+  set runNotice(notice: RunNotice | null) {
+    this.keptRunNotice = notice ? { notice, scope: this.stepDataScope } : null;
+  }
+  private keptRunNotice: { notice: RunNotice; scope: string } | null = null;
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
    * selected one); a group with steps inside asks first. A toast offers
@@ -3302,15 +3355,33 @@ export class App implements CanvasHost {
     { keys: "Escape", does: "Stop moving a step, or close the inspector" },
     { keys: "?", does: "Show these shortcuts" },
   ];
-  get shortcuts() {
-    return this.editorNext
-      ? canvasSheet(keyPlatform()).flatMap((section) =>
+  /** The new editor's rows, read from its shortcut table when the sheet first opens. */
+  private editorShortcuts: { keys: string; does: string }[] = [];
+  /**
+   * Opens the "Keyboard shortcuts" sheet. The new editor's table loads with
+   * it, so the first page doesn't carry it.
+   */
+  async showShortcuts() {
+    try {
+      if (this.editorNext && !this.editorShortcuts.length) {
+        const { canvasSheet, keyPlatform } = await import(
+          "./editor/state/canvas-commands"
+        );
+        this.editorShortcuts = canvasSheet(keyPlatform()).flatMap((section) =>
           section.entries.map((entry) => ({
             keys: entry.keys.join(" "),
             does: entry.label,
           })),
-        )
-      : this.classicShortcuts;
+        );
+      }
+      this.shortcutsOpen = true;
+    } catch (e) {
+      this.fail(e);
+    }
+    this.cdr.markForCheck();
+  }
+  get shortcuts() {
+    return this.editorNext ? this.editorShortcuts : this.classicShortcuts;
   }
   /** "Main sequence" or "Case 1 of route": where a step sits. */
   placeLabel(owner: string) {
@@ -3940,8 +4011,12 @@ export class App implements CanvasHost {
     session: unknown;
     run: CanvasRun | null;
   } = { nodes: null, session: null, run: null };
-  /** Today's simulation as the canvas draws it; null when none is open. */
+  /**
+   * The run the canvas draws: on the Runs tab the chosen run, otherwise
+   * today's simulation; null when there is none.
+   */
   canvasRun(): CanvasRun | null {
+    if (this.tab === "Runs") return this.runView()?.canvas() ?? null;
     const session = this.simulationSession;
     // With the new editor, the canvas plays back Execute's simulated run.
     if (!session && this.editorNext) return this.playback();
@@ -4465,13 +4540,22 @@ export class App implements CanvasHost {
   saveShortcut() {
     void this.runCommand(this.profile ? "save" : "export");
   }
-  readonly editorViews = ["Designer", "Source", "Outline"];
+  /** The workflow's views; the new editor adds the workflow's runs. */
+  get editorViews() {
+    return this.editorNext ? nextEditorViews : classicEditorViews;
+  }
+  /**
+   * The run open in the Runs tab. The tab's own chunk sets it; the shell
+   * only draws it and forgets it when the tab closes.
+   */
+  readonly runView = signal<RunViewPort | null>(null);
   /** Shows another view; leaving Source asks about text typed there. False when it stays. */
   async selectTab(tab: string): Promise<boolean> {
     if (tab !== this.tab) {
       if (!this.leaveInspector()) return false;
       if (this.tab === "Source" && !(await this.settleSource())) return false;
       void this.flushAutosave();
+      this.forgetRun();
     }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
@@ -4509,8 +4593,14 @@ export class App implements CanvasHost {
    */
   private openTab() {
     const narrow = this.windowWidth < 600;
+    this.forgetRun();
     this.tab = narrow ? "Outline" : "Designer";
     this.outlineNotice = narrow;
+  }
+  /** Leaving the Runs tab, however it happens, forgets the run and its data. */
+  private forgetRun() {
+    this.runView()?.close();
+    this.runView.set(null);
   }
   paneResize(event: PointerEvent, pane: "palette" | "inspector") {
     this.resizing = {
@@ -6631,9 +6721,7 @@ export class App implements CanvasHost {
     try {
       const page = await this.api.page("workflows", false);
       if (scope !== this.profile) return;
-      for (const item of page.items) this.rememberVersion(item);
-      // A new map, so views that read it as an input see the change.
-      this.workflowVersions = new Map(this.workflowVersions);
+      this.rememberVersions(page.items);
       this.cdr.markForCheck();
     } catch {
       // Runs then show their workflow name without the version.
@@ -6644,12 +6732,28 @@ export class App implements CanvasHost {
     for (const run of runs)
       if (typeof run["id"] === "string") this.knownRuns.set(run["id"], run);
   }
-  private rememberVersion(item: Record<string, unknown>) {
-    if (typeof item["id"] === "string" && typeof item["name"] === "string")
-      this.workflowVersions.set(item["id"], {
-        name: item["name"],
-        version: String(item["version"] ?? ""),
-      });
+  /** Keeps the name and version of each published version listed. */
+  private rememberVersions(items: Record<string, unknown>[]) {
+    this.changeWorkflowVersions((versions) => {
+      for (const item of items)
+        if (typeof item["id"] === "string" && typeof item["name"] === "string")
+          versions.set(item["id"], {
+            name: item["name"],
+            version: String(item["version"] ?? ""),
+          });
+    });
+  }
+  /**
+   * Every change to the published versions: in a new map, so views that
+   * take it as an input see the change, and counted, so computed views do.
+   */
+  private changeWorkflowVersions(
+    change: (versions: Map<string, { name: string; version: string }>) => void,
+  ) {
+    const versions = new Map(this.workflowVersions);
+    change(versions);
+    this.workflowVersions = versions;
+    this.workflowVersionsChanged.update((count) => count + 1);
   }
   /** Activations by published version ID, for the Workflows status column. */
   activationsByVersion = new Map<string, Record<string, unknown>>();
@@ -6720,7 +6824,7 @@ export class App implements CanvasHost {
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
       if (this.view === "workflows" && this.libraryCollection === "workflows")
-        for (const item of result.items) this.rememberVersion(item);
+        this.rememberVersions(result.items);
       this.error = "";
     } catch (e) {
       this.fail(e);
@@ -7016,11 +7120,14 @@ export class App implements CanvasHost {
           this.runCanvas = canvas;
           this.runCanvasVersion = versionId;
           const metadata = exported.document?.metadata;
-          if (metadata?.name)
-            this.workflowVersions.set(versionId, {
-              name: metadata.name,
-              version: metadata.version ?? "",
-            });
+          const name = metadata?.name;
+          if (name)
+            this.changeWorkflowVersions((versions) =>
+              versions.set(versionId, {
+                name,
+                version: metadata.version ?? "",
+              }),
+            );
         }
         void this.findRunTask(detail);
       }
@@ -7314,14 +7421,21 @@ export class App implements CanvasHost {
    * Runs an execution from step details or the canvas. When the project's
    * catalog can't be read, asks before executing with what's on this computer.
    */
-  async executeIn(target: ExecuteTarget): Promise<ExecuteOutcome> {
+  async executeIn(
+    target: ExecuteTarget,
+    options: { fresh?: boolean } = {},
+  ): Promise<ExecuteOutcome> {
+    // The Runs tab reads runs that happened: nothing executes there.
+    if (this.tab === "Runs")
+      return { kind: "failed", message: "Go back to editing to execute." };
+    this.runNotice = null;
     const service = this.execution;
     if (!service)
       return { kind: "failed", message: "Studio is still loading Execute." };
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
     this.lastTarget = target;
-    let outcome = await service.execute(target);
+    let outcome = await service.execute(target, options);
     if (outcome.kind === "busy") return outcome;
     const draftId = this.draftId;
     if (
@@ -7336,7 +7450,7 @@ export class App implements CanvasHost {
       // Another workflow opened while the question was open: nothing runs.
       draftId === this.draftId
     )
-      outcome = await service.execute(target, { catalog: "none" });
+      outcome = await service.execute(target, { ...options, catalog: "none" });
     if (outcome.kind === "done") {
       this.runLogOpen.set(true);
       this.playRun(outcome.response);
@@ -7360,6 +7474,7 @@ export class App implements CanvasHost {
    * still to come), so test data that keeps them waiting starts none.
    */
   executeWorkflow(): void {
+    if (this.tab === "Runs") return;
     const stepThrough = this.breakpoints().size > 0;
     if (stepThrough) void this.startSession();
     else void this.executeIn({ mode: "workflow" });
@@ -7837,7 +7952,11 @@ export class App implements CanvasHost {
     let document: StudioDocument | null;
     try {
       document = await readStudioDocument(this.api, draftId, "test-data");
-    } catch {
+    } catch (e) {
+      // Test data with data from runs this account can't read: say so, and
+      // save nothing over it.
+      if (e instanceof ApiError && draftId === this.draftId)
+        service.refuseRead(e.status);
       return;
     }
     if (draftId !== this.draftId) return;
@@ -7868,7 +7987,8 @@ export class App implements CanvasHost {
       service &&
       tools &&
       place?.kind === "connected" &&
-      place.draftId === draftId
+      place.draftId === draftId &&
+      service.platformSaveAllowed()
     ) {
       await service.flush();
       if (!current()) return true;
@@ -9232,6 +9352,7 @@ export class App implements CanvasHost {
       this.identity = await this.api.request<Identity>(
         "/studio/api/api/v1/identity",
       );
+      this.identityFailure = null;
       this.catalogAfterIdentity();
       this.draftAfterIdentity();
     } catch (error) {
@@ -9275,6 +9396,10 @@ export class App implements CanvasHost {
   }
   /** Forgets everything read from the platform; the open workflow is kept. */
   private clearPlatformState() {
+    // The run's error after Debug, and a Debug asked for from Operate, belong
+    // to the account that read the run.
+    this.runNotice = null;
+    dropDebug();
     this.aiSheet = null;
     this.aiTests.clear();
     this.aiSetupGeneration++;
@@ -9287,7 +9412,7 @@ export class App implements CanvasHost {
     this.homeAttention = [];
     this.homeDrafts = [];
     this.knownRuns.clear();
-    this.workflowVersions.clear();
+    this.changeWorkflowVersions((versions) => versions.clear());
     this.versionsScope = null;
     this.activationsByVersion = new Map();
     this.runTask = null;
@@ -9328,6 +9453,7 @@ export class App implements CanvasHost {
     this.reply = "";
     this.taskData = {};
     this.identity = null;
+    this.identityFailure = null;
     this.published = null;
     this.activation = null;
     this.closeSimulation();
@@ -9372,6 +9498,7 @@ export class App implements CanvasHost {
   private async testPlatform(generation: number) {
     const sampleScope = this.stepDataScope;
     const name = this.profile?.name ?? "";
+    this.identityFailure = null;
     try {
       const result = await this.connection.test();
       if (generation !== this.platformGeneration) return;
@@ -9397,19 +9524,24 @@ export class App implements CanvasHost {
       if (plain.code === "WV-STUDIO-SESSION") return;
       if (plain.code === "WV-AUTH-NOT-LINKED") {
         if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
+        this.identityFailure = "not-linked";
         this.platformNotice = { kind: "not-linked", name };
       } else if (plain.status === 401) {
         if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
+        this.identityFailure = "expired";
         this.platformNotice = { kind: "expired", name };
       } else {
-        if (plain.code === "WV-AUTH-STORE")
+        if (plain.code === "WV-AUTH-STORE") {
+          this.identityFailure = "store";
           this.platformNotice = { kind: "store", name };
-        else if (
+        } else if (
           plain.code === "WV-AUTH-OFFLINE" ||
           plain.code === "WV-STUDIO-UPSTREAM" ||
           [0, 502, 503, 504].includes(plain.status)
-        )
+        ) {
+          this.identityFailure = "offline";
           this.platformNotice = { kind: "offline", name };
+        }
         await this.loadIdentity();
       }
     } finally {
@@ -9668,6 +9800,8 @@ export class App implements CanvasHost {
     }
     if (this.platformNotice?.kind === "signing-in") this.platformNotice = null;
     if (event.kind === "authenticated") {
+      // Signed in again: an earlier failure is no longer why nothing is read.
+      this.identityFailure = null;
       this.notify(`Signed in to ${name}.`);
       void this.afterBackgroundSignIn();
     } else if (event.kind === "ended") {
@@ -9692,6 +9826,7 @@ export class App implements CanvasHost {
   wizardVerified(result: VerifiedPlatform) {
     this.api.adopt(result.session);
     this.identity = result.identity;
+    this.identityFailure = null;
     this.catalogAfterIdentity();
     this.draftAfterIdentity();
     this.platformNotice = null;
@@ -9723,6 +9858,7 @@ export class App implements CanvasHost {
       this.profile?.name ?? this.connectionStatus?.profile?.name ?? "";
     this.platformGeneration++;
     this.clearPlatformState();
+    this.identityFailure = kind;
     this.platformNotice = { kind, name };
     void this.refreshConnectionStatus();
     this.cdr.markForCheck();
@@ -10731,6 +10867,7 @@ export class App implements CanvasHost {
     this.platformMenuOpen = false;
     const designer = designerPath.exec(location.pathname);
     if (designer) {
+      this.designerLink = location.search;
       // Back to the workflow that is open, or to another kept one.
       if (designer[1] === this.draftId) {
         this.view = "designer";
@@ -10819,7 +10956,7 @@ export class App implements CanvasHost {
     }
     if (!command && event.key === "?") {
       event.preventDefault();
-      this.shortcutsOpen = true;
+      void this.showShortcuts();
     }
     if (!onGraph) return;
     if (

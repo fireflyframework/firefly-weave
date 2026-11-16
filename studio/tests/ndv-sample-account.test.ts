@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
+import { signal } from "@angular/core";
 import { afterAll, describe, expect, it, vi } from "vitest";
 vi.hoisted(() =>
   vi.stubGlobal("document", {
@@ -59,6 +60,7 @@ async function fixture() {
     contractRevision: 0,
     knownRuns: new Map(),
     workflowVersions: new Map(),
+    workflowVersionsChanged: signal(0),
     aiTests: new Map(),
     aiSetupGeneration: 0,
     contractCache: new Map(),
@@ -73,6 +75,8 @@ async function fixture() {
     loadIdentity: async () => {},
     detachPlatformDraft() {},
     loginWatcher: { stop() {} },
+    // No run is open in the Runs tab.
+    runView: signal(null),
   });
   const controller = new StepDetailsController(app);
   await controller.setTestEvent({ name: "private sample" });
@@ -126,6 +130,40 @@ describe("sample ownership at the real App account boundary", () => {
     const { app, controller } = await fixture();
     app.applyConnection({ session: app.api.session });
     expect(controller.testEvent()).toBeUndefined();
+  });
+});
+
+describe("the run's error after Debug in editor, at the account boundary", () => {
+  const notice = {
+    draftId: "d-1",
+    runId: "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12",
+    key: "send",
+    code: "SMTP_REJECTED",
+    missing: true,
+  };
+  it("is forgotten for a different verified principal", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.wizardVerified({
+      session: structuredClone(app.api.session),
+      identity: { ...app.identity, principal_id: "other" },
+    } as never);
+    expect(app.runNotice).toBeNull();
+  });
+  it("is forgotten on a connection switch with the same open workflow", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.applyConnection({ session: app.api.session });
+    expect(app.runNotice).toBeNull();
+  });
+  it("stays for the same account", async () => {
+    const { app } = await fixture();
+    app.runNotice = notice;
+    app.wizardVerified({
+      session: structuredClone(app.api.session),
+      identity: structuredClone(app.identity!),
+    } as never);
+    expect(app.runNotice).toEqual(notice);
   });
 });
 

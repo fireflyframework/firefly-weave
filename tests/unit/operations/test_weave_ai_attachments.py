@@ -132,22 +132,22 @@ async def test_asking_about_a_run_sends_its_facts_and_rechecks_access():
         summary=AsyncMock(side_effect=[summary(), AccessDenied()]),
         steps=AsyncMock(return_value=StepFactPage(items=STEPS, complete=True)),
     )
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs, None)
     request = LumiAskRequest(message="Why did it fail?", attachments=[{"kind": "run", "id": RUN_ID}])
     audit = AuditContext()
-    resources = await service._attachments(actor, SCOPE, request, audit)
+    resources = (await service._attachments(actor, SCOPE, request, audit, summary=None)).resources
     assert resources == [{"kind": "run", "id": str(RUN_ID), "data": run_context(summary(), STEPS)}]
     runs.steps.assert_awaited_once_with(actor, SCOPE, RUN_ID, RunStepQuery(limit=200), None, context=audit)
     with pytest.raises(AccessDenied):
-        await service._attachments(actor, SCOPE, request, AuditContext())
+        await service._attachments(actor, SCOPE, request, AuditContext(), summary=None)
 
 
 async def test_a_run_without_facts_yet_is_named_as_such():
     actor = SimpleNamespace(id=uuid4())
     runs = SimpleNamespace(summary=AsyncMock(return_value=None), steps=AsyncMock())
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs, None)
     request = LumiAskRequest(message="Why?", attachments=[{"kind": "run", "id": RUN_ID}])
-    resources = await service._attachments(actor, SCOPE, request, AuditContext())
+    resources = (await service._attachments(actor, SCOPE, request, AuditContext(), summary=None)).resources
     assert resources == [{"kind": "run", "id": str(RUN_ID), "data": {"status": "not_recorded_yet"}}]
     runs.steps.assert_not_awaited()
 
@@ -211,9 +211,11 @@ def paged(steps, size=200):
 async def run_attachment(steps, run_summary=None, size=200):
     read, calls = paged(steps, size)
     runs = SimpleNamespace(summary=AsyncMock(return_value=run_summary or summary()), steps=read)
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs, None)
     request = LumiAskRequest(message="Why did it fail?", attachments=[{"kind": "run", "id": RUN_ID}])
-    resources = await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext())
+    resources = (
+        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext(), summary=None)
+    ).resources
     return resources[0]["data"], calls
 
 
@@ -299,9 +301,11 @@ async def test_a_run_the_caller_may_not_see_is_named_unavailable():
 
     hidden = UnavailableResource(id=RUN_ID, omissions=[])
     runs = SimpleNamespace(summary=AsyncMock(return_value=hidden), steps=AsyncMock())
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs, None)
     request = LumiAskRequest(message="Why?", attachments=[{"kind": "run", "id": RUN_ID}])
-    resources = await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext())
+    resources = (
+        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext(), summary=None)
+    ).resources
     assert resources == [{"kind": "run", "id": str(RUN_ID), "data": {"status": "unavailable"}}]
     runs.steps.assert_not_awaited()
 
@@ -311,11 +315,13 @@ async def test_the_selected_context_limit_counts_the_inline_draft():
 
     read, _ = paged(STEPS)
     runs = SimpleNamespace(summary=AsyncMock(return_value=summary()), steps=read)
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs, None)
     attachments = [{"kind": "run", "id": RUN_ID}]
     small = LumiAskRequest(message="Why?", attachments=attachments, draft={"format": "yaml", "source": "a: 1"})
-    assert await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, small, AuditContext())
+    assert (
+        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, small, AuditContext(), summary=None)
+    ).resources
     large = small.model_copy(update={"draft": small.draft.model_copy(update={"source": "a: " + "x" * 262000})})
     with pytest.raises(CatalogError) as failed:
-        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, large, AuditContext())
+        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, large, AuditContext(), summary=None)
     assert (failed.value.status, failed.value.code) == (413, "WV-LUMI-LIMIT")

@@ -18,14 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a18
 
-- An operator's command, such as resuming a drained worker, no longer answers
-  429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
-  both of the API's slots for changes. A request that finds every slot of its
-  kind busy now waits, in arrival order, up to 250 ms for one to free before it
-  is refused, with the same code and `Retry-After`; reads, such as the
-  readiness probe, wait the same way for theirs.
+### Workflow language
+
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists
@@ -73,34 +69,9 @@ SPDX-License-Identifier: Apache-2.0
   `WV-COMP-ERROR_REFERENCE`, `WV-COMP-ON_ERROR_AMBIGUOUS` and
   `WV-COMP-CALL_MODE` for `onError`. No migration. See
   [Handle step errors](docs/guides/handle-step-errors.md).
-- A call step that waits for a workflow whose output is `null` now gets that
-  `null` and goes on. Before, the platform read the `null` as a failed child
-  and failed while delivering the result, so the calling run never moved on,
-  and Studio stopped a simulated run at the call step and refused a `null`
-  test output for a call step with a 422. A result an operator accepts for a
-  call incident may be `null` too.
-- Weave clients no longer present a refresh token within two seconds of
-  obtaining it, so Keycloak's whole-second stale-token check refuses every
-  replaced refresh token. Credential records now keep when their tokens were
-  obtained; an earlier client cannot read such a record and reports
-  `WV-AUTH-STORE` until `weave auth login` signs in again.
-- Security: aiohttp is updated to 3.14.4 (CVE-2026-111064, CVE-2026-111066,
-  CVE-2026-123817) in the Teams extra and the Agentic worker.
-- Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
-  filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
-  CVE-2026-119197).
-- The new editor is now on by default; turn it off in Settings › Preferences to
-  use the classic designer.
-- Decision tables open in a spreadsheet grid that fills the step's Parameters
-  card, with a short cell language, keyboard editing and pasting from
-  spreadsheets. Try an input uses the step's Input and Output panes: as you
-  type test values in Input, the grid marks the rules that match and Output
-  shows the result, checked by Weave on the Studio host
-  (`POST /studio/local/decision/evaluate`), with no platform needed.
-- Table drafts are kept on this computer until you publish them with Publish
-  table; a workflow that uses one waits for it.
-- Published actions offer Change in a new version for retry, timeout and the
-  request.
+
+### Runs, incidents, and workers
+
 - Steps can run for real in an environment. `POST {environment}/step-tests`
   runs one step of a saved draft, an action or an AI task, as a test run of the
   normal runtime. Only its creator can read or cancel it with the step test API;
@@ -116,15 +87,12 @@ SPDX-License-Identifier: Apache-2.0
   {environment}/test-policy`) is off until an administrator turns it on;
   `weave platform up` turns it on in the local demo environment and gives the
   local owner the role there. Migration `0040_editor_step_tests`.
-- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
-  URL with the connection's sign-in, through the same egress rules as its
-  actions, and says why it failed (`reason`); bindable connection items name an
-  HTTP connection's origin. In Studio, the button is now **Test connection**,
-  names the host it calls, and says whether the host was unreachable, not
-  allowed, refused the sign-in or answered with an error.
-- A request can name the person it was made for in `X-Weave-Principal`; when
-  the token now belongs to someone else, the platform refuses it with 409
-  `WV-PRINCIPAL-CHANGED` before anything runs.
+- A call step that waits for a workflow whose output is `null` now gets that
+  `null` and goes on. Before, the platform read the `null` as a failed child
+  and failed while delivering the result, so the calling run never moved on,
+  and Studio stopped a simulated run at the call step and refused a `null`
+  test output for a call step with a 422. A result an operator accepts for a
+  call incident may be `null` too.
 - Two changes to the same project at once, such as a failing parallel branch
   and its sibling completing together, no longer answer 429
   `WV-OPERATION-CAPACITY`. A change used to check its run's stored workflow
@@ -133,6 +101,76 @@ SPDX-License-Identifier: Apache-2.0
   64 MiB) and reuses it only for the same content, limits and language
   features. A task completion holds the lock about 76 ms instead of 220–330 ms
   on an idle host.
+- An operator's command, such as resuming a drained worker, no longer answers
+  429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
+  both of the API's slots for changes. A request that finds every slot of its
+  kind busy now waits, in arrival order, up to 250 ms for one to free before it
+  is refused, with the same code and `Retry-After`; reads, such as the
+  readiness probe, wait the same way for theirs.
+
+### Operations
+
+- A local platform connects a kind or k3d cluster on this computer as a
+  Kubernetes target. `weave platform cluster create --provider kind|k3d --name
+  NAME` makes a single-node cluster on a Docker network of its own, from the
+  chosen provider's pinned tool (kind or k3d) and kubectl, which it downloads
+  into the installation directory and checks by SHA-256, and connects its
+  `weave-workers` namespace (`--no-connect` skips that). `weave platform cluster connect` connects any namespace of such a
+  cluster, up to eight targets per installation: it joins the platform to the
+  cluster's network, points the nodes at the platform registry, applies objects
+  rendered from code (Pod Security `restricted`, NetworkPolicies in
+  `weave-system` and the connected namespace that let only Weave's runner and
+  workers there reach the platform, and no pod there reach the registry, a
+  runner account limited to what its commands need, client secrets in
+  owner-read-only files), proves the network rules with test pods before it
+  registers anything, and starts a runner in the cluster. Pods in the cluster's
+  other namespaces aren't restricted and can reach the platform's API, sign-in
+  and registry, so don't run workloads you don't trust in a connected cluster. The worker Deployment
+  starts at 0 replicas and then changes only through reviewed change requests.
+  `cluster list` shows each cluster, target and runner, and `--check` names
+  drifted objects by kind and name without their values; `cluster disconnect`
+  revokes and removes a target, `cluster delete` deletes a test cluster,
+  `doctor --cluster` reports the pinned tools, and `up` points connected
+  clusters at the platform's current addresses. Connecting a namespace again
+  after `cluster disconnect` enables the target it had, with its approval
+  policy, and names that target in a progress line and as `enabled_again` in
+  JSON output. Connect, disconnect and list resend a request for up to 60 s when
+  the platform answers that it is busy. `up` prints a `Clusters:` line with
+  each connected cluster's state and, for an `unreachable` one, its reason
+  (JSON: `reason`), and when `up` or `connect` can't apply the platform's new
+  addresses to a cluster, the platform leaves that cluster's network until a
+  later `up` or `connect` succeeds. `weave platform status` shows a namespace
+  whose connect stopped as `pending`; its JSON `clusters` maps each namespace to
+  its state. See
+  [Connect a kind or k3d cluster on this computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
+- Kubernetes runners restart workers and take scale-downs, which remove exactly
+  the reviewed pods. Before it lowers the replicas, the runner gives each
+  reviewed pod the lowest `controller.kubernetes.io/pod-deletion-cost` and
+  clears it from the pods it keeps; the receipt warns with `WV-DRAIN-VICTIMS`
+  when a reviewed pod is still there. A restart (`restart_workers`) sets
+  `firefly.weave/restarted-at` on the pod template and succeeds when every pod
+  is new and ready with the same image. Kubernetes runners now register adapter
+  version 2, and a cluster runner may read, list, and patch the worker pods it
+  marks for removal: grant `get`, `list`, and `patch` on pods before you upgrade
+  one. The runner image includes kubectl v1.37.2, pinned by checksum. A runner
+  may reach the API over plain HTTP outside loopback when the private-origin
+  policy allows its `runner` purpose for that address, and signs in through a
+  loopback token relay (`WEAVE_TOKEN_RELAY`). `deploy/kubernetes/worker.yaml`
+  gains the `__WEAVE_WORKER_CONFIGURATION__` annotation placeholder and reports
+  its pod's namespace and node. See the upgrade notes.
+
+### AI and connections
+
+- Weave AI explains workers, incidents, platform health and change requests
+  through the API and the SDK: attach a `worker`, `incident`, `environment` or
+  `change-request` to a question. Each needs `lumi.use` and the record's own
+  read, is read again after the reply, and sends only allowlisted facts; logs,
+  host names, people, record IDs and what runs carry never reach the model, and
+  the answer carries no proposals. Deployment explanations now send each record
+  by its position instead of its ID, and the gateway request no longer lists
+  attachment IDs.
+- Email whose text or HTML isn't ASCII, such as a name with an accent, is sent;
+  it failed before it was queued.
 - Workflows can run AI agents. An `agent` step lets a model work in turns:
   each turn it answers or calls the step's tools, up to 32 of them, each an
   Action, a callable workflow (run as a child run) or a question to a person,
@@ -235,54 +273,49 @@ SPDX-License-Identifier: Apache-2.0
   run an AI model: the compiler refuses one that does
   (`WV-COMP-AGENT_ACTION` at its `uses`), and activation refuses it too
   (`WV-ACTIVATION-AI-RESERVED`), since an undo has none of an AI step's guards.
-- A local platform connects a kind or k3d cluster on this computer as a
-  Kubernetes target. `weave platform cluster create --provider kind|k3d --name
-  NAME` makes a single-node cluster on a Docker network of its own, from the
-  chosen provider's pinned tool (kind or k3d) and kubectl, which it downloads
-  into the installation directory and checks by SHA-256, and connects its
-  `weave-workers` namespace (`--no-connect` skips that). `weave platform cluster connect` connects any namespace of such a
-  cluster, up to eight targets per installation: it joins the platform to the
-  cluster's network, points the nodes at the platform registry, applies objects
-  rendered from code (Pod Security `restricted`, NetworkPolicies in
-  `weave-system` and the connected namespace that let only Weave's runner and
-  workers there reach the platform, and no pod there reach the registry, a
-  runner account limited to what its commands need, client secrets in
-  owner-read-only files), proves the network rules with test pods before it
-  registers anything, and starts a runner in the cluster. Pods in the cluster's
-  other namespaces aren't restricted and can reach the platform's API, sign-in
-  and registry, so don't run workloads you don't trust in a connected cluster. The worker Deployment
-  starts at 0 replicas and then changes only through reviewed change requests.
-  `cluster list` shows each cluster, target and runner, and `--check` names
-  drifted objects by kind and name without their values; `cluster disconnect`
-  revokes and removes a target, `cluster delete` deletes a test cluster,
-  `doctor --cluster` reports the pinned tools, and `up` points connected
-  clusters at the platform's current addresses. Connecting a namespace again
-  after `cluster disconnect` enables the target it had, with its approval
-  policy, and names that target in a progress line and as `enabled_again` in
-  JSON output. Connect, disconnect and list resend a request for up to 60 s when
-  the platform answers that it is busy. `up` prints a `Clusters:` line with
-  each connected cluster's state and, for an `unreachable` one, its reason
-  (JSON: `reason`), and when `up` or `connect` can't apply the platform's new
-  addresses to a cluster, the platform leaves that cluster's network until a
-  later `up` or `connect` succeeds. `weave platform status` shows a namespace
-  whose connect stopped as `pending`; its JSON `clusters` maps each namespace to
-  its state. See
-  [Connect a kind or k3d cluster on this computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
-- Kubernetes runners restart workers and take scale-downs, which remove exactly
-  the reviewed pods. Before it lowers the replicas, the runner gives each
-  reviewed pod the lowest `controller.kubernetes.io/pod-deletion-cost` and
-  clears it from the pods it keeps; the receipt warns with `WV-DRAIN-VICTIMS`
-  when a reviewed pod is still there. A restart (`restart_workers`) sets
-  `firefly.weave/restarted-at` on the pod template and succeeds when every pod
-  is new and ready with the same image. Kubernetes runners now register adapter
-  version 2, and a cluster runner may read, list, and patch the worker pods it
-  marks for removal: grant `get`, `list`, and `patch` on pods before you upgrade
-  one. The runner image includes kubectl v1.37.2, pinned by checksum. A runner
-  may reach the API over plain HTTP outside loopback when the private-origin
-  policy allows its `runner` purpose for that address, and signs in through a
-  loopback token relay (`WEAVE_TOKEN_RELAY`). `deploy/kubernetes/worker.yaml`
-  gains the `__WEAVE_WORKER_CONFIGURATION__` annotation placeholder and reports
-  its pod's namespace and node. See the upgrade notes.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin. In Studio, the button is now **Test connection**,
+  names the host it calls, and says whether the host was unreachable, not
+  allowed, refused the sign-in or answered with an error.
+
+### Studio, desktop app, and CLI
+
+- Studio's editor has a Runs tab: a workflow's runs in the environment you work
+  in, the chosen run drawn on its canvas, and each step's recorded data in
+  read-only step details.
+- Debug in editor and Copy to editor turn a run's data into the draft's test
+  data and execute the workflow with it, stopping where the run failed; values
+  marked secret are left out and named. Operate's run detail opens a run in its
+  workflow's newest draft, and offers to create one when there is none.
+- At 767 px and below, the editor's four views (Designer, Source, Outline and
+  Runs) fold into one view switcher on the workflow name's row, so the name and
+  the 44 px settings gear keep their room on phones and small tablets; from
+  768 px up the views stay tabs.
+- The new editor is now on by default; turn it off in Settings › Preferences to
+  use the classic designer.
+- Decision tables open in a spreadsheet grid that fills the step's Parameters
+  card, with a short cell language, keyboard editing and pasting from
+  spreadsheets. Try an input uses the step's Input and Output panes: as you
+  type test values in Input, the grid marks the rules that match and Output
+  shows the result, checked by Weave on the Studio host
+  (`POST /studio/local/decision/evaluate`), with no platform needed.
+- Table drafts are kept on this computer until you publish them with Publish
+  table; a workflow that uses one waits for it.
+- Published actions offer Change in a new version for retry, timeout and the
+  request.
+- Weave clients no longer present a refresh token within two seconds of
+  obtaining it, so Keycloak's whole-second stale-token check refuses every
+  replaced refresh token. Credential records now keep when their tokens were
+  obtained; an earlier client cannot read such a record and reports
+  `WV-AUTH-STORE` until `weave auth login` signs in again.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
+
+### Development and testing
+
 - Acceptance runs in the `cluster` and `k3d` profiles make their own
   single-node kind or k3d cluster, `weave-acc-RUN_ID`, with `weave platform
   cluster create --no-connect` and a private kubeconfig, and delete it before
@@ -298,6 +331,46 @@ SPDX-License-Identifier: Apache-2.0
   runner code, migrations, the platform SDK or CLI, the Studio operations pages,
   the cluster journeys, the Dockerfile or the pinned tool versions, and on a
   manual run with the `cluster` or `k3d` profile.
+- Every workflow action is pinned to a full commit, and six actions move to
+  their current major releases. Tag builds of Checks and Desktop installers
+  restore no caches, and the desktop installers build with the pinned Rust
+  1.96.0 toolchain.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a18` and the
+  desktop product to `0.1.0-alpha.18`; the native internal installer counter is
+  `0.1.18`.
+- Pin the Agentic and Files 0.1.10 packages to core 0.1.0a18. The Agentic
+  worker also adds the model turn task and the shared token count; the Files
+  worker has no other change.
+- Security: aiohttp is updated to 3.14.4 (CVE-2026-111064, CVE-2026-111066,
+  CVE-2026-123817) in the Teams extra and the Agentic worker.
+- Security: the Agentic worker updates dnspython to 2.9.2 (CVE-2026-114605,
+  CVE-2026-128089), filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5
+  (CVE-2026-119194 to CVE-2026-119197).
+- Security: the Agentic worker updates temporalio to 1.35.0, whose bundled Rust
+  extension no longer includes zip 8.6.0 (CVE-2026-115905, CVE-2026-115907 to
+  CVE-2026-115909); the worker never loaded that code.
+- Schema revision becomes `0040_editor_step_tests`, with two new migrations:
+  `0039_transactions_reserve` and `0040_editor_step_tests`. One role is added,
+  `step_tester`, which `weave platform up` grants to the local owner in the
+  demo environment only and no existing account gains. See
+  [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha18)
+  for what the upgrade involves, the behavior changes to check, and what to do
+  before a rollback.
+
+Verified on macOS (Apple silicon) before the release pull request: the full
+local check gate (17 stages, including the unit and contract tests, the Agentic
+and Files worker suites, and building, installing, and checking the 0.1.0a18
+core and 0.1.10 worker packages). The release gate on the merge commit
+(integration tests against a real PostgreSQL 17 with Kafka, the release images,
+the process end-to-end tests, and the queue measurement) and the release
+acceptance profile against a real Docker platform run before the tag, and the
+release notes say what they verified. The desktop installers on Windows and
+Linux beyond their CI builds, Developer ID signing, and Apple notarization are
+**not verified** for this release. macOS installers remain ad-hoc signed and not
+notarized, and Windows installers remain unsigned.
 
 ## 0.1.0a17
 
@@ -500,7 +573,7 @@ SPDX-License-Identifier: Apache-2.0
   **Ctrl+Enter** / **Cmd+Enter**. They use pinned output, the last results, the
   test input (or a sample of the input fields) and saved AI turns; actions
   nobody has run on stubs. The canvas plays the run back, finished steps show a
-  line such as "3 fields", the Output and Input panes show what each step
+  line such as "3 fields," the Output and Input panes show what each step
   returned and received (Schema, Table and JSON), and a decision lists its paths
   as taken, not taken or not checked. Last results stay on this computer under
   your account and are marked out of date when the step changes. The Studio
@@ -985,7 +1058,7 @@ notarized, and Windows installers remain unsigned.
   keeps those actions' settings and step notes in this browser for your
   account, and **Save draft** says so. With the new editor off, Studio keeps
   the inspector.
-- Add **Add a step** to Studio's new editor: a panel on the right (the whole
+- Studio's new editor gains **Add a step**: a panel on the right (the whole
   window below 768 pixels) that every **+**, a dragged handle, N, / and the
   toolbar open at that place. It starts with **What triggers this workflow?**
   on an empty workflow and **What happens next?** afterwards, searches by

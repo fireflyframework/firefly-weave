@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.lod-minimal]="lod === 'minimal'"
   [class.revealing]="revealing()"
   [class.locked]="locked()"
+  [class.viewing-runs]="viewingRuns()"
   [class.placing-note]="!!placingNote"
   [class.minimap-shown]="minimapOn || panning"
   role="group"
@@ -226,7 +227,8 @@ SPDX-License-Identifier: Apache-2.0
               }
             </div>
           }
-          @for (output of l.handles; track output.key) {
+          <!-- A run that happened connects nothing: no handles. -->
+          @for (output of viewingRuns() ? [] : l.handles; track output.key) {
             <span
               class="handle f-drag-blocker"
               [class.connecting]="band?.key === output.key"
@@ -366,6 +368,7 @@ SPDX-License-Identifier: Apache-2.0
     </f-flow>
     <weave-canvas-tools
       [zoom]="view.zoom"
+      [editing]="!viewingRuns()"
       (zoomIn)="zoomBy(1.2)"
       (zoomOut)="zoomBy(1 / 1.2)"
       (reset)="zoomBy(1 / view.zoom)"
@@ -381,7 +384,14 @@ SPDX-License-Identifier: Apache-2.0
         Click where the note should go, or press Escape.
       </p>
     }
-    @if (selectedCount() > 1) {
+    @if (viewingRuns()) {
+      <span class="canvas-read-only" role="img" aria-label="Read-only"
+        ><weave-icon name="lock" [size]="16" /><span class="read-only-text"
+          >Read-only</span
+        ></span
+      >
+    }
+    @if (selectedCount() > 1 && !viewingRuns()) {
       <weave-selection-toolbar
         [count]="selectedCount()"
         [blocked]="duplicateBlocked()"

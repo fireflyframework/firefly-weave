@@ -84,14 +84,14 @@ def test_projection_excludes_authority_provider_values_and_paths(kind):
 
 async def test_attachment_uses_existing_scoped_read_and_propagates_denial():
     deployments = SimpleNamespace(read=AsyncMock(side_effect=AccessDenied()))
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, deployments, NO_POLICY, None)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, deployments, NO_POLICY, None, None)
     actor = SimpleNamespace(id=uuid4())
     scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
     identifier = uuid4()
     request = LumiAskRequest(message="Explain", attachments=[{"kind": "deployment-plan", "id": identifier}])
     context = AuditContext()
     with pytest.raises(AccessDenied):
-        await service._attachments(actor, scope, request, context)
+        await service._attachments(actor, scope, request, context, summary=None)
     deployments.read.assert_awaited_once_with("plans", identifier, actor=actor, scope=scope, context=context)
 
 
@@ -117,7 +117,7 @@ async def test_explanation_discards_proposals_and_rechecks_access_after_gateway(
         proposals=[{"title": "Unexpected", "kind": "workflow", "format": "yaml", "source": "kind: Workflow"}],
     )
     gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=reply))
-    service = LumiService(connections, None, None, gateway, deployments, NO_POLICY, None)
+    service = LumiService(connections, None, None, gateway, deployments, NO_POLICY, None, None)
     service._require = AsyncMock(return_value=actor)
     service._read = AsyncMock(
         return_value=SimpleNamespace(
@@ -138,9 +138,9 @@ async def test_explanation_discards_proposals_and_rechecks_access_after_gateway(
     request = LumiAskRequest(message="Explain", attachments=[{"kind": "deployment-target", "id": uuid4()}])
     if revoke:
         with pytest.raises(AccessDenied):
-            await service.ask(actor, scope, request, context=AuditContext())
+            await service.ask(actor, scope, request, context=AuditContext(), summary=None)
     else:
-        result = await service.ask(actor, scope, request, context=AuditContext())
+        result = await service.ask(actor, scope, request, context=AuditContext(), summary=None)
         assert result.answer == reply.answer and result.proposals == []
     assert deployments.read.await_count == 2
     gateway.ask.assert_awaited_once()

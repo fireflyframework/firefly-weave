@@ -363,6 +363,19 @@ assigned, because Weave has no deactivated steps, and Ctrl/Cmd+K is reserved.
 The last section of the sheet, Differences from n8n, lists each row that differs
 as two sentences: what the keys do in Studio, then what they do in n8n.
 
+The `runs` surface is the Runs tab's list: Up and Down choose the previous and
+next run, Home and End the first and last, and Enter shows the chosen run on
+the canvas. Choosing moves the selection and never moves focus out of the list.
+Escape on the Runs canvas returns focus to the chosen row.
+
+## The Runs tab's address
+
+`/workflows/<draft>/designer?tab=runs` opens a workflow on its Runs tab, and
+`&run=<run ID>` (a UUID) chooses that run. Choosing another run replaces the
+address without adding a history entry; leaving the tab drops the query. The
+address never carries filters or an environment: a link opens where the session
+is, and it never writes test data.
+
 ## The new editor
 
 The new editor is on by default. It is a per-viewer preference: the key

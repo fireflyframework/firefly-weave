@@ -115,7 +115,13 @@ import {
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
 import type { LastResult } from "../state/last-results";
+import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
+import type {
+  RecordedOutput,
+  Received,
+  RunDataPort,
+} from "../runs-tab/run-port";
 import type { HostDiagnostic } from "../../integrations/http-action-client";
 import {
   PendingEntries,
@@ -152,6 +158,9 @@ export type ControllerHost = Pick<
   | "cacheContract"
   | "label"
   | "editingLocked"
+  | "runData"
+  | "viewingRuns"
+  | "runView"
   | "profile"
   | "stepDataScope"
   | "api"
@@ -301,6 +310,13 @@ export class StepDetailsController {
     return this.hidden !== null;
   }
   testEvent(): Json | undefined {
+    // A run's own input, in run mode: never the draft's test data.
+    const run = this.run();
+    if (run) {
+      run.version();
+      return run.input() as Json;
+    }
+    if (this.viewingRuns()) return undefined;
     this.syncTestEvent();
     const service = this.testData;
     service.version();
@@ -397,6 +413,52 @@ export class StepDetailsController {
     );
     return safeSample(schema ?? {}, pin.entry.output);
   }
+  // --------------------------------------------------- run mode
+  /** The run open in the Runs tab; step details then show its data, read-only. */
+  run(): RunDataPort | null {
+    return this.host.runData ?? null;
+  }
+  /**
+   * The Runs tab: step details show runs that happened, never the draft's
+   * test data or last results, and change nothing.
+   */
+  viewingRuns(): boolean {
+    return !!this.host.viewingRuns || !!this.run();
+  }
+  /** Each step's chosen iteration in run mode (its instance key). */
+  readonly iteration = signal<Readonly<Record<string, string>>>({});
+  /** The instance key run mode shows for a step: the chosen iteration, else the first (failed first). */
+  runKey(target: string): string {
+    const run = this.run();
+    if (!run || instanceStep(target) !== target) return target;
+    run.version();
+    const keys = run.iterations(target);
+    const chosen = this.iteration()[target];
+    return chosen && keys.includes(chosen) ? chosen : (keys[0] ?? target);
+  }
+  /** What a step returned in the run, read from the platform the first time it's shown. */
+  runOutput(target: string): RecordedOutput {
+    const run = this.run();
+    if (!run) return { kind: "none", why: "not-recorded" };
+    run.version();
+    const stepId = instanceStep(target);
+    const key = this.runKey(target);
+    const output = run.output(key);
+    if (output.kind === "loading") run.read(stepId);
+    return output;
+  }
+  /** Try again after a failed read of a step's outputs. */
+  retryRunOutput(target: string): void {
+    this.run()?.read(instanceStep(target));
+  }
+  /** What the step received, recomputed from the run's data. */
+  runReceived(target: string): Received {
+    const run = this.run();
+    if (!run) return { ok: false, reason: "" };
+    run.version();
+    return run.received(instanceStep(target));
+  }
+
   // --------------------------------------------------- executed data
   /** A step's (or an iteration's) last result, from the last execution on this computer, or null. */
   lastResult(key: string): LastResult | null {
@@ -407,11 +469,21 @@ export class StepDetailsController {
    * pane and formula previews: its pin, else its last result (still used when
    * out of date), else nothing. Secret fields are left out.
    */
-  stepData(
-    key: string,
-  ):
-    | { value: Json; source: "pinned" | "simulated"; stale: StaleReason | null }
+  stepData(key: string):
+    | {
+        value: Json;
+        source: "pinned" | "simulated" | "run";
+        stale: StaleReason | null;
+      }
     | undefined {
+    // In run mode a step's data is what it returned in that run, nothing else.
+    if (this.viewingRuns()) {
+      if (!this.run()) return undefined;
+      const output = this.runOutput(key);
+      return output.kind === "value"
+        ? { value: output.value as Json, source: "run", stale: null }
+        : undefined;
+    }
     const stepId = instanceStep(key);
     const pin = this.pinOfTarget(key) ?? this.pinOfTarget(stepId);
     if (pin)
@@ -515,6 +587,7 @@ export class StepDetailsController {
 
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
+    if (this.viewingRuns()) return false;
     const step = this.step(target);
     const descriptor = this.descriptor(target);
     if (!step || !descriptor) return false;
@@ -530,6 +603,8 @@ export class StepDetailsController {
     value: Json,
     source: DataSource,
   ): Promise<string | null> {
+    const locked = this.readOnlyReason(target);
+    if (locked) return locked;
     if (!this.pinnable(target)) return "This step's output can't be pinned.";
     if (this.stale()) return "This workflow's test data is still opening.";
     const now = this.prints().get(target);
@@ -552,6 +627,7 @@ export class StepDetailsController {
   /** Unpins the step's output, with an Undo toast. */
   /** Unpins with an Undo toast; resolves true once the pin is gone. */
   unpin(target: string): Promise<boolean> {
+    if (this.readOnlyReason(target)) return Promise.resolve(false);
     const service = this.testData;
     if (!service.data().pins?.[target]) return Promise.resolve(false);
     const previous = service.data();
@@ -569,6 +645,7 @@ export class StepDetailsController {
   }
   /** Keep pinned: the same output, current again (today's fingerprints). */
   keepPinned(target: string): void {
+    if (this.readOnlyReason(target)) return;
     const service = this.testData;
     const entry = service.data().pins?.[target];
     const now = this.prints().get(target);
@@ -582,6 +659,8 @@ export class StepDetailsController {
   }
   /** Pins a sample made from the step's output fields. */
   async generateOutput(target: string): Promise<string | null> {
+    const locked = this.readOnlyReason(target);
+    if (locked) return locked;
     const step = this.step(target);
     const schema = step
       ? this.descriptor(target)?.outputSchema(step, this.kindContext())
@@ -618,6 +697,7 @@ export class StepDetailsController {
       // The same precedence as the Output pane: a pin, else the last result.
       output: (id) => this.stepData(id)?.value,
       stamp: () => [
+        this.run()?.version() ?? null,
         this.host.model.revision,
         this.testData.version(),
         this.testData.generation(),
@@ -754,6 +834,17 @@ export class StepDetailsController {
   }
   /** Why nothing can change now, in words for the step, trigger or settings at `target`. */
   readOnlyReason(target?: string): string | null {
+    const run = this.run();
+    if (run)
+      return `You're looking at ${run.label()}. Go back to editing to change this step.`;
+    const shown = this.host.runView?.();
+    // A chosen run still loading reads as the run it will show.
+    if (this.host.viewingRuns && shown?.loading && shown.chosen)
+      return `You're looking at run ${shortId(shown.chosen)}. Go back to editing to change this step.`;
+    if (this.host.viewingRuns)
+      return shown?.listed
+        ? "Choose a run to see what this step did in it. Go back to editing to change this step."
+        : "Steps are read-only on the Runs tab. Go back to editing to change this step.";
     if (this.host.model.readonly)
       return target === "$workflow"
         ? "Fix the source to edit workflow settings."

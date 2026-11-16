@@ -31,6 +31,7 @@ import type { PlainError } from "../../errors";
 import { durationText, shortId } from "../../format";
 import { statusTone, toneAttribute } from "../../status-labels";
 import {
+  OMISSION_WORDS,
   stepOutput,
   type OmissionReason,
   type StepFact,
@@ -90,15 +91,6 @@ export function stepBar(
     open,
   };
 }
-
-const omissionText: Record<OmissionReason, string> = {
-  classified_secret: "This output is classified as secret.",
-  classification_unavailable:
-    "Studio can't tell whether this output is safe to show.",
-  uncertain_derived: "This output may be derived from protected data.",
-  confidential_text: "This output holds confidential text.",
-  resource_limit: "This output is too large to show.",
-};
 
 /** One step instance's output, as the person asked for it. */
 export type StepOutputState =
@@ -392,7 +384,7 @@ export class StepTimeline {
     return state.kind === "ready" ? state.output : { kind: "none" };
   }
   omitted(reason: OmissionReason) {
-    return omissionText[reason] ?? "This output can't be shown.";
+    return OMISSION_WORDS[reason] ?? "This output can't be shown.";
   }
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);

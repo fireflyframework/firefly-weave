@@ -379,10 +379,10 @@ async def test_asking_keeps_the_guards_of_a_draft_attached_without_an_inline_one
     from test_weave_ai_context import ask_through_the_service
 
     from firefly_weave.contracts.lumi import LumiAskRequest
-    from firefly_weave.operations.lumi import LumiService
+    from firefly_weave.operations.lumi import Attachments, LumiService
 
     attached = {"kind": "draft", "id": "d", "data": {"document": guarded(), "revision": 3}}
-    monkeypatch.setattr(LumiService, "_attachments", AsyncMock(return_value=[attached]))
+    monkeypatch.setattr(LumiService, "_attachments", AsyncMock(return_value=Attachments([attached], frozenset())))
     proposal = {"title": "Rename", "kind": "workflow", "format": "yaml", "source": yaml.safe_dump(stripped())}
     request = LumiAskRequest(message="Be more polite", attachments=[{"kind": "draft", "id": str(uuid4())}])
 
@@ -420,10 +420,10 @@ async def test_a_question_whose_draft_does_not_parse_keeps_the_guards_of_an_atta
     from test_weave_ai_context import ask_through_the_service
 
     from firefly_weave.contracts.lumi import LumiAskRequest
-    from firefly_weave.operations.lumi import LumiService
+    from firefly_weave.operations.lumi import Attachments, LumiService
 
     attached = {"kind": "draft", "id": "d", "data": {"document": guarded(), "revision": 3}}
-    monkeypatch.setattr(LumiService, "_attachments", AsyncMock(return_value=[attached]))
+    monkeypatch.setattr(LumiService, "_attachments", AsyncMock(return_value=Attachments([attached], frozenset())))
     proposal = {"title": "Fix", "kind": "workflow", "format": "yaml", "source": yaml.safe_dump(stripped())}
     request = LumiAskRequest(
         message="Fix it",

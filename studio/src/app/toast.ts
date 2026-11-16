@@ -36,11 +36,15 @@ export interface ToastAction {
 }
 export interface ToastOptions {
   text: string;
+  /** A second, quieter line under the text, which then reads as a title. */
+  detail?: string;
   action?: ToastAction;
   tone?: "neutral" | "danger";
 }
-export interface Toast extends Required<Omit<ToastOptions, "action">> {
+export interface Toast
+  extends Required<Omit<ToastOptions, "action" | "detail">> {
   id: number;
+  detail?: string;
   action?: ToastAction;
 }
 
@@ -71,6 +75,7 @@ export class ToastService {
     this.current.set({
       id: ++this.sequence,
       text: options.text,
+      detail: options.detail,
       action: options.action,
       tone: options.tone ?? "neutral",
     });
@@ -103,7 +108,7 @@ export class ToastService {
     const toast = this.current();
     this.timer = setTimeout(
       () => this.dismiss(toast?.id),
-      toastTime(toast?.text ?? ""),
+      toastTime(`${toast?.text ?? ""} ${toast?.detail ?? ""}`),
     );
   }
   private stop() {
@@ -152,9 +157,20 @@ export class ToastService {
         (focusin)="toasts.hold('focus')"
         (focusout)="toasts.release('focus')"
       >
-        <span class="toast-text">{{ toast.text }}</span>
+        @if (toast.detail) {
+          <span class="toast-text"
+            ><strong>{{ toast.text }}</strong
+            ><span class="toast-detail">{{ toast.detail }}</span></span
+          >
+        } @else {
+          <span class="toast-text">{{ toast.text }}</span>
+        }
         @if (toast.action; as action) {
-          <button type="button" (click)="toasts.act()">
+          <button
+            type="button"
+            [class.toast-action-box]="!!toast.detail"
+            (click)="toasts.act()"
+          >
             {{ action.label }}
           </button>
         }
