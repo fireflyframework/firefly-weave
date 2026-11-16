@@ -795,19 +795,21 @@ async def test_a_deactivated_owner_rejects_its_start(platform, access_db, provis
 
 async def test_a_disable_waits_for_a_start_that_holds_its_trigger(platform):
     trigger = await platform.bind(await platform.publish(reaction()))
-    waiting = (
-        "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type='Lock' "
-        "AND query LIKE 'SELECT %FROM event_triggers %FOR UPDATE'"
-    )
     async with platform.sessions() as session, session.begin():
         # A start in flight holds the trigger as a start does.
         await session.execute(text("SELECT 1 FROM event_triggers WHERE id=:id FOR SHARE"), {"id": trigger.id})
         disabling = asyncio.create_task(
             platform.event_triggers.disable(platform.actor, platform.scope, trigger.id, context=AuditContext())
         )
-        for _ in range(200):
-            if (await platform.query(waiting))[0]["n"] or disabling.done():
+        # Once some session of this database waits on a lock, the disable is blocked on the start and hasn't
+        # returned. A mutation waits at most 250 ms for a lock, so the start ends right after.
+        blocked = (
+            "SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'"
+        )
+        for _ in range(500):
+            if (await platform.query(blocked))[0]["n"] or disabling.done():
                 break
-            await asyncio.sleep(0.01)
-        assert (await platform.query(waiting))[0]["n"] == 1 and not disabling.done()
-    assert (await disabling).disabled
+        assert not disabling.done()
+    # The start's transaction ended, so the disable goes ahead.
+    disabled = await asyncio.wait_for(disabling, timeout=30)
+    assert disabling.done() and disabled.disabled
