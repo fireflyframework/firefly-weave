@@ -492,15 +492,15 @@ class OperationsSummaryService:
                 )
 
             latency = await read_section(tx, self._latency, monotonic=self.monotonic)
-            load = await section(read_load)
-            workers = await section(read_workers)
+            load = await section(self._load)
+            workers = await section(self._workers)
             targets: TargetsSection | ForbiddenSection | UnavailableSection = (
                 ForbiddenSection(state="forbidden")
                 if reach.targets == ()
-                else await section(lambda reader: read_targets(reader, reach.targets))
+                else await section(lambda reader: self._targets(reader, reach.targets))
             )
             incidents: IncidentsSection | ForbiddenSection | UnavailableSection = (
-                await section(read_incidents) if reach.incidents else ForbiddenSection(state="forbidden")
+                await section(self._incidents) if reach.incidents else ForbiddenSection(state="forbidden")
             )
             attention = await section(lambda reader: self._attention(reader, reach))
             # The last day's runs from run statistics: status.read is all it needs.
@@ -593,6 +593,20 @@ class OperationsSummaryService:
         started = self.monotonic()
         await budget.session.execute(text("SELECT 1"))
         return round(max(0.0, self.monotonic() - started) * 1000, 3)
+
+    # Each section reads through a method, the one place a section can be observed or replaced as a whole; the
+    # alert signals share the module functions behind them.
+    async def _load(self, reader: SectionReader) -> LoadSection:
+        return await read_load(reader)
+
+    async def _workers(self, reader: SectionReader) -> WorkersSection:
+        return await read_workers(reader)
+
+    async def _targets(self, reader: SectionReader, targets: tuple[UUID, ...] | None) -> TargetsSection:
+        return await read_targets(reader, targets)
+
+    async def _incidents(self, reader: SectionReader) -> IncidentsSection:
+        return await read_incidents(reader)
 
     async def _attention(self, reader: SectionReader, reach: _Reach) -> list[AttentionItem]:
         """Up to 20 items per kind the caller may read, ranked together; alerts join once they are stored."""
