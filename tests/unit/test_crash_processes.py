@@ -16,6 +16,7 @@
 
 """Owned subprocess limits and correlated signals use real local processes."""
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -36,6 +37,49 @@ async def test_output_budget_kills_only_owned_child(tmp_path):
         await owner.command(sys.executable, "-I", "-c", "print('x' * 10000)")
     assert owner.processes and all(p.returncode is not None for p in owner.processes)
     assert all(p.stat().st_size <= 1024 for p in tmp_path.glob("*.log"))
+
+
+async def test_output_budget_holds_when_the_child_group_exited_before_the_kill(tmp_path, monkeypatch):
+    # macOS can answer killpg with EPERM, not ESRCH, once every process of the group has exited. The child keeps
+    # running after its output, so the budget always kills its group; the kill works, then answers EPERM.
+    killpg = module.os.killpg
+
+    def macos(pid, sig):
+        killpg(pid, sig)
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(module.os, "killpg", macos)
+    owner = module.ProcessOwner(tmp_path, limit=1024)
+    child = "import sys, time; sys.stdout.write('x' * 10000); sys.stdout.flush(); time.sleep(30)"
+    with pytest.raises(module.ProcessFailure, match="output"):
+        await asyncio.wait_for(owner.command(sys.executable, "-I", "-c", child), 10)
+    assert owner.processes and all(p.returncode is not None for p in owner.processes)
+
+
+async def test_a_group_that_refuses_the_kill_and_keeps_running_is_a_failure(tmp_path, monkeypatch):
+    # EPERM while the child still runs means the kill really failed, and waiting for the child could last forever.
+    import signal
+    from contextlib import suppress
+
+    killpg = module.os.killpg
+
+    def refused(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(module.os, "killpg", refused)
+    owner = module.ProcessOwner(tmp_path)
+    try:
+        with pytest.raises(module.ProcessFailure, match="kept running"):
+            await asyncio.wait_for(
+                owner.command(sys.executable, "-I", "-c", "import time; time.sleep(30)", timeout=0.2), 10
+            )
+        assert owner.processes[0].returncode is None
+    finally:
+        for process in owner.processes:
+            with suppress(ProcessLookupError, PermissionError):
+                killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        await asyncio.gather(*owner.drains.values(), return_exceptions=True)
 
 
 async def test_command_timeout_is_failure_and_retains_log(tmp_path):
