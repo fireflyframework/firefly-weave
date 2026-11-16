@@ -313,6 +313,15 @@ type PlatformNoticeKind =
  * know the account, or the sign-in ended.
  */
 export type IdentityFailure = "offline" | "store" | "not-linked" | "expired";
+/**
+ * A check of who is signed in that failed for a reason other than the
+ * account: a locked credential store says so, and anything else (no answer,
+ * a 5xx, an unexpected refusal) reads as a platform Studio couldn't reach,
+ * which offers Try again.
+ */
+function unreadIdentity(plain: PlainError): "store" | "offline" {
+  return plain.code === "WV-AUTH-STORE" ? "store" : "offline";
+}
 interface ConnectionSlot {
   name: string;
   connector: string;
@@ -9506,17 +9515,11 @@ export class App implements CanvasHost {
         this.identityFailure = "expired";
         this.platformNotice = { kind: "expired", name };
       } else {
-        if (plain.code === "WV-AUTH-STORE") {
-          this.identityFailure = "store";
-          this.platformNotice = { kind: "store", name };
-        } else if (
-          plain.code === "WV-AUTH-OFFLINE" ||
-          plain.code === "WV-STUDIO-UPSTREAM" ||
-          [0, 502, 503, 504].includes(plain.status)
-        ) {
-          this.identityFailure = "offline";
-          this.platformNotice = { kind: "offline", name };
-        }
+        // Without a recorded reason the Runs tab would wait for good and the
+        // banner would say nothing: an unexpected error reads as offline.
+        const kind = unreadIdentity(plain);
+        this.identityFailure = kind;
+        this.platformNotice = { kind, name };
         await this.loadIdentity();
       }
     } finally {
@@ -9780,6 +9783,9 @@ export class App implements CanvasHost {
       this.notify(`Signed in to ${name}.`);
       void this.afterBackgroundSignIn();
     } else if (event.kind === "ended") {
+      // Ended without an account: sign in again, whatever state the host
+      // still reports, rather than wait for an account that isn't coming.
+      if (!this.identity) this.identityFailure = "expired";
       this.platformNotice = {
         kind: "sign-in-failed",
         name,
