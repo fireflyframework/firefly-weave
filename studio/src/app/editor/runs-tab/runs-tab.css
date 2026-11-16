@@ -520,6 +520,8 @@ button.runs-chip-remove {
 }
 .runs-message strong {
   font: var(--type-title-sm);
+  /* No lone last word ("date.") where the panel is narrow. */
+  text-wrap: balance;
 }
 .runs-message p {
   margin: 0;

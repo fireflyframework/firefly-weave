@@ -796,6 +796,45 @@ test.describe("the Runs list's states", () => {
       await expect(runs.panel.getByRole("status")).toHaveCount(0);
     });
 
+  test.describe("at 768x1024", () => {
+    test.use({ viewport: { width: 768, height: 1024 } });
+
+    test("the out-of-date title wraps into even lines, without a lone word", async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, {
+        status: 403,
+        json: {
+          status: 403,
+          code: "WV-STUDIO-CSRF",
+          message: "Refresh Studio before submitting this change",
+        },
+      });
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const title = runsPage(page).panel.locator(
+        ".runs-body .runs-message strong",
+      );
+      await expect(title).toHaveText("This Studio window is out of date.");
+      // The width of each line the title wraps into, widest first.
+      const lines = await title.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const rows = new Map<number, number>();
+        for (const rect of range.getClientRects())
+          rows.set(
+            Math.round(rect.top),
+            (rows.get(Math.round(rect.top)) ?? 0) + rect.width,
+          );
+        return [...rows.values()].sort((a, b) => b - a);
+      });
+      expect(lines).toHaveLength(2);
+      expect(lines[1] / lines[0]).toBeGreaterThan(0.5);
+    });
+  });
+
   for (const status of [500, 403])
     test(`a check of who is signed in that fails with an unexpected ${status} says the platform couldn't be reached, with Try again`, async ({
       page,
