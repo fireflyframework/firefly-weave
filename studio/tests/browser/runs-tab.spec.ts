@@ -749,41 +749,52 @@ test.describe("the Runs list's states", () => {
     expect(host.requests("/studio/connection/test")).toHaveLength(0);
   });
 
-  test("a check of who is signed in that Studio itself refuses asks to reload Studio, without Try again", async ({
-    page,
-  }) => {
-    await useNewEditor(page);
-    await failingPlatform(page, {
-      status: 403,
-      json: {
+  for (const { refusal, code, message: said, error, title, next } of [
+    {
+      refusal: "as out of date",
+      code: "WV-STUDIO-CSRF",
+      message: "Refresh Studio before submitting this change",
+      error: "Reload the page",
+      title: "This Studio window is out of date.",
+      next: "Reload the page to see this workflow's runs.",
+    },
+    {
+      // Reloading the same address meets the same refusal.
+      refusal: "for its address",
+      code: "WV-STUDIO-ORIGIN",
+      message: "Open Studio at its exact local address",
+      error: "Open Studio at its exact local address",
+      title: "Open Studio at its exact local address.",
+      next: "Then you can see this workflow's runs.",
+    },
+  ])
+    test(`a check of who is signed in that Studio refuses ${refusal} says what to do, without Try again`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, {
         status: 403,
-        code: "WV-STUDIO-CSRF",
-        message: "Refresh Studio before submitting this change",
-      },
+        json: { status: 403, code, message: said },
+      });
+      const banner = page.locator(".error-banner");
+      await expect(banner).toContainText(error);
+      await expect(banner.locator(".support-code")).toHaveText(
+        `Support code: ${code}`,
+      );
+      await expect(page.locator(".platform-banner")).toHaveCount(0);
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const runs = runsPage(page);
+      const message = runs.panel.locator(".runs-body .runs-message");
+      // The cause in bold, the next step below it.
+      await expect(message.locator("strong")).toHaveText(title);
+      await expect(message.locator("p")).toHaveText(next);
+      await expect(
+        message.getByRole("button", { name: "Try again" }),
+      ).toHaveCount(0);
+      await expect(runs.panel.getByRole("status")).toHaveCount(0);
     });
-    const error = page.locator(".error-banner");
-    await expect(error).toContainText("Reload the page");
-    await expect(error.locator(".support-code")).toHaveText(
-      "Support code: WV-STUDIO-CSRF",
-    );
-    await expect(page.locator(".platform-banner")).toHaveCount(0);
-    await newWorkflow(page);
-    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
-    await page.getByRole("tab", { name: "Runs" }).click();
-    const runs = runsPage(page);
-    const message = runs.panel.locator(".runs-body .runs-message");
-    // The banner's words: the cause in bold, the next step below it.
-    await expect(message.locator("strong")).toHaveText(
-      "This Studio window is out of date.",
-    );
-    await expect(message.locator("p")).toHaveText(
-      "Reload the page to see this workflow's runs.",
-    );
-    await expect(
-      message.getByRole("button", { name: "Try again" }),
-    ).toHaveCount(0);
-    await expect(runs.panel.getByRole("status")).toHaveCount(0);
-  });
 
   for (const status of [500, 403])
     test(`a check of who is signed in that fails with an unexpected ${status} says the platform couldn't be reached, with Try again`, async ({

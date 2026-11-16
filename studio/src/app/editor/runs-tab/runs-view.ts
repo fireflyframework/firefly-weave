@@ -249,7 +249,9 @@ export class RunsView implements DoCheck {
       unread:
         failure === "offline"
           ? "unreachable"
-          : failure === "store" || failure === "studio"
+          : failure === "store" ||
+              failure === "outdated" ||
+              failure === "address"
             ? failure
             : null,
       name: app.model.definition.metadata.name ?? "",

@@ -310,30 +310,43 @@ type PlatformNoticeKind =
 /**
  * Why the last check of who is signed in found no account: the platform
  * couldn't be reached, the credential store is locked, Studio itself refused
- * the request (an out-of-date window), the platform doesn't know the
- * account, or the sign-in ended.
+ * the request (an out-of-date window, or a window opened at another
+ * address), the platform doesn't know the account, or the sign-in ended.
  */
 export type IdentityFailure =
   | "offline"
   | "store"
-  | "studio"
+  | StudioRefusal
   | "not-linked"
   | "expired";
+/** Studio refusing its own request: the window is out of date, or at another address. */
+export type StudioRefusal = "outdated" | "address";
 /**
- * Studio refusing its own request: an out-of-date window, or one opened at
- * another address. Reloading Studio is the fix. Other WV-STUDIO- codes report
- * the platform's side (no answer, a timeout), which Try again can fix.
+ * Studio's own refusals and what fixes them: reloading an out-of-date window,
+ * or opening Studio at its exact address (reloading the same one won't).
+ * Other WV-STUDIO- codes report the platform's side (no answer, a timeout),
+ * which Try again can fix.
  */
-const STUDIO_REFUSALS = new Set(["WV-STUDIO-CSRF", "WV-STUDIO-ORIGIN"]);
+const STUDIO_REFUSALS: Readonly<Record<string, StudioRefusal>> = {
+  "WV-STUDIO-CSRF": "outdated",
+  "WV-STUDIO-ORIGIN": "address",
+};
+const isStudioRefusal = (
+  failure: IdentityFailure | null,
+): failure is StudioRefusal => failure === "outdated" || failure === "address";
 /**
  * A check of who is signed in that failed for a reason other than the
- * account: a locked credential store says so, Studio's own refusal asks to
- * reload Studio, and anything else (no answer, a 5xx, an unexpected refusal)
+ * account: a locked credential store says so, Studio's own refusal says what
+ * fixes it, and anything else (no answer, a 5xx, an unexpected refusal)
  * reads as a platform Studio couldn't reach, which offers Try again.
  */
-function unreadIdentity(plain: PlainError): "store" | "studio" | "offline" {
+function unreadIdentity(
+  plain: PlainError,
+): "store" | StudioRefusal | "offline" {
   if (plain.code === "WV-AUTH-STORE") return "store";
-  return STUDIO_REFUSALS.has(plain.code) ? "studio" : "offline";
+  return Object.hasOwn(STUDIO_REFUSALS, plain.code)
+    ? STUDIO_REFUSALS[plain.code]
+    : "offline";
 }
 interface ConnectionSlot {
   name: string;
@@ -9561,9 +9574,9 @@ export class App implements CanvasHost {
         // banner would say nothing: an unexpected error reads as offline.
         const kind = unreadIdentity(plain);
         this.identityFailure = kind;
-        if (kind === "studio") {
-          // Studio refused its own request: its error says to reload the
-          // window, where Try again would meet the same refusal. An earlier
+        if (isStudioRefusal(kind)) {
+          // Studio refused its own request: its error says what fixes it,
+          // where Try again would meet the same refusal. An earlier
           // unreachable or store banner no longer says why.
           const earlier = this.platformNotice?.kind;
           if (earlier === "offline" || earlier === "store")
@@ -10269,7 +10282,7 @@ export class App implements CanvasHost {
     // platform out of reach matters only while there is no account. Studio's
     // own refusal says nothing about the account: its error explains it.
     if (failure === "expired" || failure === "not-linked") return failure;
-    return this.identity || failure === "studio" ? null : failure;
+    return this.identity || isStudioRefusal(failure) ? null : failure;
   }
   get platformStatusText() {
     if (!this.profile) return "Local authoring";
