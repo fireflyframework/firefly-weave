@@ -57,6 +57,7 @@ jobs:
         with:
           node-version: '24.15.0'
           cache: npm
+          package-manager-cache: false
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
@@ -143,6 +144,7 @@ jobs:
         with:
           node-version: '24.15.0'
           cache: npm
+          package-manager-cache: false
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
