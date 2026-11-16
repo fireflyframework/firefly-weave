@@ -487,6 +487,64 @@ accepts 1 to 100. `next_cursor` continues the same list: it is bound to the
 environment, the caller and the filter, and a cursor from another list answers
 422. Reading this list needs `connection.bind`; a caller without it gets 403.
 
+#### Weave AI explanations of Operations records
+
+`lumi.ask` accepts up to four attachments, each `{"kind", "id"}`. The Operations
+kinds are `deployment-target`, `deployment`, `deployment-observation`,
+`deployment-plan`, `deployment-job`, `worker`, `incident`, `environment` and
+`change-request`. A request with any of them is an explanation: it carries no
+draft and no `run`, `draft` or `simulation` attachment (422 otherwise), and the
+reply's `proposals` is always empty.
+
+Each attachment needs `lumi.use`, checked on the token's principal, and the read
+its owning service decides, checked as the caller's stored principal, which is
+loaded again for each question:
+
+| Kind | `id` | Read it needs | What Weave AI receives |
+| --- | --- | --- | --- |
+| `worker` | The worker's ID | `status.read`; placement only for targets with `deployment.read` | Presence, last contact age, draining, capacity, active leases, up to 20 task types, runtime, platform hint, SDK version, placement target and component, registration age |
+| `incident` | The incident's ID | `incident.read`; `run.read` for the step kind and event types | Code, origin code, status, step ID, step kind, instance key, generation, age, workflow name and version, run status, the last 20 event types, resolution kind, whether external effects may continue, and the code's meaning and fitting decisions |
+| `environment` | The path's environment ID | `status.read`, and each summary section's own capability | API version and uptime, compatibility, up to 16 health components, load, workers, targets, incidents, runs in the last 24 hours, and up to 20 attention items |
+| `change-request` | The change request's ID | `deployment.read` on its target, its plan and its apply job | Intent, state, up to 20 components with desired values and image digests, drain mode and timeout, drain set size, four-eyes, plan time left, plan risks, up to 20 history states with ages, receipt code, failure code and warnings |
+
+Without `run.read`, an incident's step kind and event types are sent as
+`withheld`; an incident on a classified or policy-blocked run is sent as
+`{"status": "unavailable"}`. A summary section the caller can't read is sent as
+`{"state": "forbidden"}`, and one that timed out as `{"state": "unavailable"}`.
+Lists beyond their limit are counted (`more_task_types`, `more_attention` and so
+on), and an explanation over its room is shortened by kind with a `trimmed` note.
+
+Weave AI never receives:
+
+- Logs of any kind: execution and container logs, event data and evidence, task error text.
+- What runs carry: run inputs and outputs, resolution reasons, outputs and evidence references, transaction business
+  keys and participants.
+- Where things run: host names, nodes, namespaces, labels, operating systems and architectures, drain member hosts,
+  target identities and registry addresses.
+- People: requesters, planners, approvers and the actors of a history entry or a resolution.
+- Record IDs, the selected record's included: each attachment goes out as its kind, its position in the request
+  (`"ref": 1` to `4`) and its data. Build digests, incident keys and plan digests stay out too.
+- Typed text: change request titles and reasons, failure messages and comments.
+
+For the `worker`, `incident`, `environment` and `change-request` kinds, every
+string sent is a fixed value, a code, a name, a step ID or instance key, an
+attention title that matches the summary's own wording, or a server sentence;
+anything else is sent as `null`, and times are sent as ages in whole seconds. The
+deployment kinds send their records' saved times as they are.
+
+The API reads each attachment as the caller before the model call and again after
+it. A refusal on the second read discards the reply with that read's own error.
+When the second read reaches less than the first, for example a worker's placement,
+an incident's run facts, a summary section or target, or an attention title that
+named a workflow, the reply is discarded with 403. Errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 403 | the owning read's code | The caller lacks the record's read, before or after the model call, or access narrowed during it |
+| 404 | `WV-NOT-FOUND` | The record doesn't exist in this environment, or an `environment` attachment names another environment |
+| 503 | `WV-UNAVAILABLE` | An `environment` attachment arrives before the platform summary has started |
+| 413 | `WV-LUMI-LIMIT` | The selected context exceeds 256 KiB |
+
 #### Activations with AI steps
 
 When the API has a policy mounted, a new activation of a workflow with AI task

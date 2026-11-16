@@ -23,13 +23,14 @@ text, the reply format and the guide come first, at most a third of the compact 
 and the conversation then share what is left, each held to at most 40%, 20% and 15% of the budget. A part over its
 share is trimmed in that order (the draft becomes an outline, then a run lists fewer steps and attachments are left
 out from the last, then the oldest messages), and the trimming is listed in ``trimmed`` so the model can say what
-it did not see. Nothing is cut mid-value.
+it did not see. Nothing is cut mid-value. An explanation of Operations records carries no draft, so its attachments
+get the draft's share as well, and each kind is shortened by its own rule before attachments are left out.
 """
 
 import copy
 import json
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Literal, cast
@@ -386,6 +387,20 @@ class Shaped:
     profile: Profile
 
 
+# Shortens one attachment's data to ``room`` tokens (None: no limit), naming what it left out in ``trimmed``.
+type Shorten = Callable[[JsonObject, int | None, list[str]], JsonObject]
+EXPLAIN_ONLY: Final = "Explain only; return no proposals."
+
+
+@dataclass(frozen=True)
+class Explanation:
+    """What an explanation-only request adds: one limitation sentence per kind present, in order, and how each kind
+    shortens. The caller builds it, so this module knows no attachment kind's rules."""
+
+    limitations: tuple[str, ...]
+    shorten: Mapping[str, Shorten]
+
+
 def _parsed(format: str, source: str) -> JsonValue | None:
     try:
         return parse_source(source, format=cast(Literal["yaml", "json"], format)).value
@@ -552,17 +567,24 @@ def shape(
     draft: tuple[str, str] | None,
     selected_step: str | None,
     schemas: dict[str, JsonValue],
-    explanation_only: bool = False,
+    explanation: Explanation | None = None,
     fix: bool = False,
 ) -> Shaped:
-    """What to send for one question; deterministic, so the same inputs send the same request."""
+    """What to send for one question; deterministic, so the same inputs send the same request.
+
+    An explanation carries no draft, so its attachments get the draft's share too; each is sent as its kind, its
+    position in the request (``ref``) and its data, never its record ID, and an attachment over its room is first
+    shortened by its kind's own rule.
+    """
     trimmed: list[str] = []
     context: JsonObject = {"profile": profile}
-    if explanation_only:
+    if explanation is not None:
         context["purpose"] = "explain-operations"
-        context["limitations"] = (
-            "Saved snapshots only, not live cloud state or worker task capacity. Explain only; return no proposals."
-        )
+        context["limitations"] = " ".join((*explanation.limitations, EXPLAIN_ONLY))
+        resources = [
+            {"kind": cast(JsonObject, resource)["kind"], "ref": position, "data": cast(JsonObject, resource)["data"]}
+            for position, resource in enumerate(resources, start=1)
+        ]
     else:
         if profile != "full":
             context["guide"] = GUIDE
@@ -617,7 +639,7 @@ def shape(
                     _note(trimmed, "draft")
                 else:
                     context["draft"] = {"outline": shown, **extra}
-    allowance = share(ATTACHMENT_SHARE)
+    allowance = share(ATTACHMENT_SHARE + DRAFT_SHARE) if explanation is not None else share(ATTACHMENT_SHARE)
     kept: list[JsonValue] = []
     for resource in resources:
         room = allowance - _tokens(kept) if allowance is not None and kept else allowance
@@ -640,7 +662,16 @@ def shape(
                 else {"note": TOO_LARGE_DRAFT, "revision": data["revision"]},
             }
         if allowance is not None and _tokens([*kept, resource]) > allowance:
-            resource = _shortened_run(resource, allowance - _tokens(kept) if kept else allowance, trimmed)
+            left = allowance - _tokens(kept) if kept else allowance
+            shorten = (
+                explanation.shorten.get(str(resource["kind"])) if explanation and isinstance(resource, dict) else None
+            )
+            if shorten is not None and isinstance(resource, dict) and isinstance(resource["data"], dict):
+                # The data's room is what the attachment's own wrapping leaves of the attachment's room.
+                wrapping = _tokens({**resource, "data": {}}) - _tokens({})
+                resource = {**resource, "data": shorten(resource["data"], left - wrapping, trimmed)}
+            else:
+                resource = _shortened_run(resource, left, trimmed)
         kept.append(resource)
 
     def over() -> bool:

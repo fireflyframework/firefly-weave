@@ -27,6 +27,16 @@ SPDX-License-Identifier: Apache-2.0
   data and execute the workflow with it, stopping where the run failed; values
   marked secret are left out and named. Operate's run detail opens a run in its
   workflow's newest draft, and offers to create one when there is none.
+- Weave AI explains workers, incidents, platform health and change requests
+  through the API and the SDK: attach a `worker`, `incident`, `environment` or
+  `change-request` to a question. Each needs `lumi.use` and the record's own
+  read, is read again after the reply, and sends only allowlisted facts; logs,
+  host names, people, record IDs and what runs carry never reach the model, and
+  the answer carries no proposals. Deployment explanations now send each record
+  by its position instead of its ID, and the gateway request no longer lists
+  attachment IDs.
+- Email whose text or HTML isn't ASCII, such as a name with an accent, is sent;
+  it failed before it was queued.
 - An operator's command, such as resuming a drained worker, no longer answers
   429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
   both of the API's slots for changes. A request that finds every slot of its
