@@ -622,6 +622,8 @@ def client_refusals():
             id="wire-version",
         ),
         pytest.param(lambda: httpx.Response(200, json={"not": "a lease"}), id="not-the-contract"),
+        # The API never redirects, so a redirect means the runner was given the wrong address.
+        pytest.param(lambda: httpx.Response(307, headers={"Location": "https://elsewhere.example/"}), id="redirect"),
     ]
 
 
