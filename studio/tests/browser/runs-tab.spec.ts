@@ -602,6 +602,47 @@ test.describe("the Runs list's states", () => {
     },
   };
 
+  test("a sign-in that ends in the background keeps an unreachable platform as the reason", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    const host = new PlatformHost({
+      platforms: [acmePlatform({ signedIn: false, expired: true })],
+      active: "Acme",
+      test: () => unreachable,
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill(unreachable),
+    );
+    await page.goto("/");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Studio couldn't reach Acme.");
+    // Sign in from the platform menu, and leave the sign-in waiting.
+    await page.locator(".platform-indicator").click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("failed", "WV-AUTH-DENIED");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    await expect(
+      runsPage(page).panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("Studio couldn't reach Acme.");
+  });
+
   test("a window paired again that Studio refuses as out of date leaves no unreachable banner", async ({
     page,
   }) => {
