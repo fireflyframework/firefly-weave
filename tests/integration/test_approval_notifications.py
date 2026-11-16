@@ -41,6 +41,7 @@ from firefly_weave.contracts.alerts import (
     MyAlertAddressUpdate,
 )
 from firefly_weave.contracts.email import MailProfile
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.email.service import EmailService, unavailable
 from firefly_weave.email.transport import SMTPResult
 from firefly_weave.operations.alert_channels import (
@@ -223,9 +224,9 @@ async def test_a_revoked_opt_in_stops_mail_at_once_and_an_owner_who_lost_email_s
 
 async def test_60_messages_an_hour_per_environment_counted_per_recipient(mail):
     case = mail
-    target = await channel(case, *({"member": member.id} for member in case.members))
+    targets = [await channel(case, *({"member": member.id} for member in case.members)) for _ in range(4)]
     for index in range(7):
-        await case.channels.test(case.owner_a, case.scope, target.id, f"test-{index}", context=CONTEXT)
+        await case.channels.test(case.owner_a, case.scope, targets[index // 2].id, f"test-{index}", context=CONTEXT)
     await deliver(case)
     states = [row["state"] for row in await notifications(case)]
     assert states == ["sent"] * 6 + ["skipped_limit"] and len(case.server.sent) == 60
@@ -388,3 +389,22 @@ async def test_an_alert_mail_shows_the_value_its_notification_was_queued_with(ma
     await deliver(case, 30)
     (message,) = [raw for _, raw in case.server.sent]
     assert "Value: 1 (threshold above 0)\n" in text_of(message)
+
+
+async def test_test_messages_leave_alert_mail_its_budget(mail):
+    case = mail
+    target = await channel(case, *({"member": member.id} for member in case.members))
+    refused: list[str] = []
+    for index in range(6):
+        try:
+            await case.channels.test(case.owner_a, case.scope, target.id, f"test-{index}", context=CONTEXT)
+        except CatalogError as error:
+            refused.append(error.code)
+    await deliver(case)
+    assert refused == ["WV-ALERT-LIMIT"] * 3 and len(case.server.sent) == 30
+    run = await case.start("alert-after-tests")
+    await add_incident(case, run.id, "first")
+    await create(case, draft(name="Incidents are open", channel_ids=[str(target.id)]))
+    await case.loop.evaluate(case.authority)
+    await deliver(case)
+    assert [(row["state"], row["code"]) for row in await notifications(case, kind="firing")] == [("sent", None)]

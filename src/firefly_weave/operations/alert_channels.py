@@ -31,7 +31,7 @@ import re
 import secrets
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -67,6 +67,8 @@ from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 
 CHANNEL_LIMIT = 20
+# Test messages a channel takes an hour; more could spend the mail budgets alerts need.
+TESTS_PER_HOUR = 3
 SCOPED = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 # Roles that machines hold; a principal with only these is no person and receives no alert mail.
 SERVICE_ROLES = frozenset({"worker", "deployment_runner"})
@@ -594,7 +596,11 @@ class AlertChannelService:
     async def test(
         self, actor: Principal, scope: Scope, channel_id: UUID, idempotency_key: str, *, context: AuditContext
     ) -> AlertNotificationView:
-        """Queue one test message; the next delivery sends it, and it counts toward the mail budgets."""
+        """Queue one test message; the next delivery sends it, and it counts toward the mail budgets.
+
+        A channel takes at most three test messages an hour, so tests never spend the budget firing and resolved
+        mail needs.
+        """
         self._require(actor, scope, ("alert.manage",), context)
         async with self.uow.open(scope) as tx:
             await self._current(tx, actor, ("alert.manage",), context)
@@ -602,8 +608,22 @@ class AlertChannelService:
             prior = await replay.replay()
             if prior is not None:
                 return AlertNotificationView.model_validate_json(json.dumps(prior))
-            row = await self._row(tx, channel_id)
+            # The channel's row is held, so two tests at once count each other.
+            row = await self._row(tx, channel_id, lock_row=True)
             now = await _now(tx)
+            recent = await _rows(
+                tx,
+                f"SELECT count(*) AS n FROM alert_notifications WHERE {SCOPED} AND channel_id=:channel "
+                "AND kind='test' AND created_at>:since",
+                channel=channel_id,
+                since=now - timedelta(hours=1),
+            )
+            if int(recent[0]["n"]) >= TESTS_PER_HOUR:
+                raise CatalogError(
+                    409,
+                    "WV-ALERT-LIMIT",
+                    f"A channel takes at most {TESTS_PER_HOUR} test messages an hour; try again later.",
+                )
             await _execute(
                 tx,
                 "INSERT INTO alert_notifications(tenant_id,project_id,environment_id,id,channel_id,kind,sequence,"
