@@ -18,6 +18,7 @@
 it started."""
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -39,6 +40,7 @@ from firefly_weave.contracts.integration_events import IntegrationEvent
 from firefly_weave.contracts.platform_events import PlatformEvent
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.event_fanout import fan_out
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.triggers.event_starts import EventStartService
 
@@ -686,3 +688,24 @@ async def test_a_chain_of_reactions_stops_at_three_runs(platform):
         (4, "skipped", "WV-TRIGGER-EVENT-DEPTH"),
     ]
     assert [row["event_depth"] for row in await reactions(platform)] == [1, 2, 3]
+
+
+async def test_fan_out_holds_the_outbox_lock_it_counts_under(platform, monkeypatch):
+    """A chain's count of starts is right only while no other event of the project fans out, so fan-out takes the
+    project's outbox lock itself, whoever calls it."""
+    await platform.bind(await platform.publish(reaction()))
+    with held(monkeypatch):
+        run = await in_doubt(platform)
+    stored = IntegrationEvent.model_validate_json(json.dumps(await outbox_event(platform, run, "transaction.in_doubt")))
+    namespace = f"outbox:{platform.scope.tenant_id}:{platform.scope.project_id}"
+    key = int.from_bytes(hashlib.sha256(namespace.encode()).digest()[:8], signed=True) & 0xFFFFFFFFFFFFFFFF
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await fan_out(tx, stored.model_copy(update={"event_id": uuid4()}))
+        holding = await tx.session.scalar(
+            text(
+                "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND granted "
+                "AND classid::bigint=:high AND objid::bigint=:low AND objsubid=1"
+            ),
+            {"high": key >> 32, "low": key & 0xFFFFFFFF},
+        )
+    assert holding == 1

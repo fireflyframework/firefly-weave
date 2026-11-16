@@ -134,6 +134,11 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
     facts = event.payload.transaction
     if facts is None or event.scope.environment_id is None:
         return 0
+    from firefly_weave.operations.outbox import project_lock
+
+    # Held until this commit, and already held when the outbox calls: no other event of the project counts or adds
+    # starts of a chain meanwhile, whoever calls.
+    await project_lock(tx)
     params = {
         "tenant": event.scope.tenant_id,
         "project": event.scope.project_id,
@@ -153,8 +158,7 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
     depth, root = (chain["event_depth"], chain["root_event_id"]) if chain is not None else (0, None)
     spent = 0
     if root is not None:
-        # The outbox holds the project's lock until this commit, so no other event of the chain counts or adds
-        # starts meanwhile. A start counts while it may still start a run and once it did.
+        # Under the project's lock taken above. A start counts while it may still start a run and once it did.
         spent = await tx.session.scalar(
             text(
                 f"SELECT count(*) FROM event_trigger_starts WHERE {scope} AND root_event_id=:root "
