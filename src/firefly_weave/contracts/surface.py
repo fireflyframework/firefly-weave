@@ -988,11 +988,12 @@ OPERATIONS = {
             etag=True,
         ),
         Operation(
+            # status.read too: a rule's state shows operations figures.
             "alert_rules.create",
             ENVIRONMENT + "/alert-rules",
             "POST",
             AlertRuleView,
-            "alert.manage",
+            "alert.manage and status.read",
             AlertRuleDraft,
             (201,),
             idempotency=True,
@@ -1003,7 +1004,7 @@ OPERATIONS = {
             ENVIRONMENT + "/alert-rules/{identifier}",
             "PUT",
             AlertRuleView,
-            "alert.manage",
+            "alert.manage and status.read",
             AlertRuleDraft,
             revision="required",
             etag=True,
@@ -1018,12 +1019,12 @@ OPERATIONS = {
             request_required=False,
         ),
         Operation(
-            # Also needs status.read: a preview reveals operations figures.
+            # status.read too: a preview reveals operations figures, as a rule's state does.
             "alert_rules.preview",
             ENVIRONMENT + "/alert-rules/preview",
             "POST",
             AlertPreview,
-            "alert.manage",
+            "alert.manage and status.read",
             AlertRuleDraft,
         ),
         Operation("alert_presets.list", ENVIRONMENT + "/alert-presets", "GET", list[AlertPreset], "alert.read"),
@@ -1044,12 +1045,12 @@ OPERATIONS = {
             etag=True,
         ),
         Operation(
-            # Also needs the creator's email.send: mail goes out as whoever last saved the channel.
+            # email.send too: mail goes out as whoever last saved the channel.
             "alert_channels.create",
             ENVIRONMENT + "/alert-channels",
             "POST",
             AlertChannel,
-            "alert.manage",
+            "alert.manage and email.send",
             AlertChannelDraft,
             (201,),
             idempotency=True,
@@ -1060,7 +1061,7 @@ OPERATIONS = {
             ENVIRONMENT + "/alert-channels/{identifier}",
             "PUT",
             AlertChannel,
-            "alert.manage",
+            "alert.manage and email.send",
             AlertChannelDraft,
             revision="required",
             etag=True,
@@ -1093,12 +1094,12 @@ OPERATIONS = {
             etag=True,
         ),
         Operation(
-            # Also needs environment.manage. Without If-Match the environment must have no saved settings yet.
+            # Without If-Match the environment must have no saved settings yet.
             "alert_settings.update",
             ENVIRONMENT + "/alert-settings",
             "PUT",
             AlertSettings,
-            "alert.manage",
+            "alert.manage and environment.manage",
             AlertSettingsUpdate,
             revision="optional",
             etag=True,
@@ -1112,23 +1113,21 @@ OPERATIONS = {
             page=True,
         ),
         Operation(
-            # Also needs environment.manage.
             "alert_recipient_consents.create",
             ENVIRONMENT + "/alert-recipient-consents",
             "POST",
             AlertRecipientConsent,
-            "alert.manage",
+            "alert.manage and environment.manage",
             AlertRecipientConsentDraft,
             (201,),
             idempotency=True,
         ),
         Operation(
-            # Also needs environment.manage.
             "alert_recipient_consents.revoke",
             ENVIRONMENT + "/alert-recipient-consents/{identifier}/revoke",
             "POST",
             AlertRecipientConsent,
-            "alert.manage",
+            "alert.manage and environment.manage",
             request_required=False,
         ),
         Operation("alerts.list", ENVIRONMENT + "/alerts", "GET", AlertPage, "alert.read", query=AlertQuery),

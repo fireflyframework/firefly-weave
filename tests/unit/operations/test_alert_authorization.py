@@ -165,6 +165,32 @@ async def test_the_alert_manager_may_call_every_alert_operation_and_no_other_rol
         await call(person("alert_manager", *extra))
 
 
+# The operations that check a second capability, as the API states them.
+COMBINED = {
+    "alert_rules.create": "alert.manage and status.read",
+    "alert_rules.update": "alert.manage and status.read",
+    "alert_rules.preview": "alert.manage and status.read",
+    "alert_channels.create": "alert.manage and email.send",
+    "alert_channels.update": "alert.manage and email.send",
+    "alert_settings.update": "alert.manage and environment.manage",
+    "alert_recipient_consents.create": "alert.manage and environment.manage",
+    "alert_recipient_consents.revoke": "alert.manage and environment.manage",
+}
+
+
+def test_openapi_states_every_capability_an_alert_operation_checks():
+    assert {name for name, (_, extra) in CALLS.items() if extra} == set(COMBINED)
+    for name, capability in COMBINED.items():
+        assert OPERATIONS[name].capability == capability
+        assert f"Required capability: {capability}." in OPERATIONS[name].native().description
+
+
+@pytest.mark.parametrize("name", sorted(COMBINED))
+async def test_the_alert_manager_alone_is_refused_what_needs_a_second_capability(name):
+    with pytest.raises(AccessDenied):
+        await CALLS[name][0](person("alert_manager"))
+
+
 def test_retention_periods_list_what_the_platform_keeps():
     periods = {item.record: item.seconds for item in retention_periods().items}
     day = 86_400

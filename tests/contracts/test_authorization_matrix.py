@@ -62,14 +62,18 @@ def test_every_operation_added_after_the_baseline_is_in_the_matrix():
 def test_matrix_capabilities_match_the_operations():
     for row in ROWS:
         assert row.capability == OPERATIONS[row.operation].capability, row.operation
-        assert any(matrix.holds((role,), row.capability, ROLE_CAPABILITIES) for role in ROLE_CAPABILITIES), row
+        # Every capability a row names is one some role grants.
+        assert matrix.holds(tuple(ROLE_CAPABILITIES), row.capability, ROLE_CAPABILITIES), row
 
 
-def test_holds_reads_alternative_capabilities():
+def test_holds_reads_alternative_and_combined_capabilities():
     roles = {"tenant_admin": frozenset({"grant.manage"}), "viewer": frozenset({"run.read"})}
     assert matrix.holds({"tenant_admin"}, "grant.manage or grant.admin", roles)
     assert not matrix.holds({"viewer"}, "grant.manage or grant.admin", roles)
     assert not matrix.holds({"unknown-role"}, "run.read", roles)
+    # Capabilities an operation needs together may come from different roles, but each one must be held.
+    assert matrix.holds({"tenant_admin", "viewer"}, "grant.manage and run.read", roles)
+    assert not matrix.holds({"tenant_admin"}, "grant.manage and run.read", roles)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.operation)

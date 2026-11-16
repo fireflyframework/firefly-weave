@@ -64,7 +64,7 @@ body = {}
 # Alert channels need alert.manage, and creating or saving one also the person's email.send; a permitted save names
 # a random connection, so it answers 422 WV-ALERT-CHANNEL and stores nothing. A random channel answers 404.
 [operations."alert_channels.create"]
-capability = "alert.manage"
+capability = "alert.manage and email.send"
 body = { kind = "email", name = "Probe", connection_revision_id = "random", recipients = [{ member = "random" }] }
 
 [operations."alert_channels.delete"]
@@ -83,7 +83,7 @@ capability = "alert.manage"
 identifier = "random"
 
 [operations."alert_channels.update"]
-capability = "alert.manage"
+capability = "alert.manage and email.send"
 identifier = "random"
 body = { kind = "email", name = "Probe", connection_revision_id = "random", recipients = [{ member = "random" }] }
 
@@ -91,7 +91,7 @@ body = { kind = "email", name = "Probe", connection_revision_id = "random", reci
 # opt-in names a domain no environment allows, so it is refused and stores nothing; a permitted settings save names a
 # random channel (or meets saved settings without If-Match), so it changes nothing.
 [operations."alert_recipient_consents.create"]
-capability = "alert.manage"
+capability = "alert.manage and environment.manage"
 body = { address = "j9-probe@unlisted.invalid", statement = "Probe" }
 answers = [{ status = 422, code = "WV-ALERT-RECIPIENT" }]
 
@@ -99,14 +99,14 @@ answers = [{ status = 422, code = "WV-ALERT-RECIPIENT" }]
 capability = "alert.read"
 
 [operations."alert_recipient_consents.revoke"]
-capability = "alert.manage"
+capability = "alert.manage and environment.manage"
 identifier = "random"
 
 [operations."alert_settings.read"]
 capability = "alert.read"
 
 [operations."alert_settings.update"]
-capability = "alert.manage"
+capability = "alert.manage and environment.manage"
 body = { recipient_domains = [], approval_channel_ids = ["random"] }
 
 # Alerts and their history need alert.read; acknowledging one needs alert.manage, and a random alert answers 404.
@@ -135,7 +135,7 @@ capability = "status.read"
 capability = "alert.read"
 
 [operations."alert_rules.create"]
-capability = "alert.manage"
+capability = "alert.manage and status.read"
 body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info", channel_ids = ["random"] }
 
 [operations."alert_rules.delete"]
@@ -146,7 +146,7 @@ identifier = "random"
 capability = "alert.read"
 
 [operations."alert_rules.preview"]
-capability = "alert.manage"
+capability = "alert.manage and status.read"
 body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
 
 [operations."alert_rules.read"]
@@ -154,7 +154,7 @@ capability = "alert.read"
 identifier = "random"
 
 [operations."alert_rules.update"]
-capability = "alert.manage"
+capability = "alert.manage and status.read"
 identifier = "random"
 body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
 

@@ -1104,22 +1104,22 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `run_statistics.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/steps` | status.read |
 | `alert_rules.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.read |
 | `alert_rules.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.read |
-| `alert_rules.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.manage |
-| `alert_rules.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
+| `alert_rules.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.manage and status.read |
+| `alert_rules.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage and status.read |
 | `alert_rules.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
-| `alert_rules.preview` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/preview` | alert.manage |
+| `alert_rules.preview` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/preview` | alert.manage and status.read |
 | `alert_presets.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-presets` | alert.read |
 | `alert_channels.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.read |
 | `alert_channels.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.read |
-| `alert_channels.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.manage |
-| `alert_channels.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage |
+| `alert_channels.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.manage and email.send |
+| `alert_channels.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage and email.send |
 | `alert_channels.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage |
 | `alert_channels.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}/test` | alert.manage |
 | `alert_settings.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.read |
-| `alert_settings.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.manage |
+| `alert_settings.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.manage and environment.manage |
 | `alert_recipient_consents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.read |
-| `alert_recipient_consents.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.manage |
-| `alert_recipient_consents.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents/{identifier}/revoke` | alert.manage |
+| `alert_recipient_consents.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.manage and environment.manage |
+| `alert_recipient_consents.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents/{identifier}/revoke` | alert.manage and environment.manage |
 | `alerts.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts` | alert.read |
 | `alerts.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}` | alert.read |
 | `alerts.acknowledge` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}/acknowledge` | alert.manage |
