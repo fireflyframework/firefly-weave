@@ -16,21 +16,30 @@
 
 """Binding a workflow to platform events: what a binding may ask for, and where its commands and bridge reach."""
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 from click.testing import CliRunner
 
 from firefly_weave.cli.triggers import triggers
+from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.connections.registry import ConnectorRegistry
+from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.catalog import ActivationRequest
 from firefly_weave.contracts.definitions import EventTriggerSpec
 from firefly_weave.contracts.event_triggers import EventTriggerRequest
-from firefly_weave.contracts.transaction_resolve import resolve_task_capability
-from firefly_weave.contracts.workers import ReleaseRequest
+from firefly_weave.contracts.transaction_resolve import resolve_action_definition, resolve_task_capability
+from firefly_weave.contracts.workers import ReleaseRequest, WorkerRelease
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.studio.service import StudioOptions, StudioProfile, StudioService
 from firefly_weave.triggers.event_triggers import binding_problem, effective_sources
+from firefly_weave.workers.repository import WorkerRepository
+from firefly_weave.workers.service import WorkerService
 
 IN_DOUBT, COMPENSATED, COMPLETED = "transaction.in_doubt", "transaction.compensated", "transaction.completed"
 
@@ -121,3 +130,46 @@ def test_no_worker_release_may_offer_a_platform_task_type():
             registry.validate_release(release({**platform, "taskType": task_type}))
         assert (refused.value.status, refused.value.code) == (409, "WV-CAPABILITY-CONFLICT")
     registry.validate_release(release({**platform, "taskType": "record-event"}))
+
+
+def test_no_activation_may_pin_a_worker_release_for_a_platform_task_type(monkeypatch):
+    """A release registered before the platform reserved its task types can still offer one: admission refuses the
+    pin, so no run ever creates a pinned platform task."""
+    capability = resolve_task_capability()
+    reference = f"{capability['taskType']}@{capability['taskVersion']}"
+    release = WorkerRelease.model_validate_json(
+        json.dumps({"id": str(uuid4()), "image_digest": "sha256:" + "a" * 64, "capabilities": [capability]})
+    )
+    offered = CatalogSnapshot.from_definitions([], tasks=release.capabilities).resolve("TaskCapability", reference)
+    assert offered is not None
+    executable = {
+        "graph": {"nodes": []},
+        "dependencies": [
+            {"kind": "Action", "reference": "weave.transaction-resolve@1.0.0", "document": resolve_action_definition()},
+            {"kind": "TaskCapability", "reference": reference, "digest": offered.digest},
+        ],
+    }
+
+    async def stored(_repository: WorkerRepository, _identifier: UUID) -> WorkerRelease:
+        return release
+
+    monkeypatch.setattr(WorkerRepository, "release", stored)
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    request = ActivationRequest(
+        version_id=uuid4(),
+        artifact_digest="a" * 64,
+        scope=scope,
+        worker_release_ids={capability["taskType"]: release.id},
+    )
+    admission = WorkerService(MagicMock(), MagicMock()).admit(
+        MagicMock(),
+        scope,
+        request,
+        SimpleNamespace(executable=executable),
+        capability="release.activate",
+        context=MagicMock(),
+        tx=MagicMock(),
+    )
+    with pytest.raises(CatalogError) as refused:
+        asyncio.run(admission)
+    assert (refused.value.status, refused.value.code) == (422, "WV-READINESS")
