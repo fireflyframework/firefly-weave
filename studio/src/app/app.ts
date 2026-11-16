@@ -10329,15 +10329,16 @@ export class App implements CanvasHost {
   }
   /**
    * The wizard is open: the indicator reads "Connecting…", not "Signed out".
-   * An account the platform doesn't recognize is a settled answer, so the
-   * visible text says so, as the indicator's accessible name does.
+   * An account the platform doesn't recognize is a settled answer, also once
+   * its banner is dismissed, so the visible text says so, as the indicator's
+   * accessible name does.
    */
   get indicatorConnecting() {
     return (
       this.view === "connect" &&
       !!this.profile &&
       !this.signedIn &&
-      this.platformNotice?.kind !== "not-linked"
+      this.identityProblem !== "not-linked"
     );
   }
   /**

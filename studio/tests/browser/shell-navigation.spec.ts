@@ -449,6 +449,41 @@ for (const { failure, code } of [
     await expect(page.locator(".platform-banner")).toHaveCount(0);
   });
 
+test("with the sign-in assistant open, an unrecognized account reads the same seen and heard after its banner is dismissed", async ({
+  page,
+}) => {
+  await platformHost(page, {
+    platforms: [acmePlatform({ signedIn: false, expired: true })],
+    active: "Acme",
+    test: () => ({
+      status: 401,
+      json: {
+        status: 401,
+        code: "WV-AUTH-NOT-LINKED",
+        message: "You signed in, but this platform does not know you.",
+      },
+    }),
+  });
+  const notice = page.locator(".platform-banner");
+  await expect(notice).toContainText(
+    "You signed in, but Acme doesn't recognize your account yet.",
+  );
+  await notice
+    .getByRole("button", { name: "Dismiss platform message" })
+    .click();
+  const indicator = page.locator(".platform-indicator");
+  await indicator.click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Sign in with your browser" }),
+  ).toBeVisible();
+  await expect(indicator).toHaveAccessibleName(
+    /^Platform: Acme · Account not recognized · /,
+  );
+  await expect(indicator).toContainText("Account not recognized");
+  await expect(indicator).not.toContainText("Connecting…");
+});
+
 test("a toast sits bottom-left beside the sidebar and pauses while hovered", async ({
   page,
 }) => {
