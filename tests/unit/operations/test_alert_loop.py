@@ -18,6 +18,7 @@
 to the rest, how often it runs, and what it tells the health registry. Evaluation itself runs on PostgreSQL."""
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -26,7 +27,13 @@ import pytest
 from firefly_weave.access.models import Grant, Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.operations import alert_loop
-from firefly_weave.operations.alert_loop import CYCLE_START_SECONDS, EVALUATE_SECONDS, AlertLoop, readable_targets
+from firefly_weave.operations.alert_loop import (
+    CYCLE_START_SECONDS,
+    DELIVER_SECONDS,
+    EVALUATE_SECONDS,
+    AlertLoop,
+    readable_targets,
+)
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.settings import Settings
 
@@ -130,3 +137,34 @@ def test_a_rule_reads_the_targets_its_owner_may_read():
     assert readable_targets(restricted, here) == tuple(sorted((target, other)))
     assert readable_targets(owner(Grant(role="viewer", scope=here)), here) == ()
     assert readable_targets(None, here) == ()
+
+
+class Deliveries:
+    def __init__(self, failing=frozenset()):
+        self.failing, self.visited = failing, []
+
+    async def deliver(self, authority, now, *, limit=10):
+        self.visited.append(authority)
+        if authority in self.failing:
+            raise RuntimeError("the mail server is down")
+        return 1
+
+
+@dataclass(frozen=True)
+class Authority:
+    scope: Scope
+
+
+async def test_mail_goes_out_every_10_seconds_for_environments_evaluated_in_the_last_two_cycles():
+    recent, stale, broken = Authority(scope()), Authority(scope()), Authority(scope())
+    notifier = Deliveries(failing=frozenset({broken}))
+    loop = Traversal({})
+    loop.notifier = notifier
+    loop.seen(stale)
+    loop.monotonic_clock.seconds += 2 * EVALUATE_SECONDS + 1
+    loop.seen(recent)
+    loop.seen(broken)
+    # The failing environment doesn't stop the others; one not evaluated for two cycles is left to its evaluator.
+    assert await loop.deliver_cycle() is False
+    assert notifier.visited == [recent, broken]
+    assert DELIVER_SECONDS == 10.0

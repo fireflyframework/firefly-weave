@@ -247,6 +247,20 @@ def delivery() -> None:
     op.execute(
         f"CREATE INDEX alert_notifications_pending ON alert_notifications({KEY},created_at,id) WHERE state='pending'"
     )
+    # One row per message to one recipient, with a keyed hash of the address and never the address: the mail budgets
+    # count these, and a retry knows who already got the message.
+    op.execute(f"""CREATE TABLE alert_messages(
+        {SCOPE_COLUMNS},id uuid NOT NULL,notification_id uuid NOT NULL,rule_id uuid,channel_id uuid NOT NULL,
+        recipient_hash text NOT NULL CHECK(recipient_hash ~ '^[0-9a-f]{{64}}$'),request_id uuid NOT NULL,
+        attempt integer NOT NULL CHECK(attempt BETWEEN 0 AND 3),
+        state text NOT NULL CHECK(state IN ('queued','accepted','rejected','unknown')),sent_at timestamptz NOT NULL,
+        PRIMARY KEY({KEY},id),{ENVIRONMENT})""")
+    op.execute(f"CREATE UNIQUE INDEX alert_messages_request ON alert_messages({KEY},request_id)")
+    op.execute(f"CREATE INDEX alert_messages_sent ON alert_messages({KEY},sent_at)")
+    op.execute(f"CREATE INDEX alert_messages_recipient ON alert_messages({KEY},recipient_hash,sent_at)")
+    op.execute(
+        f"CREATE INDEX alert_messages_rule ON alert_messages({KEY},rule_id,sent_at) WHERE rule_id IS NOT NULL"
+    )
     op.execute(f"""CREATE TABLE alert_settings(
         {SCOPE_COLUMNS},recipient_domains text[] NOT NULL DEFAULT '{{}}' CHECK(cardinality(recipient_domains)<=20
             AND array_position(recipient_domains,NULL) IS NULL),
@@ -265,6 +279,8 @@ def delivery() -> None:
         CHECK((approval_after_at IS NULL)=(approval_after_id IS NULL)),PRIMARY KEY({KEY}),{ENVIRONMENT})""")
     op.execute("CREATE INDEX alert_environments_due ON alert_environments(tenant_id,next_at)")
     secure("alert_notifications", "SELECT,INSERT,UPDATE,DELETE")
+    secure("alert_messages", "SELECT,INSERT,DELETE")
+    op.execute("GRANT UPDATE(state) ON alert_messages TO weave_app")
     secure("alert_settings", "SELECT,INSERT,UPDATE,DELETE")
     secure("alert_preset_installs", "SELECT,INSERT")
     # The evaluator claims due environments with only the tenant set, then works inside each one; a row is created
@@ -336,6 +352,7 @@ def upgrade() -> None:
         "alert_member_addresses",
         "alert_hash_keys",
         "alert_notifications",
+        "alert_messages",
         "alert_settings",
         "alert_preset_installs",
         "alert_environments",

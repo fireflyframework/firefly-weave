@@ -93,6 +93,7 @@ from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.definitions.studio_documents import StudioDocumentService
+from firefly_weave.email.service import EmailService
 from firefly_weave.email.source import EmailSourceService
 from firefly_weave.email.transport import MailPolicy
 from firefly_weave.files.human import HumanFileService
@@ -103,6 +104,7 @@ from firefly_weave.operations.ai_connections import AIConnectionService, Gateway
 from firefly_weave.operations.ai_models import AIModelService
 from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.alert_loop import AlertLoop
+from firefly_weave.operations.alert_notifications import AlertNotifier
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
@@ -471,7 +473,9 @@ def make_app(
                     operations_loop = OperationsLoop(settings, pyfly.context.get_bean(UnitOfWork), health)
                     await operations_loop.open()
                     app.state.operations_loop = operations_loop
-                    alert_loop = AlertLoop(settings, pyfly.context.get_bean(UnitOfWork), health)
+                    units = pyfly.context.get_bean(UnitOfWork)
+                    notifier = AlertNotifier(units, pyfly.context.get_bean(EmailService))
+                    alert_loop = AlertLoop(settings, units, health, notifier=notifier)
                     await alert_loop.open()
                     app.state.alert_loop = alert_loop
                 except BaseException:

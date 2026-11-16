@@ -47,6 +47,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.alerts import AlertRuleDraft
 from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
 from firefly_weave.operations.alert_channels import principal_here
+from firefly_weave.operations.alert_notifications import AlertNotifier, scan_approvals
 from firefly_weave.operations.alert_rules import (
     ALERT_PRESETS,
     RULE_LIMIT,
@@ -84,6 +85,10 @@ from firefly_weave.runtime.scheduler import failure_cause
 from firefly_weave.settings import Settings
 
 EVALUATE_SECONDS = ALERTS_SECONDS
+# Mail goes out on its own cadence, outside any evaluation, a few notifications per environment at a time.
+DELIVER_SECONDS = 10.0
+DELIVER_LIMIT = 10
+DELIVER_TIMEOUT_SECONDS = 60.0
 # A cycle starts no environment after this long, so it ends well within its interval.
 CYCLE_START_SECONDS = ALERTS_BUDGET_SECONDS
 ENVIRONMENTS_PER_TENANT = 8
@@ -253,6 +258,8 @@ async def prune(tx: Transaction, now: datetime) -> int:
         "AND resolved_at<:cutoff ORDER BY resolved_at LIMIT :batch) RETURNING id",
         f"DELETE FROM alert_notifications WHERE {SCOPED} AND id IN (SELECT id FROM alert_notifications WHERE "
         f"{SCOPED} AND state<>'pending' AND created_at<:cutoff ORDER BY created_at LIMIT :batch) RETURNING id",
+        f"DELETE FROM alert_messages WHERE {SCOPED} AND id IN (SELECT id FROM alert_messages WHERE {SCOPED} "
+        "AND sent_at<:cutoff ORDER BY sent_at LIMIT :batch) RETURNING id",
     )
     deleted = 0
     for statement in statements:
@@ -288,10 +295,11 @@ class AlertLoop:
         uow: UnitOfWork,
         health: LoopHealth,
         *,
+        notifier: AlertNotifier | None = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.settings, self.uow, self.health = settings, uow, health
+        self.settings, self.uow, self.health, self.notifier = settings, uow, health, notifier
         self.clock, self.monotonic = clock, monotonic
         self.outbox = OutboxService()
         self.authorization = AuthorizationService()
@@ -299,6 +307,48 @@ class AlertLoop:
         self.task: asyncio.Task[None] | None = None
         # When each environment was last pruned, by this process.
         self.pruned: dict[UUID, float] = {}
+        # The environments this process evaluated, and when: mail goes out for them between evaluations.
+        self.recent: dict[UUID, tuple[_SchedulerScope, float]] = {}
+
+    def seen(self, authority: _SchedulerScope) -> None:
+        self.recent[cast(UUID, authority.scope.environment_id)] = (authority, self.monotonic())
+
+    async def deliver_cycle(self) -> bool:
+        """Send what is due in each environment evaluated within two cycles; True when every one went without failure.
+
+        An environment this process stopped evaluating is left to the evaluator that took it over.
+        """
+        if self.notifier is None:
+            return True
+        healthy = True
+        for environment, (authority, seen) in list(self.recent.items()):
+            if self.monotonic() - seen > 2 * EVALUATE_SECONDS:
+                del self.recent[environment]
+                continue
+            try:
+                async with asyncio.timeout(DELIVER_TIMEOUT_SECONDS):
+                    await self.notifier.deliver(authority, self.clock(), limit=DELIVER_LIMIT)
+            except Exception as error:
+                raise_if_cancelled(error)
+                logging.getLogger(__name__).error("Alert mail delivery failed (%s)", failure_cause(error))
+                healthy = False
+        return healthy
+
+    async def deliver_poll(self) -> None:
+        while True:
+            try:
+                await self.deliver_cycle()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise_if_cancelled(error)
+                logging.getLogger(__name__).error("Alert mail delivery failed (%s)", failure_cause(error))
+            raise_if_cancelled()
+            await asyncio.sleep(DELIVER_SECONDS)
+
+    async def run(self) -> None:
+        """Evaluate every 30 seconds and deliver every 10, in one task, so stopping it stops both."""
+        await asyncio.gather(self.evaluate_poll(), self.deliver_poll())
 
     async def open(self) -> None:
         if self.task is not None or not self.settings.scheduler_enabled:
@@ -327,7 +377,7 @@ class AlertLoop:
                 if not valid:
                     raise RuntimeError("Alert traversal requires execute-only scheduler authority")
             # An empty context keeps a request's execution lease and identity out of the long-lived task.
-            self.task = asyncio.create_task(self.evaluate_poll(), name="weave-alerts", context=Context())
+            self.task = asyncio.create_task(self.run(), name="weave-alerts", context=Context())
             track(self.health, self.task, "alert_evaluator")
         except BaseException:
             await self.close()
@@ -423,6 +473,8 @@ class AlertLoop:
                 )
                 await install_presets(tx, now)
                 await self._rules(tx, now)
+                await scan_approvals(tx, now)
+        self.seen(authority)
         environment = cast(UUID, authority.scope.environment_id)
         if self.monotonic() - self.pruned.get(environment, -PRUNE_EVERY_SECONDS) >= PRUNE_EVERY_SECONDS:
             self.pruned[environment] = self.monotonic()

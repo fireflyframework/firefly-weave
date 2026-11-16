@@ -39,6 +39,7 @@ SCOPED_TABLES = (
     "alert_channels",
     "alert_recipient_consents",
     "alert_notifications",
+    "alert_messages",
     "alert_settings",
     "alert_preset_installs",
 )
@@ -104,6 +105,9 @@ async def seed_alerts(connection, ids, *, environment=None):
         "INSERT INTO alert_notifications(tenant_id,project_id,environment_id,id,alert_id,channel_id,kind,sequence,"
         "recipients_count,state,created_at) VALUES(:tenant,:project,:environment,:notification,:alert,:channel,"
         "'firing',0,2,'pending',now())",
+        "INSERT INTO alert_messages(tenant_id,project_id,environment_id,id,notification_id,rule_id,channel_id,"
+        "recipient_hash,request_id,attempt,state,sent_at) VALUES(:tenant,:project,:environment,gen_random_uuid(),"
+        ":notification,:rule,:channel,repeat('a',64),gen_random_uuid(),0,'queued',now())",
         "INSERT INTO alert_settings(tenant_id,project_id,environment_id,recipient_domains,approval_channel_ids,"
         "revision,updated_at,updated_by) VALUES(:tenant,:project,:environment,ARRAY['vendor.example'],'{}',1,now(),"
         ":principal)",
@@ -281,6 +285,7 @@ async def test_only_one_alert_per_rule_can_be_firing(upgraded):
     "statement",
     [
         "UPDATE alert_events SET value=0",
+        "UPDATE alert_messages SET recipient_hash=repeat('b',64)",
         "UPDATE alert_recipient_consents SET address='other@vendor.example'",
         "UPDATE alert_recipient_consents SET statement='Changed'",
         "UPDATE alert_hash_keys SET key=decode(repeat('cd',32),'hex')",
