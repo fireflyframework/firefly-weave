@@ -105,6 +105,31 @@ def workflow(name: str, steps: list[dict[str, Any]], *, callable_: bool = False,
     }
 
 
+def reaction(
+    name: str = "notify-team",
+    events: tuple[str, ...] = ("transaction.in_doubt", "transaction.compensated"),
+    *,
+    sources: list[str] | None = None,
+    steps: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """A workflow that platform events start: it declares the events and takes the platform event as its input."""
+    trigger: dict[str, Any] = {"events": list(events)}
+    if sources is not None:
+        trigger["from"] = sources
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": name, "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"$ref": "weave.platform-event-v1"},
+            "outputSchema": {},
+            "eventTrigger": trigger,
+            "steps": steps or [],
+            "output": {"literal": "noted"},
+        },
+    }
+
+
 def transaction(*steps: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": "move",
@@ -163,6 +188,18 @@ class Platform(SimpleNamespace):
             self.scope,
             StartRunRequest(activation_id=activation.id, input={"moveId": move, "quantity": 2}),
             str(uuid4()),
+            context=AuditContext(),
+        )
+
+    async def bind(self, activation, *, name: str = "notify", actor=None, **fields: Any):
+        """Bind an activation to platform events, by default the first event its workflow declares."""
+        from firefly_weave.contracts.event_triggers import EventTriggerRequest
+
+        body = {"name": name, "activation_id": str(activation.id), "events": ["transaction.in_doubt"], **fields}
+        return await self.event_triggers.create(
+            actor or self.actor,
+            self.scope,
+            EventTriggerRequest.model_validate_json(json.dumps(body)),
             context=AuditContext(),
         )
 
@@ -266,6 +303,7 @@ async def build(
     from firefly_weave.operations.incidents import IncidentService
     from firefly_weave.runtime.recovery import RecoveryService
     from firefly_weave.runtime.service import RuntimeService
+    from firefly_weave.triggers.event_triggers import EventTriggerService
 
     tasks, _, workers, actor, scope, _, _ = worker_setup
     graph = services(access_db[0])
@@ -307,6 +345,7 @@ async def build(
         runtime=graph.resolve(RuntimeService),
         recovery=graph.resolve(RecoveryService),
         incidents=graph.resolve(IncidentService),
+        event_triggers=graph.resolve(EventTriggerService),
         tasks=tasks,
         actor=actor,
         scope=scope,

@@ -163,9 +163,20 @@ class RunStartFacts:
     test: bool = False
     caller: RunSummaryCaller | None = None
     retried_from_run_id: UUID | None = None
+    # How many platform-event reactions precede this run in its chain; called runs and retries keep their source's.
+    event_depth: int = 0
+    # The event that began this run's chain of reactions, which bounds the starts the chain may make; None for a run
+    # in no chain. Called runs and retries keep their source's.
+    root_event_id: UUID | None = None
 
     def __post_init__(self) -> None:
         TypeAdapter(RunOrigin).validate_python(self.origin, strict=True)
+        if type(self.event_depth) is not int or self.event_depth < 0:
+            raise ValueError("Chain depth must be a non-negative integer")
+        if (self.event_depth == 0) != (self.root_event_id is None) or not isinstance(self.root_event_id, UUID | None):
+            raise ValueError("A run in a chain of reactions names the event that began the chain, and only such a run")
+        if self.origin == "event" and self.event_depth < 1:
+            raise ValueError("A run a platform event starts sits one reaction deeper than the run that emitted it")
         if (
             type(self.test) is not bool
             or (self.origin == "test" and not self.test)
@@ -312,10 +323,11 @@ class FactRepository:
             "workflow_name,workflow_version,activation_id,activation_name,activation_revision,status,paused,"
             "test,origin,caller_run_id,caller_node_id,caller_instance_key,retried_from_run_id,business_key,"
             "correlation_key,started_at,updated_at,classification_state,classification_policy,pinned_ir_version,"
-            "pinned_features,node_kinds,facts_started_at) SELECT :tenant,:project,:environment,:run,:version,"
-            "name,version,:activation,:name,:revision,:status,:paused,:test,:origin,:caller_run,:caller_node,"
-            ":caller_instance,:retried,:business,:correlation,:at,:at,:classification_state,:classification_policy,"
-            ":pinned_ir_version,cast(:pinned_features AS jsonb),cast(:node_kinds AS jsonb),:at "
+            "pinned_features,node_kinds,facts_started_at,event_depth,root_event_id) SELECT :tenant,:project,"
+            ":environment,:run,:version,name,version,:activation,:name,:revision,:status,:paused,:test,:origin,"
+            ":caller_run,:caller_node,:caller_instance,:retried,:business,:correlation,:at,:at,:classification_state,"
+            ":classification_policy,:pinned_ir_version,cast(:pinned_features AS jsonb),cast(:node_kinds AS jsonb),"
+            ":at,:event_depth,:root_event "
             "FROM definition_versions WHERE tenant_id=:tenant AND project_id=:project AND id=:version",
             run=view.id,
             version=view.activation.request.version_id,
@@ -330,6 +342,8 @@ class FactRepository:
             caller_node=facts.caller.node_id if facts.caller else None,
             caller_instance=facts.caller.instance_key if facts.caller else None,
             retried=facts.retried_from_run_id,
+            event_depth=facts.event_depth,
+            root_event=facts.root_event_id,
             business=request.business_key,
             correlation=request.correlation_key,
             at=at,

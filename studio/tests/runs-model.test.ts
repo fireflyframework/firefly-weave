@@ -252,6 +252,7 @@ describe("Runs model", () => {
           "retry",
           "call",
           "test",
+          "event",
           null,
         ] as const
       ).map(originLabel),
@@ -265,6 +266,7 @@ describe("Runs model", () => {
       "Retry",
       "Called by a workflow",
       "Test",
+      "Platform event",
       "Unknown",
     ]);
   });

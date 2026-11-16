@@ -44,7 +44,9 @@ if TYPE_CHECKING:
     from firefly_weave.contracts.runtime import RunListFilters
 
 type RunStatus = Literal["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"]
-type RunOrigin = Literal["manual", "webhook", "schedule", "broker", "email", "provider", "retry", "call", "test"]
+type RunOrigin = Literal[
+    "manual", "webhook", "schedule", "broker", "email", "provider", "retry", "call", "test", "event"
+]
 type RunSummaryOrder = Literal["started_desc", "started_asc", "updated_desc"]
 type RunListOrder = Literal["id", "started_desc", "started_asc", "updated_desc"]
 type HandledErrorCount = Annotated[int, Field(ge=0)]

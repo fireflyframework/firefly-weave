@@ -42,6 +42,7 @@ LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(La
 ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "ai.agent",
     "flow.callWorkflow",
+    "flow.eventTrigger",
     "flow.forEach",
     "flow.onError",
     "flow.transaction",

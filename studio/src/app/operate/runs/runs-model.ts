@@ -318,6 +318,7 @@ const origins: Record<RunOrigin, string> = {
   retry: "Retry",
   call: "Called by a workflow",
   test: "Test",
+  event: "Platform event",
 };
 /** How the run started, in plain words; older runs may not say. */
 export function originLabel(origin: RunOrigin | null): string {

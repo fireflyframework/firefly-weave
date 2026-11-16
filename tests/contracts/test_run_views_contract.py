@@ -215,6 +215,7 @@ def test_vocabularies_are_frozen():
         "retry",
         "call",
         "test",
+        "event",
     )
     assert get_args(run_views.RunStatus.__value__) == (
         "queued",

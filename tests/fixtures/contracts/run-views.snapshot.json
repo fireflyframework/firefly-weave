@@ -137,7 +137,8 @@
             "provider",
             "retry",
             "call",
-            "test"
+            "test",
+            "event"
           ],
           "type": "string"
         },
@@ -907,7 +908,8 @@
             "provider",
             "retry",
             "call",
-            "test"
+            "test",
+            "event"
           ],
           "type": "string"
         },
@@ -1293,7 +1295,8 @@
             "provider",
             "retry",
             "call",
-            "test"
+            "test",
+            "event"
           ],
           "type": "string"
         },

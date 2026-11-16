@@ -260,6 +260,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "step_tests.answer",
         "test_policy.read",
         "test_policy.save",
+        *("event_triggers." + verb for verb in ("create", "list", "read", "disable", "starts")),
         *(
             "deployment_change_requests." + verb
             for verb in (
