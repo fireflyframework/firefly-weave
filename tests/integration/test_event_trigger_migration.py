@@ -82,15 +82,16 @@ async def insert_payload(connection, ids, event, *, source_run_id, payload=PAYLO
 
 
 async def insert_start(connection, ids, trigger, *, status="requested", event=None, **fields) -> None:
-    values = {"run_id": None, "code": None, "source_run_id": ids["first_run"]} | fields
+    """A start one reaction deep, in the chain its own event began, unless ``fields`` say otherwise."""
     event = event or uuid4()
+    values = {"run_id": None, "code": None, "source_run_id": ids["first_run"], "depth": 1, "root": event} | fields
     await insert_payload(connection, ids, event, source_run_id=values["source_run_id"])
     await connection.execute(
         text(
             "INSERT INTO event_trigger_starts(tenant_id,project_id,environment_id,id,trigger_id,event_id,event_type,"
             "source_run_id,root_event_id,depth,status,code,run_id,requested_at) VALUES(:tenant,:project,"
-            ":environment,:id,:trigger,:event,'transaction.in_doubt',:source_run_id,:event,1,:status,:code,:run_id,"
-            "now())"
+            ":environment,:id,:trigger,:event,'transaction.in_doubt',:source_run_id,:root,:depth,:status,:code,"
+            ":run_id,now())"
         ),
         {**ids, **values, "id": uuid4(), "trigger": trigger, "event": event, "status": status},
     )
@@ -206,6 +207,9 @@ async def test_a_started_start_names_its_run_and_a_refused_one_its_code(upgraded
             ({"status": "rejected"}, "event_trigger_starts_refusal_code"),
             ({"status": "skipped"}, "event_trigger_starts_refusal_code"),
             ({"status": "rejected", "code": "WV-SOMETHING"}, "event_trigger_starts_code_check"),
+            # A first reaction belongs to the chain its own event began, and a deeper one to an earlier event's.
+            ({"root": uuid4()}, "event_trigger_starts_chain_root"),
+            ({"depth": 2}, "event_trigger_starts_chain_root"),
         ):
             savepoint = await connection.begin_nested()
             with pytest.raises(IntegrityError, match=constraint):
@@ -260,7 +264,9 @@ async def test_runs_can_come_from_a_platform_event_and_sit_in_a_chain(upgraded):
             ("event_depth=-1", "depth"),
             # A run sits in a chain exactly when it names the event that began the chain.
             ("root_event_id=NULL", "run_facts_event_root_check"),
-            ("event_depth=0", "run_facts_event_root_check"),
+            ("origin='manual',event_depth=0", "run_facts_event_root_check"),
+            # A run a platform event started sits at least one reaction deep.
+            ("event_depth=0,root_event_id=NULL", "run_facts_event_origin_check"),
         ):
             savepoint = await connection.begin_nested()
             with pytest.raises(IntegrityError, match=constraint):

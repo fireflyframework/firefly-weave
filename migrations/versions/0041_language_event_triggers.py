@@ -125,6 +125,7 @@ def starts() -> None:
         UNIQUE(trigger_id,event_id),
         CONSTRAINT event_trigger_starts_started_run CHECK((status='started')=(run_id IS NOT NULL)),
         CONSTRAINT event_trigger_starts_refusal_code CHECK(status IN ('requested','started') OR code IS NOT NULL),
+        CONSTRAINT event_trigger_starts_chain_root CHECK((depth=1)=(root_event_id=event_id)),
         FOREIGN KEY({SCOPE_KEY},trigger_id) REFERENCES event_triggers({SCOPE_KEY},id),
         FOREIGN KEY({SCOPE_KEY},event_id) REFERENCES event_trigger_payloads({SCOPE_KEY},event_id))""")
     # The start scan reads requested starts oldest first; the starts listing pages one trigger newest first.
@@ -169,6 +170,11 @@ def run_chains() -> None:
     op.execute(
         "ALTER TABLE run_facts ADD CONSTRAINT run_facts_event_root_check "
         "CHECK((event_depth=0)=(root_event_id IS NULL)) NOT VALID"
+    )
+    # A run a platform event started sits at least one reaction deep.
+    op.execute(
+        "ALTER TABLE run_facts ADD CONSTRAINT run_facts_event_origin_check "
+        "CHECK(origin<>'event' OR event_depth>=1) NOT VALID"
     )
     # A row charged before this migration had neither column: they count once a run sits in a chain.
     anchor = "item:=item-'transaction_state'; END IF;"
