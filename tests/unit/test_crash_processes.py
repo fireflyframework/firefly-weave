@@ -56,6 +56,32 @@ async def test_output_budget_holds_when_the_child_group_exited_before_the_kill(t
     assert owner.processes and all(p.returncode is not None for p in owner.processes)
 
 
+async def test_a_group_that_refuses_the_kill_and_keeps_running_is_a_failure(tmp_path, monkeypatch):
+    # EPERM while the child still runs means the kill really failed, and waiting for the child could last forever.
+    import signal
+    from contextlib import suppress
+
+    killpg = module.os.killpg
+
+    def refused(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(module.os, "killpg", refused)
+    owner = module.ProcessOwner(tmp_path)
+    try:
+        with pytest.raises(module.ProcessFailure, match="kept running"):
+            await asyncio.wait_for(
+                owner.command(sys.executable, "-I", "-c", "import time; time.sleep(30)", timeout=0.2), 10
+            )
+        assert owner.processes[0].returncode is None
+    finally:
+        for process in owner.processes:
+            with suppress(ProcessLookupError, PermissionError):
+                killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        await asyncio.gather(*owner.drains.values(), return_exceptions=True)
+
+
 async def test_command_timeout_is_failure_and_retains_log(tmp_path):
     owner = module.ProcessOwner(tmp_path)
     with pytest.raises(module.ProcessFailure, match="timed out"):

@@ -19,7 +19,6 @@
 import asyncio
 import os
 import signal
-from contextlib import suppress
 from pathlib import Path
 
 
@@ -71,7 +70,7 @@ class ProcessOwner:
                     if size > self.limit:
                         self.failures[process.pid] = "Owned child output exceeded limit"
                         if process.returncode is None:
-                            self.kill_group(process)
+                            await self.kill_group(process)
                         await process.wait()
                         return
             finally:
@@ -86,7 +85,7 @@ class ProcessOwner:
                 await process.wait()
                 await asyncio.shield(self.drains[process.pid])
         except TimeoutError:
-            self.kill_group(process)
+            await self.kill_group(process)
             async with asyncio.timeout(5):
                 await process.wait()
                 await asyncio.shield(self.drains[process.pid])
@@ -104,11 +103,21 @@ class ProcessOwner:
             raise ProcessFailure("Owned command failed; inspect its private retained log")
         return self.process_logs[process.pid].read_text()
 
-    def kill_group(self, process):
-        # start_new_session assigns a group exclusively owned by this process tree. Once every process of the group
-        # has exited, macOS can answer EPERM instead of ESRCH, so both mean the group is already gone.
-        with suppress(ProcessLookupError, PermissionError):
+    async def kill_group(self, process):
+        # start_new_session assigns a group exclusively owned by this process tree. A group that is already gone
+        # needs nothing; once every process of the group has exited, macOS can answer EPERM instead of ESRCH. EPERM
+        # while the child still runs means the kill really failed, and waiting for the child could last forever.
+        try:
             os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # The child may have exited a moment before its exit was seen: wait briefly, and fail only when it really
+            # keeps running.
+            try:
+                await asyncio.wait_for(process.wait(), 1)
+            except TimeoutError:
+                raise ProcessFailure("Owned process group refused the kill and kept running") from None
 
     async def close(self):
         failures = []
