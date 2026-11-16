@@ -38,6 +38,7 @@ from firefly_weave.contracts.deployments import (
 )
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import LOG, InfrastructureAdapter, OperationsRunner
+from firefly_weave.sdk._retry import kind, raise_if_cancelled, retry_delay, unavailable
 from firefly_weave.sdk.client import AsyncTokenProvider, WeaveClient
 from firefly_weave.sdk.token_relay import start_relay
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, _read_mount, private_transport
@@ -46,6 +47,11 @@ LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 # Set in a cluster: the Keycloak address the loopback token relay forwards to, and the file a liveness probe reads.
 TOKEN_RELAY = "WEAVE_TOKEN_RELAY"
 HEARTBEAT_FILE = "WEAVE_RUNNER_HEARTBEAT_FILE"
+# After a claim that could not reach the API, the runner waits this long, doubling up to the longest wait, as the
+# SDK's workers do. The heartbeat is touched only when the API answers, so a long outage still trips the liveness
+# probe that restarts a silent runner.
+CLAIM_RETRY_SECONDS = 0.5
+MAX_CLAIM_RETRY_SECONDS = 10.0
 
 
 def _private_plaintext(base_url: str) -> bool:
@@ -181,14 +187,36 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
             loop, task = asyncio.get_running_loop(), asyncio.current_task()
             assert task is not None
             loop.add_signal_handler(signal.SIGTERM, task.cancel)
+            # Claims in a row that could not reach the API.
+            failures = 0
             try:
                 while True:
-                    lease = cast(
-                        DeploymentLease | None,
-                        await client.invoke(
-                            "deployment_runners.claim", body=RunnerClaimRequest(runner_id=registration.id)
-                        ),
-                    )
+                    try:
+                        lease = cast(
+                            DeploymentLease | None,
+                            await client.invoke(
+                                "deployment_runners.claim", body=RunnerClaimRequest(runner_id=registration.id)
+                            ),
+                        )
+                    except Exception as error:
+                        raise_if_cancelled(error)
+                        # Only waiting fixes an unreachable API, for example while it restarts. Any other failure,
+                        # such as 401 or 403, stops the runner with that error, and so does any failure of --once.
+                        if once or not unavailable(error):
+                            raise
+                        failures += 1
+                        delay = retry_delay(failures, CLAIM_RETRY_SECONDS, MAX_CLAIM_RETRY_SECONDS)
+                        LOG.warning(
+                            "A claim could not reach the platform (%s, %d in a row); claiming again in %.1f s",
+                            kind(error),
+                            failures,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    if failures:
+                        LOG.info("Claims reach the platform again after %d that could not", failures)
+                        failures = 0
                     _beat(heartbeat)
                     if lease is not None:
                         await runner.execute(lease)

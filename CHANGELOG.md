@@ -30,6 +30,10 @@ SPDX-License-Identifier: Apache-2.0
   Workers that local operations deploy now start again when they stop on their
   own (`restart: unless-stopped`); one that `weave platform stop` or a change
   request stopped stays stopped.
+- The operations runner keeps claiming jobs while the API restarts, instead of
+  stopping and waiting for its restart policy: a claim that can't reach the API
+  is made again after the same doubling wait as a worker's, and 401, 403 and
+  other refusals still stop it.
 
 ## 0.1.0a18
 

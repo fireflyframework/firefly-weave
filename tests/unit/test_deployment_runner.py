@@ -476,6 +476,122 @@ async def test_lease_renewals_during_a_job_count_as_contact():
     assert client.renewals >= 1 and len(contacts) == client.renewals
 
 
+def claiming(monkeypatch, answers):
+    """Like served(), but the runner's claims get `answers` in order (an exception to raise, or a lease), then no
+    work; returns the list of claims it made. Waits before claiming again are cut to a hundredth of a second."""
+    from types import SimpleNamespace
+
+    from firefly_weave.deployment_runner import application
+
+    pending, claims = list(answers), []
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            claims.append(operation)
+            answer = pending.pop(0) if pending else None
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.setattr(application, "CLAIM_RETRY_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(application, "MAX_CLAIM_RETRY_SECONDS", 0.01, raising=False)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return claims
+
+
+def problem(status, code):
+    from firefly_weave.contracts.public import Problem
+
+    return Problem(status=status, code=code, message="Remote request failed")
+
+
+def unreachable_claims():
+    import httpcore
+
+    from firefly_weave.sdk.errors import TransportError, WeaveError
+
+    return [
+        # WeaveClient reports a refused or dropped connection on HTTPS or loopback this way.
+        pytest.param(lambda: TransportError(problem(503, "WV-TRANSPORT")), id="transport-failed"),
+        # In a cluster the pinned private-origin transport passes httpcore's error through WeaveClient.
+        pytest.param(lambda: httpcore.ConnectError("refused"), id="refused-pinned-transport"),
+        pytest.param(lambda: WeaveError(problem(503, "WV-HTTP")), id="http-503"),
+        pytest.param(lambda: WeaveError(problem(502, "WV-HTTP")), id="http-502"),
+    ]
+
+
+@pytest.mark.parametrize("unreachable", unreachable_claims())
+async def test_the_runner_claims_again_once_the_api_answers_after_it_could_not_be_reached(monkeypatch, unreachable):
+    from firefly_weave.deployment_runner.application import serve
+
+    claims = claiming(monkeypatch, [unreachable(), unreachable()])
+    running = asyncio.create_task(serve(runner_configuration("https://weave.example")))
+    for _ in range(200):
+        if len(claims) >= 3 or running.done():
+            break
+        await asyncio.sleep(0.01)
+    stopped_early = running.done() and not running.cancelled() and running.exception()
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    assert not stopped_early, f"serve() ended on a claim the API could not answer: {stopped_early!r}"
+    assert len(claims) >= 3
+
+
+async def test_the_runner_stops_on_a_claim_the_api_refuses_once_it_answers(monkeypatch):
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import TransportError, WeaveError
+
+    for status in (401, 403, 404):
+        claims = claiming(monkeypatch, [TransportError(problem(503, "WV-TRANSPORT")), WeaveError(problem(status, "X"))])
+        with pytest.raises(WeaveError) as refused:
+            await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
+        assert refused.value.status == status and len(claims) == 2
+
+
+async def test_a_cancellation_that_a_failed_runner_claim_hid_still_stops_the_runner(monkeypatch):
+    import httpcore
+
+    from firefly_weave.deployment_runner import application
+
+    claiming(monkeypatch, [])
+    claiming_now, claims = asyncio.Event(), []
+
+    class Client(application.WeaveClient):
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return await super().invoke(operation, body=body)
+            claims.append(operation)
+            claiming_now.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                # A client library that closes its connection on cancellation can raise its own error instead.
+                raise httpcore.ConnectError("connection closed") from None
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    running = asyncio.create_task(application.serve(runner_configuration("https://weave.example")))
+    await asyncio.wait_for(claiming_now.wait(), 1)
+    running.cancel()
+    await asyncio.wait({running}, timeout=1)
+    if not running.done():
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+    assert running.cancelled() and claims == ["deployment_runners.claim"]
+
+
 async def test_the_runner_starts_the_token_relay_when_asked(monkeypatch):
     from firefly_weave.deployment_runner import application
 
