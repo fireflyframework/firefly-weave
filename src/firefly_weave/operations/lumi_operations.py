@@ -34,6 +34,8 @@ from types import MappingProxyType
 from typing import Final, Protocol, get_args
 from uuid import UUID
 
+from pyfly.container import service
+
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
@@ -47,12 +49,15 @@ from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import WorkerStatus
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.deployments.change_service import ChangeRequestService
+from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
-from firefly_weave.operations.incidents import IncidentFacts
+from firefly_weave.operations.incidents import IncidentFacts, IncidentService
 from firefly_weave.operations.lumi_context import Explanation, Shorten, estimate_tokens
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, LIMITATION
 from firefly_weave.operations.summary import OperationsSummaryService, SummaryFacts
 from firefly_weave.runtime.transactions import HELD_INCIDENT
+from firefly_weave.workers.service import WorkerService
 
 # The union of the resource, deployment, component, task-type and SDK-version name patterns. Always fullmatched.
 NAME_TOKEN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@/+#\[\]-]{0,252}")
@@ -626,3 +631,70 @@ def explanation_for(kinds: Iterable[str]) -> Explanation:
     sentences = [LIMITATION] if present & set(COLLECTIONS) else []
     sentences += [LIMITATIONS[kind] for kind in LIMITATIONS if kind in present]
     return Explanation(limitations=tuple(sentences), shorten=SHORTENERS)
+
+
+# A grant that covers every target's grant of the same kind, within one attachment.
+_EVERY: Final = {"targets": "targets:*", "approvals": "approvals:*"}
+
+
+def _covered(grant: str, reach: frozenset[str]) -> bool:
+    if grant in reach:
+        return True
+    position, _, rest = grant.partition(":")
+    kind = rest.partition(":")[0]
+    return kind in _EVERY and f"{position}:{_EVERY[kind]}" in reach
+
+
+def narrowed(first: frozenset[str], second: frozenset[str]) -> bool:
+    """Whether the second read reached less than the first: a grant of the first that the second neither holds nor
+    covers with its every-target grant. Grants are prefixed with their attachment's position."""
+    return any(not _covered(grant, second) for grant in first)
+
+
+@service
+class OperationsExplainer:
+    """Reads each operations record through its owning service, as the caller, and builds what Weave AI may see.
+
+    Each kind's knowledge sits in one ``Explainer``: its paths, its reader, its limitation and how it shortens.
+    """
+
+    def __init__(
+        self,
+        workers: WorkerService,
+        incidents: IncidentService,
+        changes: ChangeRequestService,
+        deployments: DeploymentService,
+    ) -> None:
+        self.workers, self.incidents, self.changes, self.deployments = workers, incidents, changes, deployments
+        self.explainers: Mapping[str, Explainer] = MappingProxyType(
+            {
+                "worker": Explainer(WORKER_FIELDS, self._worker, LIMITATIONS["worker"], SHORTENERS["worker"]),
+                "incident": Explainer(INCIDENT_FIELDS, self._incident, LIMITATIONS["incident"], SHORTENERS["incident"]),
+                "environment": Explainer(
+                    ENVIRONMENT_FIELDS, read_environment, LIMITATIONS["environment"], SHORTENERS["environment"]
+                ),
+                "change-request": Explainer(
+                    CHANGE_REQUEST_FIELDS,
+                    self._change_request,
+                    LIMITATIONS["change-request"],
+                    SHORTENERS["change-request"],
+                ),
+            }
+        )
+
+    async def read(self, kind: str, request: ExplainRequest) -> Explained:
+        return await self.explainers[kind].read(request)
+
+    async def _worker(self, request: ExplainRequest) -> Explained:
+        status = await self.workers.read(request.actor, request.scope, request.id, context=request.context)
+        assert isinstance(status, WorkerStatus)
+        return worker_context(status)
+
+    async def _incident(self, request: ExplainRequest) -> Explained:
+        facts = await self.incidents.explanation_facts(
+            request.actor, request.scope, request.id, context=request.context
+        )
+        return incident_context(facts)
+
+    async def _change_request(self, request: ExplainRequest) -> Explained:
+        return await read_change_request(self.changes, self.deployments, request)

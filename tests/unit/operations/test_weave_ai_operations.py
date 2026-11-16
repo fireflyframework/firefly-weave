@@ -26,12 +26,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from firefly_weave.access.audit import AuditContext
-from firefly_weave.access.authorization import AccessDenied
-from firefly_weave.access.models import Principal
+from firefly_weave.access.authorization import AccessDenied, AuthorizationService
+from firefly_weave.access.models import Grant, Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import NAME_PATTERN
 from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
+from firefly_weave.contracts.lumi import OPERATIONS_KINDS, LumiAskRequest, LumiAttachment, LumiReply
 from firefly_weave.contracts.operations import IncidentView
 from firefly_weave.contracts.operations_summary import AttentionItem, AttentionKind, OperationsSummary
 from firefly_weave.contracts.public import UnavailableResource
@@ -39,16 +40,19 @@ from firefly_weave.contracts.workers import WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
 from firefly_weave.operations.incidents import IncidentFacts
+from firefly_weave.operations.lumi_deployments import COLLECTIONS
 from firefly_weave.operations.lumi_operations import (
     ATTENTION_TITLES,
     CHANGE_REQUEST_FIELDS,
     ENVIRONMENT_FIELDS,
+    EXPLAINED_KINDS,
     INCIDENT_FIELDS,
     NAME_TOKEN,
     UNTITLED_KINDS,
     WORKER_FIELDS,
     Explained,
     ExplainRequest,
+    OperationsExplainer,
     change_request_context,
     code_or_none,
     environment_context,
@@ -867,3 +871,400 @@ async def test_a_change_request_reads_its_ages_against_the_reads_time():
         Changes(change_request(plan_id=None), observed_at=later), Deployments({}), change_explain_request()
     )
     assert explained.data["history"][0]["age_seconds"] == 1000
+
+
+# Wiring: LumiService reads operations attachments through the explainer, twice, and compares their reach.
+
+SCOPE = Scope(tenant_id=ITEM_IDS[13], project_id=ITEM_IDS[14], environment_id=ENVIRONMENT_ID)
+RECORD = {"worker": WORKER_ID, "incident": INCIDENT_ID, "environment": ENVIRONMENT_ID, "change-request": CHANGE_ID}
+CAPABILITY = {
+    "worker": "status.read",
+    "incident": "incident.read",
+    "environment": "status.read",
+    "change-request": "deployment.read",
+}
+
+
+class Owners:
+    """The owning services' reads, each checking its own capability with the real authorization service."""
+
+    def __init__(self, authorization=None):
+        self.authorization = authorization
+        self.calls = []
+        self.workers = [worker()]
+        self.incidents = [incident_facts()]
+        self.summaries = [summary_facts()]
+        self.changes = [change_request(plan_id=None)]
+        self.refuse = None
+
+    def check(self, kind, actor, scope, context):
+        self.calls.append((kind, actor, scope, context))
+        if self.refuse == kind:
+            raise self.refusal
+        if self.authorization is not None:
+            self.authorization.require(actor, scope, CAPABILITY[kind], context=context)
+
+    @staticmethod
+    def take(queue):
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    async def read_worker(self, actor, scope, identifier, *, context):
+        assert identifier == WORKER_ID
+        self.check("worker", actor, scope, context)
+        return self.take(self.workers)
+
+    async def explanation_facts_incident(self, actor, scope, identifier, *, context):
+        assert identifier == INCIDENT_ID
+        self.check("incident", actor, scope, context)
+        return self.take(self.incidents)
+
+    async def explanation_facts_summary(self, actor, scope, *, context):
+        self.check("environment", actor, scope, context)
+        return self.take(self.summaries)
+
+    async def read_observed(self, identifier, *, actor, scope, context):
+        assert identifier == CHANGE_ID
+        self.check("change-request", actor, scope, context)
+        return self.take(self.changes), NOW
+
+    async def read_deployment(self, collection, identifier, *, actor, scope, context):
+        raise AssertionError("no plan or job is attached")
+
+
+def explainer(owners):
+    from types import SimpleNamespace
+
+    return OperationsExplainer(
+        SimpleNamespace(read=owners.read_worker),
+        SimpleNamespace(explanation_facts=owners.explanation_facts_incident),
+        SimpleNamespace(read_observed=owners.read_observed),
+        SimpleNamespace(read=owners.read_deployment),
+    )
+
+
+def summary_service(owners):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(explanation_facts=owners.explanation_facts_summary)
+
+
+def asker(monkeypatch, owners, *, authorization=None):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import firefly_weave.operations.lumi as module
+    from firefly_weave.operations.lumi import LumiService
+
+    @asynccontextmanager
+    async def transaction(*args, **kwargs):
+        yield SimpleNamespace(scope=SCOPE, session=None)
+
+    def require(current, scope, capability, context):
+        if authorization is not None:
+            authorization.require(current, scope, capability, context=context)
+
+    async def load_principal(session, identifier):
+        return owners.stored
+
+    monkeypatch.setattr(module, "load_principal", load_principal)
+    definitions = SimpleNamespace(transaction=transaction, require=require)
+    connections = SimpleNamespace(definitions=definitions, secrets=None)
+    reply = LumiReply(
+        answer="An explanation",
+        proposals=[{"title": "Unexpected", "kind": "workflow", "format": "yaml", "source": "kind: Workflow"}],
+    )
+    gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=reply))
+    no_policy = SimpleNamespace(current=lambda: None)
+    service = LumiService(connections, None, None, gateway, None, no_policy, None, explainer(owners))
+    service._read = AsyncMock(
+        return_value=SimpleNamespace(
+            enabled=True,
+            revision=1,
+            connection_revision_id=ITEM_IDS[15],
+            context_profile="auto",
+            profile=SimpleNamespace(timeout_seconds=5, options=SimpleNamespace(max_tokens=512)),
+        )
+    )
+    service._connection = lambda *args: None
+    monkeypatch.setattr(
+        module,
+        "ConnectionRepository",
+        lambda tx: SimpleNamespace(revision=AsyncMock(return_value=SimpleNamespace(config={}))),
+    )
+    return service, gateway
+
+
+def ask_request(*kinds):
+    return LumiAskRequest(message="Explain", attachments=[{"kind": kind, "id": RECORD[kind]} for kind in kinds])
+
+
+def person(*roles):
+    return Principal(id=ITEM_IDS[16], kind="human", grants=tuple(Grant(role=role, scope=SCOPE) for role in roles))
+
+
+async def ask(service, owners, request, actor=None):
+    actor = actor or person()
+    owners.stored = actor
+    return await service.ask(actor, SCOPE, request, context=AuditContext(), summary=summary_service(owners))
+
+
+@pytest.mark.parametrize("kind", sorted(RECORD))
+async def test_each_kind_reads_through_its_owning_service_as_the_caller(monkeypatch, kind):
+    owners = Owners()
+    service, gateway = asker(monkeypatch, owners)
+    actor = person("viewer")
+    answer = await ask(service, owners, ask_request(kind), actor)
+    assert answer.answer == "An explanation"
+    assert [call[:3] for call in owners.calls] == [(kind, actor, SCOPE)] * 2
+    assert all(isinstance(call[3], AuditContext) for call in owners.calls)
+
+
+@pytest.mark.parametrize("kind", sorted(RECORD))
+async def test_an_operations_explanation_returns_no_proposals(monkeypatch, kind):
+    owners = Owners()
+    service, _ = asker(monkeypatch, owners)
+    assert (await ask(service, owners, ask_request(kind))).proposals == []
+
+
+@pytest.mark.parametrize("kind", sorted(RECORD))
+@pytest.mark.parametrize(
+    "refusal", [AccessDenied(), CatalogError(404, "WV-NOT-FOUND", "Not found")], ids=["denied", "not-found"]
+)
+async def test_a_denial_from_the_owning_read_propagates_and_nothing_is_sent(monkeypatch, kind, refusal):
+    owners = Owners()
+    owners.refuse, owners.refusal = kind, refusal
+    service, gateway = asker(monkeypatch, owners)
+    with pytest.raises(type(refusal)):
+        await ask(service, owners, ask_request(kind))
+    gateway.ask.assert_not_awaited()
+
+
+def placed(target=TARGET_ID):
+    return worker().model_copy(update={"placement": worker().placement.model_copy(update={"target_id": target})})
+
+
+NARROWER = {
+    "worker placement removed": ("worker", "workers", [worker(), worker(placement=None)]),
+    "worker placed elsewhere": ("worker", "workers", [worker(), placed(ITEM_IDS[17])]),
+    "incident run read revoked": (
+        "incident",
+        "incidents",
+        [incident_facts(), incident_facts(step_kind="withheld", events="withheld", run_read=False)],
+    ),
+    "incident turned unavailable": (
+        "incident",
+        "incidents",
+        [incident_facts(), UnavailableResource(id=INCIDENT_ID, omissions=[])],
+    ),
+    "incidents section forbidden": (
+        "environment",
+        "summaries",
+        [summary_facts(reach=frozenset({"incidents", "runs"})), summary_facts(reach=frozenset({"runs"}))],
+    ),
+    "every target narrowed to one": (
+        "environment",
+        "summaries",
+        [summary_facts(reach=frozenset({"targets:*"})), summary_facts(reach=frozenset({f"targets:{TARGET_ID}"}))],
+    ),
+    "an approval target dropped": (
+        "environment",
+        "summaries",
+        [summary_facts(reach=frozenset({f"approvals:{TARGET_ID}"})), summary_facts(reach=frozenset())],
+    ),
+    "named then unnamed title discards": (
+        "environment",
+        "summaries",
+        [
+            summary_facts(
+                summary_of(attention=[{"kind": "incident", "id": str(ITEM_IDS[0]), "title": TITLES["incident"]}])
+            ),
+            summary_facts(
+                summary_of(attention=[{"kind": "incident", "id": str(ITEM_IDS[0]), "title": "Active incident"}])
+            ),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(NARROWER))
+async def test_a_narrower_second_reach_discards_the_reply(monkeypatch, case):
+    kind, queue, reads = NARROWER[case]
+    owners = Owners()
+    setattr(owners, queue, list(reads))
+    service, gateway = asker(monkeypatch, owners)
+    with pytest.raises(AccessDenied):
+        await ask(service, owners, ask_request(kind))
+    gateway.ask.assert_awaited_once()
+
+
+WIDER = {
+    "same placement": ("worker", "workers", [worker(), worker()]),
+    "worker placed later": ("worker", "workers", [worker(placement=None), worker()]),
+    "run read granted later": (
+        "incident",
+        "incidents",
+        [incident_facts(step_kind="withheld", events="withheld", run_read=False), incident_facts()],
+    ),
+    "one target widened to every target": (
+        "environment",
+        "summaries",
+        [summary_facts(reach=frozenset({f"targets:{TARGET_ID}"})), summary_facts(reach=frozenset({"targets:*"}))],
+    ),
+    "one approval widened to every approval": (
+        "environment",
+        "summaries",
+        [summary_facts(reach=frozenset({f"approvals:{TARGET_ID}"})), summary_facts(reach=frozenset({"approvals:*"}))],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(WIDER))
+async def test_an_equal_or_wider_second_reach_releases_the_reply(monkeypatch, case):
+    kind, queue, reads = WIDER[case]
+    owners = Owners()
+    setattr(owners, queue, list(reads))
+    service, _ = asker(monkeypatch, owners)
+    assert (await ask(service, owners, ask_request(kind))).answer == "An explanation"
+
+
+async def test_two_attachments_reach_never_merges(monkeypatch):
+    # The first attachment loses the grant the second one gains: unprefixed, the two reaches would look equal.
+    owners = Owners()
+    owners.summaries = [
+        summary_facts(reach=frozenset({"incidents"})),
+        summary_facts(reach=frozenset()),
+        summary_facts(reach=frozenset()),
+        summary_facts(reach=frozenset({"incidents"})),
+    ]
+    service, _ = asker(monkeypatch, owners)
+    request = LumiAskRequest(
+        message="Explain",
+        attachments=[{"kind": "environment", "id": ENVIRONMENT_ID}, {"kind": "environment", "id": ENVIRONMENT_ID}],
+    )
+    with pytest.raises(AccessDenied):
+        await ask(service, owners, request)
+
+
+async def test_reach_never_reaches_the_gateway(monkeypatch):
+    owners = Owners()
+    owners.summaries = [summary_facts(reach=frozenset({f"targets:{TARGET_ID}", f"approvals:{ITEM_IDS[18]}"}))]
+    service, gateway = asker(monkeypatch, owners)
+    await ask(service, owners, ask_request("worker", "environment", "incident"))
+    # What the gateway builds the model's prompt from: the message, the history and the shaped context.
+    _, request, attachments, *_ = gateway.ask.await_args.args
+    body = json.dumps([request.message, [item.model_dump() for item in request.history], attachments])
+    for secret in (TARGET_ID, ITEM_IDS[18], WORKER_ID, ENVIRONMENT_ID, INCIDENT_ID):
+        assert str(secret) not in body and secret.hex not in body
+    assert "placement:" not in body and "targets:" not in body and "named:" not in body
+
+
+async def test_four_mixed_operations_attachments_read_each_record_once_per_pass(monkeypatch):
+    owners = Owners()
+    service, gateway = asker(monkeypatch, owners)
+    await ask(service, owners, ask_request("worker", "incident", "environment", "change-request"))
+    kinds = [call[0] for call in owners.calls]
+    assert kinds == ["worker", "incident", "environment", "change-request"] * 2
+    sent = gateway.ask.await_args.args[2]["resources"]
+    assert [(item["kind"], item["ref"]) for item in sent] == [
+        ("worker", 1),
+        ("incident", 2),
+        ("environment", 3),
+        ("change-request", 4),
+    ]
+
+
+def test_every_attachment_kind_has_a_reader():
+    from firefly_weave.operations.lumi import HANDLED_KINDS
+
+    assert set(get_args(LumiAttachment.model_fields["kind"].annotation)) == HANDLED_KINDS
+    assert set(COLLECTIONS) | EXPLAINED_KINDS == OPERATIONS_KINDS
+
+
+async def test_an_attachment_kind_without_a_reader_is_refused_before_any_read(monkeypatch):
+    owners = Owners()
+    service, gateway = asker(monkeypatch, owners)
+    request = LumiAskRequest.model_construct(
+        message="Explain",
+        attachments=[
+            LumiAttachment(kind="worker", id=WORKER_ID),
+            LumiAttachment.model_construct(kind="canary-kind", id=ITEM_IDS[19]),
+        ],
+        draft=None,
+        history=[],
+        selected_step=None,
+        fix=False,
+    )
+    with pytest.raises(LookupError):
+        await service._attachments(person(), SCOPE, request, AuditContext(), summary=None)
+    assert owners.calls == []
+
+
+LOCAL_OWNER = (
+    "developer",
+    "deployer",
+    "operator",
+    "viewer",
+    "task_participant",
+    "tenant_admin",
+    "lumi_manager",
+    "execution_manager",
+    "worker_operator",
+    "deployment_reader",
+    "deployment_planner",
+    "deployment_approver",
+    "deployment_operator",
+    "transaction_reconciler",
+    "step_tester",
+)
+# Who may explain what, as each owning read decides: lumi.use, then that read's own capability.
+MATRIX = {
+    ("viewer",): set(),
+    ("lumi_user",): set(),
+    ("lumi_user", "operator"): {"incident"},
+    ("lumi_user", "viewer"): {"worker", "environment"},
+    ("lumi_user", "deployment_reader"): {"change-request"},
+    LOCAL_OWNER: {"worker", "incident", "environment", "change-request"},
+}
+
+
+@pytest.mark.parametrize("roles", list(MATRIX), ids=["+".join(roles[:3]) for roles in MATRIX])
+@pytest.mark.parametrize("kind", sorted(RECORD))
+async def test_each_role_may_explain_exactly_what_its_reads_allow(monkeypatch, roles, kind):
+    authorization = AuthorizationService()
+    owners = Owners(authorization)
+    service, gateway = asker(monkeypatch, owners, authorization=authorization)
+    if kind in MATRIX[roles]:
+        assert (await ask(service, owners, ask_request(kind), person(*roles))).answer == "An explanation"
+    else:
+        with pytest.raises(AccessDenied):
+            await ask(service, owners, ask_request(kind), person(*roles))
+        gateway.ask.assert_not_awaited()
+
+
+def test_the_scanned_service_graph_builds_weave_ai_with_its_explainer():
+    from pyfly.container import Container
+    from pyfly.container.scanner import scan_package
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from firefly_weave.access.authentication import VerifierSet
+    from firefly_weave.app import SERVICE_PACKAGES
+    from firefly_weave.connections.registry import ConnectorRegistry
+    from firefly_weave.connections.secrets import ScopedSecrets
+    from firefly_weave.operations.lumi import LumiService
+    from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
+    from firefly_weave.persistence.uow import UnitOfWork
+
+    container = Container()
+    for package in SERVICE_PACKAGES:
+        scan_package(package, container)
+    sessions = async_sessionmaker()
+    container.register_instance(async_sessionmaker, sessions)
+    container.register_instance(UnitOfWork, UnitOfWork(sessions))
+    container.register_instance(ConnectorRegistry, ConnectorRegistry())
+    container.register_instance(ScopedSecrets, ScopedSecrets())
+    container.register_instance(VerifierSet, VerifierSet(()))
+    container.register_instance(LumiGatewayClient, LumiGatewayClient(LumiGatewaySettings()))
+    weave_ai = container.resolve(LumiService)
+    assert isinstance(weave_ai.operations, OperationsExplainer)
+    assert set(weave_ai.operations.explainers) == EXPLAINED_KINDS

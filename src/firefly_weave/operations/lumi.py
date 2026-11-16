@@ -31,6 +31,7 @@ from pyfly.container import service
 from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
@@ -76,8 +77,15 @@ from firefly_weave.operations.lumi_context import (
 )
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
-from firefly_weave.operations.lumi_operations import explanation_for
+from firefly_weave.operations.lumi_operations import (
+    EXPLAINED_KINDS,
+    ExplainRequest,
+    OperationsExplainer,
+    explanation_for,
+    narrowed,
+)
 from firefly_weave.operations.run_views import RunViewService
+from firefly_weave.operations.summary import OperationsSummaryService
 from firefly_weave.persistence.uow import Transaction
 
 # The document kind each proposal kind must hold.
@@ -662,6 +670,16 @@ def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfigurat
 
 # Pages of 200 step facts read for a run attachment: the latest steps of runs up to 10,000 instances.
 RUN_PAGES = 50
+# Every attachment kind `_attachments` reads; a test keeps it equal to the contract's kinds.
+HANDLED_KINDS: Final = frozenset(COLLECTIONS) | EXPLAINED_KINDS | {"draft", "run", "simulation"}
+
+
+@dataclass(frozen=True)
+class Attachments:
+    """The attached resources as read, and the access grants that filled the operations ones, by position."""
+
+    resources: list[JsonValue]
+    reach: frozenset[str]
 
 
 @service
@@ -675,11 +693,12 @@ class LumiService:
         deployments: DeploymentService,
         policy: APIAIPolicy,
         runs: RunViewService,
+        operations: OperationsExplainer,
     ) -> None:
         self.connections, self.history, self.debug, self.gateway = connections, history, debug, gateway
         self.definitions = connections.definitions
         self.deployments = deployments
-        self.policy, self.runs = policy, runs
+        self.policy, self.runs, self.operations = policy, runs, operations
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
@@ -778,14 +797,32 @@ class LumiService:
         return handle
 
     async def _attachments(
-        self, actor: Principal, scope: Scope, request: LumiAskRequest, context: AuditContext
-    ) -> list[JsonValue]:
-        """The attached resources, read with the caller's own access; the inline draft is shaped separately."""
+        self,
+        actor: Principal,
+        scope: Scope,
+        request: LumiAskRequest,
+        context: AuditContext,
+        *,
+        summary: OperationsSummaryService | None,
+    ) -> Attachments:
+        """The attached resources, read with the caller's own access, and the grants that filled the operations ones;
+        the inline draft is shaped separately. A kind with no reader is refused before anything is read."""
+        unknown = [attachment.kind for attachment in request.attachments if attachment.kind not in HANDLED_KINDS]
+        if unknown:
+            raise LookupError(f"No reader for attachment kind {unknown[0]!r}")
         result: list[JsonValue] = []
+        reach: set[str] = set()
         project = scope.model_copy(update={"environment_id": None})
-        for attachment in request.attachments:
+        for position, attachment in enumerate(request.attachments, start=1):
             data: JsonValue
-            if attachment.kind in COLLECTIONS:
+            if attachment.kind in EXPLAINED_KINDS:
+                explained = await self.operations.read(
+                    attachment.kind, ExplainRequest(actor, scope, attachment.id, context, summary)
+                )
+                data = explained.data
+                # Each grant names its attachment, so two attachments' grants never stand in for each other.
+                reach |= {f"{position}:{grant}" for grant in explained.reach}
+            elif attachment.kind in COLLECTIONS:
                 record = await self.deployments.read(
                     COLLECTIONS[attachment.kind], attachment.id, actor=actor, scope=scope, context=context
                 )
@@ -795,7 +832,7 @@ class LumiService:
                 data = cast(JsonValue, {"document": value["document"], "revision": value["revision"]})
             elif attachment.kind == "run":
                 data = await self._run(actor, scope, attachment.id, context)
-            else:
+            elif attachment.kind == "simulation":
                 async with self.definitions.transaction(project, None, mutation=False) as tx:
                     session = await self.debug.inspect(tx, attachment.id, actor=actor, scope=project, context=context)
                     data = {
@@ -803,12 +840,14 @@ class LumiService:
                         "current_nodes": list(session.view.current_nodes),
                         "diagnostics": [item.model_dump(mode="json") for item in session.view.diagnostics],
                     }
+            else:
+                raise LookupError(f"No reader for attachment kind {attachment.kind!r}")
             result.append({"kind": attachment.kind, "id": str(attachment.id), "data": data})
         measure_value(result)
         size = len(json.dumps(result, ensure_ascii=False).encode())
         if size + (len(request.draft.source.encode()) if request.draft else 0) > 262144:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
-        return result
+        return Attachments(result, frozenset(reach))
 
     async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> JsonValue:
         """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time."""
@@ -863,8 +902,16 @@ class LumiService:
         )
 
     async def ask(
-        self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext
+        self,
+        actor: Principal,
+        scope: Scope,
+        request: LumiAskRequest,
+        *,
+        context: AuditContext,
+        summary: OperationsSummaryService | None,
     ) -> LumiAnswer:
+        """One question. ``summary`` is the lifespan-owned operations summary, or None before it starts; only an
+        environment attachment reads it."""
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
@@ -876,7 +923,8 @@ class LumiService:
         try:
             async with asyncio.timeout(config.profile.timeout_seconds):
                 tokens = self._context_tokens(connection)
-                shaped = self._shape(config, request, await self._attachments(actor, scope, request, context), tokens)
+                first = await self._attachments(actor, scope, request, context, summary=summary)
+                shaped = self._shape(config, request, first.resources, tokens)
                 credential = None
                 if handle is not None:
                     secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
@@ -894,11 +942,14 @@ class LumiService:
                     current = await self._read(tx)
                     if current is None or current.revision != config.revision or not current.enabled:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")
-                # Recheck attachment permissions and simulation ownership before releasing output.
-                resources = await self._attachments(actor, scope, request, context)
+                # Recheck attachment permissions and simulation ownership before releasing output; a reply built
+                # from wider access than this second read sees is discarded.
+                second = await self._attachments(actor, scope, request, context, summary=summary)
+                if narrowed(first.reach, second.reach):
+                    raise AccessDenied()
                 if request.explanation_only:
                     reply = reply.model_copy(update={"proposals": []})
-                drafts, unchecked = _drafts(request, resources)
+                drafts, unchecked = _drafts(request, second.resources)
                 return await asyncio.to_thread(check_proposals, reply, drafts, unchecked)
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None

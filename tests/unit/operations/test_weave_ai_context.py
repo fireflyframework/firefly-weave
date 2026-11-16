@@ -614,7 +614,7 @@ async def test_asking_sizes_the_request_to_the_endpoints_context(monkeypatch):
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=None)
     gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=LumiReply(answer="Fix step-3's input.")))
-    service = LumiService(connections, None, None, gateway, None, policy, None)
+    service = LumiService(connections, None, None, gateway, None, policy, None, None)
     actor = SimpleNamespace(id=uuid4())
     service._require = AsyncMock(return_value=actor)
     service._read = AsyncMock(return_value=configuration)
@@ -628,7 +628,7 @@ async def test_asking_sizes_the_request_to_the_endpoints_context(monkeypatch):
         selected_step="step-3",
     )
     with po.installed(origins):
-        await service.ask(actor, scope, request, context=AuditContext())
+        await service.ask(actor, scope, request, context=AuditContext(), summary=None)
     sent_request, sent_context = gateway.ask.await_args.args[1], gateway.ask.await_args.args[2]
     assert sent_context["profile"] == "compact" and "outline" in sent_context["draft"]
     assert len(sent_request.history) <= 4 and sent_request.history[-1] == HISTORY[-1]
@@ -882,7 +882,7 @@ def test_an_ollama_endpoint_without_a_context_size_is_shaped_as_compact():
     cloud = SimpleNamespace(context_tokens=None, compat=None)
     for endpoint, expected in ((entry, 8192), (cloud, None)):
         policy = SimpleNamespace(current=lambda endpoint=endpoint: SimpleNamespace(entry_for=lambda url: endpoint))
-        service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, policy, None)
+        service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, policy, None, None)
         connection = SimpleNamespace(config={"endpoint": "http://ollama:11434/v1"})
         assert service._context_tokens(connection) == expected
     assert choose_profile(8192) == "compact"
@@ -949,7 +949,7 @@ async def ask_through_the_service(monkeypatch, request, reply):
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=None)
     gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=reply))
-    service = LumiService(connections, None, None, gateway, None, policy, None)
+    service = LumiService(connections, None, None, gateway, None, policy, None, None)
     actor = SimpleNamespace(id=uuid4())
     service._require = AsyncMock(return_value=actor)
     service._read = AsyncMock(return_value=configuration)
@@ -957,7 +957,7 @@ async def ask_through_the_service(monkeypatch, request, reply):
         module, "ConnectionRepository", lambda tx: SimpleNamespace(revision=AsyncMock(return_value=connection))
     )
     with po.installed(origins):
-        answer = await service.ask(actor, scope, request, context=AuditContext())
+        answer = await service.ask(actor, scope, request, context=AuditContext(), summary=None)
     return answer, gateway.ask
 
 
