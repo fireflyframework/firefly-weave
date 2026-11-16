@@ -18,6 +18,18 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- Workflows can start from platform events. Declare `eventTrigger` with the
+  transaction events a workflow accepts and give it
+  `inputSchema: {$ref: weave.platform-event-v1}`, then bind it with
+  `weave triggers events create`, which needs `trigger.manage`, `run.start`,
+  and `run.read`. Each event starts each matching trigger's workflow once, as
+  the trigger's owner; a chain of reactions stops at three deep and at 64
+  starts per first event, and runs started this way show the origin Platform
+  event. Disabling a trigger stops its starts at once. Migration
+  `0041_language_event_triggers` adds the trigger tables.
+
 ## 0.1.0a18
 
 ### Workflow language
