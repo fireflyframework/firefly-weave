@@ -104,7 +104,8 @@ async def test_queue_age_reads_the_oldest_ready_task_of_the_task_type(operations
     }
     await owner(
         operations_case,
-        "UPDATE task_facts SET ready_since=CASE WHEN run_id=:first THEN :older ELSE :newer END "
+        "UPDATE task_facts SET ready_since=CASE WHEN run_id=:first THEN cast(:older AS timestamptz) "
+        "ELSE cast(:newer AS timestamptz) END "
         "WHERE run_id IN (:first,:second) AND status='ready'",
         first=first.id,
         second=second.id,

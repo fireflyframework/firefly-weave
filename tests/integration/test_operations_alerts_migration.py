@@ -88,8 +88,8 @@ async def seed_alerts(connection, ids, *, environment=None):
         "updated_at,updated_by) VALUES(:tenant,:project,:environment,:rule,'Run failure rate above 10 %',true,"
         "'run.failure_rate','{}','gt',0.1,900,0,10,'warning',ARRAY[cast(:channel AS uuid)],0,1,now(),now(),"
         ":principal)",
-        "INSERT INTO alert_rule_state(tenant_id,project_id,environment_id,rule_id,state,alert_id,revision) "
-        "VALUES(:tenant,:project,:environment,:rule,'firing',:alert,1)",
+        "INSERT INTO alert_rule_state(tenant_id,project_id,environment_id,rule_id,state,since,alert_id,revision) "
+        "VALUES(:tenant,:project,:environment,:rule,'firing',now(),:alert,1)",
         "INSERT INTO alerts(tenant_id,project_id,environment_id,id,rule_id,rule_name,rule_revision,signal,severity,"
         "comparator,threshold,unit,state,started_at,value_at_start) VALUES(:tenant,:project,:environment,:alert,"
         ":rule,'Run failure rate above 10 %',1,'run.failure_rate','warning','gt',0.1,'ratio','firing',now(),0.2)",
