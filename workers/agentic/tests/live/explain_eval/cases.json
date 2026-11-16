@@ -1925,6 +1925,161 @@
    }
   },
   {
+   "id": "change-image",
+   "category": "grounded-change-request",
+   "profile": "compact",
+   "context_tokens": 8192,
+   "request": {
+    "profile": {
+     "provider": "openai-chat",
+     "model": "fixture-model",
+     "options": {
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "seed": 42
+     },
+     "reasoning": {
+      "pattern": "none",
+      "maxSteps": 6
+     },
+     "maxCalls": 8,
+     "timeoutSeconds": 300,
+     "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+       "answer": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "title": "Answer",
+        "type": "string"
+       },
+       "proposals": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "title": {
+           "maxLength": 200,
+           "minLength": 1,
+           "title": "Title",
+           "type": "string"
+          },
+          "kind": {
+           "enum": [
+            "workflow",
+            "decisionTable",
+            "action",
+            "connector"
+           ],
+           "title": "Kind",
+           "type": "string"
+          },
+          "format": {
+           "enum": [
+            "yaml",
+            "json"
+           ],
+           "title": "Format",
+           "type": "string"
+          },
+          "source": {
+           "maxLength": 100000,
+           "minLength": 1,
+           "title": "Source",
+           "type": "string"
+          }
+         },
+         "required": [
+          "title",
+          "kind",
+          "format",
+          "source"
+         ],
+         "title": "LumiProposal",
+         "type": "object"
+        },
+        "maxItems": 5,
+        "title": "Proposals",
+        "type": "array"
+       },
+       "followUps": {
+        "items": {
+         "maxLength": 1000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 5,
+        "title": "Followups",
+        "type": "array"
+       }
+      },
+      "required": [
+       "answer"
+      ],
+      "title": "LumiReply",
+      "type": "object"
+     }
+    },
+    "request": {
+     "message": "Which image will this change run?",
+     "history": []
+    },
+    "attachments": {
+     "profile": "compact",
+     "purpose": "explain-operations",
+     "limitations": "Change request facts show its state and plan, not who requested or approved it. Name the state it is in and the risks its plan lists. Say when a fact, such as a log, is not in these records. Explain only; return no proposals.",
+     "resources": [
+      {
+       "kind": "change-request",
+       "ref": 1,
+       "data": {
+        "intent": "scale_workers",
+        "state": "awaiting_approval",
+        "components": [
+         {
+          "name": "fixture-worker",
+          "replicas": 3,
+          "image_digest": "sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12"
+         }
+        ],
+        "more_components": 0,
+        "drain": {
+         "mode": "none",
+         "timeout_seconds": 300
+        },
+        "drain_set_size": 0,
+        "four_eyes": true,
+        "plan_expires_in_seconds": 420,
+        "risks": [],
+        "history": [
+         {
+          "state": "observing",
+          "age_seconds": 900
+         },
+         {
+          "state": "awaiting_approval",
+          "age_seconds": 600
+         }
+        ],
+        "more_history": 0,
+        "receipt": null,
+        "failure_code": null,
+        "warnings": []
+       }
+      }
+     ]
+    },
+    "endpoint": "http://127.0.0.1:9/v1",
+    "api_version": null
+   },
+   "expect": {
+    "contains": [
+     [
+      "ab12ab12"
+     ]
+    ]
+   }
+  },
+  {
    "id": "limits-logs",
    "category": "limits",
    "profile": "compact",

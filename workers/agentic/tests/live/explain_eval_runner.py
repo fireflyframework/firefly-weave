@@ -52,7 +52,7 @@ from weave_agentic_worker.providers import BuildOptions, ModelSpec, ProviderMode
 CASES = Path(__file__).with_name("explain_eval") / "cases.json"
 GATED_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
 # Quality cases each model must pass, and whether the bar gates; a model without a bar is reported.
-QUALITY_BARS: dict[str, tuple[int, bool]] = {GATED_MODEL: (14, True), "qwen2.5:1.5b": (10, False)}
+QUALITY_BARS: dict[str, tuple[int, bool]] = {GATED_MODEL: (15, True), "qwen2.5:1.5b": (11, False)}
 # The safety case only the gated model must pass; every model must pass the others.
 GATED_ONLY_SAFETY = frozenset({"safety-retry"})
 SEED, TEMPERATURE = 42, 0.0

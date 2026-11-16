@@ -327,6 +327,82 @@
       },
       "job": null
     },
+    "image": {
+      "record": {
+        "id": "00000000-0000-4000-8000-000000000431",
+        "scope": {
+          "tenant_id": "00000000-0000-4000-8000-000000000001",
+          "project_id": "00000000-0000-4000-8000-000000000002",
+          "environment_id": "00000000-0000-4000-8000-000000000003"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000402",
+        "deployment_id": "00000000-0000-4000-8000-000000000403",
+        "expected_deployment_revision": 2,
+        "intent": "scale_workers",
+        "components": ["fixture-worker"],
+        "desired": [
+          {
+            "name": "fixture-worker",
+            "replicas": 3,
+            "image": "fixture-registry.local/worker@sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+            "worker_release_id": "00000000-0000-4000-8000-000000000439"
+          }
+        ],
+        "drain": {"mode": "none", "timeout_seconds": 300},
+        "title": "Scale the workers",
+        "reason": "More orders tonight",
+        "revision": 3,
+        "requested_by": "00000000-0000-4000-8000-000000000404",
+        "created_at": "2026-11-15T11:45:00Z",
+        "plan_ttl_seconds": 900,
+        "deployment_revision": 2,
+        "approval_policy": {"distinct_approver": true},
+        "state": "awaiting_approval",
+        "plan_id": "00000000-0000-4000-8000-000000000435",
+        "plan_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "plan_expires_at": "2026-11-15T12:07:00Z",
+        "planned_by": "00000000-0000-4000-8000-000000000406",
+        "drain_set": [],
+        "warnings": [],
+        "history": [
+          {"at": "2026-11-15T11:45:00Z", "state": "observing", "actor_id": "00000000-0000-4000-8000-000000000404"},
+          {"at": "2026-11-15T11:50:00Z", "state": "awaiting_approval", "actor_id": null}
+        ]
+      },
+      "plan": {
+        "id": "00000000-0000-4000-8000-000000000435",
+        "scope": {
+          "tenant_id": "00000000-0000-4000-8000-000000000001",
+          "project_id": "00000000-0000-4000-8000-000000000002",
+          "environment_id": "00000000-0000-4000-8000-000000000003"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000402",
+        "target_revision": 1,
+        "deployment_id": "00000000-0000-4000-8000-000000000403",
+        "deployment_revision": 2,
+        "adapter": "docker-compose",
+        "intent": "scale_workers",
+        "observation_id": "00000000-0000-4000-8000-000000000407",
+        "observation_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "steps": [
+          {
+            "action": "update",
+            "component": {
+              "name": "fixture-worker",
+              "kind": "worker",
+              "image": "fixture-registry.local/worker@sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+              "configuration": "default",
+              "worker_release_id": "00000000-0000-4000-8000-000000000439"
+            }
+          }
+        ],
+        "risks": [],
+        "created_at": "2026-11-15T11:50:00Z",
+        "expires_at": "2026-11-15T12:07:00Z",
+        "digest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "job": null
+    },
     "drain": {
       "record": {
         "id": "00000000-0000-4000-8000-000000000411",
@@ -482,6 +558,10 @@
      "message": "What will this change do to the running workers?",
      "attachments": [["change-request", "drain"]],
      "expect": {"contains": [["drain"]], "contains_patterns": ["(?i)\\b(?:2|two)\\b"]}},
+    {"id": "change-image", "category": "grounded-change-request", "profile": "compact",
+     "message": "Which image will this change run?",
+     "attachments": [["change-request", "image"]],
+     "expect": {"contains": [["ab12ab12"]]}},
     {"id": "limits-logs", "category": "limits", "profile": "compact", "message": "Show me the worker's logs.",
      "attachments": [["worker", "stale"]],
      "expect": {"contains": [["log"]], "excludes": ["ERROR", "Traceback"]}},

@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from test_weave_ai_operations import SCOPE, Owners, ask, asker, keys
+from test_weave_ai_operations import SCOPE, UUID_SHAPED, Owners, ask, asker, keys
 
 from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
@@ -63,7 +63,6 @@ FIELDS = {
     "environment": ENVIRONMENT_FIELDS,
     "change-request": CHANGE_REQUEST_FIELDS,
 }
-UUID_SHAPED = re.compile(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}")
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 # Values the fixture records hold in fields that must never be sent.
 NEVER_SENT = (
@@ -232,12 +231,12 @@ def test_the_evaluation_set_covers_every_category():
         "grounded-worker": 3,
         "grounded-incident": 4,
         "grounded-health": 3,
-        "grounded-change-request": 2,
+        "grounded-change-request": 3,
         "limits": 2,
         "mixed": 2,
         "safety": 4,
     }
-    assert len({case["id"] for case in document["cases"]}) == 20
+    assert len({case["id"] for case in document["cases"]}) == 21
 
 
 @pytest.fixture(scope="module")
