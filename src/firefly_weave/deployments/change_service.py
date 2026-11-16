@@ -597,12 +597,19 @@ class ChangeRequestService:
             return {"items": items, "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}
 
     async def read(self, identifier: UUID, *, actor: Principal, scope: Scope, context: AuditContext) -> ChangeRequest:
+        return (await self.read_observed(identifier, actor=actor, scope=scope, context=context))[0]
+
+    async def read_observed(
+        self, identifier: UUID, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> tuple[ChangeRequest, datetime]:
+        """The change request as ``read`` returns it, with the database time its state was computed at."""
         async with self.uow.open(scope, mutation=False) as tx:
             await self.able(tx, actor, "deployment.read")
             repo = DeploymentRepository(tx)
             record = await repo.get("change_requests", identifier, ChangeRequest)
             await self.deployments.authorize(tx, actor, "deployment.read", context, record.target_id)
-            return effective(record, await repo.now())
+            now = await repo.now()
+            return effective(record, now), now
 
     async def advance(
         self, identifier: UUID, revision: int | None, *, actor: Principal, scope: Scope, context: AuditContext

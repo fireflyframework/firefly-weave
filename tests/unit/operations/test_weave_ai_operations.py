@@ -26,9 +26,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import NAME_PATTERN
+from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
 from firefly_weave.contracts.operations import IncidentView
 from firefly_weave.contracts.operations_summary import AttentionItem, AttentionKind, OperationsSummary
@@ -39,6 +41,7 @@ from firefly_weave.operations.incident_codes import INCIDENT_CODES
 from firefly_weave.operations.incidents import IncidentFacts
 from firefly_weave.operations.lumi_operations import (
     ATTENTION_TITLES,
+    CHANGE_REQUEST_FIELDS,
     ENVIRONMENT_FIELDS,
     INCIDENT_FIELDS,
     NAME_TOKEN,
@@ -46,11 +49,13 @@ from firefly_weave.operations.lumi_operations import (
     WORKER_FIELDS,
     Explained,
     ExplainRequest,
+    change_request_context,
     code_or_none,
     environment_context,
     incident_context,
     key_or_none,
     name_or_none,
+    read_change_request,
     read_environment,
     title_or_none,
     worker_context,
@@ -616,3 +621,249 @@ async def test_no_summary_service_yet_answers_unavailable():
     with pytest.raises(CatalogError) as raised:
         await read_environment(environment_request(None))
     assert (raised.value.status, raised.value.code) == (503, "WV-UNAVAILABLE")
+
+
+CHANGE_ID = UUID("00000000-0000-4000-8000-0000000000e1")
+TARGET = UUID("00000000-0000-4000-8000-0000000000e2")
+DEPLOYMENT = UUID("00000000-0000-4000-8000-0000000000e3")
+REQUESTER = UUID("00000000-0000-4000-8000-0000000000e4")
+PLANNER = UUID("00000000-0000-4000-8000-0000000000e5")
+APPROVER = UUID("00000000-0000-4000-8000-0000000000e6")
+HISTORY_ACTOR = UUID("00000000-0000-4000-8000-0000000000e7")
+RELEASE = UUID("00000000-0000-4000-8000-0000000000e8")
+PLAN_ID = UUID("00000000-0000-4000-8000-0000000000e9")
+JOB_ID = UUID("00000000-0000-4000-8000-0000000000ea")
+DRAINED_WORKER = UUID("00000000-0000-4000-8000-0000000000eb")
+PLAN_DIGEST = "cd" * 32
+IMAGE_DIGEST = "sha256:" + "ef" * 32
+CHANGE_CANARIES = ("canary-title-7f3a", "canary-reason-7f3a", "canary-host-7f3a", "canary-failure-7f3a")
+
+
+def change_request(**changes):
+    data = {
+        "id": str(CHANGE_ID),
+        "scope": {"tenant_id": str(ITEM_IDS[5]), "project_id": str(ITEM_IDS[6]), "environment_id": str(ITEM_IDS[9])},
+        "target_id": str(TARGET),
+        "deployment_id": str(DEPLOYMENT),
+        "expected_deployment_revision": 2,
+        "intent": "scale_workers",
+        "components": ["fixture-worker"],
+        "desired": [
+            {
+                "name": "fixture-worker",
+                "replicas": 1,
+                "image": "registry.example/canary-registry-7f3a/worker@" + IMAGE_DIGEST,
+                "worker_release_id": str(RELEASE),
+            }
+        ],
+        "drain": {"mode": "drain_first", "timeout_seconds": 300},
+        "title": "canary-title-7f3a",
+        "reason": "canary-reason-7f3a",
+        "revision": 4,
+        "requested_by": str(REQUESTER),
+        "created_at": (NOW - timedelta(seconds=900)).isoformat(),
+        "plan_ttl_seconds": 600,
+        "deployment_revision": 2,
+        "approval_policy": {"distinct_approver": True},
+        "state": "awaiting_approval",
+        "plan_id": str(PLAN_ID),
+        "plan_digest": PLAN_DIGEST,
+        "plan_expires_at": (NOW + timedelta(seconds=420)).isoformat(),
+        "approval": {"principal_id": str(APPROVER), "approved_at": (NOW - timedelta(seconds=30)).isoformat()},
+        "planned_by": str(PLANNER),
+        "drain_set": [
+            {"worker_id": str(DRAINED_WORKER), "host": "canary-host-7f3a", "active_leases": 1},
+            {"worker_id": str(ITEM_IDS[10]), "host": "canary-host-7f3b", "active_leases": 0},
+        ],
+        "failure": {"code": "WV-DRAIN-TIMEOUT", "message": "canary-failure-7f3a"},
+        "warnings": ["WV-DRAIN-VICTIMS"],
+        "history": [
+            {"at": (NOW - timedelta(seconds=900)).isoformat(), "state": "observing", "actor_id": str(HISTORY_ACTOR)},
+            {"at": (NOW - timedelta(seconds=600)).isoformat(), "state": "awaiting_approval", "actor_id": None},
+        ],
+    }
+    return ChangeRequest.model_validate_json(json.dumps(data | changes))
+
+
+def plan(**changes):
+    data = {
+        "id": str(PLAN_ID),
+        "scope": {"tenant_id": str(ITEM_IDS[5]), "project_id": str(ITEM_IDS[6]), "environment_id": str(ITEM_IDS[9])},
+        "target_id": str(TARGET),
+        "target_revision": 1,
+        "deployment_id": str(DEPLOYMENT),
+        "deployment_revision": 2,
+        "adapter": "docker-compose",
+        "intent": "scale_workers",
+        "observation_id": str(ITEM_IDS[11]),
+        "observation_digest": PLAN_DIGEST,
+        "steps": [
+            {
+                "action": "update",
+                "component": {
+                    "name": "fixture-worker",
+                    "kind": "worker",
+                    "image": "worker@" + IMAGE_DIGEST,
+                    "configuration": "default",
+                    "worker_release_id": str(RELEASE),
+                },
+            }
+        ],
+        "risks": ["worker_drain"],
+        "created_at": (NOW - timedelta(seconds=180)).isoformat(),
+        "expires_at": (NOW + timedelta(seconds=420)).isoformat(),
+        "digest": PLAN_DIGEST,
+    }
+    return DeploymentPlan.model_validate_json(json.dumps(data | changes))
+
+
+def job(**changes):
+    data = {
+        "id": str(JOB_ID),
+        "scope": {"tenant_id": str(ITEM_IDS[5]), "project_id": str(ITEM_IDS[6]), "environment_id": str(ITEM_IDS[9])},
+        "target_id": str(TARGET),
+        "target_revision": 1,
+        "kind": "apply",
+        "plan_id": str(PLAN_ID),
+        "plan_digest": PLAN_DIGEST,
+        "state": "succeeded",
+        "revision": 3,
+        "operation_key": str(ITEM_IDS[12]),
+        "created_at": (NOW - timedelta(seconds=60)).isoformat(),
+        "deadline": (NOW + timedelta(seconds=600)).isoformat(),
+        "receipt": {
+            "code": "applied",
+            "changed_resources": ["canary-resource-7f3a", "other"],
+            "external_effects_may_continue": False,
+        },
+    }
+    return DeploymentJob.model_validate_json(json.dumps(data | changes))
+
+
+def test_a_change_request_sends_only_its_allowlisted_paths():
+    explained = change_request_context(change_request(), plan(), job(), observed_at=NOW)
+    assert set(keys(explained.data)) <= CHANGE_REQUEST_FIELDS
+    text = json.dumps(explained.data)
+    identifiers = (CHANGE_ID, TARGET, DEPLOYMENT, REQUESTER, PLANNER, APPROVER, HISTORY_ACTOR, RELEASE, PLAN_ID, JOB_ID)
+    for canary in (*CHANGE_CANARIES, "canary-registry-7f3a", "canary-resource-7f3a", PLAN_DIGEST):
+        assert canary not in text
+    for identifier in (*identifiers, DRAINED_WORKER):
+        assert str(identifier) not in text and identifier.hex not in text
+    assert explained.reach == frozenset()
+
+
+def test_a_change_request_sends_its_facts():
+    assert change_request_context(change_request(), plan(), job(), observed_at=NOW).data == {
+        "intent": "scale_workers",
+        "state": "awaiting_approval",
+        "components": [{"name": "fixture-worker", "replicas": 1, "image_digest": IMAGE_DIGEST}],
+        "more_components": 0,
+        "drain": {"mode": "drain_first", "timeout_seconds": 300},
+        "drain_set_size": 2,
+        "four_eyes": True,
+        "plan_expires_in_seconds": 420,
+        "risks": ["worker_drain"],
+        "history": [
+            {"state": "observing", "age_seconds": 900},
+            {"state": "awaiting_approval", "age_seconds": 600},
+        ],
+        "more_history": 0,
+        "receipt": {"code": "applied", "external_effects_may_continue": False, "changed_resource_count": 2},
+        "failure_code": "WV-DRAIN-TIMEOUT",
+        "warnings": ["WV-DRAIN-VICTIMS"],
+    }
+
+
+def test_ages_count_from_the_reads_own_time():
+    later = NOW + timedelta(seconds=100)
+    data = change_request_context(change_request(), plan(), None, observed_at=later).data
+    assert data["plan_expires_in_seconds"] == 320
+    assert [item["age_seconds"] for item in data["history"]] == [1000, 700]
+
+
+def test_a_change_request_without_a_plan_or_job_sends_no_risks_or_receipt():
+    data = change_request_context(change_request(plan_id=None), None, None, observed_at=NOW).data
+    assert (data["risks"], data["receipt"]) == ([], None)
+
+
+def test_a_hundred_components_send_twenty_and_count_the_rest():
+    names = [f"worker-{index}" for index in range(100)]
+    record = change_request(components=names, desired=[{"name": name, "replicas": 2} for name in names])
+    data = change_request_context(record, None, None, observed_at=NOW).data
+    assert data["components"] == [{"name": name, "replicas": 2} for name in names[:20]]
+    assert data["more_components"] == 80
+
+
+def test_ten_thousand_components_send_twenty():
+    record = change_request().model_copy(update={"components": [f"w-{index}" for index in range(10_000)]})
+    data = change_request_context(record, None, None, observed_at=NOW).data
+    assert (len(data["components"]), data["more_components"]) == (20, 9980)
+
+
+def test_fifty_history_entries_send_the_latest_twenty_oldest_first_with_ages():
+    history = [{"at": (NOW - timedelta(seconds=1000 - index)).isoformat(), "state": "observing"} for index in range(50)]
+    data = change_request_context(change_request(history=history), None, None, observed_at=NOW).data
+    assert [item["age_seconds"] for item in data["history"]] == list(range(970, 950, -1))
+    assert data["more_history"] == 30
+
+
+def test_a_failure_sends_its_code_only():
+    data = change_request_context(change_request(), None, None, observed_at=NOW).data
+    assert data["failure_code"] == "WV-DRAIN-TIMEOUT"
+    assert "canary-failure-7f3a" not in json.dumps(data)
+
+
+class Changes:
+    def __init__(self, record, observed_at=NOW):
+        self.record, self.observed_at, self.calls = record, observed_at, []
+
+    async def read_observed(self, identifier, *, actor, scope, context):
+        self.calls.append((identifier, actor, scope, context))
+        return self.record, self.observed_at
+
+
+class Deployments:
+    def __init__(self, records, refuse=None):
+        self.records, self.refuse, self.calls = records, refuse, []
+
+    async def read(self, collection, identifier, *, actor, scope, context):
+        self.calls.append((collection, identifier, actor, scope, context))
+        if collection == self.refuse:
+            raise AccessDenied()
+        return self.records[collection]
+
+
+def change_explain_request():
+    scope = Scope(tenant_id=ITEM_IDS[5], project_id=ITEM_IDS[6], environment_id=ITEM_IDS[9])
+    return ExplainRequest(
+        actor=Principal(id=ITEM_IDS[7], kind="human"), scope=scope, id=CHANGE_ID, context=AuditContext(), summary=None
+    )
+
+
+async def test_risks_come_from_the_current_plan_and_the_receipt_from_the_apply_job():
+    request = change_explain_request()
+    changes = Changes(change_request(apply_job_id=str(JOB_ID)))
+    deployments = Deployments({"plans": plan(), "jobs": job()})
+    explained = await read_change_request(changes, deployments, request)
+    who = (request.actor, request.scope, request.context)
+    assert changes.calls == [(CHANGE_ID, *who)]
+    assert deployments.calls == [("plans", PLAN_ID, *who), ("jobs", JOB_ID, *who)]
+    assert explained.data["risks"] == ["worker_drain"]
+    assert explained.data["receipt"]["code"] == "applied"
+
+
+async def test_a_refused_plan_or_job_read_propagates():
+    for refuse in ("plans", "jobs"):
+        deployments = Deployments({"plans": plan(), "jobs": job()}, refuse=refuse)
+        with pytest.raises(AccessDenied):
+            await read_change_request(
+                Changes(change_request(apply_job_id=str(JOB_ID))), deployments, change_explain_request()
+            )
+
+
+async def test_a_change_request_reads_its_ages_against_the_reads_time():
+    later = NOW + timedelta(seconds=100)
+    explained = await read_change_request(
+        Changes(change_request(plan_id=None), observed_at=later), Deployments({}), change_explain_request()
+    )
+    assert explained.data["history"][0]["age_seconds"] == 1000

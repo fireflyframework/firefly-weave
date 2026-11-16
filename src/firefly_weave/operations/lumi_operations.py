@@ -30,14 +30,14 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Final, get_args
+from typing import Final, Protocol, get_args
 from uuid import UUID
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
-from firefly_weave.contracts.deployments import PlanIntent
+from firefly_weave.contracts.deployments import ChangeRequest, DeploymentJob, DeploymentPlan, PlanIntent
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
 from firefly_weave.contracts.language import STEP_KINDS
 from firefly_weave.contracts.operations import IncidentView
@@ -390,3 +390,130 @@ async def read_environment(request: ExplainRequest) -> Explained:
         raise CatalogError(503, "WV-UNAVAILABLE", "The platform summary is not available yet")
     facts = await request.summary.explanation_facts(request.actor, request.scope, context=request.context)
     return environment_context(facts)
+
+
+COMPONENTS: Final = 20
+HISTORY: Final = 20
+WARNINGS: Final = 10
+DESIRED_COUNTS: Final = ("replicas", "cpu_millis", "memory_mib")
+DIGEST: Final = re.compile(r"sha256:[0-9a-f]{64}")
+CHANGE_REQUEST_FIELDS: Final = frozenset(
+    {
+        "/intent",
+        "/state",
+        "/components",
+        "/components/*/name",
+        "/components/*/replicas",
+        "/components/*/cpu_millis",
+        "/components/*/memory_mib",
+        "/components/*/image_digest",
+        "/more_components",
+        "/drain",
+        "/drain/mode",
+        "/drain/timeout_seconds",
+        "/drain_set_size",
+        "/four_eyes",
+        "/plan_expires_in_seconds",
+        "/risks",
+        "/history",
+        "/history/*/state",
+        "/history/*/age_seconds",
+        "/more_history",
+        "/receipt",
+        "/receipt/code",
+        "/receipt/external_effects_may_continue",
+        "/receipt/changed_resource_count",
+        "/failure_code",
+        "/warnings",
+    }
+)
+
+
+def _digest(image: str | None) -> str | None:
+    """An image reference reduced to its digest: never its registry or repository."""
+    if image is None:
+        return None
+    digest = image.rsplit("@", 1)[-1]
+    return digest if DIGEST.fullmatch(digest) else None
+
+
+def change_request_context(
+    record: ChangeRequest, plan: DeploymentPlan | None, job: DeploymentJob | None, *, observed_at: datetime
+) -> Explained:
+    """A change request's state, plan and progress: never its title, reason, people, hosts, releases or IDs."""
+    desired = {item.name: item for item in record.desired or []}
+    components: list[JsonValue] = []
+    for name in record.components[:COMPONENTS]:
+        entry: JsonObject = {"name": name_or_none(name)}
+        values = desired.get(name)
+        if values is not None:
+            entry |= {field: getattr(values, field) for field in DESIRED_COUNTS if getattr(values, field) is not None}
+            if (digest := _digest(values.image)) is not None:
+                entry["image_digest"] = digest
+        components.append(entry)
+    history: list[JsonValue] = [
+        {"state": item.state, "age_seconds": age_seconds(item.at, observed_at)} for item in record.history[-HISTORY:]
+    ]
+    receipt = job.receipt if job is not None else None
+    risks: list[JsonValue] = list(plan.risks) if plan is not None else []
+    data: JsonObject = {
+        "intent": record.intent,
+        "state": record.state,
+        "components": components,
+        "more_components": max(0, len(record.components) - COMPONENTS),
+        "drain": {"mode": record.drain.mode, "timeout_seconds": record.drain.timeout_seconds},
+        "drain_set_size": len(record.drain_set),
+        "four_eyes": record.approval_policy.distinct_approver,
+        "plan_expires_in_seconds": (
+            None
+            if record.plan_expires_at is None
+            else max(0, int((record.plan_expires_at - observed_at).total_seconds()))
+        ),
+        "risks": risks,
+        "history": history,
+        "more_history": max(0, len(record.history) - HISTORY),
+        "receipt": (
+            {
+                "code": receipt.code,
+                "external_effects_may_continue": receipt.external_effects_may_continue,
+                "changed_resource_count": len(receipt.changed_resources),
+            }
+            if receipt is not None
+            else None
+        ),
+        "failure_code": code_or_none(record.failure.code) if record.failure else None,
+        "warnings": [code_or_none(code) for code in record.warnings[:WARNINGS]],
+    }
+    return Explained(data, frozenset())
+
+
+class ChangeReads(Protocol):
+    async def read_observed(
+        self, identifier: UUID, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> tuple[ChangeRequest, datetime]: ...
+
+
+class DeploymentReads(Protocol):
+    async def read(
+        self, collection: str, identifier: UUID, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> ContractModel: ...
+
+
+async def read_change_request(changes: ChangeReads, deployments: DeploymentReads, request: ExplainRequest) -> Explained:
+    """The change request, its current plan and its apply job, each read as the caller; a refusal propagates."""
+    actor, scope, context = request.actor, request.scope, request.context
+    record, observed_at = await changes.read_observed(request.id, actor=actor, scope=scope, context=context)
+
+    async def related(collection: str, identifier: UUID | None) -> ContractModel | None:
+        if identifier is None:
+            return None
+        return await deployments.read(collection, identifier, actor=actor, scope=scope, context=context)
+
+    plan = await related("plans", record.plan_id)
+    job = await related("jobs", record.apply_job_id)
+    return change_request_context(
+        record,
+        plan if isinstance(plan, DeploymentPlan) else None,
+        job if isinstance(job, DeploymentJob) else None,
+        observed_at=observed_at,
+    )
