@@ -527,6 +527,20 @@ def test_claim_retry_waits_must_be_positive_and_capped_above_the_first():
             Worker(object(), {}, 1, claim_retry_seconds=first, max_claim_retry_seconds=cap)
 
 
+@pytest.mark.parametrize(
+    "first, cap",
+    [(0.5, float("inf")), (float("inf"), float("inf")), (0.5, 300.5)],
+    ids=["endless-cap", "endless-first-wait", "cap-over-five-minutes"],
+)
+def test_a_worker_refuses_a_claim_retry_wait_that_never_ends(first, cap):
+    # A worker that waits that long after an outage would look stopped long after the platform answers again.
+    from firefly_weave.sdk.worker import Worker
+
+    with pytest.raises(ValueError, match="claim retry"):
+        Worker(object(), {}, 1, claim_retry_seconds=first, max_claim_retry_seconds=cap)
+    assert Worker(object(), {}, 1, claim_retry_seconds=0.5, max_claim_retry_seconds=300).max_claim_retry_seconds == 300
+
+
 async def api(port, claims):
     """A real HTTP server on 127.0.0.1:`port` (0 picks one) that answers each claim with no work and counts it."""
 

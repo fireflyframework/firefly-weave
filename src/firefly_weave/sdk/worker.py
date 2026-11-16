@@ -35,6 +35,9 @@ from firefly_weave.sdk._retry import kind, raise_if_cancelled, retry_delay, unav
 from firefly_weave.sdk._settlement import lease_settlement
 
 LOG = logging.getLogger(__name__)
+# The longest wait before claiming again after an outage: a longer one would leave a worker idle long after the
+# platform answers again.
+LONGEST_CLAIM_RETRY_SECONDS = 300.0
 
 TaskHandler = Callable[[TaskLease], Awaitable[JsonValue]]
 
@@ -58,8 +61,11 @@ class Worker:
     ) -> None:
         if not 1 <= concurrency <= 100:
             raise ValueError("Concurrency must be 1..100")
-        if not 0 < claim_retry_seconds <= max_claim_retry_seconds:
-            raise ValueError("The first claim retry wait must be positive and no longer than the longest")
+        # The chained comparison also refuses infinity and NaN.
+        if not 0 < claim_retry_seconds <= max_claim_retry_seconds <= LONGEST_CLAIM_RETRY_SECONDS:
+            raise ValueError(
+                "The first claim retry wait must be positive and no longer than the longest, which is at most 300 s"
+            )
         self.client, self.handlers, self.concurrency = client, dict(handlers), concurrency
         self.claim_retry_seconds, self.max_claim_retry_seconds = claim_retry_seconds, max_claim_retry_seconds
         self.stopping = asyncio.Event()
