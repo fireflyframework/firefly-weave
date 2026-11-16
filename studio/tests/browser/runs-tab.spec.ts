@@ -593,6 +593,87 @@ test.describe("the Runs list's states", () => {
       );
     });
 
+  const unreachable: Reply = {
+    status: 503,
+    json: {
+      status: 503,
+      code: "WV-AUTH-OFFLINE",
+      message: "The platform can't be reached.",
+    },
+  };
+
+  test("a window paired again that Studio refuses as out of date leaves no unreachable banner", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    let paired = false;
+    const host = new PlatformHost({
+      platforms: [acmePlatform()],
+      active: "Acme",
+      // Unreachable at first; after pairing again, Studio refuses itself.
+      test: () =>
+        paired
+          ? {
+              status: 403,
+              json: {
+                status: 403,
+                code: "WV-STUDIO-CSRF",
+                message: "Refresh Studio before submitting this change",
+              },
+            }
+          : unreachable,
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill(unreachable),
+    );
+    // The workflow list finds the Studio session ended, once.
+    await page.route(
+      (url) =>
+        url.pathname.startsWith("/studio/api/") &&
+        url.pathname.endsWith("/workflows"),
+      (route) =>
+        paired
+          ? host.handle(route)
+          : route.fulfill({
+              status: 401,
+              json: {
+                status: 401,
+                code: "WV-STUDIO-SESSION",
+                message: "Pair again",
+              },
+            }),
+    );
+    await page.goto("/");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Studio couldn't reach Acme.");
+    await page.getByRole("button", { name: "Workflows", exact: true }).click();
+    const code = page.getByLabel("Pairing code");
+    await expect(code).toBeVisible();
+    paired = true;
+    await code.fill("new-code");
+    await code.press("Enter");
+    // Pairing again checks the account, and Studio refuses that check.
+    await expect
+      .poll(() => host.requests("/studio/connection/test").length)
+      .toBe(2);
+    // The banner and the Runs tab give the same reason.
+    await expect(banner).toHaveCount(0);
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Workflows", level: 1 }),
+    ).toHaveCount(0);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    await expect(
+      runsPage(page).panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("This Studio window is out of date.");
+  });
+
   test("a sign-in that ends in the background while the host can't renew the session asks to sign in", async ({
     page,
   }) => {

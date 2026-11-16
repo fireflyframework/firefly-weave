@@ -9561,7 +9561,11 @@ export class App implements CanvasHost {
         this.identityFailure = kind;
         if (kind === "studio") {
           // Studio refused its own request: its error says to reload the
-          // window, where Try again would meet the same refusal.
+          // window, where Try again would meet the same refusal. An earlier
+          // unreachable or store banner no longer says why.
+          const earlier = this.platformNotice?.kind;
+          if (earlier === "offline" || earlier === "store")
+            this.platformNotice = null;
           this.fail(e);
           await this.loadIdentity();
           return;
