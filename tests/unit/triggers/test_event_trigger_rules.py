@@ -178,4 +178,9 @@ def test_no_activation_may_pin_a_worker_release_for_a_platform_task_type(monkeyp
     )
     with pytest.raises(CatalogError) as refused:
         asyncio.run(admission)
-    assert (refused.value.status, refused.value.code) == (422, "WV-READINESS")
+    # The platform-task refusal itself, not another readiness refusal on the way.
+    assert (refused.value.status, refused.value.code, refused.value.message) == (
+        422,
+        "WV-READINESS",
+        "Platform task types are never pinned to a worker release",
+    )
