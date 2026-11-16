@@ -476,6 +476,349 @@ async def test_lease_renewals_during_a_job_count_as_contact():
     assert client.renewals >= 1 and len(contacts) == client.renewals
 
 
+def claiming(monkeypatch, answers):
+    """Like served(), but the runner's claims get `answers` in order (an exception to raise, or a lease), then no
+    work; returns the list of claims it made. Waits before claiming again are cut to a hundredth of a second."""
+    from types import SimpleNamespace
+
+    from firefly_weave.deployment_runner import application
+
+    pending, claims = list(answers), []
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            claims.append(operation)
+            answer = pending.pop(0) if pending else None
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.setattr(application, "CLAIM_RETRY_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(application, "MAX_CLAIM_RETRY_SECONDS", 0.01, raising=False)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return claims
+
+
+def through_the_client(monkeypatch, transport, *, timeout=None):
+    """Like claiming(), but each claim goes through the real WeaveClient over `transport` (None keeps the transport
+    serve() chose), so the runner sees exactly the errors the client raises. Registration is faked, the token comes
+    from memory, and `timeout` replaces the client's request timeout; returns the list of claims the runner made."""
+    from types import SimpleNamespace
+
+    from firefly_weave.deployment_runner import application
+    from firefly_weave.sdk.client import WeaveClient
+
+    claims = []
+
+    class Token:
+        async def get_access_token(self, target):
+            return "token"
+
+    class Client(WeaveClient):
+        def __init__(self, base_url, provider, scope, **options):
+            options["transport"] = transport or options["transport"]
+            options["timeout"] = timeout or options["timeout"]
+            super().__init__(base_url, Token(), scope, **options)
+
+        async def invoke(self, operation, **arguments):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            claims.append(operation)
+            return await super().invoke(operation, **arguments)
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.setattr(application, "CLAIM_RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(application, "MAX_CLAIM_RETRY_SECONDS", 0.01)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return claims
+
+
+def answering(*answers):
+    """A transport that answers claims with `answers` in order (an exception to raise or a response), then no work."""
+    import httpx
+
+    pending = list(answers)
+
+    def answer(request):
+        reply = pending.pop(0) if pending else httpx.Response(200, content=b"null")
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+    return httpx.MockTransport(answer)
+
+
+def unreachable_claims():
+    import httpcore
+    import httpx
+
+    return [
+        # WeaveClient reports a refused, dropped or timed-out connection on HTTPS or loopback as WV-TRANSPORT.
+        pytest.param(lambda: httpx.ConnectError("refused"), id="refused"),
+        pytest.param(lambda: httpx.RemoteProtocolError("closed"), id="dropped-mid-response"),
+        pytest.param(lambda: httpx.ReadTimeout("slow"), id="timed-out"),
+        # In a cluster the pinned private-origin transport passes httpcore's error through WeaveClient.
+        pytest.param(lambda: httpcore.ConnectError("refused"), id="refused-pinned-transport"),
+        # A gateway in front of an API that is not serving yet.
+        pytest.param(lambda: httpx.Response(503, text="<html>unavailable</html>"), id="http-503"),
+        pytest.param(lambda: httpx.Response(502, text="<html>bad gateway</html>"), id="http-502"),
+    ]
+
+
+@pytest.mark.parametrize("unreachable", unreachable_claims())
+async def test_the_runner_claims_again_once_the_api_answers_after_it_could_not_be_reached(monkeypatch, unreachable):
+    from firefly_weave.deployment_runner.application import serve
+
+    claims = through_the_client(monkeypatch, answering(unreachable(), unreachable()))
+    running = asyncio.create_task(serve(runner_configuration("https://weave.example")))
+    for _ in range(200):
+        if len(claims) >= 3 or running.done():
+            break
+        await asyncio.sleep(0.01)
+    stopped_early = running.done() and not running.cancelled() and running.exception()
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    assert not stopped_early, f"serve() ended on a claim the API could not answer: {stopped_early!r}"
+    assert len(claims) >= 3
+
+
+async def test_the_runner_stops_on_a_claim_the_api_refuses_once_it_answers(monkeypatch):
+    import httpx
+
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import WeaveError
+
+    for status in (401, 403, 404):
+        refusal = httpx.Response(status, json={"status": status, "code": "WV-REFUSED", "message": "Refused"})
+        claims = through_the_client(monkeypatch, answering(httpx.ConnectError("refused"), refusal))
+        with pytest.raises(WeaveError) as refused:
+            await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
+        assert refused.value.status == status and len(claims) == 2
+
+
+async def test_a_runner_asked_to_claim_once_never_claims_again(monkeypatch):
+    # `--once` checks one claim and reports how it went, so even a claim that could not reach the API ends it.
+    import httpx
+
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import TransportError
+
+    claims = through_the_client(monkeypatch, answering(httpx.ConnectError("refused")))
+    with pytest.raises(TransportError):
+        await asyncio.wait_for(serve(runner_configuration("https://weave.example"), once=True), 2)
+    assert claims == ["deployment_runners.claim"]
+
+
+def client_refusals():
+    import httpx
+
+    from firefly_weave.connectors.egress import EgressDenied
+
+    return [
+        # The pinned transport refuses a destination its private-origin policy does not permit.
+        pytest.param(lambda: EgressDenied(), id="destination-refused"),
+        pytest.param(lambda: httpx.UnsupportedProtocol("Request URL has an unsupported protocol"), id="protocol"),
+        pytest.param(
+            lambda: httpx.Response(200, content=b"null", headers={"X-Weave-Wire-Version": "weave/api-v9"}),
+            id="wire-version",
+        ),
+        pytest.param(lambda: httpx.Response(200, json={"not": "a lease"}), id="not-the-contract"),
+        # The API never redirects, so a redirect means the runner was given the wrong address.
+        pytest.param(lambda: httpx.Response(307, headers={"Location": "https://elsewhere.example/"}), id="redirect"),
+    ]
+
+
+@pytest.mark.parametrize("refusal", client_refusals())
+async def test_the_runner_stops_on_a_claim_its_own_client_refused(monkeypatch, refusal):
+    """Waiting fixes none of these: the client refused the destination, the protocol or the answer itself."""
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import WeaveError
+
+    claims = through_the_client(monkeypatch, answering(refusal()))
+    with pytest.raises(WeaveError):
+        await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
+    assert claims == ["deployment_runners.claim"]
+
+
+CLUSTER_API = "http://weave-api.weave-system.svc:8000"
+
+
+def cluster_policy():
+    """The private-origin policy of a cluster, where the runner reaches CLUSTER_API over plain HTTP through the pinned
+    transport, which resolves the name itself and connects only to 10.89.0.0/24."""
+    from firefly_weave import private_origins as po
+
+    entry = po.PrivateOrigin(origin=CLUSTER_API, purpose="runner", networks=("10.89.0.0/24",), credentials="bridge")
+    return po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry]))
+
+
+async def kept_claiming(running, claims):
+    """The error serve() ended with before its third claim, or None when it kept claiming; cancels it either way."""
+    for _ in range(300):
+        if len(claims) >= 3 or running.done():
+            break
+        await asyncio.sleep(0.01)
+    ended = running.exception() if running.done() and not running.cancelled() else None
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    assert len(claims) >= 3 or ended is not None, "serve() neither claimed again nor ended"
+    return ended
+
+
+async def test_the_runner_keeps_claiming_in_a_cluster_while_the_api_name_does_not_resolve(monkeypatch, caplog):
+    # While the API restarts, its service name can stop resolving for a moment.
+    import socket
+
+    from firefly_weave.deployment_runner.application import serve
+
+    async def getaddrinfo(host, port, **options):
+        raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided, or not known")
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None)
+    with cluster_policy():
+        ended = await kept_claiming(asyncio.create_task(serve(runner_configuration(CLUSTER_API))), claims)
+    assert ended is None, f"serve() ended on a name that did not resolve: {ended!r}"
+    # The warning names the lookup failure, never the name or the message.
+    assert "(ConnectError (gaierror), 1 in a row)" in caplog.text and "nodename" not in caplog.text
+
+
+async def test_the_runner_keeps_claiming_in_a_cluster_while_reaching_the_api_hangs(monkeypatch):
+    from firefly_weave.deployment_runner.application import serve
+
+    async def getaddrinfo(host, port, **options):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None, timeout=0.05)
+    with cluster_policy():
+        ended = await kept_claiming(asyncio.create_task(serve(runner_configuration(CLUSTER_API))), claims)
+    assert ended is None, f"serve() ended on a connection that timed out: {ended!r}"
+
+
+async def test_the_runner_stops_in_a_cluster_when_the_api_name_resolves_outside_its_network(monkeypatch):
+    # The pinned transport refuses the address before it connects; waiting would not change the policy.
+    import socket
+
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import ContractError
+
+    async def getaddrinfo(host, port, **options):
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", port))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None)
+    with cluster_policy(), pytest.raises(ContractError):
+        await asyncio.wait_for(serve(runner_configuration(CLUSTER_API)), 2)
+    assert claims == ["deployment_runners.claim"]
+
+
+async def untrusted_api(folder, received):
+    """A real HTTPS server on 127.0.0.1 whose self-signed certificate nobody trusts; `received` gets every byte a
+    request sends it."""
+    import ipaddress
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(hours=1))
+        .not_valid_after(now + timedelta(hours=1))
+        # The address matches, so the only fault is that nobody vouches for the certificate.
+        .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), False)
+        .sign(key, hashes.SHA256())
+    )
+    pem = folder / "api.pem"
+    pem.write_bytes(
+        certificate.public_bytes(serialization.Encoding.PEM)
+        + key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(pem)
+
+    async def answer(reader, writer):
+        received.extend(await reader.read(65536))
+        writer.close()
+
+    return await asyncio.start_server(answer, "127.0.0.1", 0, ssl=context)
+
+
+async def test_the_runner_stops_on_a_certificate_it_cannot_verify(monkeypatch, tmp_path):
+    """Waiting never makes a certificate trusted: the runner stops at once instead of retrying, and no claim, with
+    its token, ever reached that server."""
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import TransportError
+
+    received = bytearray()
+    server = await untrusted_api(tmp_path, received)
+    claims = through_the_client(monkeypatch, None)
+    try:
+        with pytest.raises(TransportError):
+            await asyncio.wait_for(
+                serve(runner_configuration(f"https://127.0.0.1:{server.sockets[0].getsockname()[1]}")), 2
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert claims == ["deployment_runners.claim"] and not received
+
+
+async def test_a_cancellation_that_a_failed_runner_claim_hid_still_stops_the_runner(monkeypatch):
+    import httpcore
+
+    from firefly_weave.deployment_runner import application
+
+    claiming(monkeypatch, [])
+    claiming_now, claims = asyncio.Event(), []
+
+    class Client(application.WeaveClient):
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return await super().invoke(operation, body=body)
+            claims.append(operation)
+            claiming_now.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                # A client library that closes its connection on cancellation can raise its own error instead.
+                raise httpcore.ConnectError("connection closed") from None
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    running = asyncio.create_task(application.serve(runner_configuration("https://weave.example")))
+    await asyncio.wait_for(claiming_now.wait(), 1)
+    running.cancel()
+    await asyncio.wait({running}, timeout=1)
+    if not running.done():
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+    assert running.cancelled() and claims == ["deployment_runners.claim"]
+
+
 async def test_the_runner_starts_the_token_relay_when_asked(monkeypatch):
     from firefly_weave.deployment_runner import application
 

@@ -115,10 +115,10 @@ import {
   openYaml,
 } from "./integrations-po";
 import {
-  builtinActions,
   hasPython,
   localAuthoring,
   python,
+  routeBuiltinActions,
   stopLocalAuthoring,
 } from "./local-authoring";
 import {
@@ -1622,12 +1622,8 @@ spec:
  * (the Linux font check), the action can't be built and its URL says so.
  */
 async function apiAuthoring(page: Page) {
-  if (hasPython) {
-    await localAuthoring(page);
-    await page.route("**/studio/contracts/connector-actions", (route) =>
-      route.fulfill({ json: builtinActions() }),
-    );
-  }
+  if (hasPython)
+    await Promise.all([localAuthoring(page), routeBuiltinActions(page)]);
   await offline(page);
 }
 

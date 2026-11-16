@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // own Python code: the same request models and functions `weave studio`
 // calls (studio/host.py), in one helper process per test worker. Nothing is
 // fetched: OpenAPI text is pasted, and HTTP actions are built offline.
-import { ChildProcess, spawn, spawnSync } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Page, Route } from "@playwright/test";
@@ -222,11 +222,13 @@ function ask(
   return answer;
 }
 
+/** Stops the local host; the next test starts it again, as a fresh worker would. */
 export function stopLocalAuthoring() {
   const stopped = child;
   child = null;
   stopped?.kill();
   release();
+  builtins = null;
 }
 
 /** What Studio sent to the local authoring endpoints, in order. */
@@ -235,25 +237,61 @@ export interface LocalCalls {
   body: Record<string, unknown>;
 }
 
-let builtins: unknown = null;
-/** The Studio host's built-in email and file actions, as its route answers. */
-export function builtinActions(): unknown {
+let builtins: Promise<unknown> | null = null;
+/**
+ * The Studio host's built-in email and file actions, as its route answers,
+ * read once per worker by the repository's Python. The read runs beside the
+ * test: a synchronous one stops the worker while Python starts, and with it
+ * every expectation's clock and every request the page makes.
+ */
+export function builtinActions(): Promise<unknown> {
   if (builtins) return builtins;
-  const run = spawnSync(
-    python,
-    [
-      "-c",
-      "import json; from firefly_weave.contracts.connector_actions import builtin_connector_actions as b; print(json.dumps({'actions': b()}))",
-    ],
-    {
-      cwd: repository,
-      encoding: "utf8",
-      env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
-    },
+  const reading = new Promise<unknown>((done, fail) => {
+    const run = spawn(
+      python,
+      [
+        "-c",
+        // Delayed like the helper's start when a test stands in for a slow machine.
+        "import json, os, time; time.sleep(float(os.environ.get('WEAVE_TEST_HELPER_START_DELAY', '0'))); from firefly_weave.contracts.connector_actions import builtin_connector_actions as b; print(json.dumps({'actions': b()}))",
+      ],
+      {
+        cwd: repository,
+        env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let out = "";
+    let err = "";
+    run.stdout.setEncoding("utf8").on("data", (text: string) => (out += text));
+    run.stderr.setEncoding("utf8").on("data", (text: string) => (err += text));
+    run.on("error", fail);
+    run.on("close", (code) => {
+      if (code !== 0) return fail(new Error(err || `Python exited ${code}`));
+      try {
+        done(JSON.parse(out));
+      } catch (error) {
+        fail(error);
+      }
+    });
+  });
+  builtins = reading;
+  // A failed read isn't kept: the next test reads again.
+  reading.catch(() => {
+    if (builtins === reading) builtins = null;
+  });
+  return reading;
+}
+
+/**
+ * Answers Studio's built-in actions with the list read before the page can
+ * ask: Python's start must not count against the expectation that follows
+ * the first email or file step.
+ */
+export async function routeBuiltinActions(page: Page) {
+  const json = await builtinActions();
+  await page.route("**/studio/contracts/connector-actions", (route) =>
+    route.fulfill({ json }),
   );
-  if (run.status !== 0) throw new Error(run.stderr);
-  builtins = JSON.parse(run.stdout);
-  return builtins;
 }
 
 /**

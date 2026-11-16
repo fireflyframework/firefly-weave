@@ -32,8 +32,48 @@ SPDX-License-Identifier: Apache-2.0
 - Before you upgrade, note that the schema name `weave.platform-event-v1` is now
   the platform's: while a catalog has its own schema under that name, compiles
   against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
-  use it, until the schema is renamed. Run views gain the origin `event`, so clients that read run origins
-  strictly need the new value.
+  use it, until the schema is renamed. Run views gain the origin `event`, so
+  clients that read run origins strictly need the new value.
+- A worker keeps running when the platform's API restarts, for example after
+  `weave platform ai enable`, and claims again once the API answers. When a
+  claim can't reach the platform (the connection is refused, drops or times
+  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` claims
+  again after a wait that doubles up to 10 seconds, each a random time in its
+  upper half, so the first is 0.25 to 0.5 seconds (`claim_retry_seconds`,
+  `max_claim_retry_seconds`, at most 300 seconds), and `stop()` ends the wait
+  at once; 401, 403, a refused release, a server certificate it can't verify
+  and every other failed claim still stop it with that error. Workers that
+  local operations deploy now start again when they stop on their own
+  (`restart: unless-stopped`); one that `weave platform stop` or a change
+  request stopped stays stopped.
+- The operations runner keeps claiming jobs while the API restarts, instead of
+  stopping and waiting for its restart policy: a claim that can't reach the API
+  is made again after the same doubling wait as a worker's, and 401, 403, a
+  redirect, a certificate it can't verify, an answer outside the API contract
+  and other refusals still stop it. When it stops, `weave operations runner
+  run` reports `WV-RUNNER-STOPPED` with the failure's kind, its code, and the
+  type of the error it came from, never its text, and exits with 3 (the API
+  couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE: Invalid
+  invocation` with 2. A code the platform doesn't mint is printed as
+  `WV-HTTP`.
+- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
+  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
+  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+- The pinned HTTP client that connectors use raises a destination name that
+  doesn't resolve as `httpcore.ConnectError`, and a connection that doesn't open
+  within the client's connect timeout as `httpcore.ConnectTimeout`, as it
+  already did for a refused connection, instead of `socket.gaierror` and
+  `TimeoutError`. The HTTP connector therefore reports a name that doesn't
+  resolve as `UNAVAILABLE` with the outcome `not_started`, instead of
+  `HTTP_FAILED` with the outcome `unknown`: the lookup fails before the request
+  is sent. A connection that never opens is unchanged for the HTTP, HTTP
+  profile, Telegram and WhatsApp connectors: each gives the client its whole
+  remaining deadline, so its own deadline ends first and it still reports a
+  timeout with the outcome `unknown`. Only a client whose connect timeout is
+  shorter than the deadline now reports it as `UNAVAILABLE` with
+  `not_started`. In a cluster, the operations runner keeps claiming while the
+  API's name doesn't resolve or its connection times out, as it does while the
+  API restarts.
 
 ## 0.1.0a18
 
