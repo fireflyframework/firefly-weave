@@ -40,7 +40,8 @@ on:
 permissions:
   contents: read
 # Tag runs restore no dependency cache: what a tag checks or builds installs from the lockfiles alone,
-# never from a cache another run wrote. Every other run keeps its uv and npm caches.
+# never from a cache another run wrote. Every other run keeps its uv and npm caches. setup-node's
+# package-manager-cache stays off, so a packageManager field cannot turn an npm cache on for a tag run.
 jobs:
   installer:
     strategy:
@@ -76,6 +77,7 @@ jobs:
         with:
           node-version: '24.15.0'
           cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
+          package-manager-cache: false
           cache-dependency-path: |
             studio/package-lock.json
             desktop/package-lock.json

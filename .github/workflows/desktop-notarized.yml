@@ -62,9 +62,11 @@ jobs:
           enable-cache: false
       - name: Verify exact release source without credentials
         run: uv run --no-project python desktop/scripts/notarize_macos.py --verify-source
+      # No npm cache either: setup-node turns one on by itself when package.json names npm as its packageManager.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.15.0'
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
         with:
           components: rustfmt,clippy
