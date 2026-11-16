@@ -24,6 +24,7 @@ leak check is itself tested at every allowlisted path.
 
 import json
 import re
+import zlib
 from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any, TypeAliasType, get_args
@@ -181,7 +182,7 @@ def free_text(variant: str, name: str) -> str:
     """The token canary of a free-text field, or one of the log-shaped lines in the second check."""
     if variant == "token":
         return TEXT[name]
-    return LOG_SHAPED[hash(name) % 2]
+    return LOG_SHAPED[zlib.crc32(name.encode()) % 2]
 
 
 def scope_of(record: str) -> dict[str, str]:
@@ -465,6 +466,8 @@ def test_every_fixture_record_carries_every_canary(record):
 def test_every_fixture_record_carries_the_log_shaped_text_in_its_free_text(variant):
     dumped = "".join(record.model_dump_json() for record in canaried(variant).values())
     assert ("canary-log" in dumped) is (variant == "log")
+    # Both lines are planted, in the same fields in every process.
+    assert [line in dumped for line in LOG_SHAPED] == [variant == "log"] * 2
 
 
 class Recording(httpx.AsyncBaseTransport):
