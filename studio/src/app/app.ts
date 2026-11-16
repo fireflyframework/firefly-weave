@@ -9874,9 +9874,10 @@ export class App implements CanvasHost {
   }
   /**
    * A sign-in ended without an account, and the host keeps the credential it
-   * had. An account Studio already has (a canceled switch) stays, and the
-   * outcome says so; one it can still use (a session it renews, or the
-   * account a canceled switch left before a reload) is checked, and the check
+   * had. An account Studio already has and nothing has refused (a canceled
+   * switch) stays, and the outcome says so; one it can still use (a session
+   * it renews, the account a canceled switch left before a reload, or an
+   * account the platform refused meanwhile) is checked, and the check
    * words the outcome the same way unless the person dismissed it or
    * something replaced it meanwhile; otherwise sign in again. A reason
    * recorded earlier (offline, a locked store) stays.
@@ -9884,7 +9885,9 @@ export class App implements CanvasHost {
   private async afterBackgroundSignInEnded() {
     await this.refreshConnectionStatus();
     const usable = sessionUsable(this.connectionStatus?.authentication);
-    if (this.identity) {
+    // Only an account nothing has refused since it loaded is kept as is; one
+    // the platform refused is checked again below.
+    if (this.identity && !this.identityFailure) {
       const notice = this.platformNotice;
       if (usable && notice?.kind === "sign-in-failed") {
         this.platformNotice = { ...notice, kept: true };

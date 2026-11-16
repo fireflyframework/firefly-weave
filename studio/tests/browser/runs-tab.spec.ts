@@ -640,6 +640,62 @@ test.describe("the Runs list's states", () => {
     await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
   });
 
+  test("a sign-in canceled in the background after the platform refused the session asks to sign in again", async ({
+    page,
+  }) => {
+    // The host still reports the earlier sign-in; the platform refuses it.
+    let refused = false;
+    const expired = {
+      status: 401,
+      json: {
+        status: 401,
+        code: "WV-AUTH-REQUIRED",
+        message: "Your sign-in has ended. Sign in again to continue.",
+      },
+    };
+    const host = new PlatformHost({
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => (refused ? expired : undefined),
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route(
+      (url) =>
+        url.pathname.startsWith("/studio/api/") &&
+        url.pathname.endsWith("/workflows"),
+      (route) => (refused ? route.fulfill(expired) : host.handle(route)),
+    );
+    await page.goto("/");
+    const indicator = page.locator(".platform-indicator");
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+    refused = true;
+    await page.getByRole("button", { name: "Workflows", exact: true }).click();
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Your session for Acme expired.");
+    await banner.getByRole("button", { name: "Sign in again" }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("cancelled");
+    // The account Studio held is the one the platform refused: checked
+    // again, it is refused again, and nothing says it still works.
+    await expect(banner).toContainText("Your session for Acme expired.", {
+      timeout: 15_000,
+    });
+    await expect(banner).not.toContainText("still signed in");
+    await expect(banner).toHaveClass(/\bwarning\b/);
+    await expect(
+      banner.getByRole("button", { name: "Sign in again" }),
+    ).toBeVisible();
+  });
+
   test("a sign-in outcome dismissed while the account is checked stays dismissed", async ({
     page,
   }) => {
