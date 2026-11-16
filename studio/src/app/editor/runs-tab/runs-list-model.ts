@@ -61,6 +61,8 @@ export type RunsTabMode =
   | "no-environment"
   | "not-linked"
   | "signed-out"
+  | "unreachable"
+  | "store"
   | "pending"
   | "unnamed"
   | "ready";
@@ -80,13 +82,19 @@ export function runsTabMode(facts: {
    * in again meets the same refusal, so this outranks `signedOut`.
    */
   notLinked?: boolean;
+  /**
+   * The check of who is signed in ended without an answer: the platform
+   * couldn't be reached, or the credential store is locked. Without it, a
+   * missing identity is a check still under way.
+   */
+  unread?: "unreachable" | "store" | null;
   name: string;
 }): RunsTabMode {
   if (!facts.profile) return "offline";
   if (!facts.profile.environmentId) return "no-environment";
   if (facts.notLinked) return "not-linked";
   if (facts.signedOut) return "signed-out";
-  if (!facts.identity) return "pending";
+  if (!facts.identity) return facts.unread ?? "pending";
   return facts.name.trim() ? "ready" : "unnamed";
 }
 

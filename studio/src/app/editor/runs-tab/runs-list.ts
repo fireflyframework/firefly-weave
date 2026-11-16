@@ -421,6 +421,13 @@ export class RunsList {
   signIn(): void {
     this.app().menuChoice("sign-in");
   }
+  /** Checks the platform and who is signed in again, as the banner's Try again does. */
+  checkAgain(): void {
+    const app = this.app();
+    const kind = app.platformNotice?.kind;
+    if (kind === "offline" || kind === "store") app.noticeAction();
+    else void app.verifyPlatform();
+  }
   openOperate(): void {
     void this.app().navigate("runs");
   }

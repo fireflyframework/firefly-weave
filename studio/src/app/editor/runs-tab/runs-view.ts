@@ -238,6 +238,13 @@ export class RunsView implements DoCheck {
       identity: app.identity,
       signedOut: app.signInToRead,
       notLinked: app.platformNotice?.kind === "not-linked",
+      // No check of who is signed in is out any more: nothing would end the
+      // wait. The banner's notice, if still there, says which failure it was.
+      unread: app.checkingIdentity
+        ? null
+        : app.platformNotice?.kind === "store"
+          ? "store"
+          : "unreachable",
       name: app.model.definition.metadata.name ?? "",
     });
     const key = [

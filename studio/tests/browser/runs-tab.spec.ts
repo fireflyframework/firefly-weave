@@ -369,6 +369,49 @@ test.describe("the Runs list's states", () => {
     await expect(message.getByRole("button")).toHaveCount(0);
   });
 
+  test("a platform Studio can't reach says so instead of loading, and Try again checks again", async ({
+    page,
+  }) => {
+    let reachable = false;
+    const offline = {
+      status: 503,
+      json: {
+        status: 503,
+        code: "WV-AUTH-OFFLINE",
+        message: "The platform can't be reached.",
+      },
+    };
+    await useNewEditor(page);
+    await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => (reachable ? undefined : offline),
+    });
+    // The account's identity can't be read either.
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      reachable ? route.fallback() : route.fulfill(offline),
+    );
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    // The banner's dismissal doesn't bring the endless wait back.
+    await page
+      .getByRole("button", { name: "Dismiss platform message" })
+      .click();
+    await page.getByRole("tab", { name: "Runs" }).click();
+    const runs = runsPage(page);
+    const message = runs.panel.locator(".runs-body .runs-message");
+    await expect(message.locator("strong")).toHaveText(
+      "Studio couldn't reach Acme.",
+    );
+    await expect(message.locator("p")).toHaveText(
+      "You can keep working locally.",
+    );
+    await expect(runs.panel.getByRole("status")).toHaveCount(0);
+    reachable = true;
+    await message.getByRole("button", { name: "Try again" }).click();
+    await expect(runs.panel).not.toContainText("Studio couldn't reach Acme.");
+  });
+
   test("a refused list shows who can grant access and no run", async ({
     page,
   }) => {

@@ -196,6 +196,22 @@ SPDX-License-Identifier: Apache-2.0
         </p>
       </div>
     }
+    @case ("unreachable") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="cloud" [size]="16" /></span>
+        <strong>Studio couldn't reach {{ platform() }}.</strong>
+        <p>You can keep working locally.</p>
+        <button type="button" (click)="checkAgain()">Try again</button>
+      </div>
+    }
+    @case ("store") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="lock" [size]="16" /></span>
+        <strong>Studio can't use this computer's credential store.</strong>
+        <p>Unlock or set up the system keychain, then try again.</p>
+        <button type="button" (click)="checkAgain()">Try again</button>
+      </div>
+    }
     @case ("signed-out") {
       <div class="runs-message">
         <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>

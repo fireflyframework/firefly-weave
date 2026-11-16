@@ -143,6 +143,27 @@ describe("what the Runs tab can list", () => {
       }),
     ).toBe("not-linked");
   });
+  it("says why when the check of who is signed in ended without an answer", () => {
+    // Nothing would end the wait: no check is out any more.
+    expect(
+      runsTabMode({
+        profile,
+        identity: null,
+        signedOut,
+        unread: "unreachable",
+        name: "a",
+      }),
+    ).toBe("unreachable");
+    expect(
+      runsTabMode({
+        profile,
+        identity: null,
+        signedOut,
+        unread: "store",
+        name: "a",
+      }),
+    ).toBe("store");
+  });
 });
 
 describe("a run as a list row", () => {
