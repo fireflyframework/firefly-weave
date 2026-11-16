@@ -47,7 +47,7 @@ the desktop app never migrates a platform.
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
 | alpha16 | `0033_language_workflow_calls` | Three new migrations, no role change. `0031_operations_key_collation` only replaces two internal accounting functions. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage) with a bounded historical backfill; it holds its locks until it commits (17 s for 10,000 retained runs and 32 s for 50,000 in a rehearsal), so stop every writer first. `0033_language_workflow_calls` adds two empty tables and takes well under a second whatever the number of retained runs (under 0.15 s in every measurement on 10,000 and 50,000 runs). Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, upgrade the server before its deployment runners, and finish or cancel runs that use loops or call other workflows before any rollback; see [what changes in alpha16](#what-changes-in-alpha16). `weave platform up --username` grants new local accounts the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. The Agentic and Files workers 0.1.8 pin this server version. |
 | alpha17 | `0038_operations_statistics` | Five new migrations and one new role; see [what changes in alpha17](#what-changes-in-alpha17) for the measured upgrade times. `0034_operations_change_requests` adds the empty `deployment_change_requests` table and two nullable columns on `deployment_plans` (who made a plan, and the change request it was made for); `0035_principal_idempotency` adds the empty `principal_idempotency` table, so a repeated `Idempotency-Key` on principal creation answers the principal it created, in its current state, for seven days; the next keyed creation by the same administrator removes older keys. These two take constant time. Every existing target now needs a second approver: plans made before the upgrade must be planned again on such targets, and an environment manager can turn the rule off per target; see [change request compatibility](#change-request-compatibility). Upgrade the server first, then its deployment runners: an upgraded runner registers adapter version 2, which an earlier server refuses. `0036_editor_studio_documents` adds the empty `studio_documents` table (a platform draft's canvas and test data, the latest two revisions of each), its tenant policy and its usage accounting; it takes well under a second. Explicitly migrate the server before restarting it, and upgrade Studio together with the server: Studio saves a platform draft's canvas and test data through the new `studio_documents` operations. `0037_language_transactions` adds the empty `run_transactions` and `worker_release_awareness` tables, a `settlement` column on task and call rows, an `effect` column on call rows, a `transaction_aware` column on task leases and a `transaction_state` column on run facts; every new column has a constant default or none, and the checks on two of them apply to new rows only, so adding them changes only the catalog. The upgrade still reads `task_intents` once to build two partial indexes, and task writes wait while they build. The upgrade took 0.07 s with 10,000 and 0.07 s with 50,000 retained runs. Purge refuses a run whose transaction is not settled. It adds the `transaction_reconciler` role, which no existing account gains. Workers that send `worker` on their claims must send the release they registered with. `0038_operations_statistics` adds three empty tables for [run metrics](metrics.md) (statistics buckets, capacity samples and rollup cursors) and the functions that count and add their duration histograms; it takes constant time and backfills nothing, so figures start at the upgrade. The environment summary gains an optional `runs_24h` section, and the `run_statistics.series`, `.workflows` and `.steps` reads need `status.read`. The Agentic and Files workers 0.1.9 pin this server version. |
-| alpha18 | `0040_editor_step_tests` | Two new migrations and one new role; see [what changes in alpha18](#what-changes-in-alpha18) for the upgrade order and what to check. `0040_editor_step_tests` adds a `test` column (constant default `false`) to workflow versions and activations, two partial indexes for normal reads, the empty `test_activation_details` and `environment_test_policies` tables with their row-level security, the `weave_purge_test_activation` function and the `step_tester` role (capability `step.test`, which grants nothing else). The new columns cost nothing toward usage while they hold their default, and nothing is backfilled; the indexes are built once over the version and activation tables, so writes to them wait while they build. No existing account gains the role; `weave platform up` gives it to the local owner in the demo environment only and turns that environment's test calls on, while every other environment keeps them off until an administrator saves its test policy. Connection test answers gain an optional `reason`, bindable connection items name an HTTP connection's origin, and any request may carry `X-Weave-Principal` (a mismatch answers 409 `WV-PRINCIPAL-CHANGED`); older clients ignore all three. Step error handling (`flow.onError`) adds no migration: it uses the existing `handled_errors` run-fact column and the task status `handled`. Upgrade clients with the server: an older client refuses `step_failed` events, step changes with `status: failed`, and the `accept_reconciled_failure` resolution kind. `0039_transactions_reserve` adds a column with no default to `run_transactions` (the latest in-doubt incident of each transaction) and one with a constant default to the internal control context, lets the app update a task's payload (a retried undo gets a new deadline), lets settlement work spend a run's control reserve, and counts transactions in doubt and undoing in the compatibility inventory; it changes only the catalog and function definitions, so it takes constant time. Explicitly migrate the server before restarting it. This version runs workflow transactions (it lists `flow.transaction`): upgrade CLIs, SDKs and Studio together with the server, because older clients refuse the `transaction.*` event types and the run-view step kind `transaction`, and drain runs with open transactions before any rollback, because an earlier server refuses to run them. A client of this release stores credentials with the time their tokens were obtained, which an earlier client cannot read: it reports `WV-AUTH-STORE` until `weave auth login` signs in again. Kubernetes deployment runners of this release register adapter version 2, so they take scale-downs, which remove exactly the reviewed pods, and restart jobs (`restart_workers`). Upgrade the server first, then grant each Kubernetes runner `get`, `list` and `patch` on its worker pods, then upgrade the runner; without that grant every scale-down it takes fails before any change. The runner image now includes kubectl v1.37.2, pinned by checksum, and `deploy/kubernetes/worker.yaml` gains the `__WEAVE_WORKER_CONFIGURATION__` placeholder, which a rendered worker needs. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade); set up this release in a new directory, whose `weave platform up` lets the API accept the sign-in clients of up to eight local cluster targets, so connecting a cluster later never restarts the API. AI readiness and AI setup's **Publish** now need the Agentic worker's model turn task (`weave-agentic.turn`): upgrade the Agentic worker to 0.1.10 together with the server, or AI readiness reports `worker_missing` and Publish answers 422 `WV-AI-WORKER-MISSING`. The Agentic and Files workers 0.1.10 pin this server version. |
+| alpha18 | `0040_editor_step_tests` | Two new migrations and one new role; see [what changes in alpha18](#what-changes-in-alpha18) for the upgrade order and what to check. `0040_editor_step_tests` adds a `test` column (constant default `false`) to workflow versions and activations, two partial indexes for normal reads, the empty `test_activation_details` and `environment_test_policies` tables with their row-level security, the `weave_purge_test_activation` function and the `step_tester` role (capability `step.test`, which grants nothing else). The new columns cost nothing toward usage while they hold their default, and nothing is backfilled; the indexes are built once over the version and activation tables, so writes to them wait while they build. No existing account gains the role; `weave platform up` gives it to the local owner in the demo environment only and turns that environment's test calls on, while every other environment keeps them off until an administrator saves its test policy. Bindable connection items now name an HTTP connection's origin in their existing `endpoint_origin` field, and any request may carry `X-Weave-Principal` (a mismatch answers 409 `WV-PRINCIPAL-CHANGED`); older clients are unaffected by both. A failed test of a `weave-http@2` connection now answers with a `reason`, which an earlier CLI or SDK refuses with `WV-WIRE`. Step error handling (`flow.onError`) adds no migration: it uses the existing `handled_errors` run-fact column and the task status `handled`. Upgrade clients with the server: an older client refuses the `accept_reconciled_failure` resolution kind. `0039_transactions_reserve` adds a column with no default to `run_transactions` (the latest in-doubt incident of each transaction) and one with a constant default to the internal control context, lets the app update a task's payload (a retried undo gets a new deadline), lets settlement work spend a run's control reserve, and counts transactions in doubt and undoing in the compatibility inventory; it changes only the catalog and function definitions, so it takes constant time. Explicitly migrate the server before restarting it. This version runs workflow transactions (it lists `flow.transaction`): upgrade CLIs, SDKs and Studio together with the server, because older clients refuse the `transaction.*` event types and the run-view step kind `transaction`, and finish or cancel runs that use transactions, step error handling or AI agent steps before any rollback, because alpha17 lists none of `flow.transaction`, `flow.onError` and `ai.agent` and leaves such runs waiting. A client of this release stores credentials with the time their tokens were obtained, which an earlier client cannot read: it reports `WV-AUTH-STORE` until `weave auth login` signs in again. Kubernetes deployment runners of this release register adapter version 2, so they take scale-downs, which remove exactly the reviewed pods, and restart jobs (`restart_workers`). Upgrade the server first, then grant each Kubernetes runner `get`, `list` and `patch` on its worker pods, then upgrade the runner; without that grant every scale-down it takes fails before any change. The runner image now includes kubectl v1.37.2, pinned by checksum, and `deploy/kubernetes/worker.yaml` gains the `__WEAVE_WORKER_CONFIGURATION__` placeholder for the `firefly.weave/configuration` annotation, which the runner compares with its policy. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade); set up this release in a new directory, whose `weave platform up` lets the API accept the sign-in clients of up to eight local cluster targets, so connecting a cluster later never restarts the API. AI readiness and AI setup's **Publish** now need the Agentic worker's model turn task (`weave-agentic.turn`): upgrade the Agentic worker to 0.1.10 together with the server, or AI readiness reports `worker_missing` and Publish answers 422 `WV-AI-WORKER-MISSING`. The Agentic and Files workers 0.1.10 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -58,7 +58,7 @@ evidence before you reopen writers.
 
 [Open diagram at full size](../diagrams/operations-upgrade.svg)
 
-### A local platform has no in-place upgrade
+## A local platform has no in-place upgrade
 
 **A local platform from `weave platform` has no in-place upgrade.** It records
 the CLI version and the checkout that created it. Every `weave platform`
@@ -540,7 +540,7 @@ its stored listing decision; its timeline answers `422 WV-IR-UNSUPPORTED`
 meanwhile. The scheduler does this in the background: each minute it visits up
 to 16 tenants, gives each one's next environment up to one second of database
 work, and re-checks at most 100 runs there, fewer when the second runs out
-first. A tenant's environments take turns, one per minute. So in an installation
+first. A tenant's environments take turns, one per minute. In an installation
 with one tenant and one environment, 10,000 waiting runs take at least 100
 minutes, and a million about a week. More environments in a tenant, or more
 than 16 tenants, make each environment wait longer.
@@ -604,7 +604,7 @@ let Compose choose the containers instead of removing the reviewed members.
 runner registers adapter version 2, which promises to remove exactly the reviewed
 members, and only such a runner claims a scale-down's apply job. Any plan that
 lowers a worker component's replicas is a scale-down, whether it scales, updates
-or deploys. From the release after alpha17, Kubernetes runners register version 2
+or deploys. From alpha18, Kubernetes runners register version 2
 too and take scale-downs; grant them `get`, `list` and `patch` on the worker pods
 before you upgrade them, as
 [Install an Operations runner](operations-runner.md#1-choose-where-the-runner-will-live)
@@ -658,7 +658,7 @@ changes before you reopen traffic:
   `WV-LEGACY-UNAVAILABLE`. Reading a run that waits for an upgrade, sending it a
   signal, or reporting a task result for it answers the same way. Runs with
   unavailable legacy evidence still answer HTTP 409 `WV-LEGACY-UNAVAILABLE`.
-  Treat the 422 as "this server is too old", not as lost data.
+  Treat the 422 as "this server is too old," not as lost data.
 - **`email_receipts.dispatch` can answer 429.** When Weave refuses the dispatch
   for capacity, the operation answers HTTP 429 (`WV-OPERATION-CAPACITY` or
   `WV-REQUEST-CAPACITY`) with `Retry-After`, where it used to answer HTTP 200
@@ -922,42 +922,61 @@ that includes them refuses to start on the previous schema.
   measure your own window.
 - **Upgrade CLIs, SDKs and Studio together with the server.** This version runs
   workflow transactions and step error handling: earlier clients refuse the
-  `transaction.*` event types, the run-view step kind `transaction`,
-  `step_failed` events, step changes with `status: failed` and the
-  `accept_reconciled_failure` resolution kind. A client of this release stores
-  credentials with the time their tokens were obtained, which an earlier client
-  cannot read: it reports `WV-AUTH-STORE` until `weave auth login` signs in
+  `transaction.*` event types, the run-view step kind `transaction` and the
+  `accept_reconciled_failure` resolution kind. A failed test of a
+  `weave-http@2` connection now answers with a `reason`, which an earlier CLI
+  or SDK refuses with `WV-WIRE`. A client of this release stores credentials with the time
+  their tokens were obtained: an earlier client on the same computer cannot
+  read them and reports `WV-AUTH-STORE` until `weave auth login` signs in
   again.
-- **Upgrade the Agentic worker to 0.1.10 together with the server.** AI
-  readiness and AI setup's **Publish** now need the worker's model turn task
-  (`weave-agentic.turn`) as well as its generate task. With a worker that serves
-  only `weave-agentic.generate`, AI readiness reports `worker_missing` and
-  Publish answers 422 `WV-AI-WORKER-MISSING`. The Agentic and Files workers
-  0.1.10 pin core 0.1.0a18.
-- **Upgrade the server before its Kubernetes deployment runners**, then grant
-  each runner `get`, `list` and `patch` on its worker pods, then upgrade the
-  runner. Kubernetes runners of this release register adapter version 2 and
-  take scale-downs, which remove exactly the reviewed pods; without that grant
-  every scale-down they take fails before any change. A rendered worker needs
-  the `__WEAVE_WORKER_CONFIGURATION__` placeholder that
-  `deploy/kubernetes/worker.yaml` gains.
-- **Before any rollback**, drain runs with open transactions, because an earlier
-  server refuses to run them, and plan to restore the backup taken before the
-  migration, as [if the upgrade fails](#if-the-upgrade-fails) explains.
+- **Upgrade the Agentic worker to 0.1.10 together with the server, and admit
+  its release.** AI readiness and AI setup's **Publish** now need the model turn
+  task (`weave-agentic.turn`) as well as the generate task
+  (`weave-agentic.generate`), and 0.1.10 is the first Agentic worker that serves
+  both. While the project's admitted Agentic releases serve only the generate
+  task, AI readiness reports `worker_missing` and Publish answers 422
+  `WV-AI-WORKER-MISSING`. The Agentic and Files workers 0.1.10 pin core
+  0.1.0a18.
+- **Upgrade the server before its Kubernetes deployment runners.** Kubernetes
+  runners of this release register adapter version 2, so they take scale-downs,
+  which remove exactly the reviewed pods, and restart jobs. After the server
+  upgrade, grant each Kubernetes runner `get`, `list` and `patch` on pods in its
+  target's namespace, as
+  [Install an Operations runner](operations-runner.md#1-choose-where-the-runner-will-live)
+  explains, then upgrade the runner. Without that grant, every scale-down the
+  runner takes fails before any change. When you render
+  `deploy/kubernetes/worker.yaml`, replace its new
+  `__WEAVE_WORKER_CONFIGURATION__` placeholder with the configuration your
+  runner's policy binds the worker component to: the runner refuses a worker
+  unless its `firefly.weave/configuration` annotation names that configuration.
+- **Before any rollback**, finish or cancel every run that uses a transaction,
+  step error handling or an AI agent step. Alpha17 lists none of
+  `flow.transaction`, `flow.onError` and `ai.agent`, so such runs wait until a
+  server that runs them takes over; see
+  [runs that need a newer server](#runs-that-need-a-newer-server). Let open
+  transactions settle first: rolling back the database means restoring the
+  backup taken before the migration, as
+  [if the upgrade fails](#if-the-upgrade-fails) explains, and that restore
+  removes a transaction's record but not what it did in other systems.
   Environment test policies and step test runs made since the upgrade are not
-  kept by that restore.
+  kept by that restore either.
 - **Local platforms.** A local platform still has
   [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade): set up
   alpha18 from its own checkout in a new directory. Its `weave platform up`
   turns step tests on in the demo environment, gives the local owner the
   `step_tester` role there, and lets the API accept the sign-in clients of up
   to eight local cluster targets, so connecting a cluster later never restarts
-  the API.
+  the API. To try a Kubernetes runner, see
+  [Connect a kind or k3d cluster on this computer](cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 Check these changes before you reopen traffic:
 
 - **Step tests stay off** in every environment but the local demo one until an
-  administrator saves its test policy (`PUT {environment}/test-policy`).
+  administrator saves its test policy (`PUT {environment}/test-policy`, which
+  needs `environment.manage`).
+- **Testing an HTTP connection contacts its host.** Testing a `weave-http@2`
+  connection now sends one `HEAD` request to its base URL with the connection's
+  sign-in, through the same egress rules as its actions.
 - **Requests wait briefly for a busy slot.** A request that finds every slot of
   its kind busy now waits, in arrival order, up to 250 ms before the API refuses
   it with 429 `WV-OPERATION-CAPACITY` and `Retry-After`.
