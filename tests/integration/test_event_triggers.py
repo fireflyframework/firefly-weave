@@ -766,3 +766,35 @@ async def test_a_start_whose_stored_event_is_unreadable_is_rejected_alone(platfo
         broken: ("rejected", "WV-TRIGGER-START", "WV-RUNTIME-INPUT"),
         readable: ("started", None, None),
     }
+
+
+async def test_a_deactivated_owner_rejects_its_start(platform, access_db, provisioned, monkeypatch):
+    owner = await person(access_db, provisioned, platform, "deployer", "operator", "viewer")
+    await platform.bind(await platform.publish(reaction()), actor=owner)
+    with held(monkeypatch):
+        await in_doubt(platform)
+    await platform.execute("UPDATE principals SET active=false WHERE id=:id", id=owner.id)
+    await platform.scan()
+    [row] = await starts(platform)
+    assert (row["status"], row["code"], row["cause"]) == ("rejected", "WV-TRIGGER-START", "WV-FORBIDDEN")
+    assert await reactions(platform) == []
+
+
+async def test_a_disable_waits_for_a_start_that_holds_its_trigger(platform):
+    trigger = await platform.bind(await platform.publish(reaction()))
+    waiting = (
+        "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type='Lock' "
+        "AND query LIKE 'SELECT %FROM event_triggers %FOR UPDATE'"
+    )
+    async with platform.sessions() as session, session.begin():
+        # A start in flight holds the trigger as a start does.
+        await session.execute(text("SELECT 1 FROM event_triggers WHERE id=:id FOR SHARE"), {"id": trigger.id})
+        disabling = asyncio.create_task(
+            platform.event_triggers.disable(platform.actor, platform.scope, trigger.id, context=AuditContext())
+        )
+        for _ in range(200):
+            if (await platform.query(waiting))[0]["n"] or disabling.done():
+                break
+            await asyncio.sleep(0.01)
+        assert (await platform.query(waiting))[0]["n"] == 1 and not disabling.done()
+    assert (await disabling).disabled
