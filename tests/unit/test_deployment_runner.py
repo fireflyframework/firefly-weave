@@ -512,10 +512,10 @@ def claiming(monkeypatch, answers):
     return claims
 
 
-def through_the_client(monkeypatch, transport):
-    """Like claiming(), but each claim goes through the real WeaveClient over `transport` (None keeps the client's own
-    network transport), so the runner sees exactly the errors the client raises. Registration is faked, and the token
-    comes from memory; returns the list of claims the runner made."""
+def through_the_client(monkeypatch, transport, *, timeout=None):
+    """Like claiming(), but each claim goes through the real WeaveClient over `transport` (None keeps the transport
+    serve() chose), so the runner sees exactly the errors the client raises. Registration is faked, the token comes
+    from memory, and `timeout` replaces the client's request timeout; returns the list of claims the runner made."""
     from types import SimpleNamespace
 
     from firefly_weave.deployment_runner import application
@@ -529,7 +529,9 @@ def through_the_client(monkeypatch, transport):
 
     class Client(WeaveClient):
         def __init__(self, base_url, provider, scope, **options):
-            super().__init__(base_url, Token(), scope, **(options | {"transport": transport or options["transport"]}))
+            options["transport"] = transport or options["transport"]
+            options["timeout"] = timeout or options["timeout"]
+            super().__init__(base_url, Token(), scope, **options)
 
         async def invoke(self, operation, **arguments):
             if operation == "deployment_runners.create":
@@ -649,6 +651,79 @@ async def test_the_runner_stops_on_a_claim_its_own_client_refused(monkeypatch, r
     claims = through_the_client(monkeypatch, answering(refusal()))
     with pytest.raises(WeaveError):
         await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
+    assert claims == ["deployment_runners.claim"]
+
+
+CLUSTER_API = "http://weave-api.weave-system.svc:8000"
+
+
+def cluster_policy():
+    """The private-origin policy of a cluster, where the runner reaches CLUSTER_API over plain HTTP through the pinned
+    transport, which resolves the name itself and connects only to 10.89.0.0/24."""
+    from firefly_weave import private_origins as po
+
+    entry = po.PrivateOrigin(origin=CLUSTER_API, purpose="runner", networks=("10.89.0.0/24",), credentials="bridge")
+    return po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry]))
+
+
+async def kept_claiming(running, claims):
+    """The error serve() ended with before its third claim, or None when it kept claiming; cancels it either way."""
+    for _ in range(300):
+        if len(claims) >= 3 or running.done():
+            break
+        await asyncio.sleep(0.01)
+    ended = running.exception() if running.done() and not running.cancelled() else None
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    assert len(claims) >= 3 or ended is not None, "serve() neither claimed again nor ended"
+    return ended
+
+
+async def test_the_runner_keeps_claiming_in_a_cluster_while_the_api_name_does_not_resolve(monkeypatch, caplog):
+    # While the API restarts, its service name can stop resolving for a moment.
+    import socket
+
+    from firefly_weave.deployment_runner.application import serve
+
+    async def getaddrinfo(host, port, **options):
+        raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided, or not known")
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None)
+    with cluster_policy():
+        ended = await kept_claiming(asyncio.create_task(serve(runner_configuration(CLUSTER_API))), claims)
+    assert ended is None, f"serve() ended on a name that did not resolve: {ended!r}"
+    # The warning names the lookup failure, never the name or the message.
+    assert "(ConnectError (gaierror), 1 in a row)" in caplog.text and "nodename" not in caplog.text
+
+
+async def test_the_runner_keeps_claiming_in_a_cluster_while_reaching_the_api_hangs(monkeypatch):
+    from firefly_weave.deployment_runner.application import serve
+
+    async def getaddrinfo(host, port, **options):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None, timeout=0.05)
+    with cluster_policy():
+        ended = await kept_claiming(asyncio.create_task(serve(runner_configuration(CLUSTER_API))), claims)
+    assert ended is None, f"serve() ended on a connection that timed out: {ended!r}"
+
+
+async def test_the_runner_stops_in_a_cluster_when_the_api_name_resolves_outside_its_network(monkeypatch):
+    # The pinned transport refuses the address before it connects; waiting would not change the policy.
+    import socket
+
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import ContractError
+
+    async def getaddrinfo(host, port, **options):
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", port))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    claims = through_the_client(monkeypatch, None)
+    with cluster_policy(), pytest.raises(ContractError):
+        await asyncio.wait_for(serve(runner_configuration(CLUSTER_API)), 2)
     assert claims == ["deployment_runners.claim"]
 
 

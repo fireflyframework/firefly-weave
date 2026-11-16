@@ -180,6 +180,22 @@ async def test_mixed_answers_for_an_approved_origin_never_open_a_connection():
         )
 
 
+async def test_a_destination_name_that_does_not_resolve_fails_a_connector_as_unavailable_before_it_started():
+    # The pinned transport resolves the name itself; a lookup that fails is a connection that was never made.
+    import socket
+
+    async def unresolvable(host, port):
+        raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided, or not known")
+
+    class Client(SecureHttpClient):
+        async def request_bounded(self, method, url, **kwargs):
+            return await super().request_bounded(method, url, resolver=unresolvable, **kwargs)
+
+    with pytest.raises(ConnectorFailure) as failure:
+        await HttpConnector(Client(), HttpPolicy(origins=acme_policy())).execute({}, v1_context(ACME))
+    assert (failure.value.code, failure.value.outcome) == ("UNAVAILABLE", "not_started")
+
+
 async def test_an_approved_development_origin_never_follows_redirects():
     wire = Wire(httpx.Response(302, headers={"location": ACME + "/items?page=2"}), httpx.Response(200, json={}))
     with pytest.raises(ConnectorFailure) as failure:
