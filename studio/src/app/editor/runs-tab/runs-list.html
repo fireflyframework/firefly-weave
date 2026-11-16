@@ -186,6 +186,13 @@ SPDX-License-Identifier: Apache-2.0
         </button>
       </div>
     }
+    @case ("signed-out") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>
+        <strong>Sign in to see this workflow's runs.</strong>
+        <button type="button" (click)="signIn()">Sign in</button>
+      </div>
+    }
     @case ("access") {
       <div class="runs-message">
         <span class="runs-ring"><weave-icon name="lock" [size]="16" /></span>

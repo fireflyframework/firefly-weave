@@ -413,6 +413,9 @@ export class RunsList {
   chooseEnvironment(): void {
     this.app().menuChoice("workspace");
   }
+  signIn(): void {
+    this.app().menuChoice("sign-in");
+  }
   openOperate(): void {
     void this.app().navigate("runs");
   }

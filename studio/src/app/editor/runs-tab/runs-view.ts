@@ -228,6 +228,7 @@ export class RunsView implements DoCheck {
     const mode = runsTabMode({
       profile: app.profile,
       identity: app.identity,
+      signedOut: app.signInToRead,
       name: app.model.definition.metadata.name ?? "",
     });
     const key = [

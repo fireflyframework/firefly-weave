@@ -288,16 +288,23 @@ test("signing out forgets the chosen run, the list and the run's data kept here"
   ).toBeVisible();
   // Nothing of the run's data stays on this computer.
   await expect.poll(runData).toEqual([]);
-  // Back to the workflow: no list and no run without an account.
+  // Back to the workflow: no list and no run without an account, and the
+  // tab asks to sign in instead of loading.
   await page.goBack();
   await runs.tabs.getByRole("tab", { name: "Runs" }).click();
   await expect(runs.panel).toBeVisible();
   await page.clock.runFor(6_000);
-  await expect(runs.rows).toHaveCount(0);
-  await expect(runs.panel.locator(".runs-body")).not.toContainText(
-    "invoice-approval",
+  const body = runs.panel.locator(".runs-body");
+  await expect(body.locator(".runs-message strong")).toHaveText(
+    "Sign in to see this workflow's runs.",
   );
+  await expect(body.getByRole("status")).toHaveCount(0);
+  await expect(runs.rows).toHaveCount(0);
+  await expect(body).not.toContainText("invoice-approval");
   await expect(runs.canvas.locator(".run-header")).toHaveCount(0);
+  // Sign in starts Studio's sign-in for the platform.
+  await body.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.locator("#wizard-heading")).toHaveText("Sign in to Acme");
 });
 
 test("the run's error is said by its code, never the platform's message", async ({
