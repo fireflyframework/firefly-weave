@@ -21,13 +21,40 @@ signal, a selector key a signal accepts, or a preset is additive; a stored rule 
 reads as unsupported and is never evaluated. Test runs never contribute to any signal.
 """
 
-from collections.abc import Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, Protocol
+from uuid import UUID
 
 from firefly_weave.contracts.alerts import AlertRuleDraft, AlertUnit
+from firefly_weave.contracts.operations_summary import (
+    IncidentsSection,
+    LoadSection,
+    TargetsSection,
+    UnavailableSection,
+    WorkersSection,
+)
+from firefly_weave.contracts.run_statistics import bucket_floor
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations import capacity_reads, statistics
+from firefly_weave.operations.loop_health import LoopHealth
+from firefly_weave.operations.statistics_histogram import quantile
+from firefly_weave.operations.statistics_reads import Outcomes, rates
+from firefly_weave.operations.summary import (
+    Budget,
+    SectionReader,
+    read_incidents,
+    read_load,
+    read_runners_offline,
+    read_section,
+    read_targets,
+    read_workers,
+)
+from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime import admission
 
 
 @dataclass(frozen=True)
@@ -39,6 +66,14 @@ class SignalSpec:
     selectors: frozenset[str]
     # Rate and quantile signals compare only once the rule's min_samples runs ended in the window.
     sampled: bool = False
+
+
+@dataclass(frozen=True)
+class Value:
+    """A reading: the signal's value (None without data) and, for run signals, how many runs ended in the window."""
+
+    value: float | None
+    samples: int | None = None
 
 
 _WORKFLOW = frozenset({"workflow"})
@@ -90,3 +125,290 @@ def validate_rule(rule: AlertRuleDraft) -> None:
         raise _refuse("threshold")
     if not spec.sampled and rule.min_samples != 1:
         raise _refuse("min_samples")
+
+
+# A 60-second window reads ended runs directly, up to this many; beyond it the five-minute statistics answer.
+RECENT_WINDOW_SECONDS = 60
+RECENT_LIMIT = 10_000
+_SCOPE = "r.tenant_id=:tenant AND r.project_id=:project AND r.environment_id=:environment"
+# Withheld runs count only toward the environment's total, never toward a workflow, as in run statistics.
+_SHOWN_IN = (
+    "r.workflow_name=:workflow AND r.classification_state='available' AND r.classification_policy=:policy "
+    "AND NOT EXISTS(SELECT 1 FROM run_policy_blocks b WHERE b.tenant_id=r.tenant_id AND b.project_id=r.project_id "
+    "AND b.environment_id=r.environment_id AND b.run_id=r.run_id)"
+)
+_RECENT_RUNS = (
+    "SELECT count(*) AS runs,count(*) FILTER (WHERE status='succeeded') AS succeeded,"
+    "count(*) FILTER (WHERE status='failed') AS failed,count(*) FILTER (WHERE status='cancelled') AS cancelled,"
+    "count(*) FILTER (WHERE status='timed_out') AS timed_out,"
+    "weave_histogram((extract(epoch FROM ended_at-started_at)*1000000)::bigint) AS duration_hist "
+    "FROM (SELECT r.status,r.started_at,r.ended_at FROM run_facts r WHERE "
+    f"{_SCOPE} AND NOT r.test AND r.ended_at IS NOT NULL AND r.ended_at>=:since AND r.ended_at<=:until "
+    "AND r.status IN ('succeeded','failed','cancelled','timed_out') {workflow} LIMIT :limit) r"
+)
+_BUCKET_RUNS = (
+    "SELECT coalesce(sum(succeeded),0) AS succeeded,coalesce(sum(failed),0) AS failed,"
+    "coalesce(sum(cancelled),0) AS cancelled,coalesce(sum(timed_out),0) AS timed_out,"
+    "weave_histogram_sum(duration_hist) AS duration_hist FROM run_stat_buckets WHERE tenant_id=:tenant "
+    "AND project_id=:project AND environment_id=:environment AND granularity='5m' AND node_id='' "
+    "AND workflow_name=:workflow AND bucket_start>=:since AND bucket_start<:until"
+)
+_ROLLED = (
+    "SELECT rolled_until FROM operations_statistics_cursors WHERE tenant_id=:tenant AND project_id=:project "
+    "AND environment_id=:environment"
+)
+
+
+class SignalUnavailable(Exception):
+    """The signal can't be read now: its statements ran out of time, or the run statistics stopped being rolled up.
+
+    The evaluator records a failed read, which changes no alert.
+    """
+
+
+class SignalSource(Protocol):
+    """The figures signals are computed from, all read in the rule's environment."""
+
+    async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
+        """Runs that ended in [since, until], or None when more than RECENT_LIMIT did."""
+        ...
+
+    async def bucket_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes:
+        """Runs counted in the five-minute statistics that overlap [since, until), the open bucket included."""
+        ...
+
+    async def load(self) -> LoadSection: ...
+
+    async def workers(self) -> WorkersSection: ...
+
+    async def incidents(self) -> IncidentsSection: ...
+
+    async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection: ...
+
+    async def runners_offline(self, targets: tuple[UUID, ...] | None) -> int: ...
+
+    async def ready(self, task_type: str | None) -> tuple[int, float | None]:
+        """Ready tasks that are due, of one task type or all, and the oldest one's wait in seconds."""
+        ...
+
+
+class _Database:
+    """The figures read with one section's reader, each statement under what is left of its budget."""
+
+    def __init__(self, reader: SectionReader, now: datetime) -> None:
+        self.reader, self.now = reader, now
+
+    async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
+        row = await self.reader.row(
+            _RECENT_RUNS.format(workflow="" if workflow is None else f"AND {_SHOWN_IN}"),
+            since=since,
+            until=until,
+            limit=RECENT_LIMIT + 1,
+            workflow=workflow,
+            policy=admission.POLICY,
+        )
+        return None if int(row["runs"]) > RECENT_LIMIT else Outcomes().add(row)
+
+    async def bucket_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes:
+        rolled = await self.reader.rows(_ROLLED)
+        # The rollup recomputes the last WINDOW of buckets every visit; a cursor older than that is behind for good.
+        if not rolled or rolled[0]["rolled_until"] is None or rolled[0]["rolled_until"] < self.now - statistics.WINDOW:
+            raise SignalUnavailable()
+        row = await self.reader.row(
+            _BUCKET_RUNS,
+            workflow=statistics.TOTAL if workflow is None else workflow,
+            since=bucket_floor(since, "5m"),
+            until=until,
+        )
+        return Outcomes().add(row)
+
+    async def load(self) -> LoadSection:
+        return await read_load(self.reader)
+
+    async def workers(self) -> WorkersSection:
+        return await read_workers(self.reader)
+
+    async def incidents(self) -> IncidentsSection:
+        return await read_incidents(self.reader)
+
+    async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection:
+        return await read_targets(self.reader, targets)
+
+    async def runners_offline(self, targets: tuple[UUID, ...] | None) -> int:
+        return await read_runners_offline(self.reader, targets)
+
+    async def ready(self, task_type: str | None) -> tuple[int, float | None]:
+        sql = capacity_reads.READY_COUNTS + ("" if task_type is None else " AND task_type=:task_type")
+        row = await self.reader.row(sql, task_type=task_type)
+        return int(row["ready"]), None if row["oldest"] is None else max(0.0, float(row["oldest"]))
+
+
+type SignalRead = Callable[
+    [SignalSource, LoopHealth, AlertRuleDraft, datetime, tuple[UUID, ...] | None], Awaitable[Value]
+]
+
+
+async def _runs(source: SignalSource, rule: AlertRuleDraft, now: datetime) -> Outcomes:
+    if rule.window_seconds is None:
+        raise ValueError("A run signal needs a window")
+    since = now - timedelta(seconds=rule.window_seconds)
+    if rule.window_seconds == RECENT_WINDOW_SECONDS:
+        recent = await source.recent_runs(rule.selector.workflow, since, now)
+        if recent is not None:
+            return recent
+    return await source.bucket_runs(rule.selector.workflow, since, now)
+
+
+async def _failure_rate(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    outcomes = await _runs(source, rule, now)
+    return Value(rates(outcomes)[0], outcomes.ended)
+
+
+async def _failures(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    outcomes = await _runs(source, rule, now)
+    return Value(float(outcomes.failed + outcomes.timed_out), outcomes.ended)
+
+
+async def _duration_p95(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    outcomes = await _runs(source, rule, now)
+    milliseconds = quantile(outcomes.hist, 0.95) if outcomes.ended else None
+    return Value(None if milliseconds is None else milliseconds / 1000, outcomes.ended)
+
+
+async def _oldest_ready(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    # Nothing waiting is a known value: the oldest wait is zero.
+    _, oldest = await source.ready(rule.selector.task_type)
+    return Value(oldest or 0.0)
+
+
+async def _ready_tasks(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    ready, _ = await source.ready(rule.selector.task_type)
+    return Value(float(ready))
+
+
+async def _outbox_pending(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.load()).outbox_pending))
+
+
+async def _provider_pending(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.load()).provider_pending))
+
+
+async def _incidents_active(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.incidents()).active))
+
+
+async def _workers_online(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.workers()).online))
+
+
+async def _free_slots(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    workers = await source.workers()
+    return Value(float(max(0, workers.capacity - workers.active_leases)))
+
+
+async def _runner_offline(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float(await source.runners_offline(targets)))
+
+
+async def _reconciliation_required(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.targets(targets)).reconciliation_required))
+
+
+async def _health_degraded(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    # The evaluator can't report on itself: its own state never fires a rule it evaluates.
+    degraded = [
+        snapshot
+        for snapshot in health.snapshots()
+        if snapshot.component != "alert_evaluator" and snapshot.state in {"degraded", "down"}
+    ]
+    return Value(float(len(degraded)))
+
+
+READERS: Mapping[str, SignalRead] = MappingProxyType(
+    {
+        "run.failure_rate": _failure_rate,
+        "run.failures": _failures,
+        "run.duration_p95": _duration_p95,
+        "queue.oldest_ready_seconds": _oldest_ready,
+        "queue.ready_tasks": _ready_tasks,
+        "outbox.pending": _outbox_pending,
+        "provider.pending": _provider_pending,
+        "incidents.active": _incidents_active,
+        "workers.online": _workers_online,
+        "workers.free_slots": _free_slots,
+        "targets.runner_offline": _runner_offline,
+        "deployments.reconciliation_required": _reconciliation_required,
+        "health.degraded": _health_degraded,
+    }
+)
+
+
+def _readable(rule: AlertRuleDraft, targets: tuple[UUID, ...] | None) -> tuple[UUID, ...] | None:
+    """The targets a rule reads: its selected target while it may read it, otherwise every target it may read."""
+    selected = rule.selector.target_id
+    if selected is None:
+        return targets
+    return (selected,) if targets is None or selected in targets else ()
+
+
+async def measure(
+    source: SignalSource,
+    health: LoopHealth,
+    rule: AlertRuleDraft,
+    now: datetime,
+    *,
+    targets: tuple[UUID, ...] | None = None,
+) -> Value:
+    """The rule's signal at ``now``. ``targets`` are the targets the rule may read (None: every one)."""
+    return await READERS[rule.signal](source, health, rule, now, _readable(rule, targets))
+
+
+async def read_signal(
+    tx: Transaction,
+    health: LoopHealth,
+    rule: AlertRuleDraft,
+    now: datetime,
+    *,
+    targets: tuple[UUID, ...] | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> Value:
+    """Read the rule's signal in the transaction's environment, in a savepoint with the summary's section budget.
+
+    Raises SignalUnavailable when the read runs out of time or meets a transient failure, or when run statistics are
+    stale; any other error propagates. Either way the transaction stays usable.
+    """
+
+    async def read(budget: Budget) -> Value:
+        return await measure(_Database(SectionReader(tx, now, budget), now), health, rule, now, targets=targets)
+
+    value = await read_section(tx, read, monotonic=monotonic)
+    if isinstance(value, UnavailableSection):
+        raise SignalUnavailable()
+    return value

@@ -24,14 +24,8 @@ from typing import Any
 import pytest
 
 from firefly_weave.contracts.alerts import AlertRuleDraft
-from firefly_weave.operations.alert_states import (
-    Advance,
-    ReadFailed,
-    RuleState,
-    Value,
-    advance,
-    condition_met,
-)
+from firefly_weave.operations.alert_signals import Value
+from firefly_weave.operations.alert_states import Advance, ReadFailed, RuleState, advance, condition_met
 
 T0 = datetime(2026, 11, 15, 12, tzinfo=UTC)
 OK = RuleState(state="ok", since=T0 - timedelta(hours=1))

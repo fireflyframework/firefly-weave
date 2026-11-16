@@ -31,7 +31,7 @@ from typing import Literal
 from uuid import UUID
 
 from firefly_weave.contracts.alerts import AlertRuleDraft
-from firefly_weave.operations.alert_signals import ALERT_SIGNALS
+from firefly_weave.operations.alert_signals import ALERT_SIGNALS, Value
 
 # A firing rule resolves only after its condition has been clear at least this long, whatever its For time.
 MIN_CLEAR_SECONDS = 60
@@ -64,14 +64,6 @@ class RuleState:
     # Of the firing alert: when it last notified anyone, and whether someone acknowledged it.
     last_notified_at: datetime | None = None
     acknowledged: bool = False
-
-
-@dataclass(frozen=True)
-class Value:
-    """A reading: the signal's value (None without data) and, for rate and quantile signals, the ended runs."""
-
-    value: float | None
-    samples: int | None = None
 
 
 @dataclass(frozen=True)
