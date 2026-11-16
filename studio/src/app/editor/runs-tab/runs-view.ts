@@ -233,18 +233,25 @@ export class RunsView implements DoCheck {
       const handed = takeLinkedRun(app.draftId);
       if (handed) this.linked = this.linkedRun = handed;
     }
+    // How the last check of who is signed in failed, as the shell recorded
+    // it, so a dismissed banner changes nothing. A check or a sign-in still
+    // under way will answer for itself: until then the tab waits.
+    const failure =
+      app.checkingIdentity || app.loginWatcher.pending
+        ? null
+        : app.identityFailure;
     const mode = runsTabMode({
       profile: app.profile,
       identity: app.identity,
-      signedOut: app.signInToRead,
-      notLinked: app.platformNotice?.kind === "not-linked",
-      // No check of who is signed in is out any more: nothing would end the
-      // wait. The banner's notice, if still there, says which failure it was.
-      unread: app.checkingIdentity
-        ? null
-        : app.platformNotice?.kind === "store"
-          ? "store"
-          : "unreachable",
+      signedOut: app.signInToRead || failure === "expired",
+      notLinked:
+        app.platformNotice?.kind === "not-linked" || failure === "not-linked",
+      unread:
+        failure === "offline"
+          ? "unreachable"
+          : failure === "store"
+            ? "store"
+            : null,
       name: app.model.definition.metadata.name ?? "",
     });
     const key = [

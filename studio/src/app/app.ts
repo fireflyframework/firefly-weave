@@ -307,6 +307,12 @@ type PlatformNoticeKind =
   | "signing-in"
   | "sign-in-failed"
   | "revocation";
+/**
+ * Why the last check of who is signed in found no account: the platform
+ * couldn't be reached, the credential store is locked, the platform doesn't
+ * know the account, or the sign-in ended.
+ */
+export type IdentityFailure = "offline" | "store" | "not-linked" | "expired";
 interface ConnectionSlot {
   name: string;
   connector: string;
@@ -559,6 +565,13 @@ export class App implements CanvasHost {
   get checkingIdentity() {
     return !!this.identityChecks?.size;
   }
+  /**
+   * How the last check of who is signed in failed, recorded where it failed:
+   * it outlives the banner's notice, which the person can dismiss. Cleared
+   * when a check starts, when an identity arrives, and on sign-in or
+   * sign-out; null also while nothing has failed.
+   */
+  identityFailure: IdentityFailure | null = null;
   /** Resolves once no check of who is signed in is still out. */
   async identitySettled() {
     while (this.identityChecks?.size)
@@ -1837,11 +1850,14 @@ export class App implements CanvasHost {
       return false;
     // After a sign-out the platform refuses calls as expected: Studio stays
     // "Signed out" instead of reporting an expired session.
-    if (plain.code === "WV-AUTH-NOT-LINKED" || !this.platformSignedOut)
+    if (plain.code === "WV-AUTH-NOT-LINKED" || !this.platformSignedOut) {
+      this.identityFailure =
+        plain.code === "WV-AUTH-NOT-LINKED" ? "not-linked" : "expired";
       this.platformNotice = {
-        kind: plain.code === "WV-AUTH-NOT-LINKED" ? "not-linked" : "expired",
+        kind: this.identityFailure,
         name: this.profile.name,
       };
+    }
     this.error = "";
     this.errorCode = "";
     this.message = "";
@@ -9311,6 +9327,7 @@ export class App implements CanvasHost {
       this.identity = await this.api.request<Identity>(
         "/studio/api/api/v1/identity",
       );
+      this.identityFailure = null;
       this.catalogAfterIdentity();
       this.draftAfterIdentity();
     } catch (error) {
@@ -9411,6 +9428,7 @@ export class App implements CanvasHost {
     this.reply = "";
     this.taskData = {};
     this.identity = null;
+    this.identityFailure = null;
     this.published = null;
     this.activation = null;
     this.closeSimulation();
@@ -9455,6 +9473,7 @@ export class App implements CanvasHost {
   private async testPlatform(generation: number) {
     const sampleScope = this.stepDataScope;
     const name = this.profile?.name ?? "";
+    this.identityFailure = null;
     try {
       const result = await this.connection.test();
       if (generation !== this.platformGeneration) return;
@@ -9480,19 +9499,24 @@ export class App implements CanvasHost {
       if (plain.code === "WV-STUDIO-SESSION") return;
       if (plain.code === "WV-AUTH-NOT-LINKED") {
         if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
+        this.identityFailure = "not-linked";
         this.platformNotice = { kind: "not-linked", name };
       } else if (plain.status === 401) {
         if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
+        this.identityFailure = "expired";
         this.platformNotice = { kind: "expired", name };
       } else {
-        if (plain.code === "WV-AUTH-STORE")
+        if (plain.code === "WV-AUTH-STORE") {
+          this.identityFailure = "store";
           this.platformNotice = { kind: "store", name };
-        else if (
+        } else if (
           plain.code === "WV-AUTH-OFFLINE" ||
           plain.code === "WV-STUDIO-UPSTREAM" ||
           [0, 502, 503, 504].includes(plain.status)
-        )
+        ) {
+          this.identityFailure = "offline";
           this.platformNotice = { kind: "offline", name };
+        }
         await this.loadIdentity();
       }
     } finally {
@@ -9751,6 +9775,8 @@ export class App implements CanvasHost {
     }
     if (this.platformNotice?.kind === "signing-in") this.platformNotice = null;
     if (event.kind === "authenticated") {
+      // Signed in again: an earlier failure is no longer why nothing is read.
+      this.identityFailure = null;
       this.notify(`Signed in to ${name}.`);
       void this.afterBackgroundSignIn();
     } else if (event.kind === "ended") {
@@ -9775,6 +9801,7 @@ export class App implements CanvasHost {
   wizardVerified(result: VerifiedPlatform) {
     this.api.adopt(result.session);
     this.identity = result.identity;
+    this.identityFailure = null;
     this.catalogAfterIdentity();
     this.draftAfterIdentity();
     this.platformNotice = null;
@@ -9806,6 +9833,7 @@ export class App implements CanvasHost {
       this.profile?.name ?? this.connectionStatus?.profile?.name ?? "";
     this.platformGeneration++;
     this.clearPlatformState();
+    this.identityFailure = kind;
     this.platformNotice = { kind, name };
     void this.refreshConnectionStatus();
     this.cdr.markForCheck();

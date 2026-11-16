@@ -18,10 +18,16 @@ SPDX-License-Identifier: Apache-2.0
 // The Runs tab's list: a workflow's runs newest first, their filters, the
 // refresh every 5 seconds, older pages, every state the list can be in, and
 // its keys. The platform is mocked with the run views fake's rules.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
-import { acmeOption, acmePlatform, platformHost } from "./platform-host";
+import {
+  acmeOption,
+  acmePlatform,
+  PlatformHost,
+  platformHost,
+  type Reply,
+} from "./platform-host";
 import {
   listedKinds,
   olderRuns,
@@ -248,6 +254,27 @@ for (const size of sizes)
     });
   });
 
+/**
+ * Acme, saved and signed in, answers every check of who is signed in with
+ * `answer`, the identity read included. Both answers are in place before
+ * Studio opens, so its first check meets them.
+ */
+async function failingPlatform(page: Page, answer: Reply) {
+  const host = new PlatformHost({
+    platforms: [acmePlatform()],
+    active: "Acme",
+    test: () => answer,
+  });
+  await page.route(
+    (url) => url.pathname.startsWith("/studio/"),
+    (route) => host.handle(route),
+  );
+  await page.route("**/studio/api/api/v1/identity", (route) =>
+    route.fulfill({ status: answer.status, json: answer.json }),
+  );
+  await page.goto("/");
+}
+
 test.describe("the Runs list's states", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -410,6 +437,98 @@ test.describe("the Runs list's states", () => {
     reachable = true;
     await message.getByRole("button", { name: "Try again" }).click();
     await expect(runs.panel).not.toContainText("Studio couldn't reach Acme.");
+  });
+
+  for (const { failure, answer, banner, tab } of [
+    {
+      failure: "a locked credential store",
+      answer: {
+        status: 503,
+        json: {
+          status: 503,
+          code: "WV-AUTH-STORE",
+          message: "The credential store is locked.",
+        },
+      },
+      banner: "Studio can't use this computer's credential store.",
+      tab: "Studio can't use this computer's credential store.",
+    },
+    {
+      failure: "an account the platform doesn't know",
+      answer: {
+        status: 401,
+        json: {
+          status: 401,
+          code: "WV-AUTH-NOT-LINKED",
+          message: "You signed in, but this platform does not know you.",
+        },
+      },
+      banner: "Acme doesn't recognize your account yet.",
+      tab: "Your account isn't linked yet.",
+    },
+    {
+      failure: "an expired sign-in",
+      answer: {
+        status: 401,
+        json: {
+          status: 401,
+          code: "WV-AUTH-REQUIRED",
+          message: "Your sign-in has ended. Sign in again to continue.",
+        },
+      },
+      banner: "Your session for Acme expired.",
+      tab: "Sign in to see this workflow's runs.",
+    },
+  ])
+    test(`after ${failure}, the Runs tab still says so once the banner is dismissed`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, answer);
+      const notice = page.locator(".platform-banner");
+      await expect(notice).toContainText(banner);
+      await notice
+        .getByRole("button", { name: "Dismiss platform message" })
+        .click();
+      await expect(notice).toHaveCount(0);
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      await expect(
+        runsPage(page).panel.locator(".runs-body .runs-message strong"),
+      ).toHaveText(tab);
+    });
+
+  test("a sign-in waiting in the background reads as loading, not as a platform Studio can't reach", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    const host = await platformHost(page, {
+      platforms: [acmePlatform({ signedIn: false })],
+      active: "Acme",
+      pendingLogin: { flow: "device" },
+    });
+    // Studio resumes the sign-in; leaving the wizard leaves it waiting.
+    await expect(page.getByRole("status", { name: "Sign-in code" })).toHaveText(
+      "WDJB-MJHT",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    const waiting = "Studio is waiting for you to finish signing in to Acme.";
+    const notice = page.locator(".platform-banner");
+    await expect(notice).toContainText(waiting);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    const runs = runsPage(page);
+    await expect(runs.panel.getByRole("status")).toHaveText("Loading runs…");
+    await expect(runs.panel.locator(".runs-body .runs-message")).toHaveCount(0);
+    await expect(
+      runs.panel.getByRole("button", { name: "Try again" }),
+    ).toHaveCount(0);
+    // Nothing checked the platform again under the waiting sign-in.
+    await expect(notice).toContainText(waiting);
+    expect(host.requests("/studio/connection/test")).toHaveLength(0);
   });
 
   test("a refused list shows who can grant access and no run", async ({
