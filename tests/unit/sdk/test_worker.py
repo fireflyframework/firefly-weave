@@ -394,7 +394,6 @@ def platform(answers, completed=None):
 def unreachable_failures():
     import httpcore
     import httpx
-    import pytest
 
     request = httpx.Request("POST", "http://platform/scope/tasks/claim")
     return [
@@ -407,11 +406,7 @@ def unreachable_failures():
     ]
 
 
-def pytest_generate_tests(metafunc):
-    if "unreachable" in metafunc.fixturenames:
-        metafunc.parametrize("unreachable", unreachable_failures())
-
-
+@pytest.mark.parametrize("unreachable", unreachable_failures())
 async def test_a_worker_claims_again_once_the_platform_answers_after_it_could_not_be_reached(unreachable):
     from firefly_weave.sdk.worker import Worker
 
