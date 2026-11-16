@@ -1380,10 +1380,11 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
 
 `event_triggers.create` also requires `run.start` and `run.read`, and `transaction.reconcile` when the request
-sets `may_reconcile`. Each run a trigger starts receives the transaction facts of its event, such as business
-keys and failure codes, so the trigger's owner must still hold `run.start` and `run.read` when the run starts.
-`event_triggers.starts` also requires `run.read`: it shows the runs a trigger started, event types and refusal
-causes.
+sets `may_reconcile`, which lets the trigger's runs resolve their transaction once workflows can resolve
+transactions; until then it has no effect. Each run a trigger starts receives the transaction facts of its event,
+such as business keys and failure codes, so the trigger's owner must still hold `run.start` and `run.read` when
+the run starts. `event_triggers.starts` also requires `run.read`: it shows the runs a trigger started, event types
+and refusal causes.
 
 ## Deployment Operations authority
 

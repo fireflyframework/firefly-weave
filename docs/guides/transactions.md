@@ -179,7 +179,9 @@ weave triggers events create --request trigger.json
 | Another enabled trigger has the name | Refused with `409 WV-TRIGGER-CONFLICT` |
 
 Creating a trigger needs `trigger.manage`, `run.start`, and `run.read`, and
-`transaction.reconcile` when the request sets `may_reconcile`. Each run starts
+`transaction.reconcile` when the request sets `may_reconcile`, which lets the
+trigger's runs resolve their transaction once workflows can resolve
+transactions; until then it has no effect. Each run starts
 as the trigger's owner, who must still hold `run.start` and `run.read` when it
 starts: the run receives what the event says about a transaction. A trigger
 can't be edited. To change one, disable it with
@@ -193,8 +195,8 @@ The run's input is the platform event: its `event_id`, `type` and `emitted_at`,
 and under `transaction` the source workflow and run, the transaction's instance
 key, business key and state, the cause when it left its normal path, its steps
 by key (`done`, `undone`, `pending`) and how each is undone, the incident when
-it is in doubt, and whether the source run was a test. It never carries a
-business value. The run's business key is the transaction's, and its origin
+it is in doubt, and whether the source run was a test. It never carries step
+inputs or outputs. The run's business key is the transaction's, and its origin
 shows as **Platform event** (`event`).
 
 ### How often reactions start
@@ -216,8 +218,9 @@ emits events can start further reactions, so the platform bounds each chain:
   a new budget.
 - **Held starts.** A start the platform can't accept yet (a spent quota, a busy
   lock, capacity) keeps its place in the budget and is tried again for up to
-  24 hours, and later events of the chain are skipped meanwhile. A chain whose
-  held starts expire can end with fewer than 64 runs.
+  24 hours, so later events of the chain may be skipped while it waits, once
+  all 64 places are taken. A chain whose held starts expire can end with fewer
+  than 64 runs.
 
 ### Read what a trigger started
 
@@ -229,7 +232,7 @@ start never suspends a run or opens an incident:
 
 | Code | Meaning |
 | --- | --- |
-| `WV-TRIGGER-START` | The run couldn't start. `cause` says why: `WV-FORBIDDEN` (the owner lost `run.start` or `run.read`, or was deactivated), `WV-READINESS` (the activation was retired), or `WV-RUNTIME-INPUT` (the event doesn't fit the input schema) |
+| `WV-TRIGGER-START` | The run couldn't start. `cause` says why, for example `WV-FORBIDDEN` (the owner lost `run.start` or `run.read`, or was deactivated), `WV-READINESS` (the activation was retired), or `WV-RUNTIME-INPUT` (the event doesn't fit the input schema) |
 | `WV-TRIGGER-DISABLED` | The trigger was disabled before the run started |
 | `WV-TRIGGER-EVENT-DEPTH` | The source run was three reactions deep |
 | `WV-TRIGGER-CHAIN-BUDGET` | The chain already had 64 runs started or waiting to start |
