@@ -463,6 +463,14 @@ export class RunsTabState {
     this.older.set(
       !cursor ? "none" : items.length >= MAX_LISTED_RUNS ? "limit" : "more",
     );
+    // A run chosen before the list arrived (from a link) whose version
+    // couldn't be read: the list now says it is this workflow's, so it draws.
+    const chosen = this.chosen();
+    if (
+      chosen?.error?.code === VERSION_UNREADABLE.code &&
+      items.some((item) => item.id === chosen.id && !isUnavailableRun(item))
+    )
+      void this.choose(chosen.id);
   }
   private listTicket(): ListTicket {
     return {

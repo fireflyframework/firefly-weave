@@ -658,6 +658,26 @@ describe("the chosen run", () => {
     expect(state.chosen()?.overlay).toBeNull();
   });
 
+  it("draws a linked run whose version couldn't be read once the list says it is this workflow's", async () => {
+    // A link chooses the run before the list answers; the platform has no
+    // export of the version it used.
+    const { state, platform, env } = setup();
+    platform.hold = (path) => path.includes(LIST);
+    state.start();
+    await env.advance(0);
+    await state.choose(fixtureIds.failed);
+    expect(state.chosen()?.error?.code).toBe(
+      "WV-STUDIO-RUN-VERSION-UNREADABLE",
+    );
+    platform.hold = null;
+    platform.release();
+    await env.advance(0);
+    await env.advance(0);
+    expect(state.chosen()?.id).toBe(fixtureIds.failed);
+    expect(state.chosen()?.error).toBeNull();
+    expect(state.chosen()?.data).not.toBeNull();
+  });
+
   it("applies an answer only to the run, workflow, account and environment it was asked for", async () => {
     const cases: [string, (ready: Setup) => Promise<void> | void][] = [
       [
