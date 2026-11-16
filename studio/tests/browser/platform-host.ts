@@ -131,6 +131,8 @@ export interface SavedPlatform {
   signedIn?: boolean;
   /** An expired access token the host renews silently on the next check. */
   refreshable?: boolean;
+  /** An expired access token without a refresh token: the host can't renew it. */
+  expired?: boolean;
   workspaces?: Workspace[];
 }
 export const acmePlatform = (
@@ -299,6 +301,7 @@ export class PlatformHost {
     const p = this.current;
     const signedIn = !!p?.signedIn;
     const refreshable = !!p && !signedIn && !!p.refreshable;
+    const expired = refreshable || (!!p && !signedIn && !!p.expired);
     return {
       configured: !!p,
       login_supported: !!p && this.loginSupported,
@@ -348,7 +351,7 @@ export class PlatformHost {
           ? "signed_out"
           : signedIn
             ? "signed_in"
-            : refreshable
+            : expired
               ? "expired"
               : "signed_out",
         expires_at: null,

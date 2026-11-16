@@ -27,6 +27,7 @@ import {
   PlatformHost,
   platformHost,
   type Reply,
+  type SavedPlatform,
 } from "./platform-host";
 import {
   listedKinds,
@@ -545,13 +546,11 @@ test.describe("the Runs list's states", () => {
     expect(host.requests("/studio/connection/test")).toHaveLength(0);
   });
 
-  test("a sign-in that ends in the background without an account asks to sign in instead of loading", async ({
-    page,
-  }) => {
+  /** Runs whose sign-in Studio resumed on opening, on the Runs tab while it waits. */
+  async function runsDuringSignIn(page: Page, platform: SavedPlatform) {
     await useNewEditor(page);
-    // The host keeps a sign-in it can't use: neither signed in nor signed out.
     const host = await platformHost(page, {
-      platforms: [acmePlatform({ signedIn: false, refreshable: true })],
+      platforms: [platform],
       active: "Acme",
       pendingLogin: { flow: "device" },
     });
@@ -565,6 +564,42 @@ test.describe("the Runs list's states", () => {
     await page.getByRole("tab", { name: "Runs" }).click();
     const runs = runsPage(page);
     await expect(runs.panel.getByRole("status")).toHaveText("Loading runs…");
+    return { host, runs };
+  }
+
+  // A failed or cancelled sign-in leaves the host's earlier credential.
+  for (const { held, platform, end } of [
+    {
+      held: "an expired session it can renew",
+      platform: acmePlatform({ signedIn: false, refreshable: true }),
+      end: ["failed", "WV-AUTH-DENIED"] as const,
+    },
+    {
+      held: "the account it was signed in with",
+      platform: acmePlatform(),
+      end: ["cancelled"] as const,
+    },
+  ])
+    test(`a sign-in that ends in the background while the host keeps ${held} loads the runs`, async ({
+      page,
+    }) => {
+      const { host, runs } = await runsDuringSignIn(page, platform);
+      host.finish(...end);
+      await expect(
+        runs.panel.locator(".runs-body .runs-message strong"),
+      ).toHaveText("No runs of invoice-approval yet.", { timeout: 15_000 });
+      await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+        /^Platform: Acme · Signed in/,
+      );
+    });
+
+  test("a sign-in that ends in the background while the host can't renew the session asks to sign in", async ({
+    page,
+  }) => {
+    const { host, runs } = await runsDuringSignIn(
+      page,
+      acmePlatform({ signedIn: false, expired: true }),
+    );
     host.finish("failed", "WV-AUTH-DENIED");
     await expect(page.locator(".platform-banner")).toContainText(
       "Sign-in was declined.",
@@ -575,6 +610,8 @@ test.describe("the Runs list's states", () => {
       "Sign in to see this workflow's runs.",
     );
     await expect(runs.panel.getByRole("status")).toHaveCount(0);
+    // A session the host can't renew isn't checked: it would only be refused.
+    expect(host.requests("/studio/connection/test")).toHaveLength(0);
   });
 
   for (const status of [500, 403])

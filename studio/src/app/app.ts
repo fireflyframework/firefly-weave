@@ -9808,21 +9808,31 @@ export class App implements CanvasHost {
       this.notify(`Signed in to ${name}.`);
       void this.afterBackgroundSignIn();
     } else if (event.kind === "ended") {
-      // Ended without an account: sign in again, whatever state the host
-      // still reports, rather than wait for an account that isn't coming.
-      if (!this.identity) this.identityFailure = "expired";
       this.platformNotice = {
         kind: "sign-in-failed",
         name,
         detail: `${loginOutcome(event.state, event.code).title.replace(/\.$/, "")}.`,
       };
-      void this.refreshConnectionStatus();
+      void this.trackIdentity(this.afterBackgroundSignInEnded());
     }
   }
   private async afterBackgroundSignIn() {
     await this.refreshConnectionStatus();
     await this.checkPlatform();
     await this.refresh();
+  }
+  /**
+   * A sign-in ended without an account, and the host keeps the credential it
+   * had: one it can still use (a session it renews, or the account a
+   * cancelled switch left) is checked; otherwise sign in again. A reason
+   * recorded earlier (offline, a locked store) stays.
+   */
+  private async afterBackgroundSignInEnded() {
+    await this.refreshConnectionStatus();
+    if (this.identity) return;
+    if (sessionUsable(this.connectionStatus?.authentication))
+      await this.checkPlatform();
+    else this.identityFailure ??= "expired";
   }
   /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {
