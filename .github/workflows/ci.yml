@@ -41,10 +41,10 @@ jobs:
   offline:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.8.22'
           python-version: '3.12'
@@ -54,16 +54,16 @@ jobs:
     name: studio checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.8.22'
           python-version: '3.12'
           enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.15.0'
           cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
@@ -80,16 +80,16 @@ jobs:
         shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.8.22'
           python-version: '3.12'
           enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.15.0'
           cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
@@ -110,16 +110,16 @@ jobs:
     name: studio performance
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.8.22'
           python-version: '3.12'
           enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv sync --locked --all-extras --group docs
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.15.0'
           cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
@@ -159,10 +159,10 @@ jobs:
     steps:
       - name: Keep repository line endings
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.8.22'
           python-version: '3.12'
@@ -170,7 +170,7 @@ jobs:
       - run: uv sync --locked --all-extras --group docs
       - name: Portable Python unit subset
         run: uv run --no-sync python -m pytest tests/unit/compiler tests/contracts tests/unit/email tests/unit/providers tests/unit/operations tests/unit/test_private_origins.py tests/unit/test_release_versions.py tests/unit/test_acme_fixture.py tests/unit/test_acceptance_journeys.py tests/unit/test_acceptance_evidence.py tests/unit/test_ci_workflows.py -q --tb=short --show-capture=no -p no:cacheprovider
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.15.0'
           cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }} # zizmor: ignore[cache-poisoning] -- npm cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
@@ -190,7 +190,7 @@ jobs:
     runs-on: [self-hosted, weave-owned-release]
     environment: weave-owned-release
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py --release --docker-context colima-weave-tests
