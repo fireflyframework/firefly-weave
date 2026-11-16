@@ -29,6 +29,11 @@ SPDX-License-Identifier: Apache-2.0
   starts per first event, and runs started this way show the origin Platform
   event. Disabling a trigger stops its starts at once. Migration
   `0041_language_event_triggers` adds the trigger tables.
+- Before you upgrade, note that the schema name `weave.platform-event-v1` is now
+  the platform's: while a catalog has its own schema under that name, compiles
+  against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
+  use it, until the schema is renamed. Run views gain the origin `event`, so clients that read run origins
+  strictly need the new value.
 
 ## 0.1.0a18
 
