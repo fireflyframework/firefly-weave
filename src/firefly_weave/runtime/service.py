@@ -833,9 +833,9 @@ class RuntimeService:
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Only a terminal run can create a linked retry")
             # Retry replay is owned by the outer receipt; the nested start gets a fresh identity.
             start_key = str(uuid4())
-            # A retry keeps its source's place in a chain of reactions.
+            # A retry keeps its source's place in a chain of reactions, and spends the same chain's budget.
             source = await repository.rows(
-                f"SELECT event_depth FROM run_facts WHERE {SCOPE} AND run_id=:run", run=run_id
+                f"SELECT event_depth,root_event_id FROM run_facts WHERE {SCOPE} AND run_id=:run", run=run_id
             )
             view = await self.start(
                 current,
@@ -845,7 +845,10 @@ class RuntimeService:
                 context=context,
                 tx=tx,
                 start_facts=RunStartFacts(
-                    origin="retry", retried_from_run_id=run_id, event_depth=source[0]["event_depth"] if source else 0
+                    origin="retry",
+                    retried_from_run_id=run_id,
+                    event_depth=source[0]["event_depth"] if source else 0,
+                    root_event_id=source[0]["root_event_id"] if source else None,
                 ),
             )
             await repository.execute(

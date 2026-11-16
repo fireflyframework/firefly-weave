@@ -42,13 +42,19 @@ from firefly_weave.contracts.platform_events import EventCode
 from firefly_weave.contracts.transactions import PlatformEventType
 
 type EventStartStatus = Literal["requested", "started", "rejected", "skipped"]
-# Why a start started no run: the start was refused, the trigger was disabled first, or the chain was too deep.
-type EventStartCode = Literal["WV-TRIGGER-START", "WV-TRIGGER-DISABLED", "WV-TRIGGER-EVENT-DEPTH"]
+# Why a start started no run: the start was refused, the trigger was disabled first, the chain was too deep, or the
+# chain had already made all the starts it may make.
+type EventStartCode = Literal[
+    "WV-TRIGGER-START", "WV-TRIGGER-DISABLED", "WV-TRIGGER-EVENT-DEPTH", "WV-TRIGGER-CHAIN-BUDGET"
+]
 
 # Enabled platform-event triggers one environment may hold, so one event requests at most this many starts.
 MAX_EVENT_TRIGGERS: Final = 64
 # Events from a run this deep in a chain of reactions start no workflows.
 MAX_EVENT_DEPTH: Final = 3
+# Starts one chain of reactions may make, across all its depths: the chain began with one event of a run that no
+# event started, and every run it started, called or retried carries that event's ID.
+MAX_CHAIN_STARTS: Final = 64
 
 # Codes and their product copy. Append-only and value-free: start records and problems embed these messages.
 EVENT_TRIGGER_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
@@ -60,6 +66,9 @@ EVENT_TRIGGER_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "WV-TRIGGER-CONFLICT": "Another enabled platform-event trigger has this name.",
         "WV-TRIGGER-START": "The triggered workflow couldn't start.",
         "WV-TRIGGER-DISABLED": "The trigger was disabled before the workflow started.",
+        "WV-TRIGGER-CHAIN-BUDGET": (
+            "This chain of reactions has already started 64 workflows, so its events start no more."
+        ),
     }
 )
 

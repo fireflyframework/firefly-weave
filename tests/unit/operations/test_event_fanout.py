@@ -65,8 +65,17 @@ def trigger(number: int, events=(IN_DOUBT,), *, workflow: str = "notify-team", s
     return TriggerMatch(id=UUID(int=number), workflow_name=workflow, events=tuple(events), source_workflows=sources)
 
 
-def source(*, workflow: str = "move-between-systems", depth: int = 0, test: bool = False) -> SourceFacts:
-    return SourceFacts(run_id=RUN, workflow_name=workflow, depth=depth, test=test)
+def source(
+    *,
+    workflow: str = "move-between-systems",
+    depth: int = 0,
+    test: bool = False,
+    root: UUID | None = None,
+    spent: int = 0,
+) -> SourceFacts:
+    return SourceFacts(
+        run_id=RUN, workflow_name=workflow, depth=depth, test=test, root_event_id=root, chain_starts=spent
+    )
 
 
 def offered(triggers, incoming=None, origin=None) -> list[tuple[int, str, int, str | None]]:
@@ -110,6 +119,23 @@ def test_events_from_a_run_three_reactions_deep_are_recorded_as_skipped():
     ]
 
 
+def test_a_chain_of_reactions_starts_at_most_64_workflows_then_records_skips():
+    root = UUID(int=99)
+    triggers = [trigger(number) for number in range(6, 0, -1)]
+    # The chain that started with root has made 60 starts: four more fit, in trigger order.
+    assert offered(triggers, origin=source(depth=1, root=root, spent=60)) == [
+        *[(number, "requested", 2, None) for number in (1, 2, 3, 4)],
+        *[(number, "skipped", 2, "WV-TRIGGER-CHAIN-BUDGET") for number in (5, 6)],
+    ]
+    assert offered(triggers, origin=source(depth=2, root=root, spent=64)) == [
+        (number, "skipped", 3, "WV-TRIGGER-CHAIN-BUDGET") for number in range(1, 7)
+    ]
+    # Past the deepest reaction a chain ends whatever its budget, and says so.
+    assert offered(triggers[-1:], origin=source(depth=3, root=root, spent=64)) == [
+        (1, "skipped", 4, "WV-TRIGGER-EVENT-DEPTH")
+    ]
+
+
 def test_the_start_payload_is_the_platform_event():
     incoming = event()
     payload = event_payload(incoming)
@@ -131,7 +157,17 @@ def test_the_start_payload_is_the_platform_event():
 def test_a_run_start_carries_its_chain_depth():
     assert RunStartFacts(origin="manual").event_depth == 0
     caller = RunSummaryCaller(run_id=RUN, node_id="notify", instance_key="")
-    assert RunStartFacts(origin="call", caller=caller, event_depth=2).event_depth == 2
+    assert RunStartFacts(origin="call", caller=caller, event_depth=2, root_event_id=RUN).event_depth == 2
     for depth in (-1, True, "1"):
         with pytest.raises(ValueError, match="depth"):
             RunStartFacts(origin="manual", event_depth=depth)  # type: ignore[arg-type]
+
+
+def test_a_run_in_a_chain_names_the_event_that_started_the_chain():
+    root = UUID(int=7)
+    assert RunStartFacts(origin="manual").root_event_id is None
+    caller = RunSummaryCaller(run_id=RUN, node_id="notify", instance_key="")
+    assert RunStartFacts(origin="call", caller=caller, event_depth=1, root_event_id=root).root_event_id == root
+    for depth, named in ((1, None), (0, root), (1, str(root))):
+        with pytest.raises(ValueError, match="chain"):
+            RunStartFacts(origin="manual", event_depth=depth, root_event_id=named)  # type: ignore[arg-type]

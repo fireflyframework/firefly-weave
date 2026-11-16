@@ -23,7 +23,9 @@ at a full quota. An event offered to triggers is stored once in ``event_trigger_
 the event's own commit: when that commit stops a run, they spend the run's control reserve, as its other rows do, and
 storing the event once keeps that spend to one event plus a small row per trigger. Neither keeps a foreign key to the
 run or to the outbox event, so a purged run is never blocked by its trigger's history. ``run_facts.event_depth``
-counts reactions in a chain and costs nothing while it is 0, so rows charged before this migration cost the same.
+counts reactions in a chain and ``run_facts.root_event_id`` names the event that began it; each start record names
+that event too, so fan-out counts a chain's starts against its budget. Both run columns cost nothing while a run is
+in no chain, so rows charged before this migration cost the same.
 Runs may come from a platform event. Tasks the platform runs itself are never pinned to a worker release and are
 found through their own index. The changes to existing tables add a column with a constant default or a check that
 skips the rows already there, which changes only the catalog; building the platform task index reads ``task_intents``
@@ -47,7 +49,7 @@ EVENTS = (
     "'transaction.reconciled','transaction.force_ended'"
 )
 ORIGINS = "'manual','webhook','schedule','broker','email','provider','retry','call','test','event'"
-START_CODES = "'WV-TRIGGER-START','WV-TRIGGER-DISABLED','WV-TRIGGER-EVENT-DEPTH'"
+START_CODES = "'WV-TRIGGER-START','WV-TRIGGER-DISABLED','WV-TRIGGER-EVENT-DEPTH','WV-TRIGGER-CHAIN-BUDGET'"
 RESOLVE_TASK_TYPE = "weave-platform.transaction-resolve"
 
 
@@ -113,7 +115,7 @@ def starts() -> None:
     op.execute(f"""CREATE TABLE event_trigger_starts(
         {SCOPE_COLUMNS},id uuid PRIMARY KEY,trigger_id uuid NOT NULL,event_id uuid NOT NULL,
         event_type text NOT NULL CHECK(event_type IN ({EVENTS})),source_run_id uuid NOT NULL,
-        depth integer NOT NULL CHECK(depth>=1),
+        root_event_id uuid NOT NULL,depth integer NOT NULL CHECK(depth>=1),
         status text NOT NULL CHECK(status IN ('requested','started','rejected','skipped')),
         code text CHECK(code IN ({START_CODES})),cause text CHECK(char_length(cause) BETWEEN 1 AND 64),
         run_id uuid UNIQUE,requested_at timestamptz NOT NULL,started_at timestamptz,
@@ -129,6 +131,11 @@ def starts() -> None:
     )
     op.execute(
         f"CREATE INDEX event_trigger_starts_trigger ON event_trigger_starts({SCOPE_KEY},trigger_id,requested_at,id)"
+    )
+    # Fan-out counts the starts a chain of reactions has made, or may still make, against its budget.
+    op.execute(
+        f"CREATE INDEX event_trigger_starts_chain ON event_trigger_starts({SCOPE_KEY},root_event_id) "
+        "WHERE status IN ('requested','started')"
     )
     scoped("event_trigger_starts", ("id",), "status,code,cause,run_id,started_at")
 
@@ -154,13 +161,21 @@ def run_chains() -> None:
     # A constant default changes only the catalog, whatever the table's size.
     op.execute("ALTER TABLE run_facts ADD COLUMN event_depth integer NOT NULL DEFAULT 0")
     op.execute("ALTER TABLE run_facts ADD CONSTRAINT run_facts_event_depth_check CHECK(event_depth>=0) NOT VALID")
-    # A row charged before this migration had no depth: the column counts once a run sits in a chain.
+    # The event that began a run's chain; a run sits in a chain exactly when it names one.
+    op.execute("ALTER TABLE run_facts ADD COLUMN root_event_id uuid")
+    op.execute(
+        "ALTER TABLE run_facts ADD CONSTRAINT run_facts_event_root_check "
+        "CHECK((event_depth=0)=(root_event_id IS NULL)) NOT VALID"
+    )
+    # A row charged before this migration had neither column: they count once a run sits in a chain.
     anchor = "item:=item-'transaction_state'; END IF;"
     patch_function(
         "public.weave_charged_row(text,jsonb)",
         anchor,
         anchor + "\n        IF relation='run_facts' AND item->'event_depth'='0'::jsonb THEN "
-        "item:=item-'event_depth'; END IF;",
+        "item:=item-'event_depth'; END IF;"
+        "\n        IF relation='run_facts' AND item->'root_event_id'='null'::jsonb THEN "
+        "item:=item-'root_event_id'; END IF;",
         applied="event_depth",
     )
 

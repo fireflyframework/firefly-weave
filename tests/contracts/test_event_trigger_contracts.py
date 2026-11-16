@@ -114,6 +114,9 @@ def test_an_event_trigger_start_reports_its_outcome_without_values():
     assert wire(EventTriggerStart, rejected).model_dump(mode="json") == rejected
     requested = {key: value for key, value in rejected.items() if key not in {"code", "cause"}}
     assert set(wire(EventTriggerStart, {**requested, "status": "requested"}).model_dump()) == set(requested)
+    for code in ("WV-TRIGGER-DISABLED", "WV-TRIGGER-EVENT-DEPTH", "WV-TRIGGER-CHAIN-BUDGET"):
+        skipped = {**requested, "status": "skipped", "code": code}
+        assert wire(EventTriggerStart, skipped).model_dump(mode="json") == skipped
     for refused in (
         {**STARTED, "depth": 0},
         {**STARTED, "run_id": None},

@@ -20,6 +20,7 @@ it started."""
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -29,7 +30,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.event_triggers import MAX_EVENT_TRIGGERS, EventTriggerStart
+from firefly_weave.contracts.event_triggers import MAX_CHAIN_STARTS, MAX_EVENT_TRIGGERS, EventTriggerStart
 from firefly_weave.contracts.integration_events import IntegrationEvent
 from firefly_weave.contracts.platform_events import PlatformEvent
 from firefly_weave.contracts.runtime import StartRunRequest
@@ -232,8 +233,9 @@ async def test_the_starts_listing_pages_newest_first_without_payloads(platform):
         )
         await platform.execute(
             "INSERT INTO event_trigger_starts(tenant_id,project_id,environment_id,id,trigger_id,event_id,event_type,"
-            "source_run_id,depth,status,code,cause,requested_at) VALUES(:tenant,:project,:environment,:id,:trigger,"
-            ":event,'transaction.in_doubt',:run,1,'rejected','WV-TRIGGER-START','WV-FORBIDDEN',:at)",
+            "source_run_id,root_event_id,depth,status,code,cause,requested_at) VALUES(:tenant,:project,:environment,"
+            ":id,:trigger,:event,'transaction.in_doubt',:run,:event,1,'rejected','WV-TRIGGER-START','WV-FORBIDDEN',"
+            ":at)",
             **values,
             id=uuid4(),
             trigger=owner.id,
@@ -384,15 +386,20 @@ async def test_a_stop_at_a_full_quota_records_its_starts(platform):
     assert len(await platform.query("SELECT event_id FROM event_trigger_payloads")) == 1
 
 
-async def test_a_called_run_and_a_retry_keep_their_chain_depth(platform):
+async def test_a_called_run_and_a_retry_keep_their_place_in_the_chain(platform):
     called = await platform.publish(workflow("callee", [], callable_=True))
     step = {"id": "call", "kind": "callWorkflow", "uses": "callee@1.0.0", "with": {"ref": "/input"}}
     caller = await platform.start(await platform.publish(workflow("caller", [step]), callee=called.id))
-    # A run that a platform event started: one reaction deep.
-    await platform.execute("UPDATE run_facts SET event_depth=1 WHERE run_id=:run", run=caller.id)
+    # A run that a platform event started: one reaction deep, in the chain that event began.
+    root = uuid4()
+    await platform.execute(
+        "UPDATE run_facts SET event_depth=1,root_event_id=:root WHERE run_id=:run", run=caller.id, root=root
+    )
     await platform.scan()
-    [child] = await platform.query("SELECT run_id,event_depth FROM run_facts WHERE caller_run_id=:run", run=caller.id)
-    assert child["event_depth"] == 1
+    [child] = await platform.query(
+        "SELECT run_id,event_depth,root_event_id FROM run_facts WHERE caller_run_id=:run", run=caller.id
+    )
+    assert (child["event_depth"], child["root_event_id"]) == (1, root)
     assert (await platform.state(caller.id))["status"] == "succeeded"
     async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
         retry = await platform.runtime.retry_run(
@@ -404,5 +411,88 @@ async def test_a_called_run_and_a_retry_keep_their_chain_depth(platform):
             scope=platform.scope,
             context=AuditContext(),
         )
-    [facts] = await platform.query("SELECT origin,event_depth FROM run_facts WHERE run_id=:run", run=retry.id)
-    assert (facts["origin"], facts["event_depth"]) == ("retry", 1)
+    [facts] = await platform.query(
+        "SELECT origin,event_depth,root_event_id FROM run_facts WHERE run_id=:run", run=retry.id
+    )
+    assert (facts["origin"], facts["event_depth"], facts["root_event_id"]) == ("retry", 1, root)
+
+
+def from_event(value: Any) -> Any:
+    """A move step that reads the platform event its run reacts to instead of a move request."""
+    if value == {"ref": "/input/quantity"}:
+        return {"literal": 2}
+    if value == {"ref": "/input/moveId"}:
+        return {"ref": "/input/transaction/instance_key"}
+    if isinstance(value, dict):
+        return {key: from_event(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_event(item) for item in value]
+    return value
+
+
+# Reacts to completed moves and to its own completed transactions: each of its runs can start the next ones.
+RELAY = reaction(
+    "relay",
+    ("transaction.completed",),
+    sources=["move", "relay"],
+    steps=[from_event(transaction(hold(), add(), submit()))],
+)
+
+
+async def complete_transaction(platform) -> None:
+    for key in ("hold", "add", "submit", "hold#confirm"):
+        await platform.complete(await platform.lease(key))
+
+
+async def chain_starts(platform, root: str) -> list[tuple[str, str | None, int]]:
+    rows = await platform.query(
+        "SELECT status,code,depth FROM event_trigger_starts WHERE root_event_id=:root ORDER BY depth,trigger_id",
+        root=root,
+    )
+    return [(row["status"], row["code"], row["depth"]) for row in rows]
+
+
+async def test_a_chain_of_reactions_starts_at_most_64_workflows_per_root_event(platform):
+    """64 triggers on a workflow that reacts to itself: without a budget, one event requests 64 starts, each of those
+    runs' events 64 more, and so on down to the deepest reaction."""
+    relay = await platform.publish(RELAY)
+    for index in range(MAX_CHAIN_STARTS):
+        await platform.bind(relay, name=f"relay-{index:02d}", events=["transaction.completed"])
+    mover = await platform.publish(workflow(*MOVE))
+    first = await platform.start(mover, "M-1")
+    await complete_transaction(platform)
+    root = (await outbox_event(platform, first, "transaction.completed"))["event_id"]
+    assert await chain_starts(platform, root) == [("requested", None, 1)] * MAX_CHAIN_STARTS
+    # Two of them started nothing, which leaves their places in the chain's budget.
+    await platform.execute(
+        "UPDATE event_trigger_starts SET status='rejected',code='WV-TRIGGER-START',cause='WV-FORBIDDEN' "
+        "WHERE id IN (SELECT id FROM event_trigger_starts ORDER BY trigger_id LIMIT 2)"
+    )
+    # Another move begins a chain of its own, with a whole budget that the first chain's events never spend.
+    second = await platform.start(mover, "M-2")
+    await complete_transaction(platform)
+    other = (await outbox_event(platform, second, "transaction.completed"))["event_id"]
+    assert await chain_starts(platform, other) == [("requested", None, 1)] * MAX_CHAIN_STARTS
+    # One reaction, started as the start scan starts it: the stored event as its input, one reaction deep in the
+    # chain the event began.
+    [stored] = await platform.query("SELECT payload FROM event_trigger_payloads WHERE event_id=:event", event=root)
+    reacting = await platform.runtime.start(
+        platform.actor,
+        platform.scope,
+        StartRunRequest(activation_id=relay.id, input=stored["payload"]),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+    await platform.execute(
+        "UPDATE run_facts SET event_depth=1,root_event_id=:root WHERE run_id=:run", run=reacting.id, root=root
+    )
+    await complete_transaction(platform)
+    await outbox_event(platform, reacting, "transaction.completed")
+    deeper = [row for row in await chain_starts(platform, root) if row[2] == 2]
+    assert deeper == [("requested", None, 2)] * 2 + [("skipped", "WV-TRIGGER-CHAIN-BUDGET", 2)] * 62
+    [spent] = await platform.query(
+        "SELECT count(*) AS n FROM event_trigger_starts WHERE root_event_id=:root AND status IN ('requested',"
+        "'started')",
+        root=root,
+    )
+    assert spent["n"] == MAX_CHAIN_STARTS

@@ -19,8 +19,9 @@
 Each enabled trigger of the event's environment that accepts the event's type and source workflow gets one start
 record; the event itself is stored once, as the input every start of it gets. A trigger ignores events of its own
 workflow unless its sources name that workflow, events of test runs start nothing, and events from a run that sits
-three reactions deep are recorded as skipped, so chains of reactions end. The recovery loop starts the requested
-records later.
+three reactions deep are recorded as skipped, so chains of reactions end. A chain also ends once it has made 64
+starts across all its depths: every run in it carries the event that began it, and starts past that budget are
+recorded as skipped. The recovery loop starts the requested records later.
 """
 
 from collections.abc import Sequence
@@ -30,7 +31,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
-from firefly_weave.contracts.event_triggers import MAX_EVENT_DEPTH, MAX_EVENT_TRIGGERS
+from firefly_weave.contracts.event_triggers import MAX_CHAIN_STARTS, MAX_EVENT_DEPTH, MAX_EVENT_TRIGGERS
 from firefly_weave.contracts.integration_events import IntegrationEvent
 from firefly_weave.contracts.platform_events import PLATFORM_EVENT_VERSION, PlatformEvent
 from firefly_weave.persistence.uow import Transaction
@@ -55,6 +56,13 @@ class SourceFacts:
     workflow_name: str
     depth: int
     test: bool
+    # The event that began the source's chain; None when no event started the source, so this event begins one.
+    root_event_id: UUID | None = None
+    # Starts the chain has already requested or made, which its budget counts.
+    chain_starts: int = 0
+
+
+type SkipCode = Literal["WV-TRIGGER-EVENT-DEPTH", "WV-TRIGGER-CHAIN-BUDGET"]
 
 
 @dataclass(frozen=True)
@@ -62,7 +70,7 @@ class StartRow:
     trigger_id: UUID
     depth: int
     status: Literal["requested", "skipped"]
-    code: Literal["WV-TRIGGER-EVENT-DEPTH"] | None = None
+    code: SkipCode | None = None
 
 
 def accepts(trigger: TriggerMatch, event_type: str, source_workflow: str) -> bool:
@@ -75,20 +83,27 @@ def accepts(trigger: TriggerMatch, event_type: str, source_workflow: str) -> boo
 
 
 def start_rows(triggers: Sequence[TriggerMatch], event: IntegrationEvent, source: SourceFacts) -> list[StartRow]:
-    """One row per trigger that accepts the event, in trigger order; none for an event of a test run."""
+    """One row per trigger that accepts the event, in trigger order; none for an event of a test run.
+
+    Past the deepest reaction every row is skipped; otherwise the chain's remaining budget goes to the first
+    triggers, and the rest are skipped, so one event never starts more than its chain may.
+    """
     if source.test:
         return []
     depth = source.depth + 1
-    if source.depth >= MAX_EVENT_DEPTH:
-        status: Literal["requested", "skipped"] = "skipped"
-        code: Literal["WV-TRIGGER-EVENT-DEPTH"] | None = "WV-TRIGGER-EVENT-DEPTH"
-    else:
-        status, code = "requested", None
-    return [
-        StartRow(trigger_id=trigger.id, depth=depth, status=status, code=code)
-        for trigger in sorted(triggers, key=lambda item: item.id)
-        if accepts(trigger, event.type, source.workflow_name)
-    ]
+    remaining = MAX_CHAIN_STARTS - source.chain_starts
+    rows: list[StartRow] = []
+    for trigger in sorted(triggers, key=lambda item: item.id):
+        if not accepts(trigger, event.type, source.workflow_name):
+            continue
+        if source.depth >= MAX_EVENT_DEPTH:
+            rows.append(StartRow(trigger.id, depth, "skipped", "WV-TRIGGER-EVENT-DEPTH"))
+        elif remaining > 0:
+            rows.append(StartRow(trigger.id, depth, "requested"))
+            remaining -= 1
+        else:
+            rows.append(StartRow(trigger.id, depth, "skipped", "WV-TRIGGER-CHAIN-BUDGET"))
+    return rows
 
 
 def event_payload(event: IntegrationEvent) -> PlatformEvent:
@@ -118,9 +133,28 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
         "environment": event.scope.environment_id,
     }
     scope = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
-    depth = await tx.session.scalar(
-        text(f"SELECT event_depth FROM run_facts WHERE {scope} AND run_id=:run"), {**params, "run": facts.run_id}
+    chain = (
+        (
+            await tx.session.execute(
+                text(f"SELECT event_depth,root_event_id FROM run_facts WHERE {scope} AND run_id=:run"),
+                {**params, "run": facts.run_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
     )
+    depth, root = (chain["event_depth"], chain["root_event_id"]) if chain is not None else (0, None)
+    spent = 0
+    if root is not None:
+        # The outbox holds the project's lock until this commit, so no other event of the chain counts or adds
+        # starts meanwhile. A start counts while it may still start a run and once it did.
+        spent = await tx.session.scalar(
+            text(
+                f"SELECT count(*) FROM event_trigger_starts WHERE {scope} AND root_event_id=:root "
+                "AND status IN ('requested','started')"
+            ),
+            {**params, "root": root},
+        )
     rows = (
         (
             await tx.session.execute(
@@ -146,7 +180,14 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
         for row in rows
     ]
     # The facts are the platform's own: the source's workflow and test flag come with the event.
-    source = SourceFacts(run_id=facts.run_id, workflow_name=facts.workflow.name, depth=depth or 0, test=facts.test)
+    source = SourceFacts(
+        run_id=facts.run_id,
+        workflow_name=facts.workflow.name,
+        depth=depth,
+        test=facts.test,
+        root_event_id=root,
+        chain_starts=spent or 0,
+    )
     starts = start_rows(triggers, event, source)
     if not starts:
         return 0
@@ -161,8 +202,8 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
         await tx.session.execute(
             text(
                 "INSERT INTO event_trigger_starts(tenant_id,project_id,environment_id,id,trigger_id,event_id,"
-                "event_type,source_run_id,depth,status,code,requested_at) VALUES(:tenant,:project,:environment,:id,"
-                ":trigger,:event,:type,:run,:depth,:status,:code,clock_timestamp()) "
+                "event_type,source_run_id,root_event_id,depth,status,code,requested_at) VALUES(:tenant,:project,"
+                ":environment,:id,:trigger,:event,:type,:run,:root,:depth,:status,:code,clock_timestamp()) "
                 "ON CONFLICT (trigger_id,event_id) DO NOTHING"
             ),
             {
@@ -172,6 +213,8 @@ async def fan_out(tx: Transaction, event: IntegrationEvent) -> int:
                 "event": event.event_id,
                 "type": event.type,
                 "run": facts.run_id,
+                # The runs these rows start belong to the source's chain, or to a chain this event begins.
+                "root": root or event.event_id,
                 "depth": start.depth,
                 "status": start.status,
                 "code": start.code,

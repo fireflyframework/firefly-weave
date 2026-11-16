@@ -88,8 +88,9 @@ async def insert_start(connection, ids, trigger, *, status="requested", event=No
     await connection.execute(
         text(
             "INSERT INTO event_trigger_starts(tenant_id,project_id,environment_id,id,trigger_id,event_id,event_type,"
-            "source_run_id,depth,status,code,run_id,requested_at) VALUES(:tenant,:project,:environment,:id,"
-            ":trigger,:event,'transaction.in_doubt',:source_run_id,1,:status,:code,:run_id,now())"
+            "source_run_id,root_event_id,depth,status,code,run_id,requested_at) VALUES(:tenant,:project,"
+            ":environment,:id,:trigger,:event,'transaction.in_doubt',:source_run_id,:event,1,:status,:code,:run_id,"
+            "now())"
         ),
         {**ids, **values, "id": uuid4(), "trigger": trigger, "event": event, "status": status},
     )
@@ -173,6 +174,15 @@ async def test_the_upgrade_adds_event_trigger_tables_with_exact_scope(upgraded):
                 )
             ).scalars()
             assert set(granted) == columns, table
+        # Fan-out counts a chain's starts that may still start, or did, through their own index.
+        assert (
+            await connection.scalar(
+                text("SELECT indexdef FROM pg_indexes WHERE indexname='event_trigger_starts_chain'")
+            )
+        ).endswith(
+            "(tenant_id, project_id, environment_id, root_event_id) WHERE "
+            "(status = ANY (ARRAY['requested'::text, 'started'::text]))"
+        )
         # Starts carry no copy of the event: the payload is stored once per event.
         assert not await connection.scalar(
             text(
@@ -189,6 +199,7 @@ async def test_a_started_start_names_its_run_and_a_refused_one_its_code(upgraded
         trigger = await insert_trigger(connection, ids)
         await insert_start(connection, ids, trigger, status="started", run_id=uuid4())
         await insert_start(connection, ids, trigger, status="rejected", code="WV-TRIGGER-START", cause="WV-FORBIDDEN")
+        await insert_start(connection, ids, trigger, status="skipped", code="WV-TRIGGER-CHAIN-BUDGET")
         for fields, constraint in (
             ({"status": "started"}, "event_trigger_starts_started_run"),
             ({"status": "requested", "run_id": uuid4()}, "event_trigger_starts_started_run"),
@@ -234,11 +245,23 @@ async def test_enabled_trigger_names_are_unique_and_a_disabled_one_frees_its_nam
 async def test_runs_can_come_from_a_platform_event_and_sit_in_a_chain(upgraded):
     engine, ids = upgraded
     async with engine.begin() as connection:
-        assert await connection.scalar(text("SELECT count(*) FROM run_facts WHERE event_depth<>0")) == 0
-        await connection.execute(
-            text("UPDATE run_facts SET origin='event',event_depth=2 WHERE run_id=:run"), {"run": ids["first_run"]}
+        assert (
+            await connection.scalar(
+                text("SELECT count(*) FROM run_facts WHERE event_depth<>0 OR root_event_id IS NOT NULL")
+            )
+            == 0
         )
-        for assignment, constraint in (("origin='nope'", "run_facts_origin_check"), ("event_depth=-1", "depth")):
+        await connection.execute(
+            text("UPDATE run_facts SET origin='event',event_depth=2,root_event_id=gen_random_uuid() WHERE run_id=:run"),
+            {"run": ids["first_run"]},
+        )
+        for assignment, constraint in (
+            ("origin='nope'", "run_facts_origin_check"),
+            ("event_depth=-1", "depth"),
+            # A run sits in a chain exactly when it names the event that began the chain.
+            ("root_event_id=NULL", "run_facts_event_root_check"),
+            ("event_depth=0", "run_facts_event_root_check"),
+        ):
             savepoint = await connection.begin_nested()
             with pytest.raises(IntegrityError, match=constraint):
                 await connection.execute(
@@ -262,7 +285,8 @@ async def test_existing_run_facts_cost_the_same_after_the_upgrade(empty_settings
             await assert_usage(connection, ids)
         async with engine.begin() as connection:
             await connection.execute(
-                text("UPDATE run_facts SET event_depth=1 WHERE run_id=:run"), {"run": ids["first_run"]}
+                text("UPDATE run_facts SET event_depth=1,root_event_id=gen_random_uuid() WHERE run_id=:run"),
+                {"run": ids["first_run"]},
             )
             assert await connection.scalar(text(metrics), {"run": ids["first_run"]}) != before
         async with engine.begin() as connection:
