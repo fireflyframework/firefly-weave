@@ -512,24 +512,68 @@ def claiming(monkeypatch, answers):
     return claims
 
 
-def problem(status, code):
-    from firefly_weave.contracts.public import Problem
+def through_the_client(monkeypatch, transport):
+    """Like claiming(), but each claim goes through the real WeaveClient over `transport` (None keeps the client's own
+    network transport), so the runner sees exactly the errors the client raises. Registration is faked, and the token
+    comes from memory; returns the list of claims the runner made."""
+    from types import SimpleNamespace
 
-    return Problem(status=status, code=code, message="Remote request failed")
+    from firefly_weave.deployment_runner import application
+    from firefly_weave.sdk.client import WeaveClient
+
+    claims = []
+
+    class Token:
+        async def get_access_token(self, target):
+            return "token"
+
+    class Client(WeaveClient):
+        def __init__(self, base_url, provider, scope, **options):
+            super().__init__(base_url, Token(), scope, **(options | {"transport": transport or options["transport"]}))
+
+        async def invoke(self, operation, **arguments):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            claims.append(operation)
+            return await super().invoke(operation, **arguments)
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.setattr(application, "CLAIM_RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(application, "MAX_CLAIM_RETRY_SECONDS", 0.01)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return claims
+
+
+def answering(*answers):
+    """A transport that answers claims with `answers` in order (an exception to raise or a response), then no work."""
+    import httpx
+
+    pending = list(answers)
+
+    def answer(request):
+        reply = pending.pop(0) if pending else httpx.Response(200, content=b"null")
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+    return httpx.MockTransport(answer)
 
 
 def unreachable_claims():
     import httpcore
-
-    from firefly_weave.sdk.errors import TransportError, WeaveError
+    import httpx
 
     return [
-        # WeaveClient reports a refused or dropped connection on HTTPS or loopback this way.
-        pytest.param(lambda: TransportError(problem(503, "WV-TRANSPORT")), id="transport-failed"),
+        # WeaveClient reports a refused, dropped or timed-out connection on HTTPS or loopback as WV-TRANSPORT.
+        pytest.param(lambda: httpx.ConnectError("refused"), id="refused"),
+        pytest.param(lambda: httpx.RemoteProtocolError("closed"), id="dropped-mid-response"),
+        pytest.param(lambda: httpx.ReadTimeout("slow"), id="timed-out"),
         # In a cluster the pinned private-origin transport passes httpcore's error through WeaveClient.
         pytest.param(lambda: httpcore.ConnectError("refused"), id="refused-pinned-transport"),
-        pytest.param(lambda: WeaveError(problem(503, "WV-HTTP")), id="http-503"),
-        pytest.param(lambda: WeaveError(problem(502, "WV-HTTP")), id="http-502"),
+        # A gateway in front of an API that is not serving yet.
+        pytest.param(lambda: httpx.Response(503, text="<html>unavailable</html>"), id="http-503"),
+        pytest.param(lambda: httpx.Response(502, text="<html>bad gateway</html>"), id="http-502"),
     ]
 
 
@@ -537,7 +581,7 @@ def unreachable_claims():
 async def test_the_runner_claims_again_once_the_api_answers_after_it_could_not_be_reached(monkeypatch, unreachable):
     from firefly_weave.deployment_runner.application import serve
 
-    claims = claiming(monkeypatch, [unreachable(), unreachable()])
+    claims = through_the_client(monkeypatch, answering(unreachable(), unreachable()))
     running = asyncio.create_task(serve(runner_configuration("https://weave.example")))
     for _ in range(200):
         if len(claims) >= 3 or running.done():
@@ -551,14 +595,46 @@ async def test_the_runner_claims_again_once_the_api_answers_after_it_could_not_b
 
 
 async def test_the_runner_stops_on_a_claim_the_api_refuses_once_it_answers(monkeypatch):
+    import httpx
+
     from firefly_weave.deployment_runner.application import serve
-    from firefly_weave.sdk.errors import TransportError, WeaveError
+    from firefly_weave.sdk.errors import WeaveError
 
     for status in (401, 403, 404):
-        claims = claiming(monkeypatch, [TransportError(problem(503, "WV-TRANSPORT")), WeaveError(problem(status, "X"))])
+        refusal = httpx.Response(status, json={"status": status, "code": "WV-REFUSED", "message": "Refused"})
+        claims = through_the_client(monkeypatch, answering(httpx.ConnectError("refused"), refusal))
         with pytest.raises(WeaveError) as refused:
             await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
         assert refused.value.status == status and len(claims) == 2
+
+
+def client_refusals():
+    import httpx
+
+    from firefly_weave.connectors.egress import EgressDenied
+
+    return [
+        # The pinned transport refuses a destination its private-origin policy does not permit.
+        pytest.param(lambda: EgressDenied(), id="destination-refused"),
+        pytest.param(lambda: httpx.UnsupportedProtocol("Request URL has an unsupported protocol"), id="protocol"),
+        pytest.param(
+            lambda: httpx.Response(200, content=b"null", headers={"X-Weave-Wire-Version": "weave/api-v9"}),
+            id="wire-version",
+        ),
+        pytest.param(lambda: httpx.Response(200, json={"not": "a lease"}), id="not-the-contract"),
+    ]
+
+
+@pytest.mark.parametrize("refusal", client_refusals())
+async def test_the_runner_stops_on_a_claim_its_own_client_refused(monkeypatch, refusal):
+    """Waiting fixes none of these: the client refused the destination, the protocol or the answer itself."""
+    from firefly_weave.deployment_runner.application import serve
+    from firefly_weave.sdk.errors import WeaveError
+
+    claims = through_the_client(monkeypatch, answering(refusal()))
+    with pytest.raises(WeaveError):
+        await asyncio.wait_for(serve(runner_configuration("https://weave.example")), 2)
+    assert claims == ["deployment_runners.claim"]
 
 
 async def test_a_cancellation_that_a_failed_runner_claim_hid_still_stops_the_runner(monkeypatch):

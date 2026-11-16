@@ -24,7 +24,7 @@ import asyncio
 import random as _random
 from collections.abc import Callable
 
-from firefly_weave.sdk.errors import WeaveError
+from firefly_weave.sdk.errors import ContractError, TransportError, WeaveError
 
 # Statuses that ask a caller to come back later: rate limiting, or a gateway or API that is not serving yet.
 RETRY_LATER = frozenset({429, 502, 503, 504})
@@ -38,8 +38,16 @@ def unavailable(error: BaseException) -> bool:
 
     if isinstance(error, httpx.HTTPStatusError):
         return error.response.status_code in RETRY_LATER
+    if isinstance(error, ContractError):
+        # WeaveClient refused the request or the answer itself: a destination its policy does not permit, another
+        # wire version, or an answer outside the contract. Waiting changes none of them.
+        return False
+    if isinstance(error, TransportError):
+        # WeaveClient reports every failed httpx call as WV-TRANSPORT 503 and keeps that call's error as the
+        # context, so the call's error decides: a refused connection is an outage, an unsupported protocol is not.
+        failure = error.__cause__ or error.__context__
+        return failure is not None and unavailable(failure)
     if isinstance(error, WeaveError):
-        # WeaveClient reports a failed transport as WV-TRANSPORT with status 503.
         return error.status in RETRY_LATER
     # The default httpx transport raises httpx's errors; the pinned private-origin transport passes httpcore's on.
     return isinstance(
