@@ -66,7 +66,14 @@ FIELDS = {
 UUID_SHAPED = re.compile(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}")
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 # Values the fixture records hold in fields that must never be sent.
-NEVER_SENT = ("fixture-host", "fixture-registry", "fixture-worker-7c9d.svc", "Scale the workers", "More orders tonight", "Quiet night")
+NEVER_SENT = (
+    "fixture-host",
+    "fixture-registry",
+    "fixture-worker-7c9d.svc",
+    "Scale the workers",
+    "More orders tonight",
+    "Quiet night",
+)
 
 
 def parsed(model: Any, value: Any) -> Any:
