@@ -223,6 +223,7 @@ def recipients() -> None:
 
 def delivery() -> None:
     """Notifications, settings, installed presets and the evaluator's per-environment schedule."""
+    # An alert notification keeps the value it was queued with, so every delivery of its mail says the same.
     op.execute(f"""CREATE TABLE alert_notifications(
         {SCOPE_COLUMNS},id uuid NOT NULL,alert_id uuid,channel_id uuid NOT NULL,
         kind text NOT NULL CHECK(kind IN ({NOTIFICATION_KINDS})),sequence integer NOT NULL CHECK(sequence>=0),
@@ -230,7 +231,7 @@ def delivery() -> None:
         state text NOT NULL CHECK(state IN ('pending','sent','failed','skipped_limit')),
         code text CHECK(code ~ '^[a-z][a-z_]{{0,63}}$'),attempts integer NOT NULL DEFAULT 0 CHECK(attempts>=0),
         created_at timestamptz NOT NULL,attempted_at timestamptz,change_request_id uuid,
-        change_request_revision integer CHECK(change_request_revision>0),
+        change_request_revision integer CHECK(change_request_revision>0),value double precision,
         CHECK((kind IN ('firing','resolved','repeat'))=(alert_id IS NOT NULL)),
         CHECK((kind='approval')=(change_request_id IS NOT NULL)),
         CHECK((change_request_id IS NULL)=(change_request_revision IS NULL)),

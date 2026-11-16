@@ -48,6 +48,7 @@ from firefly_weave.operations.alert_channels import (
     AlertChannelService,
     AlertRecipientConsentService,
     AlertSettingsService,
+    address_hash,
 )
 from firefly_weave.operations.alert_loop import AlertLoop
 from firefly_weave.operations.alert_notifications import AlertNotifier, scan_approvals
@@ -288,3 +289,102 @@ async def test_an_approval_mail_names_the_target_intent_and_expiry_once_per_revi
         assert await scan_approvals(tx, case.now) == 1
     approvals = await notifications(case, kind="approval")
     assert len(approvals) == 2
+
+
+async def test_a_send_that_fails_after_the_server_took_the_mail_is_never_sent_again(mail, monkeypatch):
+    case = mail
+    target = await channel(case, {"member": case.members[0].id})
+    original = EmailService.execute
+
+    async def execute(self, *args, **kwargs):
+        await original(self, *args, **kwargs)
+        raise ConnectionResetError("the connection dropped after the server took the mail")
+
+    monkeypatch.setattr(EmailService, "execute", execute)
+    await case.channels.test(case.owner_a, case.scope, target.id, "dropped", context=CONTEXT)
+    await deliver(case)
+    for seconds in (61, 400, 1000):
+        await deliver(case, seconds)
+    assert [recipients for recipients, _ in case.server.sent] == [(ADDRESSES[0],)]
+    rows = await notifications(case)
+    assert [(row["state"], row["code"], row["attempts"]) for row in rows] == [("failed", "mail_unknown", 1)]
+
+
+async def test_a_delivery_stopped_after_mailing_finishes_without_mailing_anyone_twice(mail, monkeypatch):
+    case = mail
+    first, second = case.members[0], case.members[1]
+    target = await channel(case, {"member": first.id}, {"member": second.id})
+    await case.channels.test(case.owner_a, case.scope, target.id, "stopped", context=CONTEXT)
+
+    async def stopped(self, *args, **kwargs):
+        raise RuntimeError("the process stopped before it recorded the outcome")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(AlertNotifier, "record", stopped)
+        with pytest.raises(RuntimeError):
+            await deliver(case)
+    assert sorted(recipients for recipients, _ in case.server.sent) == [(ADDRESSES[0],), (ADDRESSES[1],)]
+    sent = await owner(case, "SELECT recipient_hash,request_id FROM alert_messages WHERE tenant_id=:tenant")
+    # The first recipient leaves the channel before the claim is taken again.
+    current = await case.channels.read(case.owner_a, case.scope, target.id, context=CONTEXT)
+    only_second = AlertChannelDraft.model_validate_json(
+        json.dumps(
+            {
+                "kind": "email",
+                "name": "On call",
+                "connection_revision_id": str(case.connection),
+                "recipients": [{"member": str(second.id)}],
+            }
+        )
+    )
+    await case.channels.update(case.owner_a, case.scope, target.id, only_second, current.revision, context=CONTEXT)
+    for seconds in (121, 300, 1300):
+        await deliver(case, seconds)
+    assert sorted(recipients for recipients, _ in case.server.sent) == [(ADDRESSES[0],), (ADDRESSES[1],)]
+    after = await owner(case, "SELECT recipient_hash,request_id FROM alert_messages WHERE tenant_id=:tenant")
+    assert sorted(map(str, (row["request_id"] for row in after))) == sorted(
+        map(str, (row["request_id"] for row in sent))
+    )
+    rows = await notifications(case)
+    assert [(row["state"], row["code"]) for row in rows] == [("sent", None)]
+
+
+async def hash_of(case, address: str) -> str:
+    async with case.tx() as tx:
+        return await address_hash(tx, address)
+
+
+async def test_a_retry_mails_only_the_recipients_whose_earlier_message_was_refused(mail):
+    case = mail
+    first, second = case.members[0], case.members[1]
+    target = await channel(case, {"member": first.id}, {"member": second.id})
+    case.server.outcomes = ["rejected", "rejected"]
+    await case.channels.test(case.owner_a, case.scope, target.id, "refused", context=CONTEXT)
+    await deliver(case)
+    assert [(row["state"], row["attempts"]) for row in await notifications(case)] == [("pending", 1)]
+    # The second recipient's first message counts as delivered after all: a retry must not mail them again.
+    await owner(
+        case,
+        "UPDATE alert_messages SET state='accepted' WHERE tenant_id=:tenant AND recipient_hash=:hash",
+        hash=await hash_of(case, ADDRESSES[1]),
+    )
+    await deliver(case, 61)
+    assert [recipients for recipients, _ in case.server.sent][2:] == [(ADDRESSES[0],)]
+    assert [(row["state"], row["attempts"]) for row in await notifications(case)] == [("sent", 2)]
+
+
+async def test_an_alert_mail_shows_the_value_its_notification_was_queued_with(mail):
+    case = mail
+    run = await case.start("alert-value")
+    await add_incident(case, run.id, "first")
+    target = await channel(case, {"member": case.members[0].id})
+    await create(case, draft(name="Incidents are open", channel_ids=[str(target.id)]))
+    await case.loop.evaluate(case.authority)
+    # The alert's value moves on before the mail goes out; the mail still says what fired.
+    second = await case.start("alert-value-second")
+    await add_incident(case, second.id, "second")
+    case.loop.clock = lambda: case.now + timedelta(seconds=30)
+    await case.loop.evaluate(case.authority)
+    await deliver(case, 30)
+    (message,) = [raw for _, raw in case.server.sent]
+    assert "Value: 1 (threshold above 0)\n" in text_of(message)

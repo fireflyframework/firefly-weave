@@ -419,24 +419,27 @@ async def queue_notifications(
     kind: Literal["firing", "resolved", "repeat"],
     sequence: int,
     at: datetime,
+    value: float | None,
 ) -> None:
     """One pending notification per channel that still exists; the sender checks recipients and budgets later.
 
-    A notification is unique per alert, channel, kind and sequence, so a retried evaluation queues nothing twice.
+    A notification is unique per alert, channel, kind and sequence, so a retried evaluation queues nothing twice. It
+    keeps the value it was queued with, which its mail shows however the alert's value moves on.
     """
     channels = list(channel_ids)
     if not channels:
         return
     await AlertRuleRepository(tx).execute(
         "INSERT INTO alert_notifications(tenant_id,project_id,environment_id,id,alert_id,channel_id,kind,sequence,"
-        "recipients_count,state,created_at) SELECT tenant_id,project_id,environment_id,gen_random_uuid(),:alert,"
-        f"id,:kind,:sequence,jsonb_array_length(recipients),'pending',:at FROM alert_channels WHERE {SCOPED} "
-        "AND id=ANY(:channels) ON CONFLICT DO NOTHING",
+        "recipients_count,state,created_at,value) SELECT tenant_id,project_id,environment_id,gen_random_uuid(),"
+        f":alert,id,:kind,:sequence,jsonb_array_length(recipients),'pending',:at,:value FROM alert_channels WHERE "
+        f"{SCOPED} AND id=ANY(:channels) ON CONFLICT DO NOTHING",
         alert=alert_id,
         kind=kind,
         sequence=sequence,
         channels=channels,
         at=at,
+        value=value,
     )
 
 
@@ -469,7 +472,7 @@ async def record_transition(
         value=value,
         reason=reason,
     )
-    await queue_notifications(tx, alert["id"], channel_ids, kind, 0, at)
+    await queue_notifications(tx, alert["id"], channel_ids, kind, 0, at, value)
     facts = AlertEventFacts(
         state=kind, severity=alert["severity"], signal=alert["signal"], value=value, threshold=alert["threshold"]
     )

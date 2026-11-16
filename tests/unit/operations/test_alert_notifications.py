@@ -150,6 +150,9 @@ def test_20_messages_per_recipient_per_hour():
 
 def test_a_mail_whose_outcome_is_unclear_is_never_sent_again():
     assert outcome(["unknown", "rejected"], 1) == ("failed", "mail_unknown")
+    # Another deliverer is mid-send, or a send was queued and never settled: it may still arrive.
+    assert outcome(["attempting"], 1) == ("failed", "mail_unknown")
+    assert outcome(["queued", "rejected"], 1) == ("failed", "mail_unknown")
     assert outcome(["accepted", "accepted"], 1) == ("sent", None)
     assert outcome(["accepted", "rejected"], 1) == ("sent", "mail_refused")
     # A recipient the connection refuses, or an owner who can't send, ends it at once.
@@ -172,10 +175,12 @@ def test_a_transient_failure_is_retried_at_most_three_times_after_1_5_and_15_min
 
 
 def test_each_message_has_one_request_per_recipient_and_attempt():
-    notification = uuid4()
-    first = request_id(notification, 0, 0)
-    assert first == request_id(notification, 0, 0)
-    assert len({first, request_id(notification, 1, 0), request_id(notification, 0, 1), request_id(uuid4(), 0, 0)}) == 4
+    # Keyed by the recipient, not their place in the list: a recipient leaving never moves another's request.
+    notification, ana, bea = uuid4(), "a" * 64, "b" * 64
+    first = request_id(notification, ana, 0)
+    assert first == request_id(notification, ana, 0)
+    others = {request_id(notification, bea, 0), request_id(notification, ana, 1), request_id(uuid4(), ana, 0)}
+    assert len({first, *others}) == 4
 
 
 @pytest.mark.parametrize("kind", ["firing", "resolved", "repeat"])

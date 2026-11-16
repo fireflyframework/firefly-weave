@@ -21,8 +21,9 @@ one message per recipient so no recipient sees another's address. At every send 
 grant and saved address, and each outside address's domain and opt-in are checked again. Messages are counted per
 recipient against the budgets: one alert message per rule and channel every 15 minutes, 40 per rule and 60 per
 environment an hour, and 20 per recipient an hour. A message whose outcome is unclear is never sent again; a send that
-reached nobody is tried again after 1, 5 and 15 minutes. The text is fixed: no link, and no user text but the rule
-name.
+reached nobody is tried again after 1, 5 and 15 minutes, and only to the recipients it didn't reach. Each recipient's
+request is keyed by their address, so a delivery that stopped after sending reads what went out instead of sending it
+again. The text is fixed: no link, no user text but the rule name, and the value the notification was queued with.
 """
 
 import json
@@ -43,6 +44,7 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.email.service import EmailService
 from firefly_weave.operations.alert_channels import address_hash, principal_here, resolve_recipients, stored_settings
 from firefly_weave.operations.alert_rules import SCOPED, AlertRuleRepository
+from firefly_weave.operations.loop_health import raise_if_cancelled
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 from firefly_weave.runtime.scheduler import failure_cause
 
@@ -193,12 +195,13 @@ def admit(kind: Kind, recipients: Sequence[str], usage: Usage) -> list[str] | No
 def outcome(states: Sequence[str], attempts: int, *, final: str | None = None) -> Outcome:
     """A notification's state after ``attempts`` sends, from its messages' states.
 
-    Anything accepted makes it sent; an unclear one ends it, because it may have arrived; a send that reached nobody
-    is tried again until three retries are spent, unless ``final`` names a refusal no retry changes.
+    Anything accepted makes it sent. Any state but accepted or rejected ends it as unclear, because the mail may have
+    arrived: an unknown result, another deliverer mid-send, a send that never settled. A send that reached nobody is
+    tried again until three retries are spent, unless ``final`` names a refusal no retry changes.
     """
     if any(state == "accepted" for state in states):
         return "sent", None if all(state == "accepted" for state in states) else "mail_refused"
-    if any(state == "unknown" for state in states):
+    if any(state != "rejected" for state in states):
         return "failed", "mail_unknown"
     if final is not None:
         return "failed", final
@@ -215,9 +218,33 @@ def due(attempts: int, attempted_at: datetime | None, now: datetime) -> bool:
     return attempted_at <= now - timedelta(minutes=wait)
 
 
-def request_id(notification_id: UUID, index: int, attempt: int) -> UUID:
-    """One email request per notification, recipient and attempt: a retried delivery never queues one twice."""
-    return uuid5(NAMESPACE_URL, f"weave-alert-notification:{notification_id}:{index}:{attempt}")
+def request_id(notification_id: UUID, recipient_hash: str, attempt: int) -> UUID:
+    """One email request per notification, recipient and attempt, keyed by the recipient's address hash: a retried
+    delivery never queues one twice, and a recipient leaving the channel never moves another's request."""
+    return uuid5(NAMESPACE_URL, f"weave-alert-notification:{notification_id}:{recipient_hash}:{attempt}")
+
+
+def settled(state: str) -> str:
+    """A message's state as stored: what the server answered, or unknown for anything that may still arrive."""
+    return state if state in {"accepted", "rejected"} else "unknown"
+
+
+def _refused(error: Exception) -> tuple[str, str | None]:
+    """A send that surely went nowhere: rejected, with the refusal no retry changes when there is one."""
+    raise_if_cancelled(error)
+    if isinstance(error, AccessDenied | AuthenticationFailed):
+        return "rejected", "owner_unauthorized"
+    if isinstance(error, CatalogError):
+        if error.code == "WV-EMAIL-RECIPIENT":
+            # The connection's own recipient list refuses this address.
+            return "rejected", "recipient_not_allowed"
+        if error.code in {"WV-EMAIL-UNAVAILABLE", "WV-FORBIDDEN"}:
+            return "rejected", "owner_unauthorized"
+        logging.getLogger(__name__).warning("Alert mail was refused (%s)", error.code)
+        return "rejected", None
+    # The mail server or the database couldn't be reached before anything was sent: it is tried again.
+    logging.getLogger(__name__).warning("Alert mail could not be sent (%s)", failure_cause(error))
+    return "rejected", None
 
 
 # Pending notifications that may be tried now, as ``due`` decides.
@@ -226,6 +253,16 @@ _DUE = (
     f"CASE attempts WHEN 0 THEN {CLAIM_MINUTES} WHEN 1 THEN {RETRY_MINUTES[0]} WHEN 2 THEN {RETRY_MINUTES[1]} "
     f"ELSE {RETRY_MINUTES[2]} END))"
 )
+
+
+@dataclass(frozen=True)
+class Message:
+    """One recipient's message; ``existing`` when an earlier delivery of the same attempt already wrote it."""
+
+    id: UUID
+    request: UUID
+    address: str
+    existing: bool = False
 
 
 @dataclass
@@ -237,8 +274,7 @@ class Prepared:
     connection: UUID | None = None
     subject: str = ""
     body: str = ""
-    # (message ID, request ID, address) per recipient that gets it.
-    messages: tuple[tuple[UUID, UUID, str], ...] = ()
+    messages: tuple[Message, ...] = ()
     final: tuple[str, str | None] | None = None
 
 
@@ -256,7 +292,8 @@ class AlertNotifier:
             claimed = await AlertRuleRepository(tx).rows(
                 f"UPDATE alert_notifications SET attempted_at=:now WHERE {SCOPED} AND id IN (SELECT id FROM "
                 f"alert_notifications WHERE {SCOPED} AND {_DUE} ORDER BY created_at,id LIMIT :limit FOR UPDATE SKIP "
-                "LOCKED) RETURNING id,alert_id,channel_id,kind,attempts,change_request_id,change_request_revision",
+                "LOCKED) RETURNING id,alert_id,channel_id,kind,attempts,change_request_id,change_request_revision,"
+                "value",
                 now=now,
                 limit=limit,
             )
@@ -270,52 +307,65 @@ class AlertNotifier:
             prepared = await self.prepare(tx, notification, now)
         states: list[str] = []
         final: str | None = None
-        for _, request, address in prepared.messages:
+        for message in prepared.messages:
             if final == "owner_unauthorized":
                 states.append("rejected")
                 continue
-            state, refusal = await self._send(authority, prepared, request, address)
+            state, refusal = await self._send(authority, prepared, message)
             states.append(state)
             final = refusal or final
         async with self.uow.open(authority.scope, admission=False) as tx:
             await authority.verify(tx)
             await self.record(tx, prepared, states, final, now)
 
-    async def _send(
-        self, authority: _SchedulerScope, prepared: Prepared, request: UUID, address: str
-    ) -> tuple[str, str | None]:
-        """One message as the channel's owner: its state, and a refusal no retry changes."""
+    async def _send(self, authority: _SchedulerScope, prepared: Prepared, message: Message) -> tuple[str, str | None]:
+        """One message as the channel's owner: its state, and a refusal no retry changes.
+
+        A message an earlier delivery already wrote is never queued again: what that delivery queued is read, and
+        sent only if it is still waiting. Once a submission is queued, a failure counts as nothing sent only while
+        the submission is still queued; otherwise the mail may have gone out, and the outcome is unknown.
+        """
         assert prepared.owner is not None and prepared.connection is not None
         owner = Principal(id=prepared.owner, kind="human")
         try:
-            submission = await self.email.queue(
-                owner,
-                authority.scope,
-                EmailSendRequest(
-                    request_id=request,
-                    connection_revision_id=prepared.connection,
-                    to=(address,),
-                    subject=prepared.subject,
-                    text=prepared.body,
-                ),
-                automated=True,
-            )
-            result = await self.email.execute(owner, authority.scope, submission.id)
-            return result.state, None
-        except (AccessDenied, AuthenticationFailed):
-            return "rejected", "owner_unauthorized"
-        except CatalogError as error:
-            if error.code == "WV-EMAIL-RECIPIENT":
-                # The connection's own recipient list refuses this address.
-                return "rejected", "recipient_not_allowed"
-            if error.code in {"WV-EMAIL-UNAVAILABLE", "WV-FORBIDDEN"}:
-                return "rejected", "owner_unauthorized"
-            logging.getLogger(__name__).warning("Alert mail was refused (%s)", error.code)
-            return "rejected", None
+            submission = None
+            if message.existing:
+                submission = await self.email.submitted(owner, authority.scope, message.request)
+            if submission is None:
+                submission = await self.email.queue(
+                    owner,
+                    authority.scope,
+                    EmailSendRequest(
+                        request_id=message.request,
+                        connection_revision_id=prepared.connection,
+                        to=(message.address,),
+                        subject=prepared.subject,
+                        text=prepared.body,
+                    ),
+                    automated=True,
+                )
+            elif submission.state != "queued":
+                return settled(submission.state), None
         except Exception as error:
-            # The mail server or the database couldn't be reached: nothing was sent, so it is tried again.
-            logging.getLogger(__name__).warning("Alert mail could not be sent (%s)", failure_cause(error))
-            return "rejected", None
+            return _refused(error)
+        try:
+            result = await self.email.execute(owner, authority.scope, submission.id)
+        except Exception as error:
+            raise_if_cancelled(error)
+            if await self._still_queued(owner, authority, message.request):
+                return _refused(error)
+            logging.getLogger(__name__).warning("Alert mail may have been sent (%s)", failure_cause(error))
+            return "unknown", None
+        return settled(result.state), None
+
+    async def _still_queued(self, owner: Principal, authority: _SchedulerScope, request: UUID) -> bool:
+        """Whether the submission is surely unsent; a read that fails can't tell, so it is not."""
+        try:
+            submission = await self.email.submitted(owner, authority.scope, request)
+        except Exception as error:
+            raise_if_cancelled(error)
+            return False
+        return submission is not None and submission.state == "queued"
 
     async def prepare(self, tx: Transaction, notification: Mapping[str, Any], now: datetime) -> Prepared:
         """Check the channel, its owner, its recipients and the budgets again, and write the messages to send."""
@@ -357,31 +407,53 @@ class AlertNotifier:
             prepared.final = ("failed", "approval_ended")
             return prepared
         rule_id, prepared.subject, prepared.body = content
+        attempt = int(notification["attempts"])
+        # A retry goes only to the recipients every earlier attempt was refused for.
+        reached = {
+            row["recipient_hash"]
+            for row in await repository.rows(
+                f"SELECT recipient_hash FROM alert_messages WHERE {SCOPED} AND notification_id=:notification "
+                "AND attempt<:attempt AND state<>'rejected'",
+                notification=notification["id"],
+                attempt=attempt,
+            )
+        }
         hashes = {address: await address_hash(tx, address) for address in addresses}
+        hashes = {address: value for address, value in hashes.items() if value not in reached}
+        if not hashes:
+            prepared.final = ("sent", None)
+            return prepared
         allowed = admit(notification["kind"], list(hashes.values()), await self._usage(tx, notification, rule_id, now))
         if allowed is None:
             prepared.final = ("skipped_limit", "skipped_limit")
             return prepared
-        attempt = int(notification["attempts"])
         messages = []
-        for index, address in enumerate(addresses):
-            if hashes[address] not in allowed:
+        for address, recipient in hashes.items():
+            if recipient not in allowed:
                 continue
-            message, request = uuid4(), request_id(notification["id"], index, attempt)
-            await repository.execute(
+            request = request_id(notification["id"], recipient, attempt)
+            written = await repository.rows(
                 "INSERT INTO alert_messages(tenant_id,project_id,environment_id,id,notification_id,rule_id,channel_id,"
                 "recipient_hash,request_id,attempt,state,sent_at) VALUES(:tenant,:project,:environment,:id,"
-                ":notification,:rule,:channel,:hash,:request,:attempt,'queued',:now) ON CONFLICT DO NOTHING",
-                id=message,
+                ":notification,:rule,:channel,:hash,:request,:attempt,'queued',:now) ON CONFLICT DO NOTHING "
+                "RETURNING id",
+                id=uuid4(),
                 notification=notification["id"],
                 rule=rule_id,
                 channel=notification["channel_id"],
-                hash=hashes[address],
+                hash=recipient,
                 request=request,
                 attempt=attempt,
                 now=now,
             )
-            messages.append((message, request, address))
+            if written:
+                messages.append(Message(written[0]["id"], request, address))
+                continue
+            # A delivery of this attempt that stopped before recording its outcome already wrote this message.
+            (earlier,) = await repository.rows(
+                f"SELECT id FROM alert_messages WHERE {SCOPED} AND request_id=:request", request=request
+            )
+            messages.append(Message(earlier["id"], request, address, existing=True))
         prepared.messages = tuple(messages)
         prepared.owner, prepared.connection = channel["owner_id"], channel["connection_revision_id"]
         return prepared
@@ -392,13 +464,16 @@ class AlertNotifier:
         environment = (await repository.rows("SELECT name FROM environments WHERE id=:environment"))[0]["name"]
         kind = notification["kind"]
         if kind in ALERT_KINDS:
+            # Only what never changes once the notification is queued, so every delivery of it says the same.
             (alert,) = await repository.rows(
-                "SELECT rule_id,rule_name,severity,signal,comparator,threshold,unit,started_at,resolved_at,"
-                f"coalesce(last_value,value_at_start) AS value FROM alerts WHERE {SCOPED} AND id=:id",
+                "SELECT rule_id,rule_name,severity,signal,comparator,threshold,unit,started_at,resolved_at "
+                f"FROM alerts WHERE {SCOPED} AND id=:id",
                 id=notification["alert_id"],
             )
             return alert["rule_id"], *alert_email(
-                alert, environment, cast(Literal["firing", "resolved", "repeat"], kind)
+                {**alert, "value": notification["value"]},
+                environment,
+                cast(Literal["firing", "resolved", "repeat"], kind),
             )
         if kind == "test":
             return None, *channel_test_email(environment)
@@ -467,9 +542,9 @@ class AlertNotifier:
         self, tx: Transaction, prepared: Prepared, states: Sequence[str], final: str | None, now: datetime
     ) -> None:
         repository = AlertRuleRepository(tx)
-        for (message, _, _), state in zip(prepared.messages, states, strict=True):
+        for message, state in zip(prepared.messages, states, strict=True):
             await repository.execute(
-                f"UPDATE alert_messages SET state=:state WHERE {SCOPED} AND id=:id", id=message, state=state
+                f"UPDATE alert_messages SET state=:state WHERE {SCOPED} AND id=:id", id=message.id, state=settled(state)
             )
         attempts = int(prepared.notification["attempts"]) + 1
         if prepared.final is not None:

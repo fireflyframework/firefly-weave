@@ -709,7 +709,7 @@ class AlertLoop:
             repeat = step.repeat_due and bool(rule.channel_ids)
             sequence = int(row["repeat_count"] or 0) + 1
             if repeat:
-                await queue_notifications(tx, alert_id, rule.channel_ids, "repeat", sequence, now)
+                await queue_notifications(tx, alert_id, rule.channel_ids, "repeat", sequence, now, after.last_value)
             await repository.execute(
                 "UPDATE alerts SET last_value=coalesce(:value,last_value),"
                 "last_notified_at=CASE WHEN :repeat THEN cast(:now AS timestamptz) ELSE last_notified_at END,"
