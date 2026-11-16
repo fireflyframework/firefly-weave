@@ -45,6 +45,7 @@ export const healthComponents = [
 ] as const;
 export type HealthComponentName = (typeof healthComponents)[number];
 export const attentionKinds = [
+  "alert",
   "job",
   "approval",
   "worker",
@@ -490,6 +491,7 @@ export function attentionLink(item: AttentionItem): string | null {
 
 /** The icon and the short word that lead an attention item. */
 export const attentionLabels: Record<AttentionKind, [string, string]> = {
+  alert: ["Alert", "alertFiring"],
   job: ["Job", "warning"],
   approval: ["Approval", "approvals"],
   worker: ["Worker", "workers"],
@@ -498,6 +500,16 @@ export const attentionLabels: Record<AttentionKind, [string, string]> = {
   compatibility: ["Compatibility", "degraded"],
   run: ["Failed run", "failCircle"],
 };
+
+/**
+ * The icon and the short word that lead an attention item. A kind a newer
+ * server sends reads neutrally, so Needs attention still shows it.
+ */
+export function attentionLabel(kind: string): [string, string] {
+  return Object.hasOwn(attentionLabels, kind)
+    ? attentionLabels[kind as AttentionKind]
+    : ["Other", "info"];
+}
 
 /** Nothing running, waiting or needing attention in what the person may read. */
 export function isQuiet(summary: OperationsSummary): boolean {
