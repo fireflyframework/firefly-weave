@@ -198,6 +198,15 @@ def test_worker_gates_keep_independent_locked_python_runtimes(runner, monkeypatc
             assert list(commands).index(f"worker-{worker}-{gate}") < list(commands).index("prepare")
 
 
+def test_every_worker_stage_rebuilds_the_core_it_checks_against(runner):
+    # The workers install firefly-weave from its path as a copy, so a worker environment made before a merge keeps
+    # the old core until uv rebuilds it; the option belongs to uv run, before the tool and its own arguments.
+    stages = runner.worker_stages()
+    assert len(stages) == 8
+    for name, command, _ in stages:
+        assert command[7:9] == ["--reinstall-package", "firefly-weave"], name
+
+
 def test_worker_failure_stops_packaging_with_private_evidence(runner, monkeypatch, tmp_path):
     evidence = tmp_path / "checks"
     calls = capture(runner, monkeypatch, evidence, fail="worker-agentic-tests")
