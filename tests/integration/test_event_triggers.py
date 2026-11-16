@@ -105,10 +105,13 @@ async def test_a_trigger_keeps_the_sources_its_workflow_allows_when_the_binding_
 async def test_binding_more_than_the_workflow_declares_is_refused(platform):
     activation = await platform.publish(reaction(events=("transaction.in_doubt",), sources=["move"]))
     plain = await platform.publish(workflow("plain", []))
+    # Its from is omitted, so only another workflow's events may start it.
+    watcher = await platform.publish(reaction("self-watch"))
     for target, fields in (
         (activation, {"events": ["transaction.in_doubt", "transaction.completed"]}),
         (activation, {"source_workflows": ["other"]}),
         (plain, {}),
+        (watcher, {"source_workflows": ["move", "self-watch"]}),
     ):
         with pytest.raises(CatalogError) as refused:
             await platform.bind(target, **fields)
