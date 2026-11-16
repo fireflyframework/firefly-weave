@@ -174,3 +174,19 @@ def test_rows_name_the_answers_a_permitted_call_may_give_and_until_when():
         for answer in row.answers:
             assert answer["code"].startswith("WV-") and 400 <= answer["status"] < 600, row.operation
             assert answer.get("until", "logs") in journeys["capabilities"], row.operation
+
+
+def test_an_operation_about_the_caller_is_for_every_person_and_never_a_machine():
+    def held(*roles):
+        return matrix.holds(roles, "authenticated identity", ROLE_CAPABILITIES)
+
+    assert held("viewer") and held("email_reader") and held("deployment_runner", "file_reader")
+    assert not held("worker") and not held("deployment_runner") and not held()
+    # Any grant in the tenant counts, at any level, for an operation at the tenant's path.
+    path = "/tenants/{tenant}/my-alert-address"
+    environment = {"tenant_id": "t", "project_id": "p", "environment_id": "e"}
+    assert matrix.holds_at(
+        [{"role": "viewer", "scope": environment}], "authenticated identity", ROLE_CAPABILITIES, path
+    )
+    machine = [{"role": "worker", "scope": environment}, {"role": "deployment_runner", "scope": {"tenant_id": "t"}}]
+    assert not matrix.holds_at(machine, "authenticated identity", ROLE_CAPABILITIES, path)
