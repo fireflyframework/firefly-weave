@@ -132,6 +132,12 @@ import type { App } from "../app";
         .runs-on .editor-identity h1 {
           max-width: none;
         }
+        /* Where the tabs share the name's row, the Runs tab's icon gives its
+           22 px back: the four tabs otherwise leave the workflow settings
+           gear less than its 44 px target at 360 and 390 px. */
+        .editor-bar:not(.runs-on) .editor-views button weave-icon {
+          display: none;
+        }
       }
     `,
   ],
