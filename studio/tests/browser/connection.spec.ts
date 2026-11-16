@@ -1082,17 +1082,25 @@ test.describe("startup and saved platforms", () => {
       page,
     }) => {
       let failures = 1;
-      const host = await platformHost(page, {
+      const failure = {
+        status: 503,
+        json: { status: 503, code, message: "Not available." },
+      };
+      const host = new PlatformHost({
         platforms: [acmePlatform()],
         active: "Acme",
-        test: () =>
-          failures-- > 0
-            ? {
-                status: 503,
-                json: { status: 503, code, message: "Not available." },
-              }
-            : undefined,
+        test: () => (failures-- > 0 ? failure : undefined),
       });
+      await page.route(
+        (url) => url.pathname.startsWith("/studio/"),
+        (route) => host.handle(route),
+      );
+      // Reading the account through the API fails the same way; the check
+      // after Try again answers with the account itself.
+      await page.route("**/studio/api/api/v1/identity", (route) =>
+        route.fulfill(failure),
+      );
+      await page.goto("/");
       const notice = page.locator(".platform-banner");
       await expect(notice).toContainText(banner);
       await expect(notice).not.toContainText("WV-");
