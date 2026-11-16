@@ -17,6 +17,7 @@
 """Operations explanations send only allowlisted, token-checked facts of the record the caller may read."""
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import get_args
 from uuid import UUID
@@ -82,6 +83,12 @@ from firefly_weave.operations.summary import SummaryFacts
 from firefly_weave.runtime.transactions import HELD_INCIDENT
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
+# A record ID as the model could see it: hyphenated, or a run of exactly 32 hex digits. A sha256 image digest is 64
+# digits, so it does not match.
+UUID_SHAPED = re.compile(
+    r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})"
+    r"(?![0-9a-fA-F])"
+)
 WORKER_ID = UUID("00000000-0000-4000-8000-0000000000a1")
 RELEASE_ID = UUID("00000000-0000-4000-8000-0000000000a2")
 PRINCIPAL_ID = UUID("00000000-0000-4000-8000-0000000000a3")
@@ -1196,6 +1203,7 @@ async def test_reach_never_reaches_the_gateway(monkeypatch, tmp_path):
     await ask(service, owners, ask_request("worker", "environment", "incident"))
     [body] = bodies
     assert "attachments" not in json.loads(body)["request"]
+    assert UUID_SHAPED.search(json.dumps(json.loads(body)["attachments"])) is None
     for secret in (TARGET_ID, ITEM_IDS[18], WORKER_ID, ENVIRONMENT_ID, INCIDENT_ID):
         assert str(secret) not in body and secret.hex not in body
     assert "placement:" not in body and "targets:" not in body and "named:" not in body

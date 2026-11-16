@@ -26,7 +26,7 @@ import json
 import re
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import Any, get_args
+from typing import Any, TypeAliasType, get_args
 from uuid import UUID
 
 import httpx
@@ -37,6 +37,7 @@ from pydantic import BaseModel
 from test_weave_ai_operations import (
     NOW,
     SCOPE,
+    UUID_SHAPED,
     Owners,
     ask,
     asker,
@@ -51,6 +52,8 @@ from test_weave_ai_operations import (
     worker,
 )
 
+from firefly_weave.contracts.catalog import Digest
+from firefly_weave.contracts.deployments import ExternalIdentity
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
 from firefly_weave.contracts.workers import WorkerStatus
 from firefly_weave.operations.incident_codes import INCIDENT_CODES
@@ -97,6 +100,7 @@ TEXT = {
     # Business payloads.
     "incident transaction business_key": "canary-business-7f3a",
     "incident transaction participant": "canary-participant-7f3a",
+    "incident transaction pending": "canary-pending-7f3a",
     # Where things run.
     "worker identity host": "canary-host-7f3a.internal",
     "worker identity node": "canary-node-7f3a",
@@ -115,6 +119,8 @@ TEXT = {
     "change request plan digest": "7f3a" * 15 + "a7f3",
     "plan digest": "7f3a" * 15 + "b7f3",
     "plan observation digest": "7f3a" * 15 + "c7f3",
+    "job plan digest": "7f3a" * 15 + "d7f3",
+    "plan step expected_version": "canary-version-7f3a",
     # Typed text.
     "change request title": "canary-title-7f3a",
     "change request reason": "canary-change-reason-7f3a",
@@ -150,6 +156,23 @@ IDS = {
     "plan observation_id": uid(42),
     "plan worker_release_id": uid(43),
     "job operation_key": uid(44),
+    "change request scope tenant_id": uid(51),
+    "change request scope project_id": uid(52),
+    "change request scope environment_id": uid(53),
+    "change request observation_job_id": uid(54),
+    "change request observation_id": uid(55),
+    "change request drained": uid(56),
+    "change request drained_revisions": uid(57),
+    "plan scope tenant_id": uid(61),
+    "plan scope project_id": uid(62),
+    "plan scope environment_id": uid(63),
+    "plan target_id": uid(64),
+    "plan deployment_id": uid(65),
+    "job scope tenant_id": uid(71),
+    "job scope project_id": uid(72),
+    "job scope environment_id": uid(73),
+    "job target_id": uid(74),
+    "job observation_id": uid(75),
 }
 PROVIDER_KEY = "canary-provider-key-7f3a"
 
@@ -159,6 +182,10 @@ def free_text(variant: str, name: str) -> str:
     if variant == "token":
         return TEXT[name]
     return LOG_SHAPED[hash(name) % 2]
+
+
+def scope_of(record: str) -> dict[str, str]:
+    return {key: str(IDS[f"{record} scope {key}"]) for key in ("tenant_id", "project_id", "environment_id")}
 
 
 def canaried(variant: str = "token") -> dict[str, BaseModel]:
@@ -211,7 +238,7 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
                     "effect": "none",
                 }
             ],
-            "pending": [],
+            "pending": [TEXT["incident transaction pending"]],
         },
     )
     summary = summary_of(
@@ -234,6 +261,11 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
     )
     record = change_request(
         id=str(IDS["change request id"]),
+        scope=scope_of("change request"),
+        observation_job_id=str(IDS["change request observation_job_id"]),
+        observation_id=str(IDS["change request observation_id"]),
+        drained=[str(IDS["change request drained"])],
+        drained_revisions={str(IDS["change request drained_revisions"]): 3},
         target_id=str(IDS["change request target_id"]),
         deployment_id=str(IDS["change request deployment_id"]),
         requested_by=str(IDS["change request requested_by"]),
@@ -273,6 +305,9 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
     )
     current = plan(
         id=str(IDS["change request plan_id"]),
+        scope=scope_of("plan"),
+        target_id=str(IDS["plan target_id"]),
+        deployment_id=str(IDS["plan deployment_id"]),
         observation_id=str(IDS["plan observation_id"]),
         observation_digest=TEXT["plan observation digest"],
         digest=TEXT["plan digest"],
@@ -286,12 +321,17 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
                     "configuration": TEXT["plan component configuration"],
                     "worker_release_id": str(IDS["plan worker_release_id"]),
                 },
+                "expected_version": TEXT["plan step expected_version"],
             }
         ],
     )
     apply = job(
         id=str(IDS["change request apply_job_id"]),
+        scope=scope_of("job"),
+        target_id=str(IDS["job target_id"]),
+        observation_id=str(IDS["job observation_id"]),
         plan_id=str(IDS["change request plan_id"]),
+        plan_digest=TEXT["job plan digest"],
         operation_key=str(IDS["job operation_key"]),
         receipt={
             "code": "applied",
@@ -328,9 +368,90 @@ def outside(kind: str, data: Any) -> set[str]:
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
 
+IDENTIFIER_TYPES = ((UUID, "uuid"), (Digest, "digest"), (ExternalIdentity, "external identity"))
+DIGEST_SHAPED = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
+
+
+def identifier_kinds(annotation: Any, seen: frozenset[Any] = frozenset()) -> set[str]:
+    """The identifier kinds a field's annotation can hold, through unions, lists, dicts, Annotated and aliases.
+
+    A recursive alias, such as a JSON value, is followed once.
+    """
+    for kind, name in IDENTIFIER_TYPES:
+        if annotation is kind:
+            return {name}
+    if isinstance(annotation, TypeAliasType):
+        return set() if annotation in seen else identifier_kinds(annotation.__value__, seen | {annotation})
+    return set().union(*(identifier_kinds(argument, seen) for argument in get_args(annotation)))
+
+
+def contents(value: Any) -> Iterator[Any]:
+    """Every value inside a field's value, dict keys included."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from contents(child)
+    elif isinstance(value, list | tuple | set | frozenset):
+        for child in value:
+            yield from contents(child)
+    else:
+        yield value
+
+
+def identifier_fields(model: BaseModel, path: str = "") -> Iterator[tuple[str, Any]]:
+    """Every field typed as a UUID, a digest or an external identity, in the record and every model it holds."""
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name)
+        if identifier_kinds(field.annotation):
+            yield f"{path}/{name}", value
+        for child in contents(value):
+            if isinstance(child, BaseModel):
+                yield from identifier_fields(child, f"{path}/{name}")
+
+
+def dumped_strings(value: Any) -> Iterator[str]:
+    for item in contents(value):
+        if isinstance(item, str):
+            yield item
+
+
+def uncanaried(record: BaseModel) -> list[str]:
+    """Each identifier of a record that is no canary of this suite: unset, shared with a fixture, or new."""
+    ids = {str(value) for value in IDS.values()} | {value.hex for value in IDS.values()}
+    texts = set(TEXT.values())
+    found = []
+    for path, value in identifier_fields(record):
+        held = [item for item in contents(value) if isinstance(item, UUID | str)]
+        if not held:
+            found.append(f"{path} is unset")
+        found += [f"{path} holds {item}" for item in held if str(item) not in ids and item not in texts]
+    for text in dumped_strings(record.model_dump(mode="json")):
+        found += [f"{match} is not a canary" for match in UUID_SHAPED.findall(text) if match not in ids]
+        if DIGEST_SHAPED.fullmatch(text) and text not in texts:
+            found.append(f"{text} is not a canary")
+    return found
+
+
 def test_every_excluded_item_has_its_own_canary():
     assert len(set(TEXT.values())) == len(TEXT) and len(set(IDS.values())) == len(IDS)
-    assert sorted(name for names in PLANTED.values() for name in names) == sorted((*TEXT, *IDS))
+
+
+@pytest.mark.parametrize("record", sorted(PLANTED))
+def test_every_identifier_of_a_record_is_its_own_canary(record):
+    assert uncanaried(canaried()[record]) == []
+
+
+class WorkerStatusWithNewID(WorkerStatus):
+    new_id: UUID | None = None
+
+
+def test_an_identifier_field_added_to_a_contract_needs_its_own_canary():
+    record = WorkerStatusWithNewID.model_validate(canaried()["worker"].model_dump())
+    assert uncanaried(record) == ["/new_id is unset"]
+    assert uncanaried(record.model_copy(update={"new_id": uid(999)})) == [
+        f"/new_id holds {uid(999)}",
+        f"{uid(999)} is not a canary",
+    ]
 
 
 @pytest.mark.parametrize("record", sorted(PLANTED))
@@ -439,6 +560,7 @@ async def test_no_excluded_value_reaches_the_gateway(monkeypatch, tmp_path, vari
     body = raw.decode()
     assert leaks(body) == []
     sent = json.loads(body)
+    assert UUID_SHAPED.search(json.dumps(sent["attachments"])) is None
     resources = sent["attachments"]["resources"]
     assert [item["kind"] for item in resources] == ["worker", "incident", "environment", "change-request"]
     for item in resources:
@@ -525,6 +647,8 @@ CONSTANTS = frozenset(
 
 
 def allowed(value: str) -> bool:
+    if UUID_SHAPED.search(value) or TIMESTAMP.search(value):
+        return False
     return (
         value in CONSTANTS
         or bool(NAME_TOKEN.fullmatch(value))
