@@ -278,8 +278,10 @@ async def test_a_viewer_is_refused_before_anything_opens(call):
     await refused(person(role("viewer"), role("operator")), call)
 
 
-async def test_a_preview_also_needs_status_read():
-    await refused(person(role("alert_manager")), "preview")
+@pytest.mark.parametrize("call", ["create", "update", "preview"])
+async def test_saving_or_previewing_a_rule_also_needs_status_read(call):
+    # Rules and alerts show operations figures, as a preview does.
+    await refused(person(role("alert_manager")), call)
 
 
 @pytest.mark.parametrize("call", ["create", "update", "preview"])

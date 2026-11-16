@@ -150,6 +150,7 @@ async def test_a_target_rule_needs_deployment_read_on_that_target(alerting):
     actor = await principal_with(
         case,
         Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
         Grant(role="deployment_reader", scope=case.scope, resources=(str(granted),)),
     )
     offline = {"signal": "targets.runner_offline", "threshold": 0, "window_seconds": None}
@@ -159,7 +160,10 @@ async def test_a_target_rule_needs_deployment_read_on_that_target(alerting):
     assert created.selector.target_id == granted
     # A target that doesn't exist in this environment can't be watched, even by someone who may read every target.
     everywhere = await principal_with(
-        case, Grant(role="alert_manager", scope=case.scope), Grant(role="deployment_reader", scope=case.scope)
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
+        Grant(role="deployment_reader", scope=case.scope),
     )
     with pytest.raises(CatalogError) as unknown:
         await create(case, draft(**offline, selector={"target_id": str(uuid4())}), actor=everywhere)

@@ -93,8 +93,11 @@ type Call = Callable[[Principal], Awaitable[Any]]
 CALLS: dict[str, tuple[Call, tuple[str, ...]]] = {
     "alert_rules.list": (lambda actor: RULES.list(actor, SCOPE, limit=10, cursor=None, context=CONTEXT), ()),
     "alert_rules.read": (lambda actor: RULES.read(actor, SCOPE, uuid4(), context=CONTEXT), ()),
-    "alert_rules.create": (lambda actor: RULES.create(actor, SCOPE, RULE, "key", context=CONTEXT), ()),
-    "alert_rules.update": (lambda actor: RULES.update(actor, SCOPE, uuid4(), RULE, 1, context=CONTEXT), ()),
+    "alert_rules.create": (lambda actor: RULES.create(actor, SCOPE, RULE, "key", context=CONTEXT), ("viewer",)),
+    "alert_rules.update": (
+        lambda actor: RULES.update(actor, SCOPE, uuid4(), RULE, 1, context=CONTEXT),
+        ("viewer",),
+    ),
     "alert_rules.delete": (lambda actor: RULES.delete(actor, SCOPE, uuid4(), 1, context=CONTEXT), ()),
     "alert_rules.preview": (
         lambda actor: RULES.preview(actor, SCOPE, RULE, health=LoopHealth(), context=CONTEXT),

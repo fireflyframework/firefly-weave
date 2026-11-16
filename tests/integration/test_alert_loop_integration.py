@@ -27,7 +27,7 @@ from uuid import uuid4
 import pytest
 from test_alert_rules_api import add_channel
 from test_operations_statistics import owner, place, started_runs
-from test_operations_summary import add_incident, summary_service
+from test_operations_summary import add_incident, add_runner, summary_service
 from test_worker_fleet_facts import add_target, clock, principal_with
 
 from firefly_weave.access.audit import AuditContext
@@ -219,6 +219,7 @@ async def test_a_revoked_target_grant_stops_the_rule(evaluator):
     watcher = await principal_with(
         case,
         Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
         Grant(role="deployment_reader", scope=case.scope, resources=(str(target),)),
     )
     rule = await create(
@@ -424,3 +425,42 @@ async def test_a_claim_takes_no_more_due_environments_than_its_limit(evaluator):
     claimed = [authority.scope.environment_id for authority in (*first, *second, *third)]
     assert (len(first), len(second), len(third)) == (4, 4, 1)
     assert sorted(claimed) == sorted([case.scope.environment_id, *others])
+
+
+async def test_a_rule_whose_last_editor_lost_status_read_stops_reading(evaluator):
+    case = evaluator
+    run = await case.start("alert-status-read")
+    await add_incident(case, run.id, "first")
+    editor = await principal_with(
+        case, Grant(role="alert_manager", scope=case.scope), Grant(role="viewer", scope=case.scope)
+    )
+    rule = await create(case, draft(), actor=editor)
+    (binding,) = await owner(
+        case, "SELECT id FROM role_bindings WHERE principal_id=:principal AND role='viewer'", principal=editor.id
+    )
+    await case.access.revoke_grant(case.admin, case.scope, binding["id"])
+    await at(case, 0)
+    assert (await state(case, rule.id))["state"] == "unauthorized"
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
+
+
+async def test_a_target_rule_whose_owner_can_read_no_target_stops_reading(evaluator):
+    case = evaluator
+    target = await add_target(case, "alpha")
+    await add_runner(case, target, expires=case.now - timedelta(minutes=1))
+    watcher = await principal_with(
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
+        Grant(role="deployment_reader", scope=case.scope),
+    )
+    rule = await create(case, draft(signal="targets.runner_offline", name="A runner is offline"), actor=watcher)
+    (binding,) = await owner(
+        case,
+        "SELECT id FROM role_bindings WHERE principal_id=:principal AND role='deployment_reader'",
+        principal=watcher.id,
+    )
+    await case.access.revoke_grant(case.admin, case.scope, binding["id"])
+    await at(case, 0)
+    stored = await state(case, rule.id)
+    assert (stored["state"], stored["last_value"]) == ("unauthorized", None)

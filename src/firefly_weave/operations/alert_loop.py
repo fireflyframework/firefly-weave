@@ -556,17 +556,38 @@ class AlertLoop:
                 if row["updated_by"] not in owners:
                     owners[row["updated_by"]] = await principal_here(tx, row["updated_by"])
                 owner = owners[row["updated_by"]]
-                target = rule.selector.target_id
-                # A rule on one target is read only while the person who last set it may still read that target.
-                if target is not None and (
-                    owner is None
-                    or not self.authorization.allows(owner, tx.scope, "deployment.read", resource=str(target))
-                ):
+                targets = readable_targets(owner, tx.scope)
+                if not self._readable(row, rule, owner, targets, tx.scope):
                     planned.append(Planned(row, rule, None))
                     continue
-                reading = await self._read(tx, reads, rule, now, readable_targets(owner, tx.scope))
+                reading = await self._read(tx, reads, rule, now, targets)
                 planned.append(Planned(row, rule, advance(_rule_state(row), rule, reading, now), reading))
         return planned
+
+    def _readable(
+        self,
+        row: Mapping[str, Any],
+        rule: AlertRuleDraft,
+        owner: Principal | None,
+        targets: tuple[UUID, ...] | None,
+        scope: Scope,
+    ) -> bool:
+        """Whether the person who last set the rule may still read what it watches; if not, it stores unauthorized.
+
+        A rule's values are operations figures, so its last editor needs status.read, as a preview does. A rule on
+        one target needs deployment.read on that target, and a rule on targets needs some target its editor may read,
+        or it would read zero. Rules Weave installs have no editor and need neither.
+        """
+        if row["updated_by"] is not None and (
+            owner is None or not self.authorization.allows(owner, scope, "status.read")
+        ):
+            return False
+        target = rule.selector.target_id
+        if target is not None:
+            return owner is not None and self.authorization.allows(
+                owner, scope, "deployment.read", resource=str(target)
+            )
+        return "target_id" not in ALERT_SIGNALS[rule.signal].selectors or targets != ()
 
     async def _record(
         self, authority: _SchedulerScope, now: datetime, planned: Sequence[Planned], *, admitted: bool = False

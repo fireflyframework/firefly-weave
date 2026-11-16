@@ -520,6 +520,11 @@ async def resolve_firing(
     return alert_id
 
 
+# Saving a rule also needs status.read: its state shows operations figures, as a preview does, and the evaluator
+# reads it only while the person who last saved it still holds status.read.
+SAVING = ("alert.manage", "status.read")
+
+
 @service
 class AlertRuleService:
     """Rules of one environment. Every call checks the caller's token and then the caller as stored now."""
@@ -606,10 +611,10 @@ class AlertRuleService:
     async def create(
         self, actor: Principal, scope: Scope, rule: AlertRuleDraft, idempotency_key: str, *, context: AuditContext
     ) -> AlertRuleView:
-        self._require(actor, scope, ("alert.manage",), context, rule)
+        self._require(actor, scope, SAVING, context, rule)
         validate_rule(rule)
         async with self.uow.open(scope) as tx:
-            await self._current(tx, actor, ("alert.manage",), context, rule)
+            await self._current(tx, actor, SAVING, context, rule)
             replay = Idempotency(
                 tx,
                 actor.id,
@@ -654,11 +659,11 @@ class AlertRuleService:
         *,
         context: AuditContext,
     ) -> AlertRuleView:
-        self._require(actor, scope, ("alert.manage",), context, rule)
+        self._require(actor, scope, SAVING, context, rule)
         expected_revision = _revision(expected_revision)
         validate_rule(rule)
         async with self.uow.open(scope) as tx:
-            await self._current(tx, actor, ("alert.manage",), context, rule)
+            await self._current(tx, actor, SAVING, context, rule)
             await lock(tx, f"alert-rules:{scope.environment_id}")
             repository = AlertRuleRepository(tx)
             before = await repository.rule(rule_id, lock=True)
