@@ -106,6 +106,9 @@ def require_same_manifest(before: dict, after: dict) -> None:
 Checks = dict[tuple[str, str], str]
 # Bounds the wait for a lock on a restored table while its CHECK constraints are parsed again.
 CHECK_LOCK_TIMEOUT_SECONDS = 5
+# Bounds each statement of that parsing, so a definition whose constant expression is costly to work out can't run
+# without limit; a statement stopped by it is undone and its definition keeps its own text, so the restore is refused.
+CHECK_STATEMENT_TIMEOUT_SECONDS = 5
 
 
 def check_definitions(manifest: dict) -> set[tuple[str, str]]:
@@ -165,6 +168,10 @@ async def canonical_checks(url, definitions: set[tuple[str, str]]) -> Checks:
         async with engine.connect() as connection, connection.begin() as transaction:
             await connection.execute(
                 text("SELECT set_config('lock_timeout',:timeout,true)"), {"timeout": f"{CHECK_LOCK_TIMEOUT_SECONDS}s"}
+            )
+            await connection.execute(
+                text("SELECT set_config('statement_timeout',:timeout,true)"),
+                {"timeout": f"{CHECK_STATEMENT_TIMEOUT_SECONDS}s"},
             )
             copies: dict[str, str | None] = {}
             for table, definition in sorted(definitions):
