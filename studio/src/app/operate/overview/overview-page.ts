@@ -47,7 +47,7 @@ import { RefreshStatus } from "../refresh-status";
 import type { StatisticsSeries } from "../metrics/chart-model";
 import { LineChart, Sparkline, TimeChart } from "../metrics/charts";
 import {
-  attentionLabels,
+  attentionLabel,
   attentionLink,
   clockOffset,
   countText,
@@ -807,7 +807,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
     return toneAttribute(statusTone("health", state));
   }
   labelOf(item: AttentionItem) {
-    return attentionLabels[item.kind];
+    return attentionLabel(item.kind);
   }
   linkOf(item: AttentionItem) {
     return attentionLink(item);

@@ -325,6 +325,22 @@ class EmailService:
                 id=submission_id, conversation_id=conversation_id, message_id=message_id, state="queued"
             )
 
+    async def submitted(self, actor: Principal, scope: Scope, request_id: UUID) -> EmailSubmission | None:
+        """The automated submission queued in this environment with ``request_id``, whoever it was queued as.
+
+        An automated sender derives its request IDs from what it sends, so after a stop, or when another person took
+        over the sending, it reads what already went out instead of queuing again. Reading needs ``email.send``, as
+        queuing does.
+        """
+        async with self.uow.open(scope, mutation=False) as tx:
+            await self.checked(tx, actor, "email.send")
+            rows = await RuntimeRepository(tx).rows(
+                f"SELECT * FROM email_submissions WHERE {SCOPE} AND request_id=:request "
+                "AND request->>'automated'='true' ORDER BY id LIMIT 1",
+                request=request_id,
+            )
+            return self.submission(rows[0]) if rows else None
+
     async def status(self, actor: Principal, scope: Scope, identifier: UUID) -> EmailSubmission:
         async with self.uow.open(scope, mutation=False) as tx:
             rows = await RuntimeRepository(tx).rows(

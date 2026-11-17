@@ -303,8 +303,8 @@ ATTENTION_TITLES: Final[Mapping[str, re.Pattern[str]]] = MappingProxyType(
         "run": re.compile(rf"A run(?: of {_NAME})? failed"),
     }
 )
-# Attention kinds whose titles are never sent, such as titles a person writes.
-UNTITLED_KINDS: Final[frozenset[str]] = frozenset()
+# Attention kinds whose titles are never sent, such as titles a person writes: an alert's title is its rule's name.
+UNTITLED_KINDS: Final[frozenset[str]] = frozenset({"alert"})
 # Kinds whose title names a workflow only when the caller may see the run.
 WORKFLOW_TITLED: Final = frozenset({"incident", "run"})
 HEALTH_COMPONENTS: Final = values_of(HealthComponent, "component")

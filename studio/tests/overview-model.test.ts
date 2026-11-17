@@ -20,6 +20,7 @@ import { delimiter, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   attentionKinds,
+  attentionLabel,
   attentionLink,
   clockOffset,
   countText,
@@ -461,6 +462,32 @@ describe("Overview model", () => {
       over: false,
       text: "7 free slots",
     });
+  });
+
+  it("leads an attention item of a kind it doesn't know with a neutral word and icon", () => {
+    // A firing critical alert is named by its rule and has no record page yet.
+    const alert = {
+      kind: "alert",
+      id: id(9),
+      title: "Run failure rate above 10 %",
+    } as const;
+    expect(attentionLabel(alert.kind)).toEqual(["Alert", "alertFiring"]);
+    expect(attentionLink(alert)).toBeNull();
+    // A newer server's kind shows without a link instead of breaking Needs attention.
+    expect(attentionLabel("drift")).toEqual(["Other", "info"]);
+    expect(
+      attentionLink({ kind: "drift", id: id(9), title: "Drift" } as never),
+    ).toBeNull();
+    expect(attentionKinds.map(attentionLabel)).toEqual([
+      ["Alert", "alertFiring"],
+      ["Job", "warning"],
+      ["Approval", "approvals"],
+      ["Worker", "workers"],
+      ["Incident", "incidents"],
+      ["Runner", "clusters"],
+      ["Compatibility", "degraded"],
+      ["Failed run", "failCircle"],
+    ]);
   });
 
   it("links each attention item to its record", () => {

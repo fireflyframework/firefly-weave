@@ -26,6 +26,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.sdk import platform
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations/versions"
+LATER_ROLES = {"alert_manager"}
 
 
 def test_the_step_tester_role_holds_only_step_test():
@@ -58,5 +59,6 @@ def test_the_role_check_accepts_every_role_and_nothing_new():
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
-    assert set(migration.ROLES) == set(ROLE_CAPABILITIES)
+    # Roles that later migrations add are checked by those migrations' tests (alert_manager: 0042_operations_alerts).
+    assert set(migration.ROLES) == set(ROLE_CAPABILITIES) - LATER_ROLES
     assert len(set(migration.ROLES)) == len(migration.ROLES)

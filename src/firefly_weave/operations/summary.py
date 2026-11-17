@@ -45,6 +45,7 @@ from firefly_weave.access.authorization import AccessDenied, AuthorizationServic
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.alerts import AlertsSection
 from firefly_weave.contracts.operations_summary import (
     ATTENTION_LIMIT,
     COMPATIBILITY_ITEM,
@@ -84,8 +85,9 @@ TELEMETRY_INTERVALS_RECENT = 3
 # Query failures a section reports as unavailable: a cancelled or timed-out statement, a lock timeout, a
 # serialization conflict, a deadlock and exhausted database resources. Every other error propagates.
 _TRANSIENT = ("57014", "55P03", "40001", "40P01", "53")
-# Priority of each attention kind; critical alerts (1) arrive with alert storage.
+# Priority of each attention kind: critical firing alerts first.
 PRIORITY: dict[str, int] = {
+    "alert": 1,
     "job": 2,
     "approval": 3,
     "worker": 4,
@@ -330,6 +332,7 @@ class _Reach:
     runs: bool
     targets: tuple[UUID, ...] | None
     approvals: tuple[UUID, ...] | None
+    alerts: bool = False
 
     def grants(self) -> frozenset[str]:
         """The reach as named grants: ``incidents``, ``runs``, and ``targets:*`` or ``targets:<id>`` per target,
@@ -356,7 +359,7 @@ def _intersect(left: tuple[UUID, ...] | None, right: tuple[UUID, ...] | None) ->
     return tuple(sorted(set(left) & set(right)))
 
 
-class _Reader:
+class SectionReader:
     """One section's statements, each under what is left of the section's budget."""
 
     def __init__(self, tx: Transaction, observed_at: datetime, budget: Budget) -> None:
@@ -373,6 +376,109 @@ class _Reader:
 
 def _targets(targets: tuple[UUID, ...] | None) -> dict[str, Any]:
     return {"all_targets": targets is None, "target_ids": list(targets or ())}
+
+
+async def read_load(reader: SectionReader) -> LoadSection:
+    usage = {
+        row["metric"]: int(row["value"])
+        for row in await reader.rows(
+            "SELECT metric,value FROM operation_usage WHERE "
+            + _SCOPE.format(alias="")
+            + " AND metric IN ('runs_active','waits_active','outbox_pending','provider_pending','sources_enabled')"
+        )
+    }
+    tests = await reader.row(capacity_reads.ACTIVE_TESTS)
+    ready, oldest_ready = _ready(await reader.row(_READY_COUNTS))
+    leased = await reader.row(
+        "SELECT count(DISTINCT l.task_id) AS leased FROM task_leases l JOIN task_intents i "
+        f"ON {_SAME_SCOPE.format(a='i', b='l')} AND i.id=l.task_id WHERE {_SCOPE.format(alias='l.')} "
+        f"AND l.status='active' AND l.expires_at>{NOW} AND l.deadline>{NOW} AND i.status='leased'"
+    )
+    overdue = await reader.row(
+        f"SELECT count(*) AS overdue,extract(epoch FROM ({NOW}-min(deadline))) AS oldest FROM run_deadlines "
+        f"WHERE {_SCOPE.format(alias='')} AND NOT consumed AND deadline<={NOW}"
+    )
+    outbox = await reader.row(
+        f"SELECT extract(epoch FROM ({NOW}-min(next_at))) AS oldest FROM event_deliveries "
+        f"WHERE {_SCOPE.format(alias='')} AND status IN ('pending','retry') AND next_at<={NOW}"
+    )
+    return LoadSection(
+        runs_active=max(0, usage.get("runs_active", 0) - int(tests["active"])),
+        tasks_ready=ready,
+        tasks_leased=int(leased["leased"]),
+        oldest_ready_seconds=oldest_ready,
+        waits_active=usage.get("waits_active", 0),
+        waits_overdue=int(overdue["overdue"]),
+        oldest_overdue_seconds=_seconds(overdue["oldest"]),
+        outbox_pending=usage.get("outbox_pending", 0),
+        outbox_oldest_seconds=_seconds(outbox["oldest"]),
+        provider_pending=usage.get("provider_pending", 0),
+        sources_enabled=usage.get("sources_enabled", 0),
+    )
+
+
+async def read_workers(reader: SectionReader) -> WorkersSection:
+    """One grouped statement over the environment's workers, counted as the Workers page lists current ones."""
+    row = await reader.row(capacity_reads.WORKER_COUNTS)
+    return WorkersSection(**{key: int(value) for key, value in row.items()})
+
+
+async def read_targets(reader: SectionReader, targets: tuple[UUID, ...] | None) -> TargetsSection:
+    """Each readable target counted once, however many runners, jobs or plans it has."""
+    row = await reader.row(
+        "SELECT count(*) AS total,"
+        f"count(*) FILTER (WHERE EXISTS({_LIVE_RUNNER})) AS runner_online,"
+        "count(*) FILTER (WHERE EXISTS(SELECT 1 FROM deployment_jobs j WHERE "
+        f"{_SAME_SCOPE.format(a='j', b='t')} AND j.target_id=t.id "
+        "AND j.state IN ('queued','claimed','running','verifying'))) AS busy,"
+        "count(*) FILTER (WHERE EXISTS(SELECT 1 FROM deployment_jobs j WHERE "
+        f"{_SAME_SCOPE.format(a='j', b='t')} AND j.target_id=t.id "
+        "AND j.state='reconciliation_required')) AS reconciliation_required "
+        f"FROM deployment_targets t WHERE {_SCOPE.format(alias='t.')} AND {_TARGETS.format(column='t.id')}",
+        **_targets(targets),
+    )
+    plans = await reader.row(f"SELECT count(*) AS awaiting FROM ({_AWAITING_APPROVAL}) p", **_targets(targets))
+    return TargetsSection(**{key: int(value) for key, value in row.items()}, awaiting_approval=int(plans["awaiting"]))
+
+
+async def read_runners_offline(reader: SectionReader, targets: tuple[UUID, ...] | None) -> int:
+    """Enabled readable targets whose runner stopped renewing, as Needs attention names them: a target with a
+    registered, unrevoked runner and none live. A target that never had a runner isn't counted."""
+    row = await reader.row(
+        f"SELECT count(*) AS offline FROM deployment_targets t WHERE {_SCOPE.format(alias='t.')} "
+        f"AND {_TARGETS.format(column='t.id')} AND NOT coalesce((t.payload->>'disabled')::boolean,false) "
+        f"AND EXISTS(SELECT 1 FROM deployment_runners r WHERE {_SAME_SCOPE.format(a='r', b='t')} "
+        "AND r.target_id=t.id AND NOT coalesce((r.payload->>'revoked')::boolean,false)) "
+        f"AND NOT EXISTS({_LIVE_RUNNER})",
+        **_targets(targets),
+    )
+    return int(row["offline"])
+
+
+async def read_alerts(reader: SectionReader) -> AlertsSection:
+    """Firing alerts, and how many of them are critical."""
+    row = await reader.row(
+        "SELECT count(*) AS firing,count(*) FILTER (WHERE severity='critical') AS critical FROM alerts "
+        f"WHERE {_SCOPE.format(alias='')} AND state='firing'"
+    )
+    return AlertsSection(firing=int(row["firing"]), critical=int(row["critical"]))
+
+
+async def read_incidents(reader: SectionReader) -> IncidentsSection:
+    """Incidents of test runs are left out; an incident without facts predates test runs and counts.
+
+    Only known opening times count as opened in the last 24 hours: one the upgrade estimated is never counted.
+    """
+    active = await reader.row(
+        "SELECT count(*) AS active FROM incidents i LEFT JOIN incident_facts f ON "
+        f"{_SAME_SCOPE.format(a='f', b='i')} AND f.incident_id=i.id "
+        f"WHERE {_SCOPE.format(alias='i.')} AND i.status='active' AND NOT coalesce(f.test,false)"
+    )
+    opened = await reader.row(
+        f"SELECT count(*) AS opened FROM incident_facts WHERE {_SCOPE.format(alias='')} AND NOT test "
+        f"AND NOT opened_at_estimated AND opened_at>{NOW}-interval '24 hours'"
+    )
+    return IncidentsSection(active=int(active["active"]), opened_24h=int(opened["opened"]))
 
 
 class OperationsSummaryService:
@@ -412,9 +518,9 @@ class OperationsSummaryService:
             observed_at = await tx.session.scalar(text("SELECT clock_timestamp()"))
             assert isinstance(observed_at, datetime)
 
-            async def section[T](read: Callable[[_Reader], Awaitable[T]]) -> T | UnavailableSection:
+            async def section[T](read: Callable[[SectionReader], Awaitable[T]]) -> T | UnavailableSection:
                 return await read_section(
-                    tx, lambda budget: read(_Reader(tx, observed_at, budget)), monotonic=self.monotonic
+                    tx, lambda budget: read(SectionReader(tx, observed_at, budget)), monotonic=self.monotonic
                 )
 
             latency = await read_section(tx, self._latency, monotonic=self.monotonic)
@@ -427,6 +533,9 @@ class OperationsSummaryService:
             )
             incidents: IncidentsSection | ForbiddenSection | UnavailableSection = (
                 await section(self._incidents) if reach.incidents else ForbiddenSection(state="forbidden")
+            )
+            alerts: AlertsSection | ForbiddenSection | UnavailableSection = (
+                await section(read_alerts) if reach.alerts else ForbiddenSection(state="forbidden")
             )
             attention = await section(lambda reader: self._attention(reader, reach))
             # The last day's runs from run statistics: status.read is all it needs.
@@ -441,6 +550,7 @@ class OperationsSummaryService:
             incidents=incidents,
             attention=attention,
             runs_24h=runs_24h,
+            alerts=alerts,
         )
         return SummaryFacts(summary, reach.grants())
 
@@ -486,6 +596,7 @@ class OperationsSummaryService:
             runs=permitted("run.read"),
             targets=readable,
             approvals=_intersect(readable, approvable),
+            alerts=permitted("alert.read"),
         )
 
     def _api(self, scope: Scope) -> ApiSection:
@@ -521,88 +632,32 @@ class OperationsSummaryService:
         await budget.session.execute(text("SELECT 1"))
         return round(max(0.0, self.monotonic() - started) * 1000, 3)
 
-    async def _load(self, reader: _Reader) -> LoadSection:
-        usage = {
-            row["metric"]: int(row["value"])
-            for row in await reader.rows(
-                "SELECT metric,value FROM operation_usage WHERE "
-                + _SCOPE.format(alias="")
-                + " AND metric IN ('runs_active','waits_active','outbox_pending','provider_pending','sources_enabled')"
-            )
-        }
-        tests = await reader.row(capacity_reads.ACTIVE_TESTS)
-        ready, oldest_ready = _ready(await reader.row(_READY_COUNTS))
-        leased = await reader.row(
-            "SELECT count(DISTINCT l.task_id) AS leased FROM task_leases l JOIN task_intents i "
-            f"ON {_SAME_SCOPE.format(a='i', b='l')} AND i.id=l.task_id WHERE {_SCOPE.format(alias='l.')} "
-            f"AND l.status='active' AND l.expires_at>{NOW} AND l.deadline>{NOW} AND i.status='leased'"
-        )
-        overdue = await reader.row(
-            f"SELECT count(*) AS overdue,extract(epoch FROM ({NOW}-min(deadline))) AS oldest FROM run_deadlines "
-            f"WHERE {_SCOPE.format(alias='')} AND NOT consumed AND deadline<={NOW}"
-        )
-        outbox = await reader.row(
-            f"SELECT extract(epoch FROM ({NOW}-min(next_at))) AS oldest FROM event_deliveries "
-            f"WHERE {_SCOPE.format(alias='')} AND status IN ('pending','retry') AND next_at<={NOW}"
-        )
-        return LoadSection(
-            runs_active=max(0, usage.get("runs_active", 0) - int(tests["active"])),
-            tasks_ready=ready,
-            tasks_leased=int(leased["leased"]),
-            oldest_ready_seconds=oldest_ready,
-            waits_active=usage.get("waits_active", 0),
-            waits_overdue=int(overdue["overdue"]),
-            oldest_overdue_seconds=_seconds(overdue["oldest"]),
-            outbox_pending=usage.get("outbox_pending", 0),
-            outbox_oldest_seconds=_seconds(outbox["oldest"]),
-            provider_pending=usage.get("provider_pending", 0),
-            sources_enabled=usage.get("sources_enabled", 0),
-        )
+    # Each section reads through a method, the one place a section can be observed or replaced as a whole; the
+    # alert signals share the module functions behind them.
+    async def _load(self, reader: SectionReader) -> LoadSection:
+        return await read_load(reader)
 
-    async def _workers(self, reader: _Reader) -> WorkersSection:
-        """One grouped statement over the environment's workers, counted as the Workers page lists current ones."""
-        row = await reader.row(capacity_reads.WORKER_COUNTS)
-        return WorkersSection(**{key: int(value) for key, value in row.items()})
+    async def _workers(self, reader: SectionReader) -> WorkersSection:
+        return await read_workers(reader)
 
-    async def _targets(self, reader: _Reader, targets: tuple[UUID, ...] | None) -> TargetsSection:
-        """Each readable target counted once, however many runners, jobs or plans it has."""
-        row = await reader.row(
-            "SELECT count(*) AS total,"
-            f"count(*) FILTER (WHERE EXISTS({_LIVE_RUNNER})) AS runner_online,"
-            "count(*) FILTER (WHERE EXISTS(SELECT 1 FROM deployment_jobs j WHERE "
-            f"{_SAME_SCOPE.format(a='j', b='t')} AND j.target_id=t.id "
-            "AND j.state IN ('queued','claimed','running','verifying'))) AS busy,"
-            "count(*) FILTER (WHERE EXISTS(SELECT 1 FROM deployment_jobs j WHERE "
-            f"{_SAME_SCOPE.format(a='j', b='t')} AND j.target_id=t.id "
-            "AND j.state='reconciliation_required')) AS reconciliation_required "
-            f"FROM deployment_targets t WHERE {_SCOPE.format(alias='t.')} AND {_TARGETS.format(column='t.id')}",
-            **_targets(targets),
-        )
-        plans = await reader.row(f"SELECT count(*) AS awaiting FROM ({_AWAITING_APPROVAL}) p", **_targets(targets))
-        return TargetsSection(
-            **{key: int(value) for key, value in row.items()}, awaiting_approval=int(plans["awaiting"])
-        )
+    async def _targets(self, reader: SectionReader, targets: tuple[UUID, ...] | None) -> TargetsSection:
+        return await read_targets(reader, targets)
 
-    async def _incidents(self, reader: _Reader) -> IncidentsSection:
-        """Incidents of test runs are left out; an incident without facts predates test runs and counts.
+    async def _incidents(self, reader: SectionReader) -> IncidentsSection:
+        return await read_incidents(reader)
 
-        Only known opening times count as opened in the last 24 hours: one the upgrade estimated is never counted.
-        """
-        active = await reader.row(
-            "SELECT count(*) AS active FROM incidents i LEFT JOIN incident_facts f ON "
-            f"{_SAME_SCOPE.format(a='f', b='i')} AND f.incident_id=i.id "
-            f"WHERE {_SCOPE.format(alias='i.')} AND i.status='active' AND NOT coalesce(f.test,false)"
-        )
-        opened = await reader.row(
-            f"SELECT count(*) AS opened FROM incident_facts WHERE {_SCOPE.format(alias='')} AND NOT test "
-            f"AND NOT opened_at_estimated AND opened_at>{NOW}-interval '24 hours'"
-        )
-        return IncidentsSection(active=int(active["active"]), opened_24h=int(opened["opened"]))
-
-    async def _attention(self, reader: _Reader, reach: _Reach) -> list[AttentionItem]:
+    async def _attention(self, reader: SectionReader, reach: _Reach) -> list[AttentionItem]:
         """Up to 20 items per kind the caller may read, ranked together; alerts join once they are stored."""
         candidates: list[Candidate] = []
         limit = ATTENTION_LIMIT
+        if reach.alerts:
+            # Titled with the rule's name alone; only critical firing alerts need attention here.
+            for row in await reader.rows(
+                f"SELECT id,rule_name,started_at FROM alerts WHERE {_SCOPE.format(alias='')} AND state='firing' "
+                "AND severity='critical' ORDER BY started_at,id LIMIT :limit",
+                limit=limit,
+            ):
+                candidates.append(Candidate("alert", row["id"], row["rule_name"], row["started_at"]))
         if reach.targets != ():
             for row in await reader.rows(
                 "SELECT j.id,t.payload->>'name' AS target_name,"

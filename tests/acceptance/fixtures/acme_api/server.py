@@ -18,7 +18,9 @@
 
 Standard library only. Port 8080 serves the API on the fixture egress network; port
 8081 serves the control API (faults, request journal, reset) and is published on
-loopback only. The journal records the SHA-256 of X-Api-Key, never the key.
+loopback only. The journal records the SHA-256 of X-Api-Key, never the key, and
+for each POST to the sink the event's X-Weave headers and body, which hold no
+secret: the signature is an HMAC.
 """
 
 from __future__ import annotations
@@ -325,16 +327,23 @@ class ApiHandler(_Handler):
             status, value = injected, {"error": "injected"}
         else:
             status, value = self._route(path, body, key_sha256)
-        self.state.record(
-            {
-                "method": self.command,
-                "path": path,
-                "time": datetime.now(UTC).isoformat(timespec="milliseconds"),
-                "key_sha256": key_sha256,
-                "status": status,
-                "body_sha256": _digest(body) if body else None,
+        entry = {
+            "method": self.command,
+            "path": path,
+            "time": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "key_sha256": key_sha256,
+            "status": status,
+            "body_sha256": _digest(body) if body else None,
+        }
+        if self.command == "POST" and body is not None and SINK.fullmatch(path):
+            # An event delivery: its headers and body, so a journey can check the platform's signature.
+            entry["delivery"] = {
+                "event_id": self.headers.get("X-Weave-Event-ID"),
+                "timestamp": self.headers.get("X-Weave-Timestamp"),
+                "signature": self.headers.get("X-Weave-Signature"),
+                "body": body.decode("utf-8", errors="replace"),
             }
-        )
+        self.state.record(entry)
         self._send(status, value)
 
     def _route(self, path: str, body: bytes, key_sha256: str | None) -> tuple[int, Any]:

@@ -146,6 +146,25 @@ def test_side_effects_are_counted_and_bodies_bounded(servers):
     assert entries[0]["body_sha256"] == hashlib.sha256(json.dumps(approval).encode()).hexdigest()
 
 
+def test_the_sink_journals_each_delivery_with_its_signature_headers_and_body(servers):
+    api, control = servers
+    body = '{"eventId":"e-1","payload":{"alert":{"state":"firing","value":0.3}},"note":"café"}'.encode()
+    headers = {"X-Weave-Event-ID": "e-1", "X-Weave-Timestamp": "1700000000", "X-Weave-Signature": "ab12"}
+    assert call(api + "/sink/alerts-1", "POST", body, headers)[0] == 204
+    assert call(api + "/sink/alerts-1", "POST", b"{}")[0] == 204
+    assert call(api + "/approvals", "POST", {"customerId": "C-1001", "lines": []}, headers)[0] == 201
+    signed, unsigned, approval = call(control + "/_control/journal")[1]["entries"]
+    assert signed["delivery"] == {
+        "event_id": "e-1",
+        "timestamp": "1700000000",
+        "signature": "ab12",
+        "body": body.decode(),
+    }
+    assert signed["body_sha256"] == hashlib.sha256(body).hexdigest()
+    assert unsigned["delivery"] == {"event_id": None, "timestamp": None, "signature": None, "body": "{}"}
+    assert "delivery" not in approval
+
+
 def test_compose_keeps_acme_on_the_egress_network_with_a_loopback_control_port():
     document = yaml.safe_load((ROOT / "tests/acceptance/compose.fixtures.yaml").read_text(encoding="utf-8"))
     service = document["services"]["acme-api"]

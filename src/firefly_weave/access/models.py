@@ -49,6 +49,7 @@ Role = Literal[
     "worker_operator",
     "transaction_reconciler",
     "step_tester",
+    "alert_manager",
 ]
 
 
