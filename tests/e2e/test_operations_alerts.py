@@ -22,8 +22,9 @@ test is skipped. As the owner, it allows the acceptance.test email domain and re
 there. It subscribes to ``alert.transition`` through a bearer connection to the Acme fixture,
 whose sink journals each delivery with its headers, and watches a workflow of its own with the rule "run failure rate
 above 0.1 over 60 seconds". Three of ten runs time out: the rule fires within 90 seconds, and the sink receives one
-delivery signed with the subscription's secret. After ten successful runs it resolves within 150 seconds, and the sink
-receives one signed delivery for that too. An email channel to GreenMail, and GreenMail's copy of the firing
+delivery signed with the subscription's secret. After ten successful runs, while one more starts about every ten
+seconds, it resolves within 150 seconds because the failure rate fell under its threshold, and the sink receives one
+signed delivery for that too. An email channel to GreenMail, and GreenMail's copy of the firing
 message, join this journey once GreenMail is part of an acceptance profile.
 """
 
@@ -132,8 +133,9 @@ async def until(read: Callable[[], Awaitable[Any]], done: Callable[[Any], bool],
 
 
 def deliveries(run: Any, secret: str, rule_id: str) -> list[dict]:
-    """The rule's events the sink received, oldest first, each checked against the subscription's signature."""
-    events = []
+    """The rule's events the sink received, oldest first and each once, every delivery checked against the
+    subscription's signature: a delivery the platform sends again (its answer was lost) is the same event."""
+    events: dict[str, dict] = {}
     for entry in run.acme_control("/_control/journal")["entries"]:
         if entry["path"] != SINK:
             continue
@@ -145,8 +147,8 @@ def deliveries(run: Any, secret: str, rule_id: str) -> list[dict]:
         assert document["eventId"] == delivery["event_id"] and entry["status"] == 204, entry["status"]
         event = document["payload"]
         if event["correlation_id"] == rule_id:
-            events.append(event)
-    return events
+            events.setdefault(document["eventId"], event)
+    return list(events.values())
 
 
 async def delivery_connector(owner: Any) -> str:
@@ -172,6 +174,7 @@ async def prepare(run: Any, owner: Any, made: dict[str, Any]) -> None:
     Each record goes into ``made`` as soon as it exists, so the journey removes it even when a later step fails.
     """
     settings = await call(owner, "alert_settings.read")
+    made["settings"] = settings
     allowed = AlertSettingsUpdate(
         recipient_domains=sorted({*settings.recipient_domains, DOMAIN}),
         approval_channel_ids=settings.approval_channel_ids,
@@ -296,16 +299,33 @@ async def journey(run: Any) -> dict:
             healthy = await ended(await start([{"ms": 50}] * 10))
             assert set(healthy.values()) == {"succeeded"}, healthy
             healthy_at = time.monotonic()
-            async with run.client("owner") as owner:
+            fed: list[str] = []
 
-                async def current() -> Any:
-                    return await call(owner, "alerts.read", identifier=alert.id)
+            async def feed() -> None:
+                # A successful run about every 10 s keeps the 60 s window holding runs, so the alert resolves on a
+                # failure rate under its threshold, not because the window emptied.
+                while True:
+                    fed.extend(await start([{"ms": 50}]))
+                    await asyncio.sleep(10)
 
-                resolved = await until(
-                    current, lambda value: value.state == "resolved", RESOLVE_SECONDS, "the alert resolved"
-                )
-                resolved_after = time.monotonic() - healthy_at
-        assert resolved.resolved_reason in {"threshold", "no_data"}, resolved
+            feeder = asyncio.create_task(feed())
+            try:
+                async with run.client("owner") as owner:
+
+                    async def current() -> Any:
+                        return await call(owner, "alerts.read", identifier=alert.id)
+
+                    resolved = await until(
+                        current, lambda value: value.state == "resolved", RESOLVE_SECONDS, "the alert resolved"
+                    )
+                    resolved_after = time.monotonic() - healthy_at
+            finally:
+                feeder.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await feeder
+            assert resolved.resolved_reason == "threshold", resolved
+            fed_runs = await ended(fed)
+            assert set(fed_runs.values()) == {"succeeded"}, fed_runs
         changes = await until(
             lambda: asyncio.to_thread(deliveries, run, secret, rule_id),
             lambda value: len(value) >= 2,
@@ -320,10 +340,13 @@ async def journey(run: Any) -> dict:
             "resolved_reason": resolved.resolved_reason,
             "first_runs": sorted(first.values()),
             "healthy_runs": len(healthy),
+            "runs_while_resolving": len(fed_runs),
             "signed_deliveries": [event["payload"]["alert"]["state"] for event in changes],
         }
     finally:
-        # Leave the kept platform as the next journey expects: no rule of ours, no subscription, no opt-in.
+        # Leave the kept platform as the next journey expects: no rule, subscription or opt-in of ours, and the alert
+        # settings as they were. The connection stays, since connections can't be deleted; once the subscription is
+        # disabled nothing uses it.
         async with run.client("owner") as owner:
             with contextlib.suppress(WeaveError):
                 if "rule" in made:
@@ -335,6 +358,14 @@ async def journey(run: Any) -> dict:
             with contextlib.suppress(WeaveError):
                 if "consent" in made:
                     await call(owner, "alert_recipient_consents.revoke", identifier=made["consent"].id)
+            with contextlib.suppress(WeaveError):
+                if "settings" in made:
+                    before = made["settings"]
+                    now = await call(owner, "alert_settings.read")
+                    restored = AlertSettingsUpdate(
+                        recipient_domains=before.recipient_domains, approval_channel_ids=now.approval_channel_ids
+                    )
+                    await call(owner, "alert_settings.update", body=restored, revision=now.revision)
 
 
 def test_a_failure_rate_alert_fires_signs_its_webhook_and_resolves(run):
