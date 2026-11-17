@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
 import { python, pythonAvailable } from "./python-path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   WORKFLOW,
   compatibility,
@@ -524,6 +524,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from firefly_weave.compiler import schemas
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS
+from firefly_weave.contracts.limits import Limits
 try:
     from firefly_weave.compiler.api import validate_authoring as check
     mode = "authoring"
@@ -534,6 +535,9 @@ documents = json.load(sys.stdin)
 # This oracle tests reference semantics, not production timing admission. Keep
 # structural/work limits and a bounded regex deadline, allowing runner contention.
 parity_limits = replace(DEFAULT_CONTRACT_LIMITS, regex_timeout_seconds=1, max_regex_seconds=5)
+# A document probes every position of a fixture, so it reports more than the
+# default 100 diagnostics; every one of them must reach the comparison.
+probe_limits = Limits(max_diagnostics=10_000)
 # The public contracts do not change during this oracle process. Reuse their
 # canonical snapshot, while giving every full validation its own mutable copy.
 export_original = schemas.export_schemas
@@ -548,7 +552,7 @@ def export_snapshot():
 schemas.export_schemas = export_snapshot
 results = []
 for document in documents:
-    result = check(json.dumps(document), format="json", contract_limits=parity_limits)
+    result = check(json.dumps(document), format="json", limits=probe_limits, contract_limits=parity_limits)
     results.append({
         "validationOk": result.validation_ok,
         "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in result.diagnostics],
@@ -564,7 +568,7 @@ def with_scheduling_pause(limits):
         # One 200 ms descheduling interval inside the first regex measurement.
         return time.monotonic() + (0.2 if calls > 1 else 0)
     with patch.object(schemas, "time", SimpleNamespace(monotonic=clock)):
-        return check(json.dumps(documents[0]), format="json", contract_limits=limits)
+        return check(json.dumps(documents[0]), format="json", limits=probe_limits, contract_limits=limits)
 paused_default = with_scheduling_pause(DEFAULT_CONTRACT_LIMITS)
 paused_parity = with_scheduling_pause(parity_limits)
 owned_copy = export_snapshot()
@@ -688,24 +692,47 @@ function setAt(document: Json, pointer: string, value: unknown) {
     node = node[segment] as Record<string, unknown>;
   node[segments[segments.length - 1]] = value;
 }
+// One document per fixture carries a probe at every position of that fixture,
+// so the compiler validates 7 documents instead of one per position (86). Each
+// validation costs about 90 ms on a laptop and more than 2 s on a busy CI
+// runner, mostly in checks the probes don't change (the outer contract and the
+// schemas the steps declare); 86 of them outran the oracle's 180 s limit there.
+// Probes can share a document: the compiler decides whether a reference is
+// available from where the steps sit, which no probe changes, and each probe's
+// diagnostics are found by its path.
+const documents: Json[] = [];
 const probes = Object.entries(fixtures).flatMap(([name, definition]) => {
   const candidates = allIds(definition);
+  const document = structuredClone(definition) as Json;
+  const index = documents.push(document) - 1;
   return positions(name, definition).map((position) => {
-    const document = structuredClone(definition) as Json;
     setAt(document, position.pointer, {
       array: candidates.map((id) => ref(`/steps/${id}/output`)),
     });
-    return { position, candidates, document };
+    return { position, candidates, document: index };
   });
 });
 const available = pythonAvailable();
-const compiled = available
-  ? (JSON.parse(
+
+describe.skipIf(!available)("scope parity with the Python compiler", () => {
+  let compiled: {
+    mode: "authoring" | "source";
+    schemaExports: number;
+    schemaSnapshotUnchanged: boolean;
+    results: CompilerResult[];
+    budgetResult: CompilerResult;
+    pausedDefaultCodes: string[];
+    pausedParityDiagnostics: CompilerResult["diagnostics"];
+  };
+  // In a hook, not at module load: when the compiler fails or runs out of
+  // time, only these tests fail, not the whole file.
+  beforeAll(() => {
+    compiled = JSON.parse(
       execFileSync(python, ["-c", COMPILER_PROBE], {
         cwd: root,
         encoding: "utf8",
         timeout: 180_000,
-        input: JSON.stringify(probes.map((p) => p.document)),
+        input: JSON.stringify(documents),
         env: {
           ...process.env,
           PYTHONPATH: [resolve(root, "src"), process.env.PYTHONPATH]
@@ -713,30 +740,20 @@ const compiled = available
             .join(delimiter),
         },
       }),
-    ) as {
-      mode: "authoring" | "source";
-      schemaExports: number;
-      schemaSnapshotUnchanged: boolean;
-      results: CompilerResult[];
-      budgetResult: CompilerResult;
-      pausedDefaultCodes: string[];
-      pausedParityDiagnostics: CompilerResult["diagnostics"];
-    })
-  : null;
-
-describe.skipIf(!available)("scope parity with the Python compiler", () => {
+    ) as typeof compiled;
+  });
   it("exports immutable contracts once and isolates each validation's schema copy", () => {
-    expect(compiled!.schemaExports).toBe(1);
-    expect(compiled!.schemaSnapshotUnchanged).toBe(true);
+    expect(compiled.schemaExports).toBe(1);
+    expect(compiled.schemaSnapshotUnchanged).toBe(true);
   });
   it("isolates scope parity from a bounded runner scheduling pause", () => {
-    expect(compiled!.pausedDefaultCodes).toContain("WV-SCHEMA-RESOURCE_LIMIT");
-    expect(compiled!.pausedParityDiagnostics).toEqual(
-      compiled!.results[0].diagnostics,
+    expect(compiled.pausedDefaultCodes).toContain("WV-SCHEMA-RESOURCE_LIMIT");
+    expect(compiled.pausedParityDiagnostics).toEqual(
+      compiled.results[0].diagnostics,
     );
   });
   it("never treats a compiler resource-budget rejection as accepted references", () => {
-    const result = compiled!.budgetResult;
+    const result = compiled.budgetResult;
     expect(result.validationOk).toBe(false);
     expect(result.diagnostics.map((d) => d.code)).toContain(
       "WV-SCHEMA-RESOURCE_LIMIT",
@@ -750,26 +767,34 @@ describe.skipIf(!available)("scope parity with the Python compiler", () => {
   it("covers at least five fixtures and every expression position", () => {
     expect(Object.keys(fixtures).length).toBeGreaterThanOrEqual(5);
     expect(probes.length).toBeGreaterThan(40);
-    expect(compiled!.results).toHaveLength(probes.length);
+    expect(compiled.results).toHaveLength(Object.keys(fixtures).length);
   });
   it("every probe document is structurally valid authoring input", () => {
-    probes.forEach((probe, i) => {
-      const blocking = compiled!.results[i].diagnostics.filter((d) =>
+    Object.keys(fixtures).forEach((name, i) => {
+      const blocking = compiled.results[i].diagnostics.filter((d) =>
         /^WV-(PARSE|SCHEMA|EXPR)-/.test(d.code),
       );
-      expect(blocking, JSON.stringify(probe.position)).toEqual([]);
+      expect(blocking, name).toEqual([]);
     });
+  });
+  it("keeps every diagnostic of a document that probes many positions", () => {
+    const truncated = compiled.results.flatMap((result) =>
+      result.diagnostics.filter((d) =>
+        d.code.endsWith("DIAGNOSTICS_TRUNCATED"),
+      ),
+    );
+    expect(truncated).toEqual([]);
   });
   it("suggests exactly the steps the compiler accepts at each position", (context) => {
     context.skip(
-      compiled!.mode !== "authoring",
+      compiled.mode !== "authoring",
       "validate_authoring is not available yet; validate_source performs no dominance analysis, so availability cannot be compared",
     );
     let rejected = 0;
-    probes.forEach((probe, i) => {
-      const { position, candidates } = probe;
+    probes.forEach((probe) => {
+      const { position, candidates, document } = probe;
       const flagged = rejectedCandidates(
-        compiled!.results[i],
+        compiled.results[document],
         position,
         candidates,
       );
