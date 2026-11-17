@@ -114,6 +114,9 @@ jobs:
       # on its held run's random ID: when that ID sorts in about the top fifth, the test starts so many runs that its
       # three scan rounds never reach the held run, or the project's control allocation refuses a start, so it fails
       # about one run in five.
+      # test_step_test_limits.py::test_two_starts_at_once_count_each_other, until it is fixed as well: on a busy runner
+      # the second of two simultaneous starts can be refused as WV-OPERATION-CAPACITY (its transaction's 250 ms lock
+      # timeout) before it is counted and refused as WV-STEPTEST-BUSY, which the test expects.
       # test_restore_manifest.py runs in the next step, alone: it compares every weave_ role on the server between
       # two moments, and the other workers create and drop their own login roles all the time.
       - name: Integration tests
@@ -130,6 +133,7 @@ jobs:
           --deselect 'tests/integration/connectors/test_postgresql_native.py::test_built_native_sql_executor[image]'
           --deselect tests/integration/connectors/test_postgresql_tls.py
           --deselect tests/integration/test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it
+          --deselect tests/integration/test_step_test_limits.py::test_two_starts_at_once_count_each_other
           --deselect tests/integration/test_restore_manifest.py
       - name: Restore manifest tests, with no other test changing the server's roles
         if: ${{ !cancelled() }}

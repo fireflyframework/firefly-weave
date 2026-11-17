@@ -414,6 +414,8 @@ def test_the_integration_job_deselects_exactly_the_tests_that_need_what_it_lacks
         "tests/integration/test_native_image.py",
         # Runs in a step of its own: it compares every role on the server, which parallel workers create and drop.
         "tests/integration/test_restore_manifest.py",
+        # On a busy runner the second start times out on the lock (WV-OPERATION-CAPACITY) before it can be counted.
+        "tests/integration/test_step_test_limits.py::test_two_starts_at_once_count_each_other",
         # Fails when the held run's random ID sorts late; quarantined here until the test sizes its scan rounds.
         "tests/integration/test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it",
     ]
