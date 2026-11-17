@@ -689,26 +689,29 @@ describe("pasting at the limits", () => {
       return () =>
         plan(freshWorkflow(), content, { owner: "root", index: 0 }, taken);
     };
-    const duration = (paste: () => PastePlan) => {
+    // The time of one paste, measured over `times` pastes in a row.
+    const duration = (paste: () => PastePlan, times: number) => {
       const started = performance.now();
-      paste();
-      return performance.now() - started;
+      for (let time = 0; time < times; time++) paste();
+      return (performance.now() - started) / times;
     };
     // How long a paste takes depends on the machine and its load, so the test
-    // compares two sizes on the same machine: twice the steps take about twice
-    // as long when the work is linear, and four times as long when it is
-    // quadratic. The fastest of several alternating runs leaves out the pauses
-    // the paste didn't cause.
-    const half = sharing(250);
-    const full = sharing(500);
-    let fastestHalf = Infinity;
-    let fastestFull = Infinity;
+    // compares two sizes on the same machine, far enough apart that noise can't
+    // blur them: eight times the steps take about eight times as long when the
+    // work is linear, and about sixty-four times as long when it is quadratic.
+    // The small paste runs eight times per measurement, so both measurements
+    // last about as long; the fastest of several alternating runs leaves out
+    // the pauses the paste didn't cause.
+    const small = sharing(62);
+    const large = sharing(500);
+    let fastestSmall = Infinity;
+    let fastestLarge = Infinity;
     for (let round = 0; round < 9; round++) {
-      fastestHalf = Math.min(fastestHalf, duration(half));
-      fastestFull = Math.min(fastestFull, duration(full));
+      fastestSmall = Math.min(fastestSmall, duration(small, 8));
+      fastestLarge = Math.min(fastestLarge, duration(large, 1));
     }
-    expect(fastestFull / fastestHalf).toBeLessThan(3);
-    const planned = full();
+    expect(fastestLarge / fastestSmall).toBeLessThan(20);
+    const planned = large();
     expect(planned.ids.slice(0, 3)).toEqual(["a", "a-5001", "a-5002"]);
     expect(new Set(planned.ids).size).toBe(500);
   });
