@@ -23,7 +23,7 @@ there. It subscribes to ``alert.transition`` through a bearer connection to the 
 whose sink journals each delivery with its headers, and watches a workflow of its own with the rule "run failure rate
 above 0.1 over 60 seconds". Three of ten runs time out: the rule fires within 90 seconds, and the sink receives one
 delivery signed with the subscription's secret. After ten successful runs, while one more starts about every ten
-seconds, it resolves within 150 seconds because the failure rate fell under its threshold, and the sink receives one
+seconds, it resolves within 210 seconds because the failure rate fell under its threshold, and the sink receives one
 signed delivery for that too. An email channel to GreenMail, and GreenMail's copy of the firing
 message, join this journey once GreenMail is part of an acceptance profile.
 """
@@ -74,7 +74,9 @@ THRESHOLD = 0.1
 RUN_TIMEOUT = 10
 STALL_MS = RUN_TIMEOUT * 6000
 FIRE_SECONDS = 90
-RESOLVE_SECONDS = 150
+# By design a resolve takes up to about 150 s: the failures leave the 60 s window, the rule then needs 60 s of clear
+# readings, and evaluation runs every 30 s. Two more evaluation intervals absorb a late cycle on a busy machine.
+RESOLVE_SECONDS = 210
 RUNS_SECONDS = 180
 DELIVERY_SECONDS = 60
 CAPACITY = {"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"}
