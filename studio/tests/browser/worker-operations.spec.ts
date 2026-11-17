@@ -20,7 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 // Resume with their error paths. The server checks every command.
 import { test, expect, Page, Route } from "@playwright/test";
 import { connected } from "./support";
-import { acmePlatform, platformHost, type PlatformHost } from "./platform-host";
+import {
+  acmePlatform,
+  platformHost,
+  signInWaiting,
+  type PlatformHost,
+} from "./platform-host";
 
 const environment =
   "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
@@ -1398,13 +1403,12 @@ test.describe("another person on the same environment", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   /**
-   * Jane opens Workers while the platform's status can't be read; `switch`
-   * then finds John signed in on the same environment, with the page open.
+   * Jane opens Workers with a sign-in waiting in the background; `switch`
+   * finishes it as John on the same environment, with the page open.
    * `person()` says who a request was sent for.
    */
   async function janeThenJohn(page: Page) {
     let person = "jane";
-    let reachable = false;
     const identity = (host: PlatformHost) => {
       const base = host.identity();
       return {
@@ -1424,21 +1428,15 @@ test.describe("another person on the same environment", () => {
     const host = await platformHost(page, {
       platforms: [acmePlatform()],
       active: "Acme",
-      test: (current) =>
-        reachable
-          ? {
-              json: {
-                session: current.session(),
-                identity: identity(current),
-                workspaces: current.current?.workspaces ?? [],
-                truncated: false,
-                workspace_revoked: false,
-              },
-            }
-          : {
-              status: 503,
-              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
-            },
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: identity(current),
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
     });
     await page.route("**/studio/api/api/v1/identity", (r) =>
       r.fulfill({ json: identity(host) }),
@@ -1458,19 +1456,17 @@ test.describe("another person on the same environment", () => {
     });
     await page.goto("/operate/workers");
     await expect(rows(page)).toHaveCount(3);
+    const finish = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Workers", exact: true }).click(),
+    );
+    await expect(rows(page)).toHaveCount(3);
     return {
       lists,
       person: () => person,
-      /** `behindDialog`: the change arrives while a dialog covers the page. */
-      async switch(behindDialog = false) {
+      /** John finishes signing in; no click, so a dialog may cover the page. */
+      async switch() {
         person = "john";
-        reachable = true;
-        const again = page
-          .locator(".platform-banner")
-          .getByRole("button", { name: "Try again" });
-        if (behindDialog) await again.dispatchEvent("click");
-        else await again.click();
-        await expect(page.locator(".platform-banner")).toHaveCount(0);
+        await finish();
       },
     };
   }
@@ -1507,18 +1503,40 @@ test.describe("another person on the same environment", () => {
       .getByRole("dialog", { name: "Drain 3 workers?" })
       .getByRole("button", { name: "Drain" })
       .click();
+    // After the sign-in, Studio reads the host's connection before it checks
+    // who is signed in; that read stays out until the first drain's answer
+    // is on screen.
+    let answerStatus: () => void = () => undefined;
+    const statusHeld = new Promise<void>((resolve) => (answerStatus = resolve));
+    let reading: () => void = () => undefined;
+    const statusOut = new Promise<void>((resolve) => (reading = resolve));
+    await page.route(
+      (url) => url.pathname === "/studio/connection",
+      async (r) => {
+        if (people.person() === "john") {
+          reading();
+          await statusHeld;
+        }
+        await r.fallback().catch(() => undefined);
+      },
+    );
     // The first drain is on its way when John turns out to be signed in.
     await out;
     await people.switch();
+    await statusOut;
     release();
+    const results = page.getByRole("region", { name: "Drain workers" });
+    await expect(results).toContainText("Draining.");
+    // Nothing else goes out while Studio doesn't know who is signed in.
+    await page.waitForTimeout(300);
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+    answerStatus();
     await expect
       .poll(() => people.lists.filter((item) => item.person === "john").length)
       .toBeGreaterThan(0);
     await page.waitForTimeout(500);
     expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
-    await expect(
-      page.getByRole("region", { name: "Drain workers" }),
-    ).toHaveCount(0);
+    await expect(results).toHaveCount(0);
   });
 
   test("a change refused for capacity is not sent again once another person is signed in", async ({
@@ -1650,7 +1668,7 @@ test.describe("another person on the same environment", () => {
     const dialog = page.getByRole("dialog", { name: "Drain 3 workers?" });
     await expect(dialog).toBeVisible();
     // John turns out to be signed in while Jane's confirmation is open.
-    await people.switch(true);
+    await people.switch();
     await expect
       .poll(() => people.lists.filter((item) => item.person === "john").length)
       .toBeGreaterThan(0);
@@ -1727,7 +1745,7 @@ test.describe("another person on the same environment", () => {
       });
       await dialog.getByRole("button", { name: "Retire 3 workers" }).click();
       await out;
-      await people.switch(true);
+      await people.switch();
       await expect(dialog).toHaveCount(0);
       release();
       await expect(page.getByText(notice)).toBeVisible();

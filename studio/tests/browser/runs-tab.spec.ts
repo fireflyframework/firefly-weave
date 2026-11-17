@@ -27,6 +27,7 @@ import {
   PlatformHost,
   platformHost,
   type Reply,
+  type SavedPlatform,
 } from "./platform-host";
 import {
   listedKinds,
@@ -544,6 +545,524 @@ test.describe("the Runs list's states", () => {
     await expect(notice).toContainText(waiting);
     expect(host.requests("/studio/connection/test")).toHaveLength(0);
   });
+
+  /** Runs whose sign-in Studio resumed on opening, on the Runs tab while it waits. */
+  async function runsDuringSignIn(page: Page, platform: SavedPlatform) {
+    await useNewEditor(page);
+    const host = await platformHost(page, {
+      platforms: [platform],
+      active: "Acme",
+      pendingLogin: { flow: "device" },
+    });
+    await expect(page.getByRole("status", { name: "Sign-in code" })).toHaveText(
+      "WDJB-MJHT",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    const runs = runsPage(page);
+    await expect(runs.panel.getByRole("status")).toHaveText("Loading runs…");
+    return { host, runs };
+  }
+
+  // A failed or cancelled sign-in leaves the host's earlier credential.
+  for (const { held, platform, end, outcome } of [
+    {
+      held: "an expired session it can renew",
+      platform: acmePlatform({ signedIn: false, refreshable: true }),
+      end: ["failed", "WV-AUTH-DENIED"] as const,
+      outcome: "Sign-in was declined.",
+    },
+    {
+      held: "the account it was signed in with",
+      platform: acmePlatform(),
+      end: ["cancelled"] as const,
+      outcome: "Sign-in canceled.",
+    },
+  ])
+    test(`a sign-in that ends in the background while the host keeps ${held} loads the runs and says the switch didn't happen`, async ({
+      page,
+    }) => {
+      const { host, runs } = await runsDuringSignIn(page, platform);
+      host.finish(...end);
+      await expect(
+        runs.panel.locator(".runs-body .runs-message strong"),
+      ).toHaveText("No runs of invoice-approval yet.", { timeout: 15_000 });
+      await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+        /^Platform: Acme · Signed in/,
+      );
+      // The check that confirmed the earlier account keeps the outcome on
+      // screen, and says what still works instead of asking to sign in.
+      const banner = page.locator(".platform-banner");
+      await expect(banner).toContainText(
+        `${outcome} You're still signed in to Acme as jane@acme.example.`,
+      );
+      // Dismiss is its only button: nothing asks to sign in again.
+      await expect(banner.getByRole("button")).toHaveCount(1);
+      await expect(
+        banner.getByRole("button", { name: "Dismiss platform message" }),
+      ).toBeVisible();
+      // Information, not a problem: the calm style, with the account's icon.
+      await expect(banner).toHaveClass(/\bcalm\b/);
+      await expect(banner.locator(":scope > weave-icon")).toHaveAttribute(
+        "data-icon",
+        "user",
+      );
+    });
+
+  test("an account switch canceled in the background, without a reload, says the account is still signed in", async ({
+    page,
+  }) => {
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+    });
+    const indicator = page.locator(".platform-indicator");
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Switch account on Acme" }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("cancelled");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText(
+      "Sign-in canceled. You're still signed in to Acme as jane@acme.example.",
+      { timeout: 15_000 },
+    );
+    await expect(banner.getByRole("button")).toHaveCount(1);
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+  });
+
+  test("a sign-in canceled in the background after the platform refused the session asks to sign in again", async ({
+    page,
+  }) => {
+    // The host still reports the earlier sign-in; the platform refuses it.
+    let refused = false;
+    const expired = {
+      status: 401,
+      json: {
+        status: 401,
+        code: "WV-AUTH-REQUIRED",
+        message: "Your sign-in has ended. Sign in again to continue.",
+      },
+    };
+    const host = new PlatformHost({
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => (refused ? expired : undefined),
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route(
+      (url) =>
+        url.pathname.startsWith("/studio/api/") &&
+        url.pathname.endsWith("/workflows"),
+      (route) => (refused ? route.fulfill(expired) : host.handle(route)),
+    );
+    await page.goto("/");
+    const indicator = page.locator(".platform-indicator");
+    await expect(indicator).toHaveAccessibleName(/^Platform: Acme · Signed in/);
+    refused = true;
+    await page.getByRole("button", { name: "Workflows", exact: true }).click();
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Your session for Acme expired.");
+    await banner.getByRole("button", { name: "Sign in again" }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("cancelled");
+    // The account Studio held is the one the platform refused: checked
+    // again, it is refused again, and nothing says it still works.
+    await expect(banner).toContainText("Your session for Acme expired.", {
+      timeout: 15_000,
+    });
+    await expect(banner).not.toContainText("still signed in");
+    await expect(banner).toHaveClass(/\bwarning\b/);
+    await expect(
+      banner.getByRole("button", { name: "Sign in again" }),
+    ).toBeVisible();
+  });
+
+  test("a sign-in outcome dismissed while the account is checked stays dismissed", async ({
+    page,
+  }) => {
+    const { host, runs } = await runsDuringSignIn(
+      page,
+      acmePlatform({ signedIn: false, refreshable: true }),
+    );
+    // The check after the sign-in ends waits until the banner is dismissed.
+    let checking = false;
+    let release = () => undefined as void;
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/studio/connection/test", async (route) => {
+      checking = true;
+      await held;
+      await host.handle(route);
+    });
+    host.finish("failed", "WV-AUTH-DENIED");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    await expect.poll(() => checking).toBe(true);
+    await banner
+      .getByRole("button", { name: "Dismiss platform message" })
+      .click();
+    await expect(banner).toHaveCount(0);
+    release();
+    await expect(
+      runs.panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("No runs of invoice-approval yet.");
+    // Another screen draws the shell again: still no banner.
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await expect(page.locator("weave-home-dashboard")).toBeVisible();
+    await expect(banner).toHaveCount(0);
+  });
+
+  const unreachable: Reply = {
+    status: 503,
+    json: {
+      status: 503,
+      code: "WV-AUTH-OFFLINE",
+      message: "The platform can't be reached.",
+    },
+  };
+
+  test("a sign-in that ends in the background keeps an unreachable platform as the reason", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    const host = new PlatformHost({
+      platforms: [acmePlatform({ signedIn: false, expired: true })],
+      active: "Acme",
+      test: () => unreachable,
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill(unreachable),
+    );
+    await page.goto("/");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Studio couldn't reach Acme.");
+    // Sign in from the platform menu, and leave the sign-in waiting.
+    await page.locator(".platform-indicator").click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Sign in with your browser" })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in address" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    host.finish("failed", "WV-AUTH-DENIED");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    await expect(
+      runsPage(page).panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("Studio couldn't reach Acme.");
+  });
+
+  test("a window paired again that Studio refuses as out of date leaves no unreachable banner", async ({
+    page,
+  }) => {
+    await useNewEditor(page);
+    let paired = false;
+    const host = new PlatformHost({
+      platforms: [acmePlatform()],
+      active: "Acme",
+      // Unreachable at first; after pairing again, Studio refuses itself.
+      test: () =>
+        paired
+          ? {
+              status: 403,
+              json: {
+                status: 403,
+                code: "WV-STUDIO-CSRF",
+                message: "Refresh Studio before submitting this change",
+              },
+            }
+          : unreachable,
+    });
+    await page.route(
+      (url) => url.pathname.startsWith("/studio/"),
+      (route) => host.handle(route),
+    );
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill(unreachable),
+    );
+    // The workflow list finds the Studio session ended, once.
+    await page.route(
+      (url) =>
+        url.pathname.startsWith("/studio/api/") &&
+        url.pathname.endsWith("/workflows"),
+      (route) =>
+        paired
+          ? host.handle(route)
+          : route.fulfill({
+              status: 401,
+              json: {
+                status: 401,
+                code: "WV-STUDIO-SESSION",
+                message: "Pair again",
+              },
+            }),
+    );
+    await page.goto("/");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Studio couldn't reach Acme.");
+    await page.getByRole("button", { name: "Workflows", exact: true }).click();
+    const code = page.getByLabel("Pairing code");
+    await expect(code).toBeVisible();
+    paired = true;
+    await code.fill("new-code");
+    await code.press("Enter");
+    // Pairing again checks the account, and Studio refuses that check.
+    await expect
+      .poll(() => host.requests("/studio/connection/test").length)
+      .toBe(2);
+    // The banner and the Runs tab give the same reason.
+    await expect(banner).toHaveCount(0);
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Workflows", level: 1 }),
+    ).toHaveCount(0);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+    await page.getByRole("tab", { name: "Runs" }).click();
+    await expect(
+      runsPage(page).panel.locator(".runs-body .runs-message strong"),
+    ).toHaveText("This Studio window is out of date.");
+  });
+
+  test("a sign-in that ends in the background while the host can't renew the session asks to sign in", async ({
+    page,
+  }) => {
+    const { host, runs } = await runsDuringSignIn(
+      page,
+      acmePlatform({ signedIn: false, expired: true }),
+    );
+    host.finish("failed", "WV-AUTH-DENIED");
+    const banner = page.locator(".platform-banner");
+    await expect(banner).toContainText("Sign-in was declined.", {
+      timeout: 15_000,
+    });
+    // Without an account to fall back on, the outcome stays a warning.
+    await expect(banner).toHaveClass(/\bwarning\b/);
+    await expect(banner.locator(":scope > weave-icon")).toHaveAttribute(
+      "data-icon",
+      "warning",
+    );
+    const message = runs.panel.locator(".runs-body .runs-message");
+    await expect(message.locator("strong")).toHaveText(
+      "Sign in to see this workflow's runs.",
+    );
+    await expect(runs.panel.getByRole("status")).toHaveCount(0);
+    // A session the host can't renew isn't checked: it would only be refused.
+    expect(host.requests("/studio/connection/test")).toHaveLength(0);
+  });
+
+  for (const { refusal, code, message: said, error, title, next } of [
+    {
+      refusal: "as out of date",
+      code: "WV-STUDIO-CSRF",
+      message: "Refresh Studio before submitting this change",
+      error: "Reload the page",
+      title: "This Studio window is out of date.",
+      next: "Reload the page to see this workflow's runs.",
+    },
+    {
+      // Reloading the same address meets the same refusal.
+      refusal: "for its address",
+      code: "WV-STUDIO-ORIGIN",
+      message: "Open Studio at its exact local address",
+      error: "Open Studio at its exact local address",
+      title: "Open Studio at its exact local address.",
+      next: "Then you can see this workflow's runs.",
+    },
+  ])
+    test(`a check of who is signed in that Studio refuses ${refusal} says what to do, without Try again`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, {
+        status: 403,
+        json: { status: 403, code, message: said },
+      });
+      const banner = page.locator(".error-banner");
+      await expect(banner).toContainText(error);
+      await expect(banner.locator(".support-code")).toHaveText(
+        `Support code: ${code}`,
+      );
+      await expect(page.locator(".platform-banner")).toHaveCount(0);
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const runs = runsPage(page);
+      const message = runs.panel.locator(".runs-body .runs-message");
+      // The cause in bold, the next step below it.
+      await expect(message.locator("strong")).toHaveText(title);
+      await expect(message.locator("p")).toHaveText(next);
+      await expect(
+        message.getByRole("button", { name: "Try again" }),
+      ).toHaveCount(0);
+      await expect(runs.panel.getByRole("status")).toHaveCount(0);
+    });
+
+  test.describe("at 768x1024", () => {
+    test.use({ viewport: { width: 768, height: 1024 } });
+
+    test("the out-of-date title wraps into even lines, without a lone word", async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, {
+        status: 403,
+        json: {
+          status: 403,
+          code: "WV-STUDIO-CSRF",
+          message: "Refresh Studio before submitting this change",
+        },
+      });
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const title = runsPage(page).panel.locator(
+        ".runs-body .runs-message strong",
+      );
+      await expect(title).toHaveText("This Studio window is out of date.");
+      // The width of each line the title wraps into, widest first.
+      const lines = await title.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const rows = new Map<number, number>();
+        for (const rect of range.getClientRects())
+          rows.set(
+            Math.round(rect.top),
+            (rows.get(Math.round(rect.top)) ?? 0) + rect.width,
+          );
+        return [...rows.values()].sort((a, b) => b - a);
+      });
+      expect(lines).toHaveLength(2);
+      expect(lines[1] / lines[0]).toBeGreaterThan(0.5);
+    });
+  });
+
+  for (const status of [500, 403])
+    test(`a check of who is signed in that fails with an unexpected ${status} says the platform couldn't be reached, with Try again`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      await failingPlatform(page, {
+        status,
+        json: { status, code: "WV-UNEXPECTED", message: "Something failed." },
+      });
+      const notice = page.locator(".platform-banner");
+      await expect(notice).toContainText(
+        "Studio couldn't reach Acme. You can keep working locally.",
+      );
+      await expect(
+        notice.getByRole("button", { name: "Try again" }),
+      ).toBeVisible();
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const runs = runsPage(page);
+      const message = runs.panel.locator(".runs-body .runs-message");
+      await expect(message.locator("strong")).toHaveText(
+        "Studio couldn't reach Acme.",
+      );
+      await expect(
+        message.getByRole("button", { name: "Try again" }),
+      ).toBeVisible();
+      await expect(runs.panel.getByRole("status")).toHaveCount(0);
+    });
+
+  for (const { failure, answer } of [
+    {
+      failure: "can't reach the platform",
+      answer: {
+        status: 502,
+        json: {
+          status: 502,
+          code: "WV-STUDIO-UPSTREAM",
+          message: "The platform didn't answer.",
+        },
+      },
+    },
+    {
+      failure: "fails with a 500",
+      answer: {
+        status: 500,
+        json: { status: 500, code: "WV-UNEXPECTED", message: "Failed." },
+      },
+    },
+  ])
+    test(`after a sign-in in the wizard, a workspace check that ${failure} reads as unreachable, not as signed out`, async ({
+      page,
+    }) => {
+      await useNewEditor(page);
+      // The platform refuses the expired session; once the person signs in
+      // again, the wizard's check of the account fails.
+      const host = new PlatformHost({
+        platforms: [acmePlatform({ signedIn: false })],
+        active: "Acme",
+        test: (current) => (current.current?.signedIn ? answer : undefined),
+      });
+      await page.route(
+        (url) => url.pathname.startsWith("/studio/"),
+        (route) => host.handle(route),
+      );
+      await page.route("**/studio/api/api/v1/identity", (route) =>
+        route.fulfill({ status: answer.status, json: answer.json }),
+      );
+      await page.goto("/");
+      await page
+        .locator(".platform-banner")
+        .getByRole("button", { name: "Sign in again" })
+        .click();
+      await page
+        .getByRole("button", { name: "Sign in with your browser" })
+        .click();
+      await expect(
+        page.getByRole("textbox", { name: "Sign-in address" }),
+      ).toBeVisible({ timeout: 15_000 });
+      host.finish("authenticated");
+      await expect(
+        page.getByText("Studio couldn't load your workspaces."),
+      ).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: "Home", exact: true }).click();
+      await newWorkflow(page);
+      await new DesignerPage(page).setSource(JSON.stringify(runsWorkflow));
+      await page.getByRole("tab", { name: "Runs" }).click();
+      const runs = runsPage(page);
+      const message = runs.panel.locator(".runs-body .runs-message");
+      await expect(message.locator("strong")).toHaveText(
+        "Studio couldn't reach Acme.",
+      );
+      await expect(
+        message.getByRole("button", { name: "Try again" }),
+      ).toBeVisible();
+    });
 
   test("a refused list shows who can grant access and no run", async ({
     page,

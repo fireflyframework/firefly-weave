@@ -25,7 +25,8 @@ import {
   acmePlatform,
   globexPlatform,
   platformHost,
-  type PlatformHost,
+  PlatformHost,
+  type Reply,
 } from "./platform-host";
 
 const environment =
@@ -257,6 +258,230 @@ test("at 360 px a signed-out platform keeps a word beside the dot", async ({
     parseFloat(getComputedStyle(e).fontSize),
   );
   expect(size).toBeGreaterThanOrEqual(12);
+});
+
+test.describe("at 360 px the word beside the dot", () => {
+  test.use({ viewport: { width: 360, height: 740 } });
+
+  for (const { failure, answer, word, state } of [
+    {
+      failure: "a platform Studio can't reach",
+      answer: {
+        status: 503,
+        json: {
+          status: 503,
+          code: "WV-AUTH-OFFLINE",
+          message: "The platform can't be reached.",
+        },
+      },
+      word: "Offline",
+      state: "Can't reach the platform",
+    },
+    {
+      failure: "a locked credential store",
+      answer: {
+        status: 503,
+        json: {
+          status: 503,
+          code: "WV-AUTH-STORE",
+          message: "The credential store is locked.",
+        },
+      },
+      word: "Keychain",
+      state: "Credential store unavailable",
+    },
+    {
+      failure: "an account the platform doesn't know",
+      answer: {
+        status: 401,
+        json: {
+          status: 401,
+          code: "WV-AUTH-NOT-LINKED",
+          message: "You signed in, but this platform does not know you.",
+        },
+      },
+      word: "Not linked",
+      state: "Account not recognized",
+    },
+    {
+      failure: "an expired sign-in",
+      answer: {
+        status: 401,
+        json: {
+          status: 401,
+          code: "WV-AUTH-REQUIRED",
+          message: "Your sign-in has ended. Sign in again to continue.",
+        },
+      },
+      word: "Sign in",
+      state: "Session expired",
+    },
+  ] satisfies { failure: string; answer: Reply; word: string; state: string }[])
+    test(`after ${failure} it says "${word}", also once the banner is dismissed`, async ({
+      page,
+    }) => {
+      // Acme's session is saved, but every check of the account fails.
+      const host = new PlatformHost({
+        platforms: [acmePlatform()],
+        active: "Acme",
+        test: () => answer,
+      });
+      await page.route(
+        (url) => url.pathname.startsWith("/studio/"),
+        (route) => host.handle(route),
+      );
+      await page.route("**/studio/api/api/v1/identity", (route) =>
+        route.fulfill({ status: answer.status, json: answer.json }),
+      );
+      await page.goto("/");
+      const indicator = page.locator(".platform-indicator");
+      const shown = indicator.locator(".indicator-word");
+      const dot = indicator.locator(".connection-dot");
+      const notice = page.locator(".platform-banner");
+      await expect(notice).toBeVisible();
+      for (const banner of ["shown", "dismissed"]) {
+        if (banner === "dismissed")
+          await notice
+            .getByRole("button", { name: "Dismiss platform message" })
+            .click();
+        await expect(notice).toHaveCount(banner === "shown" ? 1 : 0);
+        await expect(shown, `banner ${banner}`).toHaveText(word);
+        await expect(dot, `banner ${banner}`).toHaveClass(/\bwarning\b/);
+        // The word is hidden from assistive technology: the name says it.
+        await expect(indicator, `banner ${banner}`).toHaveAccessibleName(
+          `Platform: Acme · ${state} · Workspace Payments / Production`,
+        );
+      }
+    });
+
+  test('a sign-in waiting in the background says "Signing in"', async ({
+    page,
+  }) => {
+    await platformHost(page, {
+      platforms: [acmePlatform({ signedIn: false })],
+      active: "Acme",
+      pendingLogin: { flow: "device" },
+    });
+    // Studio resumes the sign-in; leaving the wizard leaves it waiting.
+    await expect(page.getByRole("status", { name: "Sign-in code" })).toHaveText(
+      "WDJB-MJHT",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    const indicator = page.locator(".platform-indicator");
+    await expect(indicator.locator(".indicator-word")).toHaveText("Signing in");
+    await expect(indicator).toHaveAccessibleName(
+      "Platform: Acme · Signing in · Workspace Payments / Production",
+    );
+  });
+});
+
+test("a check of the account that succeeds after a refused call reads as signed in", async ({
+  page,
+}) => {
+  const host = new PlatformHost({
+    platforms: [acmePlatform()],
+    active: "Acme",
+  });
+  await page.route(
+    (url) => url.pathname.startsWith("/studio/"),
+    (route) => host.handle(route),
+  );
+  // The check of the account waits; meanwhile the workflow list is refused.
+  let release = () => undefined as void;
+  const held = new Promise<void>((done) => (release = done));
+  await page.route("**/studio/connection/test", async (route) => {
+    await held;
+    await host.handle(route);
+  });
+  let refusing = true;
+  await page.route(
+    (url) =>
+      url.pathname.startsWith("/studio/api/") &&
+      url.pathname.endsWith("/workflows"),
+    (route) =>
+      refusing
+        ? route.fulfill({
+            status: 401,
+            json: {
+              status: 401,
+              code: "WV-AUTH-REQUIRED",
+              message: "Your sign-in has ended. Sign in again to continue.",
+            },
+          })
+        : host.handle(route),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await expect(page.locator(".platform-banner")).toContainText(
+    "Your session for Acme expired.",
+  );
+  refusing = false;
+  release();
+  await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+    "Platform: Acme · Signed in as jane@acme.example · Workspace Payments / Production",
+  );
+});
+
+for (const { failure, code } of [
+  { failure: "can't reach the platform", code: "WV-AUTH-OFFLINE" },
+  { failure: "can't use the credential store", code: "WV-AUTH-STORE" },
+])
+  test(`a check that says it ${failure} leaves no banner once the account loads anyway`, async ({
+    page,
+  }) => {
+    // The host's check fails; reading the account through the API works.
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: () => ({
+        status: 503,
+        json: { status: 503, code, message: "The check failed." },
+      }),
+    });
+    // Studio reads the account once the check has failed.
+    await expect
+      .poll(() => host.requests("/studio/api/api/v1/identity", "GET").length)
+      .toBeGreaterThan(0);
+    await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
+      "Platform: Acme · Signed in as jane@acme.example · Workspace Payments / Production",
+    );
+    await expect(page.locator(".platform-banner")).toHaveCount(0);
+  });
+
+test("with the sign-in assistant open, an unrecognized account reads the same seen and heard after its banner is dismissed", async ({
+  page,
+}) => {
+  await platformHost(page, {
+    platforms: [acmePlatform({ signedIn: false, expired: true })],
+    active: "Acme",
+    test: () => ({
+      status: 401,
+      json: {
+        status: 401,
+        code: "WV-AUTH-NOT-LINKED",
+        message: "You signed in, but this platform does not know you.",
+      },
+    }),
+  });
+  const notice = page.locator(".platform-banner");
+  await expect(notice).toContainText(
+    "You signed in, but Acme doesn't recognize your account yet.",
+  );
+  await notice
+    .getByRole("button", { name: "Dismiss platform message" })
+    .click();
+  const indicator = page.locator(".platform-indicator");
+  await indicator.click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Sign in with your browser" }),
+  ).toBeVisible();
+  await expect(indicator).toHaveAccessibleName(
+    /^Platform: Acme · Account not recognized · /,
+  );
+  await expect(indicator).toContainText("Account not recognized");
+  await expect(indicator).not.toContainText("Connecting…");
 });
 
 test("a toast sits bottom-left beside the sidebar and pauses while hovered", async ({
