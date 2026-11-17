@@ -18,18 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a19
 
-- Studio says why it has no account, and keeps it true: the Runs tab, the
-  banner, and the top bar read the same reason (session expired, account not
-  recognized, platform unreachable, credential store locked, or a Studio window
-  that needs a reload). When a background sign-in is declined or canceled, the
-  banner now says so and names the account you're still signed in with,
-  instead of disappearing.
-- When a background sign-in finishes as another person, a bulk action on
-  Workers and the resend of a change refused for capacity now wait for Studio
-  to check the new account, so nothing more goes out for the previous person's
-  selection with the new person's credential.
+### Workflow language
+
 - Workflows can start from platform events. Declare `eventTrigger` with the
   transaction events a workflow accepts and give it
   `inputSchema: {$ref: weave.platform-event-v1}`, then bind it with
@@ -44,6 +36,9 @@ SPDX-License-Identifier: Apache-2.0
   against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
   use it, until the schema is renamed. Run views gain the origin `event`, so
   clients that read run origins strictly need the new value.
+
+### Runs, incidents, and workers
+
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
   claim can't reach the platform (the connection is refused, drops or times
@@ -56,6 +51,9 @@ SPDX-License-Identifier: Apache-2.0
   local operations deploy now start again when they stop on their own
   (`restart: unless-stopped`); one that `weave platform stop` or a change
   request stopped stays stopped.
+
+### Operations
+
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
   is made again after the same doubling wait as a worker's, and 401, 403, a
@@ -66,9 +64,9 @@ SPDX-License-Identifier: Apache-2.0
   couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE: Invalid
   invocation` with 2. A code the platform doesn't mint is printed as
   `WV-HTTP`.
-- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
-  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
-  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+
+### AI and connections
+
 - The pinned HTTP client that connectors use raises a destination name that
   doesn't resolve as `httpcore.ConnectError`, and a connection that doesn't open
   within the client's connect timeout as `httpcore.ConnectTimeout`, as it
@@ -84,6 +82,40 @@ SPDX-License-Identifier: Apache-2.0
   `not_started`. In a cluster, the operations runner keeps claiming while the
   API's name doesn't resolve or its connection times out, as it does while the
   API restarts.
+
+### Studio, desktop app, and CLI
+
+- Studio says why it has no account, and keeps it true: the Runs tab, the
+  banner, and the top bar read the same reason (session expired, account not
+  recognized, platform unreachable, credential store locked, or a Studio window
+  that needs a reload). When a background sign-in is declined or canceled, the
+  banner now says so and names the account you're still signed in with,
+  instead of disappearing.
+- When a background sign-in finishes as another person, a bulk action on
+  Workers and the resend of a change refused for capacity now wait for Studio
+  to check the new account, so nothing more goes out for the previous person's
+  selection with the new person's credential.
+- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
+  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
+  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+
+### Development and testing
+
+- The local check gate (`scripts/check.py`) rebuilds the core package in each
+  worker suite's environment, so the Agentic and Files worker suites always
+  test against the core in the checkout, as CI's fresh environments do.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a19` and the
+  desktop product to `0.1.0-alpha.19`; the native internal installer counter is
+  `0.1.19`.
+- Pin the Agentic and Files 0.1.11 packages to core 0.1.0a19. Neither worker
+  has another change.
+- Schema revision becomes `0041_language_event_triggers`, with one new
+  migration, `0041_language_event_triggers`, and no new role. See
+  [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha19)
+  for what the upgrade involves and the behavior changes to check.
 
 ## 0.1.0a18
 
