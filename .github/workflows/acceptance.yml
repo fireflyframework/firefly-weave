@@ -73,6 +73,9 @@ jobs:
         run: |
           KEYRING_PASSWORD="$(openssl rand -hex 24)"
           export KEYRING_PASSWORD
+          # Single quotes on purpose: the inner shell expands the variables, so the password never
+          # appears on a command line.
+          # shellcheck disable=SC2016
           dbus-run-session -- bash -c 'printf %s "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && uv run --no-sync python scripts/acceptance.py --profile pr --docker-context default --block-egress'
       - name: Upload evidence
         if: always() && steps.acceptance.outputs.scan == 'passed'
