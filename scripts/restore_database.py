@@ -163,7 +163,9 @@ async def canonical_checks(url, definitions: set[tuple[str, str]]) -> Checks:
     probes: dict[str, tuple[str, str]] = {}
     try:
         async with engine.connect() as connection, connection.begin() as transaction:
-            await connection.execute(text(f"SET LOCAL lock_timeout='{CHECK_LOCK_TIMEOUT_SECONDS}s'"))
+            await connection.execute(
+                text("SELECT set_config('lock_timeout',:timeout,true)"), {"timeout": f"{CHECK_LOCK_TIMEOUT_SECONDS}s"}
+            )
             copies: dict[str, str | None] = {}
             for table, definition in sorted(definitions):
                 if table not in copies:
