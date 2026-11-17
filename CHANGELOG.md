@@ -28,9 +28,12 @@ SPDX-License-Identifier: Apache-2.0
   `weave triggers events create`, which needs `trigger.manage`, `run.start`,
   and `run.read`. Each event starts each matching trigger's workflow once, as
   the trigger's owner; a chain of reactions stops at three deep and at 64
-  starts per first event, and runs started this way show the origin Platform
-  event. Disabling a trigger stops its starts at once. Migration
-  `0041_language_event_triggers` adds the trigger tables.
+  starts per first event, and runs started this way show the origin
+  **Platform event**. Disabling a trigger stops its starts at once.
+  `weave triggers events starts` lists what each event started or why it
+  started nothing, `weave.event_starts` counts the starts, and the platform
+  lists `flow.eventTrigger`. Migration `0041_language_event_triggers` adds the
+  trigger tables.
 - Before you upgrade, note that the schema name `weave.platform-event-v1` is now
   the platform's: while a catalog has its own schema under that name, compiles
   against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
