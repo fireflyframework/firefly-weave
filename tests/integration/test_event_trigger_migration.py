@@ -458,9 +458,21 @@ async def test_platform_tasks_are_never_pinned_to_a_worker_release(upgraded):
         )
 
 
-async def test_the_schema_is_at_the_event_trigger_version(upgraded):
+async def test_the_schema_is_at_the_event_trigger_version(empty_settings):
+    # Later migrations move the head on, so this upgrades to the trigger migration itself and reads what it records.
+    engine = create_async_engine(empty_settings.database_url.get_secret_value(), hide_parameters=True)
+    try:
+        async with engine.begin() as connection:
+            await upgrade(connection, "0031_operations_key_collation")
+            await upgrade(connection, HEAD)
+            assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == HEAD
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
+    finally:
+        await engine.dispose()
+
+
+async def test_the_schema_checks_pass_at_the_head(upgraded):
     engine, _ = upgraded
-    assert SCHEMA_VERSION == HEAD
     async with engine.begin() as connection:
         await check_schema(connection)
-        assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == HEAD
+        assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == SCHEMA_VERSION
