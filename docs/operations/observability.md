@@ -343,8 +343,9 @@ each one needs.
   email connection's own list of allowed recipients; an address that isn't is
   refused and shows `recipient_not_allowed`. All of this is checked again at
   every send. The text is fixed, with no link, and shows the value the alert
-  had when the message was queued. A person's saved address is deleted when
-  their last grant in the tenant is removed.
+  had when the message was queued. A person's saved address is deleted once
+  they hold no role in the tenant other than the machine roles `worker` and
+  `deployment_runner`.
 - **Budgets.** At most one alert message per rule and channel every 15 minutes,
   40 messages per rule and 60 per environment an hour, and 20 per recipient an
   hour, counted per recipient. A channel takes at most 3 test messages an hour,
