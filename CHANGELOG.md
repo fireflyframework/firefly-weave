@@ -100,6 +100,12 @@ SPDX-License-Identifier: Apache-2.0
   couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE: Invalid
   invocation` with 2. A code the platform doesn't mint is printed as
   `WV-HTTP`.
+- `scripts/restore_database.py` restores databases whose CHECK constraints
+  combine `BETWEEN` with another `AND`, as the event trigger and alert tables
+  do. It compares CHECK constraints as PostgreSQL parses them on the restored
+  database, so a restore is no longer refused only because PostgreSQL prints
+  the same constraint differently after the restore; any real difference
+  still refuses it.
 
 ### AI and connections
 
