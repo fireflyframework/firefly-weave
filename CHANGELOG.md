@@ -18,6 +18,17 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+### Development and testing
+
+- Pull request CI runs the PostgreSQL integration tests against PostgreSQL 17
+  on every pull request and push to `main`; the tests that need Kafka,
+  Keycloak, a built image, or the owned Docker context run in the release
+  gate.
+- Every workflow job has a timeout, and Acceptance and Desktop installers wait
+  for a draft pull request to be marked ready.
+
 ## 0.1.0a19
 
 ### Workflow language
