@@ -88,10 +88,22 @@ def baseline_operations(path: Path) -> set[str]:
     return set(json.loads(path.read_text(encoding="utf-8"))["operations"])
 
 
+# An operation about the signed-in person alone (their own alert address) needs no role capability: any person with a
+# grant in the tenant may call it, never a principal whose only roles are a machine's.
+AUTHENTICATED = "authenticated identity"
+SERVICE_ROLES = frozenset({"worker", "deployment_runner"})
+
+
 def holds(roles: Iterable[str], capability: str, role_capabilities: Mapping[str, frozenset[str]]) -> bool:
-    """True when one of the roles grants the capability, or one of its alternatives ("a or b")."""
-    options = [part.strip() for part in capability.split(" or ")]
-    return any(option in role_capabilities.get(role, frozenset()) for role in roles for option in options)
+    """True when the roles grant the capability: each one an operation needs together ("a and b"), by any of the
+    roles, or one of its alternatives ("a or b")."""
+    roles = tuple(roles)
+    if capability == AUTHENTICATED:
+        return any(role not in SERVICE_ROLES for role in roles)
+    granted = {held for role in roles for held in role_capabilities.get(role, frozenset())}
+    return all(
+        any(option.strip() in granted for option in needed.split(" or ")) for needed in capability.split(" and ")
+    )
 
 
 def accepted(row: Row, capabilities: Mapping[str, bool]) -> set[tuple[int, str]]:
@@ -118,6 +130,9 @@ def holds_at(
 ) -> bool:
     """True when a grant at the operation's scope level or above holds the capability: an environment grant does
     not reach a project's or tenant's operations, and a project grant does not reach the tenant's."""
+    if capability == AUTHENTICATED:
+        # About the caller only: a grant anywhere in the tenant makes the caller a person of it.
+        return holds([grant["role"] for grant in grants], capability, role_capabilities)
     needed = level(path)
     reaching = [
         grant["role"]

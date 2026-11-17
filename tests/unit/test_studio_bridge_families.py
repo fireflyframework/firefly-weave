@@ -260,6 +260,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "step_tests.answer",
         "test_policy.read",
         "test_policy.save",
+        *ALERT_AND_ADMINISTRATION_OPERATIONS,
         *("event_triggers." + verb for verb in ("create", "list", "read", "disable", "starts")),
         *(
             "deployment_change_requests." + verb
@@ -291,8 +292,9 @@ def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):
     from firefly_weave.contracts.surface import OPERATIONS
     from firefly_weave.studio.service import STUDIO_FAMILIES, STUDIO_OPERATIONS
 
-    # Releases cross as three named reads, never as a family: registering an image stays an operator step.
-    assert {"releases.list", "releases.read", "releases.usage"} == STUDIO_OPERATIONS
+    # Releases cross as three named reads, never as a family: registering an image stays an operator step. Webhook
+    # subscriptions and deliveries cross as reads only, so Studio can list what receives alerts.
+    assert {"releases.list", "releases.read", "releases.usage", *WEBHOOK_READS} == STUDIO_OPERATIONS
     assert "releases" not in STUDIO_FAMILIES and "tasks" not in STUDIO_FAMILIES
     assert {"operations_summary", "operations_telemetry"} <= STUDIO_FAMILIES
     with client(tmp_path) as browser:
@@ -315,7 +317,67 @@ def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):
         "releases.usage",
         "operations_summary.read",
         "operations_telemetry.read",
+        "operations_retention.read",
     }
+
+
+# The webhook subscriptions and deliveries that receive alert changes: Studio lists and reads them, never changes them.
+WEBHOOK_READS = frozenset({"subscriptions.list", "subscriptions.read", "deliveries.list", "deliveries.read"})
+# Alerts and Settings › Administration: every alert operation, the retention periods, compatibility, retention plans,
+# and the webhook reads.
+ALERT_AND_ADMINISTRATION_OPERATIONS = frozenset(
+    {
+        *(f"alert_rules.{verb}" for verb in ("list", "read", "create", "update", "delete", "preview")),
+        "alert_presets.list",
+        *(f"alert_channels.{verb}" for verb in ("list", "read", "create", "update", "delete", "test")),
+        "alerts.list",
+        "alerts.read",
+        "alerts.acknowledge",
+        "alert_events.list",
+        "alert_settings.read",
+        "alert_settings.update",
+        "alert_recipient_consents.list",
+        "alert_recipient_consents.create",
+        "alert_recipient_consents.revoke",
+        "alert_addresses.read_mine",
+        "alert_addresses.save_mine",
+        "operations_retention.read",
+        "compatibility.read",
+        "compatibility.check",
+        "retention.plan",
+        "retention.read",
+        "retention.apply",
+        *WEBHOOK_READS,
+    }
+)
+
+
+def test_studio_may_call_the_alert_administration_families_and_read_webhooks(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+    from firefly_weave.studio.service import STUDIO_FAMILIES
+
+    families = {identifier.split(".")[0] for identifier in ALERT_AND_ADMINISTRATION_OPERATIONS}
+    webhooks = {"subscriptions", "deliveries"}
+    assert families - webhooks <= STUDIO_FAMILIES and webhooks.isdisjoint(STUDIO_FAMILIES)
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        crossing = {
+            identifier
+            for identifier, operation in OPERATIONS.items()
+            if identifier.split(".")[0] in families
+            and studio.check_scope(
+                operation.canonical_path.format(
+                    tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
+                ),
+                operation.method,
+            )
+            == 200
+        }
+        environment = f"/api/v1/tenants/{TENANT}/projects/{PROJECT_ID}/environments/{ENVIRONMENT_ID}"
+        saving = studio.check_scope(f"{environment}/subscriptions", "POST")
+        retrying = studio.check_scope(f"{environment}/deliveries/{RESOURCE}/retry", "POST")
+    assert crossing == ALERT_AND_ADMINISTRATION_OPERATIONS
+    assert (saving, retrying) == (404, 404)
 
 
 def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):

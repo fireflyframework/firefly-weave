@@ -292,6 +292,74 @@ failed cycles in a row or 3 among its last 20 (see the
 that, for example once every 10 cycles, leaves the loop `ok`; its
 `recent_failures` still shows it.
 
+## Alerts
+
+An alert rule compares one signal of an environment with a threshold. The
+scheduler starts an evaluation cycle every 30 seconds and reports as
+`alert_evaluator` in health. It reads the signals without holding up the
+project's own changes, such as run starts. People with the `alert_manager` role
+create rules, email channels and recipients' opt-ins; the
+[API reference](../reference/api.md) lists the operations and every capability
+each one needs.
+
+- **Operations figures.** A rule's values and its alerts are operations
+  figures, so saving or previewing a rule also needs `status.read`. A rule on
+  open incidents (`incidents.active`) also needs `incident.read`, because the
+  environment summary shows incidents only to people who may read them. A rule
+  on every target needs at least one target its author may read; otherwise
+  saving it fails with `WV-ALERT-SIGNAL`, since it would always read zero.
+  Switching a rule off needs neither, so anyone who manages alerts can silence
+  a noisy rule someone else saved; changing anything else on it needs them. A
+  rule is read only while the person who last saved it still holds these and
+  may read the targets it watches; otherwise it shows `unauthorized` and sends
+  nothing until that access returns.
+
+- **Signals.** Run signals (`run.failure_rate`, `run.failures`,
+  `run.duration_p95`) count the runs that ended in the rule's window of 1, 5,
+  15, or 60 minutes, read from the runs themselves up to 10,000 runs and from
+  the five-minute run statistics beyond that. Test runs never count. Queue,
+  worker, outbox, incident, target, and platform health signals read the
+  current value, as the environment summary shows it.
+- **For and resolving.** A rule fires once its condition has held for its For
+  time (at once when it is 0) and resolves only after it has been clear for
+  its For time or a minute, whichever is longer. A failed read changes nothing,
+  and the first reading after a gap of more than five minutes starts both
+  waits again.
+- **Scale.** At the 30-second cadence, the scheduler comes back to every
+  environment within five minutes for about 160 tenants, or about 80 when
+  tenants have nine or more environments. Beyond that, revisits come more than
+  five minutes apart, so both waits start over at every reading, and the server
+  logs a warning that starts with `Alert evaluation is behind`. After the
+  evaluator has been stopped for more than five minutes, for example during an
+  upgrade, each environment logs that warning once on its first visit; that
+  isn't a capacity problem.
+- **Repeats.** A firing alert notifies again after its repeat interval (at
+  least 15 minutes) until someone acknowledges it. An acknowledgement made
+  while that cycle is being evaluated can still let one repeat through.
+- **Email.** A channel sends as the person who last saved it, one message per
+  recipient. Recipients are project members, at the address each one saved for
+  themselves, or outside addresses whose domain an administrator allowed and
+  whose opt-in an administrator recorded. Every recipient must also be on the
+  email connection's own list of allowed recipients; an address that isn't is
+  refused and shows `recipient_not_allowed`. All of this is checked again at
+  every send. The text is fixed, with no link, and shows the value the alert
+  had when the message was queued. A person's saved address is deleted when
+  their last grant in the tenant is removed.
+- **Budgets.** At most one alert message per rule and channel every 15 minutes,
+  40 messages per rule and 60 per environment an hour, and 20 per recipient an
+  hour, counted per recipient. A channel takes at most 3 test messages an hour,
+  and test messages never count toward the budgets of alert messages. A
+  message over a budget is skipped and shows `skipped_limit`. A message whose
+  outcome is unclear is never sent again, and a retry goes only to the
+  recipients the earlier attempts didn't reach.
+- **Presets.** Every environment gets the rule "A platform component is
+  degraded" once; deleting it doesn't bring it back. Five suggested rules are
+  offered to start from.
+- **Webhooks.** Signed subscriptions to `alert.transition` receive each firing
+  and resolve; see [integration events](../reference/integration-events.md).
+- **Retention.** Alert history and resolved alerts are kept 30 days, and at
+  most 200,000 history events per environment.
+
 ## Next steps
 
 - Look up the other server settings in [configuration](configuration.md).

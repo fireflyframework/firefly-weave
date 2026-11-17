@@ -54,6 +54,35 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Operations
 
+- Alerts on operations signals. People with the new `alert_manager` role
+  create alert rules on a fixed list of signals (run failure rate, failed runs,
+  run duration, waiting tasks, event and provider backlogs, open incidents,
+  workers, offline runners, deployments that need reconciling, degraded
+  platform components), preview a rule's current value, and acknowledge firing
+  alerts. The scheduler evaluates every environment every 30 seconds; a rule
+  fires once its condition has held for its For time and resolves after it has
+  been clear for a minute or its For time. Firing alerts show in the
+  environment summary to alert readers, critical ones first under Needs
+  attention, and signed webhook subscribers to the new `alert.transition` event
+  receive each change, with numbers and states only. Every environment gets the
+  rule "A platform component is degraded" once. Upgrade CLIs and SDKs with the
+  server: the environment summary gains an `alerts` section and the attention
+  kind `alert`, which earlier clients refuse with `502 WV-WIRE`.
+- Alert email. A channel sends as the person who last saved it, one message per
+  recipient, to project members at the address each member saved for
+  themselves, or to outside addresses whose domain an administrator allowed and
+  whose opt-in an administrator recorded; both are checked again at every send.
+  Mail has fixed text and no link, is budgeted (one message per rule and
+  channel every 15 minutes; 40 per rule, 60 per environment, and 20 per
+  recipient an hour) and is never sent twice. A channel takes three test
+  messages an hour, which never spend alert mail's budget. Change requests
+  awaiting approval can be mailed to approval channels, naming the target, the
+  change and its expiry, never the reason. Migration `0042_operations_alerts`
+  adds the alert tables.
+- `weave platform up` gives the local owner `alert_manager` and `email_sender`,
+  so alert email works out of the box.
+- The retention periods of operations records can be read
+  (`operations_retention.read`).
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
   is made again after the same doubling wait as a worker's, and 401, 403, a

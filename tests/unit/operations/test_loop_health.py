@@ -286,8 +286,8 @@ def test_scheduler_disabled_marks_every_scheduler_loop_disabled():
         ),
     )
     states = {snapshot.component: snapshot.state for snapshot in enabled.snapshots()}
-    # Nothing has run yet: enabled loops are down until their task starts, and alerts do not exist yet.
-    assert states == {**{name: "down" for name in COMPONENTS}, "alert_evaluator": "disabled"}
+    # Nothing has run yet: enabled loops are down until their task starts, the alert evaluator among them.
+    assert states == {name: "down" for name in COMPONENTS}
     # The broker consumer follows its own switch, whatever the scheduler setting.
     for scheduler, consumer, expected in ((False, True, "down"), (True, False, "disabled")):
         health = LoopHealth()

@@ -39,6 +39,27 @@ from firefly_weave.contracts.ai import (
     AISetupGrantResult,
     AISetupPublishResult,
 )
+from firefly_weave.contracts.alerts import (
+    AlertChannel,
+    AlertChannelDraft,
+    AlertEvent,
+    AlertEventQuery,
+    AlertNotificationView,
+    AlertPage,
+    AlertPreset,
+    AlertPreview,
+    AlertQuery,
+    AlertRecipientConsent,
+    AlertRecipientConsentDraft,
+    AlertRuleDraft,
+    AlertRuleView,
+    AlertSettings,
+    AlertSettingsUpdate,
+    AlertView,
+    MyAlertAddress,
+    MyAlertAddressUpdate,
+    RetentionPeriods,
+)
 from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
@@ -252,6 +273,11 @@ if TYPE_CHECKING:
 
 PROJECT = "/tenants/{tenant}/projects/{project}"
 ENVIRONMENT = PROJECT + "/environments/{environment}"
+# What saving or previewing an alert rule needs beyond the capability, for some signals.
+RULE_SIGNAL_READS = (
+    "A rule on incidents.active also needs incident.read, and a rule on a target signal without a target_id needs at "
+    "least one deployment target the caller may read (422 WV-ALERT-SIGNAL otherwise)."
+)
 type RevisionTag = Annotated[str, Field(pattern=r'^(?:"[1-9][0-9]{0,9}"|[1-9][0-9]{0,9})$')]
 type CanonicalRevisionTag = Annotated[str, Field(pattern=r'^"[1-9][0-9]{0,9}"$')]
 type PageLimit = Annotated[int, Field(ge=1, le=100)]
@@ -287,7 +313,8 @@ class Operation:
     # Public operations are documented without bearer security; AuthenticationFilter
     # must allowlist exactly the same routes and methods.
     public: bool = False
-    # Shown instead of the capability sentence for public operations without one.
+    # Shown instead of the capability sentence for public operations without one; otherwise added after it, for what
+    # some requests need beyond the capability.
     description: str = ""
     # Strict query model: OpenAPI documents its fields and the controller decodes the same model.
     query: type[BaseModel] | None = None
@@ -462,6 +489,7 @@ class Operation:
                 "Required capability: "
                 + self.capability
                 + ". Current local scoped grants are authoritative."
+                + (" " + self.description if self.description else "")
                 + (
                     " Teams must be explicitly enabled; otherwise these routes return unavailable (409)."
                     if self.id.startswith("teams_references.")
@@ -950,6 +978,209 @@ OPERATIONS = {
             StepStatisticsAnswer,
             "status.read",
             query=StatisticsStepsQuery,
+        ),
+        Operation(
+            "alert_rules.list",
+            ENVIRONMENT + "/alert-rules",
+            "GET",
+            Page[AlertRuleView],
+            "alert.read",
+            page=True,
+        ),
+        Operation(
+            "alert_rules.read",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "GET",
+            AlertRuleView,
+            "alert.read",
+            etag=True,
+        ),
+        Operation(
+            # status.read too: a rule's state shows operations figures.
+            "alert_rules.create",
+            ENVIRONMENT + "/alert-rules",
+            "POST",
+            AlertRuleView,
+            "alert.manage and status.read",
+            AlertRuleDraft,
+            (201,),
+            idempotency=True,
+            etag=True,
+            description=RULE_SIGNAL_READS,
+        ),
+        Operation(
+            "alert_rules.update",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "PUT",
+            AlertRuleView,
+            "alert.manage and status.read",
+            AlertRuleDraft,
+            revision="required",
+            etag=True,
+            description=RULE_SIGNAL_READS + " An update that only switches a rule off needs neither.",
+        ),
+        Operation(
+            "alert_rules.delete",
+            ENVIRONMENT + "/alert-rules/{identifier}",
+            "DELETE",
+            Revoked,
+            "alert.manage",
+            revision="required",
+            request_required=False,
+        ),
+        Operation(
+            # status.read too: a preview reveals operations figures, as a rule's state does.
+            "alert_rules.preview",
+            ENVIRONMENT + "/alert-rules/preview",
+            "POST",
+            AlertPreview,
+            "alert.manage and status.read",
+            AlertRuleDraft,
+            description=RULE_SIGNAL_READS,
+        ),
+        Operation("alert_presets.list", ENVIRONMENT + "/alert-presets", "GET", list[AlertPreset], "alert.read"),
+        Operation(
+            "alert_channels.list",
+            ENVIRONMENT + "/alert-channels",
+            "GET",
+            Page[AlertChannel],
+            "alert.read",
+            page=True,
+        ),
+        Operation(
+            "alert_channels.read",
+            ENVIRONMENT + "/alert-channels/{identifier}",
+            "GET",
+            AlertChannel,
+            "alert.read",
+            etag=True,
+        ),
+        Operation(
+            # email.send too: mail goes out as whoever last saved the channel.
+            "alert_channels.create",
+            ENVIRONMENT + "/alert-channels",
+            "POST",
+            AlertChannel,
+            "alert.manage and email.send",
+            AlertChannelDraft,
+            (201,),
+            idempotency=True,
+            etag=True,
+        ),
+        Operation(
+            "alert_channels.update",
+            ENVIRONMENT + "/alert-channels/{identifier}",
+            "PUT",
+            AlertChannel,
+            "alert.manage and email.send",
+            AlertChannelDraft,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "alert_channels.delete",
+            ENVIRONMENT + "/alert-channels/{identifier}",
+            "DELETE",
+            Revoked,
+            "alert.manage",
+            revision="required",
+            request_required=False,
+        ),
+        Operation(
+            "alert_channels.test",
+            ENVIRONMENT + "/alert-channels/{identifier}/test",
+            "POST",
+            AlertNotificationView,
+            "alert.manage",
+            statuses=(202,),
+            idempotency=True,
+            request_required=False,
+        ),
+        Operation(
+            "alert_settings.read",
+            ENVIRONMENT + "/alert-settings",
+            "GET",
+            AlertSettings,
+            "alert.read",
+            etag=True,
+        ),
+        Operation(
+            # Without If-Match the environment must have no saved settings yet.
+            "alert_settings.update",
+            ENVIRONMENT + "/alert-settings",
+            "PUT",
+            AlertSettings,
+            "alert.manage and environment.manage",
+            AlertSettingsUpdate,
+            revision="optional",
+            etag=True,
+        ),
+        Operation(
+            "alert_recipient_consents.list",
+            ENVIRONMENT + "/alert-recipient-consents",
+            "GET",
+            Page[AlertRecipientConsent],
+            "alert.read",
+            page=True,
+        ),
+        Operation(
+            "alert_recipient_consents.create",
+            ENVIRONMENT + "/alert-recipient-consents",
+            "POST",
+            AlertRecipientConsent,
+            "alert.manage and environment.manage",
+            AlertRecipientConsentDraft,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "alert_recipient_consents.revoke",
+            ENVIRONMENT + "/alert-recipient-consents/{identifier}/revoke",
+            "POST",
+            AlertRecipientConsent,
+            "alert.manage and environment.manage",
+            request_required=False,
+        ),
+        Operation("alerts.list", ENVIRONMENT + "/alerts", "GET", AlertPage, "alert.read", query=AlertQuery),
+        Operation("alerts.read", ENVIRONMENT + "/alerts/{identifier}", "GET", AlertView, "alert.read"),
+        Operation(
+            "alerts.acknowledge",
+            ENVIRONMENT + "/alerts/{identifier}/acknowledge",
+            "POST",
+            AlertView,
+            "alert.manage",
+            request_required=False,
+        ),
+        Operation(
+            "alert_events.list",
+            ENVIRONMENT + "/alert-events",
+            "GET",
+            Page[AlertEvent],
+            "alert.read",
+            query=AlertEventQuery,
+        ),
+        Operation(
+            "operations_retention.read",
+            ENVIRONMENT + "/operations/retention-periods",
+            "GET",
+            RetentionPeriods,
+            "status.read",
+        ),
+        # About the signed-in person only: any person with a grant in the tenant, never a machine.
+        Operation(
+            "alert_addresses.read_mine",
+            "/tenants/{tenant}/my-alert-address",
+            "GET",
+            MyAlertAddress,
+            "authenticated identity",
+        ),
+        Operation(
+            "alert_addresses.save_mine",
+            "/tenants/{tenant}/my-alert-address",
+            "PUT",
+            MyAlertAddress,
+            "authenticated identity",
+            MyAlertAddressUpdate,
         ),
         Operation(
             "retention.plan",

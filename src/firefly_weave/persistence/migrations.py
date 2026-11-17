@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from firefly_weave.settings import Settings, operations_from_env
 
-SCHEMA_VERSION = "0041_language_event_triggers"
+SCHEMA_VERSION = "0042_operations_alerts"
 
 
 async def check_schema(connection: AsyncConnection) -> None:

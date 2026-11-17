@@ -1131,6 +1131,12 @@ answer HEAD, without a body. For request and response schemas, open the
 operation in the [full API reference](api-explorer.md); to generate a client,
 [export the OpenAPI document](native-openapi.md).
 
+Some requests need more than their row's capability. Creating, updating, or
+previewing an alert rule on `incidents.active` also needs `incident.read`, and
+a rule on a target signal without a `target_id` needs at least one deployment
+target you may read (otherwise `422 WV-ALERT-SIGNAL`). An update that only
+switches a rule off needs neither.
+
 | Operation | Method and canonical path | Required authority |
 | --- | --- | --- |
 | `human_files.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/create` | human_task.complete |
@@ -1160,6 +1166,31 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `run_statistics.series` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/series` | status.read |
 | `run_statistics.workflows` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/workflows` | status.read |
 | `run_statistics.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/steps` | status.read |
+| `alert_rules.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.read |
+| `alert_rules.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.read |
+| `alert_rules.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules` | alert.manage and status.read |
+| `alert_rules.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage and status.read |
+| `alert_rules.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/{identifier}` | alert.manage |
+| `alert_rules.preview` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-rules/preview` | alert.manage and status.read |
+| `alert_presets.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-presets` | alert.read |
+| `alert_channels.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.read |
+| `alert_channels.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.read |
+| `alert_channels.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels` | alert.manage and email.send |
+| `alert_channels.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage and email.send |
+| `alert_channels.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}` | alert.manage |
+| `alert_channels.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-channels/{identifier}/test` | alert.manage |
+| `alert_settings.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.read |
+| `alert_settings.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-settings` | alert.manage and environment.manage |
+| `alert_recipient_consents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.read |
+| `alert_recipient_consents.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents` | alert.manage and environment.manage |
+| `alert_recipient_consents.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-recipient-consents/{identifier}/revoke` | alert.manage and environment.manage |
+| `alerts.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts` | alert.read |
+| `alerts.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}` | alert.read |
+| `alerts.acknowledge` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alerts/{identifier}/acknowledge` | alert.manage |
+| `alert_events.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/alert-events` | alert.read |
+| `operations_retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/operations/retention-periods` | status.read |
+| `alert_addresses.read_mine` | `GET /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
+| `alert_addresses.save_mine` | `PUT /api/v1/tenants/{tenant}/my-alert-address` | authenticated identity |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |

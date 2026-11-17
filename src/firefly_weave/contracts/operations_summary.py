@@ -25,6 +25,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field
 
+from firefly_weave.contracts.alerts import AlertsSection
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.run_statistics import RunsDaySection
 
@@ -43,7 +44,7 @@ type HealthComponentName = Literal[
     "native_executors",
     "telemetry",
 ]
-type AttentionKind = Literal["job", "approval", "worker", "incident", "runner", "compatibility", "run"]
+type AttentionKind = Literal["alert", "job", "approval", "worker", "incident", "runner", "compatibility", "run"]
 type AttentionTitle = Annotated[str, Field(min_length=1, max_length=200)]
 type Host = Annotated[str, Field(min_length=1, max_length=253)]
 
@@ -138,6 +139,10 @@ class OperationsSummary(ContractModel):
     attention: Annotated[list[AttentionItem], Field(max_length=ATTENTION_LIMIT)] | UnavailableSection
     # Read from run statistics; servers without them leave it out.
     runs_24h: RunsDaySection | UnavailableSection | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Firing alerts, for readers with alert.read; servers without alerts leave it out.
+    alerts: AlertsSection | ForbiddenSection | UnavailableSection | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TelemetryEndpoint(ContractModel):

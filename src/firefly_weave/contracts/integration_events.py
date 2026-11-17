@@ -25,6 +25,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.alerts import AlertEventFacts
 from firefly_weave.contracts.definitions import ContractModel, ResourceName
 from firefly_weave.contracts.deployments import ChangeState
 from firefly_weave.contracts.platform_events import TransactionEventFacts
@@ -41,6 +42,7 @@ EventType = Literal[
     "transaction.in_doubt",
     "transaction.reconciled",
     "transaction.force_ended",
+    "alert.transition",
 ]
 
 
@@ -54,6 +56,8 @@ class EventMetadata(ContractModel):
     change_state: ChangeState | None = Field(default=None, exclude_if=lambda v: v is None)
     # A transaction event's facts: keys, states, codes and the business key, never business values.
     transaction: TransactionEventFacts | None = Field(default=None, exclude_if=lambda v: v is None)
+    # An alert's new state, severity, signal and figures; never its rule's name, selector or recipients.
+    alert: AlertEventFacts | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class IntegrationEvent(ContractModel):

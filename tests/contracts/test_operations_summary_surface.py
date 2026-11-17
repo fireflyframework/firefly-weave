@@ -120,10 +120,13 @@ def test_attention_is_bounded_to_twenty_items_with_bounded_titles_and_known_kind
         "id": "compatibility",
         "title": "Restricted",
     }
+    # A critical firing alert, titled with its rule's name.
+    assert AttentionItem(kind="alert", id=INSTANCE, title="Run failure rate above 10 %").kind == "alert"
     with pytest.raises(ValidationError):
         summary(attention=[item] * 21)
     for invalid in (
-        {"kind": "alert", "id": INSTANCE, "title": "x"},
+        {"kind": "alert", "id": "other", "title": "x"},
+        {"kind": "warning", "id": INSTANCE, "title": "x"},
         {"kind": "run", "id": "other", "title": "x"},
         {"kind": "run", "id": INSTANCE, "title": "x" * 201},
         {"kind": "run", "id": INSTANCE, "title": ""},
