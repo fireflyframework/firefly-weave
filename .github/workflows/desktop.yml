@@ -29,6 +29,7 @@ on:
       - 'uv.lock'
       - '.github/workflows/desktop.yml'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'desktop/**'
       - 'studio/**'
@@ -39,11 +40,17 @@ on:
       - '.github/workflows/desktop.yml'
 permissions:
   contents: read
+# A new commit on a pull request cancels that pull request's older run, as in Checks. Every other run (main,
+# tags, manual dispatch) gets its own group, so no build of a main commit or a tag is cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # Tag runs restore no dependency cache: what a tag checks or builds installs from the lockfiles alone,
 # never from a cache another run wrote. Every other run keeps its uv and npm caches. setup-node's
 # package-manager-cache stays off, so a packageManager field cannot turn an npm cache on for a tag run.
 jobs:
   installer:
+    if: github.event.pull_request.draft == false # drafts wait for ready_for_review
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +68,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
     runs-on: ${{ matrix.os }}
+    # About 1.5 times the slowest recent green build (28 minutes, the Intel macOS installers).
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash

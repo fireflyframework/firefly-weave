@@ -18,10 +18,12 @@
 # also runs for fork pull requests. Every pull request and every push to main runs the pr profile.
 # Pull requests that change how Weave runs workers on a cluster, and manual runs, also run the
 # cluster profile (kind) or, on a manual run, the k3d profile, on a cluster made for the run.
-# Pushes to main run no cluster job.
+# Pushes to main run no cluster job. A draft pull request runs nothing: its run starts when it is
+# marked ready for review.
 name: Acceptance
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,6 +42,7 @@ concurrency:
 jobs:
   pr:
     name: Acceptance (pr profile)
+    if: github.event.pull_request.draft == false # drafts wait for ready_for_review
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
@@ -70,6 +73,9 @@ jobs:
         run: |
           KEYRING_PASSWORD="$(openssl rand -hex 24)"
           export KEYRING_PASSWORD
+          # Single quotes on purpose: the inner shell expands the variables, so the password never
+          # appears on a command line.
+          # shellcheck disable=SC2016
           dbus-run-session -- bash -c 'printf %s "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && uv run --no-sync python scripts/acceptance.py --profile pr --docker-context default --block-egress'
       - name: Upload evidence
         if: always() && steps.acceptance.outputs.scan == 'passed'
@@ -80,7 +86,7 @@ jobs:
           retention-days: 30
   changes:
     name: Changes on the cluster path
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -117,7 +123,8 @@ jobs:
     name: Acceptance (${{ inputs.profile || 'cluster' }} profile)
     needs: changes
     # On a manual run the changes job is skipped, and a skipped need skips this job unless its
-    # condition checks the run's status itself.
+    # condition checks the run's status itself. On a draft the changes job is skipped too, so its
+    # output is empty and this job skips with it.
     if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.cluster == 'true') }}
     runs-on: ubuntu-24.04
     # The cluster profile's stage budgets in scripts/acceptance.py (prepare 30, up 25, run 45,

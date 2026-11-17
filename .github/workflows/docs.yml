@@ -25,9 +25,12 @@ permissions:
 concurrency:
   group: documentation-${{ github.ref }}
   cancel-in-progress: true
+# Each job's timeout is about 1.5 times its slowest recent green run, and at least 10 minutes: a build takes
+# under a minute, so a hung step fails within minutes instead of after GitHub's 6-hour default.
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,6 +52,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write
