@@ -110,7 +110,8 @@ async def mail(operations_case, services, provisioned, monkeypatch):
     case.server = MailServer()
     case.email = EmailService(graph.resolve(ConnectionService), case.server)
     case.notifier = AlertNotifier(UnitOfWork(case.sessions), case.email)
-    roles = ("alert_manager", "email_sender", "deployer", "tenant_admin", "viewer")
+    # Rules on open incidents need incident.read (operator) besides status.read (viewer).
+    roles = ("alert_manager", "email_sender", "deployer", "tenant_admin", "viewer", "operator")
     case.owner_a = await principal_with(case, *(Grant(role=role, scope=case.scope) for role in roles))
     case.owner_b = await principal_with(case, *(Grant(role=role, scope=case.scope) for role in roles))
     case.manager = case.owner_a
