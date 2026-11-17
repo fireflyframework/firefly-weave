@@ -148,6 +148,18 @@ SPDX-License-Identifier: Apache-2.0
   [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha19)
   for what the upgrade involves and the behavior changes to check.
 
+Verified on macOS (Apple silicon) before the release pull request: the full
+local check gate (17 stages, including the unit and contract tests, the Agentic
+and Files worker suites, and building, installing, and checking the 0.1.0a19
+core and 0.1.11 worker packages). The release gate on the merge commit
+(integration tests against a real PostgreSQL 17 with Kafka, the release images,
+the process end-to-end tests, and the queue measurement) and the release
+acceptance profile against a real Docker platform run before the tag, and the
+release notes say what they verified. The desktop installers on Windows and
+Linux beyond their CI builds, Developer ID signing, and Apple notarization are
+**not verified** for this release. macOS installers remain ad-hoc signed and not
+notarized, and Windows installers remain unsigned.
+
 ## 0.1.0a18
 
 ### Workflow language
