@@ -56,6 +56,7 @@ from firefly_weave.operations.alert_rules import (
     ALERT_PRESETS,
     RULE_LIMIT,
     SCOPED,
+    SIGNAL_CAPABILITIES,
     AlertRuleRepository,
     evaluable,
     queue_notifications,
@@ -622,14 +623,16 @@ class AlertLoop:
     ) -> bool:
         """Whether the person who last set the rule may still read what it watches; if not, it stores unauthorized.
 
-        A rule's values are operations figures, so its last editor needs status.read, as a preview does. A rule on
-        one target needs deployment.read on that target, and a rule on targets needs some target its editor may read,
-        or it would read zero. Rules Weave installs have no editor and need neither.
+        A rule's values are operations figures, so its last editor needs status.read, as a preview does, and a rule on
+        open incidents also needs incident.read, as the environment summary does. A rule on one target needs
+        deployment.read on that target, and a rule on targets needs some target its editor may read, or it would read
+        zero. Rules Weave installs have no editor and need none of these.
         """
-        if row["updated_by"] is not None and (
-            owner is None or not self.authorization.allows(owner, scope, "status.read")
-        ):
-            return False
+        if row["updated_by"] is not None:
+            extra = SIGNAL_CAPABILITIES.get(rule.signal)
+            needed = ("status.read",) if extra is None else ("status.read", extra)
+            if owner is None or not all(self.authorization.allows(owner, scope, name) for name in needed):
+                return False
         target = rule.selector.target_id
         if target is not None:
             return owner is not None and self.authorization.allows(

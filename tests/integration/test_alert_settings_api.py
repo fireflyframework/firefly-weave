@@ -43,6 +43,7 @@ from firefly_weave.contracts.public import Revoked
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.email.service import EmailService, unavailable
 from firefly_weave.operations.alert_channels import (
+    ADMINISTRATOR_ROLES,
     CHANNEL_LIMIT,
     AlertAddressService,
     AlertChannelService,
@@ -216,6 +217,36 @@ async def test_outside_addresses_need_an_allowed_domain_and_another_administrato
     ]
 
 
+async def test_a_sole_administrator_may_add_the_address_they_opted_in_and_the_audit_says_so(mail):
+    case = mail
+    # admin_a becomes the tenant's one administrator: the others lose the roles that manage environments.
+    for principal in (case.admin.id, case.admin_b.id):
+        bindings = await owner(
+            case,
+            "SELECT id FROM role_bindings WHERE principal_id=:principal AND tenant_id=:tenant AND role=ANY(:roles)",
+            principal=principal,
+            tenant=case.scope.tenant_id,
+            roles=list(ADMINISTRATOR_ROLES),
+        )
+        for binding in bindings:
+            await case.access.revoke_grant(case.admin, case.scope, binding["id"])
+    await allow(case, case.admin_a, ["vendor.example"])
+    await opt_in(case, case.admin_a, "oncall@vendor.example")
+    created = await create(case, case.admin_a, {"address": "oncall@vendor.example"})
+    assert states(created) == [(0, "ok")]
+    (audited,) = await owner(
+        case,
+        "SELECT event->'details' AS details FROM access_audit WHERE action='alert_channel.create' AND target=:channel",
+        channel=str(created.id),
+    )
+    assert audited["details"]["sole_administrator"] is True
+    # With a second administrator, the same save is refused: someone else must record the opt-in.
+    await case.access.grant(case.admin, case.admin_b.id, Grant(role="tenant_admin", scope=case.scope))
+    with pytest.raises(CatalogError) as refused:
+        await create(case, case.admin_a, {"address": "oncall@vendor.example"}, name="Second")
+    assert refused.value.result == {"recipients": [{"index": 0, "reason": "consent_by_creator"}]}
+
+
 async def test_opt_ins_domains_and_approval_channels_need_environment_manage(mail):
     case = mail
     manager = await principal_with(
@@ -276,8 +307,8 @@ async def test_a_channel_a_rule_uses_cant_be_deleted(mail):
     rule = AlertRuleDraft.model_validate_json(
         json.dumps(
             {
-                "name": "Incidents are open",
-                "signal": "incidents.active",
+                "name": "Events are waiting",
+                "signal": "outbox.pending",
                 "comparator": "gt",
                 "threshold": 0,
                 "severity": "info",

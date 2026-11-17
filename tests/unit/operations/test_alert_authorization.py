@@ -38,6 +38,7 @@ from firefly_weave.contracts.alerts import (
     AlertSettingsUpdate,
 )
 from firefly_weave.contracts.surface import OPERATIONS
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.alert_channels import (
     AlertChannelService,
     AlertRecipientConsentService,
@@ -93,15 +94,18 @@ type Call = Callable[[Principal], Awaitable[Any]]
 CALLS: dict[str, tuple[Call, tuple[str, ...]]] = {
     "alert_rules.list": (lambda actor: RULES.list(actor, SCOPE, limit=10, cursor=None, context=CONTEXT), ()),
     "alert_rules.read": (lambda actor: RULES.read(actor, SCOPE, uuid4(), context=CONTEXT), ()),
-    "alert_rules.create": (lambda actor: RULES.create(actor, SCOPE, RULE, "key", context=CONTEXT), ("viewer",)),
+    "alert_rules.create": (
+        lambda actor: RULES.create(actor, SCOPE, RULE, "key", context=CONTEXT),
+        ("viewer", "operator"),
+    ),
     "alert_rules.update": (
         lambda actor: RULES.update(actor, SCOPE, uuid4(), RULE, 1, context=CONTEXT),
-        ("viewer",),
+        ("viewer", "operator"),
     ),
     "alert_rules.delete": (lambda actor: RULES.delete(actor, SCOPE, uuid4(), 1, context=CONTEXT), ()),
     "alert_rules.preview": (
         lambda actor: RULES.preview(actor, SCOPE, RULE, health=LoopHealth(), context=CONTEXT),
-        ("viewer",),
+        ("viewer", "operator"),
     ),
     "alert_presets.list": (lambda actor: RULES.presets(actor, SCOPE, context=CONTEXT), ()),
     "alert_channels.list": (lambda actor: CHANNELS.list(actor, SCOPE, limit=10, cursor=None, context=CONTEXT), ()),
@@ -189,6 +193,51 @@ def test_openapi_states_every_capability_an_alert_operation_checks():
 async def test_the_alert_manager_alone_is_refused_what_needs_a_second_capability(name):
     with pytest.raises(AccessDenied):
         await CALLS[name][0](person("alert_manager"))
+
+
+TARGETS_RULE = AlertRuleDraft.model_validate_json(
+    json.dumps(
+        {
+            "name": "A runner is offline",
+            "signal": "targets.runner_offline",
+            "comparator": "gte",
+            "threshold": 1,
+            "severity": "warning",
+        }
+    )
+)
+
+
+def saving(rule: AlertRuleDraft) -> dict[str, Call]:
+    """Each way to save or preview a rule, as one call."""
+    return {
+        "create": lambda actor: RULES.create(actor, SCOPE, rule, "key", context=CONTEXT),
+        "update": lambda actor: RULES.update(actor, SCOPE, uuid4(), rule, 1, context=CONTEXT),
+        "preview": lambda actor: RULES.preview(actor, SCOPE, rule, health=LoopHealth(), context=CONTEXT),
+    }
+
+
+@pytest.mark.parametrize("way", ["create", "update", "preview"])
+async def test_a_rule_on_open_incidents_needs_incident_read_as_the_summary_does(way):
+    save = saving(RULE)[way]
+    with pytest.raises(AccessDenied):
+        await save(person("alert_manager", "viewer"))
+    with pytest.raises(Passed):
+        await save(person("alert_manager", "viewer", "operator"))
+
+
+@pytest.mark.parametrize("way", ["create", "update", "preview"])
+async def test_a_rule_on_every_target_needs_a_target_its_saver_may_read(way):
+    save = saving(TARGETS_RULE)[way]
+    with pytest.raises(CatalogError) as refused:
+        await save(person("alert_manager", "viewer"))
+    assert (refused.value.status, refused.value.code, refused.value.result) == (
+        422,
+        "WV-ALERT-SIGNAL",
+        {"field": "signal"},
+    )
+    with pytest.raises(Passed):
+        await save(person("alert_manager", "viewer", "deployment_reader"))
 
 
 def test_retention_periods_list_what_the_platform_keeps():

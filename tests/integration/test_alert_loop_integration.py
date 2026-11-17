@@ -65,8 +65,12 @@ def draft(**changes: Any) -> AlertRuleDraft:
 async def evaluator(operations_case, services):
     case = operations_case
     case.rules = services(case.sessions).resolve(AlertRuleService)
+    # Rules on open incidents need incident.read (operator) besides status.read (viewer).
     case.manager = await principal_with(
-        case, Grant(role="alert_manager", scope=case.scope), Grant(role="viewer", scope=case.scope)
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
+        Grant(role="operator", scope=case.scope),
     )
     case.now = await clock(case)
     case.uow = UnitOfWork(case.sessions)
@@ -462,7 +466,10 @@ async def test_a_rule_whose_last_editor_lost_status_read_stops_reading(evaluator
     run = await case.start("alert-status-read")
     await add_incident(case, run.id, "first")
     editor = await principal_with(
-        case, Grant(role="alert_manager", scope=case.scope), Grant(role="viewer", scope=case.scope)
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
+        Grant(role="operator", scope=case.scope),
     )
     rule = await create(case, draft(), actor=editor)
     (binding,) = await owner(
@@ -471,6 +478,27 @@ async def test_a_rule_whose_last_editor_lost_status_read_stops_reading(evaluator
     await case.access.revoke_grant(case.admin, case.scope, binding["id"])
     await at(case, 0)
     assert (await state(case, rule.id))["state"] == "unauthorized"
+    assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
+
+
+async def test_a_rule_on_open_incidents_whose_last_editor_lost_incident_read_stops_reading(evaluator):
+    case = evaluator
+    run = await case.start("alert-incident-read")
+    await add_incident(case, run.id, "first")
+    editor = await principal_with(
+        case,
+        Grant(role="alert_manager", scope=case.scope),
+        Grant(role="viewer", scope=case.scope),
+        Grant(role="operator", scope=case.scope),
+    )
+    rule = await create(case, draft(), actor=editor)
+    (binding,) = await owner(
+        case, "SELECT id FROM role_bindings WHERE principal_id=:principal AND role='operator'", principal=editor.id
+    )
+    await case.access.revoke_grant(case.admin, case.scope, binding["id"])
+    await at(case, 0)
+    stored = await state(case, rule.id)
+    assert (stored["state"], stored["last_value"]) == ("unauthorized", None)
     assert await rows(case, "SELECT id FROM alerts WHERE rule_id=:rule", rule=rule.id) == []
 
 

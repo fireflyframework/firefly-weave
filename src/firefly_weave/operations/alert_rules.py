@@ -26,6 +26,7 @@ unsupported and is never evaluated or deleted by it.
 import json
 from collections.abc import Iterable, Mapping
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -529,6 +530,9 @@ async def resolve_firing(
 # Saving a rule also needs status.read: its state shows operations figures, as a preview does, and the evaluator
 # reads it only while the person who last saved it still holds status.read.
 SAVING = ("alert.manage", "status.read")
+# Signals whose figures the environment summary shows only with one more capability: a rule on one needs it to be
+# saved or previewed, and the evaluator reads it only while the person who last saved it still holds it.
+SIGNAL_CAPABILITIES: Mapping[str, str] = MappingProxyType({"incidents.active": "incident.read"})
 
 
 @service
@@ -551,10 +555,25 @@ class AlertRuleService:
             raise CatalogError(422, "WV-SCOPE", "Alert rules require an environment")
         for capability in capabilities:
             self.authorization.require(principal, scope, capability, context=context)
+        if rule is None:
+            return
+        if rule.signal in SIGNAL_CAPABILITIES:
+            self.authorization.require(principal, scope, SIGNAL_CAPABILITIES[rule.signal], context=context)
         # A rule that watches a target needs read access to that target, as the person who sets it.
-        if rule is not None and rule.selector.target_id is not None:
+        if rule.selector.target_id is not None:
             self.authorization.require(
                 principal, scope, "deployment.read", resource=str(rule.selector.target_id), context=context
+            )
+        elif "target_id" in ALERT_SIGNALS[rule.signal].selectors and (
+            target_permissions(self.authorization, principal, principal, scope, "deployment.read", context) == ()
+        ):
+            # Over every target, it would read only the targets its saver may read: none, so always zero.
+            raise CatalogError(
+                422,
+                "WV-ALERT-SIGNAL",
+                "You can't read any deployment target here, so this rule would always read zero. "
+                "Pick a target you may read, or ask for read access to deployments.",
+                result={"field": "signal"},
             )
 
     async def _current(

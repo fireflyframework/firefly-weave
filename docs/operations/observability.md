@@ -303,8 +303,12 @@ create rules, email channels and recipients' opt-ins; the
 each one needs.
 
 - **Operations figures.** A rule's values and its alerts are operations
-  figures, so saving or previewing a rule also needs `status.read`. A rule is
-  read only while the person who last saved it still holds `status.read` and
+  figures, so saving or previewing a rule also needs `status.read`. A rule on
+  open incidents (`incidents.active`) also needs `incident.read`, because the
+  environment summary shows incidents only to people who may read them. A rule
+  on every target needs at least one target its author may read; otherwise
+  saving it fails with `WV-ALERT-SIGNAL`, since it would always read zero. A
+  rule is read only while the person who last saved it still holds these and
   may read the targets it watches; otherwise it shows `unauthorized` and sends
   nothing until that access returns.
 
@@ -323,7 +327,10 @@ each one needs.
   environment within five minutes for about 160 tenants, or about 80 when
   tenants have nine or more environments. Beyond that, revisits come more than
   five minutes apart, so both waits start over at every reading, and the server
-  logs a warning that starts with `Alert evaluation is behind`.
+  logs a warning that starts with `Alert evaluation is behind`. After the
+  evaluator has been stopped for more than five minutes, for example during an
+  upgrade, each environment logs that warning once on its first visit; that
+  isn't a capacity problem.
 - **Repeats.** A firing alert notifies again after its repeat interval (at
   least 15 minutes) until someone acknowledges it. An acknowledgement made
   while that cycle is being evaluated can still let one repeat through.
@@ -340,10 +347,9 @@ each one needs.
   40 messages per rule and 60 per environment an hour, and 20 per recipient an
   hour, counted per recipient. A channel takes at most 3 test messages an hour,
   and test messages never count toward the budgets of alert messages. A
-  message over a budget is skipped and
-  shows `skipped_limit`. A message whose outcome is unclear is never sent
-  again, and a retry goes only to the recipients the earlier attempts didn't
-  reach.
+  message over a budget is skipped and shows `skipped_limit`. A message whose
+  outcome is unclear is never sent again, and a retry goes only to the
+  recipients the earlier attempts didn't reach.
 - **Presets.** Every environment gets the rule "A platform component is
   degraded" once; deleting it doesn't bring it back. Five suggested rules are
   offered to start from.
