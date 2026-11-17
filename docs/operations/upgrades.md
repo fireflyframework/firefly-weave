@@ -998,32 +998,43 @@ Check these changes before you reopen traffic:
 
 ## What changes in alpha19
 
-Alpha19 adds one schema migration (the head becomes
-`0041_language_event_triggers`) and no role. Follow the procedure above and
-migrate explicitly before you restart the server; a server that includes it
-refuses to start on the previous schema.
+Alpha19 adds two schema migrations (the head becomes `0042_operations_alerts`)
+and one role, `alert_manager`, which no existing account gains. Follow the
+procedure above and migrate explicitly before you restart the server; a server
+that includes them refuses to start on the previous schema.
 
-- **Allow for the migration time.** `0041_language_event_triggers` adds the
-  empty platform-event trigger tables, two run columns that cost nothing while a
-  run is in no chain, and checks that skip the rows already there, and it
-  backfills nothing. It builds the platform task index, which reads
-  `task_intents` under a SHARE lock, so task writes wait while it builds. In a
-  rehearsal on PostgreSQL 17 (4 CPUs, 8 GiB), with one task per retained run,
-  the migration took:
+- **Allow for the migration time.** Neither migration backfills retained runs.
+  `0041_language_event_triggers` adds the empty platform-event trigger tables,
+  two run columns that cost nothing while a run is in no chain, and checks that
+  skip the rows already there. It builds the platform task index, which reads
+  `task_intents` under a SHARE lock, so task writes wait while it builds.
+  `0042_operations_alerts` adds empty alert tables with their row-level
+  security and a function for the alert scheduler. Of the existing tables it
+  changes only `role_bindings`: it adds the role check again, which reads every
+  grant once, and a trigger that forgets a person's alert address when their
+  last grant in the tenant goes. In a rehearsal on PostgreSQL 17 (4 CPUs,
+  8 GiB), with one task per retained run and 10,000 role grants, each migration
+  took:
 
   | Migration | 10,000 retained runs | 50,000 retained runs |
   | --- | --- | --- |
-  | `0041_language_event_triggers` | 0.09 s | 0.14 s |
+  | `0041_language_event_triggers` | 0.12 s | 0.10 s |
+  | `0042_operations_alerts` | 0.22 s | 0.18 s |
 
-  Building the platform task index took 0.004 s and 0.027 s of that. Rehearse
-  the upgrade on a restored copy to measure your own window.
+  The repository's own benchmark measured `0041_language_event_triggers` at
+  0.086 s and 0.144 s, of which building the platform task index took 0.004 s
+  and 0.027 s. Rehearse the upgrade on a restored copy to measure your own
+  window.
 - **Rename a catalog schema named `weave.platform-event-v1` first.** The name is
   now the platform's: while a catalog has its own schema under that name,
   compiles against that catalog fail with `WV-COMP-RESERVED_SCHEMA`, even for
   workflows that don't use it, until the schema is renamed.
-- **Upgrade CLIs and SDKs together with the server.** Run views gain the origin
-  `event` for runs that platform events start, so clients that read run origins
-  strictly need this release.
+- **Upgrade CLIs and SDKs together with the server.** The environment summary
+  gains an `alerts` section and the attention kind `alert`, which earlier
+  clients refuse with `502 WV-WIRE`, and run views gain the origin `event` for
+  runs that platform events start, so clients that read run origins strictly
+  need this release. Integration events gain the type `alert.transition`, which
+  an existing subscriber receives only once it subscribes to it.
 - **Upgrade workers and the operations runner to keep them running through an
   API restart.** Workers built with this release's SDK, and the operations
   runner, claim again after a wait that doubles up to 10 seconds when a claim
@@ -1033,17 +1044,25 @@ refuses to start on the previous schema.
   change.
 - **Before any rollback**, plan to restore the backup taken before the
   migration, as [if the upgrade fails](#if-the-upgrade-fails) explains. Event
-  triggers and the record of what each event started since the upgrade are not
-  kept by that restore.
+  triggers and the record of what each event started, and alert rules, alerts,
+  channels and recorded opt-ins made since the upgrade, are not kept by that
+  restore.
 - **Local platforms.** A local platform still has
   [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade): set up
-  alpha19 from its own checkout in a new directory. Workers that its local
-  operations deploy now start again when they stop on their own
-  (`restart: unless-stopped`); one that `weave platform stop` or a change
-  request stopped stays stopped.
+  alpha19 from its own checkout in a new directory. Its `weave platform up`
+  gives the local owner `alert_manager` and `email_sender`, so alert email works
+  out of the box. Workers that its local operations deploy now start again when
+  they stop on their own (`restart: unless-stopped`); one that
+  `weave platform stop` or a change request stopped stays stopped.
 
 Check these changes before you reopen traffic:
 
+- **Every environment gets one alert rule.** After the upgrade, the scheduler
+  installs the rule "A platform component is degraded" in every environment
+  once; deleting it doesn't bring it back. Health reports a new enabled
+  component, `alert_evaluator`. Creating rules and email channels needs the
+  `alert_manager` role, which no existing account has; a channel also needs
+  `email.send`, because mail goes out as whoever last saved it.
 - **Platform events can start workflows.** Binding a trigger
   (`weave triggers events create`) needs `trigger.manage`, `run.start` and
   `run.read`; each event starts each matching trigger's workflow once, as the

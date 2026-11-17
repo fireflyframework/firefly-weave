@@ -141,8 +141,10 @@ SPDX-License-Identifier: Apache-2.0
   `0.1.19`.
 - Pin the Agentic and Files 0.1.11 packages to core 0.1.0a19. Neither worker
   has another change.
-- Schema revision becomes `0041_language_event_triggers`, with one new
-  migration, `0041_language_event_triggers`, and no new role. See
+- Schema revision becomes `0042_operations_alerts`, with two new migrations:
+  `0041_language_event_triggers` and `0042_operations_alerts`. One role is
+  added, `alert_manager`, which `weave platform up` grants to the local owner
+  and no existing account gains. See
   [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha19)
   for what the upgrade involves and the behavior changes to check.
 

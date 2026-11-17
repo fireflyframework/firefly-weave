@@ -52,14 +52,17 @@ permissions, and real delivery still need checking in your deployment.
 
 Weave is an alpha workflow and integration platform. This documentation targets
 **`0.1.0a19`**, with PyFly 26.9.15 and database schema revision
-`0041_language_event_triggers`. Alpha19 starts workflows from platform events:
-a trigger runs a workflow once for each transaction event it accepts, as the
-trigger's owner, with a bounded chain of reactions. Workers and the operations
-runner keep claiming while the platform's API restarts, and workers that local
-operations deploy start again when they stop on their own. Studio says why it
-has no account, and holds commands after a background sign-in as another
-person until it has checked the new account. Alpha19 adds one migration,
-described in the
+`0042_operations_alerts`. Alpha19 alerts on operations signals: people with the
+`alert_manager` role set rules on a fixed list of signals, firing alerts show in
+the environment summary and reach signed webhook subscribers, and alert email
+goes to project members and to outside addresses an administrator allowed. It
+starts workflows from platform events: a trigger runs a workflow once for each
+transaction event it accepts, as the trigger's owner, with a bounded chain of
+reactions. Workers and the operations runner keep claiming while the platform's
+API restarts, and workers that local operations deploy start again when they
+stop on their own. Studio says why it has no account, and holds commands after
+a background sign-in as another person until it has checked the new account.
+Alpha19 adds two migrations and the `alert_manager` role, described in the
 [upgrade procedure](operations/upgrades.md#what-changes-in-alpha19). Alpha18
 moved to schema revision `0040_editor_step_tests` and runs workflow
 transactions, which stop behind an in-doubt incident for a person to resolve
