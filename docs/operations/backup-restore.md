@@ -209,7 +209,13 @@ a restore succeeded. The helper:
    access lists intact.
 5. **Compares:** the restored manifest must equal the source, and the source
    must not have changed during capture. Only then does it write `target.env` and
-   the completion receipt `restore.json`.
+   the completion receipt `restore.json`. `CHECK` constraints are compared as
+   PostgreSQL prints them after parsing them again on the target: PostgreSQL
+   prints a `BETWEEN` inside a longer `AND` as a nested `AND`, and a restore
+   re-creates it as a flat `AND` chain, so the same constraint can read
+   differently in `before.json` and `after.json`. The helper parses each
+   definition on an empty temporary copy of its table, in a transaction it
+   always rolls back. Every other part of the manifest must match exactly.
 
 **What it never does.** It dumps or restores no global roles, changes no existing
 role, reconstructs no table, edits no lease, and drops no database. There is no
