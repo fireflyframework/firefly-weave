@@ -307,7 +307,9 @@ each one needs.
   open incidents (`incidents.active`) also needs `incident.read`, because the
   environment summary shows incidents only to people who may read them. A rule
   on every target needs at least one target its author may read; otherwise
-  saving it fails with `WV-ALERT-SIGNAL`, since it would always read zero. A
+  saving it fails with `WV-ALERT-SIGNAL`, since it would always read zero.
+  Switching a rule off needs neither, so anyone who manages alerts can silence
+  a noisy rule someone else saved; changing anything else on it needs them. A
   rule is read only while the person who last saved it still holds these and
   may read the targets it watches; otherwise it shows `unauthorized` and sends
   nothing until that access returns.

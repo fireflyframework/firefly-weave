@@ -20,6 +20,7 @@ and the refusals that come before any transaction opens."""
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -296,3 +297,85 @@ async def test_a_target_rule_needs_deployment_read_on_that_target(call):
     )
     await refused(person(role("alert_manager"), role("viewer"), role("deployment_reader", other)), call, rule)
     await refused(person(role("alert_manager"), role("viewer")), call, rule)
+
+
+class Stored:
+    """One stored rule behind a transaction: the update's database steps, recording what it saved."""
+
+    def __init__(self, row: dict[str, Any], people: dict[UUID, Principal]) -> None:
+        self.row, self.people, self.saved = row, people, []
+
+    def repository(self, tx: Any) -> "Stored":
+        return self
+
+    @asynccontextmanager
+    async def open(self, scope, *, mutation=True, admission=True):
+        yield SimpleNamespace(session=None, scope=scope)
+
+    async def load_principal(self, session: Any, principal_id: UUID) -> Principal:
+        return self.people[principal_id]
+
+    async def rule(self, rule_id: UUID, *, lock: bool = False) -> dict[str, Any]:
+        return self.row
+
+    async def missing_channels(self, channel_ids: Any) -> list[UUID]:
+        return []
+
+    async def target_exists(self, target: UUID) -> bool:
+        return True
+
+    async def lock_state(self, rule_id: UUID) -> None:
+        return None
+
+    async def now(self) -> datetime:
+        return NOW
+
+    async def start_state(self, rule_id: UUID, now: datetime, *, insert: bool = False) -> None:
+        return None
+
+    async def update(self, rule_id: UUID, rule: AlertRuleDraft, actor: UUID, now: datetime, expected: int) -> bool:
+        self.saved.append(rule)
+        return True
+
+    async def view(self, rule_id: UUID) -> AlertRuleDraft:
+        return self.saved[-1]
+
+
+INCIDENTS = {
+    "name": "Incidents are open",
+    "signal": "incidents.active",
+    "selector": {},
+    "comparator": "gt",
+    "threshold": 0,
+    "window_seconds": None,
+    "min_samples": 1,
+    "severity": "critical",
+}
+
+
+async def test_a_rule_on_open_incidents_can_be_switched_off_without_incident_read(monkeypatch):
+    import firefly_weave.operations.alert_rules as alert_rules
+
+    manager = person(role("alert_manager"), role("viewer"))
+    store = Stored(stored(**INCIDENTS), {manager.id: manager})
+    monkeypatch.setattr(alert_rules, "AlertRuleRepository", store.repository)
+    monkeypatch.setattr(alert_rules, "load_principal", store.load_principal)
+
+    async def nothing(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    for name in ("lock", "audit", "resolve_firing"):
+        monkeypatch.setattr(alert_rules, name, nothing)
+    service = AlertRuleService(store, AuthorizationService())  # type: ignore[arg-type]
+    switched_off = evaluable(store.row).model_copy(update={"enabled": False})
+
+    async def save(rule: AlertRuleDraft) -> Any:
+        return await service.update(manager, SCOPE, store.row["id"], rule, 3, context=CONTEXT)
+
+    # Saved by someone with incident.read; a manager without it may still switch it off, which reads nothing.
+    assert (await save(switched_off)).enabled is False
+    # Anything more than switching it off still needs incident.read, as saving it on does.
+    for change in ({"threshold": 2.0}, {"name": "Quiet incidents"}, {"enabled": True}):
+        with pytest.raises(AccessDenied):
+            await save(switched_off.model_copy(update=change))
+    assert store.saved == [switched_off]

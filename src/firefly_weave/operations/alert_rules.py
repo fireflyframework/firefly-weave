@@ -166,6 +166,11 @@ def condition_changed(before: AlertRuleDraft, after: AlertRuleDraft) -> bool:
     return any(getattr(before, field) != getattr(after, field) for field in CONDITION)
 
 
+def disables_only(before: AlertRuleDraft | None, after: AlertRuleDraft) -> bool:
+    """Whether saving ``after`` over the stored rule only switches it off, which makes it read nothing."""
+    return not after.enabled and before is not None and before.model_copy(update={"enabled": False}) == after
+
+
 def preview_of(rule: AlertRuleDraft, reading: Value, at: datetime) -> AlertPreview:
     """What a rule would see now: its value, or why it has none, and whether its condition holds."""
     met = condition_met(rule, reading.value, reading.samples)
@@ -684,11 +689,14 @@ class AlertRuleService:
         *,
         context: AuditContext,
     ) -> AlertRuleView:
-        self._require(actor, scope, SAVING, context, rule)
+        # A rule switched off reads nothing, so its signal's reads are checked only once the stored rule shows that
+        # the update changes more than that.
+        reading = rule if rule.enabled else None
+        self._require(actor, scope, SAVING, context, reading)
         expected_revision = _revision(expected_revision)
         validate_rule(rule)
         async with self.uow.open(scope) as tx:
-            await self._current(tx, actor, SAVING, context, rule)
+            current = await self._current(tx, actor, SAVING, context, reading)
             await lock(tx, f"alert-rules:{scope.environment_id}")
             repository = AlertRuleRepository(tx)
             before = await repository.rule(rule_id, lock=True)
@@ -696,6 +704,9 @@ class AlertRuleService:
                 raise _missing()
             if before["revision"] != expected_revision:
                 raise _changed()
+            if reading is None and not disables_only(evaluable(before), rule):
+                self._require(actor, scope, (), context, rule)
+                self._require(current, tx.scope, (), context, rule)
             await self._check(repository, rule)
             await repository.lock_state(rule_id)
             now = await repository.now()
