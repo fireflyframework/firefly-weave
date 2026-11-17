@@ -39,6 +39,11 @@ on:
       - '.github/workflows/desktop.yml'
 permissions:
   contents: read
+# A new commit on a pull request cancels that pull request's older run, as in Checks. Every other run (main,
+# tags, manual dispatch) gets its own group, so no build of a main commit or a tag is cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # Tag runs restore no dependency cache: what a tag checks or builds installs from the lockfiles alone,
 # never from a cache another run wrote. Every other run keeps its uv and npm caches. setup-node's
 # package-manager-cache stays off, so a packageManager field cannot turn an npm cache on for a tag run.

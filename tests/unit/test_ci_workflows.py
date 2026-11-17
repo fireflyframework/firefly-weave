@@ -138,6 +138,11 @@ def test_checks_run_once_per_pull_request_commit_and_never_cancel_main():
     assert "format('pr-{0}', github.event.pull_request.number) || github.run_id" in concurrency["group"]
 
 
+def test_desktop_installers_cancel_only_a_pull_requests_older_run():
+    # A group per ref would let a newer push to main replace a main build still waiting to start.
+    assert workflow("desktop.yml")["concurrency"] == workflow("ci.yml")["concurrency"]
+
+
 def test_every_job_has_a_timeout_below_githubs_six_hour_default():
     missing = [
         (path.name, name)
