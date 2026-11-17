@@ -1131,6 +1131,12 @@ answer HEAD, without a body. For request and response schemas, open the
 operation in the [full API reference](api-explorer.md); to generate a client,
 [export the OpenAPI document](native-openapi.md).
 
+Some requests need more than their row's capability. Creating, updating, or
+previewing an alert rule on `incidents.active` also needs `incident.read`, and
+a rule on a target signal without a `target_id` needs at least one deployment
+target you may read (otherwise `422 WV-ALERT-SIGNAL`). An update that only
+switches a rule off needs neither.
+
 | Operation | Method and canonical path | Required authority |
 | --- | --- | --- |
 | `human_files.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/create` | human_task.complete |

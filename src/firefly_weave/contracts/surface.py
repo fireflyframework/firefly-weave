@@ -273,6 +273,11 @@ if TYPE_CHECKING:
 
 PROJECT = "/tenants/{tenant}/projects/{project}"
 ENVIRONMENT = PROJECT + "/environments/{environment}"
+# What saving or previewing an alert rule needs beyond the capability, for some signals.
+RULE_SIGNAL_READS = (
+    "A rule on incidents.active also needs incident.read, and a rule on a target signal without a target_id needs at "
+    "least one deployment target the caller may read (422 WV-ALERT-SIGNAL otherwise)."
+)
 type RevisionTag = Annotated[str, Field(pattern=r'^(?:"[1-9][0-9]{0,9}"|[1-9][0-9]{0,9})$')]
 type CanonicalRevisionTag = Annotated[str, Field(pattern=r'^"[1-9][0-9]{0,9}"$')]
 type PageLimit = Annotated[int, Field(ge=1, le=100)]
@@ -308,7 +313,8 @@ class Operation:
     # Public operations are documented without bearer security; AuthenticationFilter
     # must allowlist exactly the same routes and methods.
     public: bool = False
-    # Shown instead of the capability sentence for public operations without one.
+    # Shown instead of the capability sentence for public operations without one; otherwise added after it, for what
+    # some requests need beyond the capability.
     description: str = ""
     # Strict query model: OpenAPI documents its fields and the controller decodes the same model.
     query: type[BaseModel] | None = None
@@ -483,6 +489,7 @@ class Operation:
                 "Required capability: "
                 + self.capability
                 + ". Current local scoped grants are authoritative."
+                + (" " + self.description if self.description else "")
                 + (
                     " Teams must be explicitly enabled; otherwise these routes return unavailable (409)."
                     if self.id.startswith("teams_references.")
@@ -999,6 +1006,7 @@ OPERATIONS = {
             (201,),
             idempotency=True,
             etag=True,
+            description=RULE_SIGNAL_READS,
         ),
         Operation(
             "alert_rules.update",
@@ -1009,6 +1017,7 @@ OPERATIONS = {
             AlertRuleDraft,
             revision="required",
             etag=True,
+            description=RULE_SIGNAL_READS + " An update that only switches a rule off needs neither.",
         ),
         Operation(
             "alert_rules.delete",
@@ -1027,6 +1036,7 @@ OPERATIONS = {
             AlertPreview,
             "alert.manage and status.read",
             AlertRuleDraft,
+            description=RULE_SIGNAL_READS,
         ),
         Operation("alert_presets.list", ENVIRONMENT + "/alert-presets", "GET", list[AlertPreset], "alert.read"),
         Operation(

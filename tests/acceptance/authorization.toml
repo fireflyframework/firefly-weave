@@ -129,14 +129,15 @@ identifier = "random"
 capability = "status.read"
 
 # Alert rules: reads need alert.read; changes and previews need alert.manage (a preview also needs status.read, which
-# every person here who holds alert.manage has). A permitted create names a random channel, so it answers 422
-# WV-ALERT-CHANNEL and stores nothing; a random rule answers 404.
+# every person here who holds alert.manage has). The bodies watch outbox.pending, a signal that needs nothing beyond
+# the capability, so each row's capability is all the call needs. A permitted create names a random channel, so it
+# answers 422 WV-ALERT-CHANNEL and stores nothing; a random rule answers 404.
 [operations."alert_presets.list"]
 capability = "alert.read"
 
 [operations."alert_rules.create"]
 capability = "alert.manage and status.read"
-body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info", channel_ids = ["random"] }
+body = { name = "Probe", signal = "outbox.pending", comparator = "gt", threshold = 0, severity = "info", channel_ids = ["random"] }
 
 [operations."alert_rules.delete"]
 capability = "alert.manage"
@@ -147,7 +148,7 @@ capability = "alert.read"
 
 [operations."alert_rules.preview"]
 capability = "alert.manage and status.read"
-body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
+body = { name = "Probe", signal = "outbox.pending", comparator = "gt", threshold = 0, severity = "info" }
 
 [operations."alert_rules.read"]
 capability = "alert.read"
@@ -156,7 +157,7 @@ identifier = "random"
 [operations."alert_rules.update"]
 capability = "alert.manage and status.read"
 identifier = "random"
-body = { name = "Probe", signal = "incidents.active", comparator = "gt", threshold = 0, severity = "info" }
+body = { name = "Probe", signal = "outbox.pending", comparator = "gt", threshold = 0, severity = "info" }
 
 [operations."bindable_connections.list"]
 capability = "connection.bind"

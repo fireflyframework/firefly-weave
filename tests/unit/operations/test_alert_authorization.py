@@ -189,6 +189,38 @@ def test_openapi_states_every_capability_an_alert_operation_checks():
         assert f"Required capability: {capability}." in OPERATIONS[name].native().description
 
 
+def test_the_rule_operations_say_what_a_signal_also_needs():
+    for name in ("alert_rules.create", "alert_rules.update", "alert_rules.preview"):
+        description = OPERATIONS[name].native().description
+        assert "A rule on incidents.active also needs incident.read" in description, name
+        assert "at least one deployment target the caller may read" in description, name
+    assert (
+        "An update that only switches a rule off needs neither" in OPERATIONS["alert_rules.update"].native().description
+    )
+
+
+def test_the_acceptance_matrix_saves_rules_whose_signal_needs_nothing_more():
+    """So each matrix row's capability text is everything the call needs."""
+    import tomllib
+    from pathlib import Path
+
+    from firefly_weave.operations.alert_rules import SIGNAL_CAPABILITIES
+    from firefly_weave.operations.alert_signals import ALERT_SIGNALS
+
+    matrix = tomllib.loads(
+        (Path(__file__).resolve().parents[3] / "tests/acceptance/authorization.toml").read_text(encoding="utf-8")
+    )
+    bodies = {
+        name: row["body"]
+        for name, row in matrix["operations"].items()
+        if name.startswith("alert_rules.") and "body" in row
+    }
+    assert set(bodies) == {"alert_rules.create", "alert_rules.update", "alert_rules.preview"}
+    for name, body in bodies.items():
+        assert body["signal"] not in SIGNAL_CAPABILITIES, name
+        assert "target_id" not in ALERT_SIGNALS[body["signal"]].selectors, name
+
+
 @pytest.mark.parametrize("name", sorted(COMBINED))
 async def test_the_alert_manager_alone_is_refused_what_needs_a_second_capability(name):
     with pytest.raises(AccessDenied):
