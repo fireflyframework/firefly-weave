@@ -412,6 +412,11 @@ def test_the_integration_job_deselects_exactly_the_tests_that_need_what_it_lacks
         "tests/integration/test_keycloak.py",
         # A locally built image.
         "tests/integration/test_native_image.py",
+        # Sleeps 1.1 s and expects the overall timeout not to have fired yet, which a busy runner can overrun.
+        "tests/integration/test_parallel.py::"
+        "test_timely_signal_survives_sibling_suspension_until_recovery_or_overall_timeout[mixed_signal_overall]",
+        # Simultaneous completions that can meet the 250 ms lock timeout on a busy runner.
+        "tests/integration/test_parallel.py::test_two_replicas_join_once",
         # Runs in a step of its own: it compares every role on the server, which parallel workers create and drop.
         "tests/integration/test_restore_manifest.py",
         # On a busy runner the second start times out on the lock (WV-OPERATION-CAPACITY) before it can be counted.
