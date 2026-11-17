@@ -51,19 +51,32 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a18`**, with PyFly 26.9.15 and database schema revision
-`0040_editor_step_tests`. Alpha18 runs workflow transactions, which stop behind
-an in-doubt incident for a person to resolve when Weave can't tell what
-happened; lets steps handle their own failures (**On error**); runs AI agent
-steps, which call their tools turn by turn and wait for a person's review of
-every call that changes data; runs one step of a draft for real in an
-environment as a test run; connects kind and k3d clusters on this computer
-to a local platform as Kubernetes targets; and lets Weave AI explain a worker,
-an incident, the platform's health or a change request through the API and the
-SDK, without sending logs, host names, people or record IDs to the model. In Studio, the new editor is on by
-default, its **Runs** tab draws a run on its workflow's canvas and turns the
-run's data into test data, and decision tables open in a spreadsheet grid. Alpha18 adds two migrations and the `step_tester` role, described in the
-[upgrade procedure](operations/upgrades.md#what-changes-in-alpha18). Alpha17
+**`0.1.0a19`**, with PyFly 26.9.15 and database schema revision
+`0042_operations_alerts`. Alpha19 alerts on operations signals: people with the
+`alert_manager` role set rules on a fixed list of signals, firing alerts show in
+the environment summary and reach signed webhook subscribers, and alert email
+goes to project members and to outside addresses an administrator allowed. It
+starts workflows from platform events: a trigger runs a workflow once for each
+transaction event it accepts, as the trigger's owner, with a bounded chain of
+reactions. Workers and the operations runner keep claiming while the platform's
+API restarts, and workers that local operations deploy start again when they
+stop on their own. Studio says why it has no account, and after a background
+sign-in as another person it holds bulk actions on Workers and resends of
+changes refused for capacity until it has checked the new account.
+Alpha19 adds two migrations and the `alert_manager` role, described in the
+[upgrade procedure](operations/upgrades.md#what-changes-in-alpha19). Alpha18
+moved to schema revision `0040_editor_step_tests` and runs workflow
+transactions, which stop behind an in-doubt incident for a person to resolve
+when Weave can't tell what happened; lets steps handle their own failures
+(**On error**); runs AI agent steps, which call their tools turn by turn and
+wait for a person's review of every call that changes data; runs one step of a
+draft for real in an environment as a test run; connects kind and k3d clusters
+on this computer to a local platform as Kubernetes targets; and lets Weave AI
+explain a worker, an incident, the platform's health or a change request
+through the API and the SDK, without sending logs, host names, people or record
+IDs to the model. In Studio, the new editor is on by default, its **Runs** tab
+draws a run on its workflow's canvas and turns the run's data into test data,
+and decision tables open in a spreadsheet grid. Alpha17
 moved to schema revision `0038_operations_statistics` and adds run metrics under
 **Operate › Metrics**, reviewed change requests for every infrastructure
 change, Operations that work out of the box on the local Docker platform,

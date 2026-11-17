@@ -677,7 +677,7 @@ wheels = [
 
 [[package]]
 name = "firefly-weave"
-version = "0.1.0a18"
+version = "0.1.0a19"
 source = { directory = "../../" }
 dependencies = [
     { name = "click" },
@@ -3165,7 +3165,7 @@ wheels = [
 
 [[package]]
 name = "weave-agentic-worker"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "." }
 dependencies = [
     { name = "firefly-weave" },

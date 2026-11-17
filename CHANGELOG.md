@@ -18,86 +18,91 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a19
 
-- Alerts on operations signals. People with the new `alert_manager` role
-  create alert rules on a fixed list of signals (run failure rate, failed runs,
-  run duration, waiting tasks, event and provider backlogs, open incidents,
-  workers, offline runners, deployments that need reconciling, degraded
-  platform components), preview a rule's current value, and acknowledge firing
-  alerts. The scheduler evaluates every environment every 30 seconds; a rule
-  fires once its condition has held for its For time and resolves after it has
-  been clear for a minute or its For time. Firing alerts show in the
-  environment summary to alert readers, critical ones first under Needs
-  attention, and signed webhook subscribers to the new `alert.transition` event
-  receive each change, with numbers and states only. Every environment gets the
-  rule "A platform component is degraded" once. Upgrade CLIs and SDKs with the
-  server: the environment summary gains an `alerts` section and the attention
-  kind `alert`, which earlier clients refuse with `502 WV-WIRE`.
-- Alert email. A channel sends as the person who last saved it, one message per
-  recipient, to project members at the address each member saved for
-  themselves, or to outside addresses whose domain an administrator allowed and
-  whose opt-in an administrator recorded; both are checked again at every send.
-  Mail has fixed text and no link, is budgeted (one message per rule and
-  channel every 15 minutes; 40 per rule, 60 per environment, and 20 per
-  recipient an hour) and is never sent twice. A channel takes three test
-  messages an hour, which never spend alert mail's budget. Change requests
-  awaiting approval can be mailed to approval channels, naming the target, the
-  change and its expiry, never the reason. Migration `0042_operations_alerts`
-  adds the alert tables.
-- `weave platform up` gives the local owner `alert_manager` and `email_sender`,
-  so alert email works out of the box.
-- The retention periods of operations records can be read
-  (`operations_retention.read`).
-- Studio says why it has no account, and keeps it true: the Runs tab, the
-  banner, and the top bar read the same reason (session expired, account not
-  recognized, platform unreachable, credential store locked, or a Studio window
-  that needs a reload). When a background sign-in is declined or canceled, the
-  banner now says so and names the account you're still signed in with,
-  instead of disappearing.
-- When a background sign-in finishes as another person, a bulk action on
-  Workers and the resend of a change refused for capacity now wait for Studio
-  to check the new account, so nothing more goes out for the previous person's
-  selection with the new person's credential.
+### Workflow language
+
 - Workflows can start from platform events. Declare `eventTrigger` with the
   transaction events a workflow accepts and give it
   `inputSchema: {$ref: weave.platform-event-v1}`, then bind it with
   `weave triggers events create`, which needs `trigger.manage`, `run.start`,
   and `run.read`. Each event starts each matching trigger's workflow once, as
   the trigger's owner; a chain of reactions stops at three deep and at 64
-  starts per first event, and runs started this way show the origin Platform
-  event. Disabling a trigger stops its starts at once. Migration
-  `0041_language_event_triggers` adds the trigger tables.
+  starts per first event, and runs started this way show the origin
+  **Platform event**. Disabling a trigger stops its starts at once.
+  `weave triggers events starts` lists what each event started or why it
+  started nothing, `weave.event_starts` counts the starts, and the platform
+  lists `flow.eventTrigger`. Migration `0041_language_event_triggers` adds the
+  trigger tables.
 - Before you upgrade, note that the schema name `weave.platform-event-v1` is now
   the platform's: while a catalog has its own schema under that name, compiles
   against it fail with `WV-COMP-RESERVED_SCHEMA`, even for workflows that don't
   use it, until the schema is renamed. Run views gain the origin `event`, so
   clients that read run origins strictly need the new value.
+
+### Runs, incidents, and workers
+
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
-  claim can't reach the platform (the connection is refused, drops or times
-  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` claims
+  claim can't reach the platform (the connection is refused, drops, or times
+  out, or the API answers 429, 502, 503, or 504), the SDK's `Worker` claims
   again after a wait that doubles up to 10 seconds, each a random time in its
   upper half, so the first is 0.25 to 0.5 seconds (`claim_retry_seconds`,
   `max_claim_retry_seconds`, at most 300 seconds), and `stop()` ends the wait
-  at once; 401, 403, a refused release, a server certificate it can't verify
+  at once; 401, 403, a refused release, a server certificate it can't verify,
   and every other failed claim still stop it with that error. Workers that
   local operations deploy now start again when they stop on their own
   (`restart: unless-stopped`); one that `weave platform stop` or a change
   request stopped stays stopped.
+
+### Operations
+
+- Alerts on operations signals. People with the new `alert_manager` role
+  create alert rules on a fixed list of signals (run failure rate, failed runs,
+  run duration, waiting tasks, event and provider backlogs, open incidents,
+  workers, offline runners, deployments that need reconciling, degraded
+  platform components), preview a rule's current value, and acknowledge firing
+  alerts. The scheduler evaluates each environment's rules every 30 seconds, or
+  less often in an installation with many tenants or environments; a rule
+  fires once its condition has held for its For time and resolves once it has
+  been clear for its For time or a minute, whichever is longer. The
+  environment summary counts firing alerts for alert readers, and only
+  critical ones show under **Needs attention**, ahead of every other item.
+  Signed webhook subscribers to the new `alert.transition` event receive each
+  firing and resolve, without the rule's name or any recipient. Every
+  environment gets the rule "A platform component is degraded" once. Upgrade
+  CLIs and SDKs with the server: the environment summary gains an `alerts`
+  section and the attention kind `alert`, which earlier clients refuse with
+  `502 WV-WIRE`.
+- Alert email. A channel sends as the person who last saved it, one message per
+  recipient, to project members at the address each member saved for
+  themselves, or to outside addresses whose domain an administrator allowed and
+  whose opt-in an administrator recorded; both are checked again at every send.
+  Mail has fixed text and no link, is budgeted (one message per rule and
+  channel every 15 minutes; 40 per rule, 60 per environment, and 20 per
+  recipient an hour), and is never sent twice. A channel takes three test
+  messages an hour, which never spend alert mail's budget. Change requests
+  awaiting approval can be mailed to approval channels, naming the target, the
+  change, and its expiry, never the reason. Migration `0042_operations_alerts`
+  adds the alert tables.
+- `weave platform up` gives the local owner `alert_manager` and `email_sender`,
+  so the owner needs no other role to set up alert email; a channel still
+  needs an email connection, which the local platform doesn't create.
+- The retention periods of operations records can be read
+  (`operations_retention.read`).
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
   is made again after the same doubling wait as a worker's, and 401, 403, a
-  redirect, a certificate it can't verify, an answer outside the API contract
+  redirect, a certificate it can't verify, an answer outside the API contract,
   and other refusals still stop it. When it stops, `weave operations runner
   run` reports `WV-RUNNER-STOPPED` with the failure's kind, its code, and the
   type of the error it came from, never its text, and exits with 3 (the API
   couldn't be reached or failed) or 1, instead of `WV-CLI-USAGE: Invalid
   invocation` with 2. A code the platform doesn't mint is printed as
   `WV-HTTP`.
-- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
-  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
-  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+
+### AI and connections
+
 - The pinned HTTP client that connectors use raises a destination name that
   doesn't resolve as `httpcore.ConnectError`, and a connection that doesn't open
   within the client's connect timeout as `httpcore.ConnectTimeout`, as it
@@ -106,13 +111,61 @@ SPDX-License-Identifier: Apache-2.0
   resolve as `UNAVAILABLE` with the outcome `not_started`, instead of
   `HTTP_FAILED` with the outcome `unknown`: the lookup fails before the request
   is sent. A connection that never opens is unchanged for the HTTP, HTTP
-  profile, Telegram and WhatsApp connectors: each gives the client its whole
+  profile, Telegram, and WhatsApp connectors: each gives the client its whole
   remaining deadline, so its own deadline ends first and it still reports a
   timeout with the outcome `unknown`. Only a client whose connect timeout is
   shorter than the deadline now reports it as `UNAVAILABLE` with
   `not_started`. In a cluster, the operations runner keeps claiming while the
   API's name doesn't resolve or its connection times out, as it does while the
   API restarts.
+
+### Studio, desktop app, and CLI
+
+- Studio says why it has no account, and keeps it true: the Runs tab, the
+  banner, and the top bar read the same reason (session expired, account not
+  recognized, platform unreachable, credential store locked, or a Studio window
+  that needs a reload or was opened at another address). When a background
+  sign-in is declined or canceled, the banner now says so and names the account
+  you're still signed in with, instead of disappearing.
+- When a background sign-in finishes as another person, a bulk action on
+  Workers and the resend of a change refused for capacity now wait for Studio
+  to check the new account, so nothing more goes out for the previous person's
+  selection with the new person's credential.
+- `WeaveClient` raises a redirect from the API as `ContractError`, with the same
+  code (`WV-HTTP`) and status (502) as before, because the API never redirects;
+  Studio's connection check now reports it as `WV-STUDIO-IDENTITY`.
+
+### Development and testing
+
+- The local check gate (`scripts/check.py`) rebuilds the core package in each
+  worker suite's environment, so the Agentic and Files worker suites always
+  test against the core in the checkout, as CI's fresh environments do.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a19` and the
+  desktop product to `0.1.0-alpha.19`; the native internal installer counter is
+  `0.1.19`.
+- Pin the Agentic and Files 0.1.11 packages to core 0.1.0a19. Neither worker
+  has another change.
+- Schema revision becomes `0042_operations_alerts`, with two new migrations:
+  `0041_language_event_triggers` and `0042_operations_alerts`. One role is
+  added, `alert_manager`, which `weave platform up` grants to the local owner
+  and no existing account gains. See
+  [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha19)
+  for what the upgrade involves and the behavior changes to check.
+
+Verified on macOS (Apple silicon) before the release pull request: the full
+local check gate (17 stages, including the unit and contract tests, the Agentic
+and Files worker suites, and building, installing, and checking the 0.1.0a19
+core and 0.1.11 worker packages). The release gate on the merge commit
+(integration tests against a real PostgreSQL 17 with Kafka, the release images,
+the process end-to-end tests, and the queue measurement) and the release
+acceptance profile against a real Docker platform run before the tag, and the
+release notes say what they verified. The desktop installers on Windows and
+Linux beyond their CI builds, Developer ID signing, and Apple notarization are
+**not verified** for this release. macOS installers remain ad-hoc signed and not
+notarized, and Windows installers remain unsigned.
 
 ## 0.1.0a18
 
