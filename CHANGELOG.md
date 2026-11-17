@@ -83,7 +83,8 @@ SPDX-License-Identifier: Apache-2.0
   change and its expiry, never the reason. Migration `0042_operations_alerts`
   adds the alert tables.
 - `weave platform up` gives the local owner `alert_manager` and `email_sender`,
-  so alert email works out of the box.
+  so the owner needs no other role to set up alert email; a channel still
+  needs an email connection, which the local platform doesn't create.
 - The retention periods of operations records can be read
   (`operations_retention.read`).
 - The operations runner keeps claiming jobs while the API restarts, instead of

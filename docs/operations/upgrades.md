@@ -1050,10 +1050,12 @@ that includes them refuses to start on the previous schema.
 - **Local platforms.** A local platform still has
   [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade): set up
   alpha19 from its own checkout in a new directory. Its `weave platform up`
-  gives the local owner `alert_manager` and `email_sender`, so alert email works
-  out of the box. Workers that its local operations deploy now start again when
-  they stop on their own (`restart: unless-stopped`); one that
-  `weave platform stop` or a change request stopped stays stopped.
+  gives the local owner `alert_manager` and `email_sender`, so the owner needs no
+  other role to set up alert email; a channel still needs an email connection,
+  which the local platform doesn't create. Workers that its local operations
+  deploy now start again when they stop on their own
+  (`restart: unless-stopped`); one that `weave platform stop` or a change
+  request stopped stays stopped.
 
 Check these changes before you reopen traffic:
 
