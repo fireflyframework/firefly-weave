@@ -138,6 +138,16 @@ def test_checks_run_once_per_pull_request_commit_and_never_cancel_main():
     assert "format('pr-{0}', github.event.pull_request.number) || github.run_id" in concurrency["group"]
 
 
+def test_every_job_has_a_timeout_below_githubs_six_hour_default():
+    missing = [
+        (path.name, name)
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for name, job in jobs(path.name).items()
+        if not isinstance(job.get("timeout-minutes"), int) or not 0 < job["timeout-minutes"] < 360
+    ]
+    assert missing == []
+
+
 SETUP_UV = "astral-sh/setup-uv@"
 SETUP_NODE = "actions/setup-node@"
 # `${{ [!]startsWith(github.ref, 'refs/tags/') && '<then>' || '<else>' }}`, the one shape the cache inputs use.
