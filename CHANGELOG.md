@@ -44,12 +44,12 @@ SPDX-License-Identifier: Apache-2.0
 
 - A worker keeps running when the platform's API restarts, for example after
   `weave platform ai enable`, and claims again once the API answers. When a
-  claim can't reach the platform (the connection is refused, drops or times
-  out, or the API answers 429, 502, 503 or 504), the SDK's `Worker` claims
+  claim can't reach the platform (the connection is refused, drops, or times
+  out, or the API answers 429, 502, 503, or 504), the SDK's `Worker` claims
   again after a wait that doubles up to 10 seconds, each a random time in its
   upper half, so the first is 0.25 to 0.5 seconds (`claim_retry_seconds`,
   `max_claim_retry_seconds`, at most 300 seconds), and `stop()` ends the wait
-  at once; 401, 403, a refused release, a server certificate it can't verify
+  at once; 401, 403, a refused release, a server certificate it can't verify,
   and every other failed claim still stop it with that error. Workers that
   local operations deploy now start again when they stop on their own
   (`restart: unless-stopped`); one that `weave platform stop` or a change
@@ -80,10 +80,10 @@ SPDX-License-Identifier: Apache-2.0
   whose opt-in an administrator recorded; both are checked again at every send.
   Mail has fixed text and no link, is budgeted (one message per rule and
   channel every 15 minutes; 40 per rule, 60 per environment, and 20 per
-  recipient an hour) and is never sent twice. A channel takes three test
+  recipient an hour), and is never sent twice. A channel takes three test
   messages an hour, which never spend alert mail's budget. Change requests
   awaiting approval can be mailed to approval channels, naming the target, the
-  change and its expiry, never the reason. Migration `0042_operations_alerts`
+  change, and its expiry, never the reason. Migration `0042_operations_alerts`
   adds the alert tables.
 - `weave platform up` gives the local owner `alert_manager` and `email_sender`,
   so the owner needs no other role to set up alert email; a channel still
@@ -93,7 +93,7 @@ SPDX-License-Identifier: Apache-2.0
 - The operations runner keeps claiming jobs while the API restarts, instead of
   stopping and waiting for its restart policy: a claim that can't reach the API
   is made again after the same doubling wait as a worker's, and 401, 403, a
-  redirect, a certificate it can't verify, an answer outside the API contract
+  redirect, a certificate it can't verify, an answer outside the API contract,
   and other refusals still stop it. When it stops, `weave operations runner
   run` reports `WV-RUNNER-STOPPED` with the failure's kind, its code, and the
   type of the error it came from, never its text, and exits with 3 (the API
@@ -111,7 +111,7 @@ SPDX-License-Identifier: Apache-2.0
   resolve as `UNAVAILABLE` with the outcome `not_started`, instead of
   `HTTP_FAILED` with the outcome `unknown`: the lookup fails before the request
   is sent. A connection that never opens is unchanged for the HTTP, HTTP
-  profile, Telegram and WhatsApp connectors: each gives the client its whole
+  profile, Telegram, and WhatsApp connectors: each gives the client its whole
   remaining deadline, so its own deadline ends first and it still reports a
   timeout with the outcome `unknown`. Only a client whose connect timeout is
   shorter than the deadline now reports it as `UNAVAILABLE` with
