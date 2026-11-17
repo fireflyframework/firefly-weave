@@ -73,6 +73,93 @@ def test_manifest_difference_identifies_changed_authority_or_data():
             module.require_same_manifest(before, changed)
 
 
+# PostgreSQL 17 prints `CHECK(for_seconds BETWEEN 0 AND 3600 AND for_seconds%30=0)` with the BETWEEN as a nested
+# AND; pg_restore parses that text again, which flattens the nesting. PRINTED is what PostgreSQL prints after it
+# parses each definition once more.
+NESTED = "CHECK ((((for_seconds >= 0) AND (for_seconds <= 3600)) AND ((for_seconds % 30) = 0)))"
+FLAT = "CHECK (((for_seconds >= 0) AND (for_seconds <= 3600) AND ((for_seconds % 30) = 0)))"
+WIDER = "CHECK ((((for_seconds >= 0) AND (for_seconds <= 7200)) AND ((for_seconds % 30) = 0)))"
+OTHER_COLUMN = "CHECK ((((min_samples >= 0) AND (min_samples <= 3600)) AND ((min_samples % 30) = 0)))"
+PRINTED = {
+    NESTED: FLAT,
+    FLAT: FLAT,
+    WIDER: "CHECK (((for_seconds >= 0) AND (for_seconds <= 7200) AND ((for_seconds % 30) = 0)))",
+    OTHER_COLUMN: "CHECK (((min_samples >= 0) AND (min_samples <= 3600) AND ((min_samples % 30) = 0)))",
+}
+# A CHECK the stand-in parser does not know, as if the target could not parse it: it must keep its own text.
+UNPARSED = "CHECK ((preset_id ~ '^[a-z]+$'::text))"
+FOREIGN_KEY = "FOREIGN KEY (rule_id) REFERENCES alert_rules(id)"
+
+
+def alert_manifest(
+    check=FLAT,
+    *,
+    table="alert_rules",
+    name="alert_rules_for_seconds_check",
+    unparsed=UNPARSED,
+    foreign_key=FOREIGN_KEY,
+    data="a",
+):
+    constraints = [[table, name, check]] if check else []
+    constraints += [
+        ["alert_rules", "alert_rules_preset_id_check", unparsed],
+        ["alert_events", "alert_events_rule_fkey", foreign_key],
+    ]
+    return {
+        "catalog": {"tables": [["public", "alert_rules", "r"]], "constraints": constraints},
+        "data": {"alert_rules": {"rows": 1, "sha256": data}},
+    }
+
+
+SOURCE = alert_manifest(NESTED)
+
+
+async def postgres_parser(definitions):
+    """The text PostgreSQL prints for each CHECK definition it can parse on the target."""
+    return {(table, text): PRINTED[text] for table, text in definitions if text in PRINTED}
+
+
+def test_check_constraints_that_differ_only_in_and_nesting_compare_equal():
+    import asyncio
+
+    module = restore_module()
+    restored = alert_manifest(FLAT)
+    with pytest.raises(ValueError, match="manifest"):
+        module.require_same_manifest(SOURCE, restored)
+    asyncio.run(module.require_restored_manifest(SOURCE, restored, postgres_parser))
+
+
+@pytest.mark.parametrize(
+    "restored",
+    [
+        alert_manifest(WIDER),
+        alert_manifest(OTHER_COLUMN),
+        alert_manifest(None),
+        alert_manifest(name="alert_rules_window_check"),
+        alert_manifest(table="alert_rules_copy"),
+        alert_manifest(unparsed="CHECK ((preset_id ~ '^[a-z0-9]+$'::text))"),
+        alert_manifest(data="b"),
+        alert_manifest(foreign_key=FOREIGN_KEY + " ON DELETE CASCADE"),
+    ],
+    ids=[
+        "other-bounds",
+        "other-column",
+        "missing",
+        "renamed",
+        "other-table",
+        "other-check-the-target-cannot-parse",
+        "other-data",
+        "other-foreign-key",
+    ],
+)
+def test_restored_manifest_still_refuses_a_real_difference(restored):
+    import asyncio
+
+    module = restore_module()
+    with pytest.raises(ValueError, match="manifest"):
+        asyncio.run(module.require_restored_manifest(SOURCE, restored, postgres_parser))
+
+
 def test_restore_cleanup_attempts_every_owned_resource():
     import asyncio
     import sys

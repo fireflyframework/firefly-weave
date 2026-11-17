@@ -27,10 +27,13 @@ import re
 import runpy
 import shlex
 import time
+from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import make_url, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from firefly_weave.sdk.deployment import read_file, real_path, run_command
@@ -98,6 +101,101 @@ def create_database_sql(name: str, source: dict) -> str:
 def require_same_manifest(before: dict, after: dict) -> None:
     if before != after:
         raise ValueError("Restored catalog/data manifest differs; retained target must not start")
+
+
+Checks = dict[tuple[str, str], str]
+# Bounds the wait for a lock on a restored table while its CHECK constraints are parsed again.
+CHECK_LOCK_TIMEOUT_SECONDS = 5
+# Bounds each statement of that parsing, so a definition whose constant expression is costly to work out can't run
+# without limit; a statement stopped by it is undone and its definition keeps its own text, so the restore is refused.
+CHECK_STATEMENT_TIMEOUT_SECONDS = 5
+
+
+def check_definitions(manifest: dict) -> set[tuple[str, str]]:
+    """The table and printed definition of every CHECK constraint in a manifest."""
+    return {
+        (table, definition)
+        for table, _, definition in manifest["catalog"]["constraints"]
+        if definition.startswith("CHECK ")
+    }
+
+
+def with_canonical_checks(manifest: dict, canonical: Mapping[tuple[str, str], str]) -> dict:
+    """The manifest with each CHECK definition replaced by its canonical text; one without any keeps its own."""
+    constraints = [
+        [table, name, canonical.get((table, definition), definition) if definition.startswith("CHECK ") else definition]
+        for table, name, definition in manifest["catalog"]["constraints"]
+    ]
+    return {**manifest, "catalog": {**manifest["catalog"], "constraints": constraints}}
+
+
+async def require_restored_manifest(
+    before: dict, after: dict, canonical: Callable[[set[tuple[str, str]]], Awaitable[Checks]]
+) -> None:
+    """Require the restored manifest to equal the source's, comparing CHECK constraints as PostgreSQL parses them.
+
+    PostgreSQL stores `x BETWEEN a AND b AND y` as an AND nested inside an AND and prints it that way, but its parser
+    flattens nested ANDs, so pg_restore re-creates the same constraint with a flat AND chain and it prints differently.
+    ``canonical`` gives the text PostgreSQL prints after parsing each CHECK definition once more, which is the same for
+    both forms. Only CHECK definition text is replaced; every other part of the manifest compares exactly as printed.
+    """
+    if before != after:
+        checks = await canonical(check_definitions(before) | check_definitions(after))
+        before, after = with_canonical_checks(before, checks), with_canonical_checks(after, checks)
+    require_same_manifest(before, after)
+
+
+async def attempt(connection, statement: str) -> bool:
+    """Run one statement under a savepoint; a statement PostgreSQL rejects is undone and reported as False."""
+    try:
+        async with connection.begin_nested():
+            # Sent as written, without bind-parameter parsing; a prepared statement holds exactly one command.
+            await connection.exec_driver_sql(statement)
+    except DBAPIError:
+        return False
+    return True
+
+
+async def canonical_checks(url, definitions: set[tuple[str, str]]) -> Checks:
+    """Parse each CHECK definition on an empty copy of its table in the restored database, and print it again.
+
+    The copies are temporary tables in a transaction that is always rolled back, so the restored database is left as
+    it was. A definition its table cannot hold, or whose table stays locked, gets no canonical text and keeps its own.
+    """
+    engine = create_async_engine(url, hide_parameters=True)
+    probes: dict[str, tuple[str, str]] = {}
+    try:
+        async with engine.connect() as connection, connection.begin() as transaction:
+            await connection.execute(
+                text("SELECT set_config('lock_timeout',:timeout,true)"), {"timeout": f"{CHECK_LOCK_TIMEOUT_SECONDS}s"}
+            )
+            await connection.execute(
+                text("SELECT set_config('statement_timeout',:timeout,true)"),
+                {"timeout": f"{CHECK_STATEMENT_TIMEOUT_SECONDS}s"},
+            )
+            copies: dict[str, str | None] = {}
+            for table, definition in sorted(definitions):
+                if table not in copies:
+                    copy = f"weave_check_table_{len(copies)}"
+                    created = await attempt(connection, f"CREATE TEMP TABLE {copy} (LIKE public.{identifier(table)})")
+                    copies[table] = "pg_temp." + copy if created else None
+                if copies[table] is None:
+                    continue
+                probe = f"weave_check_{len(probes)}"
+                if await attempt(connection, f"ALTER TABLE {copies[table]} ADD CONSTRAINT {probe} {definition}"):
+                    probes[probe] = (table, definition)
+            printed = (
+                await connection.execute(
+                    text(
+                        "SELECT conname,pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE connamespace=pg_my_temp_schema()"
+                    )
+                )
+            ).all()
+            await transaction.rollback()
+    finally:
+        await engine.dispose()
+    return {probes[name]: definition for name, definition in printed if name in probes}
 
 
 def save(path: Path, value: dict | bytes) -> None:
@@ -316,7 +414,7 @@ async def restore(runtime_file: Path, output: Path, context: str, container: str
         )
         after = await manifest(target_url)
         save(output / "after.json", after)
-        require_same_manifest(before, after)
+        await require_restored_manifest(before, after, partial(canonical_checks, target_url))
         require_same_manifest(before, await manifest(source_url))
         changed = dict(runtime)
         for key in ("WEAVE_DATABASE_URL", "WEAVE_SCHEDULER_DATABASE_URL", "WEAVE_MIGRATION_DATABASE_URL"):
