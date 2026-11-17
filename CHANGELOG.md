@@ -31,7 +31,9 @@ SPDX-License-Identifier: Apache-2.0
   environment summary to alert readers, critical ones first under Needs
   attention, and signed webhook subscribers to the new `alert.transition` event
   receive each change, with numbers and states only. Every environment gets the
-  rule "A platform component is degraded" once.
+  rule "A platform component is degraded" once. Upgrade CLIs and SDKs with the
+  server: the environment summary gains an `alerts` section and the attention
+  kind `alert`, which earlier clients refuse with `502 WV-WIRE`.
 - Alert email. A channel sends as the person who last saved it, one message per
   recipient, to project members at the address each member saved for
   themselves, or to outside addresses whose domain an administrator allowed and
