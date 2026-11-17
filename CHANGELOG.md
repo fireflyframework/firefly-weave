@@ -59,15 +59,18 @@ SPDX-License-Identifier: Apache-2.0
   run duration, waiting tasks, event and provider backlogs, open incidents,
   workers, offline runners, deployments that need reconciling, degraded
   platform components), preview a rule's current value, and acknowledge firing
-  alerts. The scheduler evaluates every environment every 30 seconds; a rule
-  fires once its condition has held for its For time and resolves after it has
-  been clear for a minute or its For time. Firing alerts show in the
-  environment summary to alert readers, critical ones first under Needs
-  attention, and signed webhook subscribers to the new `alert.transition` event
-  receive each change, with numbers and states only. Every environment gets the
-  rule "A platform component is degraded" once. Upgrade CLIs and SDKs with the
-  server: the environment summary gains an `alerts` section and the attention
-  kind `alert`, which earlier clients refuse with `502 WV-WIRE`.
+  alerts. The scheduler evaluates each environment's rules every 30 seconds, or
+  less often in an installation with many tenants or environments; a rule
+  fires once its condition has held for its For time and resolves once it has
+  been clear for its For time or a minute, whichever is longer. The
+  environment summary counts firing alerts for alert readers, and only
+  critical ones show under **Needs attention**, ahead of every other item.
+  Signed webhook subscribers to the new `alert.transition` event receive each
+  firing and resolve, without the rule's name or any recipient. Every
+  environment gets the rule "A platform component is degraded" once. Upgrade
+  CLIs and SDKs with the server: the environment summary gains an `alerts`
+  section and the attention kind `alert`, which earlier clients refuse with
+  `502 WV-WIRE`.
 - Alert email. A channel sends as the person who last saved it, one message per
   recipient, to project members at the address each member saved for
   themselves, or to outside addresses whose domain an administrator allowed and
