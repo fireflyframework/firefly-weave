@@ -215,8 +215,10 @@ a restore succeeded. The helper:
    `AND`, and a restore re-creates it as a flat `AND` chain, so the same
    constraint can read differently in `before.json` and `after.json`. The
    helper parses each definition on an empty temporary copy of its table, in a
-   transaction it always rolls back. Every other part of the manifest must
-   match exactly.
+   transaction it always rolls back, so the restore's role needs the `TEMP`
+   privilege on the target database; every role has it by default. Without it,
+   the copies fail and the restore is refused. Every other part of the manifest
+   must match exactly.
 
 **What it never does.** It dumps or restores no global roles, changes no existing
 role, reconstructs no table, edits no lease, and drops no database. There is no
