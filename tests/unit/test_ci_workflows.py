@@ -392,6 +392,33 @@ def test_every_test_the_integration_job_deselects_still_exists():
     assert missing == []
 
 
+def test_the_integration_job_deselects_exactly_the_tests_that_need_what_it_lacks():
+    # Pinned so a test can't be skipped on pull requests by adding one more --deselect: every entry here needs a
+    # reason, and the release gate still runs all of them.
+    words = integration_command().split()
+    targets = sorted(words[index + 1].strip("'") for index, word in enumerate(words) if word == "--deselect")
+    assert targets == [
+        # Kafka, which the job doesn't start.
+        "tests/integration/connectors/test_kafka.py",
+        "tests/integration/connectors/test_kafka_api.py",
+        "tests/integration/connectors/test_kafka_native.py",
+        "tests/integration/connectors/test_kafka_tls.py::test_real_sasl_tls_ack_wrong_ca_identity_and_max_value",
+        # A locally built native image.
+        "tests/integration/connectors/test_postgresql_native.py::test_built_native_sql_executor[image]",
+        # The owned Docker context the TLS proof starts its server in.
+        "tests/integration/connectors/test_postgresql_tls.py",
+        # Keycloak.
+        "tests/integration/test_cli_identity.py",
+        "tests/integration/test_keycloak.py",
+        # A locally built image.
+        "tests/integration/test_native_image.py",
+        # Runs in a step of its own: it compares every role on the server, which parallel workers create and drop.
+        "tests/integration/test_restore_manifest.py",
+        # Fails when the held run's random ID sorts late; quarantined here until the test sizes its scan rounds.
+        "tests/integration/test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it",
+    ]
+
+
 def acceptance_harness():
     """scripts/acceptance.py, loaded by path: its stage budgets set the acceptance jobs' timeouts."""
     import importlib.util
