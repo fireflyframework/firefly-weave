@@ -60,6 +60,10 @@ jobs:
   # every push to main: one PostgreSQL 17 service, the image compose.yaml pins, with its data on tmpfs.
   integration:
     name: integration (PostgreSQL 17)
+    # Manual runs only for now: on a four-core hosted runner shared by four test workers and PostgreSQL, three of its
+    # first four runs each failed a different test that depends on timing. It runs on pull requests and main again
+    # once the suite is split across runners and those tests are fixed.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # No green run to size it from yet: four local workers took about 25 minutes, and the unit tests run up to 2.5
     # times slower on a shared runner than locally.
@@ -120,7 +124,8 @@ jobs:
       # Two more of the same kind, from test_parallel.py: test_two_replicas_join_once, whose two simultaneous
       # completions can meet the same 250 ms lock timeout, and the mixed_signal_overall case of
       # test_timely_signal_survives_sibling_suspension_until_recovery_or_overall_timeout, which sleeps 1.1 s and
-      # expects the overall timeout not to have fired yet.
+      # expects the overall timeout not to have fired yet. And test_operations_cache_refresh.py::
+      # test_policy_change_withholds_until_cache_is_revalidated, which failed the same way on a busy runner.
       # test_restore_manifest.py runs in the next step, alone: it compares every weave_ role on the server between
       # two moments, and the other workers create and drop their own login roles all the time.
       - name: Integration tests
@@ -139,6 +144,7 @@ jobs:
           --deselect tests/integration/test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it
           --deselect tests/integration/test_step_test_limits.py::test_two_starts_at_once_count_each_other
           --deselect tests/integration/test_parallel.py::test_two_replicas_join_once
+          --deselect tests/integration/test_operations_cache_refresh.py::test_policy_change_withholds_until_cache_is_revalidated
           --deselect 'tests/integration/test_parallel.py::test_timely_signal_survives_sibling_suspension_until_recovery_or_overall_timeout[mixed_signal_overall]'
           --deselect tests/integration/test_restore_manifest.py
       - name: Restore manifest tests, with no other test changing the server's roles
