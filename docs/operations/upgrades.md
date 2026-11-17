@@ -1065,8 +1065,9 @@ Check these changes before you reopen traffic:
   once; deleting it doesn't bring it back. Health's `alert_evaluator`
   component, which earlier releases list as `disabled`, now runs wherever the
   scheduler runs. Creating rules and email channels needs the
-  `alert_manager` role, which no existing account has; a channel also needs
-  `email.send`, because mail goes out as whoever last saved it.
+  `alert_manager` role, which no existing account has; a rule also needs
+  `status.read`, and a channel `email.send`, because mail goes out as whoever
+  last saved it.
 - **Platform events can start workflows.** Binding a trigger
   (`weave triggers events create`) needs `trigger.manage`, `run.start` and
   `run.read`; each event starts each matching trigger's workflow once, as the
