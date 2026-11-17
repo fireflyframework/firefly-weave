@@ -121,9 +121,9 @@ SPDX-License-Identifier: Apache-2.0
 - Studio says why it has no account, and keeps it true: the Runs tab, the
   banner, and the top bar read the same reason (session expired, account not
   recognized, platform unreachable, credential store locked, or a Studio window
-  that needs a reload). When a background sign-in is declined or canceled, the
-  banner now says so and names the account you're still signed in with,
-  instead of disappearing.
+  that needs a reload or was opened at another address). When a background
+  sign-in is declined or canceled, the banner now says so and names the account
+  you're still signed in with, instead of disappearing.
 - When a background sign-in finishes as another person, a bulk action on
   Workers and the resend of a change refused for capacity now wait for Studio
   to check the new account, so nothing more goes out for the previous person's
