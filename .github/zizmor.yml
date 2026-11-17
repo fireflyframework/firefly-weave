@@ -25,4 +25,4 @@ rules:
       # only v* tags, and the runner is ephemeral and in a runner group restricted to this repository and to selected
       # workflows (ci.yml on refs/tags/v*). Workflows from every outside contributor's pull request need approval
       # first, because a pull request can edit ci.yml and drop both the job's condition and its environment.
-      - ci.yml:205
+      - ci.yml:285

@@ -299,6 +299,99 @@ def test_each_cross_platform_area_has_tagged_tests():
         assert 'tag: "@xplat"' in (ROOT / "studio/tests/browser" / name).read_text(encoding="utf-8"), name
 
 
+def integration_command():
+    """The parallel run of the suite; test_restore_manifest.py gets a step of its own."""
+    (command,) = [
+        command for command in runs(jobs("ci.yml")["integration"]) if "-m pytest tests/integration -n" in command
+    ]
+    return command
+
+
+def test_the_integration_job_runs_on_the_compose_postgresql_image_with_its_data_on_tmpfs():
+    job = jobs("ci.yml")["integration"]
+    (service,) = job["services"].values()
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]["postgres"]
+    # The same PostgreSQL 17 image, pinned by digest, and the same owner and control database as compose.yaml.
+    assert service["image"] == compose["image"] and "@sha256:" in service["image"]
+    assert service["env"]["POSTGRES_USER"] == compose["environment"]["POSTGRES_USER"]
+    assert service["env"]["POSTGRES_DB"] == compose["environment"]["POSTGRES_DB"]
+    assert "--tmpfs /var/lib/postgresql/data" in service["options"]
+    assert "--health-cmd" in service["options"]
+
+
+def test_the_integration_job_points_the_fixtures_at_its_service_on_the_release_gates_port():
+    from sqlalchemy import make_url
+
+    job = jobs("ci.yml")["integration"]
+    (service,) = job["services"].values()
+    (mapping,) = service["ports"]
+    host_port, container_port = (int(port) for port in str(mapping).split(":"))
+    url = make_url(job["env"]["WEAVE_TEST_DATABASE_URL"])
+    # What tests/integration/conftest.py accepts, on the port the release gate's PostgreSQL uses, which the
+    # connector tests in tests/integration/connectors/test_postgresql.py also require.
+    assert (url.drivername, url.host, url.port, container_port) == ("postgresql+asyncpg", "127.0.0.1", 55433, 5432)
+    assert host_port == url.port
+    assert (url.username, url.password, url.database) == (
+        service["env"]["POSTGRES_USER"],
+        service["env"]["POSTGRES_PASSWORD"],
+        service["env"]["POSTGRES_DB"],
+    )
+
+
+def test_the_integration_job_marks_its_service_and_installs_the_gates_test_fixture_before_the_tests():
+    job = jobs("ci.yml")["integration"]
+    commands = runs(job)
+    (marker,) = [step for step in job["steps"] if "infra/postgres/init.sql" in step.get("run", "")]
+    # The fixtures refuse a database without the marker that infra/postgres/init.sql writes.
+    assert "firefly-weave-b1-local-integration" in (ROOT / "infra/postgres/init.sql").read_text(encoding="utf-8")
+    assert marker["env"] == {"POSTGRES_CONTAINER": "${{ job.services.postgres.id }}"}
+    assert "${{" not in marker["run"] and "-v ON_ERROR_STOP=1" in marker["run"]
+    # The release gate installs the same test-only connector package before its integration stage.
+    fixture = "uv pip install --no-deps ./tests/fixtures/e2-provider"
+    assert '"tests/fixtures/e2-provider"' in (ROOT / "scripts/check.py").read_text(encoding="utf-8")
+    pytest_line = integration_command()
+    assert commands.index(marker["run"]) < commands.index(fixture) < commands.index(pytest_line)
+
+
+def test_the_integration_job_runs_the_suite_on_every_pull_request_and_main_push():
+    job = jobs("ci.yml")["integration"]
+    assert "if" not in job and job["runs-on"] == "ubuntu-24.04"
+    words = integration_command().split()
+    start = words.index("pytest")
+    assert " ".join(words[start - 2 : start + 6]) == "python -m pytest tests/integration -n 4 --dist loadfile"
+    # The whole suite runs: nothing stops it at the first failure or runs only the last failures.
+    assert not {"--maxfail", "-x", "--lf", "--last-failed"} & set(words)
+
+
+def test_the_restore_manifest_tests_run_once_alone_after_the_parallel_run():
+    # They compare every weave_ role on the server between two moments, and the parallel workers create and drop
+    # their own login roles throughout the run.
+    steps = jobs("ci.yml")["integration"]["steps"]
+    path = "tests/integration/test_restore_manifest.py"
+    assert f"--deselect {path}" in integration_command()
+    parallel = next(index for index, step in enumerate(steps) if step.get("run") == integration_command())
+    (alone,) = [index for index, step in enumerate(steps) if f"-m pytest {path}" in step.get("run", "")]
+    assert alone > parallel
+    assert steps[alone]["if"] == "${{ !cancelled() }}"
+    assert " -n " not in steps[alone]["run"] and "--dist" not in steps[alone]["run"]
+
+
+def test_every_test_the_integration_job_deselects_still_exists():
+    # pytest ignores a --deselect that matches nothing: after a rename, the stale entry would go unnoticed and the
+    # renamed test would run here without the service it needs.
+    words = integration_command().split()
+    # A parametrized id is quoted, so that the shell never reads its brackets as a pattern.
+    targets = [words[index + 1].strip("'") for index, word in enumerate(words) if word == "--deselect"]
+    assert targets
+    missing = []
+    for target in targets:
+        path, _, name = target.partition("::")
+        source = ROOT / path
+        if not source.is_file() or (name and f"def {name.split('[')[0]}(" not in source.read_text(encoding="utf-8")):
+            missing.append(target)
+    assert missing == []
+
+
 def acceptance_harness():
     """scripts/acceptance.py, loaded by path: its stage budgets set the acceptance jobs' timeouts."""
     import importlib.util

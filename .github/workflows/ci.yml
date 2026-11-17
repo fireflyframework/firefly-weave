@@ -56,6 +56,86 @@ jobs:
           python-version: '3.12'
           enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py
+  # The PostgreSQL integration tests, as the release gate's integration stage runs them, on every pull request and
+  # every push to main: one PostgreSQL 17 service, the image compose.yaml pins, with its data on tmpfs.
+  integration:
+    name: integration (PostgreSQL 17)
+    runs-on: ubuntu-24.04
+    # No green run to size it from yet: four local workers took about 25 minutes, and the unit tests run up to 2.5
+    # times slower on a shared runner than locally.
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+        env:
+          POSTGRES_USER: weave_b1_owner
+          # Not a secret: a throwaway server on this job's runner, with no data, gone when the job ends.
+          POSTGRES_PASSWORD: weave-ci-integration
+          POSTGRES_DB: weave_b1_control
+        # 55433 is the release gate's PostgreSQL port; the PostgreSQL connector tests accept no other.
+        ports:
+          - '55433:5432'
+        options: >-
+          --shm-size 256mb
+          --tmpfs /var/lib/postgresql/data
+          --health-cmd "pg_isready -U weave_b1_owner -d weave_b1_control"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      WEAVE_TEST_DATABASE_URL: postgresql+asyncpg://weave_b1_owner:weave-ci-integration@127.0.0.1:55433/weave_b1_control
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+          enable-cache: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'auto' }} # zizmor: ignore[cache-poisoning] -- uv cache is off on tag runs; PR, main and manual runs only read caches their own ref or main wrote
+      - run: uv sync --locked --all-extras --group docs
+      # The fixtures refuse a server without the marker infra/postgres/init.sql writes; compose.yaml runs that file
+      # when its server first starts, and a service container cannot mount it, so this step runs it.
+      - name: Mark the service as the integration backend
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -q -U weave_b1_owner -d weave_b1_control < infra/postgres/init.sql
+      # The test-only connector package, installed without dependencies as the release gate installs it.
+      - run: uv pip install --no-deps ./tests/fixtures/e2-provider
+      # Deselected: the 36 tests that need a service this job does not start. The release gate, which has all of
+      # those services, still runs every one of them.
+      # - A Kafka broker from the owned Kafka image in the owned Docker context: test_kafka.py, test_kafka_api.py,
+      #   test_kafka_native.py, and the broker half of test_kafka_tls.py.
+      # - Keycloak: test_keycloak.py, and test_cli_identity.py, whose CLI sign-ins all go through it.
+      # - A Weave image built from this commit: test_native_image.py and the image case of test_postgresql_native.py.
+      # - The owned Docker context, for the PostgreSQL TLS server: test_postgresql_tls.py.
+      # Also deselected until it is fixed, though the release gate still runs it:
+      # test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it. Its outcome depends
+      # on its held run's random ID: when that ID sorts in about the top fifth, the test starts so many runs that its
+      # three scan rounds never reach the held run, or the project's control allocation refuses a start, so it fails
+      # about one run in five.
+      # test_restore_manifest.py runs in the next step, alone: it compares every weave_ role on the server between
+      # two moments, and the other workers create and drop their own login roles all the time.
+      - name: Integration tests
+        run: >-
+          uv run --locked --all-extras --group docs python -m pytest tests/integration -n 4 --dist loadfile
+          -q --tb=short --show-capture=no -rfEs --durations=10 -p no:cacheprovider
+          --deselect tests/integration/connectors/test_kafka.py
+          --deselect tests/integration/connectors/test_kafka_api.py
+          --deselect tests/integration/connectors/test_kafka_native.py
+          --deselect tests/integration/connectors/test_kafka_tls.py::test_real_sasl_tls_ack_wrong_ca_identity_and_max_value
+          --deselect tests/integration/test_keycloak.py
+          --deselect tests/integration/test_cli_identity.py
+          --deselect tests/integration/test_native_image.py
+          --deselect 'tests/integration/connectors/test_postgresql_native.py::test_built_native_sql_executor[image]'
+          --deselect tests/integration/connectors/test_postgresql_tls.py
+          --deselect tests/integration/test_transaction_runtime.py::test_a_held_run_never_stops_the_timeouts_of_runs_after_it
+          --deselect tests/integration/test_restore_manifest.py
+      - name: Restore manifest tests, with no other test changing the server's roles
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run --locked --all-extras --group docs python -m pytest tests/integration/test_restore_manifest.py
+          -q --tb=short --show-capture=no -rfEs -p no:cacheprovider
   studio-checks:
     name: studio checks
     runs-on: ubuntu-24.04
