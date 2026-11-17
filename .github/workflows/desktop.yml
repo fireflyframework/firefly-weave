@@ -29,6 +29,7 @@ on:
       - 'uv.lock'
       - '.github/workflows/desktop.yml'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'desktop/**'
       - 'studio/**'
@@ -49,6 +50,7 @@ concurrency:
 # package-manager-cache stays off, so a packageManager field cannot turn an npm cache on for a tag run.
 jobs:
   installer:
+    if: github.event.pull_request.draft == false # drafts wait for ready_for_review
     strategy:
       fail-fast: false
       matrix:

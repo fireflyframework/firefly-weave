@@ -153,6 +153,28 @@ def test_every_job_has_a_timeout_below_githubs_six_hour_default():
     assert missing == []
 
 
+# The one condition a job checks to skip a draft. Pushes and manual runs have no pull request, and GitHub compares
+# the missing value equal to false, so they still run.
+NOT_A_DRAFT = "github.event.pull_request.draft == false"
+
+
+@pytest.mark.parametrize(
+    ("name", "gated"),
+    [("acceptance.yml", {"pr", "changes"}), ("desktop.yml", {"installer"})],
+)
+def test_long_workflows_skip_drafts_and_run_once_a_draft_is_marked_ready(name, gated):
+    document = workflow(name)
+    types = document["on"]["pull_request"]["types"]
+    assert set(types) == {"opened", "synchronize", "reopened", "ready_for_review"}
+    # Every other job needs a gated one: it skips with it, or, as the cluster job does on a pull request, runs only
+    # on an output that a skipped job leaves empty (test_the_cluster_job_runs_for_cluster_changes_...).
+    for job_name, job in document["jobs"].items():
+        if job_name in gated:
+            assert NOT_A_DRAFT in job["if"], (name, job_name)
+        else:
+            assert set([job["needs"]] if isinstance(job["needs"], str) else job["needs"]) <= gated, (name, job_name)
+
+
 SETUP_UV = "astral-sh/setup-uv@"
 SETUP_NODE = "actions/setup-node@"
 # `${{ [!]startsWith(github.ref, 'refs/tags/') && '<then>' || '<else>' }}`, the one shape the cache inputs use.
@@ -376,7 +398,8 @@ def changes_step():
 
 def test_the_changes_job_reads_only_and_diffs_the_pull_request_commits_through_the_environment():
     job = jobs("acceptance.yml")["changes"]
-    assert job["if"] == "github.event_name == 'pull_request'"
+    # A draft skips it, and with it the cluster job, which reads its output.
+    assert job["if"] == "github.event_name == 'pull_request' && github.event.pull_request.draft == false"
     assert job["permissions"] == {"contents": "read"}
     (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout")]
     # The whole history, so the merge base of both commits is there.
