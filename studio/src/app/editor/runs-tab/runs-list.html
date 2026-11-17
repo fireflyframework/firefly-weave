@@ -212,6 +212,20 @@ SPDX-License-Identifier: Apache-2.0
         <button type="button" (click)="checkAgain()">Try again</button>
       </div>
     }
+    @case ("outdated") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="stale" [size]="16" /></span>
+        <strong>This Studio window is out of date.</strong>
+        <p>Reload the page to see this workflow's runs.</p>
+      </div>
+    }
+    @case ("address") {
+      <div class="runs-message">
+        <span class="runs-ring"><weave-icon name="laptop" [size]="16" /></span>
+        <strong>Open Studio at its exact local address.</strong>
+        <p>Then you can see this workflow's runs.</p>
+      </div>
+    }
     @case ("signed-out") {
       <div class="runs-message">
         <span class="runs-ring"><weave-icon name="user" [size]="16" /></span>

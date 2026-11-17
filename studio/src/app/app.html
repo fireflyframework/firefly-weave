@@ -192,12 +192,7 @@ SPDX-License-Identifier: Apache-2.0
               aria-hidden="true"
               [class.neutral]="indicatorConnecting"
               [class.offline]="(!profile || !signedIn) && !indicatorConnecting"
-              [class.warning]="
-                platformNotice?.kind === 'expired' ||
-                platformNotice?.kind === 'not-linked' ||
-                platformNotice?.kind === 'offline' ||
-                platformNotice?.kind === 'store'
-              "
+              [class.warning]="!!identityProblem"
             ></span>
             @if (indicatorWord) {
               <span class="indicator-word" aria-hidden="true">{{
@@ -277,7 +272,7 @@ SPDX-License-Identifier: Apache-2.0
               [name]="
                 platformNotice.kind === 'revocation'
                   ? 'logout'
-                  : platformNotice.kind === 'signing-in'
+                  : platformNotice.kind === 'signing-in' || platformNotice.kept
                     ? 'user'
                     : 'warning'
               "
@@ -427,6 +422,7 @@ SPDX-License-Identifier: Apache-2.0
                   (verified)="wizardVerified($event)"
                   (workspaceChange)="wizardWorkspace($event)"
                   (accountProblem)="wizardAccountProblem($event)"
+                  (checkFailed)="wizardCheckFailed($event)"
                   (finish)="finishWizard()"
                   (cancel)="closeWizard()"
                   (workLocally)="wizardWorkLocally()"

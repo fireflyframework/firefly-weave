@@ -31,7 +31,12 @@ import {
 } from "../../src/app/operate/run-views.fixture";
 import type { RunSummary } from "../../src/app/operate/run-contracts";
 import { connected, selectChoice } from "./support";
-import { acme, acmePlatform, platformHost } from "./platform-host";
+import {
+  acme,
+  acmePlatform,
+  platformHost,
+  signInWaiting,
+} from "./platform-host";
 
 const environment =
   "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
@@ -1879,32 +1884,24 @@ test.describe("another person on the same environment", () => {
     page,
   }) => {
     await page.clock.install({ time: new Date(NOW) });
-    // The platform can't be reached at first, so Studio reads the identity
-    // itself (jane); Try again then finds john signed in on the same
-    // environment, while the page stays open.
+    // Jane is signed in with a sign-in waiting in the background; john
+    // finishes it on the same environment while the page stays open.
     let person = "jane";
-    let reachable = false;
-    await platformHost(page, {
+    const host = await platformHost(page, {
       platforms: [acmePlatform()],
       active: "Acme",
-      test: (host) =>
-        reachable
-          ? {
-              json: {
-                session: host.session(),
-                identity: {
-                  ...host.identity(),
-                  principal_id: `principal-${person}`,
-                },
-                workspaces: host.current?.workspaces ?? [],
-                truncated: false,
-                workspace_revoked: false,
-              },
-            }
-          : {
-              status: 503,
-              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
-            },
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: {
+            ...current.identity(),
+            principal_id: `principal-${person}`,
+          },
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
     });
     let releaseJane: () => void = () => undefined;
     const janeHeld = new Promise<void>((resolve) => (releaseJane = resolve));
@@ -1935,7 +1932,9 @@ test.describe("another person on the same environment", () => {
         })
         .catch(() => undefined);
     });
-    await page.getByRole("button", { name: "Runs", exact: true }).click();
+    const john = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Runs", exact: true }).click(),
+    );
     await expect(rows(page)).toHaveCount(1);
     await expect(rows(page).first()).toContainText("JANE-1");
     // A read for jane is still out when john turns out to be signed in.
@@ -1944,13 +1943,8 @@ test.describe("another person on the same environment", () => {
       .poll(() => requests.at(-1)?.query.get("business_key"))
       .toBe("jane-secret");
     person = "john";
-    reachable = true;
-    await page
-      .locator(".platform-banner")
-      .getByRole("button", { name: "Try again" })
-      .click();
+    await john();
     // Nothing read for jane stays, though her read is still out.
-    await expect(page.locator(".platform-banner")).toHaveCount(0);
     await expect(rows(page)).toHaveCount(0);
     await expect(page.getByLabel("Business key")).toHaveValue("");
     // Her answer lands after the change: it is dropped, and john's first
@@ -1979,35 +1973,28 @@ test.describe("a run started for one person", () => {
   const versionId = "44444444-4444-4444-8444-444444444444";
 
   /**
-   * Jane is signed in while the platform's status can't be read; Try again
-   * then finds John signed in on the same environment, in place. Start run
+   * Jane is signed in with a sign-in waiting in the background; John
+   * finishes it on the same environment, in place. Start run
    * answers once `answer` is called, with a run no list includes.
    */
   async function janeThenJohn(page: Page) {
     await page.clock.install({ time: new Date(NOW) });
     let person = "jane";
-    let reachable = false;
-    await platformHost(page, {
+    const host = await platformHost(page, {
       platforms: [acmePlatform()],
       active: "Acme",
-      test: (host) =>
-        reachable
-          ? {
-              json: {
-                session: host.session(),
-                identity: {
-                  ...host.identity(),
-                  principal_id: `principal-${person}`,
-                },
-                workspaces: host.current?.workspaces ?? [],
-                truncated: false,
-                workspace_revoked: false,
-              },
-            }
-          : {
-              status: 503,
-              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
-            },
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: {
+            ...current.identity(),
+            principal_id: `principal-${person}`,
+          },
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
     });
     await page.route("**/run-summaries?**", (route) =>
       route.fulfill({
@@ -2067,12 +2054,7 @@ test.describe("a run started for one person", () => {
       posted: 0,
       async john() {
         person = "john";
-        reachable = true;
-        await page
-          .locator(".platform-banner")
-          .getByRole("button", { name: "Try again" })
-          .click();
-        await expect(page.locator(".platform-banner")).toHaveCount(0);
+        await finish();
         await expect(rows(page).first()).toContainText("JOHN-1");
       },
     };
@@ -2087,7 +2069,9 @@ test.describe("a run started for one person", () => {
         })
         .catch(() => undefined);
     });
-    await page.getByRole("button", { name: "Runs", exact: true }).click();
+    const finish = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Runs", exact: true }).click(),
+    );
     await expect(rows(page).first()).toContainText("JANE-1");
     return control;
   }

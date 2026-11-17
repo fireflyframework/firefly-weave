@@ -309,10 +309,45 @@ type PlatformNoticeKind =
   | "revocation";
 /**
  * Why the last check of who is signed in found no account: the platform
- * couldn't be reached, the credential store is locked, the platform doesn't
- * know the account, or the sign-in ended.
+ * couldn't be reached, the credential store is locked, Studio itself refused
+ * the request (an out-of-date window, or a window opened at another
+ * address), the platform doesn't know the account, or the sign-in ended.
  */
-export type IdentityFailure = "offline" | "store" | "not-linked" | "expired";
+export type IdentityFailure =
+  | "offline"
+  | "store"
+  | StudioRefusal
+  | "not-linked"
+  | "expired";
+/** Studio refusing its own request: the window is out of date, or at another address. */
+export type StudioRefusal = "outdated" | "address";
+/**
+ * Studio's own refusals and what fixes them: reloading an out-of-date window,
+ * or opening Studio at its exact address (reloading the same one won't).
+ * Other WV-STUDIO- codes report the platform's side (no answer, a timeout),
+ * which Try again can fix.
+ */
+const STUDIO_REFUSALS: Readonly<Record<string, StudioRefusal>> = {
+  "WV-STUDIO-CSRF": "outdated",
+  "WV-STUDIO-ORIGIN": "address",
+};
+const isStudioRefusal = (
+  failure: IdentityFailure | null,
+): failure is StudioRefusal => failure === "outdated" || failure === "address";
+/**
+ * A check of who is signed in that failed for a reason other than the
+ * account: a locked credential store says so, Studio's own refusal says what
+ * fixes it, and anything else (no answer, a 5xx, an unexpected refusal)
+ * reads as a platform Studio couldn't reach, which offers Try again.
+ */
+function unreadIdentity(
+  plain: PlainError,
+): "store" | StudioRefusal | "offline" {
+  if (plain.code === "WV-AUTH-STORE") return "store";
+  return Object.hasOwn(STUDIO_REFUSALS, plain.code)
+    ? STUDIO_REFUSALS[plain.code]
+    : "offline";
+}
 interface ConnectionSlot {
   name: string;
   connector: string;
@@ -543,6 +578,8 @@ export class App implements CanvasHost {
     server?: string;
     /** A plain sentence about the outcome, for "sign-in-failed". */
     detail?: string;
+    /** For "sign-in-failed": the account from before still works. */
+    kept?: boolean;
   } | null = null;
   lumiOpen = false;
   // A query by name, not by class: the Clusters area stays in its deferred chunk.
@@ -9509,15 +9546,22 @@ export class App implements CanvasHost {
       }
       this.api.adopt(result.session);
       this.identity = result.identity;
+      // A refusal recorded while the check ran is answered by its success.
+      this.identityFailure = null;
       this.catalogAfterIdentity();
       this.draftAfterIdentity();
       this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
+      const notice = this.platformNotice;
       this.platformNotice = result.workspace_revoked
         ? { kind: "revoked", name }
-        : this.profile?.environmentId
-          ? null
-          : { kind: "workspace", name };
+        : !this.profile?.environmentId
+          ? { kind: "workspace", name }
+          : notice?.kind === "sign-in-failed"
+            ? // A sign-in that failed while the account this check confirms
+              // still works: the outcome stays, without asking to sign in.
+              { ...notice, kept: true }
+            : null;
     } catch (e) {
       if (generation !== this.platformGeneration) return;
       const plain = describeError(e);
@@ -9531,18 +9575,28 @@ export class App implements CanvasHost {
         this.identityFailure = "expired";
         this.platformNotice = { kind: "expired", name };
       } else {
-        if (plain.code === "WV-AUTH-STORE") {
-          this.identityFailure = "store";
-          this.platformNotice = { kind: "store", name };
-        } else if (
-          plain.code === "WV-AUTH-OFFLINE" ||
-          plain.code === "WV-STUDIO-UPSTREAM" ||
-          [0, 502, 503, 504].includes(plain.status)
-        ) {
-          this.identityFailure = "offline";
-          this.platformNotice = { kind: "offline", name };
+        // Without a recorded reason the Runs tab would wait for good and the
+        // banner would say nothing: an unexpected error reads as offline.
+        const kind = unreadIdentity(plain);
+        this.identityFailure = kind;
+        if (isStudioRefusal(kind)) {
+          // Studio refused its own request: its error says what fixes it,
+          // where Try again would meet the same refusal. An earlier
+          // unreachable or store banner no longer says why.
+          const earlier = this.platformNotice?.kind;
+          if (earlier === "offline" || earlier === "store")
+            this.platformNotice = null;
+          this.fail(e);
+          await this.loadIdentity();
+          return;
         }
+        const notice = { kind, name };
+        this.platformNotice = notice;
         await this.loadIdentity();
+        // The account loaded through the API after all: the banner this
+        // check showed no longer applies.
+        if (this.identity && this.platformNotice === notice)
+          this.platformNotice = null;
       }
     } finally {
       this.cdr.markForCheck();
@@ -9798,7 +9852,14 @@ export class App implements CanvasHost {
         this.platformNotice = { kind: "signing-in", name };
       return;
     }
-    if (this.platformNotice?.kind === "signing-in") this.platformNotice = null;
+    // The waiting notice goes; a success also ends an earlier sign-in's
+    // outcome, which the check after it would otherwise word as kept.
+    const shown = this.platformNotice?.kind;
+    if (
+      shown === "signing-in" ||
+      (event.kind === "authenticated" && shown === "sign-in-failed")
+    )
+      this.platformNotice = null;
     if (event.kind === "authenticated") {
       // Signed in again: an earlier failure is no longer why nothing is read.
       this.identityFailure = null;
@@ -9810,17 +9871,61 @@ export class App implements CanvasHost {
         name,
         detail: `${loginOutcome(event.state, event.code).title.replace(/\.$/, "")}.`,
       };
-      void this.refreshConnectionStatus();
+      void this.trackIdentity(this.afterBackgroundSignInEnded());
     }
   }
   private async afterBackgroundSignIn() {
-    await this.refreshConnectionStatus();
-    await this.checkPlatform();
+    // The host already holds the new sign-in while Studio still has the
+    // account from before: commands wait from now until the check answers,
+    // not only once the connection's status has been read.
+    await this.trackIdentity(
+      this.refreshConnectionStatus().then(() => this.checkPlatform()),
+    );
     await this.refresh();
   }
+  /**
+   * A sign-in ended without an account, and the host keeps the credential it
+   * had. An account Studio already has and nothing has refused (a canceled
+   * switch) stays, and the outcome says so; one it can still use (a session
+   * it renews, the account a canceled switch left before a reload, or an
+   * account the platform refused meanwhile) is checked, and the check
+   * words the outcome the same way unless the person dismissed it or
+   * something replaced it meanwhile; otherwise sign in again. A reason
+   * recorded earlier (offline, a locked store) stays.
+   */
+  private async afterBackgroundSignInEnded() {
+    await this.refreshConnectionStatus();
+    const usable = sessionUsable(this.connectionStatus?.authentication);
+    // Only an account nothing has refused since it loaded is kept as is; one
+    // the platform refused is checked again below.
+    if (this.identity && !this.identityFailure) {
+      const notice = this.platformNotice;
+      if (usable && notice?.kind === "sign-in-failed") {
+        this.platformNotice = { ...notice, kept: true };
+        this.cdr.markForCheck();
+      }
+      return;
+    }
+    if (!usable) {
+      this.identityFailure ??= "expired";
+      return;
+    }
+    await this.checkPlatform();
+  }
+  /** The wizard signed in: an earlier failure is no longer why nothing is read. */
   wizardStatus(status: ConnectionStatus) {
     this.connectionStatus = status;
     if (this.platformNotice?.kind === "expired") this.platformNotice = null;
+    this.identityFailure = null;
+    this.cdr.markForCheck();
+  }
+  /**
+   * The wizard's check of the account failed for a reason other than the
+   * account: recorded as the shell's own check records it. The wizard shows
+   * the error itself, so no banner.
+   */
+  wizardCheckFailed(error: unknown) {
+    this.identityFailure = unreadIdentity(describeError(error));
     this.cdr.markForCheck();
   }
   wizardVerified(result: VerifiedPlatform) {
@@ -10068,8 +10173,13 @@ export class App implements CanvasHost {
   }
   /** Informational notices use calm colors; problems keep the warning style. */
   get noticeCalm() {
-    const kind = this.platformNotice?.kind;
-    return kind === "revocation" || kind === "signing-in";
+    const notice = this.platformNotice;
+    return (
+      notice?.kind === "revocation" ||
+      notice?.kind === "signing-in" ||
+      // A sign-in that failed while the account from before still works.
+      (notice?.kind === "sign-in-failed" && !!notice.kept)
+    );
   }
   get noticeText() {
     const notice = this.platformNotice;
@@ -10097,14 +10207,29 @@ export class App implements CanvasHost {
         return revocationNote;
       case "signing-in":
         return `Studio is waiting for you to finish signing in to ${notice.name}.`;
-      case "sign-in-failed":
-        return `${notice.detail ?? "Sign-in didn't finish."} Sign in to ${notice.name} again to publish, run, and manage work. You can keep working locally.`;
+      case "sign-in-failed": {
+        const outcome = notice.detail ?? "Sign-in didn't finish.";
+        if (!notice.kept)
+          return `${outcome} Sign in to ${notice.name} again to publish, run, and manage work. You can keep working locally.`;
+        const account = this.signedInAccount;
+        return `${outcome} You're still signed in to ${notice.name}${account ? ` as ${account}` : ""}.`;
+      }
     }
+  }
+  /** The signed-in account's name as the top bar shows it; a bare subject is an ID, so none. */
+  private get signedInAccount() {
+    const status = this.connectionStatus;
+    const account = status?.profile?.account?.display_name
+      ? status.profile.account
+      : status?.authentication?.account;
+    return account?.display_name?.trim() ?? "";
   }
   get noticeActionLabel() {
     switch (this.platformNotice?.kind) {
-      case "expired":
       case "sign-in-failed":
+        // Still signed in with the account from before: nothing to do.
+        return this.platformNotice.kept ? "" : "Sign in again";
+      case "expired":
         return "Sign in again";
       case "signing-in":
         return "Show sign-in";
@@ -10162,19 +10287,51 @@ export class App implements CanvasHost {
       (this.signInEnded || this.platformSignedOut)
     );
   }
+  /**
+   * Why the active platform's account can't be used, as the Runs tab reads
+   * it: the banner's reason while it shows, otherwise how the last check of
+   * who is signed in failed, so dismissing the banner changes nothing. A
+   * sign-in or a check still under way answers for itself.
+   */
+  get identityProblem(): IdentityFailure | null {
+    if (!this.profile || this.loginWatcher.pending) return null;
+    const kind = this.platformNotice?.kind;
+    if (
+      kind === "expired" ||
+      kind === "not-linked" ||
+      kind === "offline" ||
+      kind === "store"
+    )
+      return kind;
+    const failure = this.checkingIdentity ? null : this.identityFailure;
+    // An account the platform refuses outranks one held from before; a
+    // platform out of reach matters only while there is no account. Studio's
+    // own refusal says nothing about the account: its error explains it.
+    if (failure === "expired" || failure === "not-linked") return failure;
+    return this.identity || isStudioRefusal(failure) ? null : failure;
+  }
   get platformStatusText() {
     if (!this.profile) return "Local authoring";
     if (this.loginWatcher.pending) return "Signing in";
-    const kind = this.platformNotice?.kind;
-    if (kind === "expired") return "Session expired";
-    if (kind === "not-linked") return "Account not recognized";
-    if (kind === "offline") return "Can't reach the platform";
-    if (kind === "store") return "Credential store unavailable";
-    if (this.identity) return "Signed in";
+    const problem = this.identityProblem;
+    if (problem === "not-linked") return "Account not recognized";
+    if (problem === "offline") return "Can't reach the platform";
+    if (problem === "store") return "Credential store unavailable";
     const status = this.connectionStatus;
-    return status?.profile?.name === this.profile.name
-      ? stateLabel(platformState(status.profile, status))
-      : "Not signed in";
+    const state =
+      status?.profile?.name === this.profile.name
+        ? platformState(status.profile, status)
+        : null;
+    if (problem === "expired")
+      // Once the banner is gone, a sign-out the host reports still reads as
+      // one; a host still holding a sign-in the platform refused doesn't.
+      return this.platformNotice?.kind === "expired" ||
+        !state ||
+        state === "signed_in"
+        ? "Session expired"
+        : stateLabel(state);
+    if (this.identity) return "Signed in";
+    return state ? stateLabel(state) : "Not signed in";
   }
   /** Workspace names for the selected scope, from the identity or the saved profile. */
   get workspaceNames() {
@@ -10264,15 +10421,16 @@ export class App implements CanvasHost {
   }
   /**
    * The wizard is open: the indicator reads "Connecting…", not "Signed out".
-   * An account the platform doesn't recognize is a settled answer, so the
-   * visible text says so, as the indicator's accessible name does.
+   * An account the platform doesn't recognize is a settled answer, also once
+   * its banner is dismissed, so the visible text says so, as the indicator's
+   * accessible name does.
    */
   get indicatorConnecting() {
     return (
       this.view === "connect" &&
       !!this.profile &&
       !this.signedIn &&
-      this.platformNotice?.kind !== "not-linked"
+      this.identityProblem !== "not-linked"
     );
   }
   /**
@@ -10281,10 +10439,18 @@ export class App implements CanvasHost {
    */
   get indicatorWord() {
     if (!this.profile || this.indicatorConnecting) return "";
-    const kind = this.platformNotice?.kind;
-    if (kind === "offline" || kind === "store") return "Offline";
-    if (!this.signedIn) return "Sign in";
-    return "";
+    if (this.loginWatcher.pending) return "Signing in";
+    switch (this.identityProblem) {
+      case "not-linked":
+        return "Not linked";
+      case "expired":
+        return "Sign in";
+      case "offline":
+        return "Offline";
+      case "store":
+        return "Keychain";
+    }
+    return this.signedIn ? "" : "Sign in";
   }
   /** The platform menu's second line: "Payments / Production · jane@acme.example". */
   get platformMenuDetail() {

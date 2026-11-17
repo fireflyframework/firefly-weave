@@ -131,6 +131,8 @@ export interface SavedPlatform {
   signedIn?: boolean;
   /** An expired access token the host renews silently on the next check. */
   refreshable?: boolean;
+  /** An expired access token without a refresh token: the host can't renew it. */
+  expired?: boolean;
   workspaces?: Workspace[];
 }
 export const acmePlatform = (
@@ -299,6 +301,7 @@ export class PlatformHost {
     const p = this.current;
     const signedIn = !!p?.signedIn;
     const refreshable = !!p && !signedIn && !!p.refreshable;
+    const expired = refreshable || (!!p && !signedIn && !!p.expired);
     return {
       configured: !!p,
       login_supported: !!p && this.loginSupported,
@@ -348,7 +351,7 @@ export class PlatformHost {
           ? "signed_out"
           : signedIn
             ? "signed_in"
-            : refreshable
+            : expired
               ? "expired"
               : "signed_out",
         expires_at: null,
@@ -756,6 +759,44 @@ export async function platformHost(
   );
   await page.goto(path);
   return host;
+}
+
+/**
+ * Another person is about to sign in on the same environment: Switch account
+ * starts a browser sign-in on the active platform, `back` returns to the page
+ * under test, and the sign-in waits in the background while that page is used.
+ * The returned function finishes the sign-in. The host holds Studio's polls
+ * until then, so the finish lands at once, not at the next poll.
+ */
+export async function signInWaiting(
+  page: Page,
+  host: PlatformHost,
+  back: () => Promise<void>,
+) {
+  const held: (() => void)[] = [];
+  let finished = false;
+  await page.route(/\/studio\/connection\/login\/login-\d+$/, async (route) => {
+    if (!finished) await new Promise<void>((resolve) => held.push(resolve));
+    // A poll the page gave up on while it was held has nobody to answer.
+    await route.fallback().catch(() => undefined);
+  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: `Switch account on ${host.active}` })
+    .click();
+  await page.getByRole("button", { name: "Sign in with your browser" }).click();
+  await expect
+    .poll(() => host.requests("/studio/connection/login/start").length)
+    .toBe(1);
+  await back();
+  const banner = page.locator(".platform-banner");
+  await expect(banner).toContainText("waiting for you to finish signing in");
+  return async () => {
+    finished = true;
+    host.finish("authenticated");
+    for (const release of held.splice(0)) release();
+    await expect(banner).toHaveCount(0);
+  };
 }
 
 /** No horizontal page scroll and no control outside the viewport. */
