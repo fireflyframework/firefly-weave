@@ -29,8 +29,16 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.scheduler import _SchedulerScope
+from firefly_weave.access.service import audit
+from firefly_weave.compiler.api import import_artifact
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.email import EmailCorrelationToken, EmailReceipt, EmailTokenRequest, NormalizedEmail
+from firefly_weave.contracts.email import (
+    EmailCorrelationToken,
+    EmailReceipt,
+    EmailSourceView,
+    EmailTokenRequest,
+    NormalizedEmail,
+)
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.email.mime import parse_message
@@ -38,9 +46,36 @@ from firefly_weave.email.service import EmailService, unavailable
 from firefly_weave.email.transport import IMAPTransport
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
+from firefly_weave.triggers.retarget import (
+    RetargetOutcome,
+    checked_target,
+    email_rule,
+    require_revision,
+    retarget_audit,
+)
+
+VIEW_COLUMNS = "id,connection_revision_id,activation_id,mailbox,revision,state"
+
+
+def source_view(row: dict[str, Any]) -> EmailSourceView:
+    return EmailSourceView(
+        id=row["id"],
+        connection_revision_id=row["connection_revision_id"],
+        activation_id=row["activation_id"],
+        mailbox=row["mailbox"],
+        revision=row["revision"],
+        disabled=row["state"] != "active",
+    )
+
+
+def resync_first() -> CatalogError:
+    return CatalogError(
+        409, "WV-TRIGGER-DISABLED", "This email source isn't reading its mailbox; rebaseline it, then move it"
+    )
 
 
 def correlation_candidates(mail: NormalizedEmail) -> tuple[str, ...]:
@@ -75,6 +110,107 @@ class EmailSourceService:
                 mailbox=profile.folder,
             )
             return identifier
+
+    async def list(
+        self, actor: Principal, scope: Scope, *, limit: int = 50, cursor: UUID | None = None
+    ) -> dict[str, Any]:
+        """This environment's email sources, without message data, policy internals or mailbox positions."""
+        if not 1 <= limit <= 100:
+            raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+        async with self.email.uow.open(scope, mutation=False) as tx:
+            await self.email.checked(tx, actor, "email.read")
+            # The view's columns are small and bounded, so a page is bounded by its count alone.
+            rows = await RuntimeRepository(tx).rows(
+                f"SELECT {VIEW_COLUMNS} FROM email_sources WHERE {SCOPE}"
+                + (" AND id>:after" if cursor is not None else "")
+                + " ORDER BY id LIMIT :limit",
+                limit=limit + 1,
+                **({"after": cursor} if cursor is not None else {}),
+            )
+            return {
+                "items": [source_view(row).model_dump(mode="json") for row in rows[:limit]],
+                "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+            }
+
+    async def read(self, actor: Principal, scope: Scope, identifier: UUID) -> EmailSourceView:
+        async with self.email.uow.open(scope, mutation=False) as tx:
+            await self.email.checked(tx, actor, "email.read")
+            rows = await RuntimeRepository(tx).rows(
+                f"SELECT {VIEW_COLUMNS} FROM email_sources WHERE {SCOPE} AND id=:id", id=identifier
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Email source not found")
+            return source_view(rows[0])
+
+    async def retarget(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        activation_id: UUID,
+        expected: int | None,
+        *,
+        context: AuditContext,
+    ) -> EmailSourceView:
+        """Move a source to another activation of its workflow; it then starts runs as the mover.
+
+        The mover needs what creating the source needs and may start runs of the new version, whose input must
+        accept every received message. The generation moves and the lease clears, so a poll in flight stops before
+        it admits anything; the mailbox position is kept.
+        """
+        async with self.runtime.definitions.transaction(scope, None) as tx:
+            actor = await self.email.checked(tx, actor, "email.manage")
+            self.runtime.require(actor, scope, "trigger.manage", context)
+            self.runtime.require(actor, scope, "run.start", context)
+            repository = RuntimeRepository(tx)
+            rows = await repository.rows(
+                f"SELECT * FROM email_sources WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Email source not found")
+            current = rows[0]
+            require_revision(expected, current["revision"])
+            if current["state"] != "active":
+                raise resync_first()
+            await checked_target(tx, current["activation_id"], activation_id)
+            await self.email.connection(tx, actor, current["connection_revision_id"])
+            activation, envelope = await self.runtime.definitions.runtime_snapshot(
+                actor, scope, activation_id, context=context, tx=tx
+            )
+            artifact = import_artifact(envelope)
+            await self.runtime.definitions.execution_readiness(
+                actor, scope, activation.request, artifact, capability="run.start", context=context, tx=tx
+            )
+            ir = workflow(artifact)
+            bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
+            email_rule(ir.schemas[ir.input_schema], bundle)
+            [moved] = await repository.rows(
+                f"UPDATE email_sources SET activation_id=:activation,principal_id=:principal,revision=revision+1,"
+                f"generation=generation+1,lease_until=NULL WHERE {SCOPE} AND id=:id RETURNING {VIEW_COLUMNS}",
+                id=identifier,
+                activation=activation_id,
+                principal=actor.id,
+            )
+            await audit(
+                tx.session,
+                actor,
+                "email.source.retarget",
+                str(identifier),
+                scope=scope,
+                capability="email.manage",
+                context=context,
+                details=retarget_audit(
+                    RetargetOutcome(
+                        kind="email",
+                        resource_id=identifier,
+                        from_activation_id=current["activation_id"],
+                        to_activation_id=activation_id,
+                        from_principal_id=current["principal_id"],
+                        to_principal_id=actor.id,
+                    )
+                ),
+            )
+            return source_view(moved)
 
     async def checked(
         self, tx: Transaction, identifier: UUID, *, lock: bool = False
