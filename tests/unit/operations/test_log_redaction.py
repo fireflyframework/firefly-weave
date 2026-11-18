@@ -16,9 +16,7 @@
 
 """Log text loses every secret it carries, wherever it sits, before it is stored or shown."""
 
-import json
 import unicodedata
-from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -27,7 +25,6 @@ from hypothesis import strategies as st
 
 from firefly_weave.operations.log_redaction import redact_entry, redact_text
 
-CORPUS = Path(__file__).resolve().parents[2] / "fixtures/log_redaction_corpus.json"
 # Fake secret-shaped values, built from parts so that secret scanners reading this public repository raise no alert.
 PEM_BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
 SECRETS = {
@@ -60,7 +57,58 @@ def planted(template: str) -> str:
     return template
 
 
-CASES = json.loads(CORPUS.read_text(encoding="utf-8"))
+def case(name: str, text: str, *secrets: str, known: bool = False) -> dict:
+    return {"name": name, "text": text, "secrets": list(secrets), "known": known}
+
+
+# The planted-secret corpus: each pattern the redaction covers, inside prose, JSON, URLs, quotes and headers, in upper
+# and lower case. <<NAME>> stands for SECRETS[NAME].
+CASES = [
+    case("a GitHub token in prose", "Calling the API with <<GITHUB_TOKEN>> now", "GITHUB_TOKEN"),
+    case("a GitHub token assigned", "token=<<GITHUB_TOKEN>>", "GITHUB_TOKEN"),
+    case("a GitHub OAuth token in JSON", '{"token": "<<GITHUB_OAUTH>>"}', "GITHUB_OAUTH"),
+    case("a fine-grained GitHub token", "pat <<GITHUB_PAT>> used", "GITHUB_PAT"),
+    case("an AWS access key ID", "aws key <<AWS_KEY_ID>>", "AWS_KEY_ID"),
+    case("an AWS session key ID assigned", "AWS_ACCESS_KEY_ID=<<AWS_SESSION_KEY_ID>>", "AWS_SESSION_KEY_ID"),
+    case("an API key after a colon", "openai key: <<OPENAI_KEY>>", "OPENAI_KEY"),
+    case("a JWT in prose", "jwt <<JWT>> in text", "JWT"),
+    case("a JWT in JSON", '{"id_token":"<<JWT>>"}', "JWT"),
+    case("a JWT in a URL query", "https://api.example.test/v1?id_token=<<JWT>>&page=2", "JWT"),
+    case("an Authorization header", "Authorization: Bearer <<BEARER>>", "BEARER"),
+    case("a lower-case Authorization header", "authorization: bearer <<BEARER>>", "BEARER"),
+    case("an upper-case basic authorization", "AUTHORIZATION=Basic <<BASIC>>", "BASIC"),
+    case("an Authorization header in JSON", '{"Authorization": "Basic <<BASIC>>"}', "BASIC"),
+    case("a Proxy-Authorization header", "Proxy-Authorization: Basic <<BASIC>>", "BASIC"),
+    case("a Cookie header", "Cookie: <<COOKIE>>", "COOKIE"),
+    case("a Set-Cookie header", "Set-Cookie: <<COOKIE>>; Path=/; HttpOnly", "COOKIE"),
+    case("a cookie in a Python dict", "headers={'cookie': '<<COOKIE>>'}", "COOKIE"),
+    case("a private key block", "key material <<PEM>> end", "PEM_BODY"),
+    case("a private key block in JSON", 'cert: "<<PEM_ESCAPED>>"', "PEM_BODY"),
+    case("a password in a Git URL", "https://deploy:<<PASSWORD>>@git.example.test/repo.git", "PASSWORD"),
+    case("a password in a database URL", "postgres://app:<<PASSWORD>>@db.internal:5432/orders", "PASSWORD"),
+    case("a token query parameter", "GET https://api.example.test/items?token=<<PASSWORD>>", "PASSWORD"),
+    case("an upper-case key query parameter", "GET https://api.example.test/items?page=1&KEY=<<PASSWORD>>", "PASSWORD"),
+    case(
+        "a signed URL",
+        "https://files.example.test/report.pdf?X-Amz-Signature=<<SIGNATURE>>&X-Amz-Expires=300",
+        "SIGNATURE",
+    ),
+    case("an authorization code in a callback", "callback https://app.example.test/cb?code=<<CODE>>&state=xyz", "CODE"),
+    case("a secret query parameter", "https://api.example.test/hook?secret=<<PASSWORD>>", "PASSWORD"),
+    case("a mixed-case password query parameter", "https://api.example.test/login?Password=<<PASSWORD>>", "PASSWORD"),
+    case("a password assigned in prose", "password=<<PASSWORD>> user=ana", "PASSWORD"),
+    case("a password in JSON", '{"password": "<<PASSWORD>>", "user": "ana"}', "PASSWORD"),
+    case("a client secret in YAML", "client_secret: <<PASSWORD>>", "PASSWORD"),
+    case("an API key with spaces around the sign", "api-key = <<PASSWORD>>", "PASSWORD"),
+    case("a leased value in prose", "Used the leased value <<LEASED>> to sign in", "LEASED", known=True),
+    case("a leased value in JSON", '{"credential":"<<LEASED>>"}', "LEASED", known=True),
+    case("a leased value in a query", "https://api.example.test/x?q=<<LEASED>>", "LEASED", known=True),
+    case("a leased value URL-encoded", "encoded <<LEASED_URL>> here", "LEASED_URL", known=True),
+    case("a token between quotes", "split by quotes '<<GITHUB_TOKEN>>'", "GITHUB_TOKEN"),
+    case("an upper-case bearer token", "BEARER <<BEARER>>", "BEARER"),
+    case("two secrets on two lines", "Token <<GITHUB_TOKEN>>\n<<AWS_KEY_ID>>", "GITHUB_TOKEN", "AWS_KEY_ID"),
+    case("a token split by an invisible character", "zero width: <<GITHUB_TOKEN_SPLIT>> done", "GITHUB_TOKEN"),
+]
 
 
 def test_the_corpus_plants_forty_secrets_of_every_kind():
