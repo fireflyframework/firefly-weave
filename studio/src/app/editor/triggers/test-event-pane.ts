@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // is connected and test calls are on; anywhere else, and for Kafka, email and
 // app event triggers, the person pastes a sample instead. The sample becomes
 // the workflow's test input, as the input form's Test event does.
+import { stopListening } from "../activation/execute-in-environment";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -66,6 +67,11 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
               <p class="trigger-event-status" role="status">
                 <span class="loading-spinner small"></span>Getting a test URL…
               </p>
+              @if (alone()) {
+                <button type="button" class="pane-generate" (click)="stop()">
+                  Stop listening
+                </button>
+              }
             }
             @case ("listening") {
               @if (state?.kind === "listening") {
@@ -123,6 +129,16 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                   >
                     Copy cURL
                   </button>
+                  @if (alone()) {
+                    <!-- On a phone the header sits with Parameters: stop from here too. -->
+                    <button
+                      type="button"
+                      class="pane-generate"
+                      (click)="stop()"
+                    >
+                      Stop listening
+                    </button>
+                  }
                 </div>
               }
             }
@@ -298,6 +314,12 @@ export class TriggerEventPane {
   readonly trigger = input.required<TriggerIntent>();
   /** The editor: where a webhook listens for its test event. */
   readonly host = input<StepDetailsHost | null>(null);
+  /** Shown without the header beside it (a phone's sheet): the pane offers Stop listening too. */
+  readonly alone = input(false);
+  stop() {
+    const host = this.host();
+    if (host) stopListening(host);
+  }
   readonly urlId = computed(() => `trigger-test-url-${this.trigger().id}`);
   readonly productionId = computed(
     () => `trigger-production-url-${this.trigger().id}`,

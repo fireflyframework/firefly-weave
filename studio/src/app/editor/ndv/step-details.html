@@ -189,6 +189,7 @@ SPDX-License-Identifier: Apache-2.0
           [session]="session()"
           [trigger]="choice"
           [host]="host()"
+          [alone]="layout() === 'sheet'"
         />
       } @else if (target() === "$trigger") {
         <weave-test-event-pane [session]="session()" />

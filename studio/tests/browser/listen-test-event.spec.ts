@@ -301,7 +301,7 @@ test.describe("on a phone", () => {
   test("Listen for test event shows the Test event pane, where the test URL is", async ({
     page,
   }) => {
-    const { dialog } = await openWebhook(page);
+    const { dialog, listening } = await openWebhook(page);
     await dialog
       .locator(".sd-actions")
       .getByRole("button", { name: "Listen for test event", exact: true })
@@ -314,6 +314,12 @@ test.describe("on a phone", () => {
     await expect(
       dialog.getByRole("textbox", { name: "Make a POST request to:" }),
     ).toBeVisible();
+    // The header sits with Parameters on a phone: the pane can stop listening.
+    await dialog
+      .locator(".trigger-event")
+      .getByRole("button", { name: "Stop listening", exact: true })
+      .click();
+    await expect.poll(() => listening.retired).toEqual(["ta-1"]);
   });
 });
 
