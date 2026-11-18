@@ -139,17 +139,25 @@ const clock = (hour: number, minute: number) =>
       @if (timed()) {
         <div class="schedule-field">
           <label class="schedule-caption" [for]="ids.at">At (UTC)</label>
+          <!-- 24-hour HH:MM: everything here is UTC, never a 12-hour clock. -->
           <input
             [id]="ids.at"
-            class="param-input"
-            type="time"
+            class="param-input schedule-time"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="09:00"
+            maxlength="5"
+            [attr.aria-invalid]="timeProblem() ? 'true' : null"
             [value]="time()"
             (change)="at($any($event.target).value)"
           />
         </div>
       }
     </div>
-    @if (preview(); as shown) {
+    @if (timeProblem(); as problem) {
+      <p class="param-line" data-kind="error" role="alert">{{ problem }}</p>
+    } @else if (preview(); as shown) {
       @if ("problem" in shown) {
         <p class="param-line" data-kind="error" role="alert">
           {{ shown.problem }}
@@ -283,11 +291,22 @@ export class ScheduleBuilder {
     if (preset.kind === "weekly" || preset.kind === "monthly")
       this.write({ ...preset, day });
   }
+  /** Why the time typed isn't one, or "". */
+  readonly timeProblem = signal("");
   at(value: string) {
-    const [hour, minute] = value.split(":").map(Number);
+    const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+    if (!match) {
+      this.timeProblem.set("Use a 24-hour time such as 09:00.");
+      return;
+    }
+    this.timeProblem.set("");
     const preset = this.preset();
-    if (Number.isInteger(hour) && Number.isInteger(minute) && "hour" in preset)
-      this.write({ ...preset, hour, minute });
+    if ("hour" in preset)
+      this.write({
+        ...preset,
+        hour: Number(match[1]),
+        minute: Number(match[2]),
+      });
   }
   custom(value: string) {
     this.chosen.set("custom");

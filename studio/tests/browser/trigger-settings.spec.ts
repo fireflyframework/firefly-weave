@@ -207,8 +207,16 @@ for (const size of [
       const builder = field(details, "cron");
       await builder.getByLabel("Repeats").selectOption({ label: "Weekly on" });
       await builder.getByLabel("Day").selectOption({ label: "Monday" });
-      await builder.getByLabel("At (UTC)").fill("09:00");
-      await builder.getByLabel("At (UTC)").blur();
+      // A 24-hour HH:MM field, as everything here is UTC: never a 12-hour clock.
+      const at = builder.getByLabel("At (UTC)");
+      await expect(at).toHaveAttribute("type", "text");
+      await at.fill("25:00");
+      await at.blur();
+      await expect(builder.getByRole("alert")).toHaveText(
+        "Use a 24-hour time such as 09:00.",
+      );
+      await at.fill("09:00");
+      await at.blur();
       await expect(
         builder.getByText("Mondays 09:00 UTC", { exact: true }),
       ).toBeVisible();
@@ -266,6 +274,10 @@ for (const size of [
         "The email message doesn't fit this workflow's input. Replace the input with the email message?",
       );
       await expect(question).toBeVisible();
+      // A question waiting for an answer: a warning notice, Replace first.
+      await expect(details.locator(".trigger-question")).toHaveClass(
+        /\bnotice\b/,
+      );
       await details
         .getByRole("button", { name: "Cancel", exact: true })
         .click();

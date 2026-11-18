@@ -58,7 +58,8 @@ function emailMessageSchema(
       <weave-schedule-builder [session]="session()" [trigger]="trigger()" />
     }
     @if (question(); as asked) {
-      <div class="banner info trigger-question" role="group" aria-label="Input">
+      <!-- A question waiting for an answer: a warning notice, Replace first. -->
+      <div class="notice trigger-question" role="group" aria-label="Input">
         <p>{{ asked }}</p>
         <div class="trigger-question-actions">
           <button type="button" class="sm primary" (click)="replace()">
