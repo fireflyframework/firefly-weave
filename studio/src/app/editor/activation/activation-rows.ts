@@ -147,7 +147,9 @@ export function connectionRows(needs: ConnectionNeeds): ConnectionRow[] {
       row.chosenBy = "dev-binding";
       if (dev.tested?.ok)
         row.tested = `Tested ${relativeTime(dev.tested.at, needs.now)}`;
-    } else if (row.candidates.length === 1) {
+    } else if (row.required && row.candidates.length === 1) {
+      // An optional slot is chosen only from a choice the person made on this
+      // computer: being the only one doesn't make it wanted.
       row.chosen = row.candidates[0].revisionId;
       row.chosenBy = "only-candidate";
     }

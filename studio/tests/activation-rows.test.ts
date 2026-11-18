@@ -136,6 +136,30 @@ describe("connection rows", () => {
     ]).toEqual(["r-1", "only-candidate", undefined, 1]);
   });
 
+  it("chooses an optional slot only from this computer's dev binding, never as the only one", () => {
+    const optional = {
+      ...NEEDS,
+      slots: [{ name: "crm", connector: "weave-http@2.0.0", required: false }],
+      bindable: [http("r-1", "crm-dev")],
+    };
+    const [alone] = connectionRows(optional);
+    expect([alone.chosen, alone.chosenBy]).toEqual([undefined, undefined]);
+    const [bound] = connectionRows({
+      ...optional,
+      devBindings: [
+        {
+          slot: "crm",
+          binding: {
+            connectionId: "c-r-1",
+            revisionId: "r-1",
+            name: "crm-dev",
+          },
+        },
+      ],
+    });
+    expect([bound.chosen, bound.chosenBy]).toEqual(["r-1", "dev-binding"]);
+  });
+
   it("leaves the choice to the person when there are several and no dev binding", () => {
     const [row] = connectionRows({
       ...NEEDS,
@@ -224,7 +248,8 @@ describe("connection rows", () => {
     ).toEqual([
       ["crm", "workflow", true, undefined, undefined, "r-1"],
       ["model", "ai-step", true, "summarize", undefined, "r-ai"],
-      ["lookup-api", "agent-tool", false, "helper", "lookup", "r-1"],
+      // Optional, with no dev binding: left to the person even as the only one.
+      ["lookup-api", "agent-tool", false, "helper", "lookup", undefined],
     ]);
   });
 
