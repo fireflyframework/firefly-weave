@@ -153,6 +153,7 @@ import {
   showOutput,
   succeeded as stepTestSucceeded,
   view as stepTestView,
+  type StepTestScript,
 } from "./step-tests-po";
 import {
   keepDrafts,
@@ -5070,6 +5071,103 @@ spec:
     await expect(item).toContainText("Test calls are off in Production.");
     await shot("199-execute-policy-off");
   },
+  async "execute-release-running"({ page, shot }) {
+    await page.clock.install();
+    const details = await connectedCrm(page, {
+      starts: [
+        {
+          status: 422,
+          json: {
+            code: "WV-STEPTEST-RELEASE",
+            message: "WV-STEPTEST-RELEASE.",
+            result: {
+              choices: {
+                "weave-http@2.0.0": [
+                  { id: "r-old", label: "weave-http 2.0.0 (image a1b2)" },
+                  { id: "r-new", label: "weave-http 2.0.0 (image c3d4)" },
+                ],
+              },
+            },
+          },
+        },
+        { status: 202, json: stepTestAccepted },
+      ],
+      // The step test keeps running.
+      views: [stepTestView()],
+    });
+    await (await executeStepIn(details, "Production")).click();
+    const question = page.getByRole("alertdialog", {
+      name: "Choose a release",
+    });
+    await expect(question).toBeVisible();
+    await shot("200-execute-release-choice", { tabs: 2 });
+    await question.getByRole("button", { name: "Run it" }).click();
+    const output = await showOutput(details);
+    await page.clock.fastForward("00:12");
+    // The clock keeps running during the shots: at least 12 s by now.
+    await expect(output).toContainText(
+      /Executing crm-lookup in Production · (1[2-9]|[2-9]\d) s/,
+    );
+    await shot("201-execute-running");
+    await details.close();
+    await expect(
+      page.locator('.tile-node[data-tile="crm-lookup"] .tile-shape'),
+    ).toHaveClass(/\blive\b/);
+    await shot("202-execute-running-canvas");
+  },
+  async "execute-failed"({ page, shot }) {
+    const details = await connectedCrm(page, {
+      starts: [{ status: 202, json: stepTestAccepted }],
+      views: [
+        stepTestView({
+          status: "failed",
+          error: {
+            code: "WV-STEP-HTTP_STATUS",
+            message: "The step failed: HTTP_STATUS.",
+          },
+          ended_at: "2026-11-17T10:00:02Z",
+        }),
+      ],
+    });
+    await (await executeStepIn(details, "Production")).click();
+    const output = await showOutput(details);
+    await expect(output).toContainText(
+      "crm-lookup failed in Production: HTTP_STATUS.",
+    );
+    await shot("203-execute-failed");
+  },
+  async "execute-timed-out"({ page, shot }) {
+    const details = await connectedCrm(page, {
+      starts: [{ status: 202, json: stepTestAccepted }],
+      views: [
+        stepTestView({
+          status: "timed_out",
+          ended_at: "2026-11-17T10:00:30Z",
+        }),
+      ],
+    });
+    await (await executeStepIn(details, "Production")).click();
+    const output = await showOutput(details);
+    await expect(output).toContainText(
+      "crm-lookup didn't finish in Production within 30 s.",
+    );
+    await shot("204-execute-timed-out");
+  },
+  async "execute-canceled"({ page, shot }) {
+    const details = await connectedCrm(page, {
+      starts: [{ status: 202, json: stepTestAccepted }],
+      views: [
+        stepTestView({
+          status: "cancelled",
+          ended_at: "2026-11-17T10:00:04Z",
+        }),
+      ],
+    });
+    await (await executeStepIn(details, "Production")).click();
+    const output = await showOutput(details);
+    await expect(output).toContainText("Canceled.");
+    await shot("205-execute-canceled");
+  },
   async "runs-tab"({ page, shot }) {
     const { runs } = await openRunsTab(page);
     await chooseRun(page, runs, RUN_IDS.failed);
@@ -5222,6 +5320,28 @@ async function selectStep(page: Page, canvas: CanvasPage, width: number) {
   const details = new DesignerPage(page).inspector;
   if (width <= 1280) await expect(details).toBeHidden();
   else await expect(details).toBeVisible();
+}
+
+/** Step details on crm-lookup, connected to Production with acme-crm-1 chosen and tested. */
+async function connectedCrm(page: Page, script: StepTestScript) {
+  const { details } = await openConnected(
+    page,
+    { bindable: { [PRODUCTION]: [connectionBindable(1)] } },
+    crmWorkflow(
+      {},
+      { with: { object: { customerId: { literal: "c-1042" } } } },
+    ),
+  );
+  await routeStepTests(page, script);
+  await details.open("crm-lookup");
+  await connectionSelect(details).click();
+  await page
+    .getByRole("listbox", { name: "Connection options" })
+    .getByRole("option")
+    .filter({ hasText: /^acme-crm-1/ })
+    .click();
+  await expect(details.field("connection")).toContainText("Tested");
+  return details;
 }
 
 for (const size of sizes)
