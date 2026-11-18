@@ -589,8 +589,9 @@ async def test_provider_migration_privileges_and_lifespan_loop(inbox, access_db,
         assert len(values) == 3 and all(row[1] and row[2] for row in values)
     uow = UnitOfWork(access_db[0])
     async with uow.open(inbox["scope"]) as tx:
+        # A retarget rewrites a source's payload; the run a signal source targets never changes.
         assert not await tx.session.scalar(
-            text("SELECT has_column_privilege(current_user,'provider_sources','payload','UPDATE')")
+            text("SELECT has_column_privilege(current_user,'provider_sources','run_id','UPDATE')")
         )
         assert not await tx.session.scalar(
             text("SELECT has_column_privilege(current_user,'provider_receipts','event','UPDATE')")

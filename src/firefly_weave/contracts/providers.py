@@ -96,6 +96,8 @@ class ProviderSource(ProviderSourceRequest):
     binding_id: UUID
     principal_id: UUID
     disabled: bool = False
+    # Counts the source's changes (a retarget, a disable): a change names the revision it read.
+    revision: int = Field(default=1, ge=1)
 
 
 class ProviderEvent(ContractModel):

@@ -67,6 +67,8 @@ class BrokerTrigger(BrokerTriggerRequest):
     principal_id: UUID
     disabled: bool = False
     blocked: bool = False
+    # Counts the trigger's changes (a retarget, a disable): a change names the revision it read.
+    revision: int = Field(default=1, ge=1)
 
 
 @dataclass(frozen=True)

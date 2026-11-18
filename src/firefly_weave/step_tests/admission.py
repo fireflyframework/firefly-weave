@@ -132,14 +132,14 @@ def busy_refusal(running: Sequence[datetime], recent: Sequence[datetime], now: d
         return CatalogError(
             429,
             "WV-STEPTEST-BUSY",
-            f"You already have {MAX_RUNNING} steps executing here.",
+            f"You already have {MAX_RUNNING} test runs running here.",
             retry_after=_wait(min(running), now),
         )
     if len(recent) >= MAX_PER_MINUTE:
         return CatalogError(
             429,
             "WV-STEPTEST-BUSY",
-            f"You started {MAX_PER_MINUTE} step tests here in the last minute.",
+            f"You started {MAX_PER_MINUTE} test runs here in the last minute.",
             retry_after=_wait(min(recent) + WINDOW, now),
         )
     return None

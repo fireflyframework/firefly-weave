@@ -186,6 +186,20 @@ class EmailSourceResult(ContractModel):
     id: UUID
 
 
+class EmailSourceView(ContractModel):
+    """An email source as lists and reads show it: what it reads and which activation it starts, never its mail.
+
+    ``disabled`` is true while the source doesn't read its mailbox, as after the mailbox was reset on the server.
+    """
+
+    id: UUID
+    connection_revision_id: UUID
+    activation_id: UUID | None = None
+    mailbox: str
+    revision: int = Field(ge=1)
+    disabled: bool
+
+
 class EmailSourceStatus(ContractModel):
     state: str
     uid: int | None = None

@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import page_request, page_response
+from firefly_weave.api.triggers import retarget_body, tagged
 from firefly_weave.connections.source_bindings import SourceBindingService
 from firefly_weave.contracts.broker import BrokerTriggerRequest
 from firefly_weave.triggers.kafka import KafkaTrigger
@@ -55,7 +56,20 @@ class BrokerController:
             UUID(request.path_params["identifier"]),
             context=request.state.audit_context,
         )
-        return JSONResponse(result.model_dump(mode="json"))
+        return tagged(result, request)
+
+    @operation("broker_triggers.retarget")
+    async def retarget(self, request: Request) -> JSONResponse:
+        expected, body = await retarget_body(request)
+        result = await self.service.retarget(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            body.activation_id,
+            expected,
+            context=request.state.audit_context,
+        )
+        return tagged(result, request)
 
     @operation("broker_triggers.list")
     async def discover(self, request: Request) -> JSONResponse:

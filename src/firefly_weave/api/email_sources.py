@@ -24,6 +24,8 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
+from firefly_weave.api.transport import page_request, page_response
+from firefly_weave.api.triggers import retarget_body, tagged
 from firefly_weave.contracts.email import (
     EmailCorrelationRequest,
     EmailSourceRequest,
@@ -50,6 +52,33 @@ class EmailSourceController:
             activation_id=parsed.activation_id,
         )
         return JSONResponse(EmailSourceResult(id=identifier).model_dump(mode="json"), status_code=201)
+
+    @operation("email_sources.list")
+    async def discover(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        limit, cursor = page_request(request, scope, "email_sources")
+        result = await self.sources.list(request.state.principal, scope, limit=limit, cursor=cursor)
+        return JSONResponse(page_response(result, scope, "email_sources", request.url.path))
+
+    @operation("email_sources.read")
+    async def read(self, request: Request) -> JSONResponse:
+        result = await self.sources.read(
+            request.state.principal, request_scope(request, environment=True), UUID(request.path_params["identifier"])
+        )
+        return tagged(result, request)
+
+    @operation("email_sources.retarget")
+    async def retarget(self, request: Request) -> JSONResponse:
+        expected, body = await retarget_body(request)
+        result = await self.sources.retarget(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            body.activation_id,
+            expected,
+            context=request.state.audit_context,
+        )
+        return tagged(result, request)
 
     @operation("email_sources.poll")
     async def poll(self, request: Request) -> JSONResponse:
@@ -102,8 +131,6 @@ class EmailSourceController:
 
     @operation("email_receipts.list")
     async def inbox(self, request: Request) -> JSONResponse:
-        from firefly_weave.api.transport import page_request, page_response
-
         scope = request_scope(request, environment=True)
         limit, cursor = page_request(request, scope, "email_receipts")
         result = await self.sources.inbox(request.state.principal, scope, limit=limit, cursor=cursor)

@@ -51,6 +51,16 @@ async def _stored(tx: Transaction, *, lock: str = "") -> EnvironmentTestPolicy:
     return EnvironmentTestPolicy(test_calls=row[0], revision=row[1])
 
 
+def disabled() -> CatalogError:
+    return CatalogError(403, "WV-STEPTEST-DISABLED", "Test calls are off in this environment")
+
+
+async def require_test_calls(tx: Transaction) -> None:
+    """Refuse unless test calls are on now; a concurrent change of the policy waits for the caller's transaction."""
+    if (await _stored(tx, lock=" FOR SHARE")).test_calls != "enabled":
+        raise disabled()
+
+
 @service
 class TestPolicyService:
     __test__ = False

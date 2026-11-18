@@ -117,6 +117,7 @@ from firefly_weave.contracts.email import (
     EmailSourceRequest,
     EmailSourceResult,
     EmailSourceStatus,
+    EmailSourceView,
     EmailSubmission,
     EmailTokenRequest,
 )
@@ -229,6 +230,11 @@ from firefly_weave.contracts.runtime import (
 )
 from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
 from firefly_weave.contracts.step_tests import (
+    DraftTestActivation,
+    DraftTestActivationRequest,
+    DraftTestListen,
+    DraftTestListenRequest,
+    DraftTestRunRequest,
     EnvironmentTestPolicy,
     EnvironmentTestPolicyUpdate,
     StepTestAccepted,
@@ -238,6 +244,7 @@ from firefly_weave.contracts.step_tests import (
 )
 from firefly_weave.contracts.studio_documents import StudioDocument, StudioDocumentSave
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
+from firefly_weave.contracts.triggers import RetargetRequest
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.whatsapp import MessageId, WhatsAppDeliveryState, WhatsAppStatusFact
 from firefly_weave.contracts.worker_queries import (
@@ -1261,7 +1268,12 @@ OPERATIONS = {
             (201,),
         ),
         Operation(
-            "provider_sources.read", ENVIRONMENT + "/provider-sources/{identifier}", "GET", ProviderSource, "run.read"
+            "provider_sources.read",
+            ENVIRONMENT + "/provider-sources/{identifier}",
+            "GET",
+            ProviderSource,
+            "run.read",
+            etag=True,
         ),
         Operation(
             "provider_sources.list",
@@ -2194,6 +2206,7 @@ OPERATIONS = {
             "GET",
             BrokerTrigger,
             "trigger.manage",
+            etag=True,
         ),
         Operation(
             "broker_triggers.disable",
@@ -2221,7 +2234,7 @@ OPERATIONS = {
             "triggers.create", ENVIRONMENT + "/triggers", "POST", Trigger, "trigger.manage", TriggerRequest, (201,)
         ),
         Operation("triggers.list", ENVIRONMENT + "/triggers", "GET", Page[Trigger], "trigger.manage", page=True),
-        Operation("triggers.read", ENVIRONMENT + "/triggers/{identifier}", "GET", Trigger, "trigger.manage"),
+        Operation("triggers.read", ENVIRONMENT + "/triggers/{identifier}", "GET", Trigger, "trigger.manage", etag=True),
         Operation(
             "triggers.disable", ENVIRONMENT + "/triggers/{identifier}/disable", "POST", Disabled, "trigger.manage"
         ),
@@ -2244,7 +2257,12 @@ OPERATIONS = {
             page=True,
         ),
         Operation(
-            "event_triggers.read", ENVIRONMENT + "/event-triggers/{identifier}", "GET", EventTrigger, "trigger.manage"
+            "event_triggers.read",
+            ENVIRONMENT + "/event-triggers/{identifier}",
+            "GET",
+            EventTrigger,
+            "trigger.manage",
+            etag=True,
         ),
         Operation(
             "event_triggers.disable",
@@ -2324,6 +2342,117 @@ OPERATIONS = {
             DebugCommand,
             revision="required",
             etag=True,
+        ),
+        # Moving a trigger to another activation of its workflow: the mover needs what creating it needs, and the
+        # trigger then runs as the mover. If-Match names the revision the trigger was read at.
+        Operation(
+            "triggers.retarget",
+            ENVIRONMENT + "/triggers/{identifier}/retarget",
+            "POST",
+            Trigger,
+            "trigger.manage and run.start",
+            RetargetRequest,
+            revision="required",
+            etag=True,
+        ),
+        # A Kafka trigger or app event source also gets a new source binding for the mover; the old one is revoked.
+        Operation(
+            "broker_triggers.retarget",
+            ENVIRONMENT + "/broker-triggers/{identifier}/retarget",
+            "POST",
+            BrokerTrigger,
+            "trigger.manage and run.start and connection.manage and connection.bind",
+            RetargetRequest,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "provider_sources.retarget",
+            ENVIRONMENT + "/provider-sources/{identifier}/retarget",
+            "POST",
+            ProviderSource,
+            "trigger.manage and run.start and connection.manage and connection.bind",
+            RetargetRequest,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "email_sources.retarget",
+            ENVIRONMENT + "/email/sources/{identifier}/retarget",
+            "POST",
+            EmailSourceView,
+            "email.manage and trigger.manage and connection.bind and run.start",
+            RetargetRequest,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "event_triggers.retarget",
+            ENVIRONMENT + "/event-triggers/{identifier}/retarget",
+            "POST",
+            EventTrigger,
+            "trigger.manage and run.start and run.read",
+            RetargetRequest,
+            revision="required",
+            etag=True,
+            description="A trigger whose runs may resolve their transaction also needs transaction.reconcile.",
+        ),
+        # What each email source reads and which activation it starts; never its mail, policy or mailbox position.
+        Operation(
+            "email_sources.list",
+            ENVIRONMENT + "/email/sources",
+            "GET",
+            Page[EmailSourceView],
+            "email.read",
+            page=True,
+        ),
+        Operation(
+            "email_sources.read",
+            ENVIRONMENT + "/email/sources/{identifier}",
+            "GET",
+            EmailSourceView,
+            "email.read",
+            etag=True,
+        ),
+        # Draft test activations for Execute workflow in an environment: only their creator may run, listen through
+        # or retire one, and anyone else is told it doesn't exist. Creating one also needs connection.bind on every
+        # connection it names, and catalog.read on the draft.
+        Operation(
+            "test_activations.create",
+            ENVIRONMENT + "/test-activations",
+            "POST",
+            DraftTestActivation,
+            "step.test",
+            DraftTestActivationRequest,
+            (201,),
+        ),
+        Operation(
+            "test_activations.run",
+            ENVIRONMENT + "/test-activations/{identifier}/runs",
+            "POST",
+            RunView,
+            "step.test",
+            DraftTestRunRequest,
+            (201,),
+            optional_idempotency=True,
+        ),
+        Operation(
+            "test_activations.listen",
+            ENVIRONMENT + "/test-activations/{identifier}/listen",
+            "POST",
+            DraftTestListen,
+            "step.test and trigger.manage",
+            DraftTestListenRequest,
+            (201,),
+        ),
+        Operation(
+            "test_activations.retire",
+            ENVIRONMENT + "/test-activations/{identifier}",
+            "DELETE",
+            None,
+            "step.test",
+            statuses=(204,),
+            request_required=False,
         ),
     )
 }

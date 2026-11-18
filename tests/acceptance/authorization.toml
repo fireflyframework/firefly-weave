@@ -339,6 +339,61 @@ body = { draft_revision = 1, document = {} }
 capability = "release.retire"
 body = { older_than_seconds = 2592000, dry_run = true }
 
+# Moving a trigger to another activation: a permitted call names a random trigger, so nothing moves.
+[operations."triggers.retarget"]
+capability = "trigger.manage and run.start"
+identifier = "random"
+body = { activation_id = "random" }
+
+[operations."broker_triggers.retarget"]
+capability = "trigger.manage and run.start and connection.manage and connection.bind"
+identifier = "random"
+body = { activation_id = "random" }
+
+[operations."provider_sources.retarget"]
+capability = "trigger.manage and run.start and connection.manage and connection.bind"
+identifier = "random"
+body = { activation_id = "random" }
+
+[operations."email_sources.retarget"]
+capability = "email.manage and trigger.manage and connection.bind and run.start"
+identifier = "random"
+body = { activation_id = "random" }
+
+[operations."event_triggers.retarget"]
+capability = "trigger.manage and run.start and run.read"
+identifier = "random"
+body = { activation_id = "random" }
+
+[operations."email_sources.list"]
+capability = "email.read"
+
+[operations."email_sources.read"]
+capability = "email.read"
+identifier = "random"
+
+# Draft test activations: a permitted create names a random draft, and the others a random test activation, so
+# nothing is written or started.
+[operations."test_activations.create"]
+capability = "step.test"
+body = { draft_id = "random", draft_revision = 1 }
+# Where test calls are off (every environment but the demo one), a permitted create is refused by the policy.
+answers = [{ status = 403, code = "WV-STEPTEST-DISABLED" }]
+
+[operations."test_activations.run"]
+capability = "step.test"
+identifier = "random"
+body = { input = {} }
+
+[operations."test_activations.listen"]
+capability = "step.test and trigger.manage"
+identifier = "random"
+body = { secret_ref = "probe" }
+
+[operations."test_activations.retire"]
+capability = "step.test"
+identifier = "random"
+
 # A permitted publish fails compilation (no spec), so nothing is published.
 [controls."definitions.publish"]
 capability = "definition.publish"

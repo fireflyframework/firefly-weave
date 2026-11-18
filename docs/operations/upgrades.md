@@ -616,6 +616,42 @@ back to work, and the change request can be planned again. CLIs and SDKs of the 
 a restart plan, a target that offers `restart_workers`, or a target whose
 environment manager turned off the second approver; upgrade them with the server.
 
+## Trigger revisions and retarget
+
+Servers that move triggers between versions (migration
+`0044_editor_trigger_retarget`) change what trigger reads answer and who a
+trigger can run as:
+
+- **The migration is quick.** It adds `revision` to webhooks, Kafka triggers,
+  app event sources and email sources with a constant default, which changes
+  only the catalog, and backfills nothing. Existing triggers read revision 1,
+  which costs nothing toward usage. It replaces the unique constraint on
+  connection source bindings with an index over live bindings only, built from
+  that small table.
+- **Reads answer a revision.** `triggers`, `broker_triggers` and
+  `provider_sources` reads, lists and creates add `revision`, and their reads,
+  like `event_triggers.read`, send it as the `ETag`. **Upgrade CLIs and SDKs
+  with the server.** Earlier releases read these answers strictly and refuse
+  the new field, so `weave triggers`, `weave broker-triggers` and the Python
+  SDK's trigger and provider source reads fail against an upgraded server.
+- **Disabling moves the revision.** A disabled webhook, Kafka trigger or app
+  event source reads revision 2, as a disabled platform-event trigger already
+  did.
+- **A trigger can run as someone else.** A retarget makes the person who moves
+  a trigger its principal. Audits name the old and new principal
+  (`trigger.retarget`, `broker.retarget`, `provider.source.retarget`,
+  `email.source.retarget`, `event_trigger.retarget`); review them where you
+  review grants. See
+  [Move a trigger to another version](../reference/api.md#move-a-trigger-to-another-version).
+
+The same servers serve draft test activations (`test_activations.*`), which
+Execute workflow in an environment uses; they need test calls turned on, as step
+tests do. The Studio host bridge now forwards them, the webhook, schedule, Kafka
+trigger and app event source operations, and the new retarget and email source
+reads. An earlier
+Studio host or desktop app refuses them with `404`, so upgrade Studio and the
+desktop app with the server.
+
 ## Verify before admitting traffic
 
 Perform these checks in order for each project and execution path:
