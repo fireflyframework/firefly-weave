@@ -210,3 +210,13 @@ async def test_a_source_whose_binding_was_revoked_stays_stopped(events):
     [row] = await stored(env, "SELECT revision,binding_id FROM provider_sources WHERE id=:id")
     assert (row["revision"], row["binding_id"]) == (1, env.events.binding_id)
     assert await stored(env, "SELECT id FROM connection_source_bindings WHERE source_id=:id AND NOT revoked") == []
+
+
+async def test_a_mover_without_connection_management_is_refused_before_the_source_is_read(events):
+    env = events
+    from firefly_weave.access.authorization import AccessDenied
+
+    lacking = await person(env.access, env.admin, env.scope, "deployer", "operator", "viewer")
+    # A stale revision would answer 409; the missing capability is refused first.
+    with pytest.raises(AccessDenied):
+        await retarget(env, env.second.id, 5, actor=lacking)

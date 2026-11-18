@@ -281,7 +281,8 @@ class ProviderIngressService:
         """
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await load_principal(tx.session, actor.id)
-            for capability in ("trigger.manage", "connection.bind", "run.start"):
+            # Everything creating a source needs, the source binding's capabilities included, before it is read.
+            for capability in ("trigger.manage", "run.start", "connection.manage", "connection.bind"):
                 self.runtime.require(actor, scope, capability, context)
             repository = ProviderRepository(tx)
             current = await repository.source(identifier, lock=True)

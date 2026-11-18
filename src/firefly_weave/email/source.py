@@ -160,8 +160,9 @@ class EmailSourceService:
         """
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await self.email.checked(tx, actor, "email.manage")
-            self.runtime.require(actor, scope, "trigger.manage", context)
-            self.runtime.require(actor, scope, "run.start", context)
+            # Everything creating a source needs, binding its mail connection included, before it is read.
+            for capability in ("trigger.manage", "connection.bind", "run.start"):
+                self.runtime.require(actor, scope, capability, context)
             repository = RuntimeRepository(tx)
             rows = await repository.rows(
                 f"SELECT * FROM email_sources WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier

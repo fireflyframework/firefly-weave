@@ -218,8 +218,9 @@ class KafkaTrigger:
 
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await load_principal(tx.session, actor.id)
-            self.runtime.require(actor, scope, "trigger.manage", context)
-            self.runtime.require(actor, scope, "run.start", context)
+            # Everything creating a route needs, the source binding's capabilities included, before it is read.
+            for capability in ("trigger.manage", "run.start", "connection.manage", "connection.bind"):
+                self.runtime.require(actor, scope, capability, context)
             repository = RuntimeRepository(tx)
             rows = await repository.rows(
                 f"SELECT * FROM broker_routes WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier

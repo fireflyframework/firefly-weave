@@ -297,3 +297,13 @@ async def test_a_route_whose_binding_was_revoked_stays_stopped(kafka):
     [row] = await stored(env, "SELECT revision,binding_id FROM broker_routes WHERE id=:id")
     assert (row["revision"], row["binding_id"]) == (1, env.route.binding_id)
     assert await stored(env, "SELECT id FROM connection_source_bindings WHERE source_id=:id AND NOT revoked") == []
+
+
+async def test_a_mover_without_connection_management_is_refused_before_the_route_is_read(kafka):
+    env = kafka
+    from firefly_weave.access.authorization import AccessDenied
+
+    lacking = await person(env.access, env.admin, env.scope, "deployer", "operator", "viewer")
+    # A stale revision would answer 409; the missing capability is refused first.
+    with pytest.raises(AccessDenied):
+        await retarget(env, env.second.id, 5, actor=lacking)
