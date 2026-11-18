@@ -18,8 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // A run's steps from runs.steps: one bar per step instance, showing how long
 // it waited in the queue and how long it ran, loop iterations grouped under
 // their step, and a link to the run a step called. Outputs are read only when
-// the person opens Input/Output and asks for one step; logs are not served
-// yet, so the Logs tab says so without asking the platform.
+// the person opens Input/Output and asks for one step. The run's log entries
+// have their own section after this one.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -132,7 +132,7 @@ const stepWords: Record<string, string> = {
   timed_out: "Timed out",
 };
 
-type Tab = "timeline" | "io" | "logs";
+type Tab = "timeline" | "io";
 
 @Component({
   selector: "weave-step-timeline",
@@ -165,12 +165,7 @@ type Tab = "timeline" | "io" | "logs";
         role="tabpanel"
         [attr.aria-labelledby]="'steps-tab-' + selected()"
       >
-        @if (selected() === "logs") {
-          <p class="steps-note">
-            Logs aren't available from this platform yet. Export history keeps
-            the run's events.
-          </p>
-        } @else if (v.loading && !v.items.length) {
+        @if (v.loading && !v.items.length) {
           <div class="steps-loading" role="status">
             <span class="sr-only">Loading steps…</span>
             @for (row of [0, 1, 2]; track row) {
@@ -334,7 +329,6 @@ export class StepTimeline {
   readonly tabs: [Tab, string][] = [
     ["timeline", "Timeline"],
     ["io", "Input/Output"],
-    ["logs", "Logs"],
   ];
   readonly selected = signal<Tab>("timeline");
   readonly short = shortId;

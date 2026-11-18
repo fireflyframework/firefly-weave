@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // hidden entry is a convenience, never a control.
 import type { Routes } from "@angular/router";
 import { SETTINGS_TABS } from "../settings/settings-routes";
+import type { LogLevel } from "./run-contracts";
 
 /** The Operate pages, in navigation order; Overview is the default. */
 export const operatePages = [
@@ -165,6 +166,86 @@ export function metricsPath(route: MetricsRoute): string {
   const text = query.toString();
   return text ? `/operate/metrics?${text}` : "/operate/metrics";
 }
+
+/** The Logs ranges, in menu order; the last hour is the default. */
+export const logsRanges = ["15m", "1h", "6h", "24h", "7d"] as const;
+export type LogsRange = (typeof logsRanges)[number];
+/** The lowest level the Logs page shows; "" is every level. */
+export type LogsLevel = Exclude<LogLevel, "debug"> | "";
+const logsLevels: Record<string, LogsLevel> = {
+  all: "",
+  info: "info",
+  warning: "warning",
+  error: "error",
+};
+// A static step ID and a log code, as the platform's contract accepts them.
+const stepName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/;
+const logCode = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
+
+/**
+ * A Logs address: every filter but the message, which never enters an
+ * address, a history entry or storage.
+ */
+export interface LogsRoute {
+  range: LogsRange;
+  level: LogsLevel;
+  /** "" for every workflow. */
+  workflow: string;
+  /** A static step ID, or "" for every step. */
+  step: string;
+  /** A log code, or "" for every code. */
+  code: string;
+  /** Whether test runs' entries show. */
+  test: boolean;
+}
+export const defaultLogsRoute: Readonly<LogsRoute> = Object.freeze({
+  range: "1h",
+  level: "warning",
+  workflow: "",
+  step: "",
+  code: "",
+  test: false,
+});
+
+/** Reads "/operate/logs?range=6h&level=error&…"; anything unknown falls back. */
+export function logsRoute(search: string): LogsRoute {
+  const query = new URLSearchParams(search);
+  const range = query.get("range") ?? "";
+  const level = query.get("level") ?? "";
+  const workflow = query.get("workflow") ?? "";
+  const step = query.get("step") ?? "";
+  const code = query.get("code") ?? "";
+  return {
+    range: (logsRanges as readonly string[]).includes(range)
+      ? (range as LogsRange)
+      : defaultLogsRoute.range,
+    level: Object.hasOwn(logsLevels, level)
+      ? logsLevels[level]
+      : defaultLogsRoute.level,
+    workflow: workflowName.test(workflow) ? workflow : "",
+    step: stepName.test(step) ? step : "",
+    code: logCode.test(code) ? code : "",
+    test: query.get("test") === "1",
+  };
+}
+
+/** "/operate/logs", with each filter that differs from its default. */
+export function logsPath(route: LogsRoute): string {
+  const query = new URLSearchParams();
+  if (route.range !== defaultLogsRoute.range) query.set("range", route.range);
+  if (route.level !== defaultLogsRoute.level)
+    query.set("level", route.level || "all");
+  if (route.workflow) query.set("workflow", route.workflow);
+  if (route.step) query.set("step", route.step);
+  if (route.code) query.set("code", route.code);
+  if (route.test) query.set("test", "1");
+  const text = query.toString();
+  return text ? `/operate/logs?${text}` : "/operate/logs";
+}
+
+/** Whether a step ID or a log code has the shape the platform accepts. */
+export const isStepName = (value: string) => stepName.test(value);
+export const isLogCode = (value: string) => logCode.test(value);
 
 /** A Clusters address: one record's screen, or the tab list. */
 export interface ClustersRoute {

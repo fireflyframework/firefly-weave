@@ -524,7 +524,7 @@ weave-operate-state {
 }
 
 /* A run's steps: bars for queue wait and run time, loop iterations under
-   their step, Input/Output on request, and logs not served yet. */
+   their step, and Input/Output on request. */
 .steps {
   display: grid;
   gap: var(--group-gap);

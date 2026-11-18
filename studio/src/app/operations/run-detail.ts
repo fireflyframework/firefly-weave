@@ -33,7 +33,8 @@ import { FFlowModule } from "@foblex/flow";
 import type { App } from "../app";
 import { copyText } from "../connection";
 import { Icon } from "../icon";
-import { RunActions, runState } from "../operate/runs/run-actions";
+import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
+import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
@@ -63,7 +64,7 @@ const isRecord = (value: unknown): value is Json =>
   selector: "weave-run-detail",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, FFlowModule, StartRunDialog, StepTimeline],
+  imports: [Icon, FFlowModule, RunLogs, StartRunDialog, StepTimeline],
   styleUrl: "./run-detail.css",
   template: `@let h = host();
     @let run = h.selectedRecord!;
@@ -311,6 +312,12 @@ const isRecord = (value: unknown): value is Json =>
     }
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />
+      <weave-run-logs
+        [host]="h"
+        [runId]="view.runId"
+        [steps]="view.items"
+        [live]="live()"
+      />
     }
     <section class="run-timeline" aria-labelledby="run-timeline-title">
       <h3 id="run-timeline-title">Events</h3>
@@ -464,6 +471,11 @@ export class RunDetail implements DoCheck, OnDestroy {
   }
   status() {
     return statusLabel("run", runStatus(this.run()));
+  }
+  /** The run's status is known and it is still going. */
+  live() {
+    const run = this.run();
+    return !!runState(run) && !isTerminal(run);
   }
   /** A failed run is debugged where it failed; any other is copied. */
   failed() {
