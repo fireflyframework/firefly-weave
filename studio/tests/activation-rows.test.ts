@@ -19,11 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // workflow's language features, and one connection row per slot the
 // activation needs, prefilled from this computer's dev bindings.
 import { describe, expect, it } from "vitest";
+import type { BindableItem } from "../src/app/editor/connections/connections-api";
 import {
   chosenSummary,
   connectionRows,
   missingFeatures,
-  type BindableChoice,
   type ConnectionNeeds,
 } from "../src/app/editor/activation/activation-rows";
 
@@ -62,13 +62,13 @@ describe("connection rows", () => {
     revision: string,
     name: string,
     enabled = true,
-  ): BindableChoice => ({
-    revision_id: revision,
-    connection_id: `c-${revision}`,
+  ): BindableItem => ({
+    revisionId: revision,
+    connectionId: `c-${revision}`,
     name,
     connector: "weave-http@2.0.0",
-    label: name,
     enabled,
+    origin: "https://crm.example",
   });
   const NEEDS: ConnectionNeeds = {
     environment: "local",
@@ -85,7 +85,15 @@ describe("connection rows", () => {
       ...NEEDS,
       bindable: [http("r-1", "crm-dev"), http("r-2", "crm-sandbox")],
       devBindings: [
-        { slot: "crm", revisionId: "r-2", testedAt: "2026-11-18T09:58:00Z" },
+        {
+          slot: "crm",
+          binding: {
+            connectionId: "c-r-2",
+            revisionId: "r-2",
+            name: "crm-sandbox",
+            tested: { ok: true, at: "2026-11-18T09:58:00Z" },
+          },
+        },
       ],
     });
     expect(rows).toEqual([
@@ -95,8 +103,8 @@ describe("connection rows", () => {
         required: true,
         source: "workflow",
         candidates: [
-          expect.objectContaining({ revision_id: "r-1" }),
-          expect.objectContaining({ revision_id: "r-2" }),
+          expect.objectContaining({ revisionId: "r-1" }),
+          expect.objectContaining({ revisionId: "r-2" }),
         ],
         chosen: "r-2",
         chosenBy: "dev-binding",
@@ -109,7 +117,16 @@ describe("connection rows", () => {
     const [row] = connectionRows({
       ...NEEDS,
       bindable: [http("r-1", "crm-dev"), http("r-gone", "crm-old", false)],
-      devBindings: [{ slot: "crm", revisionId: "r-gone" }],
+      devBindings: [
+        {
+          slot: "crm",
+          binding: {
+            connectionId: "c-gone",
+            revisionId: "r-gone",
+            name: "crm-old",
+          },
+        },
+      ],
     });
     expect([
       row.chosen,
@@ -146,7 +163,16 @@ describe("connection rows", () => {
     const [row] = connectionRows({
       ...NEEDS,
       bindable: "forbidden",
-      devBindings: [{ slot: "crm", revisionId: "r-1" }],
+      devBindings: [
+        {
+          slot: "crm",
+          binding: {
+            connectionId: "c-r-1",
+            revisionId: "r-1",
+            name: "crm-dev",
+          },
+        },
+      ],
     });
     expect([row.chosen, row.message]).toEqual([
       undefined,
@@ -155,7 +181,7 @@ describe("connection rows", () => {
   });
 
   it("lists AI steps' and agent tools' connections after the workflow's, once per slot", () => {
-    const ai: BindableChoice = {
+    const ai: BindableItem = {
       ...http("r-ai", "openai"),
       connector: "weave-openai@1.0.0",
     };

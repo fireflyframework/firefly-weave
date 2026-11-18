@@ -22,6 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // computer tested while it can still be bound, else from the only
 // connection the person can bind.
 import { relativeTime } from "../../format";
+import type { BindableItem } from "../connections/connections-api";
+import type { DevBinding } from "../connections/dev-bindings";
 
 /** Language features in words, as people know them from the steps that use them. */
 const FEATURE_WORDS: Record<string, string> = {
@@ -60,22 +62,6 @@ export interface SlotNeed {
   /** The agent tool that needs it. */
   tool?: string;
 }
-/** A connection revision the person can bind (`bindable_connections.list`). */
-export interface BindableChoice {
-  connection_id: string;
-  revision_id: string;
-  name: string;
-  connector: string;
-  label: string;
-  enabled: boolean;
-}
-/** A connection this computer bound to a slot for local runs. */
-export interface DevBinding {
-  slot: string;
-  revisionId: string;
-  /** When a step test last used it successfully. */
-  testedAt?: string;
-}
 export interface ConnectionNeeds {
   /** The environment's name, as messages say it. */
   environment: string;
@@ -83,8 +69,9 @@ export interface ConnectionNeeds {
   aiSteps: SlotNeed[];
   agentToolSlots: SlotNeed[];
   /** What the person can bind here, or "forbidden" when they may not bind connections. */
-  bindable: BindableChoice[] | "forbidden";
-  devBindings: DevBinding[];
+  bindable: BindableItem[] | "forbidden";
+  /** The connections this computer bound to the workflow's slots for local runs. */
+  devBindings: { slot: string; binding: DevBinding }[];
   now?: Date;
 }
 
@@ -96,7 +83,7 @@ export interface ConnectionRow {
   source: SlotSource;
   step?: string;
   tool?: string;
-  candidates: BindableChoice[];
+  candidates: BindableItem[];
   /** The revision Studio chose for the person. */
   chosen?: string;
   chosenBy?: "dev-binding" | "only-candidate";
@@ -149,17 +136,19 @@ export function connectionRows(needs: ConnectionNeeds): ConnectionRow[] {
       row.message = `No connection for ${connectorWords(row.connector)} in ${needs.environment}. Create one in Connections.`;
       continue;
     }
-    const dev = needs.devBindings.find((binding) => binding.slot === row.slot);
+    const dev = needs.devBindings.find(
+      (entry) => entry.slot === row.slot,
+    )?.binding;
     const bound =
       dev &&
-      row.candidates.some((choice) => choice.revision_id === dev.revisionId);
+      row.candidates.some((choice) => choice.revisionId === dev.revisionId);
     if (dev && bound) {
       row.chosen = dev.revisionId;
       row.chosenBy = "dev-binding";
-      if (dev.testedAt)
-        row.tested = `Tested ${relativeTime(dev.testedAt, needs.now)}`;
+      if (dev.tested?.ok)
+        row.tested = `Tested ${relativeTime(dev.tested.at, needs.now)}`;
     } else if (row.candidates.length === 1) {
-      row.chosen = row.candidates[0].revision_id;
+      row.chosen = row.candidates[0].revisionId;
       row.chosenBy = "only-candidate";
     }
   }
