@@ -86,6 +86,18 @@ SPDX-License-Identifier: Apache-2.0
   someone else after a sign-in elsewhere.
 - The Studio guide no longer says that testing an HTTP connection sends no
   request.
+- A run's page in Operate › Runs has a **Logs** section after **Steps**: the
+  run's log entries oldest first, each with its time, level, source, step and
+  message, how many values the platform hid, whether a long message was
+  shortened, and a worker's code and fields; **Level** and **Step** narrow it,
+  and while the run is still going new entries arrive at the bottom every 5
+  seconds.
+- **Operate › Logs** (needs `run.read`) searches log entries across the
+  environment's runs: the last hour from Warning up by default, filters for
+  time (up to 7 days), level, workflow, step, code, message text (6 hours at
+  most) and test runs, **Follow** every 10 seconds, and **Load older
+  entries**. Every filter but the message is kept in the address; the message
+  never leaves the page.
 
 ### Development and testing
 
@@ -95,6 +107,10 @@ SPDX-License-Identifier: Apache-2.0
   image, or the owned Docker context run in the release gate.
 - Every workflow job has a timeout, and Acceptance and Desktop installers wait
   for a draft pull request to be marked ready.
+- The fixture worker writes a log entry for each task, and a warning with a
+  test-only `note` input, which the acceptance journeys and
+  `tests/e2e/test_operations_logs.py` use to prove a planted secret never
+  reaches log answers or stored entries.
 
 ### Versions and schema
 
