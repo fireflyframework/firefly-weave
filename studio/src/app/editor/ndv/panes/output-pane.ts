@@ -64,6 +64,17 @@ import { shortId } from "../../../format";
 import { instanceStep } from "../../state/instance-keys";
 import { isRecordedRun } from "../../canvas/run-state";
 import { RunStepLogs } from "./run-step-logs";
+import { connectionsPort } from "../../connections/connections-port";
+import type { RunningStepTest } from "../../state/step-test-service";
+import type { RealResult } from "../../state/last-results";
+import { omissionWords, realEndWords } from "../real-words";
+import {
+  filesIn,
+  type FileReference,
+} from "../../../forms/core/file-reference";
+import { downloadFile } from "../../../forms/core/file-transfer";
+import { fileValue } from "./file-value";
+import { describeError } from "../../../errors";
 
 @Component({
   selector: "weave-output-pane",
@@ -128,6 +139,7 @@ import { RunStepLogs } from "./run-step-logs";
     }
     @let ran = simulated();
     @let recorded = runView();
+    @let real = recorded ? null : realOf();
     @let stop = recorded ? null : stoppedHere();
     <div class="pane-sub">
       @if (stop) {
@@ -146,6 +158,22 @@ import { RunStepLogs } from "./run-step-logs";
         }}</span>
       } @else if (pin) {
         <span class="pill" data-tone="info">Pinned</span>
+      } @else if (real) {
+        <button
+          type="button"
+          class="pill pane-source-tag pane-real-tag"
+          data-tone="info"
+          [attr.aria-label]="
+            'From ' +
+            real.environmentName +
+            ', run ' +
+            real.runId +
+            '. Open it in Operate'
+          "
+          (click)="openRun(real.runId)"
+        >
+          From {{ real.environmentName }} · run {{ short(real.runId) }}
+        </button>
       } @else if (ran) {
         <span class="pill pane-source-tag">Simulated</span>
       } @else if (event() !== undefined && value() === undefined) {
@@ -169,8 +197,8 @@ import { RunStepLogs } from "./run-step-logs";
           class="icon-button pane-pin"
           [attr.aria-pressed]="!!pin"
           [attr.aria-label]="pin ? 'Unpin output' : 'Pin output'"
-          [attr.aria-disabled]="pin ? null : 'true'"
-          [title]="pin ? 'Pin output (P)' : noPinYet"
+          [attr.aria-disabled]="pin || realPinnable() ? null : 'true'"
+          [title]="pinTitle(!!pin)"
           (click)="togglePin()"
         >
           <weave-icon [name]="pin ? 'unpin' : 'pin'" [size]="16" />
@@ -216,6 +244,58 @@ import { RunStepLogs } from "./run-step-logs";
           @if (problem()) {
             <p class="pane-problem" role="alert">{{ problem() }}</p>
           }
+          @if (realRun(); as running) {
+            <div class="pane-empty pane-real-running" role="status">
+              <span class="loading-spinner small" aria-hidden="true"></span>
+              <h4>
+                {{
+                  running.checking
+                    ? "Checking whether " + running.stepId + " started…"
+                    : "Executing " +
+                      running.stepId +
+                      " in " +
+                      running.environment.name +
+                      " · " +
+                      elapsed(running.since)
+                }}
+              </h4>
+              <button type="button" class="sm" (click)="stopReal()">
+                Stop
+              </button>
+            </div>
+          }
+          @if (!pin && realWords(); as said) {
+            <div
+              class="notice pane-run-notice pane-real-notice"
+              [attr.data-tone]="said.tone"
+              role="status"
+            >
+              <weave-icon [name]="said.icon" [size]="16" />
+              <p>{{ said.text }}</p>
+            </div>
+          }
+          @if (!pin && realFiles().length) {
+            <ul class="pane-files" aria-label="Files in this output">
+              @for (item of realFiles(); track item.file.id) {
+                <li class="pane-file">
+                  <weave-icon name="typeFile" [size]="16" />
+                  <span class="pane-file-text"
+                    >{{ item.label }} · {{ fileDetail(item.file) }}</span
+                  >
+                  @if (canDownload()) {
+                    <button
+                      type="button"
+                      class="sm"
+                      [attr.aria-label]="'Download ' + item.file.filename"
+                      (click)="download(item.file)"
+                    >
+                      <weave-icon name="download" [size]="16" />Download
+                    </button>
+                  }
+                </li>
+              }
+            </ul>
+          }
           @if (runFailedHere(); as said) {
             <div
               class="notice pane-run-notice pane-run-stopped"
@@ -252,6 +332,13 @@ import { RunStepLogs } from "./run-step-logs";
           @if (notice(); as said) {
             <div class="pane-notice" role="status">
               <p class="pane-notice-text">{{ said.message }}</p>
+              @if (said.action; as act) {
+                <div class="pane-empty-actions">
+                  <button type="button" class="sm" (click)="act.run()">
+                    {{ act.label }}
+                  </button>
+                </div>
+              }
               @if (said.reason === "missing_mock" && canPin && !pin) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="setOutput()">
@@ -466,6 +553,115 @@ export class OutputPane {
     });
   }
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  /** Ticks every second while a step test runs here, for its elapsed time. */
+  private readonly clock = signal(Date.now());
+  private readonly ticking = effect((onCleanup) => {
+    if (!this.realRun()) return;
+    const timer = setInterval(() => this.clock.set(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+  readonly short = shortId;
+  /** This step's step test running in the environment now, if any. */
+  realRun(): RunningStepTest | null {
+    const { host, target } = this.session();
+    const running = connectionsPort(host)?.runningTests()?.running() ?? null;
+    return running?.stepId === target ? running : null;
+  }
+  elapsed(since: number): string {
+    const seconds = Math.max(0, Math.round((this.clock() - since) / 1000));
+    return seconds < 60
+      ? `${seconds} s`
+      : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+  }
+  stopReal() {
+    const { host } = this.session();
+    void connectionsPort(host)?.runningTests()?.stop();
+  }
+  /** Where this step's last result ran for real, when it did. */
+  realOf(): RealResult | null {
+    const { controller, target } = this.session();
+    return controller.realResult(target);
+  }
+  /** Why a real result shows no output, or how it ended when it didn't succeed. */
+  realWords(): { text: string; tone: string; icon: string } | null {
+    const real = this.realOf();
+    if (!real) return null;
+    if (real.omitted)
+      return { text: omissionWords(real.omitted), tone: "info", icon: "lock" };
+    const text = realEndWords(
+      this.session().target,
+      real.environmentName,
+      { status: real.status, error: real.error ?? null },
+      real.timeoutSeconds ?? 0,
+    );
+    return text
+      ? {
+          text,
+          tone: real.status === "cancelled" ? "info" : "danger",
+          icon: real.status === "cancelled" ? "info" : "critical",
+        }
+      : null;
+  }
+  /** A real result that can become test data: it succeeded and holds an output. */
+  realPinnable(): boolean {
+    const { controller, target } = this.session();
+    const real = this.realOf();
+    return (
+      !!real &&
+      real.status === "succeeded" &&
+      !this.pinned() &&
+      controller.stepData(target)?.source === "test-call" &&
+      !controller.readOnlyReason(target)
+    );
+  }
+  async pinReal() {
+    const { controller, target } = this.session();
+    const refused = await controller.pinReal(target);
+    this.problem.set(refused ?? "");
+    if (!refused) this.focusPin();
+  }
+  /** Files a real result returned, each with its name, size and type. */
+  realFiles(): { label: string; file: FileReference }[] {
+    const { controller, target } = this.session();
+    if (!this.realOf()) return [];
+    const data = controller.stepData(target);
+    return data?.source === "test-call" ? filesIn(data.value) : [];
+  }
+  fileDetail(file: FileReference): string {
+    return fileValue(file, "real")?.detail ?? file.filename;
+  }
+  canDownload(): boolean {
+    return this.session().host.can("file.read");
+  }
+  async download(file: FileReference) {
+    const { host, target } = this.session();
+    const alive = () => !this.lifetime.destroyed;
+    try {
+      const result = await downloadFile(
+        {
+          api: host.api,
+          key: target,
+          canRead: host.can("file.read"),
+          canManage: false,
+          active: alive,
+        },
+        file,
+        alive,
+      );
+      if (!alive()) return;
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.file.filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      if (alive())
+        this.problem.set(
+          `Studio couldn't download ${file.filename}: ${describeError(error).message}`,
+        );
+    }
+  }
 
   noOutput(): string | null {
     const step = this.session().controller.step(this.session().target);
@@ -668,8 +864,15 @@ export class OutputPane {
     const key = target.replace(/~/g, "~0").replace(/\//g, "~1");
     return controller.testData.localOnly().has(`/pins/${key}`);
   }
+  pinTitle(pinned: boolean): string {
+    if (pinned) return "Pin output (P)";
+    return this.realPinnable()
+      ? "Pin output: keep this run's output as test data"
+      : this.noPinYet;
+  }
   togglePin() {
     if (!this.pinned()) {
+      if (this.realPinnable()) return void this.pinReal();
       this.problem.set(this.noPinYet);
       return;
     }

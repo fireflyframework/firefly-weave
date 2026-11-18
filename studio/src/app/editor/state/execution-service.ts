@@ -39,6 +39,7 @@ import type {
   ExecuteResponse,
   ExecuteTarget,
   SimulationRequest,
+  StepTestView,
 } from "./execution";
 import type { StepFingerprints } from "./fingerprints";
 import {
@@ -47,9 +48,11 @@ import {
   pruneResults,
   readResults,
   withExecution,
+  type LastResult,
   type LastResults,
+  type RealResult,
 } from "./last-results";
-import type { StudioTestData } from "./test-data";
+import type { Fingerprint, StudioTestData } from "./test-data";
 
 type JsonObject = { [key: string]: Json };
 
@@ -160,6 +163,42 @@ export class ExecutionService {
       this.results.set(readResults(text));
   }
 
+  /**
+   * A step's real run in an environment (Execute in local) as its last
+   * result, in memory only: `keep` never writes it to this computer, and the
+   * next execution that reaches the step replaces it.
+   */
+  recordTestCall(
+    stepId: string,
+    view: StepTestView,
+    environment: { id: string; name: string },
+    execution: Fingerprint,
+    timeoutSeconds?: number,
+  ): void {
+    const previous = this.results();
+    const succeeded = view.status === "succeeded";
+    const real: RealResult = {
+      runId: view.run_id,
+      environmentId: environment.id,
+      environmentName: environment.name,
+      status: view.status,
+    };
+    if (view.omitted) real.omitted = view.omitted;
+    if (view.error) real.error = view.error;
+    if (timeoutSeconds) real.timeoutSeconds = timeoutSeconds;
+    const result: LastResult = {
+      status: succeeded ? "completed" : "failed",
+      execution,
+      real,
+    };
+    if (succeeded && !view.omitted) result.output = view.output;
+    this.results.set({
+      schemaVersion: 1,
+      at: this.host.now().toISOString(),
+      status: previous?.status ?? "completed",
+      steps: { ...(previous?.steps ?? {}), [stepId]: result },
+    });
+  }
   /** Sign-out, an account switch or a closed workflow: nothing stays in memory. */
   forget(): void {
     this.generation++;

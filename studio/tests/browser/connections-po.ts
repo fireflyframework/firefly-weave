@@ -24,7 +24,7 @@ import { stringify } from "yaml";
 import { useNewEditor } from "./canvas-po";
 import { acme, acmePlatform, platformHost } from "./platform-host";
 import { StepDetailsPage, yamlFile } from "./step-details-po";
-import { allCapabilities } from "./support";
+import { allCapabilities, routeTestDataCheck } from "./support";
 
 export const PRODUCTION = acme[0].environment_id;
 export const STAGING = acme[1].environment_id;
@@ -127,6 +127,13 @@ export interface ConnectionsState {
   /** Milliseconds to hold the first bindable answer of an environment. */
   holdFirst?: Record<string, Promise<void>>;
   capabilities?: string[];
+  /** The action's declared side effect; read_only when absent. */
+  sideEffect?: string;
+  /** Another published action in place of acme.crm-lookup. */
+  action?: {
+    metadata: { name: string; version: string };
+    [key: string]: unknown;
+  };
 }
 export interface ConnectionsRecorder {
   bindable: string[];
@@ -199,7 +206,16 @@ export async function openConnected(
   file?: ReturnType<typeof yamlFile>,
 ): Promise<{ details: StepDetailsPage; recorder: ConnectionsRecorder }> {
   await useNewEditor(page);
-  const capabilities = state.capabilities ?? [...allCapabilities, "compile"];
+  const capabilities = state.capabilities ?? [
+    ...allCapabilities,
+    "compile",
+    "step.test",
+  ];
+  const action = state.action ?? {
+    ...crmLookup,
+    spec: { ...crmLookup.spec, sideEffect: state.sideEffect ?? "read_only" },
+  };
+  const { name, version } = action.metadata;
   await platformHost(page, {
     platforms: [acmePlatform()],
     active: "Acme",
@@ -218,10 +234,12 @@ export async function openConnected(
       },
     }),
   });
+  // Pins go through the host's secret check; registered after the host so it answers first.
+  await routeTestDataCheck(page);
   await page.route("**/projects/*/actions?*", (route) =>
     route.fulfill({
       json: {
-        items: [{ id: "h1", name: "acme.crm-lookup", version: "1.0.0" }],
+        items: [{ id: "h1", name, version }],
         next_cursor: null,
       },
     }),
@@ -230,9 +248,9 @@ export async function openConnected(
     route.fulfill({
       json: {
         id: "h1",
-        name: "acme.crm-lookup",
-        version: "1.0.0",
-        document: crmLookup,
+        name,
+        version,
+        document: action,
       },
     }),
   );

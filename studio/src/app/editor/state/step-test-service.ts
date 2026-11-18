@@ -76,7 +76,7 @@ export interface StepTestServiceHost {
     { ok: true; revision: number } | { ok: false; message: string }
   >;
   /** Hands a step test's ended view to the editor as the step's result. */
-  record(stepId: string, view: StepTestView): void;
+  record(stepId: string, view: StepTestView, timeoutSeconds: number): void;
   /** Releases chosen for dependencies in this environment, this session. */
   releases: Map<string, string>;
   /** A new idempotency key; one per click. */
@@ -236,7 +236,7 @@ export class StepTestService {
           why: (answer as { stopped: "timeout" | "aborted" | "lost" }).stopped,
           runId,
         };
-      this.host.record(request.stepId, view);
+      this.host.record(request.stepId, view, request.body.timeout_seconds);
       return { kind: "done", view };
     } finally {
       if (fence.generation === this.generation) {

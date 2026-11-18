@@ -267,10 +267,14 @@ export const versionMoveText = (move: VersionMove): string =>
   `${nameOfUses(move.from)} ${versionOfUses(move.from)} is published, so this change starts version ${versionOfUses(move.to)}.`;
 
 /** Why the workflow's actions can't be published for this account. */
-export const publishRefusal = (purpose: "publish" | "simulate"): string =>
+export const publishRefusal = (
+  purpose: "publish" | "simulate" | "execute",
+): string =>
   purpose === "simulate"
     ? "Simulating this workflow publishes the actions of its Call an API, email and file steps first, and your account can't publish actions in this workspace."
-    : "Your account can't publish actions in this workspace.";
+    : purpose === "execute"
+      ? "Executing this step for real publishes the actions of its Call an API, email and file steps first, and your account can't publish actions in this workspace."
+      : "Your account can't publish actions in this workspace.";
 
 /** What Save to file adds while some of the workflow's actions aren't published. */
 export const ownedExportNote = (count: number): string =>

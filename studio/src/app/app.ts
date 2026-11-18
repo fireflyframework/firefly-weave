@@ -76,6 +76,7 @@ import type {
 } from "./editor/state/test-data";
 import {
   stepDetailsEnabled,
+  type RealSetup,
   type RunNotice,
   type StepDetailsHost,
 } from "./editor/ndv/step-details-host";
@@ -2998,7 +2999,7 @@ export class App implements CanvasHost {
       : "Saved";
   }
   /** The open workflow has a copy kept on this computer. */
-  private keptLocally = false;
+  keptLocally = false;
   /**
    * Runs a lifecycle command, or says why it can't run: the reason shows as
    * a status line under the toolbar, and the button keeps focus.
@@ -4055,6 +4056,17 @@ export class App implements CanvasHost {
    */
   canvasRun(): CanvasRun | null {
     if (this.tab === "Runs") return this.runView()?.canvas() ?? null;
+    const real = this.realStep();
+    if (real)
+      return this.realRun?.current[0] === real
+        ? this.realRun
+        : (this.realRun = {
+            mode: "real",
+            status: "running",
+            current: [real],
+            active: [],
+            done: [],
+          });
     const session = this.simulationSession;
     // With the new editor, the canvas plays back Execute's simulated run.
     if (!session && this.editorNext) return this.playback();
@@ -7430,6 +7442,11 @@ export class App implements CanvasHost {
   }
   /** Execute step, Execute previous steps and Execute workflow (null until the test data tools load). */
   execution: ExecutionService | null = null;
+  /** The step executing for real in the environment: the canvas draws its live border. */
+  readonly realStep = signal<string | null>(null);
+  /** Steps whose Execute in the environment found no connection: their tile asks for one. */
+  readonly realSetup = signal<RealSetup | null>(null);
+  private realRun: CanvasRun | null = null;
   /** Where the open draft's last results are kept: the test data's account, or memory. */
   private executionPlace: { prefix: string } | null = null;
   /** Opens the last results of the draft whose test data just opened, under the same account. */

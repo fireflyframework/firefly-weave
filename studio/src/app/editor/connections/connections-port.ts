@@ -36,6 +36,25 @@ import {
 import { DevBindings, followRevision, type DevBinding } from "./dev-bindings";
 import type { CreatedConnection } from "../../integrations/http-connection-form";
 import type { ConnectionSheetRequest } from "./connection-sheet";
+import { StepTestClient } from "../state/step-test-client";
+import { StepTestService } from "../state/step-test-service";
+import { allSteps } from "../ndv/step-walk";
+
+/** What a step test needs from the editor that hosts step details. */
+export type StepTestHost = Pick<
+  StepDetailsHost,
+  | "api"
+  | "stepDataScope"
+  | "draftId"
+  | "draftRevision"
+  | "model"
+  | "flushAutosave"
+  | "runCommand"
+  | "error"
+  | "testDataPrints"
+  | "execution"
+  | "realSetup"
+>;
 
 export type PortHost = Pick<
   StepDetailsHost,
@@ -277,9 +296,89 @@ export class ConnectionsPort {
     this.opening.set({ slot, seq: (this.opening()?.seq ?? 0) + 1 });
   }
 
+  /** Releases chosen this session for dependencies here (Ruling: one question per dependency). */
+  readonly releases = new Map<string, string>();
+  private service: StepTestService | null = null;
+  /**
+   * The step test service of this account and environment, made on first
+   * use. It outlives step details (closing them keeps following) and goes
+   * with the port.
+   */
+  stepTests(host: StepTestHost): StepTestService {
+    if (this.service) return this.service;
+    const port = this;
+    this.service = new StepTestService({
+      client: new StepTestClient(host.api),
+      scope: () => host.stepDataScope ?? "",
+      environment: () => (port.alive ? port.environment : null),
+      draft: () =>
+        host.draftId
+          ? { id: host.draftId, revision: host.draftRevision ?? 0 }
+          : null,
+      hasStep: (stepId) =>
+        allSteps(host.model.definition.spec.steps).some(
+          (step) => step.id === stepId,
+        ),
+      saveFirst: async () => {
+        // A draft the platform hasn't had yet is saved as Save draft does.
+        if (host.draftRevision === undefined) await host.runCommand("save");
+        const saved = (await host.flushAutosave?.()) ?? true;
+        const revision = host.draftRevision;
+        return saved && revision !== undefined
+          ? { ok: true, revision }
+          : {
+              ok: false,
+              message: host.error || "the workflow isn't saved to the platform",
+            };
+      },
+      record: (stepId, view, timeoutSeconds) => {
+        const prints = host.testDataPrints?.()?.get(stepId);
+        host.execution?.recordTestCall(
+          stepId,
+          view,
+          port.environment,
+          // Without the shell's fingerprints the result reads as out of date.
+          prints?.execution ?? "fnv1a64:",
+          timeoutSeconds,
+        );
+      },
+      releases: this.releases,
+    });
+    return this.service;
+  }
+  /** The service when one was made; null before the first Execute in an environment. */
+  runningTests(): StepTestService | null {
+    return this.service;
+  }
+  /** Steps whose Execute in this environment found no connection for a slot, per draft: their tile asks for one. */
+  attempted(
+    host: Pick<StepTestHost, "realSetup" | "draftId">,
+    stepId: string,
+    slot: string,
+  ) {
+    const draft = host.draftId ?? "";
+    const kept = host.realSetup?.();
+    const steps = new Map(kept?.draft === draft ? kept.steps : []);
+    steps.set(stepId, slot);
+    host.realSetup?.set({ draft, steps });
+  }
+  /** A slot got its connection: its steps need nothing more. */
+  bound(host: Pick<StepTestHost, "realSetup">, slot: string) {
+    const kept = host.realSetup?.();
+    if (!kept || ![...kept.steps.values()].includes(slot)) return;
+    host.realSetup?.set({
+      draft: kept.draft,
+      steps: new Map([...kept.steps].filter(([, name]) => name !== slot)),
+    });
+  }
+
   /** Drops everything: the account, environment or platform changed. Writes no signal, so a template may call it. */
   forget() {
     this.alive = false;
+    // The service's fences read this port's environment, which is gone now;
+    // its own state (a signal) is cleared after the render that replaced the port.
+    const service = this.service;
+    if (service) queueMicrotask(() => service.forget());
   }
 }
 

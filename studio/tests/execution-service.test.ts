@@ -450,4 +450,75 @@ describe("the execution service", () => {
     sent[2].refuse(busy);
     expect(await again).toEqual({ kind: "busy", stopping: true });
   });
+  describe("a real result from a step test", () => {
+    const real = {
+      id: "3f2a9c1e-1111-4222-8333-444455556666",
+      run_id: "9d8c7b6a-1111-4222-8333-444455556666",
+      status: "succeeded" as const,
+      side_effect: "read_only" as const,
+      pending: [],
+      output: { marker: "REAL-OUTPUT-7f3" },
+      error: null,
+      attempts: 1,
+      started_at: "2026-10-26T12:00:00Z",
+      ended_at: "2026-10-26T12:00:01Z",
+      duration_ms: 1000,
+    };
+    const local = { id: "env-local", name: "local" };
+
+    it("is kept in memory and never written to this computer", async () => {
+      const { service, sent, values } = fixture();
+      await service.open("d-1");
+      const kept = service.execute({ mode: "workflow" });
+      await settle();
+      sent[0].answer(RESPONSE);
+      await kept;
+      service.recordTestCall("send", real, local, print(2).execution, 30);
+      expect(service.results()?.steps["send"]).toMatchObject({
+        status: "completed",
+        output: { marker: "REAL-OUTPUT-7f3" },
+        real: {
+          runId: real.run_id,
+          environmentId: "env-local",
+          environmentName: "local",
+          status: "succeeded",
+        },
+      });
+      // The next execution writes results again: the real one stays out of them.
+      const again = service.execute({ mode: "step", stepId: "check" });
+      await settle();
+      sent[1].answer({
+        ...RESPONSE,
+        trace: RESPONSE.trace.filter((t) => t.node_id === "check"),
+      });
+      await again;
+      for (const text of values.values())
+        expect(text).not.toContain("REAL-OUTPUT-7f3");
+      expect(service.results()?.steps["send"]?.real?.runId).toBe(real.run_id);
+    });
+
+    it("an output the platform left out keeps no value", () => {
+      const { service } = fixture();
+      service.recordTestCall(
+        "send",
+        { ...real, output: null, omitted: "classified_secret" },
+        local,
+        print(2).execution,
+      );
+      const result = service.results()?.steps["send"];
+      expect(result?.output).toBeUndefined();
+      expect(result?.real?.omitted).toBe("classified_secret");
+    });
+
+    it("a simulated execution replaces it", async () => {
+      const { service, sent } = fixture();
+      await service.open("d-1");
+      service.recordTestCall("send", real, local, print(2).execution);
+      const simulated = service.execute({ mode: "workflow" });
+      await settle();
+      sent[0].answer(RESPONSE);
+      await simulated;
+      expect(service.results()?.steps["send"]?.real).toBeUndefined();
+    });
+  });
 });

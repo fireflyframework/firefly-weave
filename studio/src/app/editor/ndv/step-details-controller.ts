@@ -59,6 +59,7 @@ import {
   CANVAS_MAX_BYTES,
   type DataSource,
   type HumanEntry,
+  type Provenance,
   type SignalEntry,
 } from "../state/test-data";
 import { TestDataService } from "../state/test-data-service";
@@ -115,7 +116,7 @@ import {
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
-import type { LastResult } from "../state/last-results";
+import type { LastResult, RealResult } from "../state/last-results";
 import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
 import type {
@@ -194,6 +195,8 @@ export interface ExecuteNotice {
   reason: BlockedReason | null;
   /** "Edit test input" is the way out. */
   input?: boolean;
+  /** A way out of its own: Open in Operate, Execute previous steps, Fix. */
+  action?: { label: string; run: () => void };
 }
 export interface StepDiagnostic {
   code: string;
@@ -475,7 +478,7 @@ export class StepDetailsController {
   stepData(key: string):
     | {
         value: Json;
-        source: "pinned" | "simulated" | "run";
+        source: "pinned" | "simulated" | "run" | "test-call";
         stale: StaleReason | null;
       }
     | undefined {
@@ -498,6 +501,19 @@ export class StepDetailsController {
     const result = this.lastResult(key);
     if (!result || result.output === undefined) return undefined;
     const step = this.step(stepId);
+    const now = this.prints().get(stepId)?.execution;
+    const stale = now === result.execution ? null : ("upstream" as const);
+    // A real run's output is as the platform classified and kept it; its
+    // output schema's secret fields are still left out here.
+    if (result.real) {
+      const schema = step
+        ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
+        : null;
+      const value = safeSample(schema ?? {}, result.output);
+      return value === undefined
+        ? undefined
+        : { value, source: "test-call", stale };
+    }
     const schema = step
       ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
       : null;
@@ -508,12 +524,27 @@ export class StepDetailsController {
       safeSample(schema ?? {}, result.output) ??
       (marksSecret(schema) ? undefined : result.output);
     if (value === undefined) return undefined;
-    const now = this.prints().get(stepId)?.execution;
-    return {
-      value,
-      source: "simulated",
-      stale: now === result.execution ? null : "upstream",
-    };
+    return { value, source: "simulated", stale };
+  }
+  /**
+   * Pin output on a real result: kept as test data that came from a run, with
+   * the run and its environment, so the platform reads it back only for
+   * people who may read that run. Null when pinned, else why not.
+   */
+  async pinReal(target: string): Promise<string | null> {
+    const real = this.realResult(target);
+    const data = this.stepData(target);
+    if (!real || data?.source !== "test-call")
+      return "There's no output from a real run to pin.";
+    return this.pin(target, data.value, "test-call", {
+      runId: real.runId,
+      runEnvironmentId: real.environmentId,
+    });
+  }
+  /** Where a step's real result came from, when its last result ran for real in an environment. */
+  realResult(key: string): RealResult | null {
+    if (this.viewingRuns()) return null;
+    return this.lastResult(key)?.real ?? null;
   }
   /** What the last execution asked of this step, or why it couldn't run (shown in its Output). */
   readonly executeNotice = signal<ExecuteNotice | null>(null);
@@ -605,6 +636,7 @@ export class StepDetailsController {
     target: string,
     value: Json,
     source: DataSource,
+    provenance: Provenance = {},
   ): Promise<string | null> {
     const locked = this.readOnlyReason(target);
     if (locked) return locked;
@@ -616,7 +648,12 @@ export class StepDetailsController {
     const at = new Date().toISOString();
     const replacing = !!service.data().pins?.[target];
     const outcome = await service.change(
-      withPin(service.data(), target, stampedPin(value, source, now, at), at),
+      withPin(
+        service.data(),
+        target,
+        stampedPin(value, source, now, at, provenance),
+        at,
+      ),
       [this.pinPointer(target)],
     );
     if (!outcome.ok) return outcome.message;

@@ -52,6 +52,13 @@ export interface CanvasHost {
   canvasFacts(): ReadonlyMap<string, StepFacts>;
   /** The run the canvas draws, or null; the same object until it changes. */
   canvasRun(): CanvasRun | null;
+  /** Steps of a draft whose Execute in an environment found no connection for a slot (step ID to slot). */
+  readonly realSetup?: Signal<{
+    draft: string;
+    steps: ReadonlyMap<string, string>;
+  } | null>;
+  /** The open draft's ID. */
+  readonly draftId?: string;
   kindContext(): KindContext;
   label(kind: string): string;
   /** Selects a step; `open` also shows it in the inspector. */

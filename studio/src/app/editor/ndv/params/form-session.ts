@@ -2186,6 +2186,7 @@ export class FormSession {
           },
     );
     if (!port.live || !this.isCurrent()) return;
+    port.bound(this.host, slot);
     this.announce(
       `${item.name} is the connection for slot ${slot} in ${port.environment.name}.`,
     );
