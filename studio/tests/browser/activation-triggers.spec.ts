@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFile } from "node:fs/promises";
 import { expect, test, type Download, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { platform, routeWebhooks } from "./activation-po";
+import { platform, routeWebhooks, versionId } from "./activation-po";
 import { command } from "./support";
 import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
@@ -278,5 +278,50 @@ test("a new Kafka trigger asks for its Kafka connection, of any version, and is 
       cluster_id: "orders-cluster",
       topic: "orders",
     }),
+  ]);
+});
+
+test("a new webhook takes the activated version's input, not the draft's edited since", async ({
+  page,
+}) => {
+  await platform(page);
+  const recorded = await routeWebhooks(page);
+  const published = {
+    type: "object",
+    properties: { orderId: { type: "string" } },
+    required: ["orderId"],
+  };
+  // The version being activated, as published: its own input.
+  await page.route(`**/projects/project/workflows/${versionId}/export`, (r) =>
+    r.fulfill({
+      json: {
+        id: versionId,
+        document: {
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "pets", version: "1.0.0" },
+          spec: {
+            inputSchema: published,
+            outputSchema: { type: "object" },
+            steps: [
+              { id: "check", kind: "transform", value: { ref: "/input" } },
+            ],
+            output: { literal: {} },
+          },
+        },
+        artifact: {
+          executable: { features: [], connections: {}, dependencies: [] },
+        },
+      },
+    }),
+  );
+  await open(page);
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  expect(recorded.created).toEqual([
+    expect.objectContaining({ name: "orders-in", payload_schema: published }),
   ]);
 });

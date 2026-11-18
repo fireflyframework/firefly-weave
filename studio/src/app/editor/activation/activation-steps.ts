@@ -314,13 +314,11 @@ export class ActivationSteps implements OnInit {
   }
   /** Sets the triggers up for the activation that just succeeded, row by row. */
   async sync(activationId: string): Promise<void> {
-    const definition = this.definition();
-    const inputSchema = definition.spec["inputSchema"];
     this.context = {
       api: this.api(),
       activationId,
       environmentId: this.environment()?.id ?? "",
-      inputSchema: isJsonObject(inputSchema) ? (inputSchema as JsonObject) : {},
+      inputSchema: this.activatedVersion().inputSchema,
       intents: triggerIntents(this.canvas()),
       connections: { ...this.connectionChoices() },
     };
@@ -379,6 +377,25 @@ export class ActivationSteps implements OnInit {
 
   /** The published version's export: its definition and compiled artifact; null when it can't be read. */
   private exported: unknown = null;
+  /**
+   * The version being activated: its version and input as published, read
+   * from its export; the editor's only when the export can't be read (the
+   * draft may have changed since it was published).
+   */
+  private activatedVersion(): { version: string; inputSchema: JsonObject } {
+    const definition = this.definition();
+    const document = record(record(this.exported)["document"]);
+    const published = record(document["spec"]);
+    const version = text(record(document["metadata"])["version"]);
+    const inputSchema =
+      "inputSchema" in published
+        ? published["inputSchema"]
+        : definition.spec["inputSchema"];
+    return {
+      version: version || definition.metadata.version,
+      inputSchema: isJsonObject(inputSchema) ? (inputSchema as JsonObject) : {},
+    };
+  }
   /** The platform's features, and the workflow's from its compiled export; null when either can't be read. */
   private async features(): Promise<string | null> {
     const api = this.api();
@@ -490,19 +507,13 @@ export class ActivationSteps implements OnInit {
         workflow: item.name,
         version: byVersionId.get(item.versionId)?.version ?? "",
       }));
-      const inputSchema = definition.spec["inputSchema"];
       this.triggers.set(
         triggerPlan({
           intents,
           resources,
           activations: planActivations,
           workflow: definition.metadata.name,
-          version: {
-            version: definition.metadata.version,
-            inputSchema: isJsonObject(inputSchema)
-              ? (inputSchema as JsonObject)
-              : {},
-          },
+          version: this.activatedVersion(),
           environmentId: this.environment()?.id ?? "",
         }).filter((row) => row.kind !== "truncated" || tooLong),
       );
