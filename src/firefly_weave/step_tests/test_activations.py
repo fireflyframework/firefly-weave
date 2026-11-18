@@ -208,7 +208,7 @@ class TestActivationService:
     async def create(
         self, actor: Principal, scope: Scope, request: DraftTestActivationRequest, *, context: AuditContext
     ) -> DraftTestActivation:
-        """Write the draft's test version and its test activation, after every check, in one transaction."""
+        """Write the draft's test version, its test activation and details, after every check, in one transaction."""
         self.authorization.require(actor, scope, "step.test", context=context)
         # The draft is a project resource: who can't read it can't run it.
         self.authorization.require(actor, project_scope(scope), "catalog.read", context=context)
@@ -277,25 +277,7 @@ class TestActivationService:
                 assignment_binding_ids=bindings.assignment_binding_ids,
                 workflow_activation_ids=bindings.workflow_activation_ids,
             )
-            definition_digest = FrozenDocument.from_value(load_definition(document).model_dump(by_alias=True)).digest
-            await repository.insert_version(version_id, document, artifact, definition_digest)
-            connector_pins = await self.definitions.execution_readiness(
-                actor, scope, activation_request, artifact, capability="step.test", context=context, tx=tx
-            )
-            name = cast(str, cast(JsonObject, document["metadata"])["name"])
-            workflow_call_pins, call_depth = await call_pins(
-                name,
-                scope,
-                executable,
-                bindings.workflow_activation_ids,
-                lambda identifier: pinned_callee(definitions, scope, identifier),
-            )
-            nodes = ir.graph.nodes
-            assignment_pins = await pin_assignments(
-                tx,
-                bindings.assignment_binding_ids,
-                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)} | assignment_slots(ir),
-            )
+            # Each named connection fits a slot of the draft, before the activation's own readiness checks.
             requirements = cast(dict[str, JsonObject], cast(JsonObject, document["spec"]).get("connections", {}))
             required = {slot for slot, need in requirements.items() if need.get("required", True)}
             supplied = set(bindings.connection_revision_ids)
@@ -315,9 +297,29 @@ class TestActivationService:
                 )
                 for slot, revision in bindings.connection_revision_ids.items()
             }
+            connector_pins = await self.definitions.execution_readiness(
+                actor, scope, activation_request, artifact, capability="step.test", context=context, tx=tx
+            )
+            name = cast(str, cast(JsonObject, document["metadata"])["name"])
+            workflow_call_pins, call_depth = await call_pins(
+                name,
+                scope,
+                executable,
+                bindings.workflow_activation_ids,
+                lambda identifier: pinned_callee(definitions, scope, identifier),
+            )
+            nodes = ir.graph.nodes
+            assignment_pins = await pin_assignments(
+                tx,
+                bindings.assignment_binding_ids,
+                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)} | assignment_slots(ir),
+            )
             validate_ai_reserved(ir)
             if uses_ai(nodes):
                 validate_ai_bindings(nodes, bound, self.definitions.ai_policy.current())
+            # Every check has passed: write the test version, its activation and details.
+            definition_digest = FrozenDocument.from_value(load_definition(document).model_dump(by_alias=True)).digest
+            await repository.insert_version(version_id, document, artifact, definition_digest)
             activation = Activation(
                 id=activation_id,
                 revision=1,

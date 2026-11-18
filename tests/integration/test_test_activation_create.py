@@ -280,3 +280,12 @@ async def test_a_stale_draft_revision_and_a_draft_that_doesnt_compile_are_refuse
         env.service.create(env.tester, env.scope, env.request(document, uuid4(), draft_revision=1), context=CONTEXT)
     )
     assert (error.status, error.code) == (404, "WV-NOT-FOUND")
+
+
+async def test_connections_for_slots_the_draft_doesnt_have_are_refused_and_nothing_is_written(drafts):
+    env = drafts
+    document = workflow("notify-moves", [NOTIFY])
+    error = await refused(env.create(env.tester, document, bindings={"connection_revision_ids": {"crm": str(uuid4())}}))
+    assert (error.status, error.code) == (422, "WV-STEPTEST-CONNECTION")
+    assert error.result == {"slots": {"crm": "The draft has no such slot."}}
+    assert await nothing_written(env)
