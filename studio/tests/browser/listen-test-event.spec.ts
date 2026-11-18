@@ -164,6 +164,12 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
   page,
 }) => {
   const { dialog, steps, listening } = await openWebhook(page);
+  // Not activated yet: the production URL comes with the activation.
+  await expect(
+    dialog.getByText(
+      "The production URL appears once you activate this workflow in Production.",
+    ),
+  ).toBeVisible();
   await dialog
     .locator(".sd-actions")
     .getByRole("button", { name: "Listen for test event", exact: true })
@@ -267,4 +273,26 @@ test("with test calls off the webhook offers Paste sample, and the header execut
   await expect(
     dialog.getByRole("button", { name: /^Execute workflow/ }).first(),
   ).toBeVisible();
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 360, height: 780 } });
+
+  test("Listen for test event shows the Test event pane, where the test URL is", async ({
+    page,
+  }) => {
+    const { dialog } = await openWebhook(page);
+    await dialog
+      .locator(".sd-actions")
+      .getByRole("button", { name: "Listen for test event", exact: true })
+      .click();
+    await expect(
+      dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Test event" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      dialog.getByRole("textbox", { name: "Make a POST request to:" }),
+    ).toBeVisible();
+  });
 });

@@ -86,6 +86,11 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
             Starts runs of the active version, signed with the production
             secret.
           </p>
+        } @else if (unactivated(); as environment) {
+          <p class="pane-empty-text">
+            The production URL appears once you activate this workflow in
+            {{ environment }}.
+          </p>
         }
         @if (canListen()) {
           @let state = listenState();
@@ -284,6 +289,14 @@ export class TriggerEventPane {
         : null;
     return typeof id === "string" && id
       ? productionUrl(host.profile.baseUrl, id)
+      : null;
+  }
+  /** The environment a webhook isn't activated in yet, when Studio is connected to one. */
+  unactivated(): string | null {
+    const host = this.host();
+    const port = host ? connectionsPort(host) : null;
+    return this.trigger().kind === "webhook" && port && !this.production()
+      ? port.environment.name
       : null;
   }
   /** Why this webhook can't listen here, or null when it can. */

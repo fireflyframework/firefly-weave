@@ -1205,14 +1205,11 @@ export class StepDetails {
   toggleListen(): void {
     const choice = this.triggerChoice();
     if (!choice) return;
-    if (this.listening()) stopListening(this.host());
-    else
-      listenFor(
-        this.host(),
-        choice,
-        this.dialogs,
-        this.controller().testEvent(),
-      );
+    if (this.listening()) return stopListening(this.host());
+    listenFor(this.host(), choice, this.dialogs, this.controller().testEvent());
+    // The test URL shows in the Test event pane: behind its tab on a narrow window.
+    if (!this.showPane("input"))
+      this.choosePane(this.layout() === "sheet" ? "pane" : "dataPane", "input");
   }
   executeItems(): RowMenuItem[] {
     // A trigger executes the workflow: here, or in the environment.
