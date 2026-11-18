@@ -272,8 +272,10 @@ identifier = "random"
 [operations."runs.logs"]
 capability = "run.read"
 identifier = "random"
-# Run logs answer 501 until the platform has a log reader (the logs capability).
-answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
+
+# Entries across runs: a permitted call reads the last hour of the environment and changes nothing.
+[operations."execution_logs.list"]
+capability = "run.read"
 
 [operations."runs.steps"]
 capability = "run.read"
@@ -305,6 +307,13 @@ answers = [{ status = 403, code = "WV-STEPTEST-DISABLED" }]
 [operations."step_tests.read"]
 capability = "step.test"
 identifier = "random"
+
+# Log entries come from workers only: no person's role holds task.log, so every person is refused and nothing is
+# written. A permitted call would name a random lease and answer 409 WV-LOG-LEASE.
+[operations."tasks.log"]
+capability = "task.log"
+body = { lease = { task_id = "random", generation = 1, owner = "random", token = "probe" }, entries = [{ at = "2026-11-17T00:00:00Z", source = "worker", level = "info", message = "Authorization probe" }] }
+answers = [{ status = 409, code = "WV-LOG-LEASE" }]
 
 # The test policy: reading needs status.read. A permitted save without If-Match expects no stored policy, so where
 # one is stored (the demo environment after platform up) it answers 409 WV-REVISION and changes nothing.

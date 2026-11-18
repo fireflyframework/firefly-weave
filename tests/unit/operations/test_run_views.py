@@ -30,7 +30,7 @@ from firefly_weave.access.models import Grant, Principal
 from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.transport import encode_cursor_v2
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.run_views import RunLogQuery, RunStepQuery, RunSummaryQuery
+from firefly_weave.contracts.run_views import ExecutionLogQuery, RunLogQuery, RunStepQuery, RunSummaryQuery
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.run_views import RunViewService
 
@@ -103,21 +103,21 @@ async def call(service: RunViewService, actor: Principal, operation: str):
         return await service.summaries(actor, SCOPE, RunSummaryQuery(), None, context=CONTEXT)
     if operation == "runs.steps":
         return await service.steps(actor, SCOPE, RUN, RunStepQuery(), None, context=CONTEXT)
+    if operation == "execution_logs.list":
+        return await service.execution_logs(actor, SCOPE, ExecutionLogQuery(), None, context=CONTEXT)
     return await service.logs(actor, SCOPE, RUN, RunLogQuery(), None, context=CONTEXT)
 
 
-OPERATIONS = ("run_summaries.list", "runs.steps", "runs.logs")
+OPERATIONS = ("run_summaries.list", "runs.steps", "runs.logs", "execution_logs.list")
 
 
-@pytest.mark.parametrize("operation", ["runs.logs"])
+@pytest.mark.parametrize("operation", ["runs.logs", "execution_logs.list"])
 @pytest.mark.parametrize("role", ["viewer", "execution_manager"])
-async def test_run_readers_reach_the_not_served_answer(monkeypatch, operation, role):
+async def test_run_readers_read_logs_in_the_authorization_unit(monkeypatch, operation, role):
     actor = principal(role)
     service, unit = service_with(monkeypatch, actor)
-    with pytest.raises(CatalogError) as failure:
-        await call(service, actor, operation)
-    assert (failure.value.status, failure.value.code) == (501, "WV-UNAVAILABLE")
-    assert operation in failure.value.message
+    page = await call(service, actor, operation)
+    assert (page.items, page.next_cursor) == ([], None)
     assert unit.opened == 1
 
 
@@ -147,10 +147,7 @@ async def test_each_authority_is_checked_and_audited_once(monkeypatch, caplog, o
     actor = principal("viewer")
     service, unit = service_with(monkeypatch, actor)
     with caplog.at_level(logging.INFO, logger="weave.authorization"):
-        try:
-            await call(service, actor, operation)
-        except CatalogError as error:
-            assert (operation, error.status) == ("runs.logs", 501)
+        await call(service, actor, operation)
     records = [json.loads(record.getMessage()) for record in caplog.records if record.name == "weave.authorization"]
     # One decision for the token principal and one for the principal stored now.
     assert [(record["capability"], record["outcome"]) for record in records] == [("run.read", "allow")] * 2
@@ -164,6 +161,7 @@ def test_the_current_principal_check_cannot_be_called_without_the_token_check():
         "summary",
         "steps",
         "logs",
+        "execution_logs",
         "precheck",
     }
 
@@ -188,13 +186,8 @@ async def test_controller_validates_then_delegates(monkeypatch, method, path, qu
     actor = principal("viewer")
     service, _ = service_with(monkeypatch, actor)
     controller = RunViewController(service)
-    if method == "logs":
-        with pytest.raises(CatalogError) as failure:
-            await controller.logs(request(path, query, actor))
-        assert failure.value.status == 501
-    else:
-        response = await getattr(controller, method)(request(path, query, actor, identifier=method != "summaries"))
-        assert response.status_code == 200
+    response = await getattr(controller, method)(request(path, query, actor, identifier=method != "summaries"))
+    assert response.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -242,21 +235,23 @@ async def test_controller_rejects_cursors_from_another_filter_or_run(monkeypatch
     assert unit.opened == 1
 
 
-async def test_not_served_problem_reaches_clients_as_501():
-    from firefly_weave.api.errors import ErrorAdvice
-    from firefly_weave.operations.run_views import not_served
-
-    response = await ErrorAdvice().catalog_error(not_served("runs.logs"))
-    assert response.status_code == 501
-    assert json.loads(response.body) == {
-        "code": "WV-UNAVAILABLE",
-        "message": "This server does not serve runs.logs yet",
-    }
-
-
 @pytest.fixture(autouse=True)
 def empty_repository(monkeypatch):
+    from firefly_weave.operations.execution_logs import ExecutionLogReader, RunLogReader
     from firefly_weave.operations.fact_reads import FactReadRepository
+
+    async def metadata(repository, run_id):
+        return {}
+
+    async def run_log(reader, run_id, query, position):
+        return [], None
+
+    async def across(reader, query, position):
+        return [], None
+
+    monkeypatch.setattr(FactReadRepository, "metadata", metadata)
+    monkeypatch.setattr(RunLogReader, "page", run_log)
+    monkeypatch.setattr(ExecutionLogReader, "page", across)
 
     async def summaries(repository, query, position):
         return []

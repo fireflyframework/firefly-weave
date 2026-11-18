@@ -25,6 +25,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.compiler.catalog import TaskCapability
 from firefly_weave.contracts.connectors import ResolvedSecret
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
+from firefly_weave.contracts.log_values import LogCode, LogFieldKey, LogFieldValue, LogLevel
 from firefly_weave.contracts.transactions import PhaseOperation, UndoMode
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.operations.redaction import Omission
@@ -303,3 +304,54 @@ class CredentialGrantRequest(ContractModel):
 
 class CredentialLease(ResolvedSecret):
     expires_at: AwareDatetime
+
+
+# What `tasks.log` accepts in one request: entries per batch, and the body's size in bytes.
+TASK_LOG_BATCH = 50
+TASK_LOG_BODY_BYTES = 256 * 1024
+# The most values one entry says it hid, and the most entries one request says the writer dropped.
+TASK_LOG_REDACTIONS = 10_000
+TASK_LOG_DROPPED = 1_000_000
+type LogCount = Annotated[int, Field(ge=0)]
+
+
+class TaskLogEntry(ContractModel):
+    """One log entry a worker or connector writes about the task it holds.
+
+    The run, step, attempt, worker, workflow and test flag come from the lease, never from the entry; the server
+    clamps ``at`` into the lease's lifetime and redacts the text again. ``truncated`` and ``redactions`` say what the
+    writer already cut and hid.
+    """
+
+    at: AwareDatetime
+    source: Literal["worker", "connector", "ai"]
+    level: LogLevel
+    code: LogCode | None = None
+    message: str = Field(max_length=512)
+    fields: dict[LogFieldKey, LogFieldValue] = Field(default_factory=dict, max_length=16)
+    truncated: bool = False
+    redactions: Annotated[int, Field(ge=0, le=TASK_LOG_REDACTIONS)] = 0
+
+    @model_validator(mode="after")
+    def ai_usage(self) -> Self:
+        if self.code == "AI.USAGE" and (
+            self.source != "ai"
+            or any(type(self.fields.get(name)) is not int for name in ("input_tokens", "output_tokens"))
+        ):
+            raise ValueError("AI.USAGE entries come from an AI step and count input_tokens and output_tokens")
+        return self
+
+
+class TaskLogRequest(ContractModel):
+    """Up to 50 entries about the leased task, and how many the writer dropped before sending."""
+
+    lease: LeaseProof
+    entries: list[TaskLogEntry] = Field(min_length=1, max_length=TASK_LOG_BATCH)
+    dropped: Annotated[int, Field(ge=0, le=TASK_LOG_DROPPED)] = 0
+
+
+class TaskLogAccepted(ContractModel):
+    """Entries of the batch stored, and entries of the batch dropped because a quota cut it."""
+
+    accepted: LogCount
+    dropped: LogCount

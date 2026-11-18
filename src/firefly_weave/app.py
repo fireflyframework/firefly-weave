@@ -53,6 +53,7 @@ from firefly_weave.api.connector_descriptors import ConnectorDescriptorControlle
 from firefly_weave.api.debug import DebugController
 from firefly_weave.api.definitions import DefinitionController
 from firefly_weave.api.event_triggers import EventTriggerController
+from firefly_weave.api.execution_logs import ExecutionLogController
 from firefly_weave.api.files import FileController
 from firefly_weave.api.health import HealthController
 from firefly_weave.api.human_files import HumanFileController
@@ -381,6 +382,7 @@ def make_app(
                 RunController,
                 RunViewService,
                 RunViewController,
+                ExecutionLogController,
                 WorkerController,
                 OperationsSummaryController,
                 RunStatisticsController,
@@ -451,6 +453,7 @@ def make_app(
                         settings.native_executors,
                         settings.native_image_digest,
                         settings.shutdown_timeout_seconds,
+                        daily_log_entries=settings.execution_log_daily_entries,
                     )
                     await dispatcher.open()
                     app.state.dispatcher = dispatcher
