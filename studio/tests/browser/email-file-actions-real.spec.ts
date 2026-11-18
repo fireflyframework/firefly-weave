@@ -164,7 +164,11 @@ test("an unclear mail answer is never resent", async ({ page }) => {
     "weave-email@1.0.0",
     view({
       status: "failed",
-      error: { code: "EMAIL_ACCEPTANCE_UNKNOWN", message: "unknown" },
+      // As the platform reports a failed step: WV-STEP-<code> and its generic message.
+      error: {
+        code: "WV-STEP-EMAIL_ACCEPTANCE_UNKNOWN",
+        message: "The step failed: EMAIL_ACCEPTANCE_UNKNOWN.",
+      },
       ended_at: "2026-11-17T10:00:05Z",
     }),
   );

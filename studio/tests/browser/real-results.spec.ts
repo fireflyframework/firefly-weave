@@ -126,12 +126,19 @@ test("a failed test says so", async ({ page }) => {
     page,
     view({
       status: "failed",
-      error: { code: "HTTP_STATUS", message: "The API answered 500." },
+      // As the platform reports a failed step: WV-STEP-<code> and its generic message.
+      error: {
+        code: "WV-STEP-HTTP_STATUS",
+        message: "The step failed: HTTP_STATUS.",
+      },
       ended_at: "2026-11-17T10:00:02Z",
     }),
   );
   await expect(output(details)).toContainText(
-    "crm-lookup failed in Production: HTTP_STATUS. The API answered 500.",
+    "crm-lookup failed in Production: HTTP_STATUS.",
+  );
+  await expect(output(details)).not.toContainText(
+    "The step failed: HTTP_STATUS.",
   );
 });
 

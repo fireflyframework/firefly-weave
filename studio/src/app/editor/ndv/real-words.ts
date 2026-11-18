@@ -22,10 +22,16 @@ import { OMISSION_WORDS } from "../../operate/run-contracts";
 import type { StepTestOmission, StepTestView } from "../state/execution";
 import type { StepTestRefusal } from "../state/step-test-client";
 
-/** The platform's code for an email whose delivery can't be confirmed either way. */
+/** The connector's code for an email whose delivery can't be confirmed either way. */
 export const UNCLEAR_MAIL_CODES: ReadonlySet<string> = new Set([
   "EMAIL_ACCEPTANCE_UNKNOWN",
 ]);
+/** A failed step's error comes as `WV-STEP-<the step's own code>`. */
+const STEP_CODE_PREFIX = "WV-STEP-";
+const stepCode = (code: string): string =>
+  code.startsWith(STEP_CODE_PREFIX)
+    ? code.slice(STEP_CODE_PREFIX.length)
+    : code;
 
 /** The action's "needs data from earlier steps" reason: Execute previous steps is the way out. */
 export const upstreamMissing = (reason: string): boolean =>
@@ -49,11 +55,14 @@ export function realEndWords(
       return `${step} didn't finish in ${environment} within ${timeoutSeconds} s.`;
     default: {
       const error = view.error;
-      if (error && UNCLEAR_MAIL_CODES.has(error.code))
+      if (!error) return `${step} failed in ${environment}.`;
+      const code = stepCode(error.code);
+      if (UNCLEAR_MAIL_CODES.has(code))
         return "The mail server's answer was unclear. Weave won't resend it; check the mailbox.";
-      return error
-        ? `${step} failed in ${environment}: ${error.code}. ${error.message}`
-        : `${step} failed in ${environment}.`;
+      // The platform's own message often only repeats the code.
+      return error.message === `The step failed: ${code}.`
+        ? `${step} failed in ${environment}: ${code}.`
+        : `${step} failed in ${environment}: ${code}. ${error.message}`;
     }
   }
 }
