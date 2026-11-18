@@ -132,10 +132,19 @@ function readTest(value: unknown): ConnectionTest {
 /** Refusals that answer the question "can this connection be used?": the platform says why. */
 const ANSWERS = new Set([403, 404, 409, 422]);
 
-export function platformConnections(api: StudioApi): ConnectionsApi {
+/**
+ * The platform's connection operations in one environment. `environment` is
+ * the environment's API path when the caller made it; requests keep going
+ * there even after Studio switched to another one.
+ */
+export function platformConnections(
+  api: StudioApi,
+  environment?: string,
+): ConnectionsApi {
+  const scope = () => environment ?? api.environment;
   return {
     async bindable(connector) {
-      const base = `${api.environment}/bindable-connections?connector=${encodeURIComponent(connector)}&limit=${PAGE}`;
+      const base = `${scope()}/bindable-connections?connector=${encodeURIComponent(connector)}&limit=${PAGE}`;
       const items: BindableItem[] = [];
       let cursor: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
@@ -155,7 +164,7 @@ export function platformConnections(api: StudioApi): ConnectionsApi {
       try {
         return readTest(
           await api.request(
-            `${api.environment}/connections/${encodeURIComponent(revisionId)}/test`,
+            `${scope()}/connections/${encodeURIComponent(revisionId)}/test`,
             "POST",
           ),
         );
@@ -173,7 +182,7 @@ export function platformConnections(api: StudioApi): ConnectionsApi {
     async policy() {
       let answer: unknown;
       try {
-        answer = await api.request(`${api.environment}/test-policy`);
+        answer = await api.request(`${scope()}/test-policy`);
       } catch (error) {
         if (error instanceof ApiError && error.status === 403)
           return "unreadable";

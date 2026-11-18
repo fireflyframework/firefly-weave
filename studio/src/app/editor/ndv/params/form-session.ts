@@ -2248,6 +2248,7 @@ export class FormSession {
     await port.reload(connector);
     if (!port.live || !this.isCurrent()) return;
     const list = await port.listed(connector);
+    if (!port.live || !this.isCurrent()) return;
     const item =
       list.items?.find((entry) => entry.revisionId === created.id) ??
       list.items?.find((entry) => entry.name === created.name);
@@ -2271,7 +2272,8 @@ export class FormSession {
     await port.ready;
     const list = await port.listed(connector);
     const now = this.connectionView(spec);
-    if (!list.items || !now || now.port !== port || !this.isCurrent()) return;
+    if (!port.live || !list.items || !now || now.port !== port) return;
+    if (!this.isCurrent()) return;
     if (now.binding) {
       const listed = list.items.find(
         (entry) => entry.connectionId === now.binding?.connectionId,
@@ -2286,6 +2288,7 @@ export class FormSession {
         return;
       }
       await port.follow(workflow, now.slot, listed);
+      if (!port.live || !this.isCurrent()) return;
       if (
         needsTest(port.binding(workflow, now.slot), port.canManage, new Date())
       )

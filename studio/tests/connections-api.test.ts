@@ -183,4 +183,28 @@ describe("connections from the platform", () => {
       platformConnections(down.api).test(REVISION),
     ).rejects.toThrow();
   });
+
+  it("keeps asking the environment it was made for", async () => {
+    let environment = ENV;
+    const calls: string[] = [];
+    const api = {
+      get environment() {
+        return environment;
+      },
+      request: async (path: string) => {
+        calls.push(path);
+        return path.endsWith("/test-policy")
+          ? { test_calls: "enabled", revision: 1 }
+          : { items: [], next_cursor: null };
+      },
+    } as unknown as StudioApi;
+    const connections = platformConnections(api, ENV);
+    // The person switches environment after the port was made.
+    environment = "/studio/api/api/v1/tenants/t/projects/p/environments/other";
+    await connections.bindable("weave-http@2.0.0");
+    await connections.policy();
+    await connections.test(REVISION);
+    expect(calls.every((path) => path.startsWith(`${ENV}/`))).toBe(true);
+    expect(calls).toHaveLength(3);
+  });
 });

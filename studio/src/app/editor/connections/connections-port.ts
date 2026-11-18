@@ -112,7 +112,8 @@ export class ConnectionsPort {
     readonly environmentId: string,
     private readonly now: () => number = () => Date.now(),
   ) {
-    this.api = platformConnections(host.api);
+    // Requests go to the environment this port was made for, never a later one.
+    this.api = platformConnections(host.api, environmentPath(host.api));
     const account = host.runAccount;
     this.ready = (async () => {
       const prefix = account
@@ -240,7 +241,7 @@ export class ConnectionsPort {
   ): Promise<void> {
     const bound = this.binding(workflow, slot);
     const key = `${workflow}\u0000${slot}`;
-    if (!bound || this.testing.has(key)) return;
+    if (!this.alive || !bound || this.testing.has(key)) return;
     this.testing.add(key);
     this.bump();
     let ok = false;
@@ -403,6 +404,14 @@ export class ConnectionsPort {
 }
 
 const ports = new WeakMap<object, ConnectionsPort>();
+
+function environmentPath(api: PortHost["api"]): string | undefined {
+  try {
+    return api.environment;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The connections port of the account, environment and platform shown now,
