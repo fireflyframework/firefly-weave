@@ -24,6 +24,10 @@ increments, so a change prepared from an older read is refused. A Kafka trigger 
 hands gets a new source binding and the old one is revoked: a source still has at most one live binding, and
 revoked ones stay as history. Existing rows read revision 1, which costs nothing toward usage, so usage charged
 before this migration stays exact; nothing is backfilled.
+
+A draft test activation can listen for test events through a webhook route on the test activation. When the sweep
+purges a retired test activation, ``weave_purge_test_activation`` now deletes its listen routes too; its owner may
+delete only routes of test activations.
 """
 
 import sqlalchemy as sa
@@ -33,6 +37,11 @@ revision = "0044_editor_trigger_retarget"
 down_revision = "0042_operations_alerts"
 
 SOURCES = ("trigger_routes", "broker_routes", "provider_sources", "email_sources")
+PURGE = "public.weave_purge_test_activation(uuid,uuid,uuid,uuid)"
+EXACT = " AND ".join(
+    f"{name}=nullif(current_setting('weave.{name}',true),'')::uuid"
+    for name in ("tenant_id", "project_id", "environment_id")
+)
 UPDATES = {
     "trigger_routes": "activation_id,principal_id,payload,revision",
     "broker_routes": "activation_id,principal_id,binding_id,payload,revision",
@@ -92,10 +101,33 @@ def row_accounting() -> None:
     )
 
 
+def listen_routes() -> None:
+    """A purged test activation takes its listen routes with it, and its purge may delete nothing else.
+
+    A route is stopped before its activation is purged, so its reserve was already released, as a purged run's is.
+    """
+    op.execute("GRANT DELETE ON trigger_routes TO weave_retention_owner")
+    op.execute(
+        f"CREATE POLICY test_listen_purge ON trigger_routes FOR DELETE TO weave_retention_owner USING ({EXACT} "
+        "AND EXISTS(SELECT 1 FROM public.activation_revisions a WHERE a.tenant_id=trigger_routes.tenant_id "
+        "AND a.project_id=trigger_routes.project_id AND a.environment_id=trigger_routes.environment_id "
+        "AND a.id=trigger_routes.activation_id AND a.test))"
+    )
+    anchor = "DELETE FROM public.activation_revisions"
+    patch_function(
+        PURGE,
+        anchor,
+        "DELETE FROM public.trigger_routes WHERE tenant_id=t AND project_id=p AND environment_id=e "
+        "AND activation_id=target;\n        " + anchor,
+        applied="public.trigger_routes",
+    )
+
+
 def upgrade() -> None:
     revisions()
     live_bindings()
     row_accounting()
+    listen_routes()
     op.execute(f"UPDATE weave_schema_version SET version='{revision}'")
 
 
