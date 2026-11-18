@@ -358,10 +358,14 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
   `trigger.manage`. Studio sends the webhook's test secret handle
   (`testSecretRef`), never its production one, then reads
   `GET {ENV}/run-summaries?activation_id=…&include_test=true&started_after=…`
-  every 2 seconds until a run starts, the URL expires, or three reads in a row
-  fail. The run's input becomes the workflow's test input, with
+  every 2 seconds, from two minutes before this computer's clock, until a run
+  starts that Execute workflow didn't start and listening didn't take before,
+  the URL expires, or three reads in a row fail. The run's input becomes the workflow's test input, with
   `source: "test-call"`, `runId` and `runEnvironmentId`. Stop listening
   deletes the test activation, which retires its test URL.
+- **Retiring.** Studio deletes its test activation when the editor's draft is
+  another one or another saved revision, when the editor closes, and when the
+  account, environment or platform changes; listening on it ends.
 - **Following.** Studio reads a step test every second for 30 seconds, then
   every 2 seconds, until it ends or its timeout plus a minute passes; a read
   that fails waits twice as long (at most 30 seconds), and three in a row stop
@@ -412,7 +416,7 @@ The dialog reads, before Activate:
 | Step | Read | Rows |
 | --- | --- | --- |
 | Checks | `GET {PROJECT}/language` and the version's export (`artifact.executable.features`) | The first feature the platform doesn't run stops the dialog. |
-| Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot, chosen for the person from this computer's dev binding or the only candidate. |
+| Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot. A required slot is chosen for the person from this computer's dev binding or the only candidate; an optional one only from a dev binding. |
 | Called workflows | The version's export (`document`), `GET {PROJECT}/workflows` and `GET {ENV}/activations` | Each callee's current activation, sent as `workflow_activation_ids`; a callee without one blocks Activate. |
 | Triggers | `GET {ENV}/triggers`, `schedules`, `broker-triggers`, `email/sources` and `provider-sources` | One row per trigger choice: create, move, a schedule to save, a choice the CLI sets up, or a resource this workflow ran that is left behind, with **Stop it**. |
 
