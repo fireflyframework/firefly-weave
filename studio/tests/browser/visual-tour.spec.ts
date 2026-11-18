@@ -137,6 +137,24 @@ import {
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
+  PRODUCTION,
+  bindable as connectionBindable,
+  connectionSelect,
+  crmWorkflow,
+  openConnected,
+  revisionId as connectionRevision,
+  routeConnectionForm,
+  type ConnectionsState,
+} from "./connections-po";
+import {
+  accepted as stepTestAccepted,
+  executeIn as executeStepIn,
+  routeStepTests,
+  showOutput,
+  succeeded as stepTestSucceeded,
+  view as stepTestView,
+} from "./step-tests-po";
+import {
   keepDrafts,
   listedKinds,
   openRunsTab,
@@ -4951,6 +4969,106 @@ spec:
     ).toHaveCount(2);
     await expect(page.getByText(`Scale workers · ${deployment}`)).toBeVisible();
     await shot("90-clusters-approvals");
+  },
+  async connections({ page, shot }) {
+    const state: ConnectionsState = {
+      bindable: {
+        [PRODUCTION]: [
+          connectionBindable(1),
+          connectionBindable(2, { endpoint_origin: "http://legacy.acme.test" }),
+        ],
+      },
+      tests: {
+        [connectionRevision(2)]: {
+          ok: false,
+          code: "failed",
+          reason: "unauthorized",
+        },
+      },
+      sideEffect: "non_idempotent",
+    };
+    await page.clock.install();
+    const { details } = await openConnected(
+      page,
+      state,
+      crmWorkflow(
+        {},
+        { with: { object: { customerId: { literal: "c-1042" } } } },
+      ),
+    );
+    const created: { id: string; body: Record<string, unknown> }[] = [];
+    await routeConnectionForm(page, state, created);
+    await routeStepTests(page, {
+      starts: [{ status: 202, json: stepTestAccepted }],
+      views: [stepTestView(), stepTestSucceeded({ name: "Ana", open: 2 })],
+    });
+    const options = page
+      .getByRole("listbox", { name: "Connection options" })
+      .getByRole("option");
+    await details.open("crm-lookup");
+    await connectionSelect(details).click();
+    await expect(
+      options.filter({ hasText: "Create connection" }),
+    ).toBeVisible();
+    await shot("192-connection-choices");
+    // The shot parks the pointer, which closes the list: open it again.
+    if (!(await options.first().isVisible()))
+      await connectionSelect(details).click();
+    await options.filter({ hasText: /^acme-crm-1/ }).click();
+    await expect(details.field("connection")).toContainText("Tested just now");
+    await page.clock.fastForward("02:00");
+    await expect(details.field("connection")).toContainText("Tested 2 min ago");
+    await shot("193-connection-tested");
+    await connectionSelect(details).click();
+    await options.filter({ hasText: /^acme-crm-2/ }).click();
+    await expect(details.field("connection")).toContainText("Test failed");
+    await shot("194-connection-test-failed");
+    await connectionSelect(details).click();
+    await options.filter({ hasText: "Create connection" }).click();
+    const form = page.getByRole("dialog", {
+      name: "New API connection",
+      exact: true,
+    });
+    await expect(form.getByLabel("API address", { exact: true })).toBeVisible();
+    await shot("195-connection-sheet", { tabs: 2 });
+    await page.keyboard.press("Escape");
+    await expect(form).toHaveCount(0);
+    await connectionSelect(details).click();
+    await options.filter({ hasText: /^acme-crm-1/ }).click();
+    await expect(details.field("connection")).toContainText("Tested");
+    const item = await executeStepIn(details, "Production");
+    await expect(item).toBeVisible();
+    await shot("196-execute-in-environment");
+    // The shot closes the menu: open it again.
+    if (!(await item.isVisible()))
+      await (await executeStepIn(details, "Production")).click();
+    else await item.click();
+    const question = page.getByRole("alertdialog", {
+      name: "Execute crm-lookup in Production?",
+    });
+    await expect(question).toBeVisible();
+    await shot("197-execute-confirmation", { tabs: 2 });
+    await question.getByRole("button", { name: "Run it" }).click();
+    const output = await showOutput(details);
+    await expect(output).toContainText("From Production · run");
+    await shot("198-real-result");
+  },
+  async "connections-policy-off"({ page, shot }) {
+    const { details } = await openConnected(
+      page,
+      {
+        bindable: { [PRODUCTION]: [connectionBindable(1)] },
+        policy: { [PRODUCTION]: "disabled" },
+      },
+      crmWorkflow(
+        {},
+        { with: { object: { customerId: { literal: "c-1042" } } } },
+      ),
+    );
+    await details.open("crm-lookup");
+    const item = await executeStepIn(details, "Production");
+    await expect(item).toContainText("Test calls are off in Production.");
+    await shot("199-execute-policy-off");
   },
   async "runs-tab"({ page, shot }) {
     const { runs } = await openRunsTab(page);
