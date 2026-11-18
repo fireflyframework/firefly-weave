@@ -113,7 +113,7 @@ class EventTrigger(EventTriggerRequest):
     # Whose authority starts each run; it must still hold run.start, and run.read for the transaction facts the run
     # receives, when the run starts.
     principal_id: UUID
-    # 1 when created, 2 once disabled.
+    # 1 when created, then one more for each retarget and for the disable.
     revision: int = Field(ge=1)
     disabled: bool = False
     created_at: AwareDatetime

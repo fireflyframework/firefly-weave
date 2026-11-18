@@ -14,7 +14,8 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Platform-event triggers over HTTP: bind an activation to platform events, disable it, and read what it started."""
+"""Platform-event triggers over HTTP: bind an activation to platform events, move or disable the binding, and read
+what it started."""
 
 from uuid import UUID
 
@@ -26,6 +27,7 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import page_request, page_response
+from firefly_weave.api.triggers import retarget_body, tagged
 from firefly_weave.contracts.event_triggers import EventTriggerRequest
 from firefly_weave.triggers.event_triggers import EventTriggerService
 
@@ -63,7 +65,20 @@ class EventTriggerController:
             UUID(request.path_params["identifier"]),
             context=request.state.audit_context,
         )
-        return JSONResponse(result.model_dump(mode="json"))
+        return tagged(result, request)
+
+    @operation("event_triggers.retarget")
+    async def retarget(self, request: Request) -> JSONResponse:
+        expected, body = await retarget_body(request)
+        result = await self.service.retarget(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            body.activation_id,
+            expected,
+            context=request.state.audit_context,
+        )
+        return tagged(result, request)
 
     @operation("event_triggers.disable")
     async def disable(self, request: Request) -> JSONResponse:

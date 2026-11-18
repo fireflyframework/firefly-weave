@@ -172,6 +172,29 @@ def mail(revision=2, activation=None):
     )
 
 
+def platform_events(revision=2, activation=None):
+    from datetime import UTC, datetime
+
+    from firefly_weave.contracts.event_triggers import EventTrigger
+
+    return EventTrigger(
+        id=uuid4(),
+        name="notify",
+        activation_id=activation or uuid4(),
+        events=["transaction.in_doubt"],
+        workflow_name="notify-team",
+        principal_id=MOVER.id,
+        revision=revision,
+        created_at=datetime.now(UTC),
+    )
+
+
+def event_controller(service):
+    from firefly_weave.api.event_triggers import EventTriggerController
+
+    return EventTriggerController(service)
+
+
 def broker_controller(service):
     from firefly_weave.api.broker import BrokerController
 
@@ -192,8 +215,13 @@ def email_controller(service):
 
 @pytest.mark.parametrize(
     "controller, resource",
-    [(broker_controller, kafka), (provider_controller, events), (email_controller, mail)],
-    ids=["kafka", "app events", "email"],
+    [
+        (broker_controller, kafka),
+        (provider_controller, events),
+        (email_controller, mail),
+        (event_controller, platform_events),
+    ],
+    ids=["kafka", "app events", "email", "platform events"],
 )
 async def test_every_source_retarget_passes_the_revision_and_answers_the_new_one(controller, resource):
     target, identifier = uuid4(), uuid4()
@@ -222,6 +250,8 @@ async def test_kafka_and_app_event_and_email_reads_answer_the_revision_as_the_et
     provider = provider_controller(SimpleNamespace(read=provider_read))
     assert (await provider.read(request())).headers["ETag"] == '"6"'
     assert (await email_controller(SimpleNamespace(read=email_read)).read(request())).headers["ETag"] == '"8"'
+    events_service, _ = recording(platform_events(revision=3))
+    assert (await event_controller(events_service).read(request())).headers["ETag"] == '"3"'
 
 
 async def test_the_email_source_list_pages_with_a_scope_bound_cursor():
