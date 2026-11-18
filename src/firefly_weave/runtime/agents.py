@@ -34,7 +34,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final, Literal, cast
 
+from pydantic import ValidationError
+
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR
+from firefly_weave.contracts.agent_conversations import (
+    CONVERSATION_MESSAGES,
+    ConversationMessage,
+)
 from firefly_weave.contracts.agent_turns import (
     DATA_NOTICES,
     TOOL_RESULT_BYTES,
@@ -200,6 +206,33 @@ def memory_loaded(
     return _next_turn(
         ir, node, state.model_copy(update={"messages": messages, "phase": "turn"}), run_tokens, forced=False
     )
+
+
+def loaded_entries(state: AgentState, data: JsonObject) -> list[JsonObject]:
+    """The remembered messages a ``memory_loaded`` event hands the waiting agent, after checking that it is for this
+    agent's conversation and well formed. Raises ``ValueError`` for anything else.
+
+    An expired conversation and a test run's load carry no messages.
+    """
+    if state.phase != "memory" or state.conversation is None:
+        raise ValueError("The agent isn't waiting for its memory")
+    if set(data) - _LOADED_FIELDS or data.get("key_hash") != state.conversation:
+        raise ValueError("The load is for another conversation")
+    version, expired, test = data.get("version"), data.get("expired"), data.get("test", False)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+        raise ValueError("A load names the conversation's version")
+    if not isinstance(expired, bool) or not isinstance(test, bool):
+        raise ValueError("A load says whether the conversation expired and whether the run is a test")
+    messages = data.get("messages")
+    if not isinstance(messages, list) or len(messages) > CONVERSATION_MESSAGES or ((expired or test) and messages):
+        raise ValueError("A load carries at most 200 messages, none when expired or for a test run")
+    try:
+        return [ConversationMessage.model_validate(entry).model_dump(mode="json") for entry in messages]
+    except ValidationError:
+        raise ValueError("A remembered message is a user or assistant entry") from None
+
+
+_LOADED_FIELDS: Final = frozenset({"node_id", "key_hash", "version", "expired", "test", "messages"})
 
 
 def _memory_message(entries: list[JsonObject]) -> JsonObject:

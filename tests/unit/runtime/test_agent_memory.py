@@ -18,6 +18,8 @@
 each completed exchange, scrubbed and redacted."""
 
 import hashlib
+import json
+from datetime import timedelta
 
 import pytest
 from agent_fixtures import (
@@ -25,16 +27,22 @@ from agent_fixtures import (
     LOOKUP,
     NOW,
     PROFILE,
+    SHIPPED,
+    Run,
     agent,
+    answering,
     compiled,
     conversation_memory_enabled,  # noqa: F401 - a fixture
     final,
     node_of_ir,
+    tasks,
     tool_calls,
     workflow,
 )
 
+from firefly_weave.contracts.agent_conversations import conversation_key_hash
 from firefly_weave.contracts.agent_turns import turn_fits, wire_json
+from firefly_weave.runtime import kernel
 from firefly_weave.runtime.agents import (
     ActivationValues,
     activate,
@@ -42,6 +50,8 @@ from firefly_weave.runtime.agents import (
     tool_failed,
     turn_completed,
 )
+from firefly_weave.runtime.kernel import KernelError
+from firefly_weave.runtime.models import Deadline, MemoryIntent, StepChange
 
 pytestmark = pytest.mark.usefixtures("conversation_memory_enabled")
 
@@ -227,3 +237,240 @@ def test_the_loaded_turn_fits_the_context_like_any_other():
     ]
     remembered = kept[0]["content"]["memory"] if kept[0]["role"] == "context" and "memory" in kept[0]["content"] else []
     assert len(remembered) < 200 and remembered[-1]["content"].startswith("99 ")
+
+
+# Through the kernel: a workflow whose agent remembers each customer's conversation.
+CUSTOMER = "C-4777"
+CUSTOMER_HASH = conversation_key_hash("support-desk", CUSTOMER)
+BY_CUSTOMER = {"scope": "conversation", "key": {"ref": "/input/customerId"}}
+RUN_INPUT = {"message": "Where is order A-17?", "region": "eu", "orders": ["A-17"], "customerId": CUSTOMER}
+
+
+def remembering(memory=BY_CUSTOMER, **changes):
+    document = answering(workflow(agent(tools=[LOOKUP], memory=memory, **changes)))
+    document["spec"]["inputSchema"]["properties"]["customerId"] = {"type": "string"}
+    if "onError" in changes:
+        document["spec"]["output"] = {"ref": "/steps/support/error/code"}
+    return document
+
+
+def kernel_run(customer: str = CUSTOMER, **changes) -> Run:
+    return Run(remembering(**changes), value={**RUN_INPUT, "customerId": customer})
+
+
+def loaded(run: Run, messages=(), **data):
+    fields = {
+        "node_id": "support",
+        "key_hash": CUSTOMER_HASH,
+        "version": 1,
+        "expired": False,
+        "messages": list(messages),
+    }
+    return run.send("memory_loaded", **(fields | data))
+
+
+def memory_intents(result) -> list[MemoryIntent]:
+    return [command for command in result.commands if isinstance(command, MemoryIntent)]
+
+
+def test_activation_arms_the_deadline_and_asks_for_the_conversation():
+    run = kernel_run()
+
+    started = run.send("started")
+
+    own = [command for command in started.commands if getattr(command, "node_id", None) == "support"]
+    assert own == [
+        Deadline(node_id="support", deadline=NOW + timedelta(seconds=900)),
+        MemoryIntent(op="load", node_id="support", workflow="support-desk", key_hash=CUSTOMER_HASH),
+    ]
+    assert tasks(started) == {} and run.state.agents["support"].phase == "memory"
+
+
+def test_a_memory_loaded_event_starts_turn_1_with_the_conversation():
+    run = kernel_run()
+    run.send("started")
+
+    result = loaded(run, exchanges(1))
+
+    turn = tasks(result)["support#1"].input
+    assert turn["messages"][0] == {"role": "context", "content": {"memory": exchanges(1)}}
+    assert turn["messages"][1] == {"role": "user", "content": "Where is order A-17?"}
+    assert run.state.agents["support"].phase == "turn"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"key_hash": conversation_key_hash("support-desk", "C-9")},
+        {"messages": [{"role": "tool", "content": "x"}]},
+        {"messages": [{"role": "user", "content": "x", "name": "C-4"}]},
+        {"messages": exchanges(101)},
+        {"expired": True, "messages": exchanges(1)},
+        {"test": True, "messages": exchanges(1)},
+        {"version": -1},
+        {"version": True},
+        {"expired": "no"},
+        {"extra": 1},
+    ],
+    ids=[
+        "another-key",
+        "tool-role",
+        "extra-field",
+        "too-many",
+        "expired-with-messages",
+        "test-with-messages",
+        "negative-version",
+        "boolean-version",
+        "expired-not-boolean",
+        "unknown-field",
+    ],
+)
+def test_a_malformed_memory_loaded_event_is_refused(data):
+    run = kernel_run()
+    run.send("started")
+
+    refused(run, loaded(run, **data))
+
+
+def refused(run: Run, result) -> None:
+    # A refused event at the agent's key holds the run there, as a late turn does; no turn starts.
+    assert ("support", "WV-RUNTIME-EVENT") in {(item.node_id, item.code) for item in run.state.incidents.values()}
+    assert tasks(result) == {} and memory_intents(result) == []
+
+
+def test_memory_loaded_a_second_time_is_refused():
+    run = kernel_run()
+    run.send("started")
+    assert "support#1" in tasks(loaded(run))
+
+    refused(run, loaded(run))
+
+
+def test_memory_loaded_for_an_agent_without_a_conversation_is_refused():
+    run = Run(answering(workflow(agent(tools=[LOOKUP]))))
+    run.send("started")
+
+    refused(run, loaded(run))
+
+
+def test_an_agent_whose_memory_never_arrives_times_out():
+    run = kernel_run()
+    run.send("started")
+    assert run.state.agents["support"].phase == "memory"
+    due = run.state.waits["support"]
+    run.at = due
+
+    result = run.send("wait_elapsed", node_id="support", deadline=due.isoformat())
+
+    assert ("support", "WV-AGENT-TIMEOUT") in {(item.node_id, item.code) for item in run.state.incidents.values()}
+    assert memory_intents(result) == [] and "support" not in run.state.agents
+
+
+def answered(run: Run, result="Order A-17 has shipped."):
+    run.send("started")
+    loaded(run, exchanges(1))
+    run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"})))
+    run.answer("support#1.1", SHIPPED)
+    return run.answer("support#2", final(result))
+
+
+def test_the_completed_agent_asks_to_append_after_its_output_guard():
+    run = kernel_run()
+
+    result = answered(run)
+
+    assert memory_intents(result) == [
+        MemoryIntent(
+            op="append",
+            node_id="support",
+            workflow="support-desk",
+            key_hash=CUSTOMER_HASH,
+            messages=[
+                {"role": "user", "content": "Where is order A-17?"},
+                {"role": "assistant", "content": "Order A-17 has shipped."},
+            ],
+            window=24,
+            ttl_seconds=2_592_000,
+        )
+    ]
+    assert run.state.status == "succeeded" and run.state.memories == {}
+
+
+def test_an_answer_the_output_guard_refuses_appends_nothing(monkeypatch):
+    validate = kernel.validate
+
+    def refusing_the_step_output(ir, schema, value):
+        if isinstance(value, dict) and "stopReason" in value:
+            raise KernelError("WV-SCHEMA-INVALID_INSTANCE")
+        validate(ir, schema, value)
+
+    monkeypatch.setattr(kernel, "validate", refusing_the_step_output)
+    run = kernel_run(onError="continue")
+
+    result = answered(run)
+
+    assert memory_intents(result) == []
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-SCHEMA-INVALID_INSTANCE")
+
+
+def test_a_key_outside_1_to_256_characters_fails_like_a_bad_prompt():
+    handled = kernel_run("C" * 257, onError="continue")
+    result = handled.send("started")
+    [change] = [change for change in result.steps if change.node_id == "support"]
+    assert isinstance(change, StepChange) and change.status == "failed"
+    assert change.error is not None and change.error["code"] == "WV-SCHEMA-INVALID_INSTANCE"
+    assert memory_intents(result) == [] and handled.state.output == "WV-SCHEMA-INVALID_INSTANCE"
+
+    unhandled = kernel_run("")
+    unhandled.send("started")
+    assert {item.node_id for item in unhandled.state.incidents.values()} == {"support"}
+
+
+def test_the_conversation_keys_value_appears_in_no_intent_state_or_event():
+    # The run's own input keeps the key, under the run's retention; nothing the conversation path writes does.
+    run = kernel_run()
+    history = [run.send("started")]
+    waiting = run.state.agents["support"].model_dump_json()
+    event = {"node_id": "support", "key_hash": CUSTOMER_HASH, "version": 1, "expired": False, "messages": exchanges(1)}
+    history.append(run.send("memory_loaded", **event))
+    history.append(run.answer("support#1", final("Order A-17 has shipped.")))
+
+    intents = [intent.model_dump_json() for result in history for intent in memory_intents(result)]
+    assert len(intents) == 2 and CUSTOMER_HASH in waiting
+    written = [
+        *intents,
+        waiting,
+        json.dumps(event),
+        *(command.model_dump_json() for result in history for command in result.commands),
+        *(change.model_dump_json() for result in history for change in result.steps),
+    ]
+    for text in written:
+        assert CUSTOMER not in text
+
+
+def test_the_same_key_in_two_workflows_gives_two_hashes():
+    first = kernel_run()
+    renamed = remembering()
+    renamed["metadata"]["name"] = "billing-desk"
+    second = Run(renamed, value=RUN_INPUT)
+
+    [one] = memory_intents(first.send("started"))
+    [other] = memory_intents(second.send("started"))
+
+    assert one.key_hash == CUSTOMER_HASH
+    assert other.key_hash == conversation_key_hash("billing-desk", CUSTOMER) != CUSTOMER_HASH
+
+
+def test_a_run_memory_workflows_transitions_keep_their_bytes():
+    # Recorded on main before conversation memory: a run-memory agent's four transitions, joined by newlines.
+    document = answering(workflow(agent(tools=[LOOKUP], memory={"scope": "run", "key": "orders"})))
+    run = Run(document)
+    history = [
+        run.send("started"),
+        run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"}))),
+        run.answer("support#1.1", SHIPPED),
+        run.answer("support#2", final("Order A-17 has shipped.")),
+    ]
+    joined = b"\n".join(item.model_dump_json().encode() for item in history)
+
+    assert hashlib.sha256(joined).hexdigest() == "ecaf90a80a01d5d0ddc7504b05382bf6888466e0a2ec6c79091092c4415375a1"
