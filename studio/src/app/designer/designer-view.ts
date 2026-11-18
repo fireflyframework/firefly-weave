@@ -54,6 +54,9 @@ import { DialogService } from "../dialog";
 import { workflowTestItem } from "../editor/activation/execute-in-environment";
 import { connectionsPort } from "../editor/connections/connections-port";
 
+/** The narrowest window whose editor bar has room for Execute workflow's split. */
+const SPLIT_MIN_WIDTH = 1024;
+
 @Component({
   selector: "weave-designer",
   // A view of the shell's state: checked whenever the shell renders.
@@ -1519,22 +1522,24 @@ export class DesignerView implements DoCheck {
   }
   /** Execute workflow's other ways: Execute workflow in the environment Studio is connected to. */
   executeWays(): RowMenuItem[] {
-    // A phone's bar has no room for the split: More offers it instead.
-    if (this.host().windowWidth <= 767) return [];
+    // Below 1024 px the bar has no room for the split: More offers it instead.
+    if (this.host().windowWidth < SPLIT_MIN_WIDTH) return [];
     const item = workflowTestItem(this.host(), this.dialogs);
     return item ? [item] : [];
   }
-  /** More: the shell's commands, with Execute workflow in the environment after Execute workflow on a phone. */
+  /**
+   * More: the shell's commands and, when the bar has no room for the split,
+   * Execute workflow in the environment, after Execute workflow (a phone's
+   * More holds it) or first.
+   */
   moreMenu(): RowMenuItem[] {
     const h = this.host();
     const items = h.moreItems;
-    if (h.windowWidth > 767) return items;
+    if (h.windowWidth >= SPLIT_MIN_WIDTH) return items;
     const real = workflowTestItem(h, this.dialogs);
     if (!real) return items;
     const at = items.findIndex((item) => item.label === "Execute workflow");
-    return at < 0
-      ? [...items, real]
-      : [...items.slice(0, at + 1), real, ...items.slice(at + 1)];
+    return [...items.slice(0, at + 1), real, ...items.slice(at + 1)];
   }
   private viewMenu: { key: string; items: RowMenuItem[] } | null = null;
   /**
