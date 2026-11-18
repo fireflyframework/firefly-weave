@@ -434,12 +434,58 @@ function blank(schema: JsonObject) {
   );
 }
 
+/** The JSON types a schema names, or null when it names none (any value). */
+function typesOf(schema: unknown): Set<string> | null {
+  if (!isJsonObject(schema)) return null;
+  const type = schema["type"];
+  if (typeof type === "string") return new Set([type]);
+  if (Array.isArray(type) && type.every((item) => typeof item === "string"))
+    return new Set(type as string[]);
+  return null;
+}
+
+/** Whether a value of one of `given`'s types can be one of `wanted`'s (an integer is a number). */
+const overlaps = (wanted: Set<string>, given: Set<string>) =>
+  [...given].some(
+    (type) => wanted.has(type) || (type === "integer" && wanted.has("number")),
+  );
+
+/**
+ * Whether the input asks for nothing the email message lacks: an object,
+ * required fields the message has, no message field of another type, and
+ * room for every message field. Finer checks are the platform's (it accepts
+ * any input compatible with the message when the email source moves).
+ */
+function takesEmail(input: JsonObject, message: JsonObject): boolean {
+  const kinds = typesOf(input);
+  if (kinds && !kinds.has("object")) return false;
+  const fields = isJsonObject(message["properties"])
+    ? message["properties"]
+    : {};
+  const declared = isJsonObject(input["properties"]) ? input["properties"] : {};
+  const required = Array.isArray(input["required"]) ? input["required"] : [];
+  if (required.some((name) => typeof name !== "string" || !(name in fields)))
+    return false;
+  for (const [name, field] of Object.entries(declared)) {
+    if (!(name in fields)) continue;
+    const wanted = typesOf(field);
+    const given = typesOf(fields[name]);
+    if (wanted && given && !overlaps(wanted, given)) return false;
+  }
+  return !(
+    input["additionalProperties"] === false &&
+    Object.keys(fields).some((name) => !(name in declared))
+  );
+}
+
 /**
  * Whether a trigger's payload fits the workflow's one input. Only an email
- * trigger brings its own payload (the email message); a webhook's and a
- * Kafka message's payload is the input itself. Adding an email trigger to a
- * workflow whose input asks for something else asks before replacing it; an
- * email trigger already there reports the misfit instead.
+ * trigger brings its own payload: the received message, whose schema
+ * (`emailSchema`) is the platform's NormalizedEmail with its definitions
+ * inlined, not the exported email-message envelope. A webhook's and a Kafka
+ * message's payload is the input itself. Adding an email trigger to a
+ * workflow whose input asks for something the message lacks asks before
+ * replacing it; an email trigger already there reports the misfit instead.
  */
 export function inputFit(
   kind: TriggerKind,
@@ -449,6 +495,9 @@ export function inputFit(
 ): InputFit {
   if (kind !== "email" || jsonEqual(input, emailSchema))
     return { kind: "fits" };
+  if (!options.existing && blank(input))
+    return { kind: "replace", schema: emailSchema };
+  if (takesEmail(input, emailSchema)) return { kind: "fits" };
   if (options.existing)
     return {
       kind: "problem",
@@ -456,7 +505,6 @@ export function inputFit(
         "This workflow's input no longer accepts an email. Reset the input to the email message.",
       schema: emailSchema,
     };
-  if (blank(input)) return { kind: "replace", schema: emailSchema };
   return {
     kind: "ask",
     question:

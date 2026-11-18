@@ -374,12 +374,79 @@ describe("step details lines", () => {
 });
 
 describe("the input-fit question", () => {
+  // The received message's schema, as the platform's email_input_schema() inlines it (abridged).
   const EMAIL = {
     type: "object",
-    properties: { sender: { type: "string" } },
-    required: ["sender"],
+    properties: {
+      sender: { type: "string" },
+      to: { type: "array", items: { type: "string" } },
+      subject: { type: "string" },
+      reply_to: { anyOf: [{ type: "string" }, { type: "null" }] },
+      automated: { type: "boolean" },
+    },
+    required: ["sender", "to", "subject"],
   };
-  const FORM = { type: "object", properties: { region: { type: "string" } } };
+  const FORM = {
+    type: "object",
+    properties: { region: { type: "string" } },
+    required: ["region"],
+  };
+
+  it.each([
+    [
+      "part of the message",
+      {
+        type: "object",
+        properties: { sender: { type: "string" } },
+        required: ["sender"],
+      },
+    ],
+    [
+      "fields the message may lack, optional",
+      {
+        type: "object",
+        properties: { sender: { type: "string" }, note: { type: "string" } },
+      },
+    ],
+    [
+      "a wider type",
+      {
+        type: "object",
+        properties: { to: { type: ["array", "null"] }, automated: {} },
+      },
+    ],
+    [
+      "a field whose message type it can't read",
+      { type: "object", properties: { reply_to: { type: "string" } } },
+    ],
+  ])("lets an email start a workflow whose input asks for %s", (_, input) => {
+    expect(inputFit("email", input, EMAIL)).toEqual({ kind: "fits" });
+    expect(inputFit("email", input, EMAIL, { existing: true })).toEqual({
+      kind: "fits",
+    });
+  });
+
+  it.each([
+    [
+      "a field the message doesn't have",
+      { type: "object", properties: {}, required: ["orderId"] },
+    ],
+    [
+      "another type for a message field",
+      { type: "object", properties: { automated: { type: "string" } } },
+    ],
+    [
+      "only the fields it names",
+      {
+        type: "object",
+        properties: { sender: { type: "string" } },
+        additionalProperties: false,
+      },
+    ],
+    ["something other than an object", { type: "array" }],
+  ])("asks when the input asks for %s", (_, input) => {
+    expect(inputFit("email", input, EMAIL).kind).toBe("ask");
+  });
 
   it("asks before replacing an input that doesn't take an email", () => {
     expect(inputFit("email", FORM, EMAIL)).toEqual({
