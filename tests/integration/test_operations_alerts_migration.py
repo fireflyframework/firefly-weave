@@ -193,14 +193,12 @@ async def test_runs_keep_their_byte_guard(empty_settings):
         await engine.dispose()
 
 
-async def test_the_schema_version_is_the_new_head(upgraded):
+async def test_the_schema_version_records_the_alerts_migration(upgraded):
+    # Later migrations follow this one; tests/unit/test_migration_chain.py keeps the line to the head.
     engine, _ = upgraded
     async with engine.begin() as connection:
         assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == HEAD
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
-    from firefly_weave.persistence.migrations import SCHEMA_VERSION
-
-    assert HEAD == SCHEMA_VERSION
 
 
 async def test_every_alert_table_forces_row_level_security_and_another_environment_reads_nothing(upgraded):
