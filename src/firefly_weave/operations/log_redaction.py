@@ -84,10 +84,14 @@ _QUOTED: Final = (
     r"|(?P<escape>\\{1,7}+)\"(?P<eq>(?:[^\"\\]++|\\++(?!\")|(?!(?P=escape)\")\\++\")*+)(?:(?P=escape)\")?|"
 )
 _SEPARATOR: Final = r"(?:\\{0,7}+[\"'])?[ \t]{0,8}[:=][ \t]{0,8}"
+# A header written as a pair, ('Cookie', '...') or ["Authorization", "..."]: its quoted name, then a comma.
+_PAIR: Final = r"\\{0,7}+[\"'][ \t]{0,8},[ \t]{0,8}"
 _HEADER: Final = re.compile(
-    r"(?i)(?<![A-Za-z0-9_.-])(?:(?:proxy-)?authorization|(?:set-)?cookie)(?=" + _SEPARATOR + ")"
+    r"(?i)(?<![A-Za-z0-9_.-])(?:(?:proxy-)?authorization|(?:set-)?cookie)(?=" + _SEPARATOR + "|" + _PAIR + ")"
 )
-_HEADER_VALUE: Final = re.compile(_SEPARATOR + _QUOTED + r"(?P<bare>\[redacted\]|[^\"']++))")
+_HEADER_VALUE: Final = re.compile(
+    "(?:" + _SEPARATOR + "|" + _PAIR + ")" + _QUOTED + r"(?P<bare>\[redacted\]|[^\"']++))"
+)
 _KEY: Final = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]{1,128}+(?=" + _SEPARATOR + ")")
 _KEY_VALUE: Final = re.compile(_SEPARATOR + _QUOTED + r"(?P<bare>\[redacted\]|[^\s&,;\"'}\])]++))")
 _PARAMETER: Final = re.compile(r"(?<=[?&;])[A-Za-z0-9_.%-]{1,128}+(?==)")

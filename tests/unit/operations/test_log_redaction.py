@@ -134,6 +134,8 @@ CASES = [
     case("a signature key", "signature=<<SIGNATURE>>", "SIGNATURE"),
     case("a subscription key header", "Ocp-Apim-Subscription-Key: <<PASSWORD>>", "PASSWORD"),
     case("a session ID", "sessionid=<<PASSWORD>>", "PASSWORD"),
+    case("a Cookie header as a pair", "[('Cookie', '<<COOKIE>>')]", "COOKIE"),
+    case("an Authorization header as a pair", "headers=[(\"Authorization\", \"Basic <<BASIC>>\")]", "BASIC"),
 ]
 
 
