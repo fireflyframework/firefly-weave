@@ -62,8 +62,13 @@ NESTING_LIMIT: Final = 32
 FIELDS_BYTES: Final = 8192
 
 # Field and key names that hold secrets: a field so named is dropped, a value assigned to one is hidden. Token
-# counts (input_tokens, max_tokens) and tokenizers are not secrets.
-SECRET_NAME: Final = re.compile(r"(?i)secret|token(?!s|iz)|passw(?:or)?d|authorization|cookie|api[_-]?key|credential")
+# counts (input_tokens, max_tokens) and tokenizers are not secrets. Short names count only as a whole part of the
+# name, between its ends and _ . or -, so author, passenger and keyboard stay; key counts only as the whole name.
+SECRET_NAME: Final = re.compile(
+    r"(?i)secret|token(?!s|iz)|passw(?:or)?d|authorization|cookie|api[_-]?key|credential"
+    r"|(?:^|(?<=[_.-]))(?:pwd|pass|auth|signature|session[_-]?id|(?:private|access|signing|subscription)[_.-]?key)"
+    r"(?=$|[_.-])|^key$"
+)
 # URL query parameter names that hold secrets.
 SECRET_PARAMETER: Final = re.compile(r"(?i)token|key|sig|secret|passw(?:or)?d|code|auth|credential")
 _FIELD_KEY: Final = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")

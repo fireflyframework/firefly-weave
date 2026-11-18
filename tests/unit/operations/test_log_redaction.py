@@ -125,6 +125,15 @@ CASES = [
         json.dumps({"outer": json.dumps({"raw": json.dumps({"Authorization": "Basic <<BASIC>>"})})}),
         "BASIC",
     ),
+    case("a password in an ODBC connection string", "Server=db;User Id=app;Pwd=<<PASSWORD>>;", "PASSWORD"),
+    case("a pass key", "pass=<<PASSWORD>>", "PASSWORD"),
+    case("a private key in JSON", '{"private_key": "<<PASSWORD>>"}', "PASSWORD"),
+    case("an access key assigned", "access_key=<<PASSWORD>>", "PASSWORD"),
+    case("a signing key in YAML", "signing_key: <<PASSWORD>>", "PASSWORD"),
+    case("an auth key", "auth=<<PASSWORD>>", "PASSWORD"),
+    case("a signature key", "signature=<<SIGNATURE>>", "SIGNATURE"),
+    case("a subscription key header", "Ocp-Apim-Subscription-Key: <<PASSWORD>>", "PASSWORD"),
+    case("a session ID", "sessionid=<<PASSWORD>>", "PASSWORD"),
 ]
 
 
@@ -216,6 +225,14 @@ def test_secret_named_fields_are_dropped():
     assert result.fields == {"order_id": 42, "ok": True}
     assert result.redactions == 4
     assert not result.truncated
+
+
+def test_short_secret_names_are_dropped_as_whole_name_parts_only():
+    secret = SECRETS["PASSWORD"]
+    named = {name: secret for name in ("auth", "pwd", "private_key", "access_key", "key", "signature", "db_pass")}
+    kept = {"author": "ana", "passenger": "bo", "keyboard": "us", "cache_key": "orders:42", "keys": 3}
+    result = redact_entry("author=ana passenger=bo keyboard=us", {**named, **kept}, known=frozenset())
+    assert (result.message, result.fields, result.redactions) == ("author=ana passenger=bo keyboard=us", kept, 7)
 
 
 def test_token_counts_are_not_secrets():
