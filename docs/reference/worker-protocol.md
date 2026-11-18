@@ -156,10 +156,14 @@ what the writer cut and hid. For example:
 - **The lease says where an entry belongs.** The run, step, attempt, worker,
   workflow and test flag come from the lease, never from the entry. The
   platform moves an `at` outside the lease's lifetime to its start or to now.
-- **The platform redacts again.** Credential values, `Authorization` and
-  `Cookie` values, values of secret-named keys, secret-named URL query
-  parameters, private key blocks, bearer tokens, and well-known key shapes become
-  `[redacted]`, and secret-named fields are dropped, before an entry is stored.
+- **Hide what you lease; the platform catches patterns.** The platform never
+  holds the credential values a worker leases, so the worker hides them before
+  it writes, as the SDK does. Before an entry is stored, the platform redacts it
+  again by pattern: `Authorization` and `Cookie` values, values of secret-named
+  keys, secret-named URL query parameters, private key blocks, bearer tokens,
+  and well-known key shapes become `[redacted]`, and secret-named fields are
+  dropped. Fields that would take an entry past 8 KiB as stored are left out
+  and the entry is marked `truncated`.
 - **Quotas.** An attempt writes at most 200 entries or 64 KiB, a run 2,000
   entries or 1 MiB, and an environment `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` a UTC
   day (200,000 by default). A batch over a quota keeps what fits and reports the

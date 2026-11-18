@@ -375,8 +375,10 @@ wrote while they ran its steps. Both reads need `run.read`; the
   person typed.
 - **Worker entries** come from `task_log()` in a worker or a native connector
   (see the [SDK reference](../reference/sdk.md#task-logs)). The platform stores
-  one only while the worker holds the task's current lease, redacts it again,
-  and takes the run, step, and attempt from the lease. Native HTTP calls write
+  one only while the worker holds the task's current lease, redacts it again by
+  pattern (leased credential values are hidden by the worker, since the
+  platform never holds them), and takes the run, step, and attempt from the
+  lease. Native HTTP calls write
   one entry each with the method, the host, the status, and the duration.
 - **Quotas.** 200 entries or 64 KiB per attempt, 2,000 entries or 1 MiB per run,
   and `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` (200,000) per environment a UTC day.

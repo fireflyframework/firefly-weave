@@ -431,7 +431,9 @@ async def check_order(lease):
   `WorkerTransport.credentials` are hidden, and so are `Authorization` and
   `Cookie` values, secret-named keys and URL parameters, private key blocks, and
   well-known token shapes. Secret-named fields are dropped. The platform redacts
-  again before it stores an entry.
+  again before it stores an entry, by pattern only: it never holds your leased
+  values, so hiding them is the worker's job. Pass a secret the task gets
+  another way to `task_log().hide(value)` before you log near it.
 - `Worker` sends entries through a transport that has a `log` method, as
   `WorkerTransport` does: when 50 are waiting, every 2 seconds
   (`log_interval_seconds`), and once more, for at most 2 seconds, before it

@@ -16,9 +16,10 @@
 
 """Secrets out of log text, before an entry is sent, stored or shown.
 
-The SDK runs it on every entry a worker or connector writes, and the server runs it again on what arrives. It hides:
+The SDK runs it on every entry a worker or connector writes, and the server runs it again on what arrives, by
+pattern only: the server never holds the values a task leased, so only the worker can hide those. It hides:
 
-- the credential values leased to the task, by exact match (also URL-encoded and JSON-escaped);
+- the credential values leased to the task, by exact match (also URL-encoded and JSON-escaped), in the worker;
 - the values of ``Authorization``, ``Proxy-Authorization``, ``Cookie`` and ``Set-Cookie``, to their closing quote or
   the end of the text;
 - values assigned to a secret-named key (``password=...``, ``"api_key": "..."``, ``client_secret: ...``), also in
@@ -29,11 +30,12 @@ The SDK runs it on every entry a worker or connector writes, and the server runs
 
 Format characters are removed first, so an invisible character can't split a secret; control characters, line
 separators and other spaces become plain spaces, so an entry is one line. Leased values are cleaned the same way
-before they are matched. A message keeps 512 characters, a field value 256, an entry 16
-fields in 8 KiB as stored; fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose
-strings are redacted before it is written as JSON text. Each hidden value counts once, and text that is already
-redacted counts nothing, so a second pass changes nothing. Every pattern is linear on untrusted text. It imports
-only the standard library and ``firefly_weave.redaction_patterns``, so workers and the runner can use it too.
+before they are matched. A message keeps 512 characters, a field value 256, an entry 16 fields in 8 KiB as stored.
+Fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose strings are
+redacted before it is written as JSON text. Each hidden value counts once, and text that is already redacted counts
+nothing, so a second pass changes nothing. Every pattern is linear on untrusted text. Besides the standard library
+it imports only ``firefly_weave.redaction_patterns``, which needs pydantic for its value types and nothing of the
+server, so workers and the runner can use it too.
 """
 
 import json
