@@ -41,7 +41,6 @@ import {
   type ConnectionRow,
 } from "./editor/activation/activation-rows";
 import type { ActivationSteps } from "./editor/activation/activation-steps";
-import type { TriggerRow } from "./editor/activation/trigger-plan";
 import {
   platformConnections,
   type BindableItem,
@@ -51,7 +50,10 @@ import {
   connectionsPort,
   type PortHost,
 } from "./editor/connections/connections-port";
-import type { CanvasSidecar } from "./editor/state/canvas-sidecar";
+import type {
+  CanvasSidecar,
+  TriggerIntent,
+} from "./editor/state/canvas-sidecar";
 
 export interface ActivationBindings {
   connection_revision_ids: Record<string, string>;
@@ -259,28 +261,45 @@ function onceEach(api: StudioApi): StudioApi {
           <span class="loading-spinner small"></span>Activating…
         </p>
       }
+      @if (settingUp()) {
+        <p class="dialog-status" role="status">
+          <span class="loading-spinner small"></span>Setting up the triggers…
+        </p>
+      }
       <div class="dialog-footer">
-        <button
-          type="button"
-          class="tertiary"
-          [disabled]="running()"
-          (click)="dismiss()"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          class="primary"
-          [disabled]="
-            busy() ||
-            state() === 'loading' ||
-            pinsLoading() ||
-            !!picker()?.loading() ||
-            !!steps()?.blocked()
-          "
-        >
-          Activate version
-        </button>
+        @if (activated()) {
+          <!-- The activation is done: the triggers' rows say what happened. -->
+          <button
+            type="button"
+            class="primary"
+            [disabled]="settingUp()"
+            (click)="cancel.emit()"
+          >
+            Done
+          </button>
+        } @else {
+          <button
+            type="button"
+            class="tertiary"
+            [disabled]="running()"
+            (click)="dismiss()"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="primary"
+            [disabled]="
+              busy() ||
+              state() === 'loading' ||
+              pinsLoading() ||
+              !!picker()?.loading() ||
+              !!steps()?.blocked()
+            "
+          >
+            Activate version
+          </button>
+        }
       </div>
     </form>
   </weave-modal>`,
@@ -313,8 +332,20 @@ export class ActivationDialog implements OnInit {
   /** The editor, whose connections port knows this computer's dev bindings. */
   connectionsHost = input<PortHost | null>(null);
   confirm = output<ActivationBindings>();
-  /** What to do to the triggers once the activation succeeds; emitted just before confirm. */
-  plan = output<TriggerRow[]>();
+  /** The activation's ID once it succeeded: the dialog then sets its triggers up. */
+  activated = input("");
+  /**
+   * The trigger choices with their created or moved resources kept, and what
+   * needs attention; null intents when there was nothing to set up. Emitted
+   * once the triggers are set up, and again after each Retry.
+   */
+  triggers = output<{
+    intents: TriggerIntent[] | null;
+    attention: string | null;
+    first: boolean;
+  }>();
+  readonly settingUp = signal(false);
+  private setUpFor = "";
   cancel = output<void>();
   state = signal<"loading" | "ready" | "forbidden" | "error">("loading");
   error = signal<{ message: string; code: string } | null>(null);
@@ -371,6 +402,15 @@ export class ActivationDialog implements OnInit {
   private host = inject<ElementRef<HTMLElement>>(ElementRef);
   private injector = inject(Injector);
   constructor() {
+    // Once the activation succeeds, its triggers are set up (or there is nothing to do).
+    effect(() => {
+      const id = this.activated();
+      untracked(() => {
+        if (!id || id === this.setUpFor) return;
+        this.setUpFor = id;
+        void this.setUp(id);
+      });
+    });
     // A failure takes focus, so it is announced and Tab stays in the dialog.
     effect(() => {
       if (!this.failure()) return;
@@ -407,6 +447,30 @@ export class ActivationDialog implements OnInit {
       },
       { injector: this.injector },
     );
+  }
+  private async setUp(activationId: string) {
+    const steps = this.steps();
+    if (!steps?.needsSync()) {
+      this.triggers.emit({ intents: null, attention: null, first: true });
+      return;
+    }
+    this.settingUp.set(true);
+    try {
+      await steps.sync(activationId);
+    } finally {
+      this.settingUp.set(false);
+    }
+    this.triggers.emit({
+      intents: steps.storedIntents(),
+      attention: steps.attention(),
+      first: true,
+    });
+    steps.retried = () =>
+      this.triggers.emit({
+        intents: steps.storedIntents(),
+        attention: steps.attention(),
+        first: false,
+      });
   }
   /** Loads the checks and the called workflows and triggers steps from their own chunk. */
   async loadSteps() {
@@ -565,7 +629,6 @@ export class ActivationDialog implements OnInit {
     this.host.nativeElement.querySelector<HTMLElement>(".modal-panel")?.focus();
     const steps = this.steps();
     const calls = steps?.pins() ?? {};
-    this.plan.emit(steps?.plan() ?? []);
     this.confirm.emit({
       connection_revision_ids: connections,
       ...pins,

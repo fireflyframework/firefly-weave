@@ -32,7 +32,7 @@ import { ApiError, type Diagnostic, type StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { Workflow } from "../../model";
-import type { CanvasSidecar } from "../state/canvas-sidecar";
+import type { CanvasSidecar, TriggerIntent } from "../state/canvas-sidecar";
 import { triggerIntents } from "../state/canvas-sidecar";
 import { missingFeatures } from "./activation-rows";
 import {
@@ -48,6 +48,15 @@ import {
   type PlanActivation,
   type TriggerRow,
 } from "./trigger-plan";
+import {
+  actionable,
+  attention,
+  retryResult,
+  syncTriggers,
+  withStoredResources,
+  type SyncContext,
+  type SyncResult,
+} from "./trigger-sync";
 import {
   RESOURCE_KINDS,
   listTriggerResources,
@@ -98,10 +107,28 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
         <h3>Triggers</h3>
         <ul class="activation-rows" aria-label="Triggers">
           @for (row of triggers(); track $index) {
-            <li class="activation-row" [attr.data-kind]="row.kind">
-              <span>{{ row.text }}</span>
+            @let result = results().get($index);
+            <li
+              class="activation-row"
+              [attr.data-kind]="result ? result.status : row.kind"
+            >
+              <span>{{ result ? result.text : row.text }}</span>
+              @if (result?.status === "failed") {
+                <button
+                  type="button"
+                  class="sm"
+                  [disabled]="retrying() === $index"
+                  (click)="retry($index)"
+                >
+                  Retry
+                </button>
+              }
               <!-- An email source has no stop operation: it keeps running. -->
-              @if (row.kind === "left-behind" && row.resourceKind !== "email") {
+              @if (
+                !synced() &&
+                row.kind === "left-behind" &&
+                row.resourceKind !== "email"
+              ) {
                 <label class="activation-stop-it">
                   <input
                     type="checkbox"
@@ -149,6 +176,11 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
     .activation-row[data-kind="failed"] {
       color: var(--danger-ink);
     }
+    .activation-row[data-kind="created"],
+    .activation-row[data-kind="moved"],
+    .activation-row[data-kind="stopped"] {
+      color: var(--success-ink, var(--text));
+    }
     .activation-stop-it {
       display: inline-flex;
       align-items: center;
@@ -172,6 +204,13 @@ export class ActivationSteps implements OnInit {
   readonly callees = signal<CalleeRow[]>([]);
   readonly triggers = signal<TriggerRow[]>([]);
   readonly failures = signal<string[]>([]);
+  /** After the activation: what happened to each trigger row, by its place in the list. */
+  readonly results = signal<ReadonlyMap<number, SyncResult>>(new Map());
+  readonly synced = signal(false);
+  readonly retrying = signal<number | null>(null);
+  private context: SyncContext | null = null;
+  /** Called after each Retry, so the dialog can keep what it made. */
+  retried: () => void = () => undefined;
 
   /** Why Activate can't run, or null. */
   readonly blocked = computed(() => {
@@ -193,6 +232,54 @@ export class ActivationSteps implements OnInit {
   /** What to do to the triggers once the activation succeeds, with the person's Stop it choices. */
   plan(): TriggerRow[] {
     return this.triggers();
+  }
+  /** Whether any trigger row changes something once the activation succeeds. */
+  needsSync(): boolean {
+    return this.triggers().some(actionable);
+  }
+  /** Sets the triggers up for the activation that just succeeded, row by row. */
+  async sync(activationId: string): Promise<void> {
+    const definition = this.definition();
+    const inputSchema = definition.spec["inputSchema"];
+    this.context = {
+      api: this.api(),
+      activationId,
+      environmentId: this.environment()?.id ?? "",
+      inputSchema: isJsonObject(inputSchema) ? (inputSchema as JsonObject) : {},
+      intents: triggerIntents(this.canvas()),
+      connections: {},
+    };
+    this.synced.set(true);
+    const rows = this.triggers();
+    for (const [index, row] of rows.entries()) {
+      if (!actionable(row)) continue;
+      const [result] = await syncTriggers([row], this.context);
+      this.results.update((map) => new Map(map).set(index, result));
+    }
+  }
+  async retry(index: number) {
+    const result = this.results().get(index);
+    if (!result || !this.context) return;
+    this.retrying.set(index);
+    try {
+      const next = await retryResult(result, this.context);
+      this.results.update((map) => new Map(map).set(index, next));
+      this.retried();
+    } finally {
+      this.retrying.set(null);
+    }
+  }
+  /** The trigger choices with what was created or moved kept for this environment. */
+  storedIntents(): TriggerIntent[] {
+    return withStoredResources(
+      triggerIntents(this.canvas()),
+      this.environment()?.id ?? "",
+      [...this.results().values()],
+    );
+  }
+  /** "1 trigger needs attention.", or null. */
+  attention(): string | null {
+    return attention([...this.results().values()]);
   }
   stopIt(index: number, stop: boolean) {
     this.triggers.update((rows) =>

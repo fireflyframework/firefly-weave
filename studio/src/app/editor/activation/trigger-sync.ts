@@ -30,6 +30,9 @@ import {
   type JsonObject,
 } from "../../forms/core/json";
 import type { TriggerIntent } from "../state/canvas-sidecar";
+import { settingsKey } from "../triggers/trigger-target";
+
+export { settingsKey };
 import type { TriggerRow } from "./trigger-plan";
 import {
   createResource,
@@ -201,17 +204,6 @@ export async function retryResult(
       );
     throw error;
   }
-}
-
-/** A trigger choice's settings, without what Studio stores about its resources. */
-export function settingsKey(intent: TriggerIntent): string {
-  const {
-    id: _id,
-    resources: _resources,
-    activated: _activated,
-    ...settings
-  } = intent;
-  return canonicalJson(settings);
 }
 
 /** The trigger choices with each created or moved resource kept for this environment. */

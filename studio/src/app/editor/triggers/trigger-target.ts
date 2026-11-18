@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // "$trigger:<id>" is one trigger choice of the canvas sidecar, as its tile on
 // the canvas is named. Both start the workflow, so what follows a trigger
 // (the first step, Execute workflow) is the same for every one of them.
+import { canonicalJson } from "../../forms/core/json";
 import {
   triggerIntents,
   type CanvasSidecar,
@@ -46,4 +47,23 @@ export function triggerChoiceOf(
   if (!isTriggerChoice(target)) return null;
   const id = target.slice(CHOICE.length);
   return triggerIntents(canvas).find((intent) => intent.id === id) ?? null;
+}
+
+/** A trigger choice's settings, without what Studio stores about its resources. */
+export function settingsKey(intent: TriggerIntent): string {
+  const {
+    id: _id,
+    resources: _resources,
+    activated: _activated,
+    ...settings
+  } = intent;
+  return canonicalJson(settings);
+}
+
+/** Whether a trigger choice was activated somewhere with the settings it has now. */
+export function activatedAsIs(intent: TriggerIntent): boolean {
+  const activated = intent["activated"];
+  if (!activated || typeof activated !== "object") return false;
+  const key = settingsKey(intent);
+  return Object.values(activated).some((value) => value === key);
 }

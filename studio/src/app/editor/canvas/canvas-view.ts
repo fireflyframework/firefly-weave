@@ -745,7 +745,11 @@ export class CanvasView implements OnInit, DoCheck {
   private triggerText(tileId: string) {
     const kind = this.intentOf(tileId)?.kind ?? "manual";
     return {
-      ...triggerTile(kind, this.host().model.definition),
+      ...triggerTile(
+        kind,
+        this.host().model.definition,
+        this.intentOf(tileId) ?? undefined,
+      ),
       manual: kind === "manual",
     };
   }
