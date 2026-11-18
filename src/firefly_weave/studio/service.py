@@ -94,6 +94,9 @@ STUDIO_FAMILIES = frozenset(
         # Running one step for real from step details, and whether the environment allows it.
         "step_tests",
         "test_policy",
+        # Execute workflow in an environment: draft test activations, their runs and listening for a test event;
+        # step.test, trigger.manage and the creator are checked server-side.
+        "test_activations",
         # AI connection tests run in the AI gateway; connection.manage is checked server-side.
         "ai_connections",
         "ai_endpoints",
@@ -139,6 +142,13 @@ STUDIO_FAMILIES = frozenset(
         # Draft canvases and test data: capabilities, run data and secrets are checked server-side.
         "studio_documents",
         "debug",
+        # The triggers Studio sets up when it activates a workflow: webhooks, schedules, Kafka triggers and app event
+        # sources. Every operation checks its capabilities server-side, including what a retarget needs; signed
+        # webhook and provider ingress stay public platform routes.
+        "triggers",
+        "schedules",
+        "broker_triggers",
+        "provider_sources",
     }
 )
 # Single read operations from families that otherwise stay operator-only: releases.create

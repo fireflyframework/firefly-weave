@@ -262,8 +262,13 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "step_tests.answer",
         "test_policy.read",
         "test_policy.save",
+        *("test_activations." + verb for verb in ("create", "run", "listen", "retire")),
         *ALERT_AND_ADMINISTRATION_OPERATIONS,
-        *("event_triggers." + verb for verb in ("create", "list", "read", "disable", "starts")),
+        *("event_triggers." + verb for verb in ("create", "list", "read", "disable", "starts", "retarget")),
+        # Studio reads email sources and moves them to the version it activates.
+        *("email_sources." + verb for verb in ("list", "read", "retarget")),
+        # Studio creates, lists and moves a workflow's triggers when it activates the workflow.
+        *TRIGGER_OPERATIONS,
         *(
             "deployment_change_requests." + verb
             for verb in (
@@ -384,6 +389,41 @@ def test_studio_may_call_the_alert_administration_families_and_read_webhooks(tmp
     assert (saving, retrying) == (404, 404)
 
 
+TRIGGER_OPERATIONS = frozenset(
+    {
+        *("triggers." + verb for verb in ("create", "list", "read", "disable", "retarget")),
+        *("schedules." + verb for verb in ("save", "list", "read", "history", "enable", "disable", "delete")),
+        *(
+            "broker_triggers." + verb
+            for verb in ("create", "list", "read", "disable", "retry", "incidents", "retarget")
+        ),
+        *("provider_sources." + verb for verb in ("create", "read", "list", "disable", "retarget")),
+    }
+)
+
+
+def test_studio_may_call_the_trigger_families_but_not_their_ingress(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    families = ("triggers.", "schedules.", "broker_triggers.", "provider_sources.", "webhooks.", "provider_ingress.")
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        crossing = {
+            identifier
+            for identifier, operation in OPERATIONS.items()
+            if identifier.startswith(families)
+            and studio.check_scope(
+                operation.canonical_path.format(
+                    tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
+                ),
+                operation.method,
+            )
+            == 200
+        }
+    # Signed webhook and provider ingress stay public routes of the platform, never the bridge's.
+    assert crossing == TRIGGER_OPERATIONS
+
+
 def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):
     from firefly_weave.contracts.surface import OPERATIONS
 
@@ -392,7 +432,7 @@ def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):
         crossing = {
             identifier
             for identifier, operation in OPERATIONS.items()
-            if identifier.startswith(("step_tests.", "test_policy."))
+            if identifier.startswith(("step_tests.", "test_policy.", "test_activations."))
             and studio.check_scope(
                 operation.canonical_path.format(
                     tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
@@ -408,6 +448,10 @@ def test_studio_may_call_step_tests_and_the_test_policy(tmp_path):
         "step_tests.answer",
         "test_policy.read",
         "test_policy.save",
+        "test_activations.create",
+        "test_activations.run",
+        "test_activations.listen",
+        "test_activations.retire",
     }
 
 

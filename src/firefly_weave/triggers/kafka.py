@@ -58,6 +58,25 @@ from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
+from firefly_weave.triggers.retarget import (
+    RetargetOutcome,
+    checked_target,
+    input_digest,
+    live_binding,
+    payload_rule,
+    require_revision,
+    retarget_audit,
+)
+from firefly_weave.triggers.retarget import disabled as stopped
+
+
+def _view(row: dict[str, Any]) -> BrokerTrigger:
+    """A stored route as its contract reads it: the columns a control or a retarget change win over the payload."""
+    return BrokerTrigger.model_validate_json(
+        json.dumps(
+            row["payload"] | {"disabled": row["disabled"], "blocked": row["blocked"], "revision": row["revision"]}
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -177,6 +196,113 @@ class KafkaTrigger:
                 context=context,
             )
             return route
+
+    async def retarget(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        activation_id: UUID,
+        expected: int | None,
+        *,
+        context: AuditContext,
+    ) -> BrokerTrigger:
+        """Move a route to another activation of its workflow, as the mover, under a new source binding.
+
+        The mover needs what creating the route needs, connection binding included. The route's old binding is
+        revoked and a new one names the mover and the moved request, so the consumer's check of binding, principal
+        and fingerprint stays exact. The generation moves and the lease clears: a consumer holding the old lease
+        stops at its next check, and the route is claimed again on the new activation.
+        """
+        from firefly_weave.connectors.broker import BrokerConnectionConfig
+
+        async with self.runtime.definitions.transaction(scope, None) as tx:
+            actor = await load_principal(tx.session, actor.id)
+            # Everything creating a route needs, the source binding's capabilities included, before it is read.
+            for capability in ("trigger.manage", "run.start", "connection.manage", "connection.bind"):
+                self.runtime.require(actor, scope, capability, context)
+            repository = RuntimeRepository(tx)
+            rows = await repository.rows(
+                f"SELECT * FROM broker_routes WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
+            )
+            if not rows:
+                raise unavailable()
+            current = _view(rows[0])
+            require_revision(expected, current.revision)
+            if current.disabled:
+                raise stopped()
+            await live_binding(tx, current.binding_id)
+            await checked_target(tx, current.activation_id, activation_id)
+            assert current.activation_id is not None
+            request = BrokerTriggerRequest(
+                **{key: getattr(current, key) for key in BrokerTriggerRequest.model_fields}
+                | {"activation_id": activation_id}
+            )
+            schema, _ = await self.target(tx, actor, request)
+            payload_rule(
+                current.payload_schema,
+                current_input=await input_digest(tx, current.activation_id),
+                new_input=canonical_digest(schema),
+            )
+            # A source has one live binding: the old one goes before the mover's is written.
+            await self.bindings.revoke_in(tx, actor, current.binding_id, context=context)
+            binding = await self.bindings.create(
+                actor,
+                tx,
+                current.connection_revision_id,
+                identifier,
+                canonical_digest(request.model_dump(mode="json")),
+                context=context,
+            )
+            _, revision = await self.bindings.check(tx, binding.id)
+            config = BrokerConnectionConfig.model_validate_json(json.dumps(revision.config))
+            if (
+                revision.adapter != "weave-kafka"
+                or config.cluster_id != current.cluster_id
+                or current.topic not in config.topics
+            ):
+                raise unavailable()
+            moved = current.model_copy(
+                update={
+                    "activation_id": activation_id,
+                    "principal_id": actor.id,
+                    "binding_id": binding.id,
+                    "revision": current.revision + 1,
+                }
+            )
+            await repository.execute(
+                f"UPDATE broker_routes SET activation_id=:activation,principal_id=:principal,binding_id=:binding,"
+                f"payload=cast(:payload AS jsonb),revision=:revision,generation=generation+1,owner_token=NULL,"
+                f"lease_until=NULL,eligible_at=clock_timestamp() WHERE {SCOPE} AND id=:id",
+                id=identifier,
+                activation=activation_id,
+                principal=actor.id,
+                binding=binding.id,
+                payload=moved.model_copy(update={"disabled": False, "blocked": False}).model_dump_json(),
+                revision=moved.revision,
+            )
+            await audit(
+                tx.session,
+                actor,
+                "broker.retarget",
+                str(identifier),
+                scope=scope,
+                capability="trigger.manage",
+                context=context,
+                details=retarget_audit(
+                    RetargetOutcome(
+                        kind="kafka",
+                        resource_id=identifier,
+                        from_activation_id=current.activation_id,
+                        to_activation_id=activation_id,
+                        from_principal_id=current.principal_id,
+                        to_principal_id=actor.id,
+                        from_binding_id=current.binding_id,
+                        to_binding_id=binding.id,
+                    )
+                ),
+            )
+        return moved
 
     async def checked(
         self, tx: Transaction, authority: ConsumerAuthority, *, for_update: bool = False
@@ -477,13 +603,11 @@ class KafkaTrigger:
             current = await load_principal(tx.session, actor.id)
             self.runtime.require(current, scope, "trigger.manage", context)
             rows = await RuntimeRepository(tx).rows(
-                f"SELECT payload,disabled,blocked FROM broker_routes WHERE {SCOPE} AND id=:id", id=identifier
+                f"SELECT payload,disabled,blocked,revision FROM broker_routes WHERE {SCOPE} AND id=:id", id=identifier
             )
             if not rows:
                 raise unavailable()
-            return BrokerTrigger.model_validate_json(
-                json.dumps(rows[0]["payload"] | {"disabled": rows[0]["disabled"], "blocked": rows[0]["blocked"]})
-            )
+            return _view(rows[0])
 
     async def list(
         self, actor: Principal, scope: Scope, *, limit: int = 50, cursor: UUID | None = None, context: AuditContext
@@ -498,10 +622,11 @@ class KafkaTrigger:
             for identifier in ids[:limit]:
                 row = (
                     await RuntimeRepository(tx).rows(
-                        f"SELECT payload,disabled,blocked FROM broker_routes WHERE {SCOPE} AND id=:id", id=identifier
+                        f"SELECT payload,disabled,blocked,revision FROM broker_routes WHERE {SCOPE} AND id=:id",
+                        id=identifier,
                     )
                 )[0]
-                items.append(row["payload"] | {"disabled": row["disabled"], "blocked": row["blocked"]})
+                items.append(_view(row).model_dump(mode="json"))
             return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
 
     async def control(
@@ -531,8 +656,10 @@ class KafkaTrigger:
                 if row[0]["disabled"]:
                     return route.model_copy(update={"disabled": True})
                 await RuntimeRepository(tx).execute("SELECT weave_control_begin('broker',:id)", id=identifier)
+            # A disable moves the revision, so a retarget prepared before it no longer applies.
+            change = "disabled=true,revision=revision+1" if action == "disable" else "blocked=false"
             await RuntimeRepository(tx).execute(
-                f"UPDATE broker_routes SET {('disabled=true' if action == 'disable' else 'blocked=false')},"
+                f"UPDATE broker_routes SET {change},"
                 f"generation=generation+1,owner_token=NULL,lease_until=NULL,"
                 f"eligible_at=clock_timestamp() WHERE {SCOPE} AND id=:id",
                 id=identifier,

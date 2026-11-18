@@ -31,12 +31,16 @@ class ProviderRepository:
 
     async def source(self, identifier: UUID, *, lock: bool = False) -> ProviderSource:
         rows = await self.db.rows(
-            f"SELECT payload,disabled FROM provider_sources WHERE {SCOPE} AND id=:id" + (" FOR UPDATE" if lock else ""),
+            f"SELECT payload,disabled,revision FROM provider_sources WHERE {SCOPE} AND id=:id"
+            + (" FOR UPDATE" if lock else ""),
             id=identifier,
         )
         if not rows:
             raise CatalogError(404, "WV-NOT-FOUND", "Provider source not found")
-        return ProviderSource.model_validate_json(json.dumps(rows[0]["payload"] | {"disabled": rows[0]["disabled"]}))
+        # The columns a disable or a retarget change win over the stored payload.
+        return ProviderSource.model_validate_json(
+            json.dumps(rows[0]["payload"] | {"disabled": rows[0]["disabled"], "revision": rows[0]["revision"]})
+        )
 
     async def receipt(self, identifier: UUID, *, lock: bool = False) -> dict[str, Any]:
         rows = await self.db.rows(

@@ -39,6 +39,22 @@ SPDX-License-Identifier: Apache-2.0
   64 KiB per attempt, 2,000 entries or 1 MiB per run, and
   `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` (200,000) per environment a day; a spent
   quota answers `429 WV-LOG-QUOTA`.
+- Triggers move to new versions of their workflow. `POST …/retarget` on a
+  webhook, Kafka trigger, app event source, email source or platform-event
+  trigger moves it to another activation of the same workflow, with the
+  revision it read in `If-Match`; a webhook keeps its URL. The trigger then
+  runs as the person who moved it, who needs every capability creating it
+  needs, and the new version must take what the trigger delivers (`409
+  WV-TRIGGER-SCHEMA-CHANGED` otherwise). Kafka triggers and app event sources
+  get a new source binding and the old one is revoked.
+- Email sources can be listed and read with `email.read`
+  (`GET …/email/sources`), without mail, policy or mailbox positions.
+- Draft test activations run a whole saved draft for real as test runs:
+  `POST …/test-activations` (`step.test`, test calls on, the draft's side
+  effect acknowledged), then `…/runs`, `…/listen` for a signed test URL
+  (`trigger.manage`), and `DELETE` to retire it. Only its creator can use it,
+  it expires within an hour, no list finds it, and turning test calls off
+  stops it at once.
 
 ### Operations
 
@@ -52,6 +68,12 @@ SPDX-License-Identifier: Apache-2.0
 - Log entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default, 1 to
   30), go with their run when it is purged, and count toward no usage;
   `operations_retention.read` lists their period.
+
+### Studio, desktop app, and CLI
+
+- The Studio host bridge forwards webhooks, schedules, Kafka triggers, app
+  event sources and draft test activations; every operation is still
+  authorized by the server.
 
 ### Development and testing
 
@@ -70,6 +92,11 @@ SPDX-License-Identifier: Apache-2.0
   `operations_retention.read` gains the record `execution_logs`, which earlier
   clients refuse with `502 WV-WIRE`. A worker built with this SDK against an
   earlier server drops its log entries and runs its tasks as before.
+- `0044_editor_trigger_retarget` adds `revision` to webhooks, Kafka triggers,
+  app event sources and email sources, lets a source get a new binding once
+  its old one is revoked, and lets the test activation purge remove listen
+  routes. Webhook, Kafka trigger and app event source answers add `revision`,
+  which earlier CLIs and SDKs refuse: upgrade them with the server.
 
 ## 0.1.0a19
 

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Immutable trigger routes; execution identity is always assigned by the server."""
+"""Trigger routes; execution identity is always assigned by the server, and only a retarget moves a route."""
 
 from typing import Literal
 from uuid import UUID
@@ -51,6 +51,8 @@ class Trigger(TriggerRequest):
     id: UUID
     principal_id: UUID
     disabled: bool = False
+    # Counts the trigger's changes (a retarget, a disable): a change names the revision it read.
+    revision: int = Field(default=1, ge=1)
 
 
 class TriggerReceipt(ContractModel):

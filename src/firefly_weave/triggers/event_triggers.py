@@ -17,11 +17,12 @@
 """Platform-event triggers: bind an activation to the platform events its workflow declares, and read what they did.
 
 A binding may ask only for events, and source workflows, that the bound version declares in ``eventTrigger``.
-Bindings are immutable: a trigger is created, then disabled; changing one means disabling it and creating another.
-An environment holds at most 64 enabled triggers. Creating one needs ``trigger.manage``, ``run.start`` and
-``run.read`` (each run receives what an event says about a transaction), and ``transaction.reconcile`` when its runs
-may resolve transactions. Disabling one is a safety control: it spends the trigger's own reserve, so it works at a
-full quota.
+A trigger's events and sources never change: it is created, retargeted to another version of its workflow, or
+disabled; asking for other events means disabling it and creating another. An environment holds at most 64 enabled
+triggers. Creating one needs ``trigger.manage``, ``run.start`` and ``run.read`` (each run receives what an event
+says about a transaction), and ``transaction.reconcile`` when its runs may resolve transactions; retargeting one
+needs the same, and the trigger then runs as the person who moved it. Disabling one is a safety control: it spends
+the trigger's own reserve, so it works at a full quota.
 """
 
 import json
@@ -51,6 +52,14 @@ from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
+from firefly_weave.triggers.retarget import (
+    RetargetOutcome,
+    checked_target,
+    require_revision,
+    retarget_audit,
+    schema_changed,
+)
+from firefly_weave.triggers.retarget import disabled as stopped
 
 TRIGGER_COLUMNS = (
     "id,name,activation_id,workflow_name,events,source_workflows,may_reconcile,principal_id,revision,disabled,"
@@ -185,6 +194,87 @@ class EventTriggerService:
                 },
             )
         return trigger
+
+    async def retarget(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        activation_id: UUID,
+        expected: int | None,
+        *,
+        context: AuditContext,
+    ) -> EventTrigger:
+        """Move a trigger to another activation of its workflow; it keeps its events, sources and starts.
+
+        The mover needs what creating the trigger needs, and the new version must declare the trigger's events and
+        sources as creating it would require. The trigger then starts runs as the mover, starts already requested
+        included.
+        """
+        async with self.runtime.definitions.transaction(scope, None) as tx:
+            actor = await self.access.load_principal(actor.id, tx=tx)
+            for capability in ("trigger.manage", "run.start", "run.read"):
+                self.runtime.require(actor, scope, capability, context)
+            repository = RuntimeRepository(tx)
+            rows = await repository.rows(
+                f"SELECT {TRIGGER_COLUMNS} FROM event_triggers WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Event trigger not found")
+            current = trigger_view(rows[0])
+            if current.may_reconcile:
+                self.runtime.require(actor, scope, "transaction.reconcile", context)
+            require_revision(expected, current.revision)
+            if current.disabled:
+                raise stopped()
+            await checked_target(tx, current.activation_id, activation_id)
+            activation, artifact = await self.runtime.definitions.runtime_snapshot(
+                actor, scope, activation_id, context=context, tx=tx
+            )
+            await self.runtime.definitions.execution_readiness(
+                actor,
+                scope,
+                activation.request,
+                import_artifact(artifact),
+                capability="run.start",
+                context=context,
+                tx=tx,
+            )
+            version = await DefinitionRepository(tx).version(activation.request.version_id)
+            asked = {"name": current.name, "activation_id": activation_id, "events": current.events}
+            if current.source_workflows is not None:
+                asked["source_workflows"] = current.source_workflows
+            request = EventTriggerRequest.model_validate({**asked, "may_reconcile": current.may_reconcile})
+            if binding_problem(declaration(version), request, version["name"]) is not None:
+                raise schema_changed()
+            [row] = await repository.rows(
+                "UPDATE event_triggers SET activation_id=:activation,principal_id=:principal,revision=revision+1 "
+                f"WHERE {SCOPE} AND id=:id RETURNING {TRIGGER_COLUMNS}",
+                id=identifier,
+                activation=activation_id,
+                principal=actor.id,
+            )
+            moved = trigger_view(row)
+            await audit(
+                tx.session,
+                actor,
+                "event_trigger.retarget",
+                str(identifier),
+                scope=scope,
+                capability="trigger.manage",
+                context=context,
+                details=retarget_audit(
+                    RetargetOutcome(
+                        kind="event",
+                        resource_id=identifier,
+                        from_activation_id=current.activation_id,
+                        to_activation_id=activation_id,
+                        from_principal_id=current.principal_id,
+                        to_principal_id=actor.id,
+                    )
+                ),
+            )
+        return moved
 
     async def disable(self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext) -> EventTrigger:
         async with self.runtime.definitions.transaction(scope, None) as tx:

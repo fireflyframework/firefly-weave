@@ -115,6 +115,19 @@ async def test_a_normal_run_cant_start_from_a_test_activation(platform):
 
 async def test_a_step_test_finds_only_its_live_activation(platform):
     definitions, actor, scope, activation, _, owner, access = platform
+    # A test activation runs only while the environment's test calls are on.
+    async with owner() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO environment_test_policies VALUES(:tenant,:project,:environment,'enabled',1,now(),:admin)"
+            ),
+            {
+                "tenant": scope.tenant_id,
+                "project": scope.project_id,
+                "environment": scope.environment_id,
+                "admin": actor.id,
+            },
+        )
     admin = await access.load_principal(actor.id)
     tester = admin.model_copy(update={"grants": (*admin.grants, Grant(role="step_tester", scope=scope))})
     async with definitions.transaction(scope, None, mutation=False) as tx:
