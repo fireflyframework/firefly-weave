@@ -56,6 +56,5 @@ test("a step test refused for another person says so and sends nothing more", as
   await expect(output(details)).toContainText(
     "You're now signed in as someone else, so Studio sent nothing. Check the account in Settings.",
   );
-  await page.waitForTimeout(500);
   expect(steps.posts).toHaveLength(1);
 });

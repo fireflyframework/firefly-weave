@@ -176,7 +176,6 @@ test("an unclear mail answer is never resent", async ({ page }) => {
   await expect(output(details)).toContainText(
     "The mail server's answer was unclear. Weave won't resend it; check the mailbox.",
   );
-  await page.waitForTimeout(500);
   expect(steps.posts).toHaveLength(1);
 });
 

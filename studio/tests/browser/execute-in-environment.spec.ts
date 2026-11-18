@@ -147,8 +147,12 @@ for (const size of sizes)
       );
       await question.getByRole("button", { name: "Cancel" }).click();
       await expect(question).toHaveCount(0);
-      await page.waitForTimeout(300);
-      expect(steps.posts).toHaveLength(0);
+      // Run it afterwards: exactly one step test reaches the platform, so
+      // the canceled click sent none, not even late.
+      await run(details);
+      await question.getByRole("button", { name: "Run it" }).click();
+      await expect(output(details)).toContainText("Ana");
+      expect(steps.posts).toHaveLength(1);
     });
 
     test("Run it sends the acknowledgement, and each click asks again", async ({
