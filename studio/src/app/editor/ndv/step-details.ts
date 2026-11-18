@@ -796,6 +796,11 @@ export class StepDetails {
           step,
           this.controller().kindContext(),
           this.host().label(step.kind),
+          (slot) =>
+            connectionsPort(this.host())?.binding(
+              this.host().model.definition.metadata.name,
+              slot,
+            )?.name ?? null,
         )
       : "";
   }

@@ -69,6 +69,8 @@ export function headerSubtitle(
   step: Step,
   ctx: KindContext,
   kindLabel: string,
+  /** Connected to an environment: the name of the connection chosen for a slot, or null. */
+  chosen: (slot: string) => string | null = () => null,
 ): string {
   const recipe = step.kind === "action" ? recipeOf(step, ctx) : null;
   if (recipe?.kind === "http") return "Call an API · HTTP request";
@@ -84,6 +86,12 @@ export function headerSubtitle(
   }
   if (step.kind === "switch")
     return `${kindLabel} · the first path that applies runs`;
+  const slot = step.kind === "action" ? step["connection"] : undefined;
+  if (typeof slot === "string" && slot) {
+    // A slot's name reads like a protocol ("http"): name the connection chosen for it, or nothing.
+    const uses = stepSummary({ ...step, connection: undefined }, ctx.workflow);
+    return [kindLabel, uses, chosen(slot)].filter(Boolean).join(" · ");
+  }
   const summary = stepSummary(step, ctx.workflow);
   return summary ? `${kindLabel} · ${summary}` : kindLabel;
 }
