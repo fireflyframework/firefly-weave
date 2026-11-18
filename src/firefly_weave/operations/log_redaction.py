@@ -21,14 +21,16 @@ The SDK runs it on every entry a worker or connector writes, and the server runs
 - the credential values leased to the task, by exact match (also URL-encoded and JSON-escaped);
 - the values of ``Authorization``, ``Proxy-Authorization``, ``Cookie`` and ``Set-Cookie``, to their closing quote or
   the end of the text;
-- values assigned to a secret-named key (``password=...``, ``"api_key": "..."``, ``client_secret: ...``);
+- values assigned to a secret-named key (``password=...``, ``"api_key": "..."``, ``client_secret: ...``), also in
+  JSON written inside a JSON string, where the quotes are escaped;
 - URL query parameters whose name holds token, key, sig, secret, password, code or auth;
 - what the shared pattern set catches: private key blocks, bearer tokens, JWTs, ``sk-``, ``AKIA``/``ASIA``,
   GitHub tokens and URL user information.
 
 Format characters are removed first, so an invisible character can't split a secret; control characters and line
 separators become spaces, so an entry is one line. A message keeps 512 characters, a field value 256, an entry 16
-fields; fields whose name is secret-named are dropped. Each hidden value counts once, and text that is already
+fields; fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose
+strings are redacted before it is written as JSON text. Each hidden value counts once, and text that is already
 redacted counts nothing, so a second pass changes nothing. Every pattern is linear on untrusted text. It imports
 only the standard library and ``firefly_weave.redaction_patterns``, so workers and the runner can use it too.
 """
@@ -53,6 +55,8 @@ INPUT_LIMIT: Final = 65536
 # A leased value shorter than this can't be told apart from ordinary text, so it isn't matched.
 KNOWN_MINIMUM: Final = 4
 SAFE_INTEGER: Final = 2**53 - 1
+# A field value nested deeper than this is left out.
+NESTING_LIMIT: Final = 32
 
 # Field and key names that hold secrets: a field so named is dropped, a value assigned to one is hidden. Token
 # counts (input_tokens, max_tokens) and tokenizers are not secrets.
@@ -61,12 +65,17 @@ SECRET_NAME: Final = re.compile(r"(?i)secret|token(?!s|iz)|passw(?:or)?d|authori
 SECRET_PARAMETER: Final = re.compile(r"(?i)token|key|sig|secret|passw(?:or)?d|code|auth|credential")
 _FIELD_KEY: Final = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
 # Keys are found first and a value is read only after a secret-named key, so a value never swallows the key after
-# it. A value runs to its closing quote (or the end of the text without one); unquoted, to the end of the text for
-# headers, whose values hold spaces, and to the next delimiter for other keys. A value that is already hidden is
-# taken whole first, so a second pass neither splits nor recounts it. Runs are possessive and keys start only where
-# no key character comes before them, so every scan is linear.
-_QUOTED: Final = r"(?:\"(?P<dq>[^\"]*+)\"?|'(?P<sq>[^']*+)'?|"
-_SEPARATOR: Final = r"[\"']?[ \t]{0,8}[:=][ \t]{0,8}"
+# it. A value runs to its closing quote (or the end of the text without one), past backslash-escaped quotes; in
+# JSON written inside a JSON string, its quotes are escaped too (\" once, \\\" twice), and the value runs to the
+# quote escaped as its opening one was. Unquoted, it runs to the end of the text for headers, whose values hold
+# spaces, and to the next delimiter for other keys. A value that is already hidden is taken whole first, so a second
+# pass neither splits nor recounts it. Runs are possessive, alternatives start with different characters, and keys
+# start only where no key character comes before them, so every scan is linear.
+_QUOTED: Final = (
+    r"(?:\"(?P<dq>(?:[^\"\\]++|\\.)*+)\"?|'(?P<sq>(?:[^'\\]++|\\.)*+)'?"
+    r"|(?P<escape>\\{1,7}+)\"(?P<eq>(?:[^\"\\]++|\\++(?!\")|(?!(?P=escape)\")\\++\")*+)(?:(?P=escape)\")?|"
+)
+_SEPARATOR: Final = r"(?:\\{0,7}+[\"'])?[ \t]{0,8}[:=][ \t]{0,8}"
 _HEADER: Final = re.compile(
     r"(?i)(?<![A-Za-z0-9_.-])(?:(?:proxy-)?authorization|(?:set-)?cookie)(?=" + _SEPARATOR + ")"
 )
@@ -109,7 +118,7 @@ class _Count:
 def _value(match: re.Match[str], count: _Count) -> str:
     """The match with its value hidden: the separator and quotes stay, so the entry still reads."""
     groups = match.groupdict()
-    group = next(name for name in ("dq", "sq", "bare") if groups.get(name) is not None)
+    group = next(name for name in ("dq", "sq", "eq", "bare") if groups.get(name) is not None)
     start, end = match.span(group)
     whole = match.group(0)
     offset = match.start()
@@ -185,17 +194,69 @@ def redact_text(text: str, *, known: frozenset[str] = frozenset(), limit: int = 
     return Redacted(result, count.value, truncated)
 
 
-def _field(value: object) -> str | int | float | bool | None:
-    if value is None or isinstance(value, bool | str):
-        return value
+class _Walk:
+    """A nested field value made safe to write as JSON: secret-named keys dropped and strings redacted, before the
+    JSON text is redacted again. The walk visits at most ``FIELD_LIMIT`` values ``NESTING_LIMIT`` levels deep, more
+    than a 256-character field can show, and says when it left something out."""
+
+    def __init__(self, forms: list[str], count: _Count) -> None:
+        self.forms = forms
+        self.count = count
+        self.left = FIELD_LIMIT
+        self.cut = False
+
+    def value(self, value: object, depth: int) -> object:
+        self.left -= 1
+        if isinstance(value, str):
+            text, cut = _redact(value, self.forms, FIELD_LIMIT, self.count)
+            self.cut = self.cut or cut
+            return text
+        if not isinstance(value, Mapping | list | tuple | set | frozenset):
+            return value
+        if depth >= NESTING_LIMIT:
+            self.cut = True
+            return None
+        if isinstance(value, Mapping):
+            kept: dict[str, object] = {}
+            for key, item in value.items():
+                if self.left <= 0:
+                    self.cut = True
+                    break
+                name = str(key)
+                if SECRET_NAME.search(name) or _hidden(name, self.forms, _Count()) != name:
+                    self.count.value += 1
+                    continue
+                kept[name] = self.value(item, depth + 1)
+            return kept
+        items: list[object] = []
+        for item in value:
+            if self.left <= 0:
+                self.cut = True
+                break
+            items.append(self.value(item, depth + 1))
+        return items
+
+
+def _field(value: object, forms: list[str], count: _Count) -> tuple[str | int | float | bool | None, bool]:
+    """A field value as stored, and whether part of it was cut."""
+    if value is None or isinstance(value, bool):
+        return value, False
     if isinstance(value, int):
-        return value if -SAFE_INTEGER <= value <= SAFE_INTEGER else str(value)
+        if -SAFE_INTEGER <= value <= SAFE_INTEGER:
+            return value, False
+        return str(value), False
     if isinstance(value, float):
-        return value if math.isfinite(value) else str(value)
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str, allow_nan=True)
-    except (TypeError, ValueError, RecursionError):
-        return str(value)
+        return (value, False) if math.isfinite(value) else (str(value), False)
+    walk = _Walk(forms, count)
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(walk.value(value, 0), ensure_ascii=False, default=str, allow_nan=True)
+        except (TypeError, ValueError, RecursionError):
+            text = str(value)
+    redacted, cut = _redact(text, forms, FIELD_LIMIT, count)
+    return redacted, cut or walk.cut
 
 
 def redact_entry(message: str, fields: Mapping[str, object], *, known: frozenset[str] = frozenset()) -> RedactedEntry:
@@ -214,9 +275,7 @@ def redact_entry(message: str, fields: Mapping[str, object], *, known: frozenset
         if len(kept) == FIELD_COUNT:
             truncated = True
             continue
-        value = _field(raw)
-        if isinstance(value, str):
-            value, cut = _redact(value, forms, FIELD_LIMIT, count)
-            truncated = truncated or cut
+        value, cut = _field(raw, forms, count)
+        truncated = truncated or cut
         kept[name] = value
     return RedactedEntry(text, kept, count.value, truncated)

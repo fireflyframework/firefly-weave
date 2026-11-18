@@ -16,6 +16,7 @@
 
 """Log text loses every secret it carries, wherever it sits, before it is stored or shown."""
 
+import json
 import unicodedata
 from urllib.parse import quote
 
@@ -108,12 +109,28 @@ CASES = [
     case("an upper-case bearer token", "BEARER <<BEARER>>", "BEARER"),
     case("two secrets on two lines", "Token <<GITHUB_TOKEN>>\n<<AWS_KEY_ID>>", "GITHUB_TOKEN", "AWS_KEY_ID"),
     case("a token split by an invisible character", "zero width: <<GITHUB_TOKEN_SPLIT>> done", "GITHUB_TOKEN"),
+    case("a password in escaped JSON", json.dumps({"raw": json.dumps({"password": "<<PASSWORD>>"})}), "PASSWORD"),
+    case(
+        "a password in JSON escaped twice",
+        json.dumps({"outer": json.dumps({"raw": json.dumps({"password": "<<PASSWORD>>", "user": "ana"})})}),
+        "PASSWORD",
+    ),
+    case(
+        "an Authorization header in escaped JSON",
+        json.dumps({"raw": json.dumps({"Authorization": "Basic <<BASIC>>"})}),
+        "BASIC",
+    ),
+    case(
+        "an Authorization header in JSON escaped twice",
+        json.dumps({"outer": json.dumps({"raw": json.dumps({"Authorization": "Basic <<BASIC>>"})})}),
+        "BASIC",
+    ),
 ]
 
 
-def test_the_corpus_plants_forty_secrets_of_every_kind():
-    assert len(CASES) == 40
-    assert len({case["name"] for case in CASES}) == 40
+def test_the_corpus_plants_at_least_forty_secrets_of_every_kind():
+    assert len(CASES) >= 40
+    assert len({case["name"] for case in CASES}) == len(CASES)
     used = {name for case in CASES for name in case["secrets"]}
     assert used >= set(SECRETS) - {"PEM", "PEM_ESCAPED", "GITHUB_TOKEN_SPLIT"}
 
@@ -256,3 +273,20 @@ def test_a_field_that_is_not_a_scalar_is_kept_as_text_and_redacted():
     assert result.fields["ratio"] == "nan"
     assert SECRETS["COOKIE"] not in str(result.fields["headers"])
     assert result.redactions == 1
+
+
+def test_a_nested_field_loses_secret_named_keys_and_secrets_in_its_strings():
+    password = SECRETS["PASSWORD"]
+    result = redact_entry(
+        "Nested",
+        {
+            "payload": {"raw": json.dumps({"password": password}), "user": "ana"},
+            "items": [{"api_key": password, "id": 7}, "Bearer " + SECRETS["BEARER"]],
+        },
+        known=frozenset(),
+    )
+    assert password not in json.dumps(result.fields) and SECRETS["BEARER"] not in json.dumps(result.fields)
+    assert json.loads(result.fields["items"]) == [{"id": 7}, "[redacted]"]
+    assert json.loads(json.loads(result.fields["payload"])["raw"]) == {"password": "[redacted]"}
+    assert result.redactions == 3
+    assert redact_entry("Nested", result.fields, known=frozenset()).redactions == 0
