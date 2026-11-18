@@ -330,12 +330,12 @@ for (const size of sizes)
         yamlFile("mismatch.yaml", stringify(workflow)),
       );
       await details.open("lookup");
+      // Connected to an environment, the field lists connections; the line under it keeps the mismatch in view.
       const connection = details.field("connection");
-      await connection.getByRole("combobox", { name: "Connection" }).click();
-      const option = page.getByRole("option", { name: /^ledger-db/ });
-      await expect(option).toContainText("This slot uses weave-http@1.0.0");
-      await expect(option).not.toContainText("Not declared");
-      await page.keyboard.press("Escape");
+      await expect(connection).toContainText(
+        "The slot ledger-db uses weave-http@1.0.0, not weave-postgresql@1.0.0.",
+      );
+      await expect(connection).not.toContainText("isn't declared");
       const action = details.field("action");
       await action.getByRole("radio", { name: "By name" }).click();
       const name = action.getByRole("textbox", { name: "Action", exact: true });
@@ -350,7 +350,7 @@ for (const size of sizes)
         "imported.action@1.0.0",
       );
     });
-    test("connection setup needs management permission while local slots stay editable", async ({
+    test("connected, Create connection says where a non-HTTP connection is created", async ({
       page,
     }) => {
       const details = await openStepFixture(page, stepFixture, (p) =>
@@ -363,40 +363,18 @@ for (const size of sizes)
       await details.open("lookup");
       const connection = details.field("connection");
       await connection.getByRole("combobox", { name: "Connection" }).click();
-      const create = page.getByRole("option", { name: /^Create connection/ });
+      const create = page
+        .getByRole("listbox", { name: "Connection options" })
+        .getByRole("option", { name: /^Create connection/ });
       await expect(create).toHaveAttribute("aria-disabled", "true");
-      await expect(create).toContainText("Ask an administrator");
-      await page.getByRole("option", { name: /^New slot/ }).click();
-      await expect(
-        connection.getByRole("combobox", { name: "Connection" }),
-      ).toHaveAttribute("data-value", "postgresql");
-    });
-    test("authorized connection setup opens for the slot and returns focus when dismissed", async ({
-      page,
-    }) => {
-      const details = await openConnectedFixture(page);
-      await details.open("lookup");
-      const select = details
-        .field("connection")
-        .getByRole("combobox", { name: "Connection" });
-      await select.click();
-      await page.getByRole("option", { name: /^Create connection/ }).click();
-      const setup = page.getByRole("dialog", {
-        name: "New API connection",
-        exact: true,
-      });
-      await expect(setup).toBeVisible();
-      await expect(
-        setup.getByLabel("Connection name", { exact: true }),
-      ).toHaveValue("ledger-db");
-      await page.keyboard.press("Escape");
-      await expect(setup).toHaveCount(0);
-      await expect(select).toBeFocused();
-      await expect(details.dialog).toBeVisible();
-      await details.close();
-      expect(parse(await sourceText(page)).spec.steps[1].connection).toBe(
-        "ledger-db",
+      await expect(create).toContainText(
+        "Studio creates weave-http connections here. Create weave-postgresql connections with weave platform integrations, or ask an administrator.",
       );
+      await expect(
+        page
+          .getByRole("listbox", { name: "Connection options" })
+          .getByRole("option", { name: /^New slot/ }),
+      ).toHaveCount(0);
     });
     test("table choices distinguish loading, failure and retry without duplicate requests", async ({
       page,

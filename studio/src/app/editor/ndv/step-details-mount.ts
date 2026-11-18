@@ -48,6 +48,9 @@ import { loadKindRegistrations } from "./kinds";
 import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
 import { formulaPreviews } from "../formula/preview";
 import { TableCatalog } from "./table-catalog";
+import { connectionsPort } from "../connections/connections-port";
+import { ConnectionSheet } from "../connections/connection-sheet";
+import type { CreatedConnection } from "../../integrations/http-connection-form";
 
 const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
 
@@ -55,7 +58,12 @@ const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
   selector: "weave-step-details-mount",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [StepDetails, WorkflowSettingsDialog, OwnedPublishDialog],
+  imports: [
+    StepDetails,
+    WorkflowSettingsDialog,
+    OwnedPublishDialog,
+    ConnectionSheet,
+  ],
   template: `@if (ready() && details.request(); as request) {
       <weave-step-details
         [host]="host()"
@@ -80,10 +88,36 @@ const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
           (closed)="ownedClosed($event)"
         />
       }
+    }
+    @if (ready() && connectionSheet(); as open) {
+      @defer (on immediate) {
+        <weave-connection-sheet
+          [api]="host().api"
+          [identity]="host().identity ?? null"
+          [workspace]="host().workspaceText ?? ''"
+          [request]="open.request"
+          (saved)="sheetSaved(open, $event)"
+          (closed)="closeSheet()"
+        />
+      }
     }`,
 })
 export class StepDetailsMount {
   host = input.required<StepDetailsHost>();
+  /** Create connection or Edit from a step's Connection field: the side sheet over step details. */
+  connectionSheet() {
+    return connectionsPort(this.host())?.sheet() ?? null;
+  }
+  sheetSaved(
+    open: { saved(created: CreatedConnection): void },
+    created: CreatedConnection,
+  ) {
+    this.closeSheet();
+    open.saved(created);
+  }
+  closeSheet() {
+    connectionsPort(this.host())?.sheet.set(null);
+  }
   canvas = input<CanvasView>();
   readonly details = inject(StepDetailsService);
   readonly ready = signal(false);

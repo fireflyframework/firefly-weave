@@ -203,3 +203,29 @@ test("a pin set right after opening is kept and follows a rename", async ({
   await expect(details.dialogFor("find")).toBeVisible();
   await expect(banner(await outputPane(details))).toBeVisible();
 });
+
+test("the code for connections and real step runs stays out of the first page", () => {
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  // Strings only that code holds: the kept bindings, the step test client,
+  // the Execute in local copy and the connection sheet.
+  const markers = [
+    "weave.devBindings.v1",
+    "/step-tests",
+    "Studio stopped waiting for",
+    "Loading the connection",
+  ];
+  const chunks = readdirSync(BUILD).filter((file) => file.endsWith(".js"));
+  for (const marker of markers) {
+    const holding = chunks.filter((file) =>
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+    );
+    expect(holding.length, marker).toBeGreaterThan(0);
+    expect(
+      holding.filter((file) => first.includes(file)),
+      marker,
+    ).toEqual([]);
+  }
+});

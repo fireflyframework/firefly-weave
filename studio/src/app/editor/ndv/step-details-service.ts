@@ -48,11 +48,14 @@ export interface StepDetailsRequest {
   revealAll: boolean;
 }
 
-export type OwnedPublishPurpose = "publish" | "simulate";
-/** Publish… or Simulate asks to publish the workflow's own actions first. */
+export type OwnedPublishPurpose = "publish" | "simulate" | "execute";
+/** Publish…, Simulate or Execute in an environment asks to publish the workflow's own actions first. */
 export interface OwnedPublishRequest {
   purpose: OwnedPublishPurpose;
   workflow: { name: string; version: string };
+  /** Execute in an environment: the step that runs, and where. */
+  step?: string;
+  environment?: string;
 }
 export interface OwnedPublishOutcome {
   /** Nothing the workflow owns is left unpublished. */

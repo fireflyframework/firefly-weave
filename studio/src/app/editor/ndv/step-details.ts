@@ -70,6 +70,16 @@ import {
   type ExecuteQuestion,
 } from "./execute-dialogs";
 import { executeGate } from "../state/execute-gate";
+import { connectionsPort } from "../connections/connections-port";
+import type {
+  RunningStepTest,
+  StepTestBody,
+  StepTestOutcome,
+} from "../state/step-test-service";
+import { sideEffectOf } from "../state/step-test-service";
+import type { SideEffect } from "../state/execution";
+import { realEndWords, refusalWords, upstreamMissing } from "./real-words";
+import { pendingOwned } from "./owned/owned-versions";
 import { sliceStepIds } from "../state/execute-request";
 import type { ExecuteTarget } from "../state/execution";
 import type { ExecuteOutcome } from "../state/execution-service";
@@ -786,6 +796,11 @@ export class StepDetails {
           step,
           this.controller().kindContext(),
           this.host().label(step.kind),
+          (slot) =>
+            connectionsPort(this.host())?.binding(
+              this.host().model.definition.metadata.name,
+              slot,
+            )?.name ?? null,
         )
       : "";
   }
@@ -1131,10 +1146,17 @@ export class StepDetails {
   }
   /** True while an execution runs; the primary button then reads Stop. */
   executing(): boolean {
-    return !!this.host().execution?.running();
+    return !!this.host().execution?.running() || !!this.realRunning();
+  }
+  /** The step test of this step running in the environment now, if any. */
+  realRunning(): RunningStepTest | null {
+    const running =
+      connectionsPort(this.host())?.runningTests()?.running() ?? null;
+    return running?.stepId === this.target() ? running : null;
   }
   executeItems(): RowMenuItem[] {
     if (this.target() === "$trigger") return [];
+    const real = this.realItem();
     return [
       {
         label: "Execute previous steps",
@@ -1142,7 +1164,256 @@ export class StepDetails {
           "Runs from the trigger up to this step, reusing pinned and current results",
         run: () => void this.execute("before"),
       },
+      ...(real ? [real] : []),
     ];
+  }
+  /**
+   * Execute in <environment>: runs this step for real as a test run. Absent
+   * without the step tester role, working locally, on the Runs tab and for
+   * kinds that can't run for real; disabled with the reason otherwise.
+   */
+  realItem(): RowMenuItem | null {
+    const host = this.host();
+    const id = this.target();
+    const controller = this.controller();
+    if (id.startsWith("$") || controller.viewingRuns()) return null;
+    const port = connectionsPort(host);
+    if (!port || !controller.descriptor(id)?.real || !host.can("step.test"))
+      return null;
+    const reason = this.realBlocked();
+    return {
+      label: `Execute in ${port.environment.name}`,
+      detail: reason ?? "Runs this step for real, as a test run",
+      disabled: !!reason,
+      run: () => void this.executeReal(),
+    };
+  }
+  /** Why Execute in the environment can't run now; null when it can (a missing connection is said after trying). */
+  realBlocked(): string | null {
+    const host = this.host();
+    const port = connectionsPort(host);
+    if (!port) return null;
+    const env = port.environment.name;
+    if (this.controller().readOnlyReason())
+      return this.controller().readOnlyReason();
+    if (host.keptLocally && host.draftRevision === undefined)
+      return `Save this workflow to the platform to execute its steps in ${env}.`;
+    const policy = port.policyNow();
+    if (policy === null)
+      return `Studio is checking whether test calls are on in ${env}.`;
+    if (policy === "unreadable")
+      return `Your account can't see whether test calls are on in ${env}.`;
+    if (policy.test_calls === "disabled")
+      return `Test calls are off in ${env}. Choose an environment where they're on to execute steps there.`;
+    // What the step itself still needs (an action, a connection, data from
+    // earlier steps) is said after trying, with the way out: working it out
+    // evaluates the step's input, which the menu must not do while it draws.
+    return null;
+  }
+  /** The step's slot without a connection chosen in this environment, or "". */
+  private missingSlot(): string {
+    const id = this.target();
+    const step = this.controller().step(id);
+    const slot =
+      typeof step?.["connection"] === "string" ? step["connection"] : "";
+    if (!slot) return "";
+    return this.controller().ndvContext(id).connections.devBinding(slot)
+      ? ""
+      : slot;
+  }
+  private realRequest() {
+    const id = this.target();
+    const controller = this.controller();
+    const real = controller.descriptor(id)?.real;
+    return real
+      ? real.request(controller.ndvContext(id), controller.kindContext())
+      : null;
+  }
+  /** Fix: the step's Connection field, in view (Parameters on a narrow window), with its choices open. */
+  private openConnection() {
+    const field = this.session()
+      .placedSpecs()
+      .find((placed) => placed.spec.type === "connection");
+    if (field) this.focusField(field, true);
+  }
+  /** A notice in this step's Output, said aloud as well. */
+  private realNotice(
+    message: string,
+    action?: { label: string; run: () => void },
+  ) {
+    this.controller().executeNotice.set({
+      target: this.target(),
+      message,
+      reason: null,
+      ...(action ? { action } : {}),
+    });
+    this.say(message);
+  }
+  /**
+   * Execute in the environment: the same error check as Execute step, then
+   * the connection, the step's own actions published, a confirmation for a
+   * step that changes data (every time), and the step test itself.
+   */
+  async executeReal(): Promise<void> {
+    const host = this.host();
+    const port = connectionsPort(host);
+    const id = this.target();
+    const controller = this.controller();
+    if (!port || this.realBlocked() || this.executing()) return;
+    const env = port.environment.name;
+    controller.reveal(id);
+    controller.executeNotice.set(null);
+    const issues = this.blockingIssues([id]);
+    const gate = executeGate(issues, [id], false);
+    if (gate.kind === "fix") {
+      this.question.set({ ...gate, issues: gate.issues as ExecuteIssue[] });
+      return;
+    }
+    const slot = this.missingSlot();
+    if (slot) {
+      port.attempted(host, id, slot);
+      this.realNotice(
+        `Choose a connection for slot ${slot} to execute ${id} in ${env}.`,
+        { label: "Fix", run: () => this.openConnection() },
+      );
+      return;
+    }
+    if (!(await this.publishOwnedFirst(env))) return;
+    const request = this.realRequest();
+    if (!request) return;
+    if ("blocked" in request) {
+      const upstream = upstreamMissing(request.blocked);
+      this.realNotice(
+        request.blocked,
+        upstream
+          ? {
+              label: "Execute previous steps",
+              run: () => void this.execute("before"),
+            }
+          : undefined,
+      );
+      return;
+    }
+    const uses = String(controller.step(id)?.["uses"] ?? "");
+    const effect = sideEffectOf(controller.kindContext().actionContract(uses));
+    if (
+      effect === "non_idempotent" ||
+      effect === "idempotency_key" ||
+      request.confirm
+    ) {
+      this.realPending = { body: request.body, ack: effect };
+      this.question.set({
+        kind: "real",
+        title: `Execute ${id} in ${env}?`,
+        stepId: id,
+        environment: env,
+        ...(request.confirm ? { extra: request.confirm } : {}),
+      });
+      return;
+    }
+    await this.runReal(request.body, null);
+  }
+  /** The step test a question waits on: its body and the effect it acknowledges. */
+  private realPending: { body: StepTestBody; ack: SideEffect | null } | null =
+    null;
+  /** A step that calls its own unpublished action publishes the workflow's actions first. */
+  private async publishOwnedFirst(env: string): Promise<boolean> {
+    const host = this.host();
+    const step = this.controller().step(this.target());
+    if (!step || !pendingOwned(host.model).includes(String(step["uses"] ?? "")))
+      return true;
+    const { name, version } = host.model.definition.metadata;
+    const { publishOwned } = await import("./owned/owned-commands");
+    const outcome = await publishOwned(this.details, {
+      purpose: "execute",
+      workflow: { name, version },
+      step: this.target(),
+      environment: env,
+    });
+    if (outcome.done) return true;
+    if (outcome.reason) this.realNotice(outcome.reason);
+    return false;
+  }
+  /** Sends the step test and shows how it went in this step's Output. */
+  private async runReal(body: StepTestBody, ack: SideEffect | null) {
+    const host = this.host();
+    const port = connectionsPort(host);
+    const controller = this.controller();
+    const id = this.target();
+    if (!port) return;
+    const env = port.environment.name;
+    const service = port.stepTests(host);
+    controller.executeNotice.set(null);
+    this.say(`Executing ${id} in ${env}.`);
+    // The service tells the canvas which step it follows (the live border), and when it stops.
+    const outcome: StepTestOutcome = await service.execute({
+      stepId: id,
+      body,
+      ack,
+    });
+    if (outcome.kind === "stale") return;
+    if (outcome.kind === "done") {
+      // The Output pane shows how it ended; this says it aloud.
+      this.say(
+        realEndWords(id, env, outcome.view, body.timeout_seconds) ??
+          `Executed ${id} in ${env}.`,
+      );
+      return;
+    }
+    if (outcome.kind === "stopped") {
+      if (outcome.why === "aborted") return;
+      const runId = outcome.runId;
+      const open = runId
+        ? {
+            label: "Open in Operate",
+            run: () => void host.viewRun?.({ id: runId }),
+          }
+        : undefined;
+      this.realNotice(
+        outcome.why === "timeout"
+          ? `Studio stopped waiting for ${id}. Find its test run in Operate › Runs with Include test runs.`
+          : `Studio lost touch with ${env} while ${id} was executing. The test keeps running there; find it in Operate › Runs with Include test runs.`,
+        open,
+      );
+      return;
+    }
+    const refusal = outcome.refusal;
+    switch (refusal.kind) {
+      case "confirm":
+        this.realPending = { body, ack: refusal.sideEffect };
+        this.question.set({
+          kind: "real",
+          title: `Execute ${id} in ${env}?`,
+          stepId: id,
+          environment: env,
+        });
+        return;
+      case "release":
+        // No release here can run a dependency: there's nothing to choose.
+        if (Object.values(refusal.choices).some((list) => !list.length)) {
+          this.realNotice(refusal.message);
+          return;
+        }
+        this.realPending = { body, ack };
+        this.question.set({
+          kind: "release",
+          title: "Choose a release",
+          stepId: id,
+          environment: env,
+          choices: refusal.choices,
+        });
+        return;
+      case "connection": {
+        const why = Object.values(refusal.slots)[0] ?? "";
+        this.realNotice(why || `A connection for ${id} can't be used.`, {
+          label: "Fix",
+          run: () => this.openConnection(),
+        });
+        return;
+      }
+      default:
+        this.realNotice(refusalWords(refusal, id, env));
+    }
   }
   /** The "?" sheet: the keys of step details and the run log; null while closed. */
   readonly sheet = signal<SheetSection[] | null>(null);
@@ -1245,10 +1516,36 @@ export class StepDetails {
       );
     } else if (notice) this.say(notice.message);
   }
-  /** Stop: the running execution's answer is dropped. */
+  /** Stop: the running execution's answer is dropped; a step test is canceled on the platform. */
   stop() {
+    if (this.realRunning()) {
+      void connectionsPort(this.host())?.runningTests()?.stop();
+      this.say("Stopping the test run.");
+      return;
+    }
     this.host().execution?.stop();
     this.say("Stopped executing.");
+  }
+  /** The question's primary answer: Unpin and execute, or Run it for a step test. */
+  confirmQuestion() {
+    const asked = this.question();
+    if (asked?.kind !== "real") return void this.unpinAndExecute();
+    this.question.set(null);
+    const pending = this.realPending;
+    this.realPending = null;
+    // Each click asks again; the acknowledgement goes with this request only.
+    if (pending) void this.runReal(pending.body, pending.ack);
+  }
+  /** The release question's answer: remembered for this environment this session. */
+  releasesChosen(chosen: Record<string, string>) {
+    this.question.set(null);
+    const port = connectionsPort(this.host());
+    const pending = this.realPending;
+    this.realPending = null;
+    if (!port || !pending) return;
+    for (const [dependency, release] of Object.entries(chosen))
+      port.releases.set(dependency, release);
+    void this.runReal(pending.body, pending.ack);
   }
   /** Fix: the question closes and the field that holds the issue gets focus. */
   fixIssue(issue: ExecuteIssue) {
@@ -1282,6 +1579,8 @@ export class StepDetails {
     await this.executeNow({ mode: "step", stepId: asked.stepId });
   }
   closeQuestion() {
+    // Cancel sends nothing.
+    this.realPending = null;
     this.question.set(null);
     setTimeout(() => this.focusExecute());
   }

@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // their keys (at most 50 columns, the first 500 rows), an object a two-column
 // key and value table, anything else one cell. DOM-free.
 import type { Json } from "../registry";
+import { fileText, type ValueOrigin } from "./file-value";
 
 export const TABLE_COLUMNS = 50;
 export const TABLE_ROWS = 500;
@@ -35,10 +36,15 @@ export interface TableData {
 const isObject = (value: unknown): value is Record<string, Json> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-/** One cell's text: scalars as they read, structures by size. */
-export function cellText(value: Json | undefined): string {
+/** One cell's text: scalars as they read, a file as one value, structures by size. */
+export function cellText(
+  value: Json | undefined,
+  origin: ValueOrigin = "sample",
+): string {
   if (value === undefined) return "";
   if (value === null) return "null";
+  const file = fileText(value, origin);
+  if (file) return file;
   if (Array.isArray(value))
     return `${value.length} item${value.length === 1 ? "" : "s"}`;
   if (isObject(value)) {
@@ -48,11 +54,16 @@ export function cellText(value: Json | undefined): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-export function tableOf(value: Json | undefined): TableData {
+export function tableOf(
+  value: Json | undefined,
+  origin: ValueOrigin = "sample",
+): TableData {
   const note = (shown: number, total: number) =>
     shown < total
       ? `Showing ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}`
       : null;
+  const file = fileText(value, origin);
+  if (file) return { columns: ["Value"], rows: [[file]], total: 1, note: null };
   if (Array.isArray(value) && value.length && value.every(isObject)) {
     const columns: string[] = [];
     for (const row of value as Record<string, Json>[])
@@ -61,7 +72,7 @@ export function tableOf(value: Json | undefined): TableData {
           columns.push(key);
     const rows = (value as Record<string, Json>[])
       .slice(0, TABLE_ROWS)
-      .map((row) => columns.map((key) => cellText(row[key])));
+      .map((row) => columns.map((key) => cellText(row[key], origin)));
     return {
       columns,
       rows,
@@ -73,7 +84,7 @@ export function tableOf(value: Json | undefined): TableData {
     const entries = Object.entries(value);
     const rows = entries
       .slice(0, TABLE_ROWS)
-      .map(([key, item]) => [key, cellText(item)]);
+      .map(([key, item]) => [key, cellText(item, origin)]);
     return {
       columns: ["Field", "Value"],
       rows,
@@ -83,7 +94,7 @@ export function tableOf(value: Json | undefined): TableData {
   }
   return {
     columns: ["Value"],
-    rows: [[cellText(value)]],
+    rows: [[cellText(value, origin)]],
     total: 1,
     note: null,
   };

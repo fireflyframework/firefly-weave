@@ -176,7 +176,9 @@ export class OwnedPublishDialog implements OnInit, OnDestroy {
       );
   }
   title(): string {
-    const { purpose, workflow } = this.request();
+    const { purpose, workflow, step, environment } = this.request();
+    if (purpose === "execute")
+      return `Publish actions to execute ${step ?? workflow.name} in ${environment ?? "this environment"}?`;
     return purpose === "publish"
       ? `Publish ${workflow.name} ${workflow.version}?`
       : `Publish actions to simulate ${workflow.name}?`;
@@ -187,12 +189,17 @@ export class OwnedPublishDialog implements OnInit, OnDestroy {
       return "Checking the actions of this workflow's steps…";
     if (phase === "blocked")
       return "Studio can't publish these actions yet. Fix what each one says, or close and keep editing.";
-    return this.request().purpose === "publish"
+    const purpose = this.request().purpose;
+    if (purpose === "execute")
+      return "A step runs for real only with published actions, so Studio publishes these first; the workflow itself isn't published. Published versions can't change: the next change to one of them makes its next version.";
+    return purpose === "publish"
       ? "Studio publishes these actions first, then the workflow. Published versions can't change: the next change to one of them makes its next version. Activate the workflow separately to use it in an environment."
       : "A simulation runs against the project catalog, so Studio publishes these actions first; the workflow itself isn't published. Published versions can't change: the next change to one of them makes its next version.";
   }
   listLabel(): string {
-    return this.request().purpose === "publish"
+    const purpose = this.request().purpose;
+    if (purpose === "execute") return "Actions to publish before the step runs";
+    return purpose === "publish"
       ? "Actions to publish before the workflow"
       : "Actions to publish before the simulation";
   }

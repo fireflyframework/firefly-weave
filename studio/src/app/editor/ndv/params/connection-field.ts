@@ -15,38 +15,234 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Select a workflow slot or open the existing connection setup entry point.
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+// Working locally: select a workflow slot or open connection setup.
+// Connected to an environment: choose one of the connections this person may
+// bind there; the slot behind it follows, the choice is kept on this computer
+// and tested, and the pill says how the last test went.
+import {
+  ChangeDetectionStrategy,
+  Component,
+  input,
+  viewChild,
+  type DoCheck,
+} from "@angular/core";
+import { Icon } from "../../../icon";
 import { Select, type SelectOption } from "../../../forms/ui/select";
 import type { ParamSpec } from "../registry";
 import type { FormSession } from "./form-session";
 import { NO_MANAGE, slotBase, slotsOf } from "./slots";
+import {
+  CREATE_CONNECTION,
+  connectionOptions,
+  testPill,
+  type TestPill,
+} from "../../connections/connection-choices";
+import type { ConnectionView } from "../../connections/connection-view";
 const NEW_SLOT = "\u0000new";
 const CREATE = "\u0000create";
 @Component({
   selector: "weave-connection-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Select],
-  template: `<weave-select
-    icon="chevronDown"
-    [label]="spec().label"
-    [hideLabel]="true"
-    [controlId]="controlId()"
-    [options]="options()"
-    [value]="value()"
-    [disabled]="!!readOnly()"
-    [describedBy]="describedBy()"
-    placeholder="Choose a slot"
-    (choose)="choose($event)"
-  />`,
+  imports: [Select, Icon],
+  template: `@if (connected(); as view) {
+      <div class="connection-row">
+        <weave-select
+          class="connection-choice"
+          icon="chevronDown"
+          [label]="spec().label"
+          [hideLabel]="true"
+          [controlId]="controlId()"
+          [options]="connectedOptions(view)"
+          [value]="view.binding?.connectionId ?? ''"
+          [disabled]="!!readOnly()"
+          [describedBy]="describedBy()"
+          [placeholder]="
+            view.list ? 'Choose a connection' : 'Loading connections…'
+          "
+          [sheetTitle]="'Connection for ' + session().target"
+          (choose)="chooseConnected($event, view)"
+        />
+        <!-- How the last test went and Retry stay together ("Test failed · Retry"). -->
+        <span class="connection-state">
+          <span class="connection-status" role="status">
+            @if (view.testing) {
+              <span class="connection-pill"
+                ><weave-icon name="spinner" [size]="16" />Testing…</span
+              >
+            } @else if (pill(view); as shown) {
+              <span
+                class="connection-pill"
+                [class.is-success]="shown.tone === 'success'"
+                [class.is-danger]="shown.tone === 'danger'"
+                ><weave-icon
+                  [name]="shown.tone === 'success' ? 'ok' : 'failCircle'"
+                  [size]="16"
+                />{{ shown.text }}</span
+              >
+            }
+          </span>
+          @if (retryable(view)) {
+            <button
+              type="button"
+              class="tertiary connection-retry"
+              (click)="retry()"
+            >
+              Retry
+            </button>
+          }
+        </span>
+      </div>
+    } @else {
+      <weave-select
+        icon="chevronDown"
+        [label]="spec().label"
+        [hideLabel]="true"
+        [controlId]="controlId()"
+        [options]="options()"
+        [value]="value()"
+        [disabled]="!!readOnly()"
+        [describedBy]="describedBy()"
+        placeholder="Choose a slot"
+        (choose)="choose($event)"
+      />
+    }`,
+  styles: `
+    .connection-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+    .connection-choice {
+      flex: 1 1 240px;
+      min-width: 0;
+    }
+    .connection-state {
+      display: inline-flex;
+      flex: none;
+      align-items: center;
+      gap: var(--space-1);
+      white-space: nowrap;
+    }
+    .connection-state:not(:has(.connection-pill, .connection-retry)),
+    .connection-status:empty {
+      display: none;
+    }
+    .connection-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      min-height: 24px;
+      padding: 0 var(--space-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pill);
+      color: var(--muted);
+      font: var(--type-caption);
+      white-space: nowrap;
+    }
+    .connection-pill.is-success {
+      border-color: var(--success-bd);
+      background: var(--success-bg);
+      color: var(--success-ink);
+    }
+    .connection-pill.is-danger {
+      border-color: var(--danger-bd);
+      background: var(--danger-bg);
+      color: var(--danger-ink);
+    }
+    .connection-retry {
+      min-height: var(--sd-target, var(--control-sm));
+    }
+    @media (max-width: 767px), (pointer: coarse) {
+      .connection-choice {
+        flex-basis: 100%;
+      }
+    }
+  `,
 })
-export class ConnectionField {
+export class ConnectionField implements DoCheck {
   session = input.required<FormSession>();
   spec = input.required<ParamSpec>();
   controlId = input.required<string>();
   describedBy = input("");
   readOnly = input<string | null>(null);
+  private readonly choices = viewChild(Select);
+  /** What was last settled (preselection, a gone connection, a due test), and the last open request seen. */
+  private settledFor = "";
+  private openSeen = -1;
+
+  /** Connected to an environment: what the field shows; null working locally. */
+  connected(): ConnectionView | null {
+    return this.session().connectionView(this.spec());
+  }
+  connectedOptions(view: ConnectionView): SelectOption[] {
+    if (!view.connector)
+      return [
+        {
+          value: "\u0000action",
+          label:
+            "Choose the action first. The connection follows its connector.",
+          disabled: true,
+        },
+      ];
+    if (!view.list) return [];
+    return connectionOptions(view.list.items ?? [], view.environment.name, {
+      manage: view.canManage,
+      connector: view.connector,
+    });
+  }
+  pill(view: ConnectionView): TestPill | null {
+    return view.canManage ? testPill(view.binding?.tested, new Date()) : null;
+  }
+  retryable(view: ConnectionView): boolean {
+    return (
+      !this.readOnly() &&
+      !view.testing &&
+      view.canManage &&
+      !!this.pill(view)?.retry
+    );
+  }
+  chooseConnected(value: string, view: ConnectionView): void {
+    const session = this.session(),
+      spec = this.spec();
+    if (this.readOnly() || !session.isCurrent()) return;
+    if (value === CREATE_CONNECTION)
+      return session.openConnectionSheet(spec, "create");
+    const item = view.list?.items?.find(
+      (entry) => entry.connectionId === value,
+    );
+    if (item?.enabled) void session.chooseConnection(spec, item);
+  }
+  retry(): void {
+    if (!this.readOnly()) void this.session().retestConnection(this.spec());
+  }
+  ngDoCheck(): void {
+    const view = this.connected();
+    if (!view) return;
+    const key = [
+      view.port.key,
+      view.slot,
+      view.binding?.connectionId ?? "",
+      view.list ? "listed" : "",
+    ].join("\u0000");
+    if (key !== this.settledFor && !this.readOnly()) {
+      this.settledFor = key;
+      const session = this.session(),
+        spec = this.spec();
+      queueMicrotask(() => void session.settleConnection(spec));
+    }
+    const request = view.port.opening();
+    if (request && request.seq !== this.openSeen) {
+      this.openSeen = request.seq;
+      if (request.slot === view.slot)
+        queueMicrotask(() => {
+          document.getElementById(this.controlId())?.focus();
+          this.choices()?.show();
+        });
+    }
+  }
   value(): string {
     const value = this.session().read(this.spec());
     return value.mode === "fixed" && typeof value.value === "string"

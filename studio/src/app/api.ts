@@ -67,6 +67,7 @@ export class ApiError extends Error {
     return this.plain.code;
   }
 }
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Host/platform admission rejections: nothing ran, so a safe request may be sent again. */
 const capacityCodes = new Set([
   "WV-OPERATION-CAPACITY",
@@ -147,6 +148,12 @@ export class StudioApi {
     settled: () => Promise<void>;
     scope: () => string;
   } | null = null;
+  /**
+   * The person Studio shows as signed in: every change sent to the platform
+   * names them, and the platform refuses one that would run as someone else.
+   * The shell sets it.
+   */
+  expectedPrincipal: (() => string | null) | null = null;
   /** Pauses before replaying a request the host or platform turned away for capacity. */
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -189,6 +196,10 @@ export class StudioApi {
     if (body !== undefined) h["Content-Type"] = "application/json";
     if (method !== "GET" && this.session.csrfToken)
       h["X-Weave-CSRF"] = this.session.csrfToken;
+    if (method !== "GET" && path.startsWith("/studio/api/")) {
+      const principal = this.expectedPrincipal?.();
+      if (principal && UUID.test(principal)) h["X-Weave-Principal"] = principal;
+    }
     // A capacity or compatibility rejection means the host or platform did not admit the
     // request, so a read, or a change that carries an idempotency key, can be sent again.
     const keyed = method !== "GET" && "Idempotency-Key" in h;

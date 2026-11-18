@@ -43,7 +43,24 @@ export interface ExecuteIssue {
 }
 export type ExecuteQuestion =
   | { kind: "fix"; title: string; issues: ExecuteIssue[] }
-  | Extract<ExecuteGate, { kind: "unpin" }>;
+  | Extract<ExecuteGate, { kind: "unpin" }>
+  | {
+      /** Execute in an environment, for a step that changes data there: asked every time. */
+      kind: "real";
+      title: string;
+      stepId: string;
+      environment: string;
+      /** A sentence of the step kind's own, such as a cost notice. */
+      extra?: string;
+    }
+  | {
+      /** Several releases can run a dependency of the step here: which one. */
+      kind: "release";
+      title: string;
+      stepId: string;
+      environment: string;
+      choices: Record<string, { id: string; label: string }[]>;
+    };
 let sequence = 0;
 
 @Component({
@@ -78,6 +95,23 @@ let sequence = 0;
     .execute-issue-step {
       font: var(--type-label);
       overflow-wrap: anywhere;
+    }
+    .execute-releases {
+      display: grid;
+      gap: var(--space-3);
+      margin: var(--space-3) 0 0;
+    }
+    .execute-release {
+      display: grid;
+      gap: var(--space-1);
+    }
+    .execute-release select {
+      min-height: var(--control-md);
+    }
+    @media (max-width: 767px), (pointer: coarse) {
+      .execute-release select {
+        min-height: var(--control-touch);
+      }
     }
     .execute-issue-message {
       font: var(--type-small);
@@ -128,6 +162,46 @@ let sequence = 0;
         <div class="dialog-actions">
           <button type="button" (click)="cancel.emit()">Close</button>
         </div>
+      } @else if (asked.kind === "real") {
+        <p class="dialog-message" [id]="messageId">
+          {{ asked.stepId }} changes data in {{ asked.environment }}. Repeating
+          it repeats the change.{{ asked.extra ? " " + asked.extra : "" }}
+        </p>
+        <div class="dialog-actions">
+          <!-- Focus starts on Cancel: a held or repeated Enter mustn't run a change. -->
+          <button type="button" data-execute-primary (click)="cancel.emit()">
+            Cancel
+          </button>
+          <button type="button" class="primary" (click)="confirm.emit()">
+            Run it
+          </button>
+        </div>
+      } @else if (asked.kind === "release") {
+        <p class="dialog-message" [id]="messageId">
+          Choose which release runs {{ asked.stepId }} in
+          {{ asked.environment }}.
+        </p>
+        <div class="execute-releases">
+          @for (dependency of dependencies(asked); track dependency) {
+            <label class="execute-release">
+              <span class="execute-issue-step">{{ dependency }}</span>
+              <select
+                [attr.data-execute-primary]="$first ? '' : null"
+                (change)="pick(dependency, $event)"
+              >
+                @for (choice of asked.choices[dependency]; track choice.id) {
+                  <option [value]="choice.id">{{ choice.label }}</option>
+                }
+              </select>
+            </label>
+          }
+        </div>
+        <div class="dialog-actions">
+          <button type="button" (click)="cancel.emit()">Cancel</button>
+          <button type="button" class="primary" (click)="chooseReleases(asked)">
+            Run it
+          </button>
+        </div>
       } @else {
         <p class="dialog-message" [id]="messageId">
           {{ asked.stepId }} uses its pinned output. Executing it unpins the
@@ -152,6 +226,25 @@ export class ExecuteDialog implements AfterViewInit {
   readonly fix = output<ExecuteIssue>();
   readonly confirm = output<void>();
   readonly cancel = output<void>();
+  /** The release question's answer: a release ID per dependency. */
+  readonly released = output<Record<string, string>>();
+  private readonly picked: Record<string, string> = {};
+  dependencies(asked: { choices: Record<string, unknown[]> }): string[] {
+    return Object.keys(asked.choices).sort();
+  }
+  pick(dependency: string, event: Event) {
+    this.picked[dependency] = (event.target as HTMLSelectElement).value;
+  }
+  chooseReleases(asked: {
+    choices: Record<string, { id: string; label: string }[]>;
+  }) {
+    const chosen: Record<string, string> = {};
+    for (const dependency of this.dependencies(asked)) {
+      const id = this.picked[dependency] ?? asked.choices[dependency][0]?.id;
+      if (id) chosen[dependency] = id;
+    }
+    this.released.emit(chosen);
+  }
   readonly titleId = `execute-dialog-title-${++sequence}`;
   readonly messageId = `execute-dialog-message-${sequence}`;
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);

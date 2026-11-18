@@ -127,14 +127,30 @@ allow that caller stay listed and carry `disabled` with the reason.
 ### Running a step in an environment
 
 A kind that can run in an environment sets `real` on its descriptor. Its
-`request(ctx)` returns `{body}` or `{blocked}` with the reason the step can't
-run, such as `Choose an action first.` The `body` is a `StepTestRequest`
-(snake_case, see [In an environment](#in-an-environment)) without `draft_id` and
+`request(ctx, kind)` returns `{body, confirm?}` or `{blocked}` with the reason
+the step can't run, such as `Choose an action first.` `kind` is the
+`KindContext`, which reads the contracts the editor already holds (an action's
+`timeoutSeconds`, for example). The `body` is a `StepTestRequest` (snake_case,
+see [In an environment](#in-an-environment)) without `draft_id` and
 `draft_revision`: the kind sets `kind`, `step_id`, `input`, the connection and
-release bindings, the side effect it acknowledges, tool mocks, `real_tools` and
-`timeout_seconds`, and the editor adds the saved draft's `draft_id` and
-`draft_revision` when it sends `POST {ENV}/step-tests`. `NdvContext` doesn't
-expose the draft, so a kind can't set those two fields.
+release bindings, tool mocks, `real_tools` and `timeout_seconds`, and the
+editor adds the saved draft's `draft_id` and `draft_revision`, and the side
+effect the person acknowledged, when it sends `POST {ENV}/step-tests`.
+`NdvContext` doesn't expose the draft, so a kind can't set those two fields.
+`confirm` is a sentence of the kind's own that the confirmation shows after
+"*step* changes data in *environment*. Repeating it repeats the change." (a
+cost notice, say); when a kind sets it, Studio asks even for a step that
+doesn't change data.
+
+The built-in action kind sends the step's resolved input, `connections` with
+the revision bound to the step's slot in this environment, `releases: {}` and
+`timeout_seconds` from the action's `timeoutSeconds`, at most 300. It reports
+`Choose the connection for slot crm first.` without a binding and
+`send-invoice needs data from earlier steps. Execute previous steps first.`
+while the input can't be computed. `NdvContext.connections.devBinding(slot)`
+returns `{connectionId, revisionId, name, tested}` from the binding kept on
+this computer (`tested` is `ok`, `failed` or null), and `bind(slot)` opens the
+slot's Connection field.
 
 ### Coverage against the language manifest
 
@@ -311,12 +327,39 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 - **Test policy.** An environment without a stored policy is `disabled` at
   revision 0. The demo environment `local` that `weave platform up` creates is
   `enabled`.
+- **Omitted output.** A `StepTestView` whose output the platform left out has
+  `output: null` and `omitted` set to `classified_secret`,
+  `classification_unavailable`, `uncertain_derived`, `confidential_text` or
+  `resource_limit`; `omitted` is absent otherwise.
+- **Releases.** Studio sends `releases: {}`; the platform picks the only
+  release that can run each dependency. When several can, it answers
+  `422 WV-STEPTEST-RELEASE` with `result.choices`, a list of `{id, label}` per
+  dependency, and Studio asks and sends the chosen IDs, remembered per
+  environment for the session.
+- **Answers.** `POST {ENV}/step-tests/{id}/answers` is published but not served
+  yet (`501 WV-UNAVAILABLE`): action and AI task step tests never wait.
+- **Refusal results.** `WV-STEPTEST-CONFIRM` carries
+  `{side_effect, action, environment}`; `WV-STEPTEST-INPUT`
+  `{diagnostics: [{path, code}]}`; `WV-SCHEMA-SECRET_VALUE` `{paths}`;
+  `WV-STEPTEST-CONNECTION` `{slots: {slot: reason}}`. `WV-STEPTEST-BUSY` comes
+  with `Retry-After`: a person runs at most 4 step tests at once, and starts at
+  most 30 a minute, per environment.
+- **Who the change is for.** Every change Studio sends to the platform carries
+  `X-Weave-Principal` with the principal Studio shows as signed in. When the
+  platform's sign-in now belongs to someone else, it refuses the change with
+  `409 WV-PRINCIPAL-CHANGED` before anything runs, and Studio doesn't send it
+  again.
+- **Following.** Studio reads a step test every second for 30 seconds, then
+  every 2 seconds, until it ends or its timeout plus a minute passes; a read
+  that fails waits twice as long (at most 30 seconds), and three in a row stop
+  following. A start whose answer was lost is sent again once with the same
+  `Idempotency-Key`, so one click starts at most one test run.
 
 | Status | Codes |
 | --- | --- |
 | 403 | `WV-FORBIDDEN`, `WV-STEPTEST-DISABLED` |
 | 404 | `WV-NOT-FOUND` |
-| 409 | `WV-STEPTEST-CONFIRM`, `WV-REVISION` |
+| 409 | `WV-STEPTEST-CONFIRM`, `WV-REVISION`, `WV-PRINCIPAL-CHANGED` |
 | 410 | `WV-TESTACTIVATION-EXPIRED` |
 | 422 | `WV-STEPTEST-INPUT`, `WV-SCHEMA-SECRET_VALUE`, `WV-STEPTEST-CONNECTION`, `WV-STEPTEST-RELEASE`, `WV-STEPTEST-KIND`, `WV-STEPTEST-TOOL-MOCK`, `WV-TESTACTIVATION-COMPILE`, `WV-TESTACTIVATION-LIFETIME`, `WV-ETAG` |
 | 429 | `WV-STEPTEST-BUSY` |
@@ -348,6 +391,18 @@ it already uses.
   can't be attributed to an account, so they are deleted.
 - The desktop app keeps the same keys in the Studio host store under its
   configuration directory instead of browser storage.
+- **Connections a slot uses.** `<account prefix>weave.devBindings.v1` holds,
+  per environment ID, workflow name and slot, the chosen connection's ID, its
+  revision ID, its name and, once tested, whether the test passed and when:
+  `{"v": 1, "bindings": {environmentId: {workflow: {slot: [connectionId,
+  revisionId, name, ok?, at?]}}}}`. Nothing else, and never a secret. At most
+  500 bindings and 64 KiB; a write past either is refused and the document
+  stays as it was. A binding follows its connection: the newest revision in the
+  environment's list replaces the kept one and clears the test result. Without
+  an account prefix, bindings last for the session only.
+- **Real results stay in memory.** A step's last result from Execute in an
+  environment is never written to `weave.lastExecution.*`; Pin output keeps it
+  as test data with `source: "test-call"`, `runId` and `runEnvironmentId`.
 
 ## Keyboard map
 

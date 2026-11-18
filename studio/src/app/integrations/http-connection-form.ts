@@ -537,6 +537,21 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       display: grid;
       gap: 16px;
     }
+    /* In a side sheet the form fills the sheet's height, so its footer rests
+       on the bottom edge however short the form is. */
+    :host(.fills-sheet) {
+      display: flex;
+      flex-direction: column;
+      flex: 1 0 auto;
+    }
+    :host(.fills-sheet) .connection-form {
+      display: flex;
+      flex: 1 0 auto;
+      flex-direction: column;
+    }
+    :host(.fills-sheet) .dialog-footer {
+      margin-top: auto;
+    }
     fieldset {
       border: 1px solid var(--line);
       border-radius: 8px;

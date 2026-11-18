@@ -94,7 +94,9 @@ export function stepSummary(step: Step, definition?: unknown): string {
     case "action": {
       const uses = String(step["uses"] ?? "");
       if (!uses || uses === placeholderAction) return "Choose an action";
-      return step["connection"] ? `${uses} · ${step["connection"]}` : uses;
+      // Never the connection slot: its name ("http") reads like a protocol, and
+      // the connection a step uses is chosen per environment, not in the workflow.
+      return uses;
     }
     case "wait":
       return formatDuration(step["durationSeconds"]);
