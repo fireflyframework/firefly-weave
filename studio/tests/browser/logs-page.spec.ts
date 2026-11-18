@@ -622,14 +622,18 @@ test.describe("Operate › Logs on a phone", () => {
     const height = (await toggle.boundingBox())!.height;
     expect(height).toBeGreaterThanOrEqual(44);
     await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // Open, the same button says it hides them.
+    const hide = page.getByRole("button", { name: "Hide filters" });
+    await expect(hide).toHaveAttribute("aria-expanded", "true");
+    await expect(toggle).toHaveCount(0);
     await expect(page.getByLabel("Time", { exact: true })).toBeFocused();
     await page.getByLabel("Time", { exact: true }).selectOption("6h");
     await page.getByLabel("Level", { exact: true }).selectOption("error");
     await page.getByLabel("Message contains").fill("SMTP");
     await page.getByLabel("Include test runs").check();
     await page.getByRole("switch", { name: "Follow" }).check();
-    await toggle.click();
+    await hide.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(page.locator(".filter-summary")).toContainText(
       "Filters: last 6 hours · Error only · message contains “SMTP” · test runs included · following every 10 seconds",
     );

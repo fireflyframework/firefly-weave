@@ -150,7 +150,7 @@ const NAME_PROBLEM =
             [attr.aria-expanded]="filtersOpen()"
             (click)="toggleFilters()"
           >
-            Change filters
+            {{ filtersOpen() ? "Hide filters" : "Change filters" }}
           </button>
         </div>
         <div
