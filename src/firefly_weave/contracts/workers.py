@@ -309,6 +309,9 @@ class CredentialLease(ResolvedSecret):
 # What `tasks.log` accepts in one request: entries per batch, and the body's size in bytes.
 TASK_LOG_BATCH = 50
 TASK_LOG_BODY_BYTES = 256 * 1024
+# The most values one entry says it hid, and the most entries one request says the writer dropped.
+TASK_LOG_REDACTIONS = 10_000
+TASK_LOG_DROPPED = 1_000_000
 type LogCount = Annotated[int, Field(ge=0)]
 
 
@@ -327,7 +330,7 @@ class TaskLogEntry(ContractModel):
     message: str = Field(max_length=512)
     fields: dict[LogFieldKey, LogFieldValue] = Field(default_factory=dict, max_length=16)
     truncated: bool = False
-    redactions: LogCount = 0
+    redactions: Annotated[int, Field(ge=0, le=TASK_LOG_REDACTIONS)] = 0
 
     @model_validator(mode="after")
     def ai_usage(self) -> Self:
@@ -344,7 +347,7 @@ class TaskLogRequest(ContractModel):
 
     lease: LeaseProof
     entries: list[TaskLogEntry] = Field(min_length=1, max_length=TASK_LOG_BATCH)
-    dropped: LogCount = 0
+    dropped: Annotated[int, Field(ge=0, le=TASK_LOG_DROPPED)] = 0
 
 
 class TaskLogAccepted(ContractModel):

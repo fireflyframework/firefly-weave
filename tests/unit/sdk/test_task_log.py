@@ -209,6 +209,20 @@ async def test_a_task_writes_at_most_200_entries_and_counts_the_rest():
     assert sum(request.dropped for request in requests) == 30
 
 
+async def test_an_entry_hiding_more_values_than_the_platform_counts_is_sent_with_the_count_capped():
+    many = "password=x " * 6000
+
+    async def handler(task):
+        task_log().info(many, **{f"field_{index:02d}": many for index in range(16)})
+        return "done"
+
+    transport = Transport()
+    await Worker(transport, {"echo@1.2.0": handler}, 1)._execute(leased())
+    ((entry,),) = [request.entries for kind, request in transport.sent if kind == "log"]
+    assert entry.redactions == 10_000
+    assert "password=x" not in entry.message
+
+
 def test_a_code_that_is_not_a_log_code_is_refused():
     from firefly_weave.sdk.task_log import TaskLog
 

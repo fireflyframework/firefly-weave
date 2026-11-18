@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from starlette.requests import Request
 
 from firefly_weave.access.audit import AuditContext
@@ -96,3 +97,28 @@ async def test_a_log_request_over_256_kib_is_refused_before_anything_is_written(
         await controller(recorded).log(request(oversized))
     assert (refused.value.status, refused.value.code) == (413, "WV-LOG-SIZE")
     assert recorded.calls == [] and recorded.opened == []
+
+
+@pytest.mark.parametrize(
+    ("place", "count"),
+    [("dropped", 1_000_001), ("dropped", 2**70), ("redactions", 10_001)],
+)
+async def test_counts_past_their_limits_are_refused_as_invalid_before_anything_is_written(place, count):
+    recorded = Recorded()
+    sent = json.loads(body())
+    if place == "dropped":
+        sent["dropped"] = count
+    else:
+        sent["entries"][0]["redactions"] = count
+    with pytest.raises(ValidationError):
+        await controller(recorded).log(request(json.dumps(sent).encode()))
+    assert recorded.calls == [] and recorded.opened == []
+
+
+async def test_counts_at_their_limits_are_accepted():
+    recorded = Recorded()
+    sent = json.loads(body())
+    sent["dropped"] = 1_000_000
+    sent["entries"][0]["redactions"] = 10_000
+    response = await controller(recorded).log(request(json.dumps(sent).encode()))
+    assert response.status_code == 202

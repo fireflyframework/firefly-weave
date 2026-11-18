@@ -33,7 +33,15 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from firefly_weave.contracts.log_values import LogFieldValue, LogLevel
-from firefly_weave.contracts.workers import TASK_LOG_BATCH, LeaseProof, TaskLogAccepted, TaskLogEntry, TaskLogRequest
+from firefly_weave.contracts.workers import (
+    TASK_LOG_BATCH,
+    TASK_LOG_DROPPED,
+    TASK_LOG_REDACTIONS,
+    LeaseProof,
+    TaskLogAccepted,
+    TaskLogEntry,
+    TaskLogRequest,
+)
 from firefly_weave.operations.log_redaction import redact_entry
 from firefly_weave.sdk._retry import raise_if_cancelled
 
@@ -135,7 +143,8 @@ class TaskLog:
             message=redacted.message,
             fields=redacted.fields,
             truncated=redacted.truncated,
-            redactions=redacted.redactions,
+            # The platform counts at most this many; the values themselves are hidden either way.
+            redactions=min(redacted.redactions, TASK_LOG_REDACTIONS),
         )
         if self.stopped or self.closing or self.written >= ATTEMPT_ENTRIES:
             self._drop(1)
@@ -166,7 +175,8 @@ class TaskLog:
         while self.pending and not self.stopped and self.send is not None and self.lease is not None:
             batch = self.pending[:TASK_LOG_BATCH]
             del self.pending[:TASK_LOG_BATCH]
-            reported = self.unreported
+            # What one request can report; the rest goes with the next one.
+            reported = min(self.unreported, TASK_LOG_DROPPED)
             try:
                 accepted = await self.send(TaskLogRequest(lease=self.lease, entries=batch, dropped=reported))
             except Exception as error:

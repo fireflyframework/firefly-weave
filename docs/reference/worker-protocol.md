@@ -85,7 +85,7 @@ every request needs a bearer access token plus a current grant in that scope.
 | Complete | `/tasks/complete` | `lease`, a unique `completion_id`, and an `output` that matches the schema; returns the committed receipt |
 | Fail | `/tasks/fail` | `lease` and an `error` with `completion_id`, a bounded `code`, an `outcome` (`not_started`, `failed`, or `unknown`), and optionally `effect` (`none` when the failure applied nothing; `unknown`, the default, otherwise) |
 | Credentials | `/tasks/credentials` | A live `lease`, the bound `connection_revision_id`, and a `slot`; returns a short-lived lease with `Cache-Control: no-store` |
-| Log | `/tasks/logs` | A live `lease`, 1 to 50 `entries`, and optionally `dropped` (entries the worker dropped); answers `202` with `accepted` and `dropped` (see [Log entries](#log-entries)) |
+| Log | `/tasks/logs` | A live `lease`, 1 to 50 `entries`, and optionally `dropped` (entries the worker dropped, at most 1,000,000); answers `202` with `accepted` and `dropped` (see [Log entries](#log-entries)) |
 
 For example, after a deployer admits the example release, registration sends:
 
@@ -136,8 +136,8 @@ lease. Operators read them in the run's log (`runs.logs`) and across runs
 Each entry has `at`, a `source` (`worker`, `connector`, or `ai`), a `level`
 (`debug`, `info`, `warning`, or `error`), an optional `code`, a `message` of at
 most 512 characters, and at most 16 `fields` (strings of up to 256 characters,
-numbers, booleans, or null). `truncated` and `redactions` say what the writer
-cut and hid. For example:
+numbers, booleans, or null). `truncated` and `redactions` (at most 10,000) say
+what the writer cut and hid. For example:
 
 ```json
 {
