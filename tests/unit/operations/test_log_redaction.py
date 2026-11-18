@@ -273,6 +273,23 @@ def test_a_leased_value_is_hidden_in_the_message_and_the_fields():
     assert result.redactions == 2
 
 
+@pytest.mark.parametrize(
+    "leased",
+    ["multi\nline-secret-42", "tab\tsecret-value-99", "zero​width-secret-7", "no break secret-3"],
+    ids=["a newline", "a tab", "a format character", "a no-break space"],
+)
+def test_a_leased_value_with_a_character_the_text_loses_is_still_hidden(leased):
+    result = redact_text("value: " + leased + " end", known=frozenset({leased}))
+    assert result.text == "value: [redacted] end"
+    assert result.redactions == 1
+
+
+def test_a_bearer_token_after_a_no_break_space_is_hidden():
+    result = redact_text("Bearer " + SECRETS["BEARER"])
+    assert SECRETS["BEARER"] not in result.text
+    assert result.redactions == 1
+
+
 def test_format_and_control_characters_are_removed():
     result = redact_text("Order 42​ shipped‮ to\x00 the dock\x07")
     assert result.text == "Order 42 shipped to  the dock "

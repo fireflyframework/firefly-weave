@@ -27,8 +27,9 @@ The SDK runs it on every entry a worker or connector writes, and the server runs
 - what the shared pattern set catches: private key blocks, bearer tokens, JWTs, ``sk-``, ``AKIA``/``ASIA``,
   GitHub tokens and URL user information; and Stripe keys, Slack tokens and Google API keys.
 
-Format characters are removed first, so an invisible character can't split a secret; control characters and line
-separators become spaces, so an entry is one line. A message keeps 512 characters, a field value 256, an entry 16
+Format characters are removed first, so an invisible character can't split a secret; control characters, line
+separators and other spaces become plain spaces, so an entry is one line. Leased values are cleaned the same way
+before they are matched. A message keeps 512 characters, a field value 256, an entry 16
 fields in 8 KiB as stored; fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose
 strings are redacted before it is written as JSON text. Each hidden value counts once, and text that is already
 redacted counts nothing, so a second pass changes nothing. Every pattern is linear on untrusted text. It imports
@@ -167,7 +168,9 @@ def _known_forms(known: frozenset[str]) -> list[str]:
     for value in known:
         if len(value) < KNOWN_MINIMUM:
             continue
-        forms.update({value, quote(value, safe=""), json.dumps(value, ensure_ascii=False)[1:-1]})
+        # Each form as it reads once the text is cleaned: a newline or tab in the value is a space there too.
+        escaped = json.dumps(value, ensure_ascii=False)[1:-1]
+        forms.update({_cleaned(value), quote(value, safe=""), _cleaned(escaped)})
     # Longest first, so a value that contains another is hidden whole.
     # A form inside the marker itself would be found again in what this pass wrote.
     return sorted(
@@ -180,7 +183,14 @@ def _visible(text: str) -> str:
 
 
 def _spaced(text: str) -> str:
-    return "".join(" " if unicodedata.category(character) in {"Cc", "Zl", "Zp"} else character for character in text)
+    # Every space separator becomes a plain space too, so a no-break space can't keep "Bearer" from its token.
+    return "".join(
+        " " if unicodedata.category(character) in {"Cc", "Zl", "Zp", "Zs"} else character for character in text
+    )
+
+
+def _cleaned(text: str) -> str:
+    return _spaced(_visible(text))
 
 
 def _hidden(text: str, known: list[str], count: _Count) -> str:
@@ -200,7 +210,7 @@ def _hidden(text: str, known: list[str], count: _Count) -> str:
 def _redact(text: str, known: list[str], limit: int, count: _Count) -> tuple[str, bool]:
     truncated = len(text) > INPUT_LIMIT
     # Control characters become spaces before the patterns run, so a second pass reads the same words as the first.
-    text = _hidden(_spaced(_visible(text[:INPUT_LIMIT])), known, count)
+    text = _hidden(_cleaned(text[:INPUT_LIMIT]), known, count)
     if len(text) > limit:
         return text[:limit], True
     return text, truncated
