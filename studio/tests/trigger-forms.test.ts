@@ -317,8 +317,8 @@ describe("step details lines", () => {
       ],
     });
     expect(
-      schedulePreview("0 0 31 * *", new Date("2026-11-18T10:00:00Z")).note,
-    ).toBe("Months without day 31 are skipped.");
+      schedulePreview("0 0 31 * *", new Date("2026-11-18T10:00:00Z")),
+    ).toMatchObject({ note: "Months without day 31 are skipped." });
     expect(schedulePreview("0 24 * * *", new Date())).toEqual({
       problem: "The hour must be between 0 and 23.",
     });
