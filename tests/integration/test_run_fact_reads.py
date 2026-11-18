@@ -525,7 +525,7 @@ async def test_native_routes_sdk_and_scope_bound_cursors(operations_case, authen
     assert (await client.get(prefix + "/run-summaries", params={"limit": 1, "cursor": cursor}, headers=headers)).json()[
         "items"
     ][0]["id"] == str(first.id)
-    for path, status in ((f"/runs/{first.id}/steps", 200), (f"/runs/{first.id}/logs", 501)):
+    for path, status in ((f"/runs/{first.id}/steps", 200), (f"/runs/{first.id}/logs", 200)):
         assert (await client.get(prefix + path, headers=headers)).status_code == status
     bad = encode_cursor_v2(scopes[1], RunSummaryQuery().cursor_collection(), None, str(first.id))
     assert (await client.get(prefix + "/run-summaries", params={"cursor": bad}, headers=headers)).status_code == 422

@@ -104,6 +104,8 @@ CANARIES = (
     "canary-change-reason-7f3a",
     "canary-drain-host-7f3a",
     "canary-failure-7f3a",
+    "canary-log-message-7f3a",
+    "canary-log-field-7f3a",
 )
 # The table that stores each canary, so the leak test first confirms every one was planted.
 STORED_IN = {
@@ -125,6 +127,8 @@ STORED_IN = {
     "canary-change-reason-7f3a": "deployment_change_requests",
     "canary-drain-host-7f3a": "deployment_change_requests",
     "canary-failure-7f3a": "deployment_change_requests",
+    "canary-log-message-7f3a": "execution_logs",
+    "canary-log-field-7f3a": "execution_logs",
 }
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
@@ -363,6 +367,19 @@ async def seeded(weave_ai, task_service, worker_ids):
         id=worker_ids[0],
     )
     await add_run_events(case, run.id)
+    # A log entry the worker wrote about the run's task: neither its message nor its fields may reach Weave AI.
+    await owner_execute(
+        case,
+        "INSERT INTO execution_logs(tenant_id,project_id,environment_id,id,run_id,task_id,generation,node_id,"
+        "instance_key,worker_id,at,received_at,source,level,code,message,fields,bytes,workflow_name,test) "
+        "SELECT t.tenant_id,t.project_id,t.environment_id,gen_random_uuid(),t.run_id,t.task_id,1,t.node_id,"
+        "t.instance_key,:worker,clock_timestamp(),clock_timestamp(),'worker','error','ORDER.REFUSED',"
+        "'Refused canary-log-message-7f3a',cast(:fields AS jsonb),64,r.workflow_name,r.test FROM task_facts t "
+        "JOIN run_facts r ON r.run_id=t.run_id WHERE t.run_id=:run",
+        run=run.id,
+        worker=worker_ids[0],
+        fields=json.dumps({"order": "canary-log-field-7f3a"}),
+    )
     active = await add_incident(case, run.id, "canary-incident-handle-7f3a", opened=now - timedelta(minutes=10))
     resolved = await add_incident(case, run.id, "canary-resolved-handle-7f3a", opened=now - timedelta(minutes=20))
     await owner_execute(
@@ -473,12 +490,6 @@ async def test_no_excluded_value_of_a_stored_record_reaches_the_gateway(weave_ai
     assert incident["resolution"] == "accept_reconciled_result"
     assert set(incident["recent_events"]) <= RUNTIME_EVENT_TYPES and incident["other_events"] == 1
     assert resources[0]["data"]["placement"] == {"target": "alpha", "component": "engine"}
-
-
-async def test_no_execution_log_table_exists_to_plant_canaries_in(weave_ai):
-    # When an execution log table lands, this suite must plant canary rows in it before explanations ship with it.
-    async with weave_ai.case.owner() as session:
-        assert await session.scalar(text("SELECT to_regclass('public.execution_logs')")) is None
 
 
 async def test_each_seeded_attention_kind_sends_a_title(weave_ai, seeded):
