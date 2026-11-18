@@ -314,11 +314,13 @@ test.describe("on a phone", () => {
     await expect(
       dialog.getByRole("textbox", { name: "Make a POST request to:" }),
     ).toBeVisible();
-    // The header sits with Parameters on a phone: the pane can stop listening.
-    await dialog
+    // The header sits with Parameters on a phone: the pane can stop
+    // listening, from right under its status, in view as listening starts.
+    const stop = dialog
       .locator(".trigger-event")
-      .getByRole("button", { name: "Stop listening", exact: true })
-      .click();
+      .getByRole("button", { name: "Stop listening", exact: true });
+    await expect(stop).toBeInViewport();
+    await stop.click();
     await expect.poll(() => listening.retired).toEqual(["ta-1"]);
   });
 });

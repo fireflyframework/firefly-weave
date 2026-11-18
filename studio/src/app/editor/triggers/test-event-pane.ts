@@ -79,6 +79,12 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                   <span class="trigger-event-dot" aria-hidden="true"></span
                   >Listening for test event
                 </p>
+                @if (alone()) {
+                  <!-- On a phone the header sits with Parameters: stop from right here, in view. -->
+                  <button type="button" class="pane-generate" (click)="stop()">
+                    Stop listening
+                  </button>
+                }
                 <label class="trigger-event-label" [attr.for]="urlId()"
                   >Make a POST request to:</label
                 >
@@ -129,16 +135,6 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                   >
                     Copy cURL
                   </button>
-                  @if (alone()) {
-                    <!-- On a phone the header sits with Parameters: stop from here too. -->
-                    <button
-                      type="button"
-                      class="pane-generate"
-                      (click)="stop()"
-                    >
-                      Stop listening
-                    </button>
-                  }
                 </div>
               }
             }
