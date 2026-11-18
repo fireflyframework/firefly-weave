@@ -67,6 +67,14 @@ from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.waits import TERMINAL
+from firefly_weave.triggers.retarget import (
+    RetargetOutcome,
+    checked_target,
+    mapping_rule,
+    require_revision,
+    retarget_audit,
+)
+from firefly_weave.triggers.retarget import disabled as stopped
 
 
 def denied() -> CatalogError:
@@ -252,6 +260,101 @@ class ProviderIngressService:
                 context=context,
             )
         return source
+
+    async def retarget(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        activation_id: UUID,
+        expected: int | None,
+        *,
+        context: AuditContext,
+    ) -> ProviderSource:
+        """Move a source to another activation of its workflow, as the mover, under a new source binding.
+
+        The mover needs what creating the source needs. The source keeps its package, connection, policy and
+        mapping, so what the mapping makes of every event the source dispatches must fit the new version's input.
+        The old binding is revoked and a new one names the mover and the moved request; receipts still pending
+        dispatch on the new activation, since every dispatch checks the source as it is then.
+        """
+        async with self.runtime.definitions.transaction(scope, None) as tx:
+            actor = await load_principal(tx.session, actor.id)
+            for capability in ("trigger.manage", "connection.bind", "run.start"):
+                self.runtime.require(actor, scope, capability, context)
+            repository = ProviderRepository(tx)
+            current = await repository.source(identifier, lock=True)
+            require_revision(expected, current.revision)
+            if current.disabled:
+                raise stopped()
+            await checked_target(tx, current.activation_id, activation_id)
+            assert current.activation_id is not None
+            request = ProviderSourceRequest(
+                **{key: getattr(current, key) for key in ProviderSourceRequest.model_fields}
+                | {"activation_id": activation_id}
+            )
+            selected = self.registry.provider_package(
+                request.package,
+                request.package_version,
+                request.provider,
+                request.schema_digest,
+                request.adapter_version,
+            )
+            schemas = self.schemas(request)
+            target, bundle = await self.target(tx, actor, request)
+            kinds = provider_dispatch_kinds(schemas, selected.metadata.model.dispatch_event_kinds)
+            mapping_rule(request.mapping.model_dump(), [schemas[kind] for kind in kinds], target, bundle)
+            # A source has one live binding: the old one goes before the mover's is written.
+            await self.bindings.revoke_in(tx, actor, current.binding_id, context=context)
+            binding = await self.bindings.create(
+                actor,
+                tx,
+                request.connection_revision_id,
+                identifier,
+                canonical_digest(request.model_dump(mode="json")),
+                context=context,
+                source_kind="provider-source",
+            )
+            moved = current.model_copy(
+                update={
+                    "activation_id": activation_id,
+                    "principal_id": actor.id,
+                    "binding_id": binding.id,
+                    "revision": current.revision + 1,
+                }
+            )
+            await repository.db.execute(
+                f"UPDATE provider_sources SET activation_id=:activation,principal_id=:principal,binding_id=:binding,"
+                f"payload=cast(:payload AS jsonb),revision=:revision WHERE {SCOPE} AND id=:id",
+                id=identifier,
+                activation=activation_id,
+                principal=actor.id,
+                binding=binding.id,
+                payload=moved.model_dump_json(),
+                revision=moved.revision,
+            )
+            await audit(
+                tx.session,
+                actor,
+                "provider.source.retarget",
+                str(identifier),
+                scope=scope,
+                capability="trigger.manage",
+                context=context,
+                details=retarget_audit(
+                    RetargetOutcome(
+                        kind="provider",
+                        resource_id=identifier,
+                        from_activation_id=current.activation_id,
+                        to_activation_id=activation_id,
+                        from_principal_id=current.principal_id,
+                        to_principal_id=actor.id,
+                        from_binding_id=current.binding_id,
+                        to_binding_id=binding.id,
+                    )
+                ),
+            )
+            return moved
 
     async def lookup(self, source_id: UUID) -> ProviderSource:
         async with self.sessions() as session:
@@ -452,7 +555,10 @@ class ProviderIngressService:
             if source.disabled:
                 return source
             await repo.db.execute("SELECT weave_control_begin('provider',:id)", id=identifier)
-            await repo.db.execute(f"UPDATE provider_sources SET disabled=true WHERE {SCOPE} AND id=:id", id=identifier)
+            # A disable moves the revision, so a retarget prepared before it no longer applies.
+            await repo.db.execute(
+                f"UPDATE provider_sources SET disabled=true,revision=revision+1 WHERE {SCOPE} AND id=:id", id=identifier
+            )
             await audit(
                 tx.session,
                 actor,
@@ -462,4 +568,4 @@ class ProviderIngressService:
                 context=context,
                 capability="trigger.manage",
             )
-            return source.model_copy(update={"disabled": True})
+            return source.model_copy(update={"disabled": True, "revision": source.revision + 1})
