@@ -653,3 +653,32 @@ def _across_entry(stream: int, row: dict[str, Any]) -> ExecutionLogEntry:
         handled=row["handled"],
         **run,
     )
+
+
+# Pruning: entries older than the retention period go in batches; day counters after 35 days.
+PRUNE_BATCH = 5000
+DAY_RETENTION = timedelta(days=35)
+
+
+async def prune(tx: Transaction, now: datetime, retention_days: int, *, batch: int = PRUNE_BATCH) -> int:
+    """Delete one batch of the environment's entries older than ``retention_days``, oldest first, and the day
+    counters older than 35 days. Returns how many entries went: fewer than ``batch`` means none are left."""
+    params = {
+        "tenant": tx.scope.tenant_id,
+        "project": tx.scope.project_id,
+        "environment": tx.scope.environment_id,
+    }
+    # The batch's IDs are read once, as an array, and deleted by key: joined to the LIMIT query instead, a plan made
+    # without fresh statistics ran that query again for every row and took seconds for one batch.
+    deleted = await tx.session.scalar(
+        text(
+            f"WITH gone AS (DELETE FROM execution_logs WHERE {_SCOPE} AND id=ANY(ARRAY(SELECT id FROM execution_logs "
+            f"WHERE {_SCOPE} AND at<:cutoff ORDER BY at LIMIT :batch)) RETURNING 1) SELECT count(*) FROM gone"
+        ),
+        {**params, "cutoff": now - timedelta(days=retention_days), "batch": batch},
+    )
+    await tx.session.execute(
+        text(f"DELETE FROM execution_log_days WHERE {_SCOPE} AND day<:oldest"),
+        {**params, "oldest": (now - DAY_RETENTION).date()},
+    )
+    return int(deleted or 0)

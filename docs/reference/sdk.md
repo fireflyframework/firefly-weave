@@ -401,6 +401,48 @@ offline workers; repeat it with a new key for the next batch.
 pinning activations and a page of readable deployments. See
 [Discovery, debugging, and history](api.md#discovery-debugging-and-history) in the API reference for the rules.
 
+## Task logs
+
+Inside a handler, `task_log()` from `firefly_weave.sdk.task_log` is the log of
+the task the handler runs; anywhere else it does nothing. Native connectors get
+it too, and each of their HTTP calls writes one `HTTP.RESPONSE` entry with the
+method, the host, the status and the duration, never the path, the query, a
+header, or a body.
+
+```python
+from firefly_weave.sdk.task_log import task_log
+
+
+async def check_order(lease):
+    order = lease.input
+    task_log().info("Checked the order", code="ORDER.CHECKED", items=len(order["lines"]))
+    return {"accepted": True}
+```
+
+- `debug`, `info`, `warning`, and `error` take the message, an optional `code`
+  (letters, digits, `.`, `_`, and `-`), `source="connector"` for connector
+  code, and up to 16 keyword fields of strings, numbers, booleans, or `None`. An
+  invalid `code` raises `ValueError` at once.
+- `ai_usage(input_tokens, output_tokens)` writes the `AI.USAGE` entry of an AI
+  step.
+- **Never log payloads, addresses, or names.** Log identifiers and counts
+  instead: an order ID rather than the order, `items=3` rather than the items.
+- Entries are redacted in the worker: values the task leased through
+  `WorkerTransport.credentials` are hidden, and so are `Authorization` and
+  `Cookie` values, secret-named keys and URL parameters, private key blocks, and
+  well-known token shapes. Secret-named fields are dropped. The platform redacts
+  again before it stores an entry.
+- `Worker` sends entries through a transport that has a `log` method, as
+  `WorkerTransport` does: when 50 are waiting, every 2 seconds
+  (`log_interval_seconds`), and once more, for at most 2 seconds, before it
+  completes or fails the task. A failed send never fails the task: the entries
+  count as dropped (`task_log().dropped`), and the task sends no more. A task
+  writes at most 200 entries. A transport without `log` drops every entry.
+
+Read them back with `invoke("runs.logs", ...)` and `invoke("execution_logs.list",
+...)`; see [Log entries](worker-protocol.md#log-entries) for what the platform
+stores and its quotas.
+
 ## Deployment Operations through the SDK
 
 Use `WeaveClient.invoke` with models from

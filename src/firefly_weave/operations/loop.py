@@ -18,8 +18,8 @@
 
 Every minute it pages tenants with its own cursors and gives one environment per tenant a budget of one second of
 database work. That work rolls finished runs and steps into statistics and samples shared capacity, refreshes cached
-run listing decisions, persists expired change request plans and prunes change requests that ended 90 days ago; it
-never grants execution authority.
+run listing decisions, persists expired change request plans, prunes change requests that ended 90 days ago and run
+log entries past their retention period; it never grants execution authority.
 """
 
 import asyncio
@@ -56,8 +56,10 @@ from firefly_weave.settings import Settings
 ENVIRONMENT_SECONDS = 1.0
 # Statistics take the first part of it, so a revalidation backlog never starves them; revalidation gets the rest.
 STATISTICS_SECONDS = 0.4
-# Change request upkeep has its own budget after revalidation, so a revalidation backlog never starves it.
+# Change request upkeep has its own budget after revalidation, so a revalidation backlog never starves it; so do the
+# step test sweep and log pruning after it.
 UPKEEP_SECONDS = 0.25
+UPKEEP_STEPS = 3
 # The wall-clock guard waits this much longer, so the database's own timeout normally ends a slow statement.
 CANCEL_GRACE_SECONDS = 0.25
 # A cycle runs one pure classification at a time; the spare slot absorbs one that outlived its cancelled quantum.
@@ -170,14 +172,16 @@ class OperationsLoop:
         return healthy
 
     async def _environment(self, authority: _SchedulerScope) -> datetime | None:
-        """Statistics first on their own slice, then revalidation with what is left, then change request upkeep."""
+        """Statistics first on their own slice, then revalidation with what is left, then each upkeep step on its own
+        budget: change requests, step test activations and run log entries."""
         started = self.monotonic()
-        async with asyncio.timeout(ENVIRONMENT_SECONDS + UPKEEP_SECONDS + CANCEL_GRACE_SECONDS):
+        async with asyncio.timeout(ENVIRONMENT_SECONDS + UPKEEP_STEPS * UPKEEP_SECONDS + CANCEL_GRACE_SECONDS):
             rolled = await self.roll_statistics(authority, started + STATISTICS_SECONDS)
             revalidated = await self.revalidate(authority, started + ENVIRONMENT_SECONDS)
             maintained = await self.maintain_changes(authority, self.monotonic() + UPKEEP_SECONDS)
             swept = await self.sweep_step_tests(authority, self.monotonic() + UPKEEP_SECONDS)
-            if rolled is False or not (revalidated and maintained and swept):
+            pruned = await self.maintain_logs(authority, self.monotonic() + UPKEEP_SECONDS)
+            if rolled is False or not (revalidated and maintained and swept and pruned):
                 raise QuantumIncomplete()
             return rolled
 
@@ -346,6 +350,30 @@ class OperationsLoop:
             logging.getLogger(__name__).error("Operations step test sweep failed (%s)", failure_cause(error))
             return False
         return True
+
+    async def maintain_logs(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
+        """Prune run log entries older than the retention period, a batch of 5,000 per unit while time is left.
+
+        True when nothing old is left, or when time ran out after a batch was pruned: a backlog shrinks every visit.
+        """
+        if not isinstance(authority, _SchedulerScope):
+            raise AccessDenied()
+        from firefly_weave.operations import execution_logs
+
+        progressed = False
+        while True:
+            try:
+                # Log entries are charged to no project, so pruning them takes no operation lock.
+                async with self._unit(authority, deadline_monotonic, mutation=True, admission=False) as tx:
+                    deleted = await execution_logs.prune(tx, self.clock(), self.settings.execution_log_retention_days)
+            except QuantumIncomplete:
+                return progressed
+            except Exception as error:
+                logging.getLogger(__name__).error("Operations log pruning failed (%s)", failure_cause(error))
+                return False
+            progressed = True
+            if deleted < execution_logs.PRUNE_BATCH:
+                return True
 
     async def close(self) -> None:
         try:

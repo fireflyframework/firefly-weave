@@ -85,6 +85,7 @@ every request needs a bearer access token plus a current grant in that scope.
 | Complete | `/tasks/complete` | `lease`, a unique `completion_id`, and an `output` that matches the schema; returns the committed receipt |
 | Fail | `/tasks/fail` | `lease` and an `error` with `completion_id`, a bounded `code`, an `outcome` (`not_started`, `failed`, or `unknown`), and optionally `effect` (`none` when the failure applied nothing; `unknown`, the default, otherwise) |
 | Credentials | `/tasks/credentials` | A live `lease`, the bound `connection_revision_id`, and a `slot`; returns a short-lived lease with `Cache-Control: no-store` |
+| Log | `/tasks/logs` | A live `lease`, 1 to 50 `entries`, and optionally `dropped` (entries the worker dropped); answers `202` with `accepted` and `dropped` (see [Log entries](#log-entries)) |
 
 For example, after a deployer admits the example release, registration sends:
 
@@ -124,6 +125,50 @@ follow the same rules, but their invocation details are private to the platform.
   token too short for that policy fails before any claim. A supervisor then
   starts a new invocation with fresh credentials. This policy fits the
   example's declared task timeout, not every handler.
+
+## Log entries
+
+A worker writes log entries about a task while it holds the task's current
+lease. Operators read them in the run's log (`runs.logs`) and across runs
+(`execution_logs.list`). The SDK's `task_log()` writes them for you; see the
+[SDK reference](sdk.md#task-logs).
+
+Each entry has `at`, a `source` (`worker`, `connector`, or `ai`), a `level`
+(`debug`, `info`, `warning`, or `error`), an optional `code`, a `message` of at
+most 512 characters, and at most 16 `fields` (strings of up to 256 characters,
+numbers, booleans, or null). `truncated` and `redactions` say what the writer
+cut and hid. For example:
+
+```json
+{
+  "lease": {"task_id": "<from the claim>", "generation": 1, "owner": "<worker ID>", "token": "<from the claim>"},
+  "entries": [
+    {"at": "2026-11-17T09:30:00Z", "source": "worker", "level": "info", "code": "ORDER.CHECKED",
+     "message": "Checked the order", "fields": {"items": 3}}
+  ]
+}
+```
+
+- **Only the current lease writes.** The entry is stored only while the lease
+  is active, held by this worker with this token, the latest attempt, and not
+  expired, all checked in the same statement as the insert. Otherwise the
+  request answers `409` with `WV-LOG-LEASE` and stores nothing.
+- **The lease says where an entry belongs.** The run, step, attempt, worker,
+  workflow and test flag come from the lease, never from the entry. The
+  platform moves an `at` outside the lease's lifetime to its start or to now.
+- **The platform redacts again.** Credential values, `Authorization` and
+  `Cookie` values, values of secret-named keys, secret-named URL query
+  parameters, private key blocks, bearer tokens, and well-known key shapes become
+  `[redacted]`, and secret-named fields are dropped, before an entry is stored.
+- **Quotas.** An attempt writes at most 200 entries or 64 KiB, a run 2,000
+  entries or 1 MiB, and an environment `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` a UTC
+  day (200,000 by default). A batch over a quota keeps what fits and reports the
+  rest as `dropped`. A batch that finds a quota spent answers `429` with
+  `WV-LOG-QUOTA`, and with `Retry-After` when the daily quota is spent. A body
+  over 256 KiB answers `413` with `WV-LOG-SIZE`.
+- An `AI.USAGE` entry comes from an AI step: `source` `ai` and whole-number
+  `input_tokens` and `output_tokens` fields. Entries are kept
+  `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default) and go with their run.
 
 ## Retries and lost responses
 
