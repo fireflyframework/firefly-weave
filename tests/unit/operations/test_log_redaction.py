@@ -52,7 +52,7 @@ SECRETS = {
     "GOOGLE": "AI" + "za" + "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY",
 }
 SECRETS["LEASED_URL"] = quote(SECRETS["LEASED"], safe="")
-SECRETS["GITHUB_TOKEN_SPLIT"] = SECRETS["GITHUB_TOKEN"][:2] + "​" + SECRETS["GITHUB_TOKEN"][2:]
+SECRETS["GITHUB_TOKEN_SPLIT"] = SECRETS["GITHUB_TOKEN"][:2] + "\u200b" + SECRETS["GITHUB_TOKEN"][2:]
 
 
 def planted(template: str) -> str:
@@ -275,7 +275,7 @@ def test_a_leased_value_is_hidden_in_the_message_and_the_fields():
 
 @pytest.mark.parametrize(
     "leased",
-    ["multi\nline-secret-42", "tab\tsecret-value-99", "zero​width-secret-7", "no break secret-3"],
+    ["multi\nline-secret-42", "tab\tsecret-value-99", "zero\u200bwidth-secret-7", "no\u00a0break secret-3"],
     ids=["a newline", "a tab", "a format character", "a no-break space"],
 )
 def test_a_leased_value_with_a_character_the_text_loses_is_still_hidden(leased):
@@ -294,13 +294,13 @@ def test_a_leased_value_the_input_cut_would_split_is_hidden_whole():
 
 
 def test_a_bearer_token_after_a_no_break_space_is_hidden():
-    result = redact_text("Bearer " + SECRETS["BEARER"])
+    result = redact_text("Bearer\u00a0" + SECRETS["BEARER"])
     assert SECRETS["BEARER"] not in result.text
     assert result.redactions == 1
 
 
 def test_format_and_control_characters_are_removed():
-    result = redact_text("Order 42​ shipped‮ to\x00 the dock\x07")
+    result = redact_text("Order 42\u200b shipped\u202e to\x00 the\u2028dock\x07")
     assert result.text == "Order 42 shipped to  the dock "
     assert not any(unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"} for character in result.text)
     assert (result.redactions, result.truncated) == (0, False)
