@@ -229,3 +229,29 @@ test("the code for connections and real step runs stays out of the first page", 
     ).toEqual([]);
   }
 });
+
+test("the activation steps, trigger setup and test listening stay out of the first page", () => {
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  // Strings only that code holds: the dialog's checks and its setting up of
+  // triggers, the test activation client, and the Test event pane's listening.
+  const markers = [
+    "Checking what this workflow needs",
+    "Setting up the triggers",
+    "/test-activations",
+    "Make a POST request to:",
+  ];
+  const chunks = readdirSync(BUILD).filter((file) => file.endsWith(".js"));
+  for (const marker of markers) {
+    const holding = chunks.filter((file) =>
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+    );
+    expect(holding.length, marker).toBeGreaterThan(0);
+    expect(
+      holding.filter((file) => first.includes(file)),
+      marker,
+    ).toEqual([]);
+  }
+});
