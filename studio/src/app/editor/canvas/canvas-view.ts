@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // tile, handle and edge; @foblex/flow pans and zooms it. The editor that
 // hosts the canvas owns the workflow and every command: the canvas keeps
 // its own view (zoom, pan, what the pointer is on) and asks the host to act.
+import { activatedAsIs } from "../triggers/trigger-activated";
 import { triggerChoiceTarget } from "../triggers/trigger-target";
 import {
   ChangeDetectionStrategy,
@@ -178,6 +179,9 @@ const NO_BORDERS: TileBorders = {
   live: false,
   error: false,
 };
+/** The trigger choice when an activation took the settings it has now: its tile shows a summary. */
+const activatedIntent = (intent: TriggerIntent | null) =>
+  intent && activatedAsIs(intent) ? intent : undefined;
 /** A webhook listening for its test event wears the live border. */
 const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
 const LISTENING = "Listening for test event";
@@ -760,7 +764,7 @@ export class CanvasView implements OnInit, DoCheck {
       ...triggerTile(
         kind,
         this.host().model.definition,
-        this.intentOf(tileId) ?? undefined,
+        activatedIntent(this.intentOf(tileId)),
       ),
       manual: kind === "manual",
     };

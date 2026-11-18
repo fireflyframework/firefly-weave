@@ -30,7 +30,7 @@ import {
   type JsonObject,
 } from "../../forms/core/json";
 import type { TriggerIntent } from "../state/canvas-sidecar";
-import { settingsKey } from "../triggers/trigger-target";
+import { settingsKey } from "../triggers/trigger-activated";
 
 export { settingsKey };
 import type { TriggerRow } from "./trigger-plan";
