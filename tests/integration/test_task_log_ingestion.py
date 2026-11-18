@@ -166,6 +166,15 @@ async def test_a_person_without_task_log_is_refused_before_any_lease_is_read(
     assert await stored(access_db) == []
 
 
+async def test_a_lease_naming_no_worker_or_a_revoked_one_answers_lease_gone(worker_setup, access_db, lease):
+    from uuid import uuid4
+
+    await refused(worker_setup, access_db, lease.proof.model_copy(update={"owner": uuid4()}))
+    async with access_db[1].begin() as tx:
+        await tx.execute(text("UPDATE worker_instances SET revoked=true WHERE id=:id"), {"id": lease.proof.owner})
+    await refused(worker_setup, access_db, lease.proof)
+
+
 async def test_a_purged_run_answers_lease_gone(worker_setup, access_db, lease):
     async with access_db[1].begin() as tx:
         await tx.execute(text("DELETE FROM task_leases WHERE task_id=:task"), {"task": lease.proof.task_id})

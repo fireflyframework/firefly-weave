@@ -56,7 +56,7 @@ from firefly_weave.contracts.workers import (
     UnavailableCompletionReceipt,
 )
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.operations.execution_logs import ExecutionLogWriter
+from firefly_weave.operations.execution_logs import ExecutionLogWriter, lease_gone
 from firefly_weave.operations.facts import FactRepository
 from firefly_weave.operations.redaction import Omission
 from firefly_weave.persistence.uow import Transaction
@@ -606,7 +606,13 @@ class TaskService:
         first, as every operation refuses a caller without its capability, before the lease's worker is read.
         """
         self.workers.definitions.authorization.require_somewhere(actor, scope, "task.log", context=context)
-        await self._operation(actor, scope, context).authority(tx, request.lease.owner, "task.log")
+        try:
+            await self._operation(actor, scope, context).authority(tx, request.lease.owner, "task.log")
+        except CatalogError as error:
+            if error.code != "WV-LEASE":
+                raise
+            # The lease names no worker, or a revoked one: whoever sent it holds no current lease on the task.
+            raise lease_gone() from None
         return await ExecutionLogWriter(tx).append(request, daily_limit=daily_limit)
 
     async def complete(
