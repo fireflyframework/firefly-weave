@@ -74,6 +74,18 @@ SPDX-License-Identifier: Apache-2.0
 - The Studio host bridge forwards webhooks, schedules, Kafka triggers, app
   event sources and draft test activations; every operation is still
   authorized by the server.
+- Step details list the connections you can use in the environment Studio is
+  connected to, test them, and keep your choice on this computer; Create
+  connection and Edit open the API connection form in a side sheet.
+- Execute in *environment* in step details runs one step of the saved draft for
+  real as a test run, asking first for steps that change data; its output shows
+  the run it came from, and Pin output keeps it as test data from that run.
+- File references in step data show as files, with Download for files a real run
+  returned.
+- Every change Studio sends names the signed-in person, so a change never runs as
+  someone else after a sign-in elsewhere.
+- The Studio guide no longer says that testing an HTTP connection sends no
+  request.
 
 ### Development and testing
 
