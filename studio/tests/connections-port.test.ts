@@ -95,4 +95,18 @@ describe("the connections port", () => {
     made.policyNow();
     expect(calls).toHaveLength(3);
   });
+
+  it("says when a choice couldn't be kept", async () => {
+    const { port: kept } = port();
+    await kept.ready;
+    // Without an account prefix a choice lasts for the session: that's kept as asked.
+    expect(await kept.setBinding("order-intake", "crm", binding)).toBe(true);
+    expect(
+      await kept.setBinding("order-intake", "crm", {
+        ...binding,
+        revisionId: "not-a-revision",
+      }),
+    ).toBe(false);
+    expect(kept.binding("order-intake", "crm")).toEqual(binding);
+  });
 });

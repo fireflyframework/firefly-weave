@@ -2173,7 +2173,7 @@ export class FormSession {
     if (changes.length && !this.commit(changes, `${spec.id}:connection`))
       return;
     const kept = port.binding(workflow, slot);
-    await port.setBinding(
+    const keptAsAsked = await port.setBinding(
       workflow,
       slot,
       kept?.connectionId === item.connectionId
@@ -2186,6 +2186,14 @@ export class FormSession {
     );
     if (!port.live || !this.isCurrent()) return;
     port.bound(this.host, slot);
+    if (!keptAsAsked) {
+      this.host.notify(
+        `${item.name} is the connection for slot ${slot} for now, but Studio couldn't keep the choice on this computer.`,
+        undefined,
+        "danger",
+      );
+      return;
+    }
     this.announce(
       `${item.name} is the connection for slot ${slot} in ${port.environment.name}.`,
     );

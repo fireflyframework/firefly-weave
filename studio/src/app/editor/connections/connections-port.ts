@@ -184,16 +184,33 @@ export class ConnectionsPort {
     this.version();
     return this.bindings?.get(this.environmentId, workflow, slot) ?? null;
   }
+  /**
+   * Keeps (or with null forgets) a slot's binding. False when it couldn't be
+   * kept as asked: a write this computer refused (the limits, storage) or a
+   * port that's no longer current. Without an account prefix a choice lasts
+   * for the session, which is kept as asked.
+   */
   async setBinding(
     workflow: string,
     slot: string,
     value: DevBinding | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this.ready;
-    if (!this.alive || !this.bindings) return;
+    if (!this.alive || !this.bindings) return false;
     if (value) this.dropped.delete(`${workflow}\u0000${slot}`);
-    await this.bindings.set(this.environmentId, workflow, slot, value);
+    const written = await this.bindings.set(
+      this.environmentId,
+      workflow,
+      slot,
+      value,
+    );
     this.bump();
+    if (written) return true;
+    const now = this.bindings.get(this.environmentId, workflow, slot);
+    return (
+      this.bindings.prefix === null &&
+      (value === null ? now === null : now?.revisionId === value.revisionId)
+    );
   }
   async renameSlot(workflow: string, from: string, to: string): Promise<void> {
     await this.ready;
@@ -365,6 +382,7 @@ export class ConnectionsPort {
         );
       },
       releases: this.releases,
+      tracking: (stepId) => host.realStep?.set(stepId),
     });
     return this.service;
   }
@@ -382,7 +400,6 @@ export class ConnectionsPort {
     const kept = host.realSetup?.();
     const steps = new Map(kept?.draft === draft ? kept.steps : []);
     steps.set(stepId, slot);
-      tracking: (stepId) => host.realStep?.set(stepId),
     host.realSetup?.set({ draft, steps });
   }
   /** A slot got its connection: its steps need nothing more. */
