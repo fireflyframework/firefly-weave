@@ -127,3 +127,19 @@ async def test_the_trigger_operations_never_show_stop_or_move_a_listen_route(lis
     await webhooks.disable(manager, env.scope, route, context=CONTEXT)
     [row] = await env.query("SELECT disabled FROM trigger_routes WHERE id=:id", id=route)
     assert row["disabled"] is False
+
+
+async def test_events_on_the_test_url_count_toward_the_creators_test_run_limits(listening):
+    env, created, listened, webhooks = listening
+    from test_test_activation_runs import run
+
+    first = await webhooks.receive(route_of(listened), EVENT, signed(EVENT))
+    for _ in range(3):
+        await run(env, created)
+    # Four test runs are running: one from the test URL and three from the creator.
+    second = b'{"eventId":"event-2","payload":{"moveId":"M-2","quantity":1}}'
+    error = await refused(webhooks.receive(route_of(listened), second, signed(second, event="event-2")))
+    assert (error.status, error.code) == (429, "WV-STEPTEST-BUSY")
+    assert len(await env.query("SELECT id FROM runs")) == 4
+    # An event already received still answers its receipt.
+    assert await webhooks.receive(route_of(listened), EVENT, signed(EVENT)) == first

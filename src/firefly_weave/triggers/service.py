@@ -38,6 +38,8 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import RunStartFacts
+from firefly_weave.persistence.idempotency import lock
+from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -319,6 +321,8 @@ class WebhookService:
                 if prior[0]["request_hash"] != fingerprint:
                     raise CatalogError(409, "WV-WEBHOOK-CONFLICT", "Event ID payload conflict")
                 return TriggerReceipt.model_validate_json(json.dumps(prior[0]["payload"]))
+            if listening:
+                await self.within_test_limits(tx, actor, scope)
             signal_id = None
             if trigger.activation_id is not None:
                 run = await self.runtime.start(
@@ -374,6 +378,19 @@ class WebhookService:
                 details={"receipt_id": str(receipt.id)},
             )
         return receipt
+
+    @staticmethod
+    async def within_test_limits(tx: Transaction, actor: Principal, scope: Scope) -> None:
+        """A test URL's events are the creator's test runs: they share the step test limits with the creator's own."""
+        from firefly_weave.step_tests.admission import busy_refusal
+        from firefly_weave.step_tests.repository import StepTestRepository
+
+        await lock(tx, f"step-test:{actor.id}:{scope.environment_id}")
+        tests = StepTestRepository(tx)
+        now = await tests.now()
+        busy = busy_refusal(*await tests.busy(actor.id, now), now)
+        if busy is not None:
+            raise busy
 
     async def list(
         self, actor: Principal, scope: Scope, *, limit: int = 50, cursor: UUID | None = None, context: AuditContext
