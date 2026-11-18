@@ -40,6 +40,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from firefly_weave.compiler.ir import accepted_ir_versions
+from firefly_weave.contracts import language_features
 from firefly_weave.contracts.log_values import LogLevel
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import (
@@ -64,6 +66,7 @@ from firefly_weave.operations.engine_log import (
 from firefly_weave.operations.fact_reads import available, unavailable
 from firefly_weave.operations.log_redaction import redact_entry
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime import admission
 from firefly_weave.workers.models import token_hash
 
 ATTEMPT_ENTRIES = 200
@@ -226,6 +229,14 @@ _AVAILABILITY = (
     "f.classification_state,f.classification_policy,f.pinned_ir_version,f.pinned_features,"
     "EXISTS(SELECT 1 FROM run_policy_blocks b WHERE " + _SAME.format(a="b", b="f") + " AND b.run_id=f.run_id) "
     "AS policy_blocked"
+)
+# The rule of fact_reads.available in SQL, for searches: the table's checks keep pinned_features an array of at
+# most 256 strings, so containment in the advertised list is the whole feature test.
+_AVAILABLE = (
+    "AND f.classification_state='available' AND f.classification_policy=:policy "
+    "AND f.pinned_ir_version=ANY(:ir_versions) AND f.pinned_features<@cast(:advertised AS jsonb) "
+    "AND NOT EXISTS(SELECT 1 FROM run_policy_blocks b WHERE " + _SAME.format(a="b", b="f") + " "
+    "AND b.run_id=f.run_id)"
 )
 # An event's step: its key cut at the first '[', '#' or '~', as node_of does.
 _EVENT_STEP = "substring(e.data->>'node_id' from '^[^[#~]*')"
@@ -510,8 +521,9 @@ class RunLogReader(_Reader):
 class ExecutionLogReader(_Reader):
     """The log across runs: stored entries, and runs and steps that ended badly, newest first.
 
-    A run whose details are withheld shows its entries as rows without text; a message search leaves those rows
-    out, so a match never says what a withheld run's entry holds. Searches read only what workers wrote.
+    A run whose details are withheld shows its entries as rows without text. A message search leaves those runs
+    out in the database, before the limit and the cursor, so neither a row nor a cursor says what a withheld run's
+    entry holds. Searches read only what workers wrote.
     """
 
     async def page(
@@ -535,6 +547,11 @@ class ExecutionLogReader(_Reader):
         items: list[ExecutionLogEntry | UnavailableResource] = []
         after = position
         for stream, row in taken:
+            if query.contains is not None and not available(row):
+                # The search's SQL leaves withheld runs out; a row that still gets here ends the search, so no
+                # cursor ever points past it.
+                more = False
+                break
             if stream == 0:
                 after = replace(after, stored=(row["at"], row["id"]))
             elif stream == 1:
@@ -543,7 +560,7 @@ class ExecutionLogReader(_Reader):
                 after = replace(after, steps=(row["at"], row["run_id"], row["node_id"], row["instance_key"]))
             if available(row):
                 items.append(_across_entry(stream, row))
-            elif query.contains is None:
+            else:
                 # Nothing of the entry is read: only its ID, as for any withheld record.
                 items.append(unavailable(_across_id(stream, row)))
         return items, (after if more else None)
@@ -566,8 +583,14 @@ class ExecutionLogReader(_Reader):
             values["node"] = query.node_id
         if query.contains is not None:
             # position() takes % and _ as plain characters, as LIKE would not.
-            clauses.append("AND position(lower(cast(:contains AS text)) in lower(l.message))>0")
-            values["contains"] = query.contains
+            clauses.extend(("AND position(lower(cast(:contains AS text)) in lower(l.message))>0", _AVAILABLE))
+            advertised = language_features.ADVERTISED_FEATURES
+            values.update(
+                contains=query.contains,
+                policy=admission.POLICY,
+                ir_versions=accepted_ir_versions(advertised),
+                advertised=json.dumps(list(advertised)),
+            )
         if position.stored is not None:
             clauses.append("AND (l.at,l.id)<(:after_at,cast(:after_id AS uuid))")
             values.update(after_at=position.stored[0], after_id=str(position.stored[1]))

@@ -109,6 +109,30 @@ async def test_withheld_runs_show_no_text(views, worker_setup, access_db, runs):
     assert [item.message for item in searched] == ["Line visible"]
 
 
+async def test_a_search_finds_past_withheld_matches_without_a_cursor_that_points_at_them(
+    views, worker_setup, access_db, runs
+):
+    _, _, _, actor, scope, _, _ = worker_setup
+    (_, first_task), (second, second_task) = runs
+    await plant(access_db, first_task, [{"at": ago(9), "level": "info", "message": "token-prefix visible"}])
+    await plant(
+        access_db,
+        second_task,
+        [{"at": ago(m), "level": "info", "message": f"token-prefix withheld {m}"} for m in (2, 3, 4)],
+    )
+    await owner(access_db, "UPDATE run_facts SET classification_state='unavailable' WHERE run_id=:run", run=second)
+    page = await views.execution_logs(
+        actor, scope, ExecutionLogQuery(contains="token-prefix", limit=1), None, context=CONTEXT
+    )
+    # The withheld matches are newer, yet the first page is the visible one and nothing points past it.
+    assert [item.message for item in page.items] == ["token-prefix visible"]
+    assert page.next_cursor is None
+    only_withheld = await views.execution_logs(
+        actor, scope, ExecutionLogQuery(contains="withheld", limit=1), None, context=CONTEXT
+    )
+    assert (only_withheld.items, only_withheld.next_cursor) == ([], None)
+
+
 async def test_contains_finds_text_regardless_of_case_and_treats_percent_and_underscore_as_text(
     views, worker_setup, access_db, runs
 ):
