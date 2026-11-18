@@ -46,6 +46,15 @@ HEAD = migration().revision
 PRIOR_HEAD = migration().down_revision
 
 
+def on_the_line_to_the_schema_version() -> list[str]:
+    from alembic.script import ScriptDirectory
+
+    from firefly_weave.persistence.migrations import SCHEMA_VERSION
+
+    scripts = ScriptDirectory(str(PATH.parents[1]))
+    return [script.revision for script in scripts.walk_revisions("base", SCHEMA_VERSION)]
+
+
 def sqlstate(error: DBAPIError) -> str | None:
     return getattr(error.orig, "sqlstate", None) or getattr(getattr(error.orig, "__cause__", None), "sqlstate", None)
 
@@ -121,9 +130,8 @@ async def test_the_schema_version_is_the_new_head(upgraded):
     async with engine.begin() as connection:
         assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == HEAD
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
-    from firefly_weave.persistence.migrations import SCHEMA_VERSION
-
-    assert HEAD == SCHEMA_VERSION
+    # Later migrations may follow this one: it stays on the line that leads to the schema version.
+    assert HEAD in on_the_line_to_the_schema_version()
 
 
 async def test_another_environment_reads_no_entry(upgraded):
