@@ -188,6 +188,10 @@ test("a slot without a connection to bind says where to create one", async ({
   ).toBeVisible();
   // A required slot without a connection keeps Activate off, and says why.
   await expect(activate(page)).toBeDisabled();
+  await expect(activate(page)).toHaveAttribute(
+    "aria-describedby",
+    "activation-missing",
+  );
   await expect(
     dialog.getByText("Choose a connection for pets first.", { exact: true }),
   ).toBeVisible();
