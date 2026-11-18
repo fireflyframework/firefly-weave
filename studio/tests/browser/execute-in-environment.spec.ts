@@ -142,6 +142,8 @@ for (const size of sizes)
       await expect(output(details)).toContainText(
         "Executing crm-lookup in Production · 0 s",
       );
+      // While it runs, Output offers nothing that would start another.
+      await expect(output(details)).not.toContainText("No output yet");
       await page.clock.fastForward("00:12");
       await expect(output(details)).toContainText(
         "Executing crm-lookup in Production · 12 s",

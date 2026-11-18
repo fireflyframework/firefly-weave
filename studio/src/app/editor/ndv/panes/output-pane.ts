@@ -454,7 +454,8 @@ import { describeError } from "../../../errors";
                   <span class="loading-spinner small" aria-hidden="true"></span>
                   <h4>Executing…</h4>
                 </div>
-              } @else if (!notice() && !stop) {
+              } @else if (!notice() && !stop && !realRun()) {
+                <!-- While a step test runs, the running block above stands in for it. -->
                 <div class="pane-empty">
                   <span class="pane-empty-icon" aria-hidden="true"
                     ><weave-icon name="execute" [size]="20"
