@@ -54,6 +54,7 @@ export type StepTestHost = Pick<
   | "testDataPrints"
   | "execution"
   | "realSetup"
+  | "realStep"
 >;
 
 export type PortHost = Pick<
@@ -381,6 +382,7 @@ export class ConnectionsPort {
     const kept = host.realSetup?.();
     const steps = new Map(kept?.draft === draft ? kept.steps : []);
     steps.set(stepId, slot);
+      tracking: (stepId) => host.realStep?.set(stepId),
     host.realSetup?.set({ draft, steps });
   }
   /** A slot got its connection: its steps need nothing more. */

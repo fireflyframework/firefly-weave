@@ -107,6 +107,7 @@ function setup() {
     },
   };
   let keys = 0;
+  const tracked: (string | null)[] = [];
   const host: StepTestServiceHost = {
     client,
     scope: () => state.scope,
@@ -117,10 +118,12 @@ function setup() {
     record: (stepId, v) => recorded.push([stepId, v]),
     releases: new Map([["acme.lookup@1.0.0", "r-1"]]),
     newKey: () => `key-${++keys}`,
+    tracking: (stepId) => tracked.push(stepId),
   };
   const service = new StepTestService(host);
   return {
     state,
+    tracked,
     service,
     posts,
     cancels,
@@ -333,5 +336,15 @@ describe("the step test service", () => {
       runId: RUN,
     });
     expect(t.recorded).toEqual([]);
+  });
+
+  it("tells the host which step it follows, and when it stops", async () => {
+    const t = setup();
+    void t.service.execute({ stepId: "lookup", body });
+    await tick();
+    expect(t.tracked).toEqual(["lookup"]);
+    // A workspace switch forgets it before any answer comes back.
+    t.service.forget();
+    expect(t.tracked).toEqual(["lookup", null]);
   });
 });

@@ -81,6 +81,8 @@ export interface StepTestServiceHost {
   releases: Map<string, string>;
   /** A new idempotency key; one per click. */
   newKey?(): string;
+  /** The step the service follows now, or null once it follows none (the canvas's live border). */
+  tracking?(stepId: string | null): void;
 }
 
 export type StepTestBody = Omit<StepTestRequest, "draft_id" | "draft_revision">;
@@ -118,6 +120,11 @@ interface Fence {
 
 export class StepTestService {
   private readonly current = signal<RunningStepTest | null>(null);
+  /** Sets what runs now and tells the host which step that is. */
+  private track(running: RunningStepTest | null) {
+    this.current.set(running);
+    this.host.tracking?.(running?.stepId ?? null);
+  }
   /** The step test Studio is starting or following, if any. */
   readonly running = this.current.asReadonly();
   private generation = 0;
@@ -173,7 +180,7 @@ export class StepTestService {
     this.busy = true;
     this.stopRequested = false;
     this.cancelled = null;
-    this.current.set({
+    this.track({
       stepId: request.stepId,
       environment,
       id: null,
@@ -242,7 +249,7 @@ export class StepTestService {
       if (fence.generation === this.generation) {
         this.busy = false;
         this.following = null;
-        this.current.set(null);
+        this.track(null);
       }
     }
   }
@@ -276,6 +283,6 @@ export class StepTestService {
     this.busy = false;
     this.stopRequested = false;
     this.cancelled = null;
-    this.current.set(null);
+    this.track(null);
   }
 }

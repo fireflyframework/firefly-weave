@@ -1339,14 +1339,13 @@ export class StepDetails {
     const env = port.environment.name;
     const service = port.stepTests(host);
     controller.executeNotice.set(null);
-    host.realStep?.set(id);
     this.say(`Executing ${id} in ${env}.`);
-    let outcome: StepTestOutcome;
-    try {
-      outcome = await service.execute({ stepId: id, body, ack });
-    } finally {
-      if (host.realStep?.() === id) host.realStep.set(null);
-    }
+    // The service tells the canvas which step it follows (the live border), and when it stops.
+    const outcome: StepTestOutcome = await service.execute({
+      stepId: id,
+      body,
+      ack,
+    });
     if (outcome.kind === "stale") return;
     if (outcome.kind === "done") {
       // The Output pane shows how it ended; this says it aloud.
