@@ -74,7 +74,7 @@ from firefly_weave.runtime.agent_tools import assignment_slots
 from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.step_tests.admission import busy_refusal, confirmation_needed
-from firefly_weave.step_tests.policy import TestPolicyService
+from firefly_weave.step_tests.policy import require_test_calls
 from firefly_weave.step_tests.repository import StepTestRepository
 from firefly_weave.step_tests.synthesis import test_version
 from firefly_weave.triggers.models import Trigger
@@ -200,11 +200,10 @@ class TestActivationService:
         definitions: DefinitionService,
         connections: ConnectionService,
         runtime: RuntimeService,
-        policy: TestPolicyService,
         secrets: ScopedSecrets,
     ) -> None:
         self.uow, self.authorization, self.definitions = uow, authorization, definitions
-        self.connections, self.runtime, self.policy, self.secrets = connections, runtime, policy, secrets
+        self.connections, self.runtime, self.secrets = connections, runtime, secrets
 
     async def create(
         self, actor: Principal, scope: Scope, request: DraftTestActivationRequest, *, context: AuditContext
@@ -214,8 +213,7 @@ class TestActivationService:
         # The draft is a project resource: who can't read it can't run it.
         self.authorization.require(actor, project_scope(scope), "catalog.read", context=context)
         async with self.uow.open(scope) as tx:
-            if not await self.policy.enabled(tx):
-                raise CatalogError(403, "WV-STEPTEST-DISABLED", "Test calls are off in this environment")
+            await require_test_calls(tx)
             self.definitions.registry.require_operational()
             repository = StepTestRepository(tx)
             draft = await repository.draft(request.draft_id, request.draft_revision)
@@ -398,6 +396,8 @@ class TestActivationService:
             now = await repository.now()
             if details["retired_at"] is not None or details["expires_at"] <= now:
                 raise expired()
+            # Turning test calls off stops live test activations at once.
+            await require_test_calls(tx)
             await lock(tx, f"step-test:{actor.id}:{scope.environment_id}")
             busy = busy_refusal(*await repository.busy(actor.id, now), now)
             if busy is not None:
@@ -446,6 +446,7 @@ class TestActivationService:
             details = await self._owned(actor, identifier, repository, lock=True)
             if details["retired_at"] is not None or details["expires_at"] <= await repository.now():
                 raise expired()
+            await require_test_calls(tx)
             self.secrets.check(scope, request.secret_ref)
             route = await repository.listen_route(identifier)
             if route is None:

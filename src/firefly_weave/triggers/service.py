@@ -381,10 +381,13 @@ class WebhookService:
 
     @staticmethod
     async def within_test_limits(tx: Transaction, actor: Principal, scope: Scope) -> None:
-        """A test URL's events are the creator's test runs: they share the step test limits with the creator's own."""
+        """A test URL's events are the creator's test runs: test calls must be on, and they share the limits."""
         from firefly_weave.step_tests.admission import busy_refusal
+        from firefly_weave.step_tests.policy import require_test_calls
         from firefly_weave.step_tests.repository import StepTestRepository
 
+        # Turning test calls off stops a test URL at once, before its limits are counted.
+        await require_test_calls(tx)
         await lock(tx, f"step-test:{actor.id}:{scope.environment_id}")
         tests = StepTestRepository(tx)
         now = await tests.now()

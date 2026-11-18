@@ -143,3 +143,18 @@ async def test_events_on_the_test_url_count_toward_the_creators_test_run_limits(
     assert len(await env.query("SELECT id FROM runs")) == 4
     # An event already received still answers its receipt.
     assert await webhooks.receive(route_of(listened), EVENT, signed(EVENT)) == first
+
+
+async def test_turning_test_calls_off_stops_live_test_activations_at_once(listening):
+    env, created, listened, webhooks = listening
+    from test_test_activation_runs import run
+
+    await env.policy("disabled")
+    for call in (
+        run(env, created),
+        listen(env, created),
+        webhooks.receive(route_of(listened), EVENT, signed(EVENT)),
+    ):
+        error = await refused(call)
+        assert (error.status, error.code) == (403, "WV-STEPTEST-DISABLED")
+    assert await env.query("SELECT id FROM runs") == []
