@@ -46,6 +46,10 @@ import {
   type CatalogEntry,
 } from "./support";
 import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
+import type {
+  ExecutionLogEntry,
+  RunLogEntry,
+} from "../../src/app/operate/run-contracts";
 import {
   HostOptions,
   PlatformHost,
@@ -1780,6 +1784,146 @@ async function changeScoreMapping(page: Page) {
       "/steps/lookup/output/customerId",
     ),
   );
+}
+
+/** A run's log entry for the tour; each call gives the next ID. */
+let tourLogs = 0;
+function tourLog(facts: Partial<RunLogEntry>): RunLogEntry {
+  return {
+    id: `cc000000-0000-4000-8000-${String(++tourLogs).padStart(12, "0")}`,
+    at: "2026-10-07T10:00:00.000Z",
+    source: "engine",
+    level: "info",
+    code: null,
+    message: "",
+    node_id: null,
+    instance_key: "",
+    attempt: null,
+    worker_id: null,
+    fields: {},
+    redactions: 0,
+    truncated: false,
+    ...facts,
+  };
+}
+const tourWorker = "0f1e2d3c-4b5a-4968-8776-655443322110";
+/** The failed run's entries, oldest first: every level, a hidden value and a code. */
+const tourRunLogs = (): RunLogEntry[] => [
+  tourLog({
+    at: "2026-10-07T10:00:00.204Z",
+    code: "RUN.STARTED",
+    message: "Run started",
+  }),
+  tourLog({
+    at: "2026-10-07T10:00:00.611Z",
+    source: "worker",
+    code: "CUSTOMER.LOOKED_UP",
+    message: "Looked up 1 customer in billing-db",
+    node_id: "fetch",
+    attempt: 1,
+    worker_id: tourWorker,
+    fields: { customers: 1 },
+    redactions: 1,
+  }),
+  tourLog({
+    at: "2026-10-07T10:00:04.720Z",
+    code: "STEP.SUCCEEDED",
+    message: "fetch finished",
+    node_id: "fetch",
+  }),
+  tourLog({
+    at: "2026-10-07T10:01:01.702Z",
+    source: "connector",
+    level: "warning",
+    code: "HTTP.RESPONSE",
+    message: "POST smtp-relay.acme.example answered 550 in 312 ms",
+    node_id: "send",
+    attempt: 3,
+    worker_id: tourWorker,
+  }),
+  tourLog({
+    at: "2026-10-07T10:01:03.918Z",
+    level: "error",
+    code: "SMTP_REJECTED",
+    message: "send failed: SMTP_REJECTED",
+    node_id: "send",
+  }),
+];
+/** Entries across runs, newest first: hidden values, a shortened entry and a withheld run. */
+function tourAcrossLogs(): (ExecutionLogEntry | Record<string, unknown>)[] {
+  const across = (
+    facts: Partial<RunLogEntry>,
+    run: string,
+  ): ExecutionLogEntry => ({
+    ...tourLog({
+      source: "worker",
+      level: "warning",
+      node_id: "fetch",
+      attempt: 1,
+      worker_id: tourWorker,
+      ...facts,
+    }),
+    run_id: run,
+    workflow_name: "invoice-approval",
+    workflow_version: "1.3.0",
+    test: false,
+  });
+  const running = "8d2c6a1f-1b2c-4d3e-8f40-5a6b7c8d9e0f";
+  const failed = "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12";
+  const now = Date.now();
+  const at = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  return [
+    across(
+      {
+        at: at(8),
+        code: "CUSTOMER.SKIPPED",
+        message:
+          "The customer lookup skipped 2 records with an unexpected status",
+        fields: { skipped: 2 },
+        redactions: 2,
+      },
+      running,
+    ),
+    across(
+      {
+        at: at(12),
+        message:
+          "Query plan for the customer lookup: Seq Scan on customers (cost=0.00..18334.00 rows=1000000 width=244) " +
+          "Filter: ((region)::text = 'EU'::text) Rows Removed by Filter: 982211 Planning Time: 0.114 ms " +
+          "Execution Time: 412.880 ms; consider an index on customers(region) so the lookup stays under the step's 2 s budget",
+        truncated: true,
+      },
+      running,
+    ),
+    {
+      id: "7b9e3d21-2e4f-4c60-9bac-1d2e3f4a5b6c",
+      unavailable: true,
+      omissions: [{ path: "", reason: "classification_unavailable" }],
+    },
+    across(
+      {
+        at: at(729),
+        source: "engine",
+        level: "error",
+        code: "SMTP_REJECTED",
+        message: "send failed: SMTP_REJECTED",
+        node_id: "send",
+        attempt: null,
+        worker_id: null,
+      },
+      failed,
+    ),
+    across(
+      {
+        at: at(730),
+        source: "connector",
+        code: "HTTP.RESPONSE",
+        message: "POST smtp-relay.acme.example answered 550 in 312 ms",
+        node_id: "send",
+      },
+      failed,
+    ),
+  ];
 }
 
 const scenes: Record<string, Scene> = {
@@ -5226,6 +5370,49 @@ spec:
       detail.getByRole("button", { name: "Debug in editor" }),
     ).toBeVisible();
     await shot("191-operate-debug-button");
+  },
+  // Operate › Logs: entries across runs from the last hour, Warning and up;
+  // on a narrow screen the filters fold behind their summary.
+  async "operate-logs"({ page, shot, size }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read"],
+      environmentName: "local",
+    });
+    await page.route(`${environment}/execution-logs?*`, (r) =>
+      r.fulfill({ json: { items: tourAcrossLogs(), next_cursor: "older" } }),
+    );
+    await open(page, "Logs");
+    await expect(
+      page
+        .getByRole("table", { name: "Log entries" })
+        .locator(".entry:not(.head)"),
+    ).toHaveCount(5);
+    await shot("192-logs-page", { end: ".page-content" });
+    if (size.width < 768) {
+      await page.getByRole("button", { name: "Change filters" }).click();
+      await expect(page.getByLabel("Time", { exact: true })).toBeFocused();
+      await shot("193-logs-filters", { end: ".page-content" });
+    }
+  },
+  // A run's Logs section, after its Steps: every level, newest at the bottom.
+  async "run-logs"({ page, shot }) {
+    await openRunsTab(page, {
+      logs: tourRunLogs(),
+      // The run detail's own reads, which the Runs tab's platform leaves out.
+      before: async () => {
+        await page.route("**/environments/*/runs/*/lifecycle", (r) =>
+          r.fulfill({ json: { archived: false, purged: false, revision: 1 } }),
+        );
+        await page.route("**/environments/*/runs/*/history?*", (r) =>
+          r.fulfill({ json: { events: [], next_cursor: null } }),
+        );
+      },
+    });
+    await page.goto(`/operate/runs/${RUN_IDS.failed}`);
+    const logs = page.getByRole("region", { name: "Logs", exact: true });
+    await expect(logs.locator(".entry:not(.head)")).toHaveCount(5);
+    await logs.scrollIntoViewIfNeeded();
+    await shot("194-run-logs", { end: ".record-detail, .page-content" });
   },
 };
 
