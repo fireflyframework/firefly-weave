@@ -1,0 +1,452 @@
+{
+  "description": "Workflow definitions and the workflow references they call, in the order the platform lists them; Studio and the platform test against the same cases.",
+  "cases": [
+    {
+      "name": "no steps",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": []
+        }
+      },
+      "references": []
+    },
+    {
+      "name": "not a workflow",
+      "document": [
+        "callWorkflow"
+      ],
+      "references": []
+    },
+    {
+      "name": "steps that are not a list",
+      "document": {
+        "spec": {
+          "steps": {
+            "id": "a",
+            "kind": "callWorkflow",
+            "uses": "x@1.0.0"
+          }
+        }
+      },
+      "references": []
+    },
+    {
+      "name": "one call",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "notify",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {},
+              "mode": "wait"
+            }
+          ]
+        }
+      },
+      "references": [
+        "notify-customer@1.0.0"
+      ]
+    },
+    {
+      "name": "the same callee twice",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "a",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {},
+              "mode": "wait"
+            },
+            {
+              "id": "b",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {},
+              "mode": "wait"
+            }
+          ]
+        }
+      },
+      "references": [
+        "notify-customer@1.0.0",
+        "notify-customer@1.0.0"
+      ]
+    },
+    {
+      "name": "a call without a reference",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "a",
+              "kind": "callWorkflow",
+              "uses": 3
+            },
+            "not a step",
+            {
+              "id": "b",
+              "kind": "callWorkflow",
+              "uses": "audit@2.0.0",
+              "with": {},
+              "mode": "wait"
+            }
+          ]
+        }
+      },
+      "references": [
+        "audit@2.0.0"
+      ]
+    },
+    {
+      "name": "calls inside blocks come after the steps around them",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "route",
+              "kind": "switch",
+              "cases": [
+                {
+                  "when": {
+                    "literal": true
+                  },
+                  "steps": [
+                    {
+                      "id": "x",
+                      "kind": "callWorkflow",
+                      "uses": "inner@1.0.0",
+                      "with": {},
+                      "mode": "wait"
+                    }
+                  ]
+                }
+              ],
+              "default": {
+                "steps": [
+                  {
+                    "id": "d",
+                    "kind": "callWorkflow",
+                    "uses": "fallback@1.0.0",
+                    "with": {},
+                    "mode": "wait"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "after",
+              "kind": "callWorkflow",
+              "uses": "outer@1.0.0",
+              "with": {},
+              "mode": "wait"
+            }
+          ]
+        }
+      },
+      "references": [
+        "outer@1.0.0",
+        "inner@1.0.0",
+        "fallback@1.0.0"
+      ]
+    },
+    {
+      "name": "parallel branches in name order",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "fan",
+              "kind": "parallel",
+              "branches": {
+                "zeta": {
+                  "steps": [
+                    {
+                      "id": "z",
+                      "kind": "callWorkflow",
+                      "uses": "zeta@1.0.0",
+                      "with": {},
+                      "mode": "wait"
+                    }
+                  ]
+                },
+                "alpha": {
+                  "steps": [
+                    {
+                      "id": "a",
+                      "kind": "callWorkflow",
+                      "uses": "alpha@1.0.0",
+                      "with": {},
+                      "mode": "wait"
+                    }
+                  ]
+                },
+                "a/b": {
+                  "steps": [
+                    {
+                      "id": "s",
+                      "kind": "callWorkflow",
+                      "uses": "slash@1.0.0",
+                      "with": {},
+                      "mode": "wait"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "references": [
+        "slash@1.0.0",
+        "alpha@1.0.0",
+        "zeta@1.0.0"
+      ]
+    },
+    {
+      "name": "loops, transactions and error paths",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "each",
+              "kind": "forEach",
+              "items": {
+                "ref": "/input/items"
+              },
+              "body": {
+                "steps": [
+                  {
+                    "id": "one",
+                    "kind": "callWorkflow",
+                    "uses": "per-item@1.0.0",
+                    "with": {},
+                    "mode": "wait"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "tx",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "charge",
+                  "kind": "action",
+                  "uses": "pay.charge@1.0.0",
+                  "confirm": {
+                    "kind": "callWorkflow",
+                    "uses": "confirm-charge@1.0.0"
+                  },
+                  "cancel": {
+                    "kind": "callWorkflow",
+                    "uses": "cancel-charge@1.0.0"
+                  },
+                  "compensate": {
+                    "kind": "callWorkflow",
+                    "uses": "refund@1.0.0"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "risky",
+              "kind": "callWorkflow",
+              "uses": "risky@1.0.0",
+              "with": {},
+              "mode": "wait",
+              "errorPath": {
+                "steps": [
+                  {
+                    "id": "recover",
+                    "kind": "callWorkflow",
+                    "uses": "recover@1.0.0",
+                    "with": {},
+                    "mode": "wait"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "references": [
+        "risky@1.0.0",
+        "per-item@1.0.0",
+        "confirm-charge@1.0.0",
+        "cancel-charge@1.0.0",
+        "refund@1.0.0",
+        "recover@1.0.0"
+      ]
+    },
+    {
+      "name": "undo steps that are not calls",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "charge",
+              "kind": "action",
+              "uses": "pay.charge@1.0.0",
+              "confirm": {
+                "kind": "action",
+                "uses": "pay.confirm@1.0.0"
+              },
+              "cancel": "no"
+            }
+          ]
+        }
+      },
+      "references": []
+    },
+    {
+      "name": "agent tools that call workflows",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "helper",
+              "kind": "agent",
+              "tools": [
+                {
+                  "name": "lookup",
+                  "workflow": "lookup-order@1.0.0"
+                },
+                {
+                  "name": "send",
+                  "action": "mail.send@1.0.0"
+                },
+                {
+                  "name": "bad",
+                  "workflow": 7
+                },
+                "tool",
+                {
+                  "name": "escalate",
+                  "workflow": "escalate@2.1.0"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "references": [
+        "lookup-order@1.0.0",
+        "escalate@2.1.0"
+      ]
+    },
+    {
+      "name": "a call on a nested switch inside a loop",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "orders",
+          "version": "1.2.0"
+        },
+        "spec": {
+          "steps": [
+            {
+              "id": "each",
+              "kind": "forEach",
+              "body": {
+                "steps": [
+                  {
+                    "id": "pick",
+                    "kind": "switch",
+                    "cases": [
+                      {
+                        "steps": [
+                          {
+                            "id": "deep",
+                            "kind": "callWorkflow",
+                            "uses": "deep@1.0.0",
+                            "with": {},
+                            "mode": "wait"
+                          }
+                        ]
+                      },
+                      "case"
+                    ],
+                    "default": "none"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "helper",
+              "kind": "agent",
+              "tools": [
+                {
+                  "name": "top",
+                  "workflow": "top@1.0.0"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "references": [
+        "top@1.0.0",
+        "deep@1.0.0"
+      ]
+    }
+  ]
+}
