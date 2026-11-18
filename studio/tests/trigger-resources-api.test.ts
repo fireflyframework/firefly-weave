@@ -176,6 +176,35 @@ describe("listing trigger resources", () => {
       4,
       true,
     ]);
+    const states = new FakeApi();
+    states.pages = [
+      [
+        {
+          id: "s-2",
+          cron: "0 9 * * *",
+          activation_id: "a-1",
+          revision: 1,
+          status: "blocked",
+        },
+        {
+          id: "s-3",
+          cron: "0 9 * * *",
+          activation_id: "a-1",
+          revision: 1,
+          status: "deleted",
+        },
+      ],
+    ];
+    expect(
+      (await listTriggerResources(states, "schedule")).items.map(
+        (item) => item.disabled,
+      ),
+    ).toEqual([false, true]);
+    const kafka = new FakeApi();
+    kafka.pages = [[{ ...WEBHOOK, id: "k-1", disabled: false, blocked: true }]];
+    expect(
+      (await listTriggerResources(kafka, "broker")).items[0].disabled,
+    ).toBe(false);
   });
 });
 
@@ -279,9 +308,13 @@ describe("moving a trigger to another activation", () => {
       }),
     ];
     expect(
-      await moveSchedule(api, schedule, "a-3", { region: "us" }),
+      await moveSchedule(api, schedule, "a-3", {
+        cron: "0 10 * * 1",
+        input: { region: "us" },
+      }),
     ).toMatchObject({ ok: false, refusal: { kind: "changed" } });
     expect(api.calls[1].body).toMatchObject({
+      cron: "0 10 * * 1",
       activation_id: "a-3",
       input: { region: "us" },
     });

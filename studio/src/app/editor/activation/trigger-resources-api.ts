@@ -134,7 +134,12 @@ export interface TriggerResource<K extends ResourceKind = ResourceKind> {
   name: string;
   activationId: string | null;
   revision: number;
-  /** True while it starts nothing: stopped, blocked, or no longer reading. */
+  /**
+   * True when someone stopped it: a stopped webhook, Kafka trigger or app
+   * event source, an email source that no longer reads, a disabled or deleted
+   * schedule. A blocked Kafka trigger or schedule still counts: moving or
+   * saving it is how it starts again.
+   */
   disabled: boolean;
   view: ResourceViews[K];
 }
@@ -199,8 +204,8 @@ function resource<K extends ResourceKind>(
         : (view as ScheduleView).cron;
   const disabled =
     "status" in view
-      ? view.status !== "enabled"
-      : view.disabled || ("blocked" in view && view.blocked);
+      ? view.status === "disabled" || view.status === "deleted"
+      : view.disabled;
   return {
     kind,
     id: view.id,
@@ -298,12 +303,18 @@ export function retarget<K extends RetargetKind>(
   );
 }
 
-/** Move a schedule to another activation by saving it, optionally with a new run input. */
+/** What a schedule's step details changed since it was last saved. */
+export interface ScheduleChanges {
+  cron?: string;
+  input?: Json;
+}
+
+/** Move a schedule to another activation by saving it, with the calendar and run input it has now. */
 export function moveSchedule(
   api: TriggerApi,
   schedule: ScheduleView,
   activationId: string,
-  input: Json = schedule.input,
+  changes: ScheduleChanges = {},
 ): Promise<ResourceOutcome<"schedule">> {
   return outcome("schedule", () =>
     api.mutate<ScheduleView>(
@@ -311,11 +322,11 @@ export function moveSchedule(
       "POST",
       {
         id: schedule.id,
-        cron: schedule.cron,
+        cron: changes.cron ?? schedule.cron,
         timezone: "UTC",
         missed_policy: "skip",
         activation_id: activationId,
-        input,
+        input: changes.input === undefined ? schedule.input : changes.input,
       },
       schedule.revision,
     ),
