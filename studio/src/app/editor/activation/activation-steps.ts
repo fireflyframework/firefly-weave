@@ -136,6 +136,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                 <button
                   type="button"
                   class="sm"
+                  [disabled]="busy()"
                   (click)="openTrigger(row.intentId)"
                 >
                   Open schedule
@@ -290,6 +291,8 @@ export class ActivationSteps implements OnInit {
   readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
   /** Called after each Retry, so the dialog can keep what it made. */
   retried: () => void = () => undefined;
+  /** True while the activation request runs: nothing may open behind the dialog. */
+  readonly busy = signal(false);
   /** Opens a trigger choice's step details; the dialog closes first. */
   openTrigger: (intentId: string) => void = () => undefined;
 

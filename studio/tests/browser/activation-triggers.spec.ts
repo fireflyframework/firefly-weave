@@ -418,3 +418,77 @@ test("a schedule whose run input no longer fits offers Open schedule, which open
     }),
   ).toBeVisible();
 });
+
+test("while the activation runs, Open schedule and the Connections link are off", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  // The published version: an optional slot with no connection to bind, and an input the schedule's doesn't fit.
+  await page.route(`**/projects/project/workflows/${versionId}/export`, (r) =>
+    r.fulfill({
+      json: {
+        id: versionId,
+        document: {
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "pets", version: "1.0.0" },
+          spec: {
+            inputSchema: {
+              type: "object",
+              properties: { orderId: { type: "string" } },
+              required: ["orderId"],
+            },
+          },
+        },
+        artifact: {
+          executable: {
+            features: [],
+            connections: {
+              audit: { connector: "weave-http@2.0.0", required: false },
+            },
+            dependencies: [],
+          },
+        },
+      },
+    }),
+  );
+  await page.route("**/environments/development/bindable-connections?*", (r) =>
+    r.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/environments/development/activations", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    await held;
+    await r.fulfill({
+      status: 201,
+      json: { id: "activation", name: "pets", revision: 1 },
+    });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      {
+        id: "trigger-4e5f6a7b",
+        kind: "schedule",
+        cron: "0 9 * * 1",
+        input: {},
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  const openSchedule = dialog.getByRole("button", { name: "Open schedule" });
+  const connections = dialog.getByRole("button", {
+    name: "Create one in Connections.",
+  });
+  await expect(openSchedule).toBeEnabled();
+  await expect(connections).toBeEnabled();
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  // The dialog stays until the activation answers: nothing may open behind it.
+  await expect(openSchedule).toBeDisabled();
+  await expect(connections).toBeDisabled();
+  release();
+});

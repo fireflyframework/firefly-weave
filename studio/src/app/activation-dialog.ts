@@ -227,6 +227,7 @@ function onceEach(api: StudioApi): StudioApi {
                         <button
                           type="button"
                           class="text-link"
+                          [disabled]="running()"
                           (click)="openConnections.emit()"
                         >
                           {{ way.link }}
@@ -461,6 +462,12 @@ export class ActivationDialog implements OnInit {
         this.setUpFor = id;
         void this.setUp(id);
       });
+    });
+    // While the activation runs, the steps' ways out (Open schedule) are off too.
+    effect(() => {
+      const steps = this.steps();
+      const running = this.running();
+      untracked(() => steps?.busy.set(running));
     });
     // A failure takes focus, so it is announced and Tab stays in the dialog.
     effect(() => {
