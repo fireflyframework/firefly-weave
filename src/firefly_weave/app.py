@@ -451,6 +451,7 @@ def make_app(
                         settings.native_executors,
                         settings.native_image_digest,
                         settings.shutdown_timeout_seconds,
+                        daily_log_entries=settings.execution_log_daily_entries,
                     )
                     await dispatcher.open()
                     app.state.dispatcher = dispatcher

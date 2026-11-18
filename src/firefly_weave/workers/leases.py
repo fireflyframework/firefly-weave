@@ -51,9 +51,12 @@ from firefly_weave.contracts.workers import (
     TaskError,
     TaskExecutionContext,
     TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
     UnavailableCompletionReceipt,
 )
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.execution_logs import ExecutionLogWriter
 from firefly_weave.operations.facts import FactRepository
 from firefly_weave.operations.redaction import Omission
 from firefly_weave.persistence.uow import Transaction
@@ -585,6 +588,24 @@ class TaskService:
         self, tx: Transaction, lease: LeaseProof, *, actor: Principal, scope: Scope, context: AuditContext
     ) -> TaskLease:
         return await self._operation(actor, scope, context).heartbeat(tx, lease)
+
+    async def log(
+        self,
+        tx: Transaction,
+        request: TaskLogRequest,
+        *,
+        actor: Principal,
+        scope: Scope,
+        context: AuditContext,
+        daily_limit: int,
+    ) -> TaskLogAccepted:
+        """Log entries about a task this worker leases, in a transaction that takes no operation lock.
+
+        The worker needs ``task.log`` for its release; the lease itself is checked in the same statement as the
+        insert, so the task and run are never locked.
+        """
+        await self._operation(actor, scope, context).authority(tx, request.lease.owner, "task.log")
+        return await ExecutionLogWriter(tx).append(request, daily_limit=daily_limit)
 
     async def complete(
         self,

@@ -36,8 +36,9 @@ from pydantic_core import PydanticCustomError
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
 from firefly_weave.contracts.instance_keys import InstanceKeyText, InstanceKeyTextOrEmpty, node_of, split_instance
+from firefly_weave.contracts.log_values import LogCode, LogFieldKey, LogFieldValue, LogLevel, LogSource
 from firefly_weave.contracts.public import UnavailableResource
-from firefly_weave.contracts.values import FiniteFloat, JsonData, SafeInteger
+from firefly_weave.contracts.values import JsonData
 from firefly_weave.operations.redaction import Omission
 
 if TYPE_CHECKING:
@@ -68,8 +69,6 @@ type StepKind = Literal[
     "transaction",
 ]
 type StepStatus = Literal["scheduled", "running", "waiting", "succeeded", "failed", "cancelled", "timed_out"]
-type LogSource = Literal["engine", "worker", "connector", "ai"]
-type LogLevel = Literal["debug", "info", "warning", "error"]
 
 TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 LOG_LEVELS: tuple[LogLevel, ...] = ("debug", "info", "warning", "error")
@@ -95,9 +94,6 @@ type TransactionStateText = Literal[
 ]
 type Count = Annotated[int, Field(ge=0)]
 type Milliseconds = Annotated[int, Field(ge=0)]
-type LogCode = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
-type LogFieldKey = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")]
-type LogFieldValue = Annotated[str, Field(max_length=256)] | SafeInteger | FiniteFloat | bool | None
 
 
 _TIMESTAMP = re.compile(

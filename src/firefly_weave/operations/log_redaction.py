@@ -54,8 +54,9 @@ INPUT_LIMIT: Final = 65536
 KNOWN_MINIMUM: Final = 4
 SAFE_INTEGER: Final = 2**53 - 1
 
-# Field and key names that hold secrets: a field so named is dropped, a value assigned to one is hidden.
-SECRET_NAME: Final = re.compile(r"(?i)secret|token|passw(?:or)?d|authorization|cookie|api[_-]?key|credential")
+# Field and key names that hold secrets: a field so named is dropped, a value assigned to one is hidden. Token
+# counts (input_tokens, max_tokens) and tokenizers are not secrets.
+SECRET_NAME: Final = re.compile(r"(?i)secret|token(?!s|iz)|passw(?:or)?d|authorization|cookie|api[_-]?key|credential")
 # URL query parameter names that hold secrets.
 SECRET_PARAMETER: Final = re.compile(r"(?i)token|key|sig|secret|passw(?:or)?d|code|auth|credential")
 _FIELD_KEY: Final = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")

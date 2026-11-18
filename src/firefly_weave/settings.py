@@ -38,6 +38,7 @@ from firefly_weave.connections.secrets import SecretGrant
 from firefly_weave.connectors.broker import BrokerPolicy
 from firefly_weave.connectors.dispatcher import ExecutorConfig
 from firefly_weave.contracts.client_configuration import ClientConfiguration, SignInFlow, SignInOption
+from firefly_weave.contracts.log_values import EXECUTION_LOG_DAILY_ENTRIES, EXECUTION_LOG_RETENTION_DAYS
 from firefly_weave.contracts.operational_policy import OperationsPolicy
 from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.operations.lumi_gateway import LumiGatewaySettings
@@ -53,11 +54,6 @@ def operations_from_env() -> OperationsPolicy:
         return OperationsPolicy.model_validate_json(raw)
     except (ValueError, UnicodeError):
         raise ValueError("Invalid WEAVE_OPERATIONS_POLICY configuration") from None
-
-
-# Run log entries are kept this many days (1-30), and an environment accepts this many a UTC day.
-EXECUTION_LOG_RETENTION_DAYS = (7, 1, 30)
-EXECUTION_LOG_DAILY_ENTRIES = (200_000, 1_000, 5_000_000)
 
 
 def whole_number_from_env(name: str, bounds: tuple[int, int, int]) -> int:

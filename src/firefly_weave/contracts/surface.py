@@ -260,6 +260,8 @@ from firefly_weave.contracts.workers import (
     ReleaseRequest,
     TaskExecutionContext,
     TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
     WorkerControlRequest,
     WorkerInstance,
     WorkerRelease,
@@ -2099,6 +2101,20 @@ OPERATIONS = {
         ),
         Operation(
             "tasks.fail", ENVIRONMENT + "/tasks/fail", "POST", CompletionAcknowledgment, "task.complete", FailRequest
+        ),
+        Operation(
+            "tasks.log",
+            ENVIRONMENT + "/tasks/logs",
+            "POST",
+            TaskLogAccepted,
+            "task.log",
+            TaskLogRequest,
+            (202,),
+            description=(
+                "Only while the lease is current, about that lease: 409 WV-LOG-LEASE otherwise. A batch over a quota "
+                "keeps what fits; one that finds a quota spent answers 429 WV-LOG-QUOTA (with Retry-After for the "
+                "daily one). The body holds at most 256 KiB (413 WV-LOG-SIZE)."
+            ),
         ),
         Operation(
             "tasks.credentials",

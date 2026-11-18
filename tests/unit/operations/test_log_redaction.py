@@ -153,6 +153,12 @@ def test_secret_named_fields_are_dropped():
     assert not result.truncated
 
 
+def test_token_counts_are_not_secrets():
+    counted = {"input_tokens": 1200, "output_tokens": 340, "max_tokens": 4096, "tokenizer": "cl100k"}
+    result = redact_entry("Used input_tokens=1200", counted, known=frozenset())
+    assert (result.message, result.fields, result.redactions) == ("Used input_tokens=1200", counted, 0)
+
+
 def test_field_values_are_redacted_and_cut():
     result = redact_entry(
         "Calling the service",
