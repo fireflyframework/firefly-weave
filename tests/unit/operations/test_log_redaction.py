@@ -139,7 +139,7 @@ CASES = [
     case("a subscription key header", "Ocp-Apim-Subscription-Key: <<PASSWORD>>", "PASSWORD"),
     case("a session ID", "sessionid=<<PASSWORD>>", "PASSWORD"),
     case("a Cookie header as a pair", "[('Cookie', '<<COOKIE>>')]", "COOKIE"),
-    case("an Authorization header as a pair", "headers=[(\"Authorization\", \"Basic <<BASIC>>\")]", "BASIC"),
+    case("an Authorization header as a pair", 'headers=[("Authorization", "Basic <<BASIC>>")]', "BASIC"),
     case("a Stripe secret key in prose", "charging with <<STRIPE>> now", "STRIPE"),
     case("a Stripe restricted key in JSON", '{"stripe": "<<STRIPE_RESTRICTED>>"}', "STRIPE_RESTRICTED"),
     case("a Slack token in a URL", "https://hooks.example.test/post?t=x&bot=<<SLACK>>", "SLACK"),
