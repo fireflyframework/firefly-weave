@@ -22,10 +22,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
-- Pull request CI runs the PostgreSQL integration tests against PostgreSQL 17
-  on every pull request and push to `main`; the tests that need Kafka,
-  Keycloak, a built image, or the owned Docker context run in the release
-  gate.
+- CI has a manual job that runs the PostgreSQL integration tests against
+  PostgreSQL 17; it moves to every pull request once the tests that depend on
+  timing pass on a hosted runner. The tests that need Kafka, Keycloak, a built
+  image, or the owned Docker context run in the release gate.
 - Every workflow job has a timeout, and Acceptance and Desktop installers wait
   for a draft pull request to be marked ready.
 
