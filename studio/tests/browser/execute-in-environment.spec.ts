@@ -132,6 +132,22 @@ for (const size of sizes)
       await expect(shape).not.toHaveClass(/\blive\b/);
     });
 
+    test("the running time counts up while the step runs", async ({ page }) => {
+      await page.clock.install();
+      const { details } = await ready(page, {
+        starts: [{ status: 202, json: accepted }],
+        views: [view()],
+      });
+      await run(details);
+      await expect(output(details)).toContainText(
+        "Executing crm-lookup in Production · 0 s",
+      );
+      await page.clock.fastForward("00:12");
+      await expect(output(details)).toContainText(
+        "Executing crm-lookup in Production · 12 s",
+      );
+    });
+
     test("a step that changes data asks first, and Cancel sends nothing", async ({
       page,
     }) => {

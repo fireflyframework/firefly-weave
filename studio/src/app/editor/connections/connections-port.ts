@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // environment's test policy. Made on first use from the shell's profile and
 // account and replaced as soon as either changes, so nothing an answer brings
 // back reaches another account, environment or platform.
-import { signal } from "@angular/core";
+import { signal, untracked } from "@angular/core";
 import { describeError } from "../../errors";
 import { testCopy, testOrigin } from "../../integrations/connection-copy";
 import type { StepDetailsHost } from "../ndv/step-details-host";
@@ -337,16 +337,18 @@ export class ConnectionsPort {
 
   /** Releases chosen this session for dependencies here: one question per dependency. */
   readonly releases = new Map<string, string>();
-  private service: StepTestService | null = null;
+  /** A signal, so what reads runningTests() (the Output pane's clock) learns when it's made. */
+  private readonly service = signal<StepTestService | null>(null);
   /**
    * The step test service of this account and environment, made on first
    * use. It outlives step details (closing them keeps following) and goes
    * with the port.
    */
   stepTests(host: StepTestHost): StepTestService {
-    if (this.service) return this.service;
+    const made = this.service();
+    if (made) return made;
     const port = this;
-    this.service = new StepTestService({
+    const service = new StepTestService({
       client: new StepTestClient(host.api),
       scope: () => host.stepDataScope ?? "",
       environment: () => (port.alive ? port.environment : null),
@@ -384,11 +386,12 @@ export class ConnectionsPort {
       releases: this.releases,
       tracking: (stepId) => host.realStep?.set(stepId),
     });
-    return this.service;
+    this.service.set(service);
+    return service;
   }
   /** The service when one was made; null before the first Execute in an environment. */
   runningTests(): StepTestService | null {
-    return this.service;
+    return this.service();
   }
   /** Steps whose Execute in this environment found no connection for a slot, per draft: their tile asks for one. */
   attempted(
@@ -417,7 +420,7 @@ export class ConnectionsPort {
     this.alive = false;
     // The service's fences read this port's environment, which is gone now;
     // its own state (a signal) is cleared after the render that replaced the port.
-    const service = this.service;
+    const service = untracked(this.service);
     if (service) queueMicrotask(() => service.forget());
   }
 }
