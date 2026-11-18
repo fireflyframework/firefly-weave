@@ -196,6 +196,28 @@ describe("the picked item", () => {
     made.rename("orders", "each-order");
     expect(made.counts("each-order")).toEqual({ count: 20, known: true });
   });
+
+  it("keeps the pick and the count when the step the loop's Items read is renamed", () => {
+    const { made, edit } = iterations();
+    edit((steps) => {
+      steps.unshift(step("fetch"));
+      steps[1]["items"] = { ref: "/steps/fetch/output" };
+    });
+    made.pick("orders", 2);
+    made.recordProgress([progress("orders", "orders", 20)]);
+    // The editor's rename rewrites the reference, and Items still read the same list.
+    edit((steps) => {
+      steps[0].id = "load";
+      steps[1]["items"] = { ref: "/steps/load/output" };
+    });
+    made.rename("fetch", "load");
+    expect(made.instanceKey("send")).toBe("send[2][0]");
+    expect(made.counts("orders")).toEqual({ count: 20, known: true });
+    // Items that changed in another way still start over.
+    edit((steps) => (steps[1]["items"] = { ref: "/steps/load/output/open" }));
+    made.rename("load", "loader");
+    expect(made.instanceKey("send")).toBe("send[0][0]");
+  });
 });
 
 describe("how many items a loop has", () => {

@@ -30,6 +30,7 @@ import {
   parsePointer,
 } from "../../forms/core/json";
 import { enclosingLoops, stepPointerOf } from "../formula/loops";
+import { rewriteStepRefs } from "../../model";
 import type { InstanceKey } from "../ndv/registry";
 import type { LoopProgress } from "./execution";
 import { instanceStep, isInstanceKey, renameInstance } from "./instance-keys";
@@ -109,15 +110,26 @@ export class Iterations {
     return isInstanceKey(key) ? key : null;
   }
 
-  /** A loop renamed in the editor keeps its pick and its counts. */
+  /**
+   * A step renamed in the editor: a renamed loop keeps its pick and its
+   * counts, and so does a loop whose Items read the renamed step, since the
+   * rename rewrites that reference and the list stays the same.
+   */
   rename(from: string, to: string): void {
+    const renamed = new Map([[from, to]]);
+    // Rebuilt in order, so the oldest counts still go first.
     const move = (map: Map<string, Kept>) => {
-      for (const [key, kept] of [...map]) {
-        const next = renameInstance(key, from, to);
-        if (next === key) continue;
-        map.delete(key);
-        map.set(next, kept);
-      }
+      const entries = [...map].map(([key, kept]): [string, Kept] => [
+        renameInstance(key, from, to),
+        {
+          ...kept,
+          items: canonicalJson(
+            rewriteStepRefs(JSON.parse(kept.items), renamed),
+          ),
+        },
+      ]);
+      map.clear();
+      for (const [key, kept] of entries) map.set(key, kept);
     };
     move(this.chosen);
     move(this.executed);
