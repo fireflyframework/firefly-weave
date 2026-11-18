@@ -197,9 +197,10 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
   await expect(dialog.getByLabel("Set the test secret")).toHaveText(
     "weave platform secret set --handle orders-test",
   );
+  // Listen and Stop listening live in the header only.
   await expect(
     dialog.getByRole("button", { name: "Stop listening", exact: true }),
-  ).toHaveCount(2);
+  ).toHaveCount(1);
   // The listen request names the webhook's test secret, never its production one.
   expect(listening.listens.map((request) => request.postDataJSON())).toEqual([
     { secret_ref: "orders-test" },
@@ -242,14 +243,12 @@ test("Stop listening retires the test URL, and the tile stops pulsing", async ({
 }) => {
   const { dialog, listening } = await openWebhook(page);
   await dialog
-    .locator(".trigger-event")
     .getByRole("button", { name: "Listen for test event", exact: true })
     .click();
   await expect(
     dialog.getByRole("textbox", { name: "Make a POST request to:" }),
   ).toHaveValue(TEST_URL);
   await dialog
-    .locator(".trigger-event")
     .getByRole("button", { name: "Stop listening", exact: true })
     .click();
   await expect.poll(() => listening.retired).toEqual(["ta-1"]);
@@ -258,7 +257,7 @@ test("Stop listening retires the test URL, and the tile stops pulsing", async ({
   ).toHaveCount(0);
   await expect(
     dialog.getByRole("button", { name: "Listen for test event", exact: true }),
-  ).toHaveCount(2);
+  ).toHaveCount(1);
   await expect(tileShape(page)).not.toHaveClass(/\blistening\b/);
 });
 

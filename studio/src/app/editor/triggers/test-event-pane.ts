@@ -24,12 +24,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
-  inject,
   input,
   signal,
 } from "@angular/core";
-import { DialogService } from "../../dialog";
-import { listenFor, stopListening } from "../activation/execute-in-environment";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { listenBlocked, type ListenState } from "./test-listener";
@@ -69,9 +66,6 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
               <p class="trigger-event-status" role="status">
                 <span class="loading-spinner small"></span>Getting a test URL…
               </p>
-              <button type="button" class="pane-generate" (click)="stop()">
-                Stop listening
-              </button>
             }
             @case ("listening") {
               @if (state?.kind === "listening") {
@@ -129,9 +123,6 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                   >
                     Copy cURL
                   </button>
-                  <button type="button" class="pane-generate" (click)="stop()">
-                    Stop listening
-                  </button>
                 </div>
               }
             }
@@ -144,10 +135,13 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                 <p class="trigger-event-status" role="status">
                   Received a test event. Its run is open in Runs.
                 </p>
+              } @else {
+                <!-- Listen and Stop listening are the header's: each shows once. -->
+                <p class="pane-empty-text">
+                  Select Listen for test event to get a test URL for this
+                  webhook.
+                </p>
               }
-              <button type="button" class="pane-generate" (click)="listen()">
-                Listen for test event
-              </button>
             }
           }
         }
@@ -304,7 +298,6 @@ export class TriggerEventPane {
   readonly trigger = input.required<TriggerIntent>();
   /** The editor: where a webhook listens for its test event. */
   readonly host = input<StepDetailsHost | null>(null);
-  private readonly dialogs = inject(DialogService);
   readonly urlId = computed(() => `trigger-test-url-${this.trigger().id}`);
   readonly productionId = computed(
     () => `trigger-production-url-${this.trigger().id}`,
@@ -362,14 +355,6 @@ export class TriggerEventPane {
       ? (connectionsPort(host)?.madeListener()?.state() ?? null)
       : null;
     return state?.triggerId === this.trigger().id ? state : null;
-  }
-  listen() {
-    const host = this.host();
-    if (host) listenFor(host, this.trigger(), this.dialogs, this.sample());
-  }
-  stop() {
-    const host = this.host();
-    if (host) stopListening(host);
   }
   async copy(text: string, what: string) {
     try {
