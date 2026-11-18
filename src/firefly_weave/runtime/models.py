@@ -23,6 +23,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, ConfigDict, Field
 
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_conversations import ConversationKeyHash, ConversationWorkflow
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.transactions import Effect, ParticipantStatus, PhaseOperation, TransactionState, UndoMode
 from firefly_weave.contracts.values import JsonData, JsonObjectData
@@ -47,6 +48,7 @@ class RuntimeEvent(ContractModel):
         "cancelled",
         "call_completed",
         "step_failed",
+        "memory_loaded",
     ]
     data: JsonObjectData = Field(default_factory=dict)
     timestamp: AwareDatetime
@@ -238,6 +240,8 @@ class AgentState(ContractModel):
     # The agent failed while calls that change data and are never retried were running: each holds its own incident,
     # and this failure reaches the step's onError setting once a person has settled them all.
     failure: AgentFailure | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The hash of the conversation this activation loads and appends to; never the key's value.
+    conversation: ConversationKeyHash | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class RunState(ContractModel):
@@ -347,6 +351,23 @@ class Deadline(ContractModel):
     name: str | None = None
 
 
+class MemoryIntent(ContractModel):
+    """Load an AI agent's conversation before its first turn, or append its completed exchange.
+
+    Only the key's hash travels: the kernel hashes the evaluated key with the workflow's name. ``messages``,
+    ``window`` and ``ttl_seconds`` are set only for an append.
+    """
+
+    kind: Literal["memory"] = "memory"
+    op: Literal["load", "append"]
+    node_id: str
+    workflow: ConversationWorkflow
+    key_hash: ConversationKeyHash
+    messages: list[JsonObjectData] = Field(default_factory=list, exclude_if=lambda v: not v)
+    window: int | None = Field(default=None, ge=2, le=200, exclude_if=lambda v: v is None)
+    ttl_seconds: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
+
+
 class StepChange(ContractModel):
     node_id: str
     # "failed" records a failure the step's onError setting handled; the run goes on.
@@ -370,5 +391,7 @@ class ControlCommand(ContractModel):
 
 class Transition(ContractModel):
     state: RunState
-    commands: list[TaskIntent | HumanTaskIntent | Deadline | ControlCommand | CallIntent] = Field(default_factory=list)
+    commands: list[TaskIntent | HumanTaskIntent | Deadline | ControlCommand | CallIntent | MemoryIntent] = Field(
+        default_factory=list
+    )
     steps: list[StepChange] = Field(default_factory=list)
