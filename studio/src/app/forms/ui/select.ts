@@ -270,13 +270,26 @@ let sequence = 0;
         background: var(--disabled-bg);
         color: var(--muted);
       }
+      /* The popup frames; the listbox inside it scrolls, so the listbox is
+         the box people see and the one that pages and reveals options. */
       .choice-list {
-        padding: 4px;
+        flex-direction: column;
+        /* Without this, the popover's own 0.25em padding would apply. */
+        padding: 0;
         background: var(--surface);
         color: var(--text);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-2);
+        overflow: hidden;
+      }
+      .choice-list:popover-open {
+        display: flex;
+      }
+      .choice-options {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 4px;
         overflow: auto;
       }
       .choice-option {
@@ -343,6 +356,9 @@ let sequence = 0;
         border-width: 1px 0 0;
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         box-shadow: var(--shadow-3);
+      }
+      .choice-list[data-side="sheet"] .choice-options {
+        padding: 0;
       }
       .choice-list[data-side="sheet"]::backdrop {
         background: var(--scrim);
@@ -469,7 +485,7 @@ export class Select {
     }
     this.active.set(next);
     requestAnimationFrame(() => {
-      const list = this.host.querySelector<HTMLElement>(".choice-list");
+      const list = this.host.querySelector<HTMLElement>('[role="listbox"]');
       const row = list?.querySelector<HTMLElement>(
         `[id="${this.id}-option-${next}"]`,
       );
@@ -513,7 +529,7 @@ export class Select {
       if (event.key === "Home") next = 0;
       else if (event.key === "End") next = this.filtered().length - 1;
       else if (event.key.startsWith("Page")) {
-        const list = this.host.querySelector<HTMLElement>(".choice-list");
+        const list = this.host.querySelector<HTMLElement>('[role="listbox"]');
         next = list
           ? pageOptionIndex(list, this.active(), direction)
           : this.active() + direction;
