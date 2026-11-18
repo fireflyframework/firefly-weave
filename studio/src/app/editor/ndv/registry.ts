@@ -382,10 +382,20 @@ export interface NdvContext {
       connector?: string;
     }): Promise<{ uses: string; title: string }[]>;
     contract(uses: string): Promise<Json | null>;
-    /** Published workflows; with callableBy, those that don't allow that caller carry `disabled`. */
-    workflows(filter?: {
-      callableBy?: string;
-    }): Promise<{ uses: string; title: string; disabled?: string }[]>;
+    /**
+     * Workflows a step may call; with callableBy, those that don't allow that
+     * caller carry `disabled`. `group` says where a version lives ("In this
+     * project", "On this computer"); `description` is a line under it.
+     */
+    workflows(filter?: { callableBy?: string }): Promise<
+      {
+        uses: string;
+        title: string;
+        disabled?: string;
+        group?: string;
+        description?: string;
+      }[]
+    >;
     /** Published decision tables, newest version first, then those on this computer. */
     tables(): Promise<{ uses: string; title: string }[]>;
     /** Why the table list is empty for now (no signed-in account yet); null otherwise. */
