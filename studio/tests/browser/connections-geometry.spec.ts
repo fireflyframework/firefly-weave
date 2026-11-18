@@ -96,9 +96,10 @@ for (const size of [
       await expect(hint).toContainText(
         "In Production · slot http · http://legacy.acme.test",
       );
-      await expect(hint.locator(".param-line-mark")).toHaveText(
-        "Not encrypted",
-      );
+      const mark = hint.locator(".param-line-mark");
+      await expect(mark).toHaveText("Not encrypted");
+      // On one line, even in a 360 px column.
+      expect((await box(mark)).height).toBeLessThan(24);
       const reason = hint.locator(".param-line-detail");
       await expect(reason).toHaveText(
         "legacy.acme.test refused this connection's sign-in.",

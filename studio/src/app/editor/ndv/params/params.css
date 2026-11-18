@@ -543,6 +543,7 @@ SPDX-License-Identifier: Apache-2.0
 }
 .param-line-mark {
   color: var(--warning-ink);
+  white-space: nowrap;
 }
 .param-line > .param-line-detail {
   display: flex;
