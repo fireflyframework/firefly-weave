@@ -619,6 +619,13 @@ SPDX-License-Identifier: Apache-2.0
             [busy]="busy !== '' || unknownCommand"
             [running]="busy !== ''"
             [failure]="activationError"
+            [definition]="model.definition"
+            [canvas]="model.canvas"
+            [environmentId]="profile.environmentId ?? ''"
+            [diagnostics]="diagnostics?.diagnostics ?? []"
+            [connectionsHost]="this"
+            [activated]="activatedId"
+            (triggers)="activationTriggers($event)"
             (confirm)="confirmActivation($event)"
             (cancel)="closeActivation()"
           />
