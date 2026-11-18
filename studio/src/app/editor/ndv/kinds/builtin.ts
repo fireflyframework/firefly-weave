@@ -20,7 +20,14 @@ SPDX-License-Identifier: Apache-2.0
 // expressions while the new one is behind its flag.
 import { conditionSummary } from "../../../designer/conditions";
 import { branchTitle, type Step } from "../../../model";
-import { registerKind, type StepKindDescriptor } from "../registry";
+import type { Json } from "../../../forms/core/json";
+import {
+  registerKind,
+  type KindContext,
+  type NdvContext,
+  type RealExecutionSupport,
+  type StepKindDescriptor,
+} from "../registry";
 import { actionForm, actionSettings } from "./forms/action-forms";
 import { decisionTableForm, transformForm } from "./forms/data-forms";
 import {
@@ -46,6 +53,51 @@ const cases = (step: Step): [number, Record<string, unknown>][] =>
 const branchNames = (step: Step): string[] =>
   isRecord(step["branches"]) ? Object.keys(step["branches"]) : [];
 
+/** The platform runs a step test for at most five minutes. */
+const STEP_TEST_TIMEOUT_SECONDS = 300;
+
+/** An action step's step test: its resolved input and the connection bound to its slot. */
+function actionRequest(
+  ctx: NdvContext,
+  kind: KindContext,
+): ReturnType<RealExecutionSupport["request"]> {
+  const step = ctx.step;
+  const action = uses(step);
+  if (!action) return { blocked: "Choose an action first." };
+  const slot = typeof step["connection"] === "string" ? step["connection"] : "";
+  const connections: Record<string, string> = {};
+  if (slot) {
+    const bound = ctx.connections.devBinding(slot);
+    if (!bound)
+      return { blocked: `Choose the connection for slot ${slot} first.` };
+    connections[slot] = bound.revisionId;
+  }
+  let input: Json = {};
+  if (step["with"] !== undefined) {
+    const resolved = ctx.sample.resolvedInput();
+    if (resolved.state !== "available")
+      return {
+        blocked: `${step.id} needs data from earlier steps. Execute previous steps first.`,
+      };
+    input = resolved.value;
+  }
+  const timeout = specOf(kind.actionContract(action))["timeoutSeconds"];
+  return {
+    body: {
+      kind: "action",
+      step_id: step.id,
+      uses: action,
+      input,
+      connections,
+      releases: {},
+      timeout_seconds:
+        typeof timeout === "number" && timeout > 0
+          ? Math.min(Math.ceil(timeout), STEP_TEST_TIMEOUT_SECONDS)
+          : STEP_TEST_TIMEOUT_SECONDS,
+    },
+  };
+}
+
 export const actionKind: StepKindDescriptor = {
   ...common("action", "app", "app"),
   fields: () => [
@@ -59,6 +111,7 @@ export const actionKind: StepKindDescriptor = {
   pinnable: true,
   form: actionForm,
   settings: actionSettings,
+  real: { request: actionRequest },
 };
 
 export const decisionTableKind: StepKindDescriptor = {
