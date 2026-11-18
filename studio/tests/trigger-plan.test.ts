@@ -41,6 +41,7 @@ const ACTIVATIONS: PlanActivation[] = [
   { id: "a-1", workflow: "orders", version: "1.1.0", inputSchema: INPUT },
   { id: "a-old", workflow: "orders", version: "1.0.0", inputSchema: OLD_INPUT },
   { id: "x-1", workflow: "billing", version: "3.0.0" },
+  { id: "a-unread", workflow: "orders", version: "1.1.5" },
 ];
 
 function webhook(
@@ -199,6 +200,23 @@ describe("webhooks", () => {
     expect(plan([HOOK], { webhook: list([resource]) })[0].kind).toBe(
       "retarget",
     );
+  });
+
+  it("proposes the move when it can't tell, and leaves the decision to the platform", () => {
+    const resource = webhook("w-1", "orders-in", "a-unread", {
+      payload_schema: OLD_INPUT,
+    });
+    expect(
+      plan([HOOK], { webhook: list([resource]) }).map((row) => [
+        row.kind,
+        row.text,
+      ]),
+    ).toEqual([
+      [
+        "retarget",
+        "Move webhook orders-in from 1.1.5 to 1.2.0 (the URL stays the same)",
+      ],
+    ]);
   });
 
   it("names this workflow's running webhooks no trigger choice describes, and leaves stopped ones out", () => {
