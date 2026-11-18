@@ -253,6 +253,8 @@ const appEventForm = (): FormSpec => ({
       label: "App and event",
       required: true,
       requiredText: APP_NEEDED,
+      // An example a builder recognizes: an app, and an event it sends.
+      placeholder: "whatsapp · message received",
       hint: "The app and the event that starts a run.",
     },
     {

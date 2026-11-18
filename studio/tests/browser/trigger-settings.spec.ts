@@ -259,6 +259,17 @@ for (const size of [
         await expect(
           pane.getByRole("button", { name: /Listen for test event/ }),
         ).toHaveCount(0);
+        if (kind === "provider") {
+          // The app and event field shows a real example, not a version pattern.
+          await parameters(details);
+          const app = field(details, "provider")
+            .locator("input:not([type=hidden])")
+            .last();
+          await expect(app).toHaveAttribute(
+            "placeholder",
+            "whatsapp · message received",
+          );
+        }
       });
 
     test("an email trigger asks before it replaces an input that doesn't take an email", async ({
