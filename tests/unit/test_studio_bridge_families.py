@@ -232,8 +232,10 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     # family, stale-worker retirement joins the workers family, and the environment summary,
     # telemetry settings and release usage join as reads, change requests join as their own family, and a
     # draft's studio documents join with their own family, and run statistics join as their own family of reads,
-    # and an AI agent's log joins through the runs family; every earlier crossing stays as it was.
+    # and an AI agent's log joins through the runs family, and log entries across runs join as their own family;
+    # every earlier crossing stays as it was.
     approved_additions = {
+        "execution_logs.list",
         "runs.agent_log",
         "run_statistics.series",
         "run_statistics.workflows",
@@ -285,7 +287,9 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "3ba280e1522358905e2cdb2e4bf66976fdc988018cdc08742c4956b87d1ab159"
     )
     assert {"workers.grant", "ai_connections.test"} <= preserved
-    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+    # Writing log entries is a worker's: it never crosses, while reading a run's log does.
+    assert {"releases.create", "tasks.credentials", "tasks.log", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+    assert "runs.logs" in preserved
 
 
 def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):

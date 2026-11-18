@@ -111,9 +111,9 @@ def test_snapshot_documents_each_operation_exactly():
             "method": "GET",
             "path": environment + "/runs/{identifier}/logs",
             "capability": "run.read",
-            "served": False,
+            "served": True,
             "query": ["level", "source", "node_id", "limit", "cursor"],
-            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500", "501"],
+            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500"],
             "response": "RunLogPage",
         },
     }

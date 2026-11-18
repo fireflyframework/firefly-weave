@@ -421,6 +421,7 @@ type RetainedRecord = Literal[
     "change_requests",
     "alert_events",
     "alerts",
+    "execution_logs",
 ]
 
 

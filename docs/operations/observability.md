@@ -361,6 +361,42 @@ each one needs.
 - **Retention.** Alert history and resolved alerts are kept 30 days, and at
   most 200,000 history events per environment.
 
+## Run logs
+
+A run's log shows what the engine did and what its workers and connectors
+wrote while they ran its steps. Both reads need `run.read`; the
+[API reference](../reference/api.md) has the rules for each.
+
+- **Engine entries** come from the run's own record and are never stored: one
+  per run event in the run's log (started, a step finished or failed, retried,
+  paused, canceled, and so on), and, in the log across runs, one for each run
+  that failed, timed out or was canceled and each step that failed or timed out.
+  They name the step and an error code, never a value, an input, or the reason a
+  person typed.
+- **Worker entries** come from `task_log()` in a worker or a native connector
+  (see the [SDK reference](../reference/sdk.md#task-logs)). The platform stores
+  one only while the worker holds the task's current lease, redacts it again by
+  pattern (leased credential values are hidden by the worker, since the
+  platform never holds them), and takes the run, step, and attempt from the
+  lease. Native HTTP calls write
+  one entry each with the method, the host, the status, and the duration.
+- **Quotas.** 200 entries or 64 KiB per attempt, 2,000 entries or 1 MiB per run,
+  and `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` (200,000) per environment a UTC day.
+  Entries over a quota are dropped and counted.
+- **Reading.** The log across runs reads the last hour by default, at most 7
+  days, or 6 hours when it searches messages; a read that takes longer than 2
+  seconds stops with `503` `WV-UNAVAILABLE` and asks for a narrower range or
+  filter. Test runs are left out unless asked for. An entry of a run whose details are withheld shows as a row
+  without text.
+- **Retention.** Entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by
+  default, at most 30). The operations loop prunes older ones in batches of
+  5,000 within its quarter-second upkeep budget per environment visit, and
+  purging a run removes its entries with it. Log entries never count toward a
+  project's usage.
+- **Privacy.** Logs never reach exported telemetry, alert payloads, integration
+  events, or Weave AI. Workers should log identifiers and counts, never
+  payloads, addresses, or names.
+
 ## Next steps
 
 - Look up the other server settings in [configuration](configuration.md).

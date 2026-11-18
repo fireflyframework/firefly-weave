@@ -33,6 +33,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.connectors.execution import ConnectorExecutionService, ServiceTransport
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.log_values import EXECUTION_LOG_DAILY_ENTRIES
 from firefly_weave.contracts.workers import InstanceRequest
 from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.sdk.worker import Worker
@@ -113,6 +114,8 @@ class NativeDispatcher:
         entries: tuple[ExecutorConfig, ...],
         image_digest: str | None,
         shutdown_seconds: float,
+        *,
+        daily_log_entries: int = EXECUTION_LOG_DAILY_ENTRIES[0],
     ) -> None:
         self.service, self.entries, self.image_digest, self.shutdown_seconds = (
             service,
@@ -120,6 +123,7 @@ class NativeDispatcher:
             image_digest,
             shutdown_seconds,
         )
+        self.daily_log_entries = daily_log_entries
         # One slot per execution the workers can run at once, plus a spare for a pure call that
         # outlived its cancelled execution. Connector calls never hold a request work slot.
         self.reservation = ReservedSlots(sum(entry.capacity for entry in entries) + 1)
@@ -186,7 +190,9 @@ class NativeDispatcher:
             async def execute(lease: Any, scope: Scope = entry.scope, principal: UUID = entry.principal_id) -> Any:
                 return await self.service.execute(scope, principal, lease, reservation=self.reservation)
 
-            transport = ServiceTransport(self.service, entry.scope, entry.principal_id, instance.id)
+            transport = ServiceTransport(
+                self.service, entry.scope, entry.principal_id, instance.id, daily_log_entries=self.daily_log_entries
+            )
             self.workers.append(Worker(transport, {ref: execute for ref in entry.task_types}, entry.capacity))
         # A request can open the dispatcher. An empty context keeps the request's execution
         # lease and identity, which end with its response, out of the long-lived workers.

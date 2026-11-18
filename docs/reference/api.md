@@ -733,10 +733,31 @@ Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
 or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
-**Run summaries, steps, and logs.** `run_summaries.list` and `runs.steps` serve
-scoped operational metadata after checking both token and current permissions.
-`runs.logs` remains a published contract: an authorized request answers `501`
-with `WV-UNAVAILABLE`.
+**Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`,
+`runs.logs`, and `execution_logs.list` serve scoped operational data after
+checking both token and current permissions.
+
+- `runs.logs` merges the engine's entries, worded from the run's events (the
+  step and an error code only), with the entries its workers and connectors
+  wrote, oldest first. `level` keeps that level and above, `source` one source,
+  and `node_id` one static step. A run whose details are withheld answers as
+  `runs.read` does.
+- `execution_logs.list` reads entries across runs, newest first: what workers
+  and connectors wrote, and engine entries for runs that failed, timed out or
+  were canceled and steps that failed or timed out (`warning` when the failure
+  was handled). Without `from` it reads the hour before `to` (default: now). A
+  range longer than 7 days, or than 6 hours with `contains`, answers `422` with
+  `WV-FILTER`. `contains` finds text whatever its case and takes `%` and `_` as
+  plain characters; it searches only what workers and connectors wrote. Test
+  runs are left out unless you send `include_test=true`. An entry of a run whose
+  details are withheld is a row without text, and a search leaves those rows
+  out.
+- A log read that takes longer than 2 seconds answers `503` with
+  `WV-UNAVAILABLE`: narrow the range or the filters.
+- Log pages follow each entry's time, and a page never repeats an entry.
+  Workers send entries in batches, up to a few seconds after they write them,
+  so an entry that arrives after a page and is dated before its last entry
+  shows in a new read from the first page, not on the next page.
 
 - Run summaries and `runs.list` default to `order=started_desc`. They also accept
   `started_asc` and `updated_desc`; `runs.list` additionally accepts `order=id`.
@@ -747,7 +768,8 @@ with `WV-UNAVAILABLE`.
   last. `updated_desc` is a live view: updates can move a run between pages,
   so refresh from the first page to see its latest position. Steps sort by
   scheduled time, static step ID and full instance key; unknown times sort last.
-- `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
+- `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default);
+  `execution_logs.list` too (100 by default).
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
 - Test runs are left out unless you send `include_test=true`, and archived runs
@@ -1310,6 +1332,7 @@ switches a rule off needs neither.
 | `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
 | `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
+| `execution_logs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/execution-logs` | run.read |
 | `runs.agent_log` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/agents/{key}/log` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
@@ -1330,6 +1353,7 @@ switches a rule off needs neither.
 | `tasks.heartbeat` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/heartbeat` | task.heartbeat |
 | `tasks.complete` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/complete` | task.complete |
 | `tasks.fail` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/fail` | task.complete |
+| `tasks.log` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/logs` | task.log |
 | `tasks.credentials` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/credentials` | credential.lease |
 | `subscriptions.save` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/subscriptions` | subscription.manage and connection.manage and connection.bind and source authority |
 | `subscriptions.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/subscriptions` | delivery.read |

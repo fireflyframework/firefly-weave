@@ -37,8 +37,11 @@ from firefly_weave.contracts.workers import (
     TaskError,
     TaskExecutionContext,
     TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
 )
 from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
+from firefly_weave.sdk.task_log import hide_leased
 
 
 class WorkerTransport:
@@ -145,7 +148,16 @@ class WorkerTransport:
     async def credentials(self, request: CredentialRequest) -> CredentialLease:
         response = await self._post_rejected("/tasks/credentials", request.model_dump(mode="json"), lease=request.lease)
         response.raise_for_status()
-        return CredentialLease.model_validate_json(response.content)
+        leased = CredentialLease.model_validate_json(response.content)
+        # The value never reaches this task's log entries.
+        hide_leased(request.lease, leased.value)
+        return leased
+
+    async def log(self, request: TaskLogRequest) -> TaskLogAccepted:
+        """Send log entries about the leased task; the platform answers what it stored and what a quota cut."""
+        response = await self._post_rejected("/tasks/logs", request.model_dump(mode="json"), lease=request.lease)
+        response.raise_for_status()
+        return TaskLogAccepted.model_validate_json(response.content)
 
     async def create_file(self, lease: LeaseProof, request_id: UUID, file: FileCreate) -> FileUpload:
         response = await self.client.post(

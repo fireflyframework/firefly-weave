@@ -209,6 +209,8 @@ from firefly_weave.contracts.run_statistics import (
     WorkflowStatisticsAnswer,
 )
 from firefly_weave.contracts.run_views import (
+    ExecutionLogPage,
+    ExecutionLogQuery,
     RunListQuery,
     RunLogPage,
     RunLogQuery,
@@ -260,6 +262,8 @@ from firefly_weave.contracts.workers import (
     ReleaseRequest,
     TaskExecutionContext,
     TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
     WorkerControlRequest,
     WorkerInstance,
     WorkerRelease,
@@ -1967,7 +1971,23 @@ OPERATIONS = {
             RunLogPage,
             "run.read",
             query=RunLogQuery,
-            served=False,
+            description=(
+                "A run whose details are withheld answers as runs.read does. A read slower than 2 s answers 503 "
+                "WV-UNAVAILABLE."
+            ),
+        ),
+        Operation(
+            "execution_logs.list",
+            ENVIRONMENT + "/execution-logs",
+            "GET",
+            ExecutionLogPage,
+            "run.read",
+            query=ExecutionLogQuery,
+            description=(
+                "An entry of a run whose details are withheld is a row without text; a search by contains leaves "
+                "those rows out. A range longer than 7 days, or than 6 hours with contains, answers 422 WV-FILTER; "
+                "a read slower than 2 s answers 503 WV-UNAVAILABLE."
+            ),
         ),
         Operation(
             "runs.agent_log",
@@ -2099,6 +2119,20 @@ OPERATIONS = {
         ),
         Operation(
             "tasks.fail", ENVIRONMENT + "/tasks/fail", "POST", CompletionAcknowledgment, "task.complete", FailRequest
+        ),
+        Operation(
+            "tasks.log",
+            ENVIRONMENT + "/tasks/logs",
+            "POST",
+            TaskLogAccepted,
+            "task.log",
+            TaskLogRequest,
+            (202,),
+            description=(
+                "Only while the lease is current, about that lease: 409 WV-LOG-LEASE otherwise. A batch over a quota "
+                "keeps what fits; one that finds a quota spent answers 429 WV-LOG-QUOTA (with Retry-After for the "
+                "daily one). The body holds at most 256 KiB (413 WV-LOG-SIZE)."
+            ),
         ),
         Operation(
             "tasks.credentials",

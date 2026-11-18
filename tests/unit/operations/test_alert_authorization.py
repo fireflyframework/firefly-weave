@@ -273,7 +273,8 @@ async def test_a_rule_on_every_target_needs_a_target_its_saver_may_read(way):
 
 
 def test_retention_periods_list_what_the_platform_keeps():
-    periods = {item.record: item.seconds for item in retention_periods().items}
+    # Run log entries are kept as long as WEAVE_EXECUTION_LOG_RETENTION_DAYS says.
+    periods = {item.record: item.seconds for item in retention_periods(12).items}
     day = 86_400
     assert periods == {
         "run_statistics_5m": 2 * day,
@@ -284,4 +285,5 @@ def test_retention_periods_list_what_the_platform_keeps():
         "change_requests": 90 * day,
         "alert_events": 30 * day,
         "alerts": 30 * day,
+        "execution_logs": 12 * day,
     }
