@@ -210,7 +210,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .choice-list, .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
 
 /** A workflow whose decision table step fills the table's inputs field by field. */
 const decisionFormWorkflow = yamlFile(
