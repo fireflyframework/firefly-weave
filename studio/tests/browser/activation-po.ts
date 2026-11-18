@@ -106,6 +106,8 @@ export interface Platform {
   assignments?: number;
   /** Fail the version export, so the pins come from the editor. */
   exportStatus?: number;
+  /** The account's capabilities, when not the default ones. */
+  capabilities?: string[];
 }
 /** The environment, project and publish mocks; returns the captured activation body. */
 export async function platform(page: Page, options: Platform = {}) {
@@ -116,7 +118,12 @@ export async function platform(page: Page, options: Platform = {}) {
   } = { body: null, exports: 0, contracts: [] };
   // Activation is driven from the classic designer here.
   await withClassicDesigner(page);
-  captured.contracts = (await connected(page, { catalog })).exports;
+  captured.contracts = (
+    await connected(page, {
+      catalog,
+      ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+    })
+  ).exports;
   await page.route("**/environments/development/connections?*", (r) =>
     r.fulfill({
       json: {
@@ -354,4 +361,91 @@ export async function openActivation(
   });
   if (review && (await reviewButton.isVisible())) await reviewButton.click();
   return dialog;
+}
+
+const webhookView = (revision: number) => ({
+  id: "w-new",
+  name: "orders-in",
+  kind: "run",
+  activation_id: "activation",
+  secret_ref: "orders-signing",
+  payload_schema: { type: "object" },
+  max_body_bytes: 1048576,
+  tolerance_seconds: 300,
+  principal_id: "p-1",
+  disabled: false,
+  revision,
+});
+
+export interface RecordedWebhooks {
+  created: Record<string, unknown>[];
+  moved: { body: unknown; ifMatch: string | null }[];
+}
+/** The webhooks of the environment: none until one is created, then that one. */
+export async function routeWebhooks(
+  page: Page,
+  failFirst = false,
+): Promise<RecordedWebhooks> {
+  const recorded: RecordedWebhooks = { created: [], moved: [] };
+  let attempts = 0;
+  await page.route("**/environments/development/triggers?*", (r) =>
+    r.fulfill({
+      json: {
+        items: recorded.created.length ? [webhookView(1)] : [],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/environments/development/triggers", (r) => {
+    attempts++;
+    if (failFirst && attempts === 1)
+      return r.fulfill({
+        status: 500,
+        json: { code: "WV-INTERNAL", message: "Broken" },
+      });
+    recorded.created.push(r.request().postDataJSON());
+    return r.fulfill({ status: 201, json: webhookView(1) });
+  });
+  await page.route(
+    "**/environments/development/triggers/w-new/retarget",
+    (r) => {
+      recorded.moved.push({
+        body: r.request().postDataJSON(),
+        ifMatch: r.request().headers()["if-match"] ?? null,
+      });
+      return r.fulfill({ json: webhookView(2) });
+    },
+  );
+  await page.route("**/environments/development/activations?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            id: "activation",
+            name: "pets",
+            revision: 1,
+            retired: false,
+            request: { version_id: versionId },
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/projects/project/workflows?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            id: versionId,
+            name: "pets",
+            version: "1.0.0",
+            digest: "e".repeat(64),
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  return recorded;
 }

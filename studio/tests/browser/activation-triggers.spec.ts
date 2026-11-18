@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFile } from "node:fs/promises";
 import { expect, test, type Download, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { platform, versionId } from "./activation-po";
+import { platform, routeWebhooks } from "./activation-po";
 import { command } from "./support";
 import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
@@ -50,90 +50,6 @@ const canvas = {
     },
   ],
 };
-const view = (revision: number) => ({
-  id: "w-new",
-  name: "orders-in",
-  kind: "run",
-  activation_id: "activation",
-  secret_ref: "orders-signing",
-  payload_schema: { type: "object" },
-  max_body_bytes: 1048576,
-  tolerance_seconds: 300,
-  principal_id: "p-1",
-  disabled: false,
-  revision,
-});
-
-interface Recorded {
-  created: Record<string, unknown>[];
-  moved: { body: unknown; ifMatch: string | null }[];
-}
-/** The webhooks of the environment: none until one is created, then that one. */
-async function webhooks(page: Page, failFirst = false): Promise<Recorded> {
-  const recorded: Recorded = { created: [], moved: [] };
-  let attempts = 0;
-  await page.route("**/environments/development/triggers?*", (r) =>
-    r.fulfill({
-      json: {
-        items: recorded.created.length ? [view(1)] : [],
-        next_cursor: null,
-      },
-    }),
-  );
-  await page.route("**/environments/development/triggers", (r) => {
-    attempts++;
-    if (failFirst && attempts === 1)
-      return r.fulfill({
-        status: 500,
-        json: { code: "WV-INTERNAL", message: "Broken" },
-      });
-    recorded.created.push(r.request().postDataJSON());
-    return r.fulfill({ status: 201, json: view(1) });
-  });
-  await page.route(
-    "**/environments/development/triggers/w-new/retarget",
-    (r) => {
-      recorded.moved.push({
-        body: r.request().postDataJSON(),
-        ifMatch: r.request().headers()["if-match"] ?? null,
-      });
-      return r.fulfill({ json: view(2) });
-    },
-  );
-  await page.route("**/environments/development/activations?*", (r) =>
-    r.fulfill({
-      json: {
-        items: [
-          {
-            id: "activation",
-            name: "pets",
-            revision: 1,
-            retired: false,
-            request: { version_id: versionId },
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
-  );
-  await page.route("**/projects/project/workflows?*", (r) =>
-    r.fulfill({
-      json: {
-        items: [
-          {
-            id: versionId,
-            name: "pets",
-            version: "1.0.0",
-            digest: "e".repeat(64),
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
-  );
-  return recorded;
-}
-
 /** Opens the workflow with its trigger choice in the new editor, connected, and publishes it. */
 async function open(page: Page, sidecar: object = canvas) {
   await withNewEditor(page);
@@ -186,7 +102,7 @@ test("a new webhook is created for the activation, kept for the environment, and
   page,
 }) => {
   await platform(page);
-  const recorded = await webhooks(page);
+  const recorded = await routeWebhooks(page);
   await open(page);
   let dialog = await activateDialog(page);
   await expect(
@@ -243,7 +159,7 @@ test("a trigger that can't be created says why with Retry, and the activation st
   page,
 }) => {
   await platform(page);
-  const recorded = await webhooks(page, true);
+  const recorded = await routeWebhooks(page, true);
   await open(page);
   const dialog = await activateDialog(page);
   await dialog
@@ -275,7 +191,7 @@ test("a new Kafka trigger asks for its Kafka connection, of any version, and is 
   page,
 }) => {
   await platform(page);
-  await webhooks(page);
+  await routeWebhooks(page);
   const KAFKA = "55555555-5555-4555-8555-555555555555";
   const listed: string[] = [];
   await page.route(
