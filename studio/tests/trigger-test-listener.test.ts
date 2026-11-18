@@ -231,6 +231,21 @@ describe("listening for a test event", () => {
     });
   });
 
+  it("ends with a reason when its test URL was retired for it, retiring nothing more", async () => {
+    const fake = new Fake();
+    const listen = listener(fake, []);
+    const watching = listen.start(HOOK, {});
+    await watching.started;
+    listen.ended("The workflow changed, so Studio stopped listening.");
+    await watching.done;
+    expect(listen.state()).toEqual({
+      kind: "failed",
+      triggerId: HOOK.id,
+      message: "The workflow changed, so Studio stopped listening.",
+    });
+    expect(fake.log).toEqual([`listen ${HOOK.id}`]);
+  });
+
   it("says why it can't listen, and Stop listening retires the test URL", async () => {
     const fake = new Fake();
     fake.answer = {

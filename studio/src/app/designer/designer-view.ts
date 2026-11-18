@@ -24,6 +24,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   type DoCheck,
+  type OnDestroy,
   inject,
   input,
   viewChild,
@@ -1497,7 +1498,11 @@ const SPLIT_MIN_WIDTH = 1024;
       <weave-step-details-mount [host]="h" [canvas]="canvas()" />
     }`,
 })
-export class DesignerView implements DoCheck {
+export class DesignerView implements DoCheck, OnDestroy {
+  /** Leaving the editor retires its test activation, and listening stops. */
+  ngOnDestroy(): void {
+    connectionsPort(this.host())?.editorClosed();
+  }
   /** The editor shell. */
   host = input.required<App>();
   /**
@@ -1507,6 +1512,11 @@ export class DesignerView implements DoCheck {
    */
   ngDoCheck(): void {
     const h = this.host();
+    // A test activation of another draft or revision is retired as the draft changes.
+    connectionsPort(h)?.draftNow(() => ({
+      draftId: h.draftId ?? "",
+      draftRevision: h.draftRevision,
+    }));
     if (!h.designerLink) return;
     const link = parseRunsLink(h.designerLink);
     h.designerLink = "";

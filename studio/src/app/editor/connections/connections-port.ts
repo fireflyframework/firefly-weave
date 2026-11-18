@@ -503,6 +503,40 @@ export class ConnectionsPort {
   listeningTo(): string | null {
     return this.listenerMade()?.listeningTo() ?? null;
   }
+  /**
+   * The editor's draft now: a held test activation of another draft or
+   * revision runs what the person no longer sees, so it is retired, and
+   * listening on it ends with why. Writes no signal while it is called.
+   */
+  draftNow(
+    draft: () => { draftId: string; draftRevision: number | undefined },
+  ) {
+    const service = untracked(this.activations);
+    const held = service?.heldDraft();
+    if (!service || !held) return;
+    const now = draft();
+    if (
+      held.draftId === now.draftId &&
+      held.draftRevision === now.draftRevision
+    )
+      return;
+    const listener = untracked(this.listenerMade);
+    queueMicrotask(async () => {
+      if (await service.retireUnless(draft))
+        listener?.ended(
+          "The workflow changed, so Studio stopped listening. Listen again to test the change.",
+        );
+    });
+  }
+  /** The editor closed: listening stops and the test activation is retired. */
+  editorClosed() {
+    const listener = untracked(this.listenerMade);
+    const service = untracked(this.activations);
+    queueMicrotask(() => {
+      void listener?.stop();
+      void service?.forget();
+    });
+  }
   /** Runs Execute workflow in the environment started on the test activation: never a test event. */
   readonly ownRuns = new Set<string>();
   private readonly workflowTest = signal(false);

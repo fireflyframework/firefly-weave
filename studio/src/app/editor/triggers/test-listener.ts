@@ -208,6 +208,13 @@ export class TestEventListener {
     return { started: started.then(() => undefined), done };
   }
 
+  /** Ends listening because its test URL was already retired (the draft changed): says why. */
+  ended(message: string): void {
+    const state = this.state();
+    if (!state || state.kind === "failed" || state.kind === "received") return;
+    this.ticket++;
+    this.state.set({ kind: "failed", triggerId: state.triggerId, message });
+  }
   /** Stops listening and retires the test URL. */
   async stop(): Promise<void> {
     this.ticket++;

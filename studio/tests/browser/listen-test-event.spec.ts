@@ -28,7 +28,7 @@ import { parse } from "yaml";
 import { RUN_IDS, VERSIONS, routeRuns, runFixture } from "./runs-po";
 import { routeStepTests } from "./step-tests-po";
 import { StepDetailsPage } from "./step-details-po";
-import { allCapabilities } from "./support";
+import { allCapabilities, showView } from "./support";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -317,4 +317,53 @@ test.describe("on a phone", () => {
       dialog.getByRole("textbox", { name: "Make a POST request to:" }),
     ).toBeVisible();
   });
+});
+
+test("a changed draft retires the test URL and listening says why; leaving the editor retires it too", async ({
+  page,
+}) => {
+  const { dialog, listening } = await openWebhook(page);
+  const listen = () =>
+    dialog
+      .locator(".sd-actions")
+      .getByRole("button", { name: "Listen for test event", exact: true })
+      .click();
+  await listen();
+  await expect(
+    dialog.getByRole("textbox", { name: "Make a POST request to:" }),
+  ).toHaveValue(TEST_URL);
+  // The workflow changes and is saved: the test URL ran the old draft.
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await showView(page, "Source");
+  const source = page.getByRole("textbox", { name: "Workflow source" });
+  await source.fill(
+    (await source.inputValue()).replace("version: 1.0.0", "version: 1.0.1"),
+  );
+  await showView(page, "Designer");
+  await page
+    .getByRole("dialog", { name: "Apply the changes typed in Source?" })
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect
+    .poll(() => listening.retired, { timeout: 15_000 })
+    .toEqual(["ta-1"]);
+  await expect(tileShape(page)).not.toHaveClass(/\blistening\b/);
+  await page
+    .locator(`.tile-node[data-tile="$trigger:${WEBHOOK}"] .tile-body`)
+    .dblclick();
+  await expect(dialog).toContainText(
+    "The workflow changed, so Studio stopped listening. Listen again to test the change.",
+  );
+
+  // Listening again, then leaving the editor, retires the new test URL.
+  await listen();
+  await expect(
+    dialog.getByRole("textbox", { name: "Make a POST request to:" }),
+  ).toHaveValue(TEST_URL);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect
+    .poll(() => listening.retired, { timeout: 15_000 })
+    .toEqual(["ta-1", "ta-1"]);
 });

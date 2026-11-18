@@ -75,6 +75,9 @@ export type ServiceOutcome<T> =
 
 interface Held {
   key: string;
+  /** The saved draft it was made for. */
+  draftId: string;
+  draftRevision: number;
   activation: DraftTestActivation;
   /**
    * The listen settings its test URL checks, once it listens. Listening
@@ -181,7 +184,12 @@ export class TestActivationService {
     }
     if (!created.ok)
       return refused(this.words(created.refusal, environment.name));
-    this.held = { key, activation: created.value };
+    this.held = {
+      key,
+      draftId: draft.draftId,
+      draftRevision: draft.draftRevision,
+      activation: created.value,
+    };
     return created;
   }
 
@@ -293,6 +301,35 @@ export class TestActivationService {
   /** The draft changed: its test activation no longer runs what the person sees. */
   draftChanged(): Promise<void> {
     return this.serial(() => this.retireHeld());
+  }
+
+  /** The saved draft the held activation runs, or null when none is held. */
+  heldDraft(): { draftId: string; draftRevision: number } | null {
+    const held = this.held;
+    return held
+      ? { draftId: held.draftId, draftRevision: held.draftRevision }
+      : null;
+  }
+
+  /**
+   * Retires the held activation unless it runs the editor's draft as it is
+   * now, read when this call's turn comes; true when it retired one.
+   */
+  retireUnless(
+    now: () => { draftId: string; draftRevision: number | undefined },
+  ): Promise<boolean> {
+    return this.serial(async () => {
+      const held = this.held;
+      const draft = now();
+      if (
+        !held ||
+        (held.draftId === draft.draftId &&
+          held.draftRevision === draft.draftRevision)
+      )
+        return false;
+      await this.retireHeld();
+      return true;
+    });
   }
 
   /** The editor closed. */

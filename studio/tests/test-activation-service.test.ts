@@ -429,6 +429,37 @@ describe("retiring", () => {
     ).toEqual(["/test-activations/ta-1", "/test-activations/ta-2"]);
   });
 
+  it("retires the activation only once the editor's draft is another one or another revision", async () => {
+    const { api, service } = setup();
+    api.answers = [activation("ta-1"), RUN, {}];
+    await service.execute({}, BINDINGS);
+    // The draft it was made for, at the revision saved: it stays.
+    expect(
+      await service.retireUnless(() => ({
+        draftId: "draft-1",
+        draftRevision: 4,
+      })),
+    ).toBe(false);
+    expect(
+      await service.retireUnless(() => ({
+        draftId: "draft-1",
+        draftRevision: 5,
+      })),
+    ).toBe(true);
+    // Nothing is held any more: nothing more to retire.
+    expect(
+      await service.retireUnless(() => ({
+        draftId: "draft-2",
+        draftRevision: 1,
+      })),
+    ).toBe(false);
+    expect(
+      api.calls
+        .filter((call) => call.method === "DELETE")
+        .map((call) => call.path),
+    ).toEqual(["/test-activations/ta-1"]);
+  });
+
   it("never throws while retiring", async () => {
     const { api, service } = setup();
     api.answers = [activation("ta-1"), RUN, new TypeError("offline")];
