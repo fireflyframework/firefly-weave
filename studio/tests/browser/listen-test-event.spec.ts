@@ -205,6 +205,10 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
     "view-tab-runs",
     { timeout: 10_000 },
   );
+  // Reading a run, nothing listens: its input never becomes a cURL to paste.
+  await expect(
+    dialog.getByRole("button", { name: "Listen for test event" }),
+  ).toHaveCount(0);
   // The payload is the workflow's test input now, kept as from a test call.
   await expect
     .poll(() =>

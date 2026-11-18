@@ -347,7 +347,11 @@ export class TriggerEventPane {
   /** A webhook connected to an environment with test calls on listens for its test event. */
   canListen(): boolean {
     return (
-      this.trigger().kind === "webhook" && !!this.host() && !this.blocked()
+      this.trigger().kind === "webhook" &&
+      !!this.host() &&
+      // Reading a run, the sample is that run's input: it never goes into a cURL.
+      !this.session().controller.viewingRuns() &&
+      !this.blocked()
     );
   }
   /** What listening is doing for this trigger, or null. */
