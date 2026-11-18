@@ -42,12 +42,21 @@ from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expressions import ExpressionFailure, evaluate
 from firefly_weave.compiler.schemas import validate_payload
-from firefly_weave.contracts.connectors import ConnectorFailure
+from firefly_weave.contracts.connectors import (
+    ActionContext,
+    ConnectionRequest,
+    ConnectionRevision,
+    ConnectorAdapter,
+    ConnectorFailure,
+    ConnectorInvocation,
+    ResolvedSecret,
+)
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionStep,
     ActionUndo,
     Branch,
+    ConnectorImplementation,
     ForEachStep,
     ParallelStep,
     SwitchStep,
@@ -104,6 +113,8 @@ _REPEATS: Final[Mapping[ConformanceCheck, tuple[int, int]]] = {
 TIMEOUT_CODE: Final = "TIMEOUT"
 INPUT_CODE: Final = "INVALID_INPUT"
 _FAILURE_CODE: Final = re.compile(FAILURE_CODE_PATTERN)
+# The request and response limits native execution gives a connector.
+_MAX_BYTES: Final = 1_048_576
 # Any run ID: the requests built before the checks start, to find setup errors, are never sent.
 _SAMPLE_RUN: Final = "00000000-0000-0000-0000-000000000000"
 
@@ -197,6 +208,8 @@ class HandlerParticipant:
     """Delivers requests to SDK worker handlers keyed by ``taskType@taskVersion``, as ``Worker(handlers=...)``
     takes them, with the lease a worker would claim, and maps their failures as the worker runner does."""
 
+    kind: Final = "worker"
+
     def __init__(self, handlers: Mapping[str, TaskHandler]) -> None:
         self.handlers = dict(handlers)
 
@@ -225,6 +238,119 @@ class HandlerParticipant:
             return failure(error)
         except Exception:
             return Failed("HANDLER_FAILED")
+
+
+class ConnectorParticipant:
+    """Delivers requests to connector adapters keyed by connector reference (``weave-postgresql@1.0.0``), with the
+    context native execution builds: the action's config and schemas, the transaction, and the step's connection.
+
+    ``connections`` maps a workflow connection slot to its connection request; ``secrets(slot, name)`` returns a
+    secret of that connection. Every check gets a new connection revision ID per slot, so its rows never share a
+    namespace with a real run's or another check's.
+    """
+
+    kind: Final = "connector"
+
+    def __init__(
+        self,
+        adapters: Mapping[str, ConnectorAdapter],
+        connections: Mapping[str, ConnectionRequest],
+        secrets: Callable[[str, str], str],
+        schemas: Mapping[str, JsonObject],
+        *,
+        new_id: Callable[[], UUID] = uuid4,
+    ) -> None:
+        self.adapters, self.connections, self.secrets = dict(adapters), dict(connections), secrets
+        self.schemas, self.new_id = dict(schemas), new_id
+        self._revisions: dict[tuple[str, str], ConnectionRevision] = {}
+
+    def prepare(self, actions: Sequence[PhaseAction]) -> None:
+        for item in actions:
+            implementation = item.action.spec.implementation
+            if not isinstance(implementation, ConnectorImplementation):
+                raise ConformanceError("WV-CONFORMANCE-HANDLER")
+            request = self.connections.get(item.connection or "")
+            if implementation.uses not in self.adapters or request is None:
+                raise ConformanceError("WV-CONFORMANCE-CONNECTION")
+            for name in request.secret_refs:
+                try:
+                    present = isinstance(self.secrets(cast(str, item.connection), name), str)
+                except LookupError:
+                    present = False
+                if not present:
+                    raise ConformanceError("WV-CONFORMANCE-CONNECTION")
+
+    async def deliver(self, request: Request) -> Completed | Failed:
+        implementation = request.action.spec.implementation
+        assert isinstance(implementation, ConnectorImplementation) and request.connection is not None
+        slot, connection = request.connection, self.connections[request.connection]
+        revision = self._revision(request.transaction.id.partition(":")[0], slot, connection, implementation.uses)
+
+        async def credentials(name: str) -> ResolvedSecret:
+            if name not in connection.secret_refs:
+                raise LookupError("The connection names no such secret")
+            return ResolvedSecret(value=self.secrets(slot, name))
+
+        async def authorize() -> None:
+            return None
+
+        spec = request.action.spec
+        invocation = ConnectorInvocation(
+            revision,
+            dict(implementation.config or {}),
+            implementation.action,
+            spec.input_schema,
+            spec.output_schema,
+            _MAX_BYTES,
+            _MAX_BYTES,
+            None,
+            dict(self.schemas),
+        )
+        context = ActionContext(
+            request.operation_key,
+            request.deadline,
+            credentials,
+            invocation,
+            authorize=authorize,
+            transaction=request.transaction,
+        )
+        try:
+            return Completed(await self.adapters[implementation.uses].execute(cast(JsonObject, request.input), context))
+        except ConnectorFailure as error:
+            return failure(error)
+        except Exception:
+            return Failed("HANDLER_FAILED")
+
+    def _revision(self, run: str, slot: str, connection: ConnectionRequest, uses: str) -> ConnectionRevision:
+        key = run, slot
+        if key not in self._revisions:
+            self._revisions[key] = ConnectionRevision(
+                **connection.model_dump(by_alias=True),
+                id=self.new_id(),
+                revision=1,
+                connector=uses,
+                connector_digest="0" * 64,
+                adapter=uses.partition("@")[0],
+            )
+        return self._revisions[key]
+
+
+class Participants:
+    """Routes each request to the participant for how its action runs: a worker or a connector."""
+
+    def __init__(self, *parts: HandlerParticipant | ConnectorParticipant) -> None:
+        self.parts = {part.kind: part for part in parts}
+
+    def prepare(self, actions: Sequence[PhaseAction]) -> None:
+        for kind, missing in (("worker", "WV-CONFORMANCE-HANDLER"), ("connector", "WV-CONFORMANCE-CONNECTION")):
+            mine = [item for item in actions if item.action.spec.implementation.kind == kind]
+            if mine and kind not in self.parts:
+                raise ConformanceError(missing)
+            if mine:
+                self.parts[kind].prepare(mine)
+
+    async def deliver(self, request: Request) -> Completed | Failed:
+        return await self.parts[request.action.spec.implementation.kind].deliver(request)
 
 
 def capability(implementation: WorkerImplementation) -> str:

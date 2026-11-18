@@ -32,15 +32,17 @@ import yaml
 
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expressions import evaluate
-from firefly_weave.contracts.connectors import ConnectorFailure
+from firefly_weave.contracts.connectors import ConnectionRequest, ConnectorFailure
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.transactions import undo_context
 from firefly_weave.contracts.workers import LeaseTransaction
 from firefly_weave.sdk.participant_conformance import (
     Completed,
     ConformanceError,
+    ConnectorParticipant,
     Failed,
     HandlerParticipant,
+    Participants,
     Request,
     check_step,
     participant_step,
@@ -444,3 +446,200 @@ async def test_a_phase_input_that_doesnt_fit_its_action_is_never_sent():
         ("cancel", "failed", "INVALID_INPUT", "none")
     ]
     assert not any(lease.capability == RELEASE for lease in system.leases)
+
+
+SQL_SCHEMAS = {
+    "inputSchema": {
+        "type": "object",
+        "properties": {"parameters": {"type": "object"}},
+        "required": ["parameters"],
+        "additionalProperties": False,
+    },
+    "outputSchema": {
+        "type": "object",
+        "properties": {"rowCount": {"type": "integer", "minimum": 0}, "rows": {"type": "array"}},
+        "required": ["rowCount", "rows"],
+        "additionalProperties": False,
+    },
+}
+
+
+def sql_action(name: str, statement: str) -> dict:
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {"name": name, "version": "1.0.0"},
+        "spec": {
+            "implementation": {
+                "kind": "connector",
+                "uses": "weave-postgresql@1.0.0",
+                "action": "idempotent-command",
+                "config": {"statement": statement, "parameters": {"reference": {"type": "string"}}},
+            },
+            "connection": {"connector": "weave-postgresql@1.0.0"},
+            "sideEffect": "idempotency_key",
+            "timeoutSeconds": 30,
+            **SQL_SCHEMAS,
+        },
+    }
+
+
+def sql_catalog() -> CatalogSnapshot:
+    documents = [
+        sql_action("sql.hold", "INSERT INTO holds (reference) VALUES (:reference)"),
+        sql_action("sql.confirm-hold", "UPDATE holds SET kept = true WHERE reference = :reference"),
+        sql_action("sql.release-hold", "DELETE FROM holds WHERE reference = :reference"),
+        *CATALOG["definitions"],
+    ]
+    return CatalogSnapshot.from_definitions([load_definition(item) for item in documents], tasks=CATALOG["tasks"])
+
+
+def sql_workflow(*, forward: str = "sql.hold", cancel_connection: str | None = None) -> dict:
+    document = workflow()
+    hold = document["spec"]["steps"][1]["steps"][0]
+    reference = {"object": {"parameters": {"object": {"reference": {"ref": "/input/moveId"}}}}}
+    hold["uses"] = f"{forward}@1.0.0"
+    if forward == "sql.hold":
+        hold["with"] = reference
+    hold["confirm"] = {"kind": "action", "uses": "sql.confirm-hold@1.0.0", "with": reference}
+    hold["cancel"] = {"kind": "action", "uses": "sql.release-hold@1.0.0", "with": reference}
+    if cancel_connection:
+        hold["cancel"]["connection"] = cancel_connection
+    document["spec"]["connections"]["other"] = {"connector": "weave-postgresql@1.0.0"}
+    return document
+
+
+class Database:
+    """A connector adapter written for these tests: it records each context and keeps the contract by key."""
+
+    def __init__(self):
+        self.contexts: list = []
+        self.answers: dict = {}
+        self.undone: set = set()
+        self.secrets: list = []
+
+    async def execute(self, input, context):
+        self.contexts.append(context)
+        self.secrets.append((await context.credentials("password")).value)
+        scope = (context.invocation.connection.id, context.operation_key)
+        branch = (context.invocation.connection.id, context.transaction.branch_key)
+        if context.transaction.phase == "try" and branch in self.undone:
+            raise ConnectorFailure("SQL_ALREADY_UNDONE", "failed", effect="none")
+        if scope in self.answers:
+            return self.answers[scope]
+        if context.transaction.phase == "cancel" and branch not in self.answers:
+            self.undone.add(branch)
+        self.answers[scope] = {"rowCount": 1, "rows": []}
+        return self.answers[scope]
+
+    async def test_connection(self, connection):
+        raise AssertionError("The check never tests a connection")
+
+
+def connection(name: str, database: str) -> ConnectionRequest:
+    return ConnectionRequest(
+        name=name,
+        connector_version_id=UUID(int=99),
+        config={"database": database},
+        secretRef={"password": f"{name}-password"},
+    )
+
+
+def connector_participant(database: Database, secrets=None, *, slots=("source", "other")) -> ConnectorParticipant:
+    return ConnectorParticipant(
+        {"weave-postgresql@1.0.0": database},
+        {slot: connection(slot, f"{slot}-db") for slot in slots},
+        secrets or (lambda slot, name: f"{slot}-secret"),
+        {},
+        new_id=ids(),
+    )
+
+
+async def test_a_connector_request_carries_the_action_config_and_the_transaction():
+    database = Database()
+    step = participant_step(sql_workflow(), "hold", sql_catalog())
+    report = await check_step(step, connector_participant(database), INPUT, new_id=ids())
+    assert report.passed
+    context = database.contexts[0]
+    first = UUID(int=1)
+    assert context.operation_key == f"{first}:hold"
+    assert context.transaction == LeaseTransaction(
+        id=f"{first}:move", branch_key=f"{first}:hold", phase="try", mode="reserve"
+    )
+    invocation = context.invocation
+    assert invocation.config == step.forward.action.spec.implementation.config
+    assert invocation.action == "idempotent-command"
+    assert (invocation.input_schema, invocation.output_schema) == (
+        SQL_SCHEMAS["inputSchema"],
+        SQL_SCHEMAS["outputSchema"],
+    )
+    assert (invocation.connection.adapter, invocation.connection.connector) == (
+        "weave-postgresql",
+        "weave-postgresql@1.0.0",
+    )
+    assert invocation.connection.config == {"database": "source-db"}
+    assert invocation.target is None and invocation.max_request_bytes == invocation.max_response_bytes == 1048576
+    await context.authorize()
+
+
+async def test_every_check_uses_its_own_connection_revision():
+    database = Database()
+    step = participant_step(sql_workflow(), "hold", sql_catalog())
+    await check_step(step, connector_participant(database), INPUT, new_id=ids())
+    by_run: dict[str, set] = {}
+    for context in database.contexts:
+        by_run.setdefault(context.operation_key.partition(":")[0], set()).add(context.invocation.connection.id)
+    assert all(len(revisions) == 1 for revisions in by_run.values())
+    revisions = [next(iter(revisions)) for revisions in by_run.values()]
+    assert len(set(revisions)) == len(revisions) == 7
+
+
+async def test_a_connector_secret_comes_from_the_named_variable():
+    database = Database()
+    step = participant_step(sql_workflow(), "hold", sql_catalog())
+    await check_step(step, connector_participant(database), INPUT, new_id=ids())
+    assert set(database.secrets) == {"source-secret"}
+    with pytest.raises(LookupError):
+        await database.contexts[0].credentials("api-key")
+
+    def missing(slot, name):
+        raise KeyError(name)
+
+    with pytest.raises(ConformanceError) as refused:
+        await check_step(step, connector_participant(Database(), missing), INPUT, new_id=ids())
+    assert refused.value.code == "WV-CONFORMANCE-CONNECTION"
+    with pytest.raises(ConformanceError) as refused:
+        await check_step(step, connector_participant(Database(), slots=("other",)), INPUT, new_id=ids())
+    assert refused.value.code == "WV-CONFORMANCE-CONNECTION"
+
+
+async def test_an_undo_on_another_slot_uses_that_slots_connection():
+    database = Database()
+    step = participant_step(sql_workflow(cancel_connection="other"), "hold", sql_catalog())
+    await check_step(step, connector_participant(database), INPUT, new_id=ids())
+    slots = {
+        (context.transaction.phase, context.invocation.connection.config["database"]) for context in database.contexts
+    }
+    assert slots == {("try", "source-db"), ("confirm", "source-db"), ("cancel", "other-db")}
+    assert ("other-secret" in database.secrets) and ("source-secret" in database.secrets)
+
+
+async def test_requests_are_routed_by_how_their_action_runs():
+    database, system = Database(), System()
+    step = participant_step(sql_workflow(forward="source-system.hold-quantity"), "hold", sql_catalog())
+    both = Participants(HandlerParticipant(system.handlers()), connector_participant(database))
+    report = await check_step(step, both, INPUT, new_id=ids())
+    # The cancel runs on another system than the step, so nothing there can refuse the late step.
+    assert failures(report) == {"try-after-cancel": "applied-late"}
+    assert {lease.transaction.phase for lease in system.leases} == {"try"}
+    assert {context.transaction.phase for context in database.contexts} == {"confirm", "cancel"}
+    for alone, code in (
+        (HandlerParticipant(system.handlers()), "WV-CONFORMANCE-HANDLER"),
+        (connector_participant(database), "WV-CONFORMANCE-HANDLER"),
+    ):
+        with pytest.raises(ConformanceError) as refused:
+            await check_step(step, alone, INPUT, new_id=ids())
+        assert refused.value.code == code
+    with pytest.raises(ConformanceError) as refused:
+        await check_step(step, Participants(HandlerParticipant(system.handlers())), INPUT, new_id=ids())
+    assert refused.value.code == "WV-CONFORMANCE-CONNECTION"
