@@ -54,6 +54,24 @@ from firefly_weave.triggers.retarget import (
 from firefly_weave.triggers.retarget import disabled as stopped
 from firefly_weave.triggers.webhooks import authenticate, denied
 
+# A draft test activation's listen route is a webhook on a test activation: it's the test activation's, so the
+# trigger operations never list, read, stop or move it.
+VISIBLE = (
+    "NOT EXISTS(SELECT 1 FROM activation_revisions a WHERE a.tenant_id=trigger_routes.tenant_id "
+    "AND a.project_id=trigger_routes.project_id AND a.environment_id=trigger_routes.environment_id "
+    "AND a.id=trigger_routes.activation_id AND a.test)"
+)
+
+
+async def listens_for_test(repository: RuntimeRepository, activation: UUID) -> bool:
+    """Whether a route on this activation is a draft test activation's listen route."""
+    rows = await repository.rows(
+        "SELECT a.test FROM activation_revisions a WHERE a.tenant_id=:tenant AND a.project_id=:project "
+        "AND a.environment_id=:environment AND a.id=:id",
+        id=activation,
+    )
+    return bool(rows and rows[0]["test"])
+
 
 def _view(row: dict[str, Any]) -> Trigger:
     """A stored route as its contract reads it: the columns a disable or a retarget change win over the payload."""
@@ -140,7 +158,7 @@ class WebhookService:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
             rows = await RuntimeRepository(tx).rows(
-                f"SELECT disabled FROM trigger_routes WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
+                f"SELECT disabled FROM trigger_routes WHERE {SCOPE} AND id=:id AND {VISIBLE} FOR UPDATE", id=identifier
             )
             if not rows or rows[0]["disabled"]:
                 return
@@ -180,7 +198,8 @@ class WebhookService:
             self.runtime.require(actor, scope, "run.start", context)
             repository = RuntimeRepository(tx)
             rows = await repository.rows(
-                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id FOR UPDATE",
+                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id AND {VISIBLE} "
+                "FOR UPDATE",
                 id=identifier,
             )
             if not rows:
@@ -280,9 +299,12 @@ class WebhookService:
             if not rows or rows[0]["disabled"] or any(rows[0][k] != v for k, v in route.items()):
                 raise denied()
             trigger = Trigger.model_validate_json(json.dumps(rows[0]["payload"]))
+            # A listen route starts test runs of its draft test activation, under step.test, until it expires.
+            listening = trigger.activation_id is not None and await listens_for_test(repository, trigger.activation_id)
+            capability = "step.test" if listening else "run.start" if trigger.kind == "run" else "run.signal"
             try:
                 actor = await self.access.load_principal(trigger.principal_id, tx=tx)
-                self.runtime.require(actor, scope, "run.start" if trigger.kind == "run" else "run.signal", context)
+                self.runtime.require(actor, scope, capability, context)
             except (AccessDenied, AuthenticationFailed):
                 raise denied() from None
             self.secrets.check(scope, trigger.secret_ref)
@@ -306,7 +328,12 @@ class WebhookService:
                     f"webhook:{trigger.id}:{event}",
                     context=context,
                     tx=tx,
-                    start_facts=RunStartFacts(origin="webhook"),
+                    # A test run is always a test run's origin, however its input arrived.
+                    start_facts=RunStartFacts(origin="test", test=True)
+                    if listening
+                    else RunStartFacts(origin="webhook"),
+                    capability=capability,
+                    test_activation=listening,
                 )
                 run_id = run.id
             else:
@@ -342,7 +369,7 @@ class WebhookService:
                 "trigger.receive",
                 str(trigger.id),
                 scope=scope,
-                capability="run.start" if trigger.kind == "run" else "run.signal",
+                capability=capability,
                 context=context,
                 details={"receipt_id": str(receipt.id)},
             )
@@ -357,15 +384,13 @@ class WebhookService:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
             ids = await page_ids(tx, "trigger_routes", limit, cursor)
-            items = []
+            items: list[dict[str, Any]] = []
             for identifier in ids[:limit]:
-                row = (
-                    await RuntimeRepository(tx).rows(
-                        f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id",
-                        id=identifier,
-                    )
-                )[0]
-                items.append(_view(row).model_dump(mode="json"))
+                rows = await RuntimeRepository(tx).rows(
+                    f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id AND {VISIBLE}",
+                    id=identifier,
+                )
+                items.extend(_view(row).model_dump(mode="json") for row in rows)
             return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
 
     async def read(self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext) -> Trigger:
@@ -373,7 +398,8 @@ class WebhookService:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
             rows = await RuntimeRepository(tx).rows(
-                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id", id=identifier
+                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id AND {VISIBLE}",
+                id=identifier,
             )
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Trigger not found")

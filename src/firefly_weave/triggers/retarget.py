@@ -176,11 +176,15 @@ async def activation_facts(tx: Transaction, identifier: UUID) -> ActivationFacts
 
 
 async def checked_target(tx: Transaction, current: UUID | None, target: UUID) -> None:
-    """Refuse a trigger without a current activation, and a target that isn't its workflow's here."""
+    """Refuse a trigger without a current activation, and a target that isn't its workflow's here.
+
+    A trigger of a test activation (a draft test activation's listen route) belongs to that activation and never
+    moves: it isn't found.
+    """
     if current is None:
         raise signal_target()
     facts = await activation_facts(tx, current)
-    if facts is None:
+    if facts is None or facts.test:
         raise not_found()
     same_workflow(facts, await activation_facts(tx, target))
 
