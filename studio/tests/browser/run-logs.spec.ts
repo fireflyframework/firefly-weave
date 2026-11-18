@@ -329,6 +329,33 @@ test.describe("a run's Logs section", () => {
     ).toBeUndefined();
   });
 
+  test("markup in a step name, a field name and a field value shows as text", async ({
+    page,
+  }) => {
+    const step = "<b>step</b>";
+    const name = '<img src="x" onerror="window.__logged = 3">';
+    const value =
+      '<script>window.__logged = 4</script><a href="https://example.org">link</a>';
+    await platform(page, {
+      [fixtureIds.failed]: [
+        entry({
+          source: "worker",
+          message: "Looked up",
+          node_id: step,
+          fields: { [name]: value },
+        }),
+      ],
+    });
+    await page.goto(`/operate/runs/${fixtureIds.failed}`);
+    const row = rowsOf(page).first();
+    await expect(row.locator(".step")).toHaveText(step);
+    await expect(row.locator(".details")).toHaveText(`${name}=${value}`);
+    await expect(section(page).locator("img, b, script, a")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as { __logged?: number }).__logged),
+    ).toBeUndefined();
+  });
+
   test("an older platform says it can't show logs and is asked once", async ({
     page,
   }) => {

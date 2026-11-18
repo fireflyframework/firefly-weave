@@ -500,6 +500,45 @@ test.describe("Operate › Logs", () => {
     ).toBeUndefined();
   });
 
+  test("markup in a workflow, a step name, a field name and a field value shows as text", async ({
+    page,
+  }) => {
+    const workflow = "<i>workflow</i>";
+    const step = "<b>step</b>";
+    const name = '<img src="x" onerror="window.__logged = 3">';
+    const value =
+      '<script>window.__logged = 4</script><a href="https://example.org">link</a>';
+    await platform(page, {
+      pages: {
+        "": {
+          items: [
+            entry({
+              message: "Looked up",
+              workflow_name: workflow,
+              node_id: step,
+              fields: { [name]: value },
+            }),
+          ],
+          next: null,
+        },
+      },
+    });
+    await openLogs(page);
+    const row = rows(page).first();
+    await expect(row.locator(".wf")).toContainText(`${workflow} 1.3.0`);
+    await expect(row.locator(".step")).toHaveText(step);
+    await expect(row.locator(".details")).toHaveText(`${name}=${value}`);
+    await expect(table(page).locator("img, b, i, script, .msg a")).toHaveCount(
+      0,
+    );
+    await expect(
+      page.locator("#logs-filters").locator("img, b, i, script"),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as { __logged?: number }).__logged),
+    ).toBeUndefined();
+  });
+
   test("says when a read took too long, and tries again", async ({ page }) => {
     const logs = await platform(page, 503);
     await openLogs(page);
