@@ -50,6 +50,8 @@ export type StepTestRefusal =
   | {
       kind: "release";
       choices: Record<string, { id: string; label: string }[]>;
+      /** The platform's own sentence, such as "No release in this environment runs …". */
+      message: string;
     }
   | { kind: "input"; diagnostics: { path: string; code: string }[] }
   | { kind: "secret"; paths: string[] }
@@ -267,7 +269,9 @@ function typedRefusal(error: ApiError): StepTestRefusal | null {
     }
     case "WV-STEPTEST-RELEASE": {
       const choices = readChoices(result["choices"]);
-      return choices ? { kind: "release", choices } : null;
+      return choices
+        ? { kind: "release", choices, message: error.message }
+        : null;
     }
     case "WV-STEPTEST-INPUT": {
       const raw = result["diagnostics"];

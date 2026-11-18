@@ -276,6 +276,7 @@ describe("the step test client", () => {
     ).toEqual({
       kind: "release",
       choices: { "acme.send@1.0.0": [{ id: "r1", label: "acme 1.0.0" }] },
+      message: "WV-STEPTEST-RELEASE said no.",
     });
     expect(
       refusalOf(

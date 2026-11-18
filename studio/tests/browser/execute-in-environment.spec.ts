@@ -241,6 +241,31 @@ for (const size of sizes)
       });
     });
 
+    test("no release that can run the step says so instead of asking", async ({
+      page,
+    }) => {
+      const { details } = await ready(page, {
+        starts: [
+          {
+            status: 422,
+            json: {
+              code: "WV-STEPTEST-RELEASE",
+              message: "No release in this environment runs weave-http@2.0.0.",
+              result: { choices: { "weave-http@2.0.0": [] } },
+            },
+          },
+        ],
+        views: ok.views,
+      });
+      await run(details);
+      await expect(output(details)).toContainText(
+        "No release in this environment runs weave-http@2.0.0.",
+      );
+      await expect(
+        page.getByRole("alertdialog", { name: "Choose a release" }),
+      ).toHaveCount(0);
+    });
+
     test("a connection problem names the slot and Fix opens the dropdown", async ({
       page,
     }) => {

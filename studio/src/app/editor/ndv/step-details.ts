@@ -1385,6 +1385,11 @@ export class StepDetails {
         });
         return;
       case "release":
+        // No release here can run a dependency: there's nothing to choose.
+        if (Object.values(refusal.choices).some((list) => !list.length)) {
+          this.realNotice(refusal.message);
+          return;
+        }
         this.realPending = { body, ack };
         this.question.set({
           kind: "release",
