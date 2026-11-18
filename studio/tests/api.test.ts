@@ -555,18 +555,24 @@ describe("the person a change is for", () => {
     expect(sentHeaders(fetch, 1)["X-Weave-Principal"]).toBe(PRINCIPAL);
   });
 
-  it("reads and host calls don't", async () => {
+  it("only changes to the platform name the person, not reads or host calls", async () => {
     const fetch = ok();
     vi.stubGlobal("fetch", fetch);
     const api = new StudioApi();
     api.expectedPrincipal = () => PRINCIPAL;
     await api.request("/studio/api/api/v1/tenants/t/projects/p/actions");
     await api.request("/studio/local/validate", "POST", { source: "" });
+    await api.request(
+      "/studio/api/api/v1/tenants/t/projects/p/drafts/d",
+      "PUT",
+      {},
+    );
     expect(sentHeaders(fetch, 0)).not.toHaveProperty("X-Weave-Principal");
     expect(sentHeaders(fetch, 1)).not.toHaveProperty("X-Weave-Principal");
+    expect(sentHeaders(fetch, 2)["X-Weave-Principal"]).toBe(PRINCIPAL);
   });
 
-  it("nothing is named before Studio knows who is signed in", async () => {
+  it("names the person only once Studio knows who is signed in", async () => {
     const fetch = ok();
     vi.stubGlobal("fetch", fetch);
     const api = new StudioApi();
@@ -575,8 +581,11 @@ describe("the person a change is for", () => {
     await api.request("/studio/api/api/v1/x", "POST", {});
     api.expectedPrincipal = () => "not-a-uuid";
     await api.request("/studio/api/api/v1/x", "POST", {});
+    api.expectedPrincipal = () => PRINCIPAL;
+    await api.request("/studio/api/api/v1/x", "POST", {});
     for (const call of [0, 1, 2])
       expect(sentHeaders(fetch, call)).not.toHaveProperty("X-Weave-Principal");
+    expect(sentHeaders(fetch, 3)["X-Weave-Principal"]).toBe(PRINCIPAL);
   });
 
   it("a change refused for another person isn't sent again and says why", async () => {
