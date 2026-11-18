@@ -172,6 +172,32 @@ test("a slot gets the only connection the person can bind, and Activate sends it
   expect(captured.body!["connection_revision_ids"]).toEqual({ pets: revision });
 });
 
+test("among several connections, a slot takes the one named like it", async ({
+  page,
+}) => {
+  const captured = await platform(page);
+  // Another weave-http connection in the environment, made before this one.
+  await bindable(page, [
+    {
+      ...PETS,
+      connection_id: "44444444-4444-4444-8444-444444444445",
+      revision_id: "44444444-4444-4444-8444-444444444444",
+      name: "acme-local",
+      label: "acme-local",
+    },
+    PETS,
+  ]);
+  await features(page, ["flow.forEach"], null);
+  const dialog = await openActivation(page, [], false);
+  await dialog.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(dialog.getByRole("combobox", { name: /pets/ })).toHaveValue(
+    revision,
+  );
+  await activate(page).click();
+  await expect.poll(() => captured.body).not.toBeNull();
+  expect(captured.body!["connection_revision_ids"]).toEqual({ pets: revision });
+});
+
 test("a slot without a connection to bind says where to create one", async ({
   page,
 }) => {

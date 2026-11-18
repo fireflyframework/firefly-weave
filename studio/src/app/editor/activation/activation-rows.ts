@@ -86,7 +86,7 @@ export interface ConnectionRow {
   candidates: BindableItem[];
   /** The revision Studio chose for the person. */
   chosen?: string;
-  chosenBy?: "dev-binding" | "only-candidate";
+  chosenBy?: "dev-binding" | "slot-name" | "only-candidate";
   /** "Tested 2 min ago", for a dev binding a step test used. */
   tested?: string;
   /** Why the row can't be filled here. */
@@ -147,11 +147,18 @@ export function connectionRows(needs: ConnectionNeeds): ConnectionRow[] {
       row.chosenBy = "dev-binding";
       if (dev.tested?.ok)
         row.tested = `Tested ${relativeTime(dev.tested.at, needs.now)}`;
-    } else if (row.required && row.candidates.length === 1) {
-      // An optional slot is chosen only from a choice the person made on this
-      // computer: being the only one doesn't make it wanted.
-      row.chosen = row.candidates[0].revisionId;
-      row.chosenBy = "only-candidate";
+    } else if (row.required) {
+      // A required slot takes the connection named like it (a connection
+      // made for this slot elsewhere), else the only one. An optional slot is
+      // chosen only from a choice the person made on this computer.
+      const named = row.candidates.find((choice) => choice.name === row.slot);
+      if (named) {
+        row.chosen = named.revisionId;
+        row.chosenBy = "slot-name";
+      } else if (row.candidates.length === 1) {
+        row.chosen = row.candidates[0].revisionId;
+        row.chosenBy = "only-candidate";
+      }
     }
   }
   return rows;

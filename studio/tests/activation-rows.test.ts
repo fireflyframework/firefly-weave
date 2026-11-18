@@ -160,6 +160,32 @@ describe("connection rows", () => {
     expect([bound.chosen, bound.chosenBy]).toEqual(["r-1", "dev-binding"]);
   });
 
+  it("chooses the connection named like the slot among several, as the dialog always has", () => {
+    // Another weave-http connection lives in the environment; the one made for
+    // this slot carries the slot's name. No dev binding: it was made elsewhere.
+    const [row] = connectionRows({
+      ...NEEDS,
+      bindable: [http("r-other", "acme-local"), http("r-crm", "crm")],
+    });
+    expect([row.chosen, row.chosenBy]).toEqual(["r-crm", "slot-name"]);
+    // A dev binding still comes first.
+    const [bound] = connectionRows({
+      ...NEEDS,
+      bindable: [http("r-other", "acme-local"), http("r-crm", "crm")],
+      devBindings: [
+        {
+          slot: "crm",
+          binding: {
+            connectionId: "c-r-other",
+            revisionId: "r-other",
+            name: "acme-local",
+          },
+        },
+      ],
+    });
+    expect([bound.chosen, bound.chosenBy]).toEqual(["r-other", "dev-binding"]);
+  });
+
   it("leaves the choice to the person when there are several and no dev binding", () => {
     const [row] = connectionRows({
       ...NEEDS,

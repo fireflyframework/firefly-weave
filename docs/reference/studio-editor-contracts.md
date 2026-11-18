@@ -416,7 +416,7 @@ The dialog reads, before Activate:
 | Step | Read | Rows |
 | --- | --- | --- |
 | Checks | `GET {PROJECT}/language` and the version's export (`artifact.executable.features`) | The first feature the platform doesn't run stops the dialog. |
-| Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot. A required slot is chosen for the person from this computer's dev binding or the only candidate; an optional one only from a dev binding. |
+| Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot. A required slot is chosen for the person from this computer's dev binding, else the connection named like the slot, else the only candidate; an optional one only from a dev binding. |
 | Called workflows | The version's export (`document`), `GET {PROJECT}/workflows` and `GET {ENV}/activations` | Each callee's current activation, sent as `workflow_activation_ids`; a callee without one blocks Activate. |
 | Triggers | `GET {ENV}/triggers`, `schedules`, `broker-triggers`, `email/sources` and `provider-sources` | One row per trigger choice: create, move, a schedule to save, a choice the CLI sets up, or a resource this workflow ran that is left behind, with **Stop it**. |
 
