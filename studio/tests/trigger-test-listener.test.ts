@@ -135,6 +135,10 @@ describe("listening for a test event", () => {
     expect(state?.kind === "listening" && state.curl).toContain(
       `PAYLOAD='{"orderId":"sample"}'`,
     );
+    // It names the webhook's test secret, the one its test URL checks.
+    expect(state?.kind === "listening" && state.curl).toContain(
+      "with the value of the test secret orders-test first",
+    );
     // Nothing yet, then the signed request's run.
     fake.summaries = [undefined, { id: RUN, status: "running" }].filter(
       Boolean,

@@ -183,6 +183,13 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
   const curl = dialog.getByLabel("Signed cURL");
   await expect(curl).toContainText(`curl -sS -X POST '${TEST_URL}'`);
   await expect(curl).toContainText("X-Weave-Signature: $SIGNATURE");
+  // It names the test secret to export, and how to set that secret's value.
+  await expect(curl).toContainText(
+    "with the value of the test secret orders-test first",
+  );
+  await expect(dialog.getByLabel("Set the test secret")).toHaveText(
+    "weave platform secret set --handle orders-test",
+  );
   await expect(
     dialog.getByRole("button", { name: "Stop listening", exact: true }),
   ).toHaveCount(2);

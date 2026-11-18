@@ -172,7 +172,13 @@ export class TestEventListener {
         kind: "listening",
         triggerId: trigger.id,
         url: listening.test_url,
-        curl: signedCurl({ url: listening.test_url, payloadSample }),
+        curl: signedCurl({
+          url: listening.test_url,
+          payloadSample,
+          ...(typeof trigger["testSecretRef"] === "string"
+            ? { secretHandle: trigger["testSecretRef"] }
+            : {}),
+        }),
         expiresAt: listening.expires_at,
       });
       return { activationId: activation.activation_id, listening };

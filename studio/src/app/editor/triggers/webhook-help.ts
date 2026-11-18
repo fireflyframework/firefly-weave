@@ -38,10 +38,22 @@ const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 export function signedCurl(options: {
   url: string;
   payloadSample?: Json;
+  /** The test secret's handle a test URL checks: named, so the person exports that one. */
+  secretHandle?: string;
 }): string {
   const payload = JSON.stringify(options.payloadSample ?? {});
+  const handle = options.secretHandle;
   return [
-    "# Export WEAVE_WEBHOOK_SECRET with the secret's value first; no command line carries it, and Studio never sees it.",
+    ...(handle
+      ? [
+          `# Export WEAVE_WEBHOOK_SECRET with the value of the test secret ${handle} first; no command line carries it, and Studio never sees it.`,
+          // read -s keeps the value out of the shell's history and the screen.
+          "# For example: read -rs WEAVE_WEBHOOK_SECRET && export WEAVE_WEBHOOK_SECRET",
+          ': "${WEAVE_WEBHOOK_SECRET:?export the test secret first}"',
+        ]
+      : [
+          "# Export WEAVE_WEBHOOK_SECRET with the secret's value first; no command line carries it, and Studio never sees it.",
+        ]),
     `PAYLOAD=${quoted(payload)}`,
     "TS=$(date +%s)",
     // Unique within a second too: a reused event ID answers the earlier receipt or a conflict.

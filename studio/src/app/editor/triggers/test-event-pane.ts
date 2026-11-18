@@ -33,7 +33,7 @@ import { listenFor, stopListening } from "../activation/execute-in-environment";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { listenBlocked, type ListenState } from "./test-listener";
-import { productionUrl } from "./webhook-help";
+import { productionUrl, secretCommand } from "./webhook-help";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
 import type { TriggerIntent } from "../state/canvas-sidecar";
@@ -97,8 +97,27 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
                     Copy URL
                   </button>
                 </div>
+                @if (testSecretCommand(); as setCommand) {
+                  <p class="trigger-event-label">
+                    Set the test secret's value on a local platform with:
+                  </p>
+                  <div class="trigger-event-copy">
+                    <code
+                      class="trigger-event-code"
+                      aria-label="Set the test secret"
+                      >{{ setCommand }}</code
+                    >
+                    <button
+                      type="button"
+                      class="pane-generate"
+                      (click)="copy(setCommand, 'the command')"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                }
                 <pre
-                  class="pane-json trigger-event-curl"
+                  class="trigger-event-code trigger-event-curl"
                   aria-label="Signed cURL"
                   >{{ state.curl }}</pre
                 >
@@ -257,12 +276,26 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
     .trigger-event-copy .pane-generate {
       margin-bottom: 0;
     }
-    .trigger-event-curl {
+    /* Commands sit in a sunken block, as Studio shows code elsewhere. */
+    .trigger-event-code {
       box-sizing: border-box;
-      width: 100%;
+      display: block;
       margin: 0;
+      padding: var(--space-2) var(--space-3);
+      font: var(--type-mono);
+      color: var(--text);
+      background: var(--sunken);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+    }
+    .trigger-event-copy .trigger-event-code {
+      flex: 1 1 16rem;
+      min-width: 0;
+    }
+    .trigger-event-curl {
+      width: 100%;
     }
   `,
 })
@@ -298,6 +331,11 @@ export class TriggerEventPane {
     return this.trigger().kind === "webhook" && port && !this.production()
       ? port.environment.name
       : null;
+  }
+  /** The command that sets the test secret's value on a local platform, or null. */
+  testSecretCommand(): string | null {
+    const handle = this.trigger()["testSecretRef"];
+    return typeof handle === "string" ? secretCommand(handle) : null;
   }
   /** Why this webhook can't listen here, or null when it can. */
   private blocked(): string | null {

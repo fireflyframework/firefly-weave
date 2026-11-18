@@ -121,6 +121,26 @@ describe("the signed cURL", () => {
     );
   });
 
+  it("names the test secret to export, shows a way that keeps it out of history, and stops without it", () => {
+    const lines = signedCurl({
+      url: URL,
+      payloadSample: {},
+      secretHandle: "orders-test",
+    }).split("\n");
+    expect(lines.slice(0, 3)).toEqual([
+      "# Export WEAVE_WEBHOOK_SECRET with the value of the test secret orders-test first; no command line carries it, and Studio never sees it.",
+      "# For example: read -rs WEAVE_WEBHOOK_SECRET && export WEAVE_WEBHOOK_SECRET",
+      ': "${WEAVE_WEBHOOK_SECRET:?export the test secret first}"',
+    ]);
+    // Without the secret, the command stops before it sends anything.
+    const result = spawnSync("sh", ["-c", lines.join("\n")], {
+      env: { PATH: process.env["PATH"] },
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("export the test secret first");
+  });
+
   it.runIf(canSign)(
     "signs exactly the bytes it sends, as the platform checks them",
     () => {

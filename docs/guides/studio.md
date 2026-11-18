@@ -1807,7 +1807,11 @@ details: **Test event**, **Parameters** and **Output**.
   **Listen for test event**: Studio saves the draft and shows a test URL
   under **Make a POST request to:**, a signed cURL to send it, and **Stop
   listening**, while the trigger's tile pulses. Export
-  `WEAVE_WEBHOOK_SECRET` with the test secret's value and run the cURL. The
+  `WEAVE_WEBHOOK_SECRET` with the value of the webhook's test secret, which the
+  pane names, never the production one: `read -rs WEAVE_WEBHOOK_SECRET && export
+  WEAVE_WEBHOOK_SECRET` keeps the value out of your shell's history. On a local
+  platform, the pane also shows the `weave platform secret set` command that sets
+  that secret's value. Then run the cURL; it stops if the secret isn't exported. The
   request's payload becomes the workflow's test input, and its run opens in
   the **Runs** tab, marked **Test**. Listening needs the step tester and
   trigger manager roles; without them, or with test calls off, the pane says
