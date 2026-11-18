@@ -23,6 +23,7 @@ import { branchName } from "../../designer/conditions";
 import { MIN_ZOOM } from "../../designer/viewport";
 import type { Step, Workflow } from "../../model";
 import type { NodeRole } from "../ndv/registry";
+import { FRAME, loopHeader } from "./loop-frame";
 
 /** Sizes in canvas units: one unit is one CSS pixel at 100% zoom. */
 export const LTR = {
@@ -135,7 +136,7 @@ export interface LtrTile {
   /** "root" or "<group>/<lane>"; "" for a trigger and End. */
   owner: string;
   index: number;
-  /** The decision or parallel step whose lane holds it; null in the main sequence. */
+  /** The decision, parallel or loop step whose lane holds it; null in the main sequence. */
   parent: string | null;
   depth: number;
   /** Position in document order. */
@@ -224,6 +225,18 @@ export interface LtrSubNodeRow {
   step: string;
   chips: LtrChip[];
 }
+/** A loop's frame around its body, in canvas units; its header band is the loop's tile. */
+export interface LtrFrame {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** "For each item in input.orders · up to 4 at a time". */
+  header: string;
+  /** The loop's own depth: 0 in the main sequence. */
+  depth: number;
+}
 export interface LtrBounds {
   minX: number;
   minY: number;
@@ -239,6 +252,7 @@ export interface LtrLayout {
   labels: LtrLaneLabel[];
   terminals: LtrTerminal[];
   subNodes: LtrSubNodeRow[];
+  frames: LtrFrame[];
   bounds: LtrBounds;
 }
 
@@ -268,9 +282,9 @@ const stepsOf = (branch: unknown): Step[] => {
   return Array.isArray(steps) ? (steps as Step[]) : [];
 };
 const isGroup = (step: Step) =>
-  step.kind === "switch" || step.kind === "parallel";
+  step.kind === "switch" || step.kind === "parallel" || step.kind === "forEach";
 
-/** A group's lanes in order: a decision's cases then Otherwise, or a parallel step's branches. */
+/** A group's lanes in order: a decision's cases then Otherwise, a parallel step's branches, or a loop's body. */
 export function lanesOf(step: Step): { name: string; steps: Step[] }[] {
   if (step.kind === "switch")
     return [
@@ -287,6 +301,8 @@ export function lanesOf(step: Step): { name: string; steps: Step[] }[] {
       name,
       steps: stepsOf(branch),
     }));
+  if (step.kind === "forEach")
+    return [{ name: "body", steps: stepsOf(step["body"]) }];
   return [];
 }
 
@@ -362,18 +378,27 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     labels: [],
     terminals: [],
     subNodes: [],
+    frames: [],
     bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   };
   const roleOf = (step: Step): NodeRole => options.role(step.kind) ?? "app";
   const agent = (step: Step) => !isGroup(step) && roleOf(step) === "ai-agent";
   const widths = new Map<Step, number>();
   const heights = new Map<Step, number>();
+  const rises = new Map<Step, number>();
+  const drops = new Map<Step, number>();
   const laneWidth = (steps: readonly Step[]): number =>
     steps.length
       ? steps.reduce((sum, step) => sum + advance(step), 0)
       : LTR.slot + LTR.edge;
   const laneHeight = (steps: readonly Step[]): number =>
     Math.max(LTR.lane, ...steps.map(height));
+  /** A loop's frame width: its body 64 in from each side, never under the minimum. */
+  const frameWidth = (body: readonly Step[]): number =>
+    Math.max(
+      FRAME.minWidth,
+      2 * FRAME.side + (body.length ? laneWidth(body) - LTR.edge : LTR.slot),
+    );
   function advance(step: Step): number {
     let width = widths.get(step);
     if (width === undefined) {
@@ -386,25 +411,77 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           ? 2 * (LTR.bar + LTR.edge) + inner
           : step.kind === "switch"
             ? LTR.tile + 2 * LTR.edge + inner
-            : (agent(step) ? LTR.agentWidth : LTR.tile) + LTR.edge;
+            : step.kind === "forEach"
+              ? frameWidth(lanesOf(step)[0].steps) + LTR.edge
+              : (agent(step) ? LTR.agentWidth : LTR.tile) + LTR.edge;
       widths.set(step, width);
     }
     return width;
   }
+  /**
+   * How far a step draws above its row: a loop's header and the gap under
+   * it (and those of the loops inside it); a group, what its first lane
+   * draws above the group's row. Lanes after the first make room for theirs.
+   */
+  function rise(step: Step): number {
+    let value = rises.get(step);
+    if (value === undefined) {
+      const lanes = lanesOf(step);
+      value =
+        step.kind === "forEach"
+          ? FRAME.header + FRAME.top + riseOf(lanes[0].steps)
+          : isGroup(step)
+            ? riseOf(lanes[0]?.steps ?? [])
+            : 0;
+      rises.set(step, value);
+    }
+    return value;
+  }
+  const riseOf = (steps: readonly Step[]): number =>
+    Math.max(0, ...steps.map(rise));
+  /** How far a step draws below its row: its tile and labels, or all its lanes hold. */
+  function drop(step: Step): number {
+    let value = drops.get(step);
+    if (value === undefined) {
+      if (step.kind === "forEach")
+        value = dropOf(lanesOf(step)[0].steps) + FRAME.bottom;
+      else if (isGroup(step)) {
+        let offset = 0;
+        value = 0;
+        lanesOf(step).forEach((lane, index) => {
+          if (index) offset += riseOf(lane.steps);
+          value = Math.max(value!, offset + dropOf(lane.steps));
+          offset += laneHeight(lane.steps);
+        });
+      } else
+        value =
+          (agent(step) ? LTR.tile + LTR.subNodeRow : LTR.tile) + FRAME.labels;
+      drops.set(step, value);
+    }
+    return value;
+  }
+  const dropOf = (steps: readonly Step[]): number =>
+    Math.max(LTR.tile + FRAME.labels, ...steps.map(drop));
   function height(step: Step): number {
     let value = heights.get(step);
     if (value === undefined) {
-      value = isGroup(step)
-        ? Math.max(
-            LTR.lane,
-            lanesOf(step).reduce(
-              (sum, lane) => sum + laneHeight(lane.steps),
-              0,
-            ),
-          )
-        : agent(step)
-          ? LTR.agentLane
-          : LTR.lane;
+      value =
+        step.kind === "forEach"
+          ? Math.max(LTR.lane, drop(step) + FRAME.after)
+          : isGroup(step)
+            ? Math.max(
+                LTR.lane,
+                lanesOf(step).reduce(
+                  (sum, lane, index) =>
+                    sum +
+                    (index ? riseOf(lane.steps) : 0) +
+                    laneHeight(lane.steps),
+                  0,
+                ),
+              )
+            : agent(step)
+              ? LTR.agentLane
+              : LTR.lane;
       heights.set(step, value);
     }
     return value;
@@ -419,6 +496,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     left: number,
     top: number,
     place: string,
+    /** The name of the "+" after the last step, when not "Add a step after <step>". */
+    endName?: string,
   ): { placed: Placed[]; end: number } {
     const placed: Placed[] = [];
     let x = left;
@@ -434,7 +513,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         place,
         after: step.kind === "fail" ? null : { owner, index: index + 1 },
       };
-      if (isGroup(step)) placed.push(group(step, base, x, top));
+      if (step.kind === "forEach") placed.push(loop(step, base, x, top));
+      else if (isGroup(step)) placed.push(group(step, base, x, top));
       else {
         const role = roleOf(step);
         const width = agent(step) ? LTR.agentWidth : LTR.tile;
@@ -482,7 +562,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         insert,
         label: null,
         plus: next ? null : { x: item.out.x + LTR.plus, y: item.out.y },
-        name: `Add a step after ${item.id}`,
+        name: !next && endName ? endName : `Add a step after ${item.id}`,
       });
       if (next)
         layout.edges.push({
@@ -523,7 +603,9 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       lanesLeft + Math.max(0, ...lanes.map((lane) => laneWidth(lane.steps)));
     const join: Point = { x: parallel ? joinX : joinX - 6, y: top + MID };
     let laneTop = top;
-    for (const lane of lanes) {
+    for (const [index, lane] of lanes.entries()) {
+      // A path after the first makes room for the frames it draws above its row.
+      if (index) laneTop += riseOf(lane.steps);
       const owner = `${step.id}/${lane.name}`;
       const label = laneLabel(step, lane.name, workflow);
       const y = laneTop + MID;
@@ -646,6 +728,124 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       out: through
         ? { x: parallel ? joinX + LTR.bar : joinX, y: top + MID }
         : null,
+      group: true,
+    };
+  }
+
+  /**
+   * A loop: a frame around its body, whose header is the loop's tile. Its
+   * steps sit on the loop's own row; edges cross the frame's sides there.
+   */
+  function loop(step: Step, base: TileBase, x: number, top: number): Placed {
+    const body = lanesOf(step)[0].steps;
+    const owner = `${step.id}/body`;
+    const place = `For each item of ${step.id}`;
+    const width = frameWidth(body);
+    const y = top + MID;
+    const frameTop = top - rise(step);
+    const bottom = top + drop(step);
+    layout.frames.push({
+      id: step.id,
+      x,
+      y: frameTop,
+      width,
+      height: bottom - frameTop,
+      header: loopHeader(step),
+      depth: base.depth,
+    });
+    layout.tiles.push({
+      ...base,
+      id: step.id,
+      role: options.role(step.kind) ?? "loop",
+      shape: SHAPES.loop,
+      x,
+      y: frameTop,
+      width,
+      height: FRAME.header,
+      order: order++,
+      labelY: bottom + LTR.labelGap,
+    });
+    const left = x + FRAME.side;
+    const right = x + width;
+    const entry = { x, y };
+    const exit = { x: right, y };
+    const start = { owner, index: 0 };
+    if (!body.length) {
+      layout.slots.push({
+        owner,
+        tile: step.id,
+        x: left,
+        y: y - LTR.slot / 2,
+        label: "For each item",
+        name: `Add a step to ${place}`,
+        insert: start,
+      });
+      layout.edges.push(
+        {
+          key: `${step.id}>$slot:${owner}`,
+          tile: step.id,
+          shape: "curve",
+          a: entry,
+          b: { x: left, y },
+          insert: null,
+          name: null,
+          leaves: null,
+          enters: null,
+        },
+        {
+          key: `$slot:${owner}>$exit:${step.id}`,
+          tile: step.id,
+          shape: "curve",
+          a: { x: left + LTR.slot, y },
+          b: exit,
+          insert: null,
+          name: null,
+          leaves: null,
+          enters: null,
+        },
+      );
+      return { id: step.id, in: entry, out: exit, group: true };
+    }
+    const inner = sequence(
+      body,
+      owner,
+      step.id,
+      base.depth + 1,
+      left,
+      top,
+      place,
+      `Add a step at the end of ${place}`,
+    );
+    const first = inner.placed[0];
+    layout.edges.push({
+      key: `${step.id}>${first.id}`,
+      tile: step.id,
+      shape: "curve",
+      a: entry,
+      b: first.in,
+      insert: start,
+      name: `Insert a step at the start of ${place}`,
+      leaves: null,
+      enters: first.id,
+    });
+    const last = inner.placed[inner.placed.length - 1];
+    const through = !!last.out && completes(body);
+    if (through)
+      layout.edges.push({
+        key: `${last.id}>$exit:${step.id}`,
+        tile: last.id,
+        shape: "curve",
+        a: { x: last.out!.x + 6, y: last.out!.y },
+        b: exit,
+        insert: null,
+        name: null,
+        leaves: last.id,
+        enters: null,
+      });
+    return {
+      id: step.id,
+      in: entry,
+      out: through ? exit : null,
       group: true,
     };
   }
