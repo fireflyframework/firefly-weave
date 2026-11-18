@@ -2045,11 +2045,10 @@ export class FormSession {
     const workflow = definition.metadata.name;
     const connector = this.connector(spec);
     const value = this.read(spec);
-    const named =
+    const slot =
       value.mode === "fixed" && typeof value.value === "string"
         ? value.value
         : "";
-    const slot = named;
     const list = connector ? port.list(connector) : null;
     const binding = slot ? port.binding(workflow, slot) : null;
     const item =
