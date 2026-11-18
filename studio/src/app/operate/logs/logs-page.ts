@@ -296,7 +296,8 @@ const NAME_PROBLEM =
             @for (row of [0, 1, 2, 3]; track row) {
               <div class="entry" aria-hidden="true">
                 <span class="bar"></span><span class="bar"></span
-                ><span class="bar wide msg"></span>
+                ><span class="bar mid"></span><span class="bar mid"></span
+                ><span class="bar mid"></span><span class="bar wide msg"></span>
               </div>
             }
           </div>

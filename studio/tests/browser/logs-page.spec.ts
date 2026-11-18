@@ -415,6 +415,49 @@ test.describe("Operate › Logs", () => {
     ).toHaveCount(0);
   });
 
+  test("Tab reads the filters, Follow, the run links and Load older entries in order", async ({
+    page,
+  }) => {
+    await platform(page, {
+      pages: { "": { items: lastHour(), next: "older1" } },
+    });
+    await openLogs(page);
+    await expect(rows(page)).toHaveCount(6);
+    await page.getByLabel("Time", { exact: true }).focus();
+    const order: string[] = [];
+    for (let i = 0; i < 14; i++) {
+      order.push(
+        await page.evaluate(() => {
+          const element = document.activeElement as HTMLElement;
+          return (
+            element.getAttribute("aria-label") ||
+            element.id ||
+            element.closest("label")?.textContent?.trim() ||
+            element.textContent?.trim() ||
+            ""
+          );
+        }),
+      );
+      await page.keyboard.press("Tab");
+    }
+    expect(order).toEqual([
+      "logs-time",
+      "logs-level",
+      "logs-workflow",
+      "logs-step",
+      "logs-code",
+      "logs-message",
+      "Include test runs",
+      "Follow",
+      "Open run 8d2c6a1f",
+      "Open run 8d2c6a1f",
+      "Open run 8d2c6a1f",
+      "Open run 1c0d7f8a",
+      "Open run 1c0d7f8a",
+      "Load older entries",
+    ]);
+  });
+
   test("a run's link opens the run's page", async ({ page }) => {
     await platform(page);
     await page.route("**/run-summaries?**", (route) =>

@@ -194,13 +194,19 @@ SPDX-License-Identifier: Apache-2.0
 }
 .bar {
   display: block;
+  width: 80%;
   height: 10px;
-  max-width: 100%;
   border-radius: var(--radius-xs);
   background: var(--skeleton);
 }
 .bar.wide {
   width: 75%;
+}
+/* A bar per column; the columns that stack under time and level have none. */
+@container entries (max-width: 759px) {
+  .bar.mid {
+    display: none;
+  }
 }
 
 /* ---------------------------------------------------------------- states */
