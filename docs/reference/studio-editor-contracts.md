@@ -365,6 +365,18 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 | 429 | `WV-STEPTEST-BUSY` |
 | 503 | `WV-COMPATIBILITY` |
 
+## Trigger choices
+
+A workflow's trigger choices live in its canvas sidecar (`triggers`), one per
+trigger tile, each with an `id` and a `kind` and the settings its step details
+hold. Studio creates or moves the platform resource behind each one when the
+workflow is activated.
+
+An email trigger starts runs with the received message, so the workflow's input
+must take one. Studio reads that message's schema, with its definitions inlined,
+from its host at `GET /studio/contracts/email-message`, a read-only route that
+answers only a paired session, like the other contract routes.
+
 ## Storage on this computer
 
 Every key the new editor keeps on this computer goes through
