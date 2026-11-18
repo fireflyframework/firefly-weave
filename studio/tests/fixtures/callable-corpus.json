@@ -1,5 +1,5 @@
 {
-  "description": "Who may call a workflow version, as the platform decides it (allows_caller and check_call_target). Studio's callable list and the platform test against the same cases. Lock entries carry the platform's digest of their document; tests/unit/test_callable_corpus.py names the right one when a document changes.",
+  "description": "Who may call a workflow version and what a call step outputs, as the platform decides them (allows_caller, check_call_target and call_output_schema). Studio's callable list and the platform test against the same cases. Lock entries carry the platform's digest of their document; tests/unit/test_callable_corpus.py names the right one when a document changes.",
   "allows": [
     {
       "name": "no callable field",
@@ -682,6 +682,216 @@
           "source": "project"
         }
       ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "a call that waits reads the called workflow's output",
+      "mode": "wait",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      }
+    },
+    {
+      "name": "stop on failure keeps the called workflow's output",
+      "mode": "wait",
+      "onFailure": "stop",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      }
+    },
+    {
+      "name": "continue on failure wraps it with the result status",
+      "mode": "wait",
+      "onFailure": "continue",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "sent": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "sent"
+            ]
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "runId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "a call that doesn't wait outputs null",
+      "mode": "detach",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "null"
+      }
+    },
+    {
+      "name": "a call that doesn't wait ignores onFailure",
+      "mode": "detach",
+      "onFailure": "continue",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "null"
+      }
+    },
+    {
+      "name": "an unknown called workflow's output is any value",
+      "mode": "wait",
+      "callee": {},
+      "output": {}
+    },
+    {
+      "name": "continue on failure wraps an unknown output too",
+      "mode": "wait",
+      "onFailure": "continue",
+      "callee": {},
+      "output": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output": {},
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "runId"
+        ],
+        "additionalProperties": false
+      }
     }
   ]
 }

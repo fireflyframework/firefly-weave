@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The platform decides who may call a workflow as Studio's callable corpus says."""
+"""The platform decides who may call a workflow, and what a call step outputs, as Studio's callable corpus says."""
 
 import json
 from pathlib import Path
@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from firefly_weave.compiler.calls import CALL_MESSAGES, check_call_target
+from firefly_weave.compiler.calls import CALL_MESSAGES, call_output_schema, check_call_target
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.ir import allows_caller
 from firefly_weave.contracts.definitions import load_definition
@@ -78,3 +78,8 @@ def test_a_listed_version_is_disabled_only_where_the_platform_refuses_the_call(
     else:
         assert spec is not None
         assert refusals == ([item["disabled"]] if "disabled" in item else [])
+
+
+@pytest.mark.parametrize("case", CORPUS["outputs"], ids=lambda case: str(case["name"]))
+def test_call_output_matches_the_corpus(case: dict[str, Any]) -> None:
+    assert call_output_schema(case["mode"], case.get("onFailure"), case["callee"]) == case["output"]

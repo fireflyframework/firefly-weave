@@ -156,7 +156,8 @@ const byNameThenNewest = (a: CallableItem, b: CallableItem) =>
       ? 1
       : compareVersions(b.version, a.version);
 
-function noteOf(lock: CatalogLockState): string | null {
+/** Why the project's published versions are missing: not connected, no catalog read, or a failed read; null otherwise. */
+export function lockNote(lock: CatalogLockState): string | null {
   if (lock.kind === "offline")
     return "Connect to a platform to call published workflows.";
   if (lock.kind === "forbidden")
@@ -216,6 +217,6 @@ export function callables(request: {
   return {
     items: matching.slice(0, CALLABLE_LIMIT),
     truncated: matching.length > CALLABLE_LIMIT,
-    note: noteOf(lock),
+    note: lockNote(lock),
   };
 }
