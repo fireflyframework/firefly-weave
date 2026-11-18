@@ -437,8 +437,9 @@ import { connectionsPort } from "../editor/connections/connections-port";
                 ><span class="compact-save-label">Save</span>
               </button>
             }
-            @if (h.moreItems.length) {
-              <weave-row-menu label="More" text="More" [items]="h.moreItems" />
+            @let more = moreMenu();
+            @if (more.length) {
+              <weave-row-menu label="More" text="More" [items]="more" />
             }
             <button
               type="button"
@@ -1518,8 +1519,22 @@ export class DesignerView implements DoCheck {
   }
   /** Execute workflow's other ways: Execute workflow in the environment Studio is connected to. */
   executeWays(): RowMenuItem[] {
+    // A phone's bar has no room for the split: More offers it instead.
+    if (this.host().windowWidth <= 767) return [];
     const item = workflowTestItem(this.host(), this.dialogs);
     return item ? [item] : [];
+  }
+  /** More: the shell's commands, with Execute workflow in the environment after Execute workflow on a phone. */
+  moreMenu(): RowMenuItem[] {
+    const h = this.host();
+    const items = h.moreItems;
+    if (h.windowWidth > 767) return items;
+    const real = workflowTestItem(h, this.dialogs);
+    if (!real) return items;
+    const at = items.findIndex((item) => item.label === "Execute workflow");
+    return at < 0
+      ? [...items, real]
+      : [...items.slice(0, at + 1), real, ...items.slice(at + 1)];
   }
   private viewMenu: { key: string; items: RowMenuItem[] } | null = null;
   /**

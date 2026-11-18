@@ -247,3 +247,24 @@ test("the trigger's step details offer Execute workflow in Production too", asyn
     page.getByRole("menuitem", { name: /^Execute workflow in Production/ }),
   ).toContainText("Runs the whole workflow for real, as a test run");
 });
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 360, height: 780 } });
+
+  test("Execute workflow in Production is in More, and the bar keeps More on screen", async ({
+    page,
+  }) => {
+    await openConnected(page, { bindable: { [PRODUCTION]: [] } }, workflow);
+    const toolbar = page.getByRole("toolbar", { name: "Workflow commands" });
+    await expect(
+      toolbar.getByRole("button", { name: "More ways to execute" }),
+    ).toHaveCount(0);
+    const more = toolbar.getByRole("button", { name: "More", exact: true });
+    const box = (await more.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+    await more.click();
+    await expect(
+      page.getByRole("menuitem", { name: /^Execute workflow in Production/ }),
+    ).toContainText("Runs the whole workflow for real, as a test run");
+  });
+});
