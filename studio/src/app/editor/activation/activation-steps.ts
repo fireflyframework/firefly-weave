@@ -131,6 +131,16 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                   Retry
                 </button>
               }
+              @if (row.kind === "schedule-input" && row.intentId) {
+                <!-- The way to fix it: the schedule's step details, where its run input is. -->
+                <button
+                  type="button"
+                  class="sm"
+                  (click)="openTrigger(row.intentId)"
+                >
+                  Open schedule
+                </button>
+              }
               <!-- An email source has no stop operation: it keeps running. -->
               @if (
                 !synced() &&
@@ -280,6 +290,8 @@ export class ActivationSteps implements OnInit {
   readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
   /** Called after each Retry, so the dialog can keep what it made. */
   retried: () => void = () => undefined;
+  /** Opens a trigger choice's step details; the dialog closes first. */
+  openTrigger: (intentId: string) => void = () => undefined;
 
   /** Why Activate can't run, or null. */
   readonly blocked = computed(() => {

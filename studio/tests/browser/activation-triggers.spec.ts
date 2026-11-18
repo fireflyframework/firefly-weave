@@ -365,3 +365,56 @@ test("an activation answer without an ID sets up no triggers, and says so", asyn
   ).toBeVisible();
   expect(recorded.created).toEqual([]);
 });
+
+test("a schedule whose run input no longer fits offers Open schedule, which opens its step details", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  await page.route(`**/projects/project/workflows/${versionId}/export`, (r) =>
+    r.fulfill({
+      json: {
+        id: versionId,
+        document: {
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "pets", version: "1.0.0" },
+          spec: {
+            inputSchema: {
+              type: "object",
+              properties: { orderId: { type: "string" } },
+              required: ["orderId"],
+            },
+          },
+        },
+        artifact: {
+          executable: { features: [], connections: {}, dependencies: [] },
+        },
+      },
+    }),
+  );
+  await open(page, {
+    ...canvas,
+    triggers: [
+      {
+        id: "trigger-4e5f6a7b",
+        kind: "schedule",
+        cron: "0 9 * * 1",
+        input: {},
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  const row = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem")
+    .filter({ hasText: "no longer fits" });
+  await row.getByRole("button", { name: "Open schedule", exact: true }).click();
+  await expect(dialog.filter({ hasText: "Activate pets" })).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", {
+      name: "Step details: Schedule trigger",
+      exact: true,
+    }),
+  ).toBeVisible();
+});

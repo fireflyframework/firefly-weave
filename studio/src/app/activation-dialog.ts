@@ -381,6 +381,8 @@ export class ActivationDialog implements OnInit {
   cancel = output<void>();
   /** "Create one in Connections.": the dialog closes and Connections opens. */
   openConnections = output<void>();
+  /** "Open schedule": the dialog closes and that trigger's step details open. */
+  openTrigger = output<string>();
   /** A message, and the words of it that open Connections, when it ends with them. */
   connectionsLink(message: string): { before: string; link: string | null } {
     const link = "Create one in Connections.";
@@ -545,6 +547,7 @@ export class ActivationDialog implements OnInit {
           : null,
       );
       ref.setInput("diagnostics", this.diagnostics());
+      ref.instance.openTrigger = (id) => this.openTrigger.emit(id);
       this.steps.set(ref.instance);
     } catch {
       // Without them the platform still refuses what it can't activate.

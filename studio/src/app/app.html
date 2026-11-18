@@ -633,6 +633,7 @@ SPDX-License-Identifier: Apache-2.0
             [activated]="activatedId"
             (triggers)="activationTriggers($event)"
             (openConnections)="openConnectionsFromActivation()"
+            (openTrigger)="openTriggerFromActivation($event)"
             (confirm)="confirmActivation($event)"
             (cancel)="closeActivation()"
           />

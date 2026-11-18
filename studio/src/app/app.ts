@@ -8520,6 +8520,11 @@ export class App implements CanvasHost {
   }
   /** The activation that just succeeded: the dialog sets its triggers up before it closes. */
   activatedId = "";
+  /** The activation dialog's way to fix a trigger: it closes, and that trigger's step details open. */
+  openTriggerFromActivation(id: string) {
+    this.closeActivation();
+    void this.openTrigger(id);
+  }
   /** The activation dialog's way to create a missing connection: it closes, and Connections opens. */
   openConnectionsFromActivation() {
     this.closeActivation();
