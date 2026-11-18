@@ -261,10 +261,14 @@ async def test_another_workflow_and_a_test_activation_are_refused(webhooks):
 
 async def test_the_mover_needs_what_creating_a_webhook_needs(webhooks):
     env = webhooks
+    from firefly_weave.access.audit import AuditContext
     from firefly_weave.access.authorization import AccessDenied
 
     for roles in (("deployer", "viewer"), ("operator", "viewer")):
         lacking = await person(env.access, env.admin, env.scope, *roles)
         with pytest.raises(AccessDenied):
             await retarget(env, env.second.id, 1, actor=lacking)
+        # Refused before the trigger is looked up, so the refusal never says whether a trigger exists.
+        with pytest.raises(AccessDenied):
+            await env.service.retarget(lacking, env.scope, uuid4(), env.second.id, 1, context=AuditContext())
     assert (await retarget(env, env.second.id, 1)).revision == 2

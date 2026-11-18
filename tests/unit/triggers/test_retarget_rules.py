@@ -56,11 +56,8 @@ def refusal(call) -> CatalogError:
     return raised.value
 
 
-def test_a_version_of_the_same_workflow_in_the_same_environment_is_accepted():
+def test_another_version_of_the_same_workflow_is_accepted_and_another_workflow_refused_with_a_hint():
     same_workflow(facts(), facts())
-
-
-def test_another_workflow_is_refused_with_a_hint():
     error = refusal(lambda: same_workflow(facts(), facts("invoices")))
     assert (error.status, error.code) == (409, "WV-TRIGGER-WORKFLOW")
     assert error.message == "Retarget it to a version of the same workflow"
@@ -74,16 +71,10 @@ def test_a_missing_foreign_or_test_activation_is_not_found(target):
     assert (error.status, error.code) == (404, "WV-NOT-FOUND")
 
 
-def test_a_payload_schema_equal_to_the_new_input_is_accepted():
+def test_the_new_input_must_be_the_payload_schema_or_the_current_input():
     payload_rule(ORDER, current_input=canonical_digest(CHANGED), new_input=canonical_digest(ORDER))
-
-
-def test_an_unchanged_input_is_accepted_whatever_the_payload_schema():
     # A trigger created without a payload schema admits what the version's own input admits.
     payload_rule({}, current_input=canonical_digest(ORDER), new_input=canonical_digest(ORDER))
-
-
-def test_a_changed_input_is_refused_with_a_hint():
     error = refusal(
         lambda: payload_rule(ORDER, current_input=canonical_digest(ORDER), new_input=canonical_digest(CHANGED))
     )
@@ -98,16 +89,12 @@ MESSAGE = {
 }
 
 
-def test_a_mapping_whose_output_the_new_input_accepts_is_accepted():
-    target = {"type": "object", "required": ["body"], "properties": {"body": {"type": "string"}}}
+def test_the_new_input_must_accept_what_the_mapping_makes_of_an_event():
     mapping = {"object": {"body": {"ref": "/payload/text"}}}
-    mapping_rule(mapping, [MESSAGE], target, {})
-
-
-def test_a_mapping_whose_output_the_new_input_doesnt_accept_is_refused():
-    target = {"type": "object", "required": ["body"], "properties": {"body": {"type": "integer"}}}
-    mapping = {"object": {"body": {"ref": "/payload/text"}}}
-    error = refusal(lambda: mapping_rule(mapping, [MESSAGE], target, {}))
+    text = {"type": "object", "required": ["body"], "properties": {"body": {"type": "string"}}}
+    mapping_rule(mapping, [MESSAGE], text, {})
+    number = {"type": "object", "required": ["body"], "properties": {"body": {"type": "integer"}}}
+    error = refusal(lambda: mapping_rule(mapping, [MESSAGE], number, {}))
     assert (error.status, error.code) == (409, "WV-TRIGGER-SCHEMA-CHANGED")
 
 
@@ -119,7 +106,7 @@ def test_the_mapping_must_fit_every_event_kind_the_source_dispatches():
     assert error.code == "WV-TRIGGER-SCHEMA-CHANGED"
 
 
-def test_an_input_that_accepts_every_email_message_is_accepted():
+def test_the_new_input_must_accept_every_message_and_not_require_a_field_messages_lack():
     email_rule(
         {
             "type": "object",
@@ -128,9 +115,6 @@ def test_an_input_that_accepts_every_email_message_is_accepted():
         },
         {},
     )
-
-
-def test_an_input_that_requires_a_field_messages_lack_is_refused():
     required = {"type": "object", "required": ["order_id"], "properties": {"order_id": {"type": "string"}}}
     error = refusal(lambda: email_rule(required, {}))
     assert (error.status, error.code) == (409, "WV-TRIGGER-SCHEMA-CHANGED")

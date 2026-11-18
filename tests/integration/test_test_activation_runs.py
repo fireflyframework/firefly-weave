@@ -120,6 +120,14 @@ async def test_step_tests_and_draft_test_runs_share_the_running_limit(drafts, wo
     error = await refused(run(env, created))
     assert (error.status, error.code) == (429, "WV-STEPTEST-BUSY")
     assert error.retry_after is not None and error.retry_after >= 1
+    # An expired activation says so, whatever the limits.
+    await env.execute(
+        "UPDATE test_activation_details SET created_at=now()-interval '2 hours',expires_at=now()-interval '1 second' "
+        "WHERE activation_id=:a",
+        a=created.id,
+    )
+    error = await refused(run(env, created))
+    assert (error.status, error.code) == (410, "WV-TESTACTIVATION-EXPIRED")
 
 
 async def test_runs_of_called_workflows_are_test_runs_too(drafts):  # noqa: F811
