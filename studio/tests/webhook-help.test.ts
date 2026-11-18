@@ -225,6 +225,10 @@ describe("a local platform", () => {
     for (const url of [
       "https://weave.acme.example",
       "http://10.0.0.5:8081",
+      // Hosts that only look local.
+      "http://localhost.example:8081",
+      "http://evil-localhost:8081",
+      "http://127.0.0.1.example",
       "not a url",
     ])
       expect(localPlatform(url), url).toBe(false);
