@@ -74,6 +74,34 @@ describe("connections from the platform", () => {
     });
   });
 
+  it("lists every bindable connection page by page and keeps any version of the named connector", async () => {
+    for (const name of ["weave-kafka", "weave-email"]) {
+      const { api, calls } = fakeApi((path) =>
+        path.includes("cursor=")
+          ? {
+              items: [
+                item({ name: "second", connector: `${name}@2.0.0` }),
+                item({ name: "prefix", connector: `${name}-extra@1.0.0` }),
+              ],
+              next_cursor: null,
+            }
+          : {
+              items: [
+                item({ name: "first", connector: `${name}@1.0.0` }),
+                item({ name: "http", connector: "weave-http@2.0.0" }),
+              ],
+              next_cursor: "c 2",
+            },
+      );
+      const items = await platformConnections(api).bindableNamed(name);
+      expect(calls.map((call) => call.path)).toEqual([
+        `${ENV}/bindable-connections?limit=100`,
+        `${ENV}/bindable-connections?limit=100&cursor=c%202`,
+      ]);
+      expect(items.map((entry) => entry.name)).toEqual(["first", "second"]);
+    }
+  });
+
   it("stops after twenty pages", async () => {
     const { api, calls } = fakeApi(() => ({
       items: [item()],

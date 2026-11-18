@@ -135,7 +135,7 @@ async function webhooks(page: Page, failFirst = false): Promise<Recorded> {
 }
 
 /** Opens the workflow with its trigger choice in the new editor, connected, and publishes it. */
-async function open(page: Page) {
+async function open(page: Page, sidecar: object = canvas) {
   await withNewEditor(page);
   await page.reload();
   await page.getByLabel("Choose a workflow file").setInputFiles([
@@ -147,7 +147,7 @@ async function open(page: Page) {
     {
       name: "pets.canvas.json",
       mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(canvas)),
+      buffer: Buffer.from(JSON.stringify(sidecar)),
     },
   ]);
   await expect(page.locator(".editor-bar")).toBeVisible();
@@ -256,4 +256,98 @@ test("a trigger that can't be created says why with Retry, and the activation st
   expect(await storedChoice(page)).toMatchObject({
     resources: { development: "w-new" },
   });
+});
+
+test("a new Kafka trigger asks for its Kafka connection, of any version, and is created on it", async ({
+  page,
+}) => {
+  await platform(page);
+  await webhooks(page);
+  const KAFKA = "55555555-5555-4555-8555-555555555555";
+  const listed: string[] = [];
+  await page.route(
+    "**/environments/development/bindable-connections?*",
+    (r) => {
+      listed.push(new URL(r.request().url()).search);
+      return r.fulfill({
+        json: {
+          items: [
+            {
+              connection_id: "66666666-6666-4666-8666-666666666666",
+              revision_id: KAFKA,
+              name: "orders-kafka",
+              connector: "weave-kafka@1.0.0",
+              enabled: true,
+            },
+            {
+              connection_id: "77777777-7777-4777-8777-777777777777",
+              revision_id: "88888888-8888-4888-8888-888888888888",
+              name: "pets",
+              connector: "weave-http@2.0.0",
+              enabled: true,
+            },
+          ],
+          next_cursor: null,
+        },
+      });
+    },
+  );
+  await page.route("**/environments/development/broker-triggers?*", (r) =>
+    r.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  const created: Record<string, unknown>[] = [];
+  await page.route("**/environments/development/broker-triggers", (r) => {
+    created.push(r.request().postDataJSON());
+    return r.fulfill({
+      status: 201,
+      json: {
+        id: "b-1",
+        name: "orders",
+        kind: "run",
+        activation_id: "activation",
+        connection_revision_id: KAFKA,
+        cluster_id: "orders-cluster",
+        topic: "orders",
+        dead_letter_policy: "receipt",
+        payload_schema: { type: "object" },
+        revision: 1,
+        disabled: false,
+      },
+    });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      {
+        id: "trigger-3d4e5f6a",
+        kind: "broker",
+        name: "orders",
+        clusterId: "orders-cluster",
+        topic: "orders",
+        deadLetterPolicy: "receipt",
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  const connection = dialog.getByRole("combobox", {
+    name: "Create Kafka trigger orders Connection",
+  });
+  await expect(connection).toHaveValue(KAFKA);
+  await expect(connection.getByRole("option")).toHaveText([
+    "Choose a weave-kafka connection",
+    "orders-kafka",
+  ]);
+  expect(listed).toContain("?limit=100");
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  expect(created).toEqual([
+    expect.objectContaining({
+      name: "orders",
+      connection_revision_id: KAFKA,
+      cluster_id: "orders-cluster",
+      topic: "orders",
+    }),
+  ]);
 });

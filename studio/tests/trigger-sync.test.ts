@@ -28,6 +28,7 @@ import type {
 } from "../src/app/editor/activation/trigger-resources-api";
 import {
   attention,
+  connectionNeed,
   retryResult,
   settingsKey,
   syncTriggers,
@@ -287,6 +288,81 @@ describe("setting up triggers after an activation", () => {
       "Couldn't create this trigger: its trigger choice is no longer in the workflow.",
     ]);
     expect(attention(results)).toBe("2 triggers need attention.");
+  });
+});
+
+describe("the connection a new trigger runs on", () => {
+  it("is any version of the Kafka or email connector, or the app's exact package", () => {
+    expect(
+      connectionNeed({ id: "t-1", kind: "broker", name: "orders" }),
+    ).toEqual({
+      connector: "weave-kafka",
+      label: "Kafka trigger orders",
+    });
+    expect(connectionNeed({ id: "t-2", kind: "email" })).toEqual({
+      connector: "weave-email",
+      label: "Email trigger",
+    });
+    expect(
+      connectionNeed({
+        id: "t-3",
+        kind: "provider",
+        name: "support-chat",
+        provider: "whatsapp",
+        package: "weave-whatsapp",
+        packageVersion: "1.2.0",
+        schemaDigest: "d".repeat(64),
+      }),
+    ).toEqual({
+      connector: "weave-whatsapp@1.2.0",
+      label: "App event trigger support-chat",
+    });
+    expect(connectionNeed(HOOK)).toBeNull();
+    expect(
+      connectionNeed({ id: "t-4", kind: "schedule", cron: "0 9 * * 1" }),
+    ).toBeNull();
+  });
+
+  it("creates a Kafka trigger on the connection chosen for it", async () => {
+    const api = new FakeApi();
+    const kafka: TriggerIntent = {
+      id: "trigger-3d4e5f6a",
+      kind: "broker",
+      name: "orders",
+      clusterId: "orders-cluster",
+      topic: "orders",
+      deadLetterPolicy: "receipt",
+    };
+    api.answers = [
+      {
+        id: "b-1",
+        name: "orders",
+        kind: "run",
+        activation_id: "a-2",
+        connection_revision_id: "rev-k",
+        cluster_id: "orders-cluster",
+        topic: "orders",
+        revision: 1,
+        disabled: false,
+      },
+    ];
+    const [result] = await syncTriggers(
+      [
+        {
+          kind: "create",
+          intentId: kafka.id,
+          resourceKind: "broker",
+          text: "Create Kafka trigger orders",
+        },
+      ],
+      { ...context(api, [kafka]), connections: { [kafka.id]: "rev-k" } },
+    );
+    expect(result).toMatchObject({ status: "created", resourceId: "b-1" });
+    expect(api.calls[0]).toMatchObject({
+      method: "POST",
+      path: "/broker-triggers",
+      body: expect.objectContaining({ connection_revision_id: "rev-k" }),
+    });
   });
 });
 

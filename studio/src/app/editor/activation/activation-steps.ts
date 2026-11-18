@@ -49,8 +49,14 @@ import {
   type TriggerRow,
 } from "./trigger-plan";
 import {
+  platformConnections,
+  type BindableItem,
+} from "../connections/connections-api";
+import {
   actionable,
   attention,
+  connectionNeed,
+  type ConnectionNeed,
   retryResult,
   syncTriggers,
   withStoredResources,
@@ -112,7 +118,9 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
               class="activation-row"
               [attr.data-kind]="result ? result.status : row.kind"
             >
-              <span>{{ result ? result.text : row.text }}</span>
+              <span [id]="'trigger-row-' + $index">{{
+                result ? result.text : row.text
+              }}</span>
               @if (result?.status === "failed") {
                 <button
                   type="button"
@@ -136,6 +144,49 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                     (change)="stopIt($index, $any($event.target).checked)"
                   />Stop it
                 </label>
+              }
+              @if (!synced() && connectionsFor().get($index); as need) {
+                <!-- A new Kafka, email or app event trigger runs on a connection of this environment. -->
+                <div class="activation-connection">
+                  <label
+                    [id]="'trigger-connection-label-' + $index"
+                    [for]="'trigger-connection-' + $index"
+                    >Connection</label
+                  >
+                  <select
+                    [id]="'trigger-connection-' + $index"
+                    [attr.aria-labelledby]="
+                      'trigger-row-' +
+                      $index +
+                      ' trigger-connection-label-' +
+                      $index
+                    "
+                    required
+                    (change)="
+                      chooseConnection(need.intentId, $any($event.target).value)
+                    "
+                  >
+                    <option
+                      value=""
+                      [selected]="!connectionChoices()[need.intentId]"
+                    >
+                      Choose a {{ need.words }} connection
+                    </option>
+                    @for (item of need.candidates; track item.revisionId) {
+                      <option
+                        [value]="item.revisionId"
+                        [selected]="
+                          connectionChoices()[need.intentId] === item.revisionId
+                        "
+                      >
+                        {{ item.name }}
+                      </option>
+                    }
+                  </select>
+                  @if (need.message) {
+                    <p class="hint">{{ need.message }}</p>
+                  }
+                </div>
               }
             </li>
           }
@@ -181,6 +232,11 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
     .activation-row[data-kind="stopped"] {
       color: var(--success-ink, var(--text));
     }
+    .activation-connection {
+      display: grid;
+      flex-basis: 100%;
+      gap: var(--space-1);
+    }
     .activation-stop-it {
       display: inline-flex;
       align-items: center;
@@ -209,6 +265,12 @@ export class ActivationSteps implements OnInit {
   readonly synced = signal(false);
   readonly retrying = signal<number | null>(null);
   private context: SyncContext | null = null;
+  /** For each new trigger that runs on a connection, by its place in the list: what it can run on. */
+  readonly connectionsFor = signal<ReadonlyMap<number, TriggerConnection>>(
+    new Map(),
+  );
+  /** The connection revision chosen for each new trigger, by trigger choice. */
+  readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
   /** Called after each Retry, so the dialog can keep what it made. */
   retried: () => void = () => undefined;
 
@@ -237,6 +299,12 @@ export class ActivationSteps implements OnInit {
   needsSync(): boolean {
     return this.triggers().some(actionable);
   }
+  chooseConnection(intentId: string, revisionId: string) {
+    this.connectionChoices.update((choices) => ({
+      ...choices,
+      [intentId]: revisionId,
+    }));
+  }
   /** Sets the triggers up for the activation that just succeeded, row by row. */
   async sync(activationId: string): Promise<void> {
     const definition = this.definition();
@@ -247,7 +315,7 @@ export class ActivationSteps implements OnInit {
       environmentId: this.environment()?.id ?? "",
       inputSchema: isJsonObject(inputSchema) ? (inputSchema as JsonObject) : {},
       intents: triggerIntents(this.canvas()),
-      connections: {},
+      connections: { ...this.connectionChoices() },
     };
     this.synced.set(true);
     const rows = this.triggers();
@@ -441,7 +509,75 @@ export class ActivationSteps implements OnInit {
             text: "Callers pin this version when they activate",
           })),
       );
+    await this.loadConnections();
     this.failures.set(failures);
     this.state.set("ready");
   }
+  /** The connections each new Kafka, email or app event trigger can run on, the only one chosen. */
+  private async loadConnections() {
+    const intents = triggerIntents(this.canvas());
+    const needs = new Map<number, ConnectionNeed & { intentId: string }>();
+    this.triggers().forEach((row, index) => {
+      if (row.kind !== "create") return;
+      const intent = intents.find((item) => item.id === row.intentId);
+      const need = intent ? connectionNeed(intent) : null;
+      if (need && intent) needs.set(index, { ...need, intentId: intent.id });
+    });
+    if (!needs.size) return;
+    const client = platformConnections(this.api());
+    const lists = new Map<string, BindableItem[] | { message: string }>();
+    const environment = this.environment()?.name || "this environment";
+    await Promise.all(
+      [...new Set([...needs.values()].map((need) => need.connector))].map(
+        async (connector) => {
+          try {
+            const items = connector.includes("@")
+              ? await client.bindable(connector)
+              : await client.bindableNamed(connector);
+            lists.set(
+              connector,
+              items.filter((item) => item.enabled),
+            );
+          } catch (error) {
+            lists.set(connector, {
+              message:
+                error instanceof ApiError && error.status === 403
+                  ? `You can't bind connections in ${environment}. Ask an administrator for the connection binder role.`
+                  : `Couldn't list the connections: ${describeError(error).message}`,
+            });
+          }
+        },
+      ),
+    );
+    const rows = new Map<number, TriggerConnection>();
+    const choices: Record<string, string> = {};
+    for (const [index, need] of needs) {
+      const listed = lists.get(need.connector) ?? [];
+      const candidates = Array.isArray(listed) ? listed : [];
+      const words = need.connector.replace("@", " ");
+      rows.set(index, {
+        intentId: need.intentId,
+        words,
+        candidates,
+        message: !Array.isArray(listed)
+          ? listed.message
+          : candidates.length
+            ? null
+            : `No connection for ${words} in ${environment}. Create one in Connections.`,
+      });
+      if (candidates.length === 1)
+        choices[need.intentId] = candidates[0].revisionId;
+    }
+    this.connectionsFor.set(rows);
+    this.connectionChoices.set(choices);
+  }
+}
+
+/** A new trigger's connection row: what it can run on, or why it can't be chosen here. */
+interface TriggerConnection {
+  intentId: string;
+  /** "weave-kafka", or "weave-whatsapp 1.2.0". */
+  words: string;
+  candidates: BindableItem[];
+  message: string | null;
 }

@@ -56,8 +56,8 @@ export interface SyncContext {
   /** The activated version's input schema: a new webhook's or Kafka trigger's payload. */
   inputSchema: JsonObject;
   intents: TriggerIntent[];
-  /** The connection revision the dialog chose for each kind that needs one. */
-  connections: Partial<Record<"broker" | "email" | "provider", string>>;
+  /** The connection revision chosen for each new trigger that needs one, by trigger choice. */
+  connections: Readonly<Record<string, string>>;
 }
 export type SyncStatus = "created" | "moved" | "stopped" | "failed";
 export interface SyncResult {
@@ -75,6 +75,35 @@ const NOUNS: Record<ResourceKind, string> = {
   email: "email source",
   provider: "app event source",
 };
+
+/** The connection a new trigger runs on: its connector, and what the row says needs it. */
+export interface ConnectionNeed {
+  /** `name@version`, or a name alone when any version of it serves. */
+  connector: string;
+  label: string;
+}
+const text = (intent: TriggerIntent, key: string) =>
+  typeof intent[key] === "string" ? (intent[key] as string) : "";
+/** What connection a trigger needs to be created, or null when it needs none. */
+export function connectionNeed(intent: TriggerIntent): ConnectionNeed | null {
+  const name = text(intent, "name");
+  const label = (noun: string) => (name ? `${noun} ${name}` : noun);
+  switch (intent.kind) {
+    case "broker":
+      return { connector: "weave-kafka", label: label("Kafka trigger") };
+    case "email":
+      return { connector: "weave-email", label: label("Email trigger") };
+    case "provider": {
+      const pkg = text(intent, "package");
+      const version = text(intent, "packageVersion");
+      return pkg && version
+        ? { connector: `${pkg}@${version}`, label: label("App event trigger") }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
 
 /** Whether a row changes anything after the activation. */
 export const actionable = (row: TriggerRow): boolean =>
@@ -112,10 +141,8 @@ async function run(
       {
         activationId,
         inputSchema: context.inputSchema,
-        ...(kind === "broker" || kind === "email" || kind === "provider"
-          ? context.connections[kind]
-            ? { connectionRevisionId: context.connections[kind] }
-            : {}
+        ...(context.connections[intent.id]
+          ? { connectionRevisionId: context.connections[intent.id] }
           : {}),
       },
     );
