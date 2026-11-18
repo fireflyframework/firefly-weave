@@ -145,7 +145,14 @@ for (const size of sizes)
       await expect(question).toContainText(
         "crm-lookup changes data in Production. Repeating it repeats the change.",
       );
-      await question.getByRole("button", { name: "Cancel" }).click();
+      // Focus starts on Cancel: a held or repeated Enter changes nothing.
+      await expect(
+        question.getByRole("button", { name: "Cancel" }),
+      ).toBeFocused();
+      await expect(
+        question.getByRole("button", { name: "Run it" }),
+      ).toHaveClass(/primary/);
+      await page.keyboard.press("Enter");
       await expect(question).toHaveCount(0);
       // Run it afterwards: exactly one step test reaches the platform, so
       // the canceled click sent none, not even late.

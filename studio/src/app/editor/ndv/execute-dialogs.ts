@@ -168,13 +168,11 @@ let sequence = 0;
           it repeats the change.{{ asked.extra ? " " + asked.extra : "" }}
         </p>
         <div class="dialog-actions">
-          <button type="button" (click)="cancel.emit()">Cancel</button>
-          <button
-            type="button"
-            class="primary"
-            data-execute-primary
-            (click)="confirm.emit()"
-          >
+          <!-- Focus starts on Cancel: a held or repeated Enter mustn't run a change. -->
+          <button type="button" data-execute-primary (click)="cancel.emit()">
+            Cancel
+          </button>
+          <button type="button" class="primary" (click)="confirm.emit()">
             Run it
           </button>
         </div>
