@@ -212,6 +212,9 @@ for (const size of [
       const withheld = rows(page).nth(3);
       await expect(withheld).toHaveText(/This run's details are withheld\./);
       await expect(withheld).not.toContainText("invoice-approval");
+      await expect(
+        withheld.getByRole("cell", { name: "Time withheld" }),
+      ).toHaveCount(1);
       await expect(page.locator("#main")).toContainText(
         "6 entries in the last hour · entries are kept for 7 days",
       );

@@ -116,7 +116,11 @@ type Line =
           </div>
         } @else {
           <div class="entry withheld" role="row">
-            <span role="cell" class="t">—</span
+            <span role="cell" class="t"
+              ><span aria-hidden="true">—</span
+              ><span class="sr-only">{{
+                line.kind === "withheld" ? "Time withheld" : "Time unknown"
+              }}</span></span
             ><span role="cell" class="lv">—</span>
             @if (withRun()) {
               <span role="cell" class="wf">—</span>
