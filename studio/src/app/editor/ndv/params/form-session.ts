@@ -117,6 +117,17 @@ import {
   reconcilePathParts,
 } from "./url-template";
 import { normalizeIdentifier } from "./identifiers";
+import { connectionsPort } from "../../connections/connections-port";
+import type { ConnectionView } from "../../connections/connection-view";
+import type { BindableItem } from "../../connections/connections-api";
+import {
+  fieldHint,
+  needsTest,
+  preselection,
+  slotFor,
+  staleBinding,
+} from "../../connections/connection-choices";
+import { followRevision } from "../../connections/dev-bindings";
 import {
   allSteps,
   newSlotName,
@@ -1317,6 +1328,10 @@ export class FormSession {
   }
   line(spec: ParamSpec, entry: FieldEntry | null): FieldLine {
     const reason = entry ? this.readOnly(entry) : null;
+    // Connected, a slot of another connector says so before the rule that follows from it.
+    const mismatch =
+      spec.type === "connection" && !reason ? this.slotMismatch(spec) : null;
+    if (mismatch) return { kind: "warning", text: mismatch };
     // The field's own rule speaks first; it needs no Fix: the field is here.
     const problem = this.problems(spec, reason)[0];
     if (problem) return { kind: problem.severity, text: problem.message };
@@ -1358,7 +1373,12 @@ export class FormSession {
       : null;
     if (reason && reason !== runNote) return { kind: "reason", text: reason };
     if (spec.type === "connection")
-      return { kind: "hint", text: spec.hint ?? SLOT_HINT };
+      return (
+        this.connectionLine(spec) ?? {
+          kind: "hint",
+          text: spec.hint ?? SLOT_HINT,
+        }
+      );
     return spec.hint
       ? { kind: "hint", text: spec.hint }
       : { kind: "none", text: "" };
@@ -2012,6 +2032,212 @@ export class FormSession {
         : "";
     this.host.openConnectionDialog(name || undefined);
   }
+  // ------------------------------------------- connections in an environment
+  /** What the Connection field shows when Studio is connected to an environment; null working locally. */
+  connectionView(spec: ParamSpec): ConnectionView | null {
+    const port = connectionsPort(this.host);
+    if (!port || spec.type !== "connection") return null;
+    const definition = this.host.model.definition;
+    const workflow = definition.metadata.name;
+    const connector = this.connector(spec);
+    const value = this.read(spec);
+    const named =
+      value.mode === "fixed" && typeof value.value === "string"
+        ? value.value
+        : "";
+    const slot = named;
+    const list = connector ? port.list(connector) : null;
+    const binding = slot ? port.binding(workflow, slot) : null;
+    const item =
+      (binding &&
+        list?.items?.find(
+          (entry) => entry.connectionId === binding.connectionId,
+        )) ||
+      null;
+    return {
+      port,
+      environment: port.environment,
+      connector,
+      workflow,
+      slot,
+      list,
+      binding,
+      item,
+      stale:
+        binding && list?.items
+          ? staleBinding(binding, list.items, port.environment.name)
+          : slot
+            ? port.droppedWhy(workflow, slot)
+            : null,
+      testing: !!slot && port.isTesting(workflow, slot),
+      failure:
+        binding?.tested && !binding.tested.ok
+          ? (port.failure(binding.revisionId) ??
+            "The last test of this connection failed.")
+          : null,
+      canManage: port.canManage,
+    };
+  }
+  /** Connected: why the step's slot doesn't fit its action's connector, or null. */
+  private slotMismatch(spec: ParamSpec): string | null {
+    const view = this.connectionView(spec);
+    if (!view?.slot || !view.connector) return null;
+    const declared = slotsOf(this.host.model.definition).find(
+      (slot) => slot.name === view.slot,
+    );
+    if (declared?.connector === view.connector) return null;
+    return declared
+      ? `The slot ${view.slot} uses ${declared.connector || "an unspecified connector"}, not ${view.connector}. Choose a connection to use a ${view.connector} slot.`
+      : `The slot ${view.slot} isn't declared in this workflow. Choose a connection to declare one.`;
+  }
+  /** The line under a connected Connection field. */
+  private connectionLine(spec: ParamSpec): FieldLine | null {
+    if (this.host.profile && !this.host.profile.environmentId)
+      return {
+        kind: "hint",
+        text: "Choose an environment in Settings to use its connections.",
+      };
+    const view = this.connectionView(spec);
+    if (!view) return null;
+    const env = view.environment.name;
+    const open = () => view.port.open(view.slot);
+    if (view.list?.error)
+      return {
+        kind: "warning",
+        text: `Studio couldn't list the connections in ${env}: ${view.list.error}`,
+      };
+    if (view.stale)
+      return {
+        kind: "warning",
+        text: view.stale,
+        fixLabel: "Choose",
+        fix: open,
+      };
+    if (view.failure) return { kind: "warning", text: view.failure };
+    if (!view.slot || !view.binding)
+      return {
+        kind: "hint",
+        text: `Choose a connection you can use in ${env}.`,
+      };
+
+    const hint = fieldHint(env, view.slot, view.item?.origin ?? null);
+    return {
+      kind: "hint",
+      text:
+        view.binding && !view.canManage
+          ? `${hint}. Your account can't test connections in ${env}.`
+          : hint,
+    };
+  }
+  /**
+   * Chooses a connection for this step: fills the step's slot (declaring one
+   * named after the connector when the workflow has none for it) as one undo
+   * step, keeps the choice on this computer once the edit is in, then tests
+   * it when a test is due. Nothing happens once the form, account or
+   * environment it was asked in has changed.
+   */
+  async chooseConnection(spec: ParamSpec, item: BindableItem): Promise<void> {
+    const port = connectionsPort(this.host);
+    const connector = this.connector(spec);
+    if (
+      spec.type !== "connection" ||
+      !port ||
+      !connector ||
+      !item.enabled ||
+      !this.editable(spec) ||
+      !this.isCurrent()
+    )
+      return;
+    const definition = this.host.model.definition;
+    const workflow = definition.metadata.name;
+    const value = this.read(spec);
+    const current =
+      value.mode === "fixed" && typeof value.value === "string"
+        ? value.value
+        : "";
+    const { slot, declare } = slotFor(definition, connector, current);
+    const changes: FormChange[] = [];
+    if (declare)
+      changes.push({
+        scope: "workflow",
+        path: ["spec", "connections", slot],
+        value: { connector, required: true },
+      });
+    if (current !== slot)
+      changes.push(
+        ...writeParam(this.subject(), spec, { mode: "fixed", value: slot }),
+      );
+    if (changes.length && !this.commit(changes, `${spec.id}:connection`))
+      return;
+    const kept = port.binding(workflow, slot);
+    await port.setBinding(
+      workflow,
+      slot,
+      kept?.connectionId === item.connectionId
+        ? followRevision(kept, item)
+        : {
+            connectionId: item.connectionId,
+            revisionId: item.revisionId,
+            name: item.name,
+          },
+    );
+    if (!port.live || !this.isCurrent()) return;
+    this.announce(
+      `${item.name} is the connection for slot ${slot} in ${port.environment.name}.`,
+    );
+    if (needsTest(port.binding(workflow, slot), port.canManage, new Date()))
+      await port.test(workflow, slot, item.origin);
+  }
+  /** Retry: tests the step's connection again. */
+  async retestConnection(spec: ParamSpec): Promise<void> {
+    const view = this.connectionView(spec);
+    if (!view?.binding || !view.canManage || !this.isCurrent()) return;
+    await view.port.test(view.workflow, view.slot, view.item?.origin ?? null);
+  }
+  /**
+   * When step details open on a step inserted a moment ago: its slot's kept
+   * connection, else the only one there is, chosen as its own undo step. A
+   * binding to a connection that's gone is forgotten and said.
+   */
+  async settleConnection(spec: ParamSpec): Promise<void> {
+    const view = this.connectionView(spec);
+    if (!view?.connector) return;
+    const { port, connector, workflow } = view;
+    await port.ready;
+    const list = await port.listed(connector);
+    const now = this.connectionView(spec);
+    if (!list.items || !now || now.port !== port || !this.isCurrent()) return;
+    if (now.binding) {
+      const listed = list.items.find(
+        (entry) => entry.connectionId === now.binding?.connectionId,
+      );
+      if (!listed) {
+        const why = staleBinding(
+          now.binding,
+          list.items,
+          port.environment.name,
+        );
+        if (why) await port.drop(workflow, now.slot, why);
+        return;
+      }
+      await port.follow(workflow, now.slot, listed);
+      if (
+        needsTest(port.binding(workflow, now.slot), port.canManage, new Date())
+      )
+        await port.test(workflow, now.slot, listed.origin);
+      return;
+    }
+    if (!this.request.fresh || this.settled.has(spec.id)) return;
+    this.settled.add(spec.id);
+    const target = slotFor(this.host.model.definition, connector, now.slot);
+    const chosen = preselection(
+      list.items,
+      port.binding(workflow, target.slot),
+    );
+    if (chosen) await this.chooseConnection(spec, chosen);
+  }
+  /** Connection fields preselected once already in this form. */
+  private readonly settled = new Set<string>();
   async renameSlot(spec: ParamSpec): Promise<void> {
     if (spec.type !== "connection" || !this.editable(spec)) return;
     const value = this.read(spec);

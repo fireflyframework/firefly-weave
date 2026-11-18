@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // undo step; a change that hides fields clears them in the same step and
 // says so with an Undo toast. Registered parameter components get the
 // registry's NdvContext from here.
+import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
 import { canonicalJson, getAt } from "../../forms/core/json";
@@ -174,6 +175,8 @@ export type ControllerHost = Pick<
   | "openTestData"
   | "pinFromElsewhere"
   | "execution"
+  | "runAccount"
+  | "environmentName"
 >;
 /** A diagnostic of one step, located in it. */
 /** Whether a schema marks any value secret, anywhere in it. */
@@ -1692,6 +1695,17 @@ export class StepDetailsController {
     return out;
   }
 
+  /** The connected environment and whether it takes test calls ("disabled" until its policy is read, or when it can't be). */
+  environmentOf(): NdvContext["environment"] {
+    const port = connectionsPort(this.host);
+    if (!port) return null;
+    const policy = port.policyNow();
+    return {
+      ...port.environment,
+      testCalls:
+        policy && policy !== "unreadable" ? policy.test_calls : "disabled",
+    };
+  }
   ndvContext(target: string): NdvContext {
     const step = this.step(target) ?? WORKFLOW_STAND_IN;
     const descriptor = this.descriptor(target);
@@ -1706,7 +1720,7 @@ export class StepDetailsController {
       workflow: host.model.definition,
       readOnly: !!this.readOnlyReason(),
       instanceKey: null,
-      environment: null,
+      environment: this.environmentOf(),
       scope: (fieldPath) =>
         referenceScope(
           host.model.definition,
@@ -1825,8 +1839,18 @@ export class StepDetailsController {
             ? { connector: slot.connector, required: slot.required !== false }
             : null;
         },
-        devBinding: () => null,
-        bind: async () => undefined,
+        devBinding: (slot) => {
+          const port = connectionsPort(host);
+          const kept = port?.binding(host.model.definition.metadata.name, slot);
+          if (!kept) return null;
+          return {
+            connectionId: kept.connectionId,
+            revisionId: kept.revisionId,
+            name: kept.name,
+            tested: kept.tested ? (kept.tested.ok ? "ok" : "failed") : null,
+          };
+        },
+        bind: async (slot) => connectionsPort(host)?.open(slot),
       },
       edit: (changes, label) => {
         if (host.model !== model || model.opened !== opened) return;

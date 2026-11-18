@@ -1,0 +1,303 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// What step details know about connections in the environment Studio is
+// connected to, for one account: the connections each connector offers, the
+// slots' kept choices on this computer, the last test of each, and the
+// environment's test policy. Made on first use from the shell's profile and
+// account and replaced as soon as either changes, so nothing an answer brings
+// back reaches another account, environment or platform.
+import { signal } from "@angular/core";
+import { describeError } from "../../errors";
+import { testCopy } from "../../integrations/connection-copy";
+import type { StepDetailsHost } from "../ndv/step-details-host";
+import { connectedPrefix } from "../state/browser-store";
+import type { EnvironmentTestPolicy } from "../state/execution";
+import { studioBackend } from "../state/studio-storage";
+import {
+  platformConnections,
+  type BindableItem,
+  type ConnectionsApi,
+} from "./connections-api";
+import { DevBindings, followRevision, type DevBinding } from "./dev-bindings";
+
+export type PortHost = Pick<
+  StepDetailsHost,
+  "api" | "profile" | "can" | "runAccount" | "stepDataScope" | "environmentName"
+>;
+
+/** A test policy read counts for a minute. */
+export const POLICY_TTL_MS = 60_000;
+
+/** One connector's connections, as the platform listed them. */
+export interface BindableList {
+  items: BindableItem[] | null;
+  error: string | null;
+}
+type Policy = EnvironmentTestPolicy | "unreadable";
+
+export class ConnectionsPort {
+  readonly api: ConnectionsApi;
+  private bindings: DevBindings | null = null;
+  /** Bindings load from this computer once the account's prefix is known. */
+  readonly ready: Promise<void>;
+  private readonly changed = signal(0);
+  /** Changes whenever a list, binding, test or policy changes. */
+  readonly version = this.changed.asReadonly();
+  private alive = true;
+  private readonly lists = new Map<string, BindableList>();
+  private readonly loading = new Map<
+    string,
+    { token: object; load: Promise<void> }
+  >();
+  private policyKept: { at: number; value: Policy } | null = null;
+  private policyLoad: Promise<Policy | null> | null = null;
+  /** The last failed test's sentence, per connection revision. */
+  private readonly failures = new Map<string, string>();
+  /** Slots whose binding was dropped this session, with why. */
+  private readonly dropped = new Map<string, string>();
+  /** Slots whose connection is being tested now. */
+  private readonly testing = new Set<string>();
+  /** Fix and bind(): the Connection field of this slot opens its choices. */
+  readonly opening = signal<{ slot: string; seq: number } | null>(null);
+
+  constructor(
+    readonly key: string,
+    private readonly host: PortHost,
+    readonly environmentId: string,
+    private readonly now: () => number = () => Date.now(),
+  ) {
+    this.api = platformConnections(host.api);
+    const account = host.runAccount;
+    this.ready = (async () => {
+      const prefix = account
+        ? await connectedPrefix(account).catch(() => null)
+        : null;
+      if (!this.alive) return;
+      const bindings = new DevBindings(studioBackend(), prefix);
+      await bindings.load();
+      if (!this.alive) return;
+      this.bindings = bindings;
+      this.bump();
+    })();
+  }
+
+  private bump() {
+    this.changed.update((n) => n + 1);
+  }
+  /** The environment as sentences name it: "local", or "this environment" before its name is known. */
+  get environment(): { id: string; name: string } {
+    return {
+      id: this.environmentId,
+      name: this.host.environmentName || "this environment",
+    };
+  }
+  get canManage(): boolean {
+    return this.host.can("connection.manage");
+  }
+  get live(): boolean {
+    return this.alive;
+  }
+
+  /** The connections a connector offers here; loads them on first ask. */
+  list(connector: string): BindableList | null {
+    this.version();
+    const kept = this.lists.get(connector);
+    if (!kept && !this.loading.has(connector)) void this.reload(connector);
+    return kept ?? null;
+  }
+  /** The connector's list once the platform answered. */
+  async listed(connector: string): Promise<BindableList> {
+    const kept = this.lists.get(connector);
+    if (kept) return kept;
+    await (this.loading.get(connector)?.load ?? this.reload(connector));
+    return this.lists.get(connector) ?? { items: null, error: null };
+  }
+  /** Asks the platform again (after a connection was created or edited). */
+  reload(connector: string): Promise<void> {
+    const token = {};
+    const load = this.fetchList(connector, token);
+    this.loading.set(connector, { token, load });
+    return load;
+  }
+  private async fetchList(connector: string, token: object): Promise<void> {
+    let next: BindableList;
+    try {
+      next = { items: await this.api.bindable(connector), error: null };
+    } catch (error) {
+      next = { items: null, error: describeError(error).message };
+    }
+    if (!this.alive || this.loading.get(connector)?.token !== token) return;
+    this.loading.delete(connector);
+    this.lists.set(connector, next);
+    this.bump();
+  }
+
+  binding(workflow: string, slot: string): DevBinding | null {
+    this.version();
+    return this.bindings?.get(this.environmentId, workflow, slot) ?? null;
+  }
+  async setBinding(
+    workflow: string,
+    slot: string,
+    value: DevBinding | null,
+  ): Promise<void> {
+    await this.ready;
+    if (!this.alive || !this.bindings) return;
+    if (value) this.dropped.delete(`${workflow}\u0000${slot}`);
+    await this.bindings.set(this.environmentId, workflow, slot, value);
+    this.bump();
+  }
+  async renameSlot(workflow: string, from: string, to: string): Promise<void> {
+    await this.ready;
+    if (!this.alive || !this.bindings) return;
+    await this.bindings.renameSlot(this.environmentId, workflow, from, to);
+    this.bump();
+  }
+  /** A kept binding follows its connection's newest revision in the list. */
+  async follow(workflow: string, slot: string, item: BindableItem) {
+    const kept = this.binding(workflow, slot);
+    if (!kept || kept.connectionId !== item.connectionId) return;
+    const next = followRevision(kept, item);
+    if (next !== kept) await this.setBinding(workflow, slot, next);
+  }
+
+  /**
+   * Forgets a slot's binding to a connection that's no longer listed, and
+   * keeps saying why for the rest of the session.
+   */
+  async drop(workflow: string, slot: string, why: string): Promise<void> {
+    this.dropped.set(`${workflow}\u0000${slot}`, why);
+    await this.setBinding(workflow, slot, null);
+  }
+  /** Why a slot's binding was dropped this session, until another is chosen. */
+  droppedWhy(workflow: string, slot: string): string | null {
+    this.version();
+    return this.dropped.get(`${workflow}\u0000${slot}`) ?? null;
+  }
+  /** Why the last test of this revision failed, or null. */
+  failure(revisionId: string): string | null {
+    this.version();
+    return this.failures.get(revisionId) ?? null;
+  }
+  isTesting(workflow: string, slot: string): boolean {
+    this.version();
+    return this.testing.has(`${workflow}\u0000${slot}`);
+  }
+  /**
+   * Tests the connection bound to a slot and keeps how it went. The answer is
+   * kept only while the slot is still bound to the revision that was tested.
+   */
+  async test(
+    workflow: string,
+    slot: string,
+    origin: string | null,
+  ): Promise<void> {
+    const bound = this.binding(workflow, slot);
+    const key = `${workflow}\u0000${slot}`;
+    if (!bound || this.testing.has(key)) return;
+    this.testing.add(key);
+    this.bump();
+    let ok = false;
+    let message: string | null = null;
+    try {
+      const result = await this.api.test(bound.revisionId);
+      ok = result.ok;
+      message = ok
+        ? null
+        : (result.message ??
+          testCopy.failed(origin ?? "the server", result.reason));
+    } catch (error) {
+      message = describeError(error).message;
+    } finally {
+      this.testing.delete(key);
+    }
+    if (!this.alive) return;
+    const current = this.binding(workflow, slot);
+    if (!current || current.revisionId !== bound.revisionId) return this.bump();
+    if (message) this.failures.set(bound.revisionId, message);
+    else this.failures.delete(bound.revisionId);
+    await this.setBinding(workflow, slot, {
+      ...current,
+      tested: { ok, at: new Date(this.now()).toISOString() },
+    });
+  }
+
+  /** The test policy as last read (for a minute), loading it when there is none or it's old. */
+  policyNow(): Policy | null {
+    this.version();
+    const kept = this.policyKept;
+    if (!kept || this.now() - kept.at > POLICY_TTL_MS) void this.policy();
+    return kept?.value ?? null;
+  }
+  /** The environment's test policy; "unreadable" when this account can't read it, null when it couldn't be read. */
+  policy(): Promise<Policy | null> {
+    const kept = this.policyKept;
+    if (kept && this.now() - kept.at <= POLICY_TTL_MS)
+      return Promise.resolve(kept.value);
+    this.policyLoad ??= (async () => {
+      let value: Policy | null = null;
+      try {
+        value = await this.api.policy();
+      } catch {
+        value = null;
+      }
+      if (!this.alive) return null;
+      this.policyLoad = null;
+      if (value) this.policyKept = { at: this.now(), value };
+      this.bump();
+      return value;
+    })();
+    return this.policyLoad;
+  }
+
+  /** Opens the Connection field of this slot (Fix, or another field asking to bind). */
+  open(slot: string) {
+    this.opening.set({ slot, seq: (this.opening()?.seq ?? 0) + 1 });
+  }
+
+  /** Drops everything: the account, environment or platform changed. Writes no signal, so a template may call it. */
+  forget() {
+    this.alive = false;
+  }
+}
+
+const ports = new WeakMap<object, ConnectionsPort>();
+
+/**
+ * The connections port of the account, environment and platform shown now,
+ * or null when Studio isn't connected to an environment. A change of any of
+ * them replaces the port, and the old one ignores whatever answers it later.
+ */
+export function connectionsPort(host: PortHost): ConnectionsPort | null {
+  const profile = host.profile;
+  if (!profile?.environmentId) return null;
+  const key = [
+    profile.name,
+    profile.baseUrl,
+    profile.tenantId,
+    profile.projectId,
+    profile.environmentId,
+    host.stepDataScope ?? "",
+  ].join("\u0000");
+  const kept = ports.get(host);
+  if (kept?.key === key) return kept;
+  kept?.forget();
+  const port = new ConnectionsPort(key, host, profile.environmentId);
+  ports.set(host, port);
+  return port;
+}

@@ -1011,6 +1011,7 @@ export class App implements CanvasHost {
     { value: "viewer", label: "Viewer" },
     { value: "operator", label: "Run operator" },
     { value: "execution_manager", label: "Execution manager" },
+    { value: "step_tester", label: "Step tester" },
     { value: "deployer", label: "Deployer" },
     { value: "task_participant", label: "Task participant" },
     { value: "task_manager", label: "Task manager" },
@@ -10384,6 +10385,9 @@ export class App implements CanvasHost {
     return this.workspaceLoading
       ? loadingWorkspace
       : workspaceFallback(environment);
+  }
+  get environmentName() {
+    return this.workspaceNames?.environment ?? null;
   }
   /** "Acme · Payments / Production": the platform and its workspace. */
   get environmentLabel() {

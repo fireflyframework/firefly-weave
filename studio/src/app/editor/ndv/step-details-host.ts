@@ -126,6 +126,12 @@ export interface StepDetailsHost {
   readonly runNotice?: RunNotice | null;
   /** The open draft's ID. */
   readonly draftId?: string;
+  /** The open platform draft's saved revision; undefined before it's saved to the platform. */
+  readonly draftRevision?: number;
+  /** The workflow has changes autosave hasn't sent yet. */
+  readonly dirty?: boolean;
+  /** The connected environment's name ("local"), or null before it's known. */
+  readonly environmentName?: string | null;
   /** The run the canvas draws; on the Runs tab it names the steps changed since. */
   canvasRun?(): CanvasRun | null;
   /** Opens a run in Operate › Runs. */
