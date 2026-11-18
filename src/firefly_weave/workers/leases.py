@@ -602,8 +602,10 @@ class TaskService:
         """Log entries about a task this worker leases, in a transaction that takes no operation lock.
 
         The worker needs ``task.log`` for its release; the lease itself is checked in the same statement as the
-        insert, so the task and run are never locked.
+        insert, so the task and run are never locked. A caller who holds ``task.log`` for no release is refused
+        first, as every operation refuses a caller without its capability, before the lease's worker is read.
         """
+        self.workers.definitions.authorization.require_somewhere(actor, scope, "task.log", context=context)
         await self._operation(actor, scope, context).authority(tx, request.lease.owner, "task.log")
         return await ExecutionLogWriter(tx).append(request, daily_limit=daily_limit)
 

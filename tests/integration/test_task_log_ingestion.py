@@ -135,6 +135,37 @@ async def test_another_workers_lease_writes_nothing(worker_setup, access_db, lea
     await refused(worker_setup, access_db, lease.proof.model_copy(update={"token": "forged"}))
 
 
+@pytest.mark.parametrize("role", ["developer", "deployer", "operator", "viewer", "task_participant"])
+async def test_a_person_without_task_log_is_refused_before_any_lease_is_read(
+    worker_setup, access_db, provisioned, lease, role
+):
+    from uuid import uuid4
+
+    from firefly_weave.access.authorization import AccessDenied
+    from firefly_weave.access.models import Grant
+
+    tasks, _, _, _, scope, _, _ = worker_setup
+    _, _, access, _ = access_db
+    admin, _ = provisioned
+    person_id = await access.create_principal(admin, "human")
+    granted = scope.model_copy(update={"environment_id": None}) if role == "developer" else scope
+    await access.grant(admin, person_id, Grant(role=role, scope=granted))
+    person = await access.load_principal(person_id)
+    # A lease naming no worker, and the worker's real one: neither reaches the lease check.
+    for proof in (lease.proof.model_copy(update={"task_id": uuid4(), "owner": uuid4()}), lease.proof):
+        with pytest.raises(AccessDenied):
+            async with UnitOfWork(access_db[0]).open(scope, mutation=True, admission=False) as tx:
+                await tasks.log(
+                    tx,
+                    TaskLogRequest(lease=proof, entries=entries()),
+                    actor=person,
+                    scope=scope,
+                    context=AuditContext(),
+                    daily_limit=200_000,
+                )
+    assert await stored(access_db) == []
+
+
 async def test_a_purged_run_answers_lease_gone(worker_setup, access_db, lease):
     async with access_db[1].begin() as tx:
         await tx.execute(text("DELETE FROM task_leases WHERE task_id=:task"), {"task": lease.proof.task_id})
