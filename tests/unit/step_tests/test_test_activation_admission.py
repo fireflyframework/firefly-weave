@@ -131,3 +131,16 @@ def test_the_test_document_is_the_draft_marked_test_with_its_runs_capped_at_an_h
     )
     shorter = {"metadata": {"name": "orders", "version": "1.2.0"}, "spec": {"timeoutSeconds": 120}}
     assert synthetic_document(shorter, activation)["spec"]["timeoutSeconds"] == 120
+
+
+def test_the_limits_count_and_name_test_runs_of_every_kind():
+    from datetime import UTC, datetime, timedelta
+
+    from firefly_weave.step_tests.admission import busy_refusal
+
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+    running = busy_refusal([now + timedelta(seconds=90)] * 4, [], now)
+    assert running is not None and running.message == "You already have 4 test runs running here."
+    assert running.retry_after == 90
+    recent = busy_refusal([], [now - timedelta(seconds=50)] * 30, now)
+    assert recent is not None and recent.message == "You started 30 test runs here in the last minute."

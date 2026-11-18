@@ -228,8 +228,9 @@ class StepTestRepository:
     async def busy(self, principal: UUID, now: datetime) -> tuple[list[datetime], list[datetime]]:
         """This person's test runs here, step tests and draft test runs alike.
 
-        The first list holds when each running one's test activation expires; the second when each started in the
-        last minute, counting each step test and each draft test activation created as a start too.
+        The first list holds when each running one ends at the latest: a step test with its test activation, a draft
+        test run at its own timeout, which may come after its activation expired. The second holds when each started
+        in the last minute, counting each step test and each draft test activation created as a start too.
         """
         running = await self.rows(
             "SELECT d.expires_at FROM test_activation_details d LEFT JOIN runs r ON r.tenant_id=d.tenant_id "
@@ -237,8 +238,16 @@ class StepTestRepository:
             "WHERE d.tenant_id=:tenant AND d.project_id=:project AND d.environment_id=:environment "
             "AND d.source='step' AND d.principal_id=:principal AND d.retired_at IS NULL AND d.expires_at>:now "
             f"AND coalesce(r.state->>'status','running') NOT IN {TERMINAL} "
-            "UNION ALL SELECT d.expires_at FROM test_activation_details d JOIN runs r ON r.tenant_id=d.tenant_id "
-            "AND r.project_id=d.project_id AND r.environment_id=d.environment_id AND r.activation_id=d.activation_id "
+            "UNION ALL SELECT coalesce(f.started_at,:now)+make_interval(secs=>least(coalesce("
+            "(v.document->'spec'->>'timeoutSeconds')::int,3600),3600)) FROM test_activation_details d "
+            "JOIN runs r ON r.tenant_id=d.tenant_id AND r.project_id=d.project_id "
+            "AND r.environment_id=d.environment_id AND r.activation_id=d.activation_id "
+            "JOIN run_facts f ON f.tenant_id=r.tenant_id AND f.project_id=r.project_id "
+            "AND f.environment_id=r.environment_id AND f.run_id=r.id "
+            "JOIN activation_revisions a ON a.tenant_id=d.tenant_id AND a.project_id=d.project_id "
+            "AND a.environment_id=d.environment_id AND a.id=d.activation_id AND a.test "
+            "JOIN definition_versions v ON v.tenant_id=a.tenant_id AND v.project_id=a.project_id "
+            "AND v.id=a.version_id AND v.test "
             "WHERE d.tenant_id=:tenant AND d.project_id=:project AND d.environment_id=:environment "
             f"AND d.source='draft' AND d.principal_id=:principal AND r.state->>'status' NOT IN {TERMINAL}",
             principal=principal,

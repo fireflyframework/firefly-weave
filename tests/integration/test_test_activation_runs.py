@@ -149,3 +149,20 @@ async def test_runs_of_called_workflows_are_test_runs_too(drafts):  # noqa: F811
     await env.platform.scan()
     [child] = await env.query("SELECT activation_id,test,origin FROM run_facts WHERE caller_run_id=:run", run=parent.id)
     assert (child["activation_id"], child["test"], child["origin"]) == (callee.id, True, "call")
+
+
+async def test_a_draft_run_that_outlives_its_activation_counts_until_its_own_timeout(drafts):  # noqa: F811
+    env = drafts
+    first = await env.create(env.tester, workflow("notify-moves", [NOTIFY]))
+    for _ in range(4):
+        await run(env, first)
+    await env.execute(
+        "UPDATE test_activation_details SET created_at=now()-interval '2 hours',expires_at=now()-interval '1 second' "
+        "WHERE activation_id=:a",
+        a=first.id,
+    )
+    # The four runs go on after their activation expired: they keep counting until their own timeout, an hour.
+    second = await env.create(env.tester, workflow("notify-moves", [NOTIFY]))
+    error = await refused(run(env, second))
+    assert (error.status, error.code) == (429, "WV-STEPTEST-BUSY")
+    assert 3500 <= error.retry_after <= 3600
