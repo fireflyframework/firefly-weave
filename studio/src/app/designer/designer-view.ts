@@ -24,6 +24,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   type DoCheck,
+  inject,
   input,
   viewChild,
 } from "@angular/core";
@@ -49,6 +50,8 @@ import { AddStepPanel } from "../editor/add-step/add-step-panel";
 import { handOverLinkedRun, parseRunsLink } from "../editor/runs-tab/run-links";
 import { RunsView } from "../editor/runs-tab/runs-view";
 import type { App } from "../app";
+import { DialogService } from "../dialog";
+import { workflowTestItem } from "../editor/activation/execute-in-environment";
 
 @Component({
   selector: "weave-designer",
@@ -83,6 +86,30 @@ import type { App } from "../app";
     `
       :host {
         display: contents;
+      }
+      /* Execute workflow and its menu read as one control, as in step details;
+         both stay children of the toolbar group, whose rules size them. */
+      .execute-workflow.has-ways {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+      .execute-more {
+        margin-inline-start: -6px;
+      }
+      .execute-more ::ng-deep .row-menu-toggle {
+        width: var(--control-md);
+        min-width: var(--control-md);
+        padding: 0;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+        background: var(--accent);
+        border-color: var(--accent);
+        border-left-color: var(--accent-press);
+        color: var(--on-accent);
+      }
+      /* The bar hides its menus' icons on a phone; this one is only its chevron. */
+      .execute-more ::ng-deep .row-menu-toggle weave-icon {
+        display: inline-flex;
       }
       .editor-views button weave-icon {
         margin-right: 6px;
@@ -314,9 +341,11 @@ import type { App } from "../app";
             @if (h.editorNext && h.execution) {
               <!-- The Runs tab reads runs that happened: nothing executes there. -->
               @if (h.tab !== "Runs") {
+                @let ways = executeWays();
                 <button
                   type="button"
                   class="primary execute-workflow"
+                  [class.has-ways]="ways.length > 0"
                   aria-label="Execute workflow"
                   title="Execute workflow (Ctrl/Cmd+Enter)"
                   (click)="h.executeWorkflow()"
@@ -327,6 +356,14 @@ import type { App } from "../app";
                     ></span
                   >
                 </button>
+                @if (ways.length) {
+                  <weave-row-menu
+                    class="execute-more"
+                    label="More ways to execute"
+                    icon="chevronDown"
+                    [items]="ways"
+                  />
+                }
               }
             } @else {
               <button
@@ -1473,6 +1510,12 @@ export class DesignerView implements DoCheck {
     if (h.tab !== "Runs") void h.selectTab("Runs");
   }
   readonly canvas = viewChild(CanvasView);
+  private readonly dialogs = inject(DialogService);
+  /** Execute workflow's other ways: Execute workflow in the environment Studio is connected to. */
+  executeWays(): RowMenuItem[] {
+    const item = workflowTestItem(this.host(), this.dialogs);
+    return item ? [item] : [];
+  }
   private viewMenu: { key: string; items: RowMenuItem[] } | null = null;
   /**
    * The view switcher's menu: the views, the one shown checked. Built again

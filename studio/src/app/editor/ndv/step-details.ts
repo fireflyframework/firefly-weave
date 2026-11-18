@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // on the dimmed shell header above it (its own inset padding doesn't close
 // it) — there is nothing to save: every edit is already in the workflow as
 // an undo step.
+import { workflowTestItem } from "../activation/execute-in-environment";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -1180,7 +1181,13 @@ export class StepDetails {
     return running?.stepId === this.target() ? running : null;
   }
   executeItems(): RowMenuItem[] {
-    if (this.triggerTarget()) return [];
+    // A trigger executes the workflow: here, or in the environment.
+    if (this.triggerTarget()) {
+      const real = this.controller().viewingRuns()
+        ? null
+        : workflowTestItem(this.host(), this.dialogs);
+      return real ? [real] : [];
+    }
     const real = this.realItem();
     return [
       {

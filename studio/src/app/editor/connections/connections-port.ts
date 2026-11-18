@@ -38,6 +38,10 @@ import type { CreatedConnection } from "../../integrations/http-connection-form"
 import type { ConnectionSheetRequest } from "./connection-sheet";
 import { StepTestClient } from "../state/step-test-client";
 import { StepTestService } from "../state/step-test-service";
+import type { TestActivationApi } from "../state/test-activation-client";
+import { TestActivationService } from "../state/test-activation-service";
+import type { SideEffect } from "../state/execution";
+import type { StudioApi } from "../../api";
 import { allSteps } from "../ndv/step-walk";
 
 /** What a step test needs from the editor that hosts step details. */
@@ -393,6 +397,72 @@ export class ConnectionsPort {
   runningTests(): StepTestService | null {
     return this.service();
   }
+  private readonly activations = signal<TestActivationService | null>(null);
+  /**
+   * The test activations of this account and environment, made on first use
+   * (Execute workflow in the environment). `confirm` asks the person before
+   * steps that change data run.
+   */
+  testActivations(
+    host: Pick<
+      StepTestHost,
+      | "api"
+      | "draftId"
+      | "draftRevision"
+      | "flushAutosave"
+      | "runCommand"
+      | "error"
+    >,
+    confirm: (request: {
+      sideEffect: SideEffect;
+      steps: string[];
+    }) => Promise<boolean>,
+  ): TestActivationService {
+    const made = untracked(this.activations);
+    if (made) return made;
+    const port = this;
+    // Requests go to the environment this port was made for, never a later one.
+    const environment = environmentPath(host.api) ?? "";
+    const service = new TestActivationService(
+      {
+        environment,
+        mutate: (...args: Parameters<StudioApi["mutate"]>) =>
+          host.api.mutate(...args),
+      } as TestActivationApi,
+      {
+        environment: () => (port.alive ? port.environment : null),
+        saveDraft: async () => {
+          // A draft the platform hasn't had yet is saved as Save draft does.
+          if (host.draftRevision === undefined) await host.runCommand("save");
+          const saved = (await host.flushAutosave?.()) ?? true;
+          const revision = host.draftRevision;
+          if (!saved || revision === undefined || !host.draftId)
+            throw Error(
+              host.error || "the workflow isn't saved to the platform",
+            );
+          return { draftId: host.draftId, draftRevision: revision };
+        },
+        confirm,
+        now: () => this.now(),
+      },
+    );
+    this.activations.set(service);
+    return service;
+  }
+  private readonly workflowTest = signal(false);
+  /** True while Execute workflow in the environment is starting its test run. */
+  runningWorkflowTest(): boolean {
+    return this.workflowTest();
+  }
+  /** Marks Execute workflow in the environment as starting until `work` settles. */
+  async trackWorkflowTest<T>(work: Promise<T>): Promise<T> {
+    this.workflowTest.set(true);
+    try {
+      return await work;
+    } finally {
+      this.workflowTest.set(false);
+    }
+  }
   /** Steps whose Execute in this environment found no connection for a slot, per draft: their tile asks for one. */
   attempted(
     host: Pick<StepTestHost, "realSetup" | "draftId">,
@@ -422,6 +492,9 @@ export class ConnectionsPort {
     // its own state (a signal) is cleared after the render that replaced the port.
     const service = untracked(this.service);
     if (service) queueMicrotask(() => service.forget());
+    // The test activation is retired early; it would expire on its own.
+    const activations = untracked(this.activations);
+    if (activations) queueMicrotask(() => void activations.forget());
   }
 }
 
