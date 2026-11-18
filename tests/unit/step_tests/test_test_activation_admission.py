@@ -123,8 +123,11 @@ def test_the_test_document_is_the_draft_marked_test_with_its_runs_capped_at_an_h
     assert document["metadata"] == {"name": "orders", "version": "1.2.0+test.0123456789ab"}
     assert document["spec"]["timeoutSeconds"] == 3600
     assert draft["spec"]["timeoutSeconds"] == 7200
-    assert synthetic_document({"metadata": {"name": "orders", "version": "1.2.0"}, "spec": {}}, activation)["spec"][
-        "timeoutSeconds"
-    ] == 3600
+    assert (
+        synthetic_document({"metadata": {"name": "orders", "version": "1.2.0"}, "spec": {}}, activation)["spec"][
+            "timeoutSeconds"
+        ]
+        == 3600
+    )
     shorter = {"metadata": {"name": "orders", "version": "1.2.0"}, "spec": {"timeoutSeconds": 120}}
     assert synthetic_document(shorter, activation)["spec"]["timeoutSeconds"] == 120
