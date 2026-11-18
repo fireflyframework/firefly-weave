@@ -57,6 +57,10 @@ test("without the step tester role there's no Execute in local", async ({
     withInput,
   );
   await details.open("crm-lookup");
+  // Connected to Production: the field lists its connections, so only the role is missing.
+  await connectionSelect(details).click();
+  await expect(page.locator(".choice-group")).toHaveText(["In Production"]);
+  await page.keyboard.press("Escape");
   await details.dialog
     .getByRole("button", { name: "More ways to execute" })
     .click();

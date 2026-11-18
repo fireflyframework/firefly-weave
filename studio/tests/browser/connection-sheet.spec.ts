@@ -153,6 +153,10 @@ for (const size of sizes)
       await options(page).filter({ hasText: "Create connection" }).click();
       const form = sheet(page, "New API connection");
       await expect(form).toBeVisible();
+      // The side sheet names the connection after the slot the step will use.
+      await expect(
+        form.getByLabel("Connection name", { exact: true }),
+      ).toHaveValue("http");
       await page.keyboard.press("Escape");
       await expect(form).toHaveCount(0);
       await expect(connectionSelect(details)).toBeFocused();
