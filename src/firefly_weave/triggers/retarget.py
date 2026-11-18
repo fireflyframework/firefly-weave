@@ -30,6 +30,7 @@ from functools import cache
 from typing import Literal, cast
 from uuid import UUID
 
+from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expression_types import infer_expression
 from firefly_weave.compiler.typecheck import check_compatibility
@@ -37,6 +38,7 @@ from firefly_weave.contracts.email import NormalizedEmail
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import RuntimeRepository
 
 SourceKind = Literal["webhook", "kafka", "provider", "email", "event"]
@@ -181,3 +183,16 @@ async def checked_target(tx: Transaction, current: UUID | None, target: UUID) ->
     if facts is None:
         raise not_found()
     same_workflow(facts, await activation_facts(tx, target))
+
+
+async def input_digest(tx: Transaction, activation: UUID) -> str:
+    """The digest of the input schema of a trigger's current activation, never a test one, as its artifact names it."""
+    rows = await RuntimeRepository(tx).rows(
+        "SELECT v.artifact FROM activation_revisions a JOIN definition_versions v ON v.tenant_id=a.tenant_id "
+        "AND v.project_id=a.project_id AND v.id=a.version_id WHERE a.tenant_id=:tenant AND a.project_id=:project "
+        "AND a.environment_id=:environment AND a.id=:id AND NOT a.test",
+        id=activation,
+    )
+    if not rows:
+        raise not_found()
+    return workflow(import_artifact(rows[0]["artifact"])).input_schema

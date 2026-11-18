@@ -38,11 +38,28 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import RunStartFacts
+from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
 from firefly_weave.triggers.models import Trigger, TriggerReceipt, TriggerRequest
+from firefly_weave.triggers.retarget import (
+    RetargetOutcome,
+    checked_target,
+    input_digest,
+    payload_rule,
+    require_revision,
+    retarget_audit,
+)
+from firefly_weave.triggers.retarget import disabled as stopped
 from firefly_weave.triggers.webhooks import authenticate, denied
+
+
+def _view(row: dict[str, Any]) -> Trigger:
+    """A stored route as its contract reads it: the columns a disable or a retarget change win over the payload."""
+    return Trigger.model_validate_json(
+        json.dumps({**row["payload"], "disabled": row["disabled"], "revision": row["revision"]})
+    )
 
 
 @service
@@ -128,8 +145,9 @@ class WebhookService:
             if not rows or rows[0]["disabled"]:
                 return
             await RuntimeRepository(tx).execute("SELECT weave_control_begin('webhook',:id)", id=identifier)
+            # A retarget prepared before the disable names an older revision, so it no longer applies.
             await RuntimeRepository(tx).execute(
-                f"UPDATE trigger_routes SET disabled=true WHERE {SCOPE} AND id=:id", id=identifier
+                f"UPDATE trigger_routes SET disabled=true,revision=revision+1 WHERE {SCOPE} AND id=:id", id=identifier
             )
             await audit(
                 tx.session,
@@ -140,6 +158,84 @@ class WebhookService:
                 capability="trigger.manage",
                 context=context,
             )
+
+    async def retarget(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        activation_id: UUID,
+        expected: int | None,
+        *,
+        context: AuditContext,
+    ) -> Trigger:
+        """Move a webhook to another activation of its workflow; it keeps its ID, so its URL, and runs as the mover.
+
+        The mover needs what creating the webhook needs, and the new version's input must be the webhook's payload
+        schema or the current version's input unchanged. The route's row lock orders the move with receives.
+        """
+        async with self.runtime.definitions.transaction(scope, None) as tx:
+            actor = await self.access.load_principal(actor.id, tx=tx)
+            self.runtime.require(actor, scope, "trigger.manage", context)
+            self.runtime.require(actor, scope, "run.start", context)
+            repository = RuntimeRepository(tx)
+            rows = await repository.rows(
+                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id FOR UPDATE",
+                id=identifier,
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Trigger not found")
+            current = _view(rows[0])
+            require_revision(expected, current.revision)
+            if current.disabled:
+                raise stopped()
+            await checked_target(tx, current.activation_id, activation_id)
+            assert current.activation_id is not None
+            self.secrets.check(scope, current.secret_ref)
+            activation, envelope = await self.runtime.definitions.runtime_snapshot(
+                actor, scope, activation_id, context=context, tx=tx
+            )
+            artifact = import_artifact(envelope)
+            await self.runtime.definitions.execution_readiness(
+                actor, scope, activation.request, artifact, capability="run.start", context=context, tx=tx
+            )
+            payload_rule(
+                current.payload_schema,
+                current_input=await input_digest(tx, current.activation_id),
+                new_input=workflow(artifact).input_schema,
+            )
+            moved = current.model_copy(
+                update={"activation_id": activation_id, "principal_id": actor.id, "revision": current.revision + 1}
+            )
+            await repository.execute(
+                f"UPDATE trigger_routes SET activation_id=:activation,principal_id=:principal,"
+                f"payload=cast(:payload AS jsonb),revision=:revision WHERE {SCOPE} AND id=:id",
+                id=identifier,
+                activation=activation_id,
+                principal=actor.id,
+                payload=moved.model_dump_json(),
+                revision=moved.revision,
+            )
+            await audit(
+                tx.session,
+                actor,
+                "trigger.retarget",
+                str(identifier),
+                scope=scope,
+                capability="trigger.manage",
+                context=context,
+                details=retarget_audit(
+                    RetargetOutcome(
+                        kind="webhook",
+                        resource_id=identifier,
+                        from_activation_id=current.activation_id,
+                        to_activation_id=activation_id,
+                        from_principal_id=current.principal_id,
+                        to_principal_id=actor.id,
+                    )
+                ),
+            )
+        return moved
 
     async def receive(self, trigger_id: UUID, raw_body: bytes, headers: dict[str, str]) -> TriggerReceipt:
         if len(raw_body) > 1048576:
@@ -265,14 +361,11 @@ class WebhookService:
             for identifier in ids[:limit]:
                 row = (
                     await RuntimeRepository(tx).rows(
-                        f"SELECT payload,disabled FROM trigger_routes WHERE {SCOPE} AND id=:id", id=identifier
+                        f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id",
+                        id=identifier,
                     )
                 )[0]
-                items.append(
-                    Trigger.model_validate_json(json.dumps({**row["payload"], "disabled": row["disabled"]})).model_dump(
-                        mode="json"
-                    )
-                )
+                items.append(_view(row).model_dump(mode="json"))
             return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
 
     async def read(self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext) -> Trigger:
@@ -280,8 +373,8 @@ class WebhookService:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
             rows = await RuntimeRepository(tx).rows(
-                f"SELECT payload,disabled FROM trigger_routes WHERE {SCOPE} AND id=:id", id=identifier
+                f"SELECT payload,disabled,revision FROM trigger_routes WHERE {SCOPE} AND id=:id", id=identifier
             )
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Trigger not found")
-            return Trigger.model_validate_json(json.dumps({**rows[0]["payload"], "disabled": rows[0]["disabled"]}))
+            return _view(rows[0])
