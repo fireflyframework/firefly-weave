@@ -34,7 +34,6 @@ import { NO_MANAGE, slotBase, slotsOf } from "./slots";
 import {
   CREATE_CONNECTION,
   connectionOptions,
-  notEncrypted,
   testPill,
   type TestPill,
 } from "../../connections/connection-choices";
@@ -61,37 +60,38 @@ const CREATE = "\u0000create";
           [placeholder]="
             view.list ? 'Choose a connection' : 'Loading connections…'
           "
+          [sheetTitle]="'Connection for ' + session().target"
           (choose)="chooseConnected($event, view)"
         />
-        <span class="connection-status" role="status">
-          @if (view.testing) {
-            <span class="connection-pill"
-              ><weave-icon name="spinner" [size]="16" />Testing…</span
+        <!-- How the last test went and Retry stay together ("Test failed · Retry"). -->
+        <span class="connection-state">
+          <span class="connection-status" role="status">
+            @if (view.testing) {
+              <span class="connection-pill"
+                ><weave-icon name="spinner" [size]="16" />Testing…</span
+              >
+            } @else if (pill(view); as shown) {
+              <span
+                class="connection-pill"
+                [class.is-success]="shown.tone === 'success'"
+                [class.is-danger]="shown.tone === 'danger'"
+                ><weave-icon
+                  [name]="shown.tone === 'success' ? 'ok' : 'failCircle'"
+                  [size]="16"
+                />{{ shown.text }}</span
+              >
+            }
+          </span>
+          @if (retryable(view)) {
+            <button
+              type="button"
+              class="tertiary connection-retry"
+              (click)="retry()"
             >
-          } @else if (pill(view); as shown) {
-            <span
-              class="connection-pill"
-              [class.is-success]="shown.tone === 'success'"
-              [class.is-danger]="shown.tone === 'danger'"
-              ><weave-icon
-                [name]="shown.tone === 'success' ? 'ok' : 'failCircle'"
-                [size]="16"
-              />{{ shown.text }}</span
-            >
+              Retry
+            </button>
           }
         </span>
-        @if (retryable(view)) {
-          <button
-            type="button"
-            class="tertiary connection-retry"
-            (click)="retry()"
-          >
-            Retry
-          </button>
-        }
-        @if (view.item && plain(view.item.origin)) {
-          <span class="connection-plain">Not encrypted</span>
-        }
       </div>
     } @else {
       <weave-select
@@ -119,11 +119,18 @@ const CREATE = "\u0000create";
       flex: 1 1 240px;
       min-width: 0;
     }
+    .connection-state {
+      display: inline-flex;
+      flex: none;
+      align-items: center;
+      gap: var(--space-1);
+      white-space: nowrap;
+    }
+    .connection-state:not(:has(.connection-pill, .connection-retry)),
     .connection-status:empty {
       display: none;
     }
-    .connection-pill,
-    .connection-plain {
+    .connection-pill {
       display: inline-flex;
       align-items: center;
       gap: var(--space-1);
@@ -131,7 +138,7 @@ const CREATE = "\u0000create";
       padding: 0 var(--space-2);
       border: 1px solid var(--border);
       border-radius: var(--radius-pill);
-      color: var(--text-muted);
+      color: var(--muted);
       font: var(--type-caption);
       white-space: nowrap;
     }
@@ -144,11 +151,6 @@ const CREATE = "\u0000create";
       border-color: var(--danger-bd);
       background: var(--danger-bg);
       color: var(--danger-ink);
-    }
-    .connection-plain {
-      border-color: var(--warning-bd);
-      background: var(--warning-bg);
-      color: var(--warning-ink);
     }
     .connection-retry {
       min-height: var(--sd-target, var(--control-sm));
@@ -201,9 +203,6 @@ export class ConnectionField implements DoCheck {
       view.canManage &&
       !!this.pill(view)?.retry
     );
-  }
-  plain(origin: string | null): boolean {
-    return notEncrypted(origin);
   }
   chooseConnected(value: string, view: ConnectionView): void {
     const session = this.session(),

@@ -82,7 +82,21 @@ describe("what the Connection field offers", () => {
     expect(options.at(-1)).toEqual({
       value: CREATE_CONNECTION,
       label: "Create connection",
+      action: true,
     });
+  });
+
+  it("a plain-HTTP address is marked as not encrypted", () => {
+    const [plain, secure] = connectionOptions(
+      [item(1, { origin: "http://legacy.acme.test" }), item(2)],
+      "local",
+      HTTP,
+    );
+    expect(plain).toMatchObject({
+      description: "http://legacy.acme.test",
+      note: "Not encrypted",
+    });
+    expect(secure.note).toBeUndefined();
   });
 
   it("a turned-off connection is listed but can't be chosen", () => {
@@ -106,10 +120,12 @@ describe("what the Connection field offers", () => {
     expect(create(HTTP)).toEqual({
       value: CREATE_CONNECTION,
       label: "Create connection",
+      action: true,
     });
     expect(create({ manage: false, connector: "weave-http@2.0.0" })).toEqual({
       value: CREATE_CONNECTION,
       label: "Create connection",
+      action: true,
       description:
         "Your account can't manage connections in staging. Ask an administrator.",
       disabled: true,
@@ -117,6 +133,7 @@ describe("what the Connection field offers", () => {
     expect(create({ manage: true, connector: "weave-sftp@1.0.0" })).toEqual({
       value: CREATE_CONNECTION,
       label: "Create connection",
+      action: true,
       description:
         "Studio creates weave-http connections here. Create weave-sftp connections with weave platform integrations, or ask an administrator.",
       disabled: true,
@@ -133,6 +150,7 @@ describe("what the Connection field offers", () => {
     expect(options[1]).toEqual({
       value: CREATE_CONNECTION,
       label: "Create connection",
+      action: true,
     });
   });
 

@@ -487,6 +487,21 @@ SPDX-License-Identifier: Apache-2.0
           {{ line.fixLabel ?? "Fix" }}
         </button>
       }
+    } @else if (line.mark || line.detail) {
+      <span class="param-line-text"
+        >{{ line.text }}
+        @if (line.mark) {
+          · <span class="param-line-mark">{{ line.mark }}</span>
+        }
+      </span>
+      @if (line.detail; as detail) {
+        <span class="param-line-detail" [attr.data-tone]="detail.tone">
+          @if (detail.tone === "danger") {
+            <weave-icon name="failCircle" [size]="16" />
+          }
+          <span>{{ detail.text }}</span>
+        </span>
+      }
     } @else {
       {{ line.text }}
     }

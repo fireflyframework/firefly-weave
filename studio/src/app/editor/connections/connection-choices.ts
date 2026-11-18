@@ -51,6 +51,7 @@ export function connectionOptions(
           label: item.name,
           description: item.origin ?? "No address",
           group,
+          ...(notEncrypted(item.origin) ? { note: "Not encrypted" } : {}),
         }
       : {
           value: item.connectionId,
@@ -69,6 +70,7 @@ export function connectionOptions(
   const create: SelectOption = {
     value: CREATE_CONNECTION,
     label: "Create connection",
+    action: true,
   };
   if (!createsHere(can.connector)) {
     create.description = `Studio creates weave-http connections here. Create ${connectorName(can.connector)} connections with weave platform integrations, or ask an administrator.`;

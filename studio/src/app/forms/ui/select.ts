@@ -39,6 +39,10 @@ export interface SelectOption {
   description?: string;
   group?: string;
   disabled?: boolean;
+  /** A command rather than a choice ("Create connection"): set apart below a rule, with a plus, in the link color. */
+  action?: boolean;
+  /** A short caution after the description ("Not encrypted"), in the warning ink. */
+  note?: string;
 }
 
 export function selectOptions(
@@ -116,11 +120,20 @@ let sequence = 0;
       [hidden]="!open()"
       [weaveAnchoredPopover]="open()"
       [popoverAnchor]="anchor"
+      [popoverSheet]="!!sheetTitle()"
       (popoverClosed)="close()"
       (mousedown)="$event.preventDefault()"
     >
       @if (open()) {
+        @if (sheetTitle()) {
+          <div class="choice-sheet-title" role="presentation">
+            {{ sheetTitle() }}
+          </div>
+        }
         @for (option of filtered(); track option.value; let index = $index) {
+          @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
+            <div class="choice-rule" role="presentation"></div>
+          }
           @if (option.group && option.group !== filtered()[index - 1]?.group) {
             <div class="choice-group" role="presentation">
               {{ option.group }}
@@ -129,6 +142,7 @@ let sequence = 0;
           <div
             role="option"
             class="choice-option"
+            [class.choice-action]="option.action"
             [id]="id + '-option-' + index"
             [attr.data-value]="option.value"
             [attr.aria-selected]="value() === option.value"
@@ -137,9 +151,20 @@ let sequence = 0;
             (mousemove)="hover(index)"
             (click)="$event.preventDefault(); pick(index)"
           >
-            <span>{{ option.label }}</span>
+            @if (option.action) {
+              <span class="choice-label"
+                ><weave-icon name="plus" [size]="16" />{{ option.label }}</span
+              >
+            } @else {
+              <span>{{ option.label }}</span>
+            }
             @if (option.description) {
-              <small>{{ option.description }}</small>
+              <small
+                >{{ option.description }}
+                @if (option.note) {
+                  · <span class="choice-note">{{ option.note }}</span>
+                }
+              </small>
             }
             @if (value() === option.value) {
               <weave-icon name="check" />
@@ -256,7 +281,7 @@ let sequence = 0;
       .choice-option.active small {
         color: var(--on-accent);
       }
-      .choice-option weave-icon {
+      .choice-option > weave-icon {
         position: absolute;
         top: 10px;
         right: 8px;
@@ -266,6 +291,50 @@ let sequence = 0;
       .choice-option[aria-disabled="true"] {
         color: var(--muted);
         cursor: not-allowed;
+      }
+      .choice-rule {
+        margin: 4px 6px;
+        border-top: 1px solid var(--line);
+      }
+      .choice-action:not([aria-disabled="true"]) {
+        color: var(--link);
+      }
+      .choice-action.active {
+        color: var(--on-accent);
+      }
+      .choice-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .choice-note {
+        color: var(--warning-ink);
+      }
+      .choice-option.active .choice-note {
+        color: inherit;
+      }
+      /* Below 768 px, with a title: a sheet along the bottom edge over a
+         scrim, with 48 px rows, instead of a list over the fields above. */
+      .choice-sheet-title {
+        display: none;
+      }
+      .choice-list[data-side="sheet"] {
+        padding: var(--space-2) var(--space-2) var(--space-4);
+        border-width: 1px 0 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        box-shadow: var(--shadow-3);
+      }
+      .choice-list[data-side="sheet"]::backdrop {
+        background: var(--scrim);
+      }
+      .choice-list[data-side="sheet"] .choice-sheet-title {
+        display: block;
+        padding: var(--space-2) 10px var(--space-3);
+        font: var(--type-label);
+      }
+      .choice-list[data-side="sheet"] .choice-option {
+        align-content: center;
+        min-height: 48px;
       }
       .choice-group {
         font-size: 12px;
@@ -294,6 +363,11 @@ export class Select {
   describedBy = input<string | null>(null);
   /** The toggle's icon; "chevronDown" where the list opens in place, under the field. */
   icon = input("chevron");
+  /**
+   * Below 768 px the choices open as a sheet along the bottom edge with this
+   * title ("Connection for crm-lookup"); without one, they open at the field.
+   */
+  sheetTitle = input<string | null>(null);
   choose = output<string>();
   id = `choice-${++sequence}`;
   open = signal(false);
@@ -348,7 +422,14 @@ export class Select {
     if (!this.host.contains(event.relatedTarget as Node | null)) this.close();
   }
   outside(event: PointerEvent) {
-    if (this.open() && !event.composedPath().includes(this.host)) this.close();
+    if (!this.open()) return;
+    const list = this.host.querySelector<HTMLElement>(".choice-list");
+    // A press on a sheet's scrim lands on the list itself, above its top edge.
+    const scrim =
+      !!list &&
+      event.target === list &&
+      event.clientY < list.getBoundingClientRect().top;
+    if (scrim || !event.composedPath().includes(this.host)) this.close();
   }
   private move(next: number, direction: 1 | -1) {
     const items = this.filtered();

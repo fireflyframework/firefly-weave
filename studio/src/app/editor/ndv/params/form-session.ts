@@ -127,6 +127,7 @@ import type { BindableItem } from "../../connections/connections-api";
 import {
   fieldHint,
   needsTest,
+  notEncrypted,
   preselection,
   slotFor,
   staleBinding,
@@ -174,6 +175,10 @@ export interface FieldLine {
   text: string;
   fixLabel?: string;
   fix?: () => void;
+  /** A hint's short caution after its text ("Not encrypted"), in the warning ink. */
+  mark?: string;
+  /** A second line under a hint: why something failed (danger), or what this account can't do. */
+  detail?: { text: string; tone: "danger" | "neutral" };
 }
 /** The stand-in for Notes, which is no field of the form, in the issues list. */
 const NOTES: PlacedSpec = {
@@ -2116,20 +2121,27 @@ export class FormSession {
         fixLabel: "Choose",
         fix: open,
       };
-    if (view.failure) return { kind: "warning", text: view.failure };
     if (!view.slot || !view.binding)
       return {
         kind: "hint",
         text: `Choose a connection you can use in ${env}.`,
       };
-
-    const hint = fieldHint(env, view.slot, view.item?.origin ?? null);
+    // Where the connection points stays in view; why its test failed goes under it.
+    const origin = view.item?.origin ?? null;
     return {
       kind: "hint",
-      text:
-        view.binding && !view.canManage
-          ? `${hint}. Your account can't test connections in ${env}.`
-          : hint,
+      text: fieldHint(env, view.slot, origin),
+      ...(notEncrypted(origin) ? { mark: "Not encrypted" } : {}),
+      ...(view.failure
+        ? { detail: { text: view.failure, tone: "danger" as const } }
+        : !view.canManage
+          ? {
+              detail: {
+                text: `Your account can't test connections in ${env}.`,
+                tone: "neutral" as const,
+              },
+            }
+          : {}),
     };
   }
   /**
