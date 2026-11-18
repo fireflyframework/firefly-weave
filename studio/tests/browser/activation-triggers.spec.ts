@@ -115,6 +115,12 @@ test("a new webhook is created for the activation, kept for the environment, and
   await expect(
     page.locator(".toast").filter({ hasText: "Activated pets 1.0.0" }),
   ).toBeVisible();
+  // The created IDs go into the trigger choices at once (kept on this
+  // computer with the canvas), and the draft's autosave clears Unsaved on its
+  // own: at most ten seconds after the last save, the publish's.
+  const chip = page.locator(".status-chip");
+  await expect(chip).toHaveCount(1);
+  await expect(chip).not.toHaveText(/Unsaved/, { timeout: 15_000 });
   expect(recorded.created).toEqual([
     expect.objectContaining({
       name: "orders-in",
