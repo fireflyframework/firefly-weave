@@ -24,12 +24,21 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  inject,
   input,
   signal,
 } from "@angular/core";
+import { DialogService } from "../../dialog";
+import { listenFor, stopListening } from "../activation/execute-in-environment";
+import { connectionsPort } from "../connections/connections-port";
+import type { StepDetailsHost } from "../ndv/step-details-host";
+import { listenBlocked, type ListenState } from "./test-listener";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
 import type { TriggerIntent } from "../state/canvas-sidecar";
+
+const LOCAL_NOTE =
+  "Listening needs a platform. Paste a sample payload instead.";
 
 /** What a pasted sample is called, by trigger. */
 const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
@@ -51,6 +60,76 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
       <div class="pane-content trigger-event">
         @if (note(); as text) {
           <p class="pane-empty-text">{{ text }}</p>
+        }
+        @if (canListen()) {
+          @let state = listenState();
+          @switch (state?.kind) {
+            @case ("starting") {
+              <p class="trigger-event-status" role="status">
+                <span class="loading-spinner small"></span>Getting a test URL…
+              </p>
+              <button type="button" class="pane-generate" (click)="stop()">
+                Stop listening
+              </button>
+            }
+            @case ("listening") {
+              @if (state?.kind === "listening") {
+                <p class="trigger-event-status" role="status">
+                  <span class="trigger-event-dot" aria-hidden="true"></span
+                  >Listening for test event
+                </p>
+                <label class="trigger-event-label" [attr.for]="urlId()"
+                  >Make a POST request to:</label
+                >
+                <div class="trigger-event-copy">
+                  <input
+                    class="trigger-event-url"
+                    readonly
+                    [id]="urlId()"
+                    [value]="state.url"
+                  />
+                  <button
+                    type="button"
+                    class="pane-generate"
+                    (click)="copy(state.url, 'the test URL')"
+                  >
+                    Copy URL
+                  </button>
+                </div>
+                <pre
+                  class="pane-json trigger-event-curl"
+                  aria-label="Signed cURL"
+                  >{{ state.curl }}</pre
+                >
+                <div class="trigger-event-actions">
+                  <button
+                    type="button"
+                    class="pane-generate"
+                    (click)="copy(state.curl, 'the signed cURL')"
+                  >
+                    Copy cURL
+                  </button>
+                  <button type="button" class="pane-generate" (click)="stop()">
+                    Stop listening
+                  </button>
+                </div>
+              }
+            }
+            @default {
+              @if (state?.kind === "failed") {
+                <p class="pane-empty-text trigger-event-problem" role="alert">
+                  {{ state.message }}
+                </p>
+              } @else if (state?.kind === "received") {
+                <p class="trigger-event-status" role="status">
+                  Received a test event. Its run is open in Runs.
+                </p>
+              }
+              <button type="button" class="pane-generate" (click)="listen()">
+                Listen for test event
+              </button>
+            }
+          }
         }
         @if (pasting()) {
           <label class="trigger-event-label" [attr.for]="fieldId()">{{
@@ -120,11 +199,87 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
     .trigger-event-problem {
       color: var(--danger-text, var(--danger));
     }
+    .trigger-event-status {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin: 0;
+      font: var(--type-label);
+    }
+    .trigger-event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--live);
+    }
+    .trigger-event-copy {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      width: 100%;
+    }
+    .trigger-event-url {
+      flex: 1 1 16rem;
+      min-width: 0;
+      font: var(--type-mono);
+    }
+    .trigger-event-copy .pane-generate {
+      margin-bottom: 0;
+    }
+    .trigger-event-curl {
+      box-sizing: border-box;
+      width: 100%;
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
   `,
 })
 export class TriggerEventPane {
   readonly session = input.required<FormSession>();
   readonly trigger = input.required<TriggerIntent>();
+  /** The editor: where a webhook listens for its test event. */
+  readonly host = input<StepDetailsHost | null>(null);
+  private readonly dialogs = inject(DialogService);
+  readonly urlId = computed(() => `trigger-test-url-${this.trigger().id}`);
+  /** Why this webhook can't listen here, or null when it can. */
+  private blocked(): string | null {
+    const host = this.host();
+    return listenBlocked(this.session().controller.environmentOf(), (role) =>
+      host ? host.can(role) : false,
+    );
+  }
+  /** A webhook connected to an environment with test calls on listens for its test event. */
+  canListen(): boolean {
+    return (
+      this.trigger().kind === "webhook" && !!this.host() && !this.blocked()
+    );
+  }
+  /** What listening is doing for this trigger, or null. */
+  listenState(): ListenState | null {
+    const host = this.host();
+    // Drawing the pane makes nothing: the listener is read once made.
+    const state = host
+      ? (connectionsPort(host)?.madeListener()?.state() ?? null)
+      : null;
+    return state?.triggerId === this.trigger().id ? state : null;
+  }
+  listen() {
+    const host = this.host();
+    if (host) listenFor(host, this.trigger(), this.dialogs, this.sample());
+  }
+  stop() {
+    const host = this.host();
+    if (host) stopListening(host);
+  }
+  async copy(text: string, what: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.session().announce(`Copied ${what}.`);
+    } catch {
+      this.session().announce("Studio couldn't reach the clipboard.");
+    }
+  }
   readonly pasting = signal(false);
   readonly draft = signal("");
   readonly problem = signal("");
@@ -138,8 +293,7 @@ export class TriggerEventPane {
   /** What the trigger can't do here, in one line; null when there's nothing to say. */
   note(): string | null {
     const kind = this.trigger().kind;
-    if (kind === "webhook")
-      return "Listening needs a platform. Paste a sample payload instead.";
+    if (kind === "webhook") return this.host() ? this.blocked() : LOCAL_NOTE;
     if (kind === "schedule")
       return "A schedule starts each run with its run input.";
     return null;

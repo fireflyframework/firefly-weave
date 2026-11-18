@@ -52,6 +52,7 @@ import { RunsView } from "../editor/runs-tab/runs-view";
 import type { App } from "../app";
 import { DialogService } from "../dialog";
 import { workflowTestItem } from "../editor/activation/execute-in-environment";
+import { connectionsPort } from "../editor/connections/connections-port";
 
 @Component({
   selector: "weave-designer",
@@ -717,7 +718,7 @@ import { workflowTestItem } from "../editor/activation/execute-in-environment";
           }
         } @else if (h.editorNext) {
           @defer (on immediate) {
-            <weave-canvas-view [host]="h" />
+            <weave-canvas-view [host]="h" [listening]="listeningTrigger()" />
           } @placeholder {
             <p class="connecting-status designer-loading" role="status">
               <span class="loading-spinner small"></span>Opening the canvas…
@@ -1511,6 +1512,10 @@ export class DesignerView implements DoCheck {
   }
   readonly canvas = viewChild(CanvasView);
   private readonly dialogs = inject(DialogService);
+  /** The webhook listening for its test event, whose tile pulses; null when none listens. */
+  listeningTrigger(): string | null {
+    return connectionsPort(this.host())?.listeningTo() ?? null;
+  }
   /** Execute workflow's other ways: Execute workflow in the environment Studio is connected to. */
   executeWays(): RowMenuItem[] {
     const item = workflowTestItem(this.host(), this.dialogs);

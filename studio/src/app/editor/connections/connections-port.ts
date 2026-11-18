@@ -40,6 +40,11 @@ import { StepTestClient } from "../state/step-test-client";
 import { StepTestService } from "../state/step-test-service";
 import type { TestActivationApi } from "../state/test-activation-client";
 import { TestActivationService } from "../state/test-activation-service";
+import {
+  TestEventListener,
+  keepTestEvent,
+  type RunReader,
+} from "../triggers/test-listener";
 import type { SideEffect } from "../state/execution";
 import type { StudioApi } from "../../api";
 import { allSteps } from "../ndv/step-walk";
@@ -449,6 +454,54 @@ export class ConnectionsPort {
     this.activations.set(service);
     return service;
   }
+  private readonly listenerMade = signal<TestEventListener | null>(null);
+  /**
+   * Listening for webhook test events in this environment, made on first
+   * use. A received event becomes the workflow's test input (from a test
+   * call) and its run opens in the Runs tab.
+   */
+  testListener(
+    host: Pick<
+      StepTestHost,
+      | "api"
+      | "draftId"
+      | "draftRevision"
+      | "flushAutosave"
+      | "runCommand"
+      | "error"
+    > &
+      Pick<StepDetailsHost, "testData" | "model" | "selectTab">,
+    confirm: (request: {
+      sideEffect: SideEffect;
+      steps: string[];
+    }) => Promise<boolean>,
+  ): TestEventListener {
+    const made = untracked(this.listenerMade);
+    if (made) return made;
+    const port = this;
+    const environment = environmentPath(host.api) ?? "";
+    const listener = new TestEventListener({
+      port: this.testActivations(host, confirm),
+      api: {
+        environment,
+        request: (...args: Parameters<StudioApi["request"]>) =>
+          host.api.request(...args),
+      } as RunReader,
+      received: (event) => {
+        if (port.alive) void keepTestEvent(host, event, port.environmentId);
+      },
+    });
+    this.listenerMade.set(listener);
+    return listener;
+  }
+  /** The listener when one was made; null before the first Listen for test event. */
+  madeListener(): TestEventListener | null {
+    return this.listenerMade();
+  }
+  /** The trigger choice listening for a test event now, or null. */
+  listeningTo(): string | null {
+    return this.listenerMade()?.listeningTo() ?? null;
+  }
   private readonly workflowTest = signal(false);
   /** True while Execute workflow in the environment is starting its test run. */
   runningWorkflowTest(): boolean {
@@ -492,6 +545,8 @@ export class ConnectionsPort {
     // its own state (a signal) is cleared after the render that replaced the port.
     const service = untracked(this.service);
     if (service) queueMicrotask(() => service.forget());
+    const listener = untracked(this.listenerMade);
+    if (listener) queueMicrotask(() => void listener.stop());
     // The test activation is retired early; it would expire on its own.
     const activations = untracked(this.activations);
     if (activations) queueMicrotask(() => void activations.forget());

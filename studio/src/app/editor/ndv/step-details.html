@@ -185,7 +185,11 @@ SPDX-License-Identifier: Apache-2.0
       @if (tablePanes()) {
         <ng-container #tableInputHost />
       } @else if (triggerChoice(); as choice) {
-        <weave-trigger-event-pane [session]="session()" [trigger]="choice" />
+        <weave-trigger-event-pane
+          [session]="session()"
+          [trigger]="choice"
+          [host]="host()"
+        />
       } @else if (target() === "$trigger") {
         <weave-test-event-pane [session]="session()" />
       } @else {
@@ -292,6 +296,19 @@ SPDX-License-Identifier: Apache-2.0
                       executeLabel()
                     }}</span></span
                   >
+                </button>
+              } @else if (listensHere()) {
+                <button
+                  type="button"
+                  [class.primary]="executePrimary()"
+                  (click)="toggleListen()"
+                >
+                  <weave-icon
+                    [name]="listening() ? 'close' : 'execute'"
+                    [size]="16"
+                  />{{
+                    listening() ? "Stop listening" : "Listen for test event"
+                  }}
                 </button>
               } @else {
                 <button

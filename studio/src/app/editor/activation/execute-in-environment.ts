@@ -22,6 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // which follows it live over the draft.
 import type { DialogOptions, DialogService } from "../../dialog";
 import { describeError } from "../../errors";
+import type { Json } from "../../forms/core/json";
+import type { TriggerIntent } from "../state/canvas-sidecar";
 import type { RowMenuItem } from "../../row-menu";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
@@ -179,4 +181,35 @@ export async function executeWorkflowIn(
       "danger",
     );
   }
+}
+
+/** What listening for a test event needs from the editor. */
+export type ListenHost = WorkflowTestHost & Pick<StepDetailsHost, "testData">;
+
+/** Starts listening for the webhook's test event on a test URL of the environment. */
+export function listenFor(
+  host: ListenHost,
+  trigger: TriggerIntent,
+  dialogs: DialogService,
+  payloadSample?: Json,
+): void {
+  const port = connectionsPort(host);
+  if (!port) return;
+  const environment = port.environment.name;
+  const listener = port.testListener(host, ({ steps }) =>
+    dialogs.confirm(sideEffectQuestion(steps, environment)),
+  );
+  const workflow = host.model.definition.metadata.name;
+  void listener.start(
+    trigger,
+    workflowTestBindings(host.workflowSlots, (slot) =>
+      port.binding(workflow, slot),
+    ),
+    payloadSample,
+  ).done;
+}
+
+/** Stops listening, which retires the test URL. */
+export function stopListening(host: WorkflowTestHost): void {
+  void connectionsPort(host)?.madeListener()?.stop();
 }

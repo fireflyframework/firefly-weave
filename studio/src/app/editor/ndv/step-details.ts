@@ -22,7 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 // on the dimmed shell header above it (its own inset padding doesn't close
 // it) — there is nothing to save: every edit is already in the workflow as
 // an undo step.
-import { workflowTestItem } from "../activation/execute-in-environment";
+import {
+  listenFor,
+  stopListening,
+  workflowTestItem,
+} from "../activation/execute-in-environment";
+import { listenBlocked } from "../triggers/test-listener";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -1180,13 +1185,52 @@ export class StepDetails {
       connectionsPort(this.host())?.runningTests()?.running() ?? null;
     return running?.stepId === this.target() ? running : null;
   }
+  /** A webhook's header button listens for its test event, where it can. */
+  listensHere(): boolean {
+    const choice = this.triggerChoice();
+    if (choice?.kind !== "webhook" || this.controller().viewingRuns())
+      return false;
+    const host = this.host();
+    return !listenBlocked(this.controller().environmentOf(), (role) =>
+      host.can(role),
+    );
+  }
+  /** True while this webhook listens for its test event. */
+  listening(): boolean {
+    const choice = this.triggerChoice();
+    return (
+      !!choice && connectionsPort(this.host())?.listeningTo() === choice.id
+    );
+  }
+  toggleListen(): void {
+    const choice = this.triggerChoice();
+    if (!choice) return;
+    if (this.listening()) stopListening(this.host());
+    else
+      listenFor(
+        this.host(),
+        choice,
+        this.dialogs,
+        this.controller().testEvent(),
+      );
+  }
   executeItems(): RowMenuItem[] {
     // A trigger executes the workflow: here, or in the environment.
     if (this.triggerTarget()) {
       const real = this.controller().viewingRuns()
         ? null
         : workflowTestItem(this.host(), this.dialogs);
-      return real ? [real] : [];
+      // Listening takes the button: Execute workflow moves to the menu.
+      const here: RowMenuItem[] = this.listensHere()
+        ? [
+            {
+              label: "Execute workflow",
+              detail: "Runs the workflow on this computer from its test event",
+              run: () => void this.execute("step"),
+            },
+          ]
+        : [];
+      return [...here, ...(real ? [real] : [])];
     }
     const real = this.realItem();
     return [
