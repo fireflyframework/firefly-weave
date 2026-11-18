@@ -1380,16 +1380,18 @@ then pauses before it, and the run log offers **Next**, **Continue** and
 
 When Studio is connected to a platform and an environment, a step's
 **Connection** field lists the connections you may use in that environment,
-grouped "In *environment*", each with its address. Choosing one fills the
+grouped "In *environment*", each with its address; on a phone the list opens
+as a sheet along the bottom of the screen. Choosing one fills the
 step's slot behind the scenes (the workflow's only slot for that connector, or
 a new one named after it) as one undo step. The workflow itself never names a
 connection: you choose the real connection again when you activate it.
 
 - **What the field shows.** The chosen connection, a test pill ("Tested just
-  now", "Tested 2 min ago", or "Test failed" with **Retry** and the reason,
-  such as "api.acme.test refused this connection's sign-in."), and a line such
-  as "In local · slot crm · https://api.acme.test". An address that starts
-  with `http://` is marked **Not encrypted**; it still works.
+  now", "Tested 2 min ago", or "Test failed" with **Retry**), and a line such
+  as "In local · slot crm · https://api.acme.test". After a failed test the
+  reason follows on its own line, such as "api.acme.test refused this
+  connection's sign-in." An address that starts with `http://` is marked
+  **Not encrypted**, in the list and on that line; it still works.
 - **When Studio tests.** Choosing a connection tests it when it wasn't tested
   in the last 10 minutes, with one request to its address. Testing needs
   permission to manage connections; without it Studio tests nothing and says
@@ -1399,7 +1401,8 @@ connection: you choose the real connection again when you activate it.
   choose.
 - **Create connection** (the list's last choice) and **Edit** (beside the
   field's label) open the API connection form in a side sheet over step
-  details. What you save becomes the step's connection and is tested. Studio
+  details, for example "For crm-lookup · slot http". A new connection starts
+  unnamed. What you save becomes the step's connection and is tested. Studio
   creates and edits HTTP connections here; other connections (email, file
   servers, databases) are created with `weave platform integrations` or by an
   administrator.
