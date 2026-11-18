@@ -40,16 +40,37 @@ import {
 const URL =
   "https://weave.example/webhooks/0b6c1f3e-7a51-4e9a-9d61-7f0c2f9d1e11";
 
-/** Runs the command with a stand-in curl that records its arguments; POSIX shells with OpenSSL only. */
-function run(command: string, secret: string) {
+/** A tool's path on this computer, or "" without it. */
+const located = (tool: string) =>
+  spawnSync("sh", ["-c", `command -v ${tool}`], {
+    encoding: "utf8",
+  }).stdout.trim();
+
+/**
+ * Runs the command with a stand-in curl that records its arguments, and
+ * with wrappers that record every OpenSSL and Perl command line; `now` fixes
+ * the clock the command reads. POSIX shells with OpenSSL and Perl only.
+ */
+function run(command: string, secret: string, now?: number) {
   const directory = mkdtempSync(join(tmpdir(), "weave-webhook-help-"));
+  const tool = (name: string, body: string) => {
+    writeFileSync(join(directory, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(directory, name), 0o755);
+  };
   try {
     const record = join(directory, "arguments");
-    writeFileSync(
-      join(directory, "curl"),
-      `#!/bin/sh\nfor value in "$@"; do printf '%s\\0' "$value"; done > "${record}"\n`,
+    const lines = join(directory, "command-lines");
+    writeFileSync(lines, "");
+    tool(
+      "curl",
+      `for value in "$@"; do printf '%s\\0' "$value"; done > "${record}"`,
     );
-    chmodSync(join(directory, "curl"), 0o755);
+    for (const name of ["openssl", "perl"])
+      tool(
+        name,
+        `printf '%s ' "$0" "$@" >> "${lines}"; echo >> "${lines}"; exec "${located(name)}" "$@"`,
+      );
+    if (now !== undefined) tool("date", `echo ${now}`);
     const result = spawnSync("sh", ["-c", command], {
       env: {
         PATH: `${directory}:${process.env["PATH"]}`,
@@ -58,14 +79,24 @@ function run(command: string, secret: string) {
       encoding: "utf8",
     });
     expect(result.stderr).toBe("");
-    return readFileSync(record, "utf8").split("\0").slice(0, -1);
+    return {
+      values: readFileSync(record, "utf8").split("\0").slice(0, -1),
+      commandLines: readFileSync(lines, "utf8"),
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+const eventId = (values: string[]) =>
+  (
+    JSON.parse(values[values.indexOf("--data-binary") + 1]) as {
+      eventId: string;
+    }
+  ).eventId;
 const canSign =
   process.platform !== "win32" &&
-  spawnSync("openssl", ["version"]).status === 0;
+  located("openssl") !== "" &&
+  spawnSync("perl", ["-MDigest::SHA=hmac_sha256_hex", "-e1"]).status === 0;
 
 describe("the signed cURL", () => {
   it("names the platform's headers and reads the secret from the environment", () => {
@@ -94,7 +125,7 @@ describe("the signed cURL", () => {
         customerId: "123",
         note: 'it\'s $HOME `here` \\ "quoted"',
       };
-      const values = run(
+      const { values } = run(
         signedCurl({ url: URL, payloadSample: sample }),
         "s3cret-value",
       );
@@ -123,8 +154,20 @@ describe("the signed cURL", () => {
     },
   );
 
+  it.runIf(canSign)(
+    "gives each request its own event ID, even within one second",
+    () => {
+      const now = Math.floor(Date.now() / 1000);
+      const first = eventId(run(signedCurl({ url: URL }), "k", now).values);
+      const second = eventId(run(signedCurl({ url: URL }), "k", now).values);
+      expect(first).toMatch(new RegExp(`^studio-${now}-[0-9a-f]{8}$`));
+      expect(second).toMatch(new RegExp(`^studio-${now}-[0-9a-f]{8}$`));
+      expect(first).not.toBe(second);
+    },
+  );
+
   it.runIf(canSign)("sends an empty object without a sample", () => {
-    const values = run(signedCurl({ url: URL }), "k");
+    const { values } = run(signedCurl({ url: URL }), "k");
     expect(
       JSON.parse(values[values.indexOf("--data-binary") + 1]).payload,
     ).toEqual({});

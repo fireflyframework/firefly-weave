@@ -42,7 +42,8 @@ export function signedCurl(options: {
     "# Set WEAVE_WEBHOOK_SECRET to the secret's value first; Studio never sees it.",
     `PAYLOAD=${quoted(payload)}`,
     "TS=$(date +%s)",
-    'EVENT_ID="studio-$TS"',
+    // Unique within a second too: a reused event ID answers the earlier receipt or a conflict.
+    'EVENT_ID="studio-$TS-$(openssl rand -hex 4)"',
     `BODY=$(printf '{"eventId":"%s","payload":%s}' "$EVENT_ID" "$PAYLOAD")`,
     `SIGNATURE=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$WEAVE_WEBHOOK_SECRET" | awk '{print $NF}')`,
     `curl -sS -X POST ${quoted(options.url)} \\`,
