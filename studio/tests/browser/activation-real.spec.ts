@@ -156,22 +156,35 @@ spec:
     "view-tab-runs",
     { timeout: 60_000 },
   );
+  await shot(page, "al-03-test-event-received");
+  await details.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(details).toHaveCount(0);
   const list = page.locator(".runs-list");
   await expect(list.getByRole("option").first()).toContainText("Test", {
     timeout: 60_000,
   });
-  await shot(page, "al-03-test-run");
+  // The run the signed request started is the one the Runs tab shows.
+  await expect(page.locator(".runs-canvas")).toContainText(/Run [0-9a-f]{8}/, {
+    timeout: 60_000,
+  });
+  await shot(page, "al-04-test-run");
 
   // Operate › Runs leaves test runs out unless asked.
   await openSidebar(page, "Runs");
   const operate = page.locator("weave-runs-page");
   await expect(operate).toBeVisible();
-  await expect(operate.getByText(workflow)).toHaveCount(0);
+  // The run's row names its workflow with a button; the filters list it too.
+  const row = operate
+    .getByRole("table", { name: "Runs" })
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("button", { name: workflow, exact: true }),
+    });
+  await expect(row).toHaveCount(0);
   await operate.getByLabel("Include test runs").check();
-  await expect(operate.getByText(workflow).first()).toBeVisible({
-    timeout: 30_000,
-  });
-  await shot(page, "al-04-operate-include-test");
+  await expect(row).toHaveCount(1, { timeout: 30_000 });
+  await expect(row).toContainText("Test");
+  await shot(page, "al-05-operate-include-test");
 
   await removePlatform(page, name);
   expectNoCredentialsLeft();
