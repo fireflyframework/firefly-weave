@@ -99,15 +99,21 @@ export async function routeStepTests(
     documents: [],
   };
   let revision = 0;
+  // Drafts save with a growing revision and read back as saved (a reload restores them).
+  const drafts = new Map<string, Record<string, unknown>>();
   await page.route("**/projects/*/drafts/*", async (route) => {
     const request = route.request();
+    const id = request.url().split("/drafts/")[1].split(/[?/]/)[0];
+    if (request.method() === "GET") {
+      const kept = drafts.get(id);
+      return kept ? route.fulfill({ json: kept }) : route.fallback();
+    }
     if (request.method() !== "PUT") return route.fallback();
     recorder.drafts.push(request);
     const body = request.postDataJSON() as { document: unknown };
-    const id = request.url().split("/drafts/")[1].split(/[?/]/)[0];
-    await route.fulfill({
-      json: { id, revision: ++revision, document: body.document },
-    });
+    const saved = { id, revision: ++revision, document: body.document };
+    drafts.set(id, saved);
+    await route.fulfill({ json: saved });
   });
   // The draft's studio documents (test data, canvas): none at first, then what was saved.
   const documents = new Map<string, Record<string, unknown>>();
