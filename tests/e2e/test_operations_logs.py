@@ -43,8 +43,8 @@ pytestmark = pytest.mark.real_operations
 ROOT = Path(__file__).resolve().parents[2]
 OWNED_CONTEXT = "colima-weave-tests"
 SUFFIX = uuid4().hex[:6]
-WORKFLOW = "logs-o-j6-" + SUFFIX
-ACTION = "logs-o-j6-sleep-" + SUFFIX
+WORKFLOW = "logs-e2e-" + SUFFIX
+ACTION = "logs-e2e-sleep-" + SUFFIX
 
 
 def _load(name: str, path: Path) -> Any:
@@ -91,7 +91,7 @@ def platform_sql(run: Any, sql: str) -> str:
     raise AssertionError("No database of the platform answered")
 
 
-def test_o_j6_a_workers_entries_reach_the_run_and_a_planted_secret_never_does(run):
+def test_a_workers_entries_reach_the_run_and_a_planted_secret_never_does(run):
     overview, logs = _journeys()
     platform = overview.Platform(run)
     _, release = overview.fixture_worker(run)
