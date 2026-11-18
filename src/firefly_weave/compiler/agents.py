@@ -40,6 +40,7 @@ from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.schema_profile import SchemaLimits, schema_children
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility
+from firefly_weave.contracts.agent_conversations import CONVERSATION_KEY_LENGTH
 from firefly_weave.contracts.agent_turns import (
     MAX_TURN_TEXT,
     TRANSCRIPT_BYTES,
@@ -97,6 +98,14 @@ MESSAGES: Final[dict[str, str]] = {
         "This many agents running at once in a loop can fill the run's state with their transcripts; "
         "lower the loop's concurrency."
     ),
+}
+
+
+# What a conversation's key must evaluate to: the kernel checks the same schema at activation.
+CONVERSATION_KEY_SCHEMA: Final[JsonObject] = {"type": "string", "minLength": 1, "maxLength": CONVERSATION_KEY_LENGTH}
+CONVERSATION_MESSAGES: Final[dict[str, str]] = {
+    "key": f"A conversation's key must be text of 1 to {CONVERSATION_KEY_LENGTH} characters.",
+    "loop": ("Items of this loop run at the same time, so two of them with one key remember in the order they finish."),
 }
 
 
@@ -412,7 +421,7 @@ def analyze_agent(
             compiled.append(resolved)
     if total > MAX_ALL_TOOL_PARAMETERS_BYTES:
         checks.issue("AGENT_TOOL_SCHEMA", location + "/tools", message=MESSAGES["AGENT_TOOL_SCHEMA"])
-    _memory(checks, step, location, scope)
+    _memory(checks, step, location, visible, scope)
     limits = cast(JsonObject, step["limits"])
     if profile is not None:
         options = cast(JsonObject, profile["options"])
@@ -536,25 +545,36 @@ def _fixed(
         checks.issue("AI_SECRET_INPUT", path + "/fixed", message=MESSAGES["AI_SECRET_INPUT"])
 
 
-def _memory(checks: AgentChecks, step: JsonObject, location: str, scope: tuple[str, ...]) -> None:
+def _memory(
+    checks: AgentChecks, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
+) -> None:
     memory = cast(JsonObject, step["memory"])
+    path = location + "/memory/key"
     if memory["scope"] == "conversation":
-        checks.issue(
-            "UNSUPPORTED_FEATURE",
-            location + "/memory/scope",
-            message=(
-                "Conversation memory needs the language feature ai.memory, "
-                "which this version of Firefly Weave does not compile yet."
-            ),
-        )
+        _conversation_key(checks, cast(JsonObject, memory["key"]), path, visible)
         return
     if memory["scope"] != "run":
         return
-    key, path = cast(str, memory["key"]), location + "/memory/key"
+    key = cast(str, memory["key"])
     earlier = checks.run_memories.get(key)
     if any(loop.concurrency > 1 for loop in checks.loops) or (earlier is not None and _in_parallel(earlier[0], scope)):
         checks.issue("AGENT_MEMORY", path, severity="warning", message=MESSAGES["AGENT_MEMORY"])
     checks.run_memories.setdefault(key, (scope, path))
+
+
+def _conversation_key(checks: AgentChecks, key: JsonObject, path: str, visible: dict[str, JsonObject]) -> None:
+    """A conversation's key reads as a string of 1 to 256 characters, never a secret; it is hashed, never sent."""
+    inferred = checks.expression(key, path, visible)
+    try:
+        mismatch = check_compatibility(inferred, CONVERSATION_KEY_SCHEMA, checks.bundle, limits=checks.schema_limits)
+    except TypeCheckLimit:
+        checks.issue("RESOURCE_LIMIT", path)
+        mismatch = None
+    if mismatch == "incompatible":
+        checks.issue("AGENT_MEMORY", path, message=CONVERSATION_MESSAGES["key"])
+    secret_input(checks, key, inferred, path, visible)
+    if any(loop.concurrency > 1 for loop in checks.loops):
+        checks.issue("AGENT_MEMORY", path, severity="warning", message=CONVERSATION_MESSAGES["loop"])
 
 
 def _in_parallel(first: Sequence[str], second: Sequence[str]) -> bool:

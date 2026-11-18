@@ -409,6 +409,7 @@ def test_the_scan_walks_an_agents_tools_and_memory_and_reports_the_step_until_it
         ("/spec/steps/0/instructions/op/name", "text.concat"),
         ("/spec/steps/0/kind", "ai.agent"),
         ("/spec/steps/0/memory/key/op/name", "text.concat"),
+        ("/spec/steps/0/memory/scope", "ai.memory"),
         ("/spec/steps/0/tools/1/fixed/object/reason/op/name", "text.join"),
     ]
 

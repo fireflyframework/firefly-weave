@@ -61,6 +61,8 @@ KIND_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
 )
 # AI agent tool targets that need a feature beyond ai.agent: a sub-workflow tool is a workflow call.
 TOOL_TARGET_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"workflow": "flow.callWorkflow"})
+# AI agent memory scopes that need a feature beyond ai.agent: a conversation is remembered across runs.
+MEMORY_SCOPE_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"conversation": "ai.memory"})
 OPERATOR_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
     {"concat": "text.concat", "join": "text.join"}
 )
