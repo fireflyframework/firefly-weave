@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // undo step; a change that hides fields clears them in the same step and
 // says so with an Undo toast. Registered parameter components get the
 // registry's NdvContext from here.
+import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
 import { canonicalJson, getAt } from "../../forms/core/json";
@@ -58,6 +59,7 @@ import {
   CANVAS_MAX_BYTES,
   type DataSource,
   type HumanEntry,
+  type Provenance,
   type SignalEntry,
 } from "../state/test-data";
 import { TestDataService } from "../state/test-data-service";
@@ -114,7 +116,7 @@ import {
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
-import type { LastResult } from "../state/last-results";
+import type { LastResult, RealResult } from "../state/last-results";
 import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
 import type {
@@ -174,6 +176,8 @@ export type ControllerHost = Pick<
   | "openTestData"
   | "pinFromElsewhere"
   | "execution"
+  | "runAccount"
+  | "environmentName"
 >;
 /** A diagnostic of one step, located in it. */
 /** Whether a schema marks any value secret, anywhere in it. */
@@ -191,6 +195,8 @@ export interface ExecuteNotice {
   reason: BlockedReason | null;
   /** "Edit test input" is the way out. */
   input?: boolean;
+  /** A way out of its own: Open in Operate, Execute previous steps, Fix. */
+  action?: { label: string; run: () => void };
 }
 export interface StepDiagnostic {
   code: string;
@@ -472,7 +478,7 @@ export class StepDetailsController {
   stepData(key: string):
     | {
         value: Json;
-        source: "pinned" | "simulated" | "run";
+        source: "pinned" | "simulated" | "run" | "test-call";
         stale: StaleReason | null;
       }
     | undefined {
@@ -495,6 +501,19 @@ export class StepDetailsController {
     const result = this.lastResult(key);
     if (!result || result.output === undefined) return undefined;
     const step = this.step(stepId);
+    const now = this.prints().get(stepId)?.execution;
+    const stale = now === result.execution ? null : ("upstream" as const);
+    // A real run's output is as the platform classified and kept it; its
+    // output schema's secret fields are still left out here.
+    if (result.real) {
+      const schema = step
+        ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
+        : null;
+      const value = safeSample(schema ?? {}, result.output);
+      return value === undefined
+        ? undefined
+        : { value, source: "test-call", stale };
+    }
     const schema = step
       ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
       : null;
@@ -505,12 +524,27 @@ export class StepDetailsController {
       safeSample(schema ?? {}, result.output) ??
       (marksSecret(schema) ? undefined : result.output);
     if (value === undefined) return undefined;
-    const now = this.prints().get(stepId)?.execution;
-    return {
-      value,
-      source: "simulated",
-      stale: now === result.execution ? null : "upstream",
-    };
+    return { value, source: "simulated", stale };
+  }
+  /**
+   * Pin output on a real result: kept as test data that came from a run, with
+   * the run and its environment, so the platform reads it back only for
+   * people who may read that run. Null when pinned, else why not.
+   */
+  async pinReal(target: string): Promise<string | null> {
+    const real = this.realResult(target);
+    const data = this.stepData(target);
+    if (!real || data?.source !== "test-call")
+      return "There's no output from a real run to pin.";
+    return this.pin(target, data.value, "test-call", {
+      runId: real.runId,
+      runEnvironmentId: real.environmentId,
+    });
+  }
+  /** Where a step's real result came from, when its last result ran for real in an environment. */
+  realResult(key: string): RealResult | null {
+    if (this.viewingRuns()) return null;
+    return this.lastResult(key)?.real ?? null;
   }
   /** What the last execution asked of this step, or why it couldn't run (shown in its Output). */
   readonly executeNotice = signal<ExecuteNotice | null>(null);
@@ -602,6 +636,7 @@ export class StepDetailsController {
     target: string,
     value: Json,
     source: DataSource,
+    provenance: Provenance = {},
   ): Promise<string | null> {
     const locked = this.readOnlyReason(target);
     if (locked) return locked;
@@ -613,7 +648,12 @@ export class StepDetailsController {
     const at = new Date().toISOString();
     const replacing = !!service.data().pins?.[target];
     const outcome = await service.change(
-      withPin(service.data(), target, stampedPin(value, source, now, at), at),
+      withPin(
+        service.data(),
+        target,
+        stampedPin(value, source, now, at, provenance),
+        at,
+      ),
       [this.pinPointer(target)],
     );
     if (!outcome.ok) return outcome.message;
@@ -1692,6 +1732,17 @@ export class StepDetailsController {
     return out;
   }
 
+  /** The connected environment and whether it takes test calls ("disabled" until its policy is read, or when it can't be). */
+  environmentOf(): NdvContext["environment"] {
+    const port = connectionsPort(this.host);
+    if (!port) return null;
+    const policy = port.policyNow();
+    return {
+      ...port.environment,
+      testCalls:
+        policy && policy !== "unreadable" ? policy.test_calls : "disabled",
+    };
+  }
   ndvContext(target: string): NdvContext {
     const step = this.step(target) ?? WORKFLOW_STAND_IN;
     const descriptor = this.descriptor(target);
@@ -1706,7 +1757,7 @@ export class StepDetailsController {
       workflow: host.model.definition,
       readOnly: !!this.readOnlyReason(),
       instanceKey: null,
-      environment: null,
+      environment: this.environmentOf(),
       scope: (fieldPath) =>
         referenceScope(
           host.model.definition,
@@ -1825,8 +1876,18 @@ export class StepDetailsController {
             ? { connector: slot.connector, required: slot.required !== false }
             : null;
         },
-        devBinding: () => null,
-        bind: async () => undefined,
+        devBinding: (slot) => {
+          const port = connectionsPort(host);
+          const kept = port?.binding(host.model.definition.metadata.name, slot);
+          if (!kept) return null;
+          return {
+            connectionId: kept.connectionId,
+            revisionId: kept.revisionId,
+            name: kept.name,
+            tested: kept.tested ? (kept.tested.ok ? "ok" : "failed") : null,
+          };
+        },
+        bind: async (slot) => connectionsPort(host)?.open(slot),
       },
       edit: (changes, label) => {
         if (host.model !== model || model.opened !== opened) return;

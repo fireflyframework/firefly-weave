@@ -535,6 +535,29 @@ SPDX-License-Identifier: Apache-2.0
   flex: 1 1 auto;
   min-width: 0;
 }
+/* A connection's hint: "Not encrypted" in the warning ink, and why its last
+   test failed on a line of its own under it, in the danger ink. */
+.param-line:has(> .param-line-detail) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.param-line-mark {
+  color: var(--warning-ink);
+  white-space: nowrap;
+}
+.param-line > .param-line-detail {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.param-line-detail[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.param-line-detail > weave-icon {
+  flex: none;
+  margin-block: 2px;
+}
 /* Not applied: what the field holds isn't in the workflow, the last value
    that applied is. The pill leads the message; where the message doesn't fit
    beside it (a narrow column), the message takes the next line whole. */

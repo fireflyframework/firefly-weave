@@ -499,6 +499,25 @@ back as **Call an action** with that version. A step whose action wasn't
 published reports that its action isn't published. Publish first to keep the
 actions in the project.
 
+### Steps that run for real
+
+With Studio connected to an environment, **Execute in *environment*** in step
+details runs one step for real as a test run (see
+[Use connections and execute steps in an environment](studio.md#use-connections-and-execute-steps-in-an-environment)).
+Which steps can, and which ask first:
+
+| Step | Runs for real | Asks first |
+| --- | --- | --- |
+| Call an action, Call an API | Yes | When the action changes data (its side effect is `non_idempotent` or `idempotency_key`) |
+| Send email, Reply to an email | Yes | Always: they send mail |
+| Write, move or delete a file | Yes | Always: they change files |
+| List, read or download files | Yes | No: they only read |
+| Other steps (decisions, transforms, waits, human tasks, calls of other workflows) | No: Execute step simulates them | — |
+
+Each run asks again; Studio never remembers an answer. An email whose delivery
+the mail server didn't confirm says "The mail server's answer was unclear.
+Weave won't resend it; check the mailbox."
+
 ## Design forms and payloads with the schema designer
 
 The schema designer edits **Input schema** and **Output schema** in the workflow
@@ -660,9 +679,10 @@ select **Add slot**.
 
 **A slot is a name, not a credential.** Activation maps each slot to an
 authorized connection revision for the chosen environment, so passwords and
-tokens never enter the workflow. When you are connected and the step uses a slot
-on the built-in HTTP connector, **Create a connection for this API** opens
-**New API connection**; the
+tokens never enter the workflow. In step details, connected to an environment,
+the **Connection** field lists real connections instead and fills the slot for
+you; **Create connection** and **Edit** open the API connection form in a side
+sheet. The
 [no-code integration guide](../connectors/http-without-code.md) explains what a
 connection holds and who must grant it.
 

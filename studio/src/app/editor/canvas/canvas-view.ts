@@ -565,7 +565,10 @@ export class CanvasView implements OnInit, DoCheck {
         return this.tileView(
           tile,
           ctx,
-          this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+          this.withRealSetup(
+            tile,
+            this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+          ),
           {
             selected: chosen.has(tile.id),
             active: tile.id === active,
@@ -1202,6 +1205,21 @@ export class CanvasView implements OnInit, DoCheck {
       event.preventDefault();
       event.stopPropagation();
     }
+  }
+  /** Execute in an environment found no connection for the step's slot: setup it needs, after that attempt only. */
+  private withRealSetup(tile: LtrTile, facts: StepFacts): StepFacts {
+    const h = this.host();
+    const kept = h.realSetup?.();
+    const slot =
+      kept && kept.draft === (h.draftId ?? "")
+        ? kept.steps.get(tile.id)
+        : undefined;
+    return slot
+      ? {
+          ...facts,
+          setup: [...facts.setup, `choose a connection for slot ${slot}`],
+        }
+      : facts;
   }
   /** A pasted reference its place can't read is setup the step needs, until it is fixed. */
   private withPasteGaps(tile: LtrTile, facts: StepFacts): StepFacts {

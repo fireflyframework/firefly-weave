@@ -119,6 +119,7 @@ export function publishLabel(
   rows: readonly OwnedRow[],
 ): string {
   const left = count(rows.filter((row) => row.state !== "published").length);
+  if (purpose === "execute") return `Publish ${left} and execute`;
   return purpose === "publish"
     ? `Publish ${left} and the workflow`
     : `Publish ${left} and simulate`;

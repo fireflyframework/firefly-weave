@@ -39,6 +39,10 @@ export interface SelectOption {
   description?: string;
   group?: string;
   disabled?: boolean;
+  /** A command rather than a choice ("Create connection"): set apart below a rule, with a plus, in the link color. */
+  action?: boolean;
+  /** A short caution after the description ("Not encrypted"), in the warning ink. */
+  note?: string;
 }
 
 export function selectOptions(
@@ -108,47 +112,88 @@ let sequence = 0;
         <weave-icon [name]="icon()" />
       </button>
     </div>
+    <!-- The popup scrolls; inside it, a phone sheet's title row and the listbox. -->
     <div
       class="choice-list"
-      role="listbox"
-      [id]="id + '-list'"
-      [attr.aria-label]="label() + ' options'"
       [hidden]="!open()"
       [weaveAnchoredPopover]="open()"
       [popoverAnchor]="anchor"
+      [popoverSheet]="!!sheetTitle()"
       (popoverClosed)="close()"
       (mousedown)="$event.preventDefault()"
     >
-      @if (open()) {
-        @for (option of filtered(); track option.value; let index = $index) {
-          @if (option.group && option.group !== filtered()[index - 1]?.group) {
-            <div class="choice-group" role="presentation">
-              {{ option.group }}
-            </div>
-          }
-          <div
-            role="option"
-            class="choice-option"
-            [id]="id + '-option-' + index"
-            [attr.data-value]="option.value"
-            [attr.aria-selected]="value() === option.value"
-            [attr.aria-disabled]="option.disabled || null"
-            [class.active]="active() === index"
-            (mousemove)="hover(index)"
-            (click)="$event.preventDefault(); pick(index)"
+      @if (open() && sheetTitle()) {
+        <div class="choice-sheet-title">
+          <span>{{ sheetTitle() }}</span>
+          <!-- For touch and pointer; the keyboard closes the list with Escape
+               and keeps its focus in the field. -->
+          <button
+            type="button"
+            class="icon-button choice-sheet-close"
+            tabindex="-1"
+            aria-label="Close choices"
+            (click)="close()"
           >
-            <span>{{ option.label }}</span>
-            @if (option.description) {
-              <small>{{ option.description }}</small>
-            }
-            @if (value() === option.value) {
-              <weave-icon name="check" />
-            }
-          </div>
-        } @empty {
-          <p class="choice-empty" role="presentation">No matching choices.</p>
-        }
+            <weave-icon name="close" />
+          </button>
+        </div>
       }
+      <div
+        class="choice-options"
+        role="listbox"
+        [id]="id + '-list'"
+        [attr.aria-label]="label() + ' options'"
+      >
+        @if (open()) {
+          @for (option of filtered(); track option.value; let index = $index) {
+            @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
+              <div class="choice-rule" role="presentation"></div>
+            }
+            @if (
+              option.group && option.group !== filtered()[index - 1]?.group
+            ) {
+              <div class="choice-group" role="presentation">
+                {{ option.group }}
+              </div>
+            }
+            <div
+              role="option"
+              class="choice-option"
+              [class.choice-action]="option.action"
+              [id]="id + '-option-' + index"
+              [attr.data-value]="option.value"
+              [attr.aria-selected]="value() === option.value"
+              [attr.aria-disabled]="option.disabled || null"
+              [class.active]="active() === index"
+              (mousemove)="hover(index)"
+              (click)="$event.preventDefault(); pick(index)"
+            >
+              @if (option.action) {
+                <span class="choice-label"
+                  ><weave-icon name="plus" [size]="16" />{{
+                    option.label
+                  }}</span
+                >
+              } @else {
+                <span>{{ option.label }}</span>
+              }
+              @if (option.description) {
+                <small
+                  >{{ option.description }}
+                  @if (option.note) {
+                    · <span class="choice-note">{{ option.note }}</span>
+                  }
+                </small>
+              }
+              @if (value() === option.value) {
+                <weave-icon name="check" />
+              }
+            </div>
+          } @empty {
+            <p class="choice-empty" role="presentation">No matching choices.</p>
+          }
+        }
+      </div>
     </div>
   `,
   styles: [
@@ -225,13 +270,26 @@ let sequence = 0;
         background: var(--disabled-bg);
         color: var(--muted);
       }
+      /* The popup frames; the listbox inside it scrolls, so the listbox is
+         the box people see and the one that pages and reveals options. */
       .choice-list {
-        padding: 4px;
+        flex-direction: column;
+        /* Without this, the popover's own 0.25em padding would apply. */
+        padding: 0;
         background: var(--surface);
         color: var(--text);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-2);
+        overflow: hidden;
+      }
+      .choice-list:popover-open {
+        display: flex;
+      }
+      .choice-options {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 4px;
         overflow: auto;
       }
       .choice-option {
@@ -256,7 +314,7 @@ let sequence = 0;
       .choice-option.active small {
         color: var(--on-accent);
       }
-      .choice-option weave-icon {
+      .choice-option > weave-icon {
         position: absolute;
         top: 10px;
         right: 8px;
@@ -266,6 +324,62 @@ let sequence = 0;
       .choice-option[aria-disabled="true"] {
         color: var(--muted);
         cursor: not-allowed;
+      }
+      .choice-rule {
+        margin: 4px 6px;
+        border-top: 1px solid var(--line);
+      }
+      .choice-action:not([aria-disabled="true"]) {
+        color: var(--link);
+      }
+      .choice-action.active {
+        color: var(--on-accent);
+      }
+      .choice-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .choice-note {
+        color: var(--warning-ink);
+      }
+      .choice-option.active .choice-note {
+        color: inherit;
+      }
+      /* Below 768 px, with a title: a sheet along the bottom edge over a
+         scrim, with 48 px rows, instead of a list over the fields above. */
+      .choice-sheet-title {
+        display: none;
+      }
+      .choice-list[data-side="sheet"] {
+        padding: var(--space-2) var(--space-2) var(--space-4);
+        border-width: 1px 0 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        box-shadow: var(--shadow-3);
+      }
+      .choice-list[data-side="sheet"] .choice-options {
+        padding: 0;
+      }
+      .choice-list[data-side="sheet"]::backdrop {
+        background: var(--scrim);
+      }
+      .choice-list[data-side="sheet"] .choice-sheet-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        padding: 0 0 var(--space-1) 10px;
+        font: var(--type-label);
+      }
+      .choice-sheet-close {
+        flex: none;
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+      }
+      .choice-list[data-side="sheet"] .choice-option {
+        align-content: center;
+        min-height: 48px;
       }
       .choice-group {
         font-size: 12px;
@@ -294,6 +408,11 @@ export class Select {
   describedBy = input<string | null>(null);
   /** The toggle's icon; "chevronDown" where the list opens in place, under the field. */
   icon = input("chevron");
+  /**
+   * Below 768 px the choices open as a sheet along the bottom edge with this
+   * title ("Connection for crm-lookup"); without one, they open at the field.
+   */
+  sheetTitle = input<string | null>(null);
   choose = output<string>();
   id = `choice-${++sequence}`;
   open = signal(false);
@@ -348,7 +467,14 @@ export class Select {
     if (!this.host.contains(event.relatedTarget as Node | null)) this.close();
   }
   outside(event: PointerEvent) {
-    if (this.open() && !event.composedPath().includes(this.host)) this.close();
+    if (!this.open()) return;
+    const list = this.host.querySelector<HTMLElement>(".choice-list");
+    // A press on a sheet's scrim lands on the list itself, above its top edge.
+    const scrim =
+      !!list &&
+      event.target === list &&
+      event.clientY < list.getBoundingClientRect().top;
+    if (scrim || !event.composedPath().includes(this.host)) this.close();
   }
   private move(next: number, direction: 1 | -1) {
     const items = this.filtered();

@@ -27,6 +27,7 @@ import {
 } from "@angular/core";
 import {
   fileReference,
+  fileSize,
   type FileAccess,
   type FileReference,
   type FileUpload,
@@ -190,11 +191,7 @@ export class FilePicker implements OnChanges, OnDestroy {
     this.generation++;
   }
   size(bytes: number) {
-    return bytes < 1024
-      ? `${bytes} B`
-      : bytes < 1048576
-        ? `${Math.ceil(bytes / 1024)} KiB`
-        : `${(bytes / 1048576).toFixed(1)} MiB`;
+    return fileSize(bytes);
   }
   remove() {
     this.error = "";

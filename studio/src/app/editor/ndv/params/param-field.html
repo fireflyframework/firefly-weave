@@ -487,6 +487,21 @@ SPDX-License-Identifier: Apache-2.0
           {{ line.fixLabel ?? "Fix" }}
         </button>
       }
+    } @else if (line.mark || line.detail) {
+      <span class="param-line-text"
+        >{{ line.text }}
+        @if (line.mark) {
+          · <span class="param-line-mark">{{ line.mark }}</span>
+        }
+      </span>
+      @if (line.detail; as detail) {
+        <span class="param-line-detail" [attr.data-tone]="detail.tone">
+          @if (detail.tone === "danger") {
+            <weave-icon name="failCircle" [size]="16" />
+          }
+          <span>{{ detail.text }}</span>
+        </span>
+      }
     } @else {
       {{ line.text }}
     }
@@ -496,6 +511,19 @@ SPDX-License-Identifier: Apache-2.0
      the value mode last, on the field's right edge. -->
 <ng-template #toolsTemplate>
   <div class="param-tools" (keydown)="toolsKey($event)">
+    @if (
+      spec.type === "connection" &&
+      !reason &&
+      session().connectionEditable(spec)
+    ) {
+      <button
+        type="button"
+        class="tertiary param-edit-connection"
+        (click)="session().openConnectionSheet(spec, 'edit')"
+      >
+        <weave-icon name="edit" [size]="16" />Edit
+      </button>
+    }
     @if (entry.option && !reason && !spec.required) {
       <button
         type="button"

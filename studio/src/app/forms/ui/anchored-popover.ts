@@ -97,6 +97,8 @@ function anchorVisible(anchor: HTMLElement) {
 export class AnchoredPopover {
   open = input(false, { alias: "weaveAnchoredPopover" });
   anchor = input.required<HTMLElement>({ alias: "popoverAnchor" });
+  /** Below 768 px, a sheet along the screen's bottom edge instead of a list at the anchor. */
+  sheet = input(false, { alias: "popoverSheet" });
   closed = output<void>({ alias: "popoverClosed" });
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -120,6 +122,26 @@ export class AnchoredPopover {
           width: window.innerWidth,
           height: window.innerHeight,
         };
+        if (this.sheet() && viewport.width < 768) {
+          const key = `sheet,${viewport.width},${viewport.height}`;
+          if (key !== previous) {
+            previous = key;
+            Object.assign(panel.style, {
+              position: "fixed",
+              boxSizing: "border-box",
+              margin: "0",
+              left: "0",
+              right: "auto",
+              top: "auto",
+              bottom: "0",
+              width: `${viewport.width}px`,
+              maxHeight: `${Math.round(viewport.height * 0.7)}px`,
+            });
+            panel.dataset["side"] = "sheet";
+          }
+          frame = requestAnimationFrame(position);
+          return;
+        }
         const width = Math.min(Math.max(rect.width, 320), viewport.width - 16);
         panel.style.width = `${width}px`;
         const height = Math.min(panel.scrollHeight + 2, 360);
@@ -144,7 +166,13 @@ export class AnchoredPopover {
       };
       const outside = (event: PointerEvent) => {
         const target = event.target as Node | null;
-        if (target && !panel.contains(target) && !anchor.contains(target))
+        // A sheet's scrim belongs to the panel: a press above the sheet closes it.
+        const scrim =
+          target === panel && event.clientY < panel.getBoundingClientRect().top;
+        if (
+          scrim ||
+          (target && !panel.contains(target) && !anchor.contains(target))
+        )
           this.closed.emit();
       };
       position();
