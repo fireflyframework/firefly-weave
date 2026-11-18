@@ -239,6 +239,15 @@ async def test_from_scratch_the_live_binding_index_replaces_the_unique_constrain
                 .all()
             )
             assert constraints == ["UNIQUE (tenant_id, project_id, environment_id, id)"]
+            mirrors = (
+                await connection.execute(
+                    text(
+                        "SELECT conrelid::regclass::text FROM pg_constraint WHERE conname LIKE '%_payload_mirror' "
+                        "AND contype='c' AND convalidated"
+                    )
+                )
+            ).scalars()
+            assert sorted(mirrors) == sorted(MIRRORED)
             for table in SOURCES:
                 assert (
                     await connection.scalar(
@@ -262,3 +271,35 @@ async def test_the_schema_version_is_the_new_head(upgraded):
     from firefly_weave.persistence.migrations import SCHEMA_VERSION
 
     assert HEAD == SCHEMA_VERSION
+
+
+MIRRORED = {
+    "trigger_routes": ("principal_id", "activation_id"),
+    "broker_routes": ("principal_id", "activation_id", "binding_id"),
+    "provider_sources": ("principal_id", "activation_id", "binding_id"),
+}
+
+
+@pytest.mark.parametrize("table", sorted(MIRRORED))
+async def test_a_source_payload_always_names_the_principal_activation_and_binding_its_columns_name(upgraded, table):
+    engine, _ = upgraded
+    async with engine.begin() as connection:
+        [(identifier,)] = (
+            await connection.execute(text(f"SELECT id FROM {table} WHERE activation_id IS NOT NULL LIMIT 1"))
+        ).all()
+        for column in MIRRORED[table]:
+            # Readers take these from the payload, so a column changed without it is refused.
+            with pytest.raises(IntegrityError):
+                async with connection.begin_nested():
+                    await connection.execute(
+                        text(
+                            f"UPDATE {table} SET payload=jsonb_set(payload,'{{{column}}}',"
+                            "to_jsonb(cast(:other AS text))) WHERE id=:id"
+                        ),
+                        {"id": identifier, "other": str(uuid4())},
+                    )
+        # A signal source names no activation: the payload's null matches the column's.
+        [(signal,)] = (
+            await connection.execute(text(f"SELECT id FROM {table} WHERE activation_id IS NULL LIMIT 1"))
+        ).all()
+        await connection.execute(text(f"UPDATE {table} SET revision=2 WHERE id=:id"), {"id": signal})

@@ -19,7 +19,8 @@ and email sources, the column updates a retarget makes, and one live source bind
 
 A retarget changes a source's activation and the person it runs as, so the app may now update those columns, and
 the stored ``payload`` that mirrors them, on the four source tables and on platform-event triggers. Nothing else
-about a source becomes writable. Each of the four tables gains ``revision``, which a retarget or a disable
+about a source becomes writable, and a check keeps the payload's principal, activation and binding equal to the
+columns. Each of the four tables gains ``revision``, which a retarget or a disable
 increments, so a change prepared from an older read is refused. A Kafka trigger or app event source that changes
 hands gets a new source binding and the old one is revoked: a source still has at most one live binding, and
 revoked ones stay as history. Existing rows read revision 1, which costs nothing toward usage, so usage charged
@@ -42,6 +43,12 @@ EXACT = " AND ".join(
     f"{name}=nullif(current_setting('weave.{name}',true),'')::uuid"
     for name in ("tenant_id", "project_id", "environment_id")
 )
+# Readers take a source's principal, activation and binding from its stored payload, not from the columns.
+MIRRORED = {
+    "trigger_routes": ("principal_id", "activation_id"),
+    "broker_routes": ("principal_id", "activation_id", "binding_id"),
+    "provider_sources": ("principal_id", "activation_id", "binding_id"),
+}
 UPDATES = {
     "trigger_routes": "activation_id,principal_id,payload,revision",
     "broker_routes": "activation_id,principal_id,binding_id,payload,revision",
@@ -67,6 +74,18 @@ def revisions() -> None:
         op.execute(f"ALTER TABLE {table} ADD COLUMN revision integer NOT NULL DEFAULT 1 CHECK (revision > 0)")
     for table, columns in UPDATES.items():
         op.execute(f"GRANT UPDATE({columns}) ON {table} TO weave_app")
+
+
+def mirrored_payloads() -> None:
+    """A source's payload always names the principal, activation and binding its columns name.
+
+    The app may now update both, so a check keeps them equal; existing rows are checked once, after the constraint
+    is in place, to keep the table lock short.
+    """
+    for table, columns in MIRRORED.items():
+        condition = " AND ".join(f"(payload->>'{column}')::uuid IS NOT DISTINCT FROM {column}" for column in columns)
+        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {table}_payload_mirror CHECK ({condition}) NOT VALID")
+        op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {table}_payload_mirror")
 
 
 def live_bindings() -> None:
@@ -125,6 +144,7 @@ def listen_routes() -> None:
 
 def upgrade() -> None:
     revisions()
+    mirrored_payloads()
     live_bindings()
     row_accounting()
     listen_routes()
