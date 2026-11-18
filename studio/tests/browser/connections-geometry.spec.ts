@@ -184,24 +184,6 @@ for (const size of [
         ).toBeLessThan(6);
     });
 
-    test("the side sheet says what it's for, starts with no name, and keeps its footer at the bottom", async ({
-      page,
-    }) => {
-      const state: ConnectionsState = { bindable: { [PRODUCTION]: [] } };
-      const { details } = await openConnected(page, state, withInput);
-      await routeConnectionForm(page, state, []);
-      await details.open("crm-lookup");
-      await expect(details.dialog).not.toContainText("· http");
-      await connectionSelect(details).click();
-      await options(page).filter({ hasText: "Create connection" }).click();
-      const sheet = page.getByRole("dialog", {
-        name: "New API connection",
-        exact: true,
-      });
-      await expect(sheet).toContainText("For crm-lookup · slot http");
-      await expect(
-        sheet.getByLabel("Connection name", { exact: true }),
-      ).toHaveValue("");
     test("a real run that ended without output keeps one row of actions under its notice", async ({
       page,
     }) => {
@@ -242,6 +224,24 @@ for (const size of [
       expect(Math.abs(a.x - n.x)).toBeLessThan(2);
     });
 
+    test("the side sheet says what it's for, starts with no name, and keeps its footer at the bottom", async ({
+      page,
+    }) => {
+      const state: ConnectionsState = { bindable: { [PRODUCTION]: [] } };
+      const { details } = await openConnected(page, state, withInput);
+      await routeConnectionForm(page, state, []);
+      await details.open("crm-lookup");
+      await expect(details.dialog).not.toContainText("· http");
+      await connectionSelect(details).click();
+      await options(page).filter({ hasText: "Create connection" }).click();
+      const sheet = page.getByRole("dialog", {
+        name: "New API connection",
+        exact: true,
+      });
+      await expect(sheet).toContainText("For crm-lookup · slot http");
+      await expect(
+        sheet.getByLabel("Connection name", { exact: true }),
+      ).toHaveValue("");
       const panel = await box(sheet);
       const footer = await box(
         sheet.getByRole("button", { name: "Create connection" }),
