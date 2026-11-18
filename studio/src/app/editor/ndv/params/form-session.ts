@@ -2250,11 +2250,12 @@ export class FormSession {
         mode === "edit"
           ? {
               mode,
+              step: this.target,
               slot,
               revisionId: view.item!.revisionId,
               name: view.item!.name,
             }
-          : { mode, slot },
+          : { mode, step: this.target, slot },
       saved: (created) =>
         void this.connectionCreated(spec, port, connector, created),
     });

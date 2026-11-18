@@ -62,9 +62,14 @@ for (const size of sizes)
       await expect(form).toBeVisible();
       // Step details stay open underneath.
       await expect(details.dialog).toBeAttached();
+      // The sheet starts unnamed and says which step and slot it's for.
+      await expect(form).toContainText("For crm-lookup · slot http");
       await expect(
         form.getByLabel("Connection name", { exact: true }),
-      ).toHaveValue("http");
+      ).toHaveValue("");
+      await form
+        .getByLabel("Connection name", { exact: true })
+        .fill("acme-crm");
       await form
         .getByLabel("API address", { exact: true })
         .fill("https://api.acme.test");
@@ -73,7 +78,7 @@ for (const size of sizes)
       await create.click();
       await expect(form).toHaveCount(0);
       expect(created).toHaveLength(1);
-      await expect(connectionSelect(details)).toHaveValue("http");
+      await expect(connectionSelect(details)).toHaveValue("acme-crm");
       await expect(details.field("connection")).toContainText(
         "Tested just now",
       );
@@ -153,10 +158,10 @@ for (const size of sizes)
       await options(page).filter({ hasText: "Create connection" }).click();
       const form = sheet(page, "New API connection");
       await expect(form).toBeVisible();
-      // The side sheet names the connection after the slot the step will use.
+      // The side sheet starts unnamed; the line under its title names the slot.
       await expect(
         form.getByLabel("Connection name", { exact: true }),
-      ).toHaveValue("http");
+      ).toHaveValue("");
       await page.keyboard.press("Escape");
       await expect(form).toHaveCount(0);
       await expect(connectionSelect(details)).toBeFocused();
@@ -172,6 +177,9 @@ for (const size of sizes)
       await connectionSelect(details).click();
       await options(page).filter({ hasText: "Create connection" }).click();
       const form = sheet(page, "New API connection");
+      await form
+        .getByLabel("Connection name", { exact: true })
+        .fill("acme-legacy");
       await form
         .getByLabel("API address", { exact: true })
         .fill("http://api.acme.test");

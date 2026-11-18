@@ -96,6 +96,7 @@ for (const size of sizes)
         name: "New API connection",
         exact: true,
       });
+      await form.getByLabel("Connection name", { exact: true }).fill("acme-eu");
       await form
         .getByLabel("API address", { exact: true })
         .fill("https://eu.acme.test");
@@ -103,7 +104,7 @@ for (const size of sizes)
       await create.scrollIntoViewIfNeeded();
       await create.click();
       await expect(form).toHaveCount(0);
-      await expect(connectionSelect(details)).toHaveValue("http");
+      await expect(connectionSelect(details)).toHaveValue("acme-eu");
       await expect(details.field("connection")).toContainText(
         "Tested just now",
       );
@@ -142,7 +143,7 @@ for (const size of sizes)
       // After a reload: the choice and the pin are back; nothing else was kept.
       await page.reload();
       await details.open("crm-lookup");
-      await expect(connectionSelect(details)).toHaveValue("http");
+      await expect(connectionSelect(details)).toHaveValue("acme-eu");
       const again = await showOutput(details);
       await expect(again).toContainText("Pinned");
       await expect(again).toContainText("Ana");

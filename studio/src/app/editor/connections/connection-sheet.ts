@@ -16,10 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Create connection and Edit, from a step's Connection field: the HTTP
-// connection form in a side sheet over step details. Creating names the
-// connection after the slot; editing starts from the bound revision and saves
-// a new one. Either way the step binds the result and tests it, and the sheet
-// closes back onto the field.
+// connection form in a side sheet over step details, saying which step and
+// slot it's for. Creating starts with no name; editing starts from the bound
+// revision and saves a new one. Either way the step binds the result and
+// tests it, and the sheet closes back onto the field.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -41,6 +41,8 @@ import {
 /** What the sheet opens for. */
 export interface ConnectionSheetRequest {
   mode: "create" | "edit";
+  /** The step the connection is for. */
+  step: string;
   /** The slot whose connection this is. */
   slot: string;
   /** Edit: the bound revision the form starts from. */
@@ -49,6 +51,7 @@ export interface ConnectionSheetRequest {
   name?: string;
 }
 
+let sheets = 0;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown) => (typeof value === "string" ? value : "");
@@ -101,13 +104,18 @@ export function prefillFromRevision(
     [heading]="heading()"
     placement="side"
     closeLabel="Close connection"
+    [describedBy]="forId"
     (dismiss)="closed.emit()"
   >
     <div class="connection-sheet">
+      <p class="connection-sheet-for" [id]="forId">
+        For {{ request().step }} · slot {{ request().slot }}
+      </p>
       @if (problem()) {
         <p class="notice" data-tone="danger" role="alert">{{ problem() }}</p>
       } @else if (prefill(); as start) {
         <weave-http-connection-form
+          class="fills-sheet"
           [api]="api()"
           [identity]="identity()"
           heading=""
@@ -130,6 +138,11 @@ export function prefillFromRevision(
       gap: var(--space-4);
       min-width: 0;
     }
+    .connection-sheet-for {
+      margin: calc(-1 * var(--space-2)) 0 0;
+      color: var(--muted);
+      font: var(--type-small);
+    }
   `,
 })
 export class ConnectionSheet implements OnInit {
@@ -140,6 +153,7 @@ export class ConnectionSheet implements OnInit {
   saved = output<CreatedConnection>();
   closed = output<void>();
   readonly prefill = signal<Partial<ConnectionDraft> | null>(null);
+  readonly forId = `connection-sheet-for-${++sheets}`;
   readonly problem = signal("");
 
   heading(): string {
@@ -152,7 +166,8 @@ export class ConnectionSheet implements OnInit {
   ngOnInit(): void {
     const request = this.request();
     if (request.mode === "create" || !request.revisionId) {
-      this.prefill.set({ name: request.slot });
+      // The slot's name ("http") makes a poor connection name; the line under the title names the slot.
+      this.prefill.set({});
       return;
     }
     void this.load(request.revisionId);
