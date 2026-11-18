@@ -430,22 +430,47 @@ weave-input-pane.is-compact .pane-source-field::before {
 .pane-source-tag {
   flex: none;
 }
-/* A real result's source ("From local · run 3f2a…"): a pill that opens the run in Operate. */
+/* A real result's source ("From local · run 3f2a…"): a 24 px pill that
+   opens the run in Operate. Its target reaches 44 px tall without the pill
+   growing, and it shortens (the run ID first) before the count, Pin or Edit
+   leave the row. */
+.pane-sub:has(> .pane-real-tag) {
+  flex-wrap: nowrap;
+}
+.pane-sub:has(> .pane-real-tag) > .pane-count {
+  flex: none;
+  white-space: nowrap;
+}
 .step-details button.pane-real-tag {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 24px;
   min-height: 24px;
-  height: auto;
   padding: 0 var(--space-2);
+  gap: var(--space-1);
   border-radius: var(--radius-pill);
   font: var(--type-caption);
   white-space: nowrap;
 }
+.step-details button.pane-real-tag::after {
+  content: "";
+  position: absolute;
+  inset: -10px 0;
+}
 .step-details button.pane-real-tag:hover {
   background: var(--hover);
 }
-@media (max-width: 767px), (pointer: coarse) {
-  .step-details button.pane-real-tag {
-    min-height: var(--control-touch);
-  }
+.pane-real-tag > .pane-real-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-real-tag > weave-icon {
+  flex: none;
+}
+.pane-real-run {
+  font-family: var(--font-mono);
 }
 /* A running step test: what runs where, for how long, and Stop. */
 .pane-real-running h4 {

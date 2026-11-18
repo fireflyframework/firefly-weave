@@ -172,7 +172,10 @@ import { describeError } from "../../../errors";
           "
           (click)="openRun(real.runId)"
         >
-          From {{ real.environmentName }} · run {{ short(real.runId) }}
+          <span class="pane-real-text"
+            >From {{ real.environmentName }} · run
+            <span class="pane-real-run">{{ short(real.runId) }}</span></span
+          ><weave-icon name="external" [size]="16" />
         </button>
       } @else if (ran) {
         <span class="pill pane-source-tag">Simulated</span>
