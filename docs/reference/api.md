@@ -754,6 +754,10 @@ checking both token and current permissions.
   out.
 - A log read that takes longer than 2 seconds answers `503` with
   `WV-UNAVAILABLE`: narrow the range or the filters.
+- Log pages follow each entry's time, and a page never repeats an entry.
+  Workers send entries in batches, up to a few seconds after they write them,
+  so an entry that arrives after a page and is dated before its last entry
+  shows in a new read from the first page, not on the next page.
 
 - Run summaries and `runs.list` default to `order=started_desc`. They also accept
   `started_asc` and `updated_desc`; `runs.list` additionally accepts `order=id`.
