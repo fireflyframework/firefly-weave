@@ -75,11 +75,19 @@ RUN_ENTRIES = 2000
 RUN_BYTES = 1024 * 1024
 _SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 _SAME = "{a}.tenant_id={b}.tenant_id AND {a}.project_id={b}.project_id AND {a}.environment_id={b}.environment_id"
+# The lease is checked here, before the run's lock and the quotas, so a dead or foreign lease neither waits for
+# another task's lock nor learns its quota state; the insert checks it again in the same statement.
+_LIVE_LEASE = (
+    "l.tenant_id=:tenant AND l.project_id=:project AND l.environment_id=:environment "
+    "AND l.task_id=:task AND l.generation=:generation AND l.owner=:owner AND l.token_hash=:hash "
+    "AND l.status='active' AND l.expires_at>{now} AND l.generation=(SELECT max(m.generation) FROM task_leases m "
+    "WHERE " + _SAME.format(a="m", b="l") + " AND m.task_id=l.task_id)"
+)
 _RUN_OF_LEASE = (
     "SELECT t.run_id FROM task_leases l JOIN task_intents t ON "
     + _SAME.format(a="t", b="l")
-    + " AND t.id=l.task_id WHERE l.tenant_id=:tenant AND l.project_id=:project AND l.environment_id=:environment "
-    "AND l.task_id=:task AND l.generation=:generation"
+    + " AND t.id=l.task_id WHERE "
+    + _LIVE_LEASE.format(now="clock_timestamp()")
 )
 _COUNTS = (
     "SELECT count(*) AS run_entries,coalesce(sum(bytes),0) AS run_bytes,"
@@ -110,10 +118,7 @@ _INSERT = (
     "JOIN run_facts r ON " + _SAME.format(a="r", b="l") + " AND r.run_id=t.run_id "
     "CROSS JOIN jsonb_to_recordset(cast(:entries AS jsonb)) AS e(id uuid,at timestamptz,source text,level text,"
     "code text,message text,fields jsonb,redactions integer,truncated boolean,bytes integer) "
-    "WHERE l.tenant_id=:tenant AND l.project_id=:project AND l.environment_id=:environment "
-    "AND l.task_id=:task AND l.generation=:generation AND l.owner=:owner AND l.token_hash=:hash "
-    "AND l.status='active' AND l.expires_at>now.at AND l.generation=(SELECT max(m.generation) FROM task_leases m "
-    "WHERE " + _SAME.format(a="m", b="l") + " AND m.task_id=l.task_id) RETURNING 1) "
+    "WHERE " + _LIVE_LEASE.format(now="now.at") + " RETURNING 1) "
     "SELECT count(*) FROM stored"
 )
 _COUNTED = (
@@ -158,7 +163,8 @@ class ExecutionLogWriter:
     async def append(self, request: TaskLogRequest, *, daily_limit: int) -> TaskLogAccepted:
         proof = request.lease
         lease = {"task": proof.task_id, "generation": proof.generation}
-        runs = await self._rows(_RUN_OF_LEASE, **lease)
+        holder = {"owner": proof.owner, "hash": token_hash(proof.token)}
+        runs = await self._rows(_RUN_OF_LEASE, **lease, **holder)
         if not runs:
             raise lease_gone()
         run = runs[0]["run_id"]
@@ -200,8 +206,7 @@ class ExecutionLogWriter:
                 {
                     **self.params,
                     **lease,
-                    "owner": proof.owner,
-                    "hash": token_hash(proof.token),
+                    **holder,
                     "entries": json.dumps(entries[:kept], ensure_ascii=False),
                 },
             )

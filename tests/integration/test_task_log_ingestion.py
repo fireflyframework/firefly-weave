@@ -70,9 +70,11 @@ async def lease(task_service, transaction_factory, queued_task, worker_ids):
 
 
 async def refused(worker_setup, access_db, proof):
-    with pytest.raises(CatalogError) as error:
-        await write(worker_setup, access_db, proof, entries())
-    assert (error.value.status, error.value.code) == (409, "WV-LOG-LEASE")
+    # With room left and with the day's quota spent alike, so a dead or foreign lease learns nothing of the quotas.
+    for daily_limit in (200_000, 0):
+        with pytest.raises(CatalogError) as error:
+            await write(worker_setup, access_db, proof, entries(), daily_limit=daily_limit)
+        assert (error.value.status, error.value.code) == (409, "WV-LOG-LEASE")
     assert await stored(access_db) == []
 
 
