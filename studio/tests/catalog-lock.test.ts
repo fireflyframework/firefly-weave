@@ -45,7 +45,7 @@ interface Pending {
   reject(error: unknown): void;
 }
 
-/** A reader over a fake platform: answers are queued or held until settled. */
+/** A reader whose platform answers at once, or holds its answers until the test settles them. */
 function reader(answer: () => unknown = () => LOCK) {
   const host = { scope: "acme/local" as string | null, canRead: true };
   const fetched: string[] = [];
