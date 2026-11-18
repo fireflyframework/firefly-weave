@@ -242,7 +242,7 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
             ? `Create ${NOUNS[kind]} ${text(intent, "name") ?? ""}`.trim()
             : connection
               ? `Start reading ${connection.mailbox ?? "mail"} on ${connection.name}`
-              : "Start reading mail on the email connection chosen above",
+              : "Start reading mail on the email connection you choose for it",
       });
       continue;
     }

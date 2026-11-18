@@ -402,7 +402,7 @@ describe("Kafka, email and app events", () => {
       "Create app event source support",
     ]);
     expect(plan([EMAIL])[0].text).toBe(
-      "Start reading mail on the email connection chosen above",
+      "Start reading mail on the email connection you choose for it",
     );
   });
 
