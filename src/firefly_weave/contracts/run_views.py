@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import AwareDatetime, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
@@ -373,6 +373,79 @@ class RunLogEntry(ContractModel):
 class RunLogPage(ContractModel):
     items: list[RunLogEntry] = Field(max_length=500)
     next_cursor: Cursor | None = None
+
+
+# The log across runs reads the last hour by default, at most 7 days, and at most 6 hours when it searches messages.
+LOG_DEFAULT_RANGE = timedelta(hours=1)
+LOG_LONGEST_RANGE = timedelta(days=7)
+LOG_SEARCH_RANGE = timedelta(hours=6)
+
+
+class ExecutionLogEntry(RunLogEntry):
+    """An entry of the log across runs, with the run it belongs to."""
+
+    run_id: UUID
+    workflow_name: ResourceName
+    workflow_version: SemVer
+    test: bool
+
+
+class ExecutionLogPage(ContractModel):
+    """Entries newest first; an entry of a run whose details are withheld is a row without text."""
+
+    items: list[ExecutionLogEntry | UnavailableResource] = Field(max_length=500)
+    next_cursor: Cursor | None = None
+
+
+class ExecutionLogQuery(ContractModel):
+    """`execution_logs.list` query: entries across runs, newest first. The cursor is bound to every filter.
+
+    ``level`` is the lowest level returned and ``node_id`` a static step ID. ``contains`` finds text in what workers
+    and connectors wrote, whatever its case, taking ``%`` and ``_`` as plain characters. Without ``from`` the range
+    starts an hour before ``to`` (default: now); it spans at most 7 days, or 6 hours with ``contains``.
+    """
+
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", validate_by_name=True, validate_by_alias=True, serialize_by_alias=True
+    )
+
+    from_: AwareDatetime | None = Field(default=None, alias="from")
+    to: AwareDatetime | None = None
+    workflow: ResourceName | None = None
+    level: LogLevel | None = None
+    code: LogCode | None = None
+    node_id: ResourceName | None = None
+    contains: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    include_test: bool = False
+    limit: DetailLimit = 100
+    cursor: Cursor | None = None
+
+    @field_validator("from_", "to", mode="before")
+    @classmethod
+    def utc(cls, value: object) -> datetime | None:
+        return utc_time(value)
+
+    @model_validator(mode="after")
+    def coherent(self) -> ExecutionLogQuery:
+        if self.from_ is not None and self.to is not None:
+            self.window(self.to)
+        return self
+
+    def window(self, now: datetime) -> tuple[datetime, datetime]:
+        """The range read: ``[from, to)``, with ``to`` defaulting to ``now`` and ``from`` to an hour before ``to``."""
+        end = self.to or now
+        start = self.from_ or end - LOG_DEFAULT_RANGE
+        if start >= end:
+            raise _filter_error("from must be earlier than to")
+        if end - start > LOG_LONGEST_RANGE:
+            raise _filter_error("The time range is longer than 7 days")
+        if self.contains is not None and end - start > LOG_SEARCH_RANGE:
+            raise _filter_error("Narrow the time range to 6 hours or less to search messages")
+        return start, end
+
+    def cursor_collection(self) -> str:
+        filters = self.model_dump(mode="json", exclude={"limit", "cursor"})
+        return f"execution_logs:{_digest(filters)}"
 
 
 class RunSummaryQuery(ContractModel):

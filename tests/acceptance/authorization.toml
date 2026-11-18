@@ -272,8 +272,10 @@ identifier = "random"
 [operations."runs.logs"]
 capability = "run.read"
 identifier = "random"
-# Run logs answer 501 until the platform has a log reader (the logs capability).
-answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
+
+# Entries across runs: a permitted call reads the last hour of the environment and changes nothing.
+[operations."execution_logs.list"]
+capability = "run.read"
 
 [operations."runs.steps"]
 capability = "run.read"

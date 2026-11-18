@@ -209,6 +209,8 @@ from firefly_weave.contracts.run_statistics import (
     WorkflowStatisticsAnswer,
 )
 from firefly_weave.contracts.run_views import (
+    ExecutionLogPage,
+    ExecutionLogQuery,
     RunListQuery,
     RunLogPage,
     RunLogQuery,
@@ -1969,7 +1971,23 @@ OPERATIONS = {
             RunLogPage,
             "run.read",
             query=RunLogQuery,
-            served=False,
+            description=(
+                "A run whose details are withheld answers as runs.read does. A read slower than 2 s answers 503 "
+                "WV-UNAVAILABLE."
+            ),
+        ),
+        Operation(
+            "execution_logs.list",
+            ENVIRONMENT + "/execution-logs",
+            "GET",
+            ExecutionLogPage,
+            "run.read",
+            query=ExecutionLogQuery,
+            description=(
+                "An entry of a run whose details are withheld is a row without text; a search by contains leaves "
+                "those rows out. A range longer than 7 days, or than 6 hours with contains, answers 422 WV-FILTER; "
+                "a read slower than 2 s answers 503 WV-UNAVAILABLE."
+            ),
         ),
         Operation(
             "runs.agent_log",
