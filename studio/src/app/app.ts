@@ -3070,12 +3070,16 @@ export class App implements CanvasHost {
         detail: this.blocker("simulate"),
         run: () => void this.runCommand("simulate"),
       });
-    for (const command of this.secondaryCommands)
+    for (const command of this.secondaryCommands) {
+      const blocked = this.blocker(command);
+      // A blocked command is marked disabled and still says why, as its own button does.
       items.push({
         label: commandLabels[command],
-        detail: this.blocker(command),
+        detail: blocked,
+        ...(blocked ? { blocked: true } : {}),
         run: () => void this.runCommand(command),
       });
+    }
     if (this.profile)
       items.push({ label: "Save to file", run: () => void this.export() });
     if (narrow)
