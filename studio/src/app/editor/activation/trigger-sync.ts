@@ -33,7 +33,7 @@ import type { TriggerIntent } from "../state/canvas-sidecar";
 import { settingsKey } from "../triggers/trigger-activated";
 
 export { settingsKey };
-import type { TriggerRow } from "./trigger-plan";
+import { title, type TriggerRow } from "./trigger-plan";
 import {
   createResource,
   moveSchedule,
@@ -63,7 +63,7 @@ export type SyncStatus = "created" | "moved" | "stopped" | "failed";
 export interface SyncResult {
   row: TriggerRow;
   status: SyncStatus;
-  /** "Created", "Moved", "Stopped", or what went wrong. */
+  /** "Created Kafka trigger orders", "Moved webhook orders-in to 1.2.0 …", "Stopped …", or what went wrong. */
   text: string;
   resourceId?: string;
 }
@@ -155,13 +155,15 @@ async function run(
       ? {
           row,
           status: "created",
-          text: "Created",
+          text: `Created ${name}`,
           resourceId: outcome.resource.id,
         }
       : failed(row, `Couldn't create ${name}: ${reason(outcome.refusal)}`);
   }
   if (!resource) return failed(row, "Couldn't set up this trigger.");
   const label = `${NOUNS[kind]} ${resource.name}`;
+  // "to 1.2.0": the version activated, as the row said before it ran.
+  const to = row.to ? ` to ${row.to}` : "";
   if (row.kind === "retarget") {
     const outcome = await retarget(
       api,
@@ -171,7 +173,12 @@ async function run(
       resource.revision,
     );
     return outcome.ok
-      ? { row, status: "moved", text: "Moved", resourceId: resource.id }
+      ? {
+          row,
+          status: "moved",
+          text: `Moved ${label}${to}${kind === "webhook" ? " (the URL stays the same)" : ""}`,
+          resourceId: resource.id,
+        }
       : failed(row, `Couldn't move ${label}: ${reason(outcome.refusal)}`);
   }
   if (row.kind === "schedule-move") {
@@ -189,12 +196,22 @@ async function run(
       },
     );
     return outcome.ok
-      ? { row, status: "moved", text: "Moved", resourceId: resource.id }
+      ? {
+          row,
+          status: "moved",
+          text: `Moved schedule ${title(resource, typeof intent?.["cron"] === "string" ? intent["cron"] : undefined)}${to}`,
+          resourceId: resource.id,
+        }
       : failed(row, `Couldn't move the schedule: ${reason(outcome.refusal)}`);
   }
   const stopped = await stopResource(api, kind, resource.id, resource.revision);
   return stopped.ok
-    ? { row, status: "stopped", text: "Stopped", resourceId: resource.id }
+    ? {
+        row,
+        status: "stopped",
+        text: `Stopped ${label}`,
+        resourceId: resource.id,
+      }
     : failed(row, `Couldn't stop ${label}: ${reason(stopped.refusal)}`);
 }
 

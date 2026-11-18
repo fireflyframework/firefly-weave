@@ -117,7 +117,7 @@ const scheduleName = (cron: string | undefined) =>
   cron ? `'${describeCalendar(cron)}'` : "without a calendar yet";
 
 /** How people know a resource: its name, an email source's mailbox, a schedule's calendar. */
-function title(resource: TriggerResource, cron?: string) {
+export function title(resource: TriggerResource, cron?: string) {
   return resource.kind === "schedule"
     ? scheduleName(cron ?? resource.name)
     : resource.name;

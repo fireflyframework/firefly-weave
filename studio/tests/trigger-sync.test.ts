@@ -176,9 +176,14 @@ describe("setting up triggers after an activation", () => {
     expect(
       results.map((result) => [result.status, result.text, result.resourceId]),
     ).toEqual([
-      ["created", "Created", "w-new"],
-      ["moved", "Moved", "w-1"],
-      ["stopped", "Stopped", "w-9"],
+      // Each row a receipt: what happened, to which trigger.
+      ["created", "Created webhook orders-in", "w-new"],
+      [
+        "moved",
+        "Moved webhook orders-x to 1.2.0 (the URL stays the same)",
+        "w-1",
+      ],
+      ["stopped", "Stopped webhook orders-gone", "w-9"],
     ]);
     expect(
       api.calls.map((call) =>
@@ -224,9 +229,60 @@ describe("setting up triggers after an activation", () => {
         "failed",
         "Couldn't move webhook orders-old: Someone else changed this item. Reload it to see the latest version, then try again.",
       ],
-      ["created", "Created"],
+      ["created", "Created webhook orders-in"],
     ]);
     expect(attention(results)).toBe("1 trigger needs attention.");
+  });
+
+  it("names a moved schedule by its calendar and the version it moved to", async () => {
+    const api = new FakeApi();
+    const schedule: TriggerIntent = {
+      id: "trigger-4e5f6a7b",
+      kind: "schedule",
+      cron: "0 9 * * 1",
+      input: {},
+    };
+    const scheduleView = {
+      id: "s-1",
+      cron: "0 9 * * 1",
+      timezone: "UTC",
+      missed_policy: "skip",
+      activation_id: "a-1",
+      input: {},
+      revision: 2,
+      principal_id: "p-1",
+      status: "enabled",
+      next_due_at: "2026-11-23T09:00:00Z",
+      blocked_reason: null,
+    };
+    api.answers = [{ ...scheduleView, activation_id: "a-2", revision: 3 }];
+    const [result] = await syncTriggers(
+      [
+        {
+          kind: "schedule-move",
+          intentId: schedule.id,
+          resourceKind: "schedule",
+          resource: {
+            kind: "schedule",
+            id: "s-1",
+            name: "0 9 * * 1",
+            activationId: "a-1",
+            revision: 2,
+            disabled: false,
+            view: scheduleView as never,
+          },
+          from: "1.1.0",
+          to: "1.2.0",
+          text: "Move schedule…",
+        },
+      ],
+      context(api, [schedule]),
+    );
+    expect(result).toMatchObject({
+      status: "moved",
+      text: expect.stringMatching(/^Moved schedule .+ to 1\.2\.0$/),
+    });
+    expect(result.text).not.toContain("0 9 * * 1");
   });
 
   it("retries a move with the revision it reads again", async () => {
@@ -241,6 +297,8 @@ describe("setting up triggers after an activation", () => {
         intentId: OLD.id,
         resourceKind: "webhook",
         resource: resource("w-1", "orders-old", 3),
+        from: "1.1.0",
+        to: "1.2.0",
         text: "Move…",
       } as TriggerRow,
       status: "failed" as const,
@@ -248,7 +306,7 @@ describe("setting up triggers after an activation", () => {
     };
     expect(await retryResult(failed, context(api, [OLD]))).toMatchObject({
       status: "moved",
-      text: "Moved",
+      text: "Moved webhook orders-old to 1.2.0 (the URL stays the same)",
       resourceId: "w-1",
     });
     expect(

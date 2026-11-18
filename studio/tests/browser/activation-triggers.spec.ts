@@ -185,7 +185,9 @@ test("a trigger that can't be created says why with Retry, and the activation st
   );
   await expect(done.getByRole("button", { name: "Review" })).toHaveCount(0);
   await rows.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(rows.getByRole("listitem")).toContainText(["Created"]);
+  await expect(rows.getByRole("listitem")).toContainText([
+    "Created webhook orders-in",
+  ]);
   expect(recorded.created).toHaveLength(1);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
