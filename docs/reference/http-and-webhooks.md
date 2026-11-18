@@ -199,6 +199,13 @@ person's who last moved it), and writes the receipt and the run or signal in one
 transaction. The `202` is returned after commit. A disabled trigger or a revoked
 principal fails closed.
 
+**Give test URLs their own secret.** A signature covers the timestamp and the body,
+not the route, so an event signed for one webhook verifies on any route that uses
+the same secret handle. When you listen for a test event on a draft test
+activation, give it a secret handle of its own, never a production webhook's:
+otherwise an event sent to that production webhook could be replayed to the test
+URL within the tolerance window and start a test run.
+
 **Retries and duplicates.** The same event ID with the exact same body returns
 the same receipt, run, and signal IDs, including after a lost response. The same
 event ID with different bytes returns HTTP 409, even when the JSON means the same
