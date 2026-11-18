@@ -17,7 +17,7 @@
 
 import json
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -32,6 +32,7 @@ from firefly_weave.persistence.uow import Transaction
 from firefly_weave.step_tests.admission import ReleaseChoice
 
 SCOPED = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
+TERMINAL = "('succeeded','failed','cancelled','timed_out')"
 # Releases are read in one bounded page; an environment with more can't be offered as choices.
 RELEASE_PAGE = 200
 
@@ -71,6 +72,14 @@ class StepTestRepository:
             revision=revision,
         )
         return cast(JsonObject, rows[0]["document"]) if rows else None
+
+    async def latest_draft_revision(self, identifier: UUID) -> int | None:
+        rows = await self.rows(
+            "SELECT max(revision) AS revision FROM draft_revisions WHERE tenant_id=:tenant AND project_id=:project "
+            "AND id=:id",
+            id=identifier,
+        )
+        return cast(int | None, rows[0]["revision"]) if rows else None
 
     async def connector_version(self, digest: str) -> UUID | None:
         rows = await self.rows(
@@ -192,19 +201,21 @@ class StepTestRepository:
         *,
         draft: UUID,
         draft_revision: int,
-        step_id: str,
+        step_id: str | None,
         side_effect: SideEffect,
         acknowledged: SideEffect | None,
         created_at: datetime,
         expires_at: datetime,
+        source: Literal["step", "draft"] = "step",
     ) -> None:
         await self.execute(
             "INSERT INTO test_activation_details(tenant_id,project_id,environment_id,activation_id,principal_id,"
             "source,draft_id,draft_revision,step_id,side_effect,acknowledged_side_effect,created_at,expires_at) "
-            "VALUES(:tenant,:project,:environment,:activation,:principal,'step',:draft,:draft_revision,:step,"
+            "VALUES(:tenant,:project,:environment,:activation,:principal,:source,:draft,:draft_revision,:step,"
             ":effect,:acknowledged,:created,:expires)",
             activation=activation,
             principal=principal,
+            source=source,
             draft=draft,
             draft_revision=draft_revision,
             step=step_id,
@@ -215,23 +226,36 @@ class StepTestRepository:
         )
 
     async def busy(self, principal: UUID, now: datetime) -> tuple[list[datetime], list[datetime]]:
-        """When each of this person's running step tests here expires, and when each of the last minute's started."""
+        """This person's test runs here, step tests and draft test runs alike.
+
+        The first list holds when each running one's test activation expires; the second when each started in the
+        last minute, counting each step test and each draft test activation created as a start too.
+        """
         running = await self.rows(
             "SELECT d.expires_at FROM test_activation_details d LEFT JOIN runs r ON r.tenant_id=d.tenant_id "
             "AND r.project_id=d.project_id AND r.environment_id=d.environment_id AND r.id=d.run_id "
             "WHERE d.tenant_id=:tenant AND d.project_id=:project AND d.environment_id=:environment "
-            "AND d.principal_id=:principal AND d.retired_at IS NULL AND d.expires_at>:now "
-            "AND coalesce(r.state->>'status','running') NOT IN ('succeeded','failed','cancelled','timed_out')",
+            "AND d.source='step' AND d.principal_id=:principal AND d.retired_at IS NULL AND d.expires_at>:now "
+            f"AND coalesce(r.state->>'status','running') NOT IN {TERMINAL} "
+            "UNION ALL SELECT d.expires_at FROM test_activation_details d JOIN runs r ON r.tenant_id=d.tenant_id "
+            "AND r.project_id=d.project_id AND r.environment_id=d.environment_id AND r.activation_id=d.activation_id "
+            "WHERE d.tenant_id=:tenant AND d.project_id=:project AND d.environment_id=:environment "
+            f"AND d.source='draft' AND d.principal_id=:principal AND r.state->>'status' NOT IN {TERMINAL}",
             principal=principal,
             now=now,
         )
+        since = now - timedelta(seconds=60)
         recent = await self.rows(
-            f"SELECT created_at FROM test_activation_details WHERE {SCOPED} AND principal_id=:principal "
-            "AND created_at>:since",
+            f"SELECT created_at AS at FROM test_activation_details WHERE {SCOPED} AND principal_id=:principal "
+            "AND created_at>:since UNION ALL SELECT f.started_at AS at FROM run_facts f JOIN test_activation_details d "
+            "ON d.tenant_id=f.tenant_id AND d.project_id=f.project_id AND d.environment_id=f.environment_id "
+            "AND d.activation_id=f.activation_id WHERE d.tenant_id=:tenant AND d.project_id=:project "
+            "AND d.environment_id=:environment AND d.source='draft' AND d.principal_id=:principal "
+            "AND f.started_at>:since",
             principal=principal,
-            since=now - timedelta(seconds=60),
+            since=since,
         )
-        return [row["expires_at"] for row in running], [row["created_at"] for row in recent]
+        return [row["expires_at"] for row in running], [row["at"] for row in recent]
 
     async def record_run(self, activation: UUID, run: UUID) -> None:
         await self.execute(
@@ -240,13 +264,57 @@ class StepTestRepository:
             run=run,
         )
 
-    async def details(self, activation: UUID) -> dict[str, Any] | None:
+    async def details(
+        self, activation: UUID, source: Literal["step", "draft"] = "step", *, lock: bool = False
+    ) -> dict[str, Any] | None:
         rows = await self.rows(
-            f"SELECT * FROM test_activation_details WHERE {SCOPED} AND activation_id=:activation AND source='step'",
+            f"SELECT * FROM test_activation_details WHERE {SCOPED} AND activation_id=:activation AND source=:source"
+            + (" FOR UPDATE" if lock else ""),
             activation=activation,
+            source=source,
         )
         return rows[0] if rows else None
+
+    async def retire(self, activation: UUID, at: datetime) -> None:
+        """Retire a test activation now and stop its listen routes; runs already started keep running."""
+        await self.execute(
+            f"UPDATE test_activation_details SET retired_at=:at WHERE {SCOPED} AND activation_id=:activation "
+            "AND retired_at IS NULL",
+            activation=activation,
+            at=at,
+        )
+        await stop_listening(self.tx, [activation])
+
+    async def listen_route(self, activation: UUID) -> UUID | None:
+        """The test activation's enabled listen route, if it has one."""
+        rows = await self.rows(
+            f"SELECT id FROM trigger_routes WHERE {SCOPED} AND activation_id=:activation AND NOT disabled",
+            activation=activation,
+        )
+        return cast(UUID, rows[0]["id"]) if rows else None
 
     async def run_status(self, run: UUID) -> str | None:
         rows = await self.rows(f"SELECT state->>'status' AS status FROM runs WHERE {SCOPED} AND id=:run", run=run)
         return cast(str, rows[0]["status"]) if rows else None
+
+
+async def stop_listening(tx: Transaction, activations: list[UUID]) -> list[UUID]:
+    """Disable the listen routes of these test activations, each as a webhook disable does; answer whose stopped."""
+    keys = {"tenant": tx.scope.tenant_id, "project": tx.scope.project_id, "environment": tx.scope.environment_id}
+    rows = (
+        await tx.session.execute(
+            text(
+                f"SELECT id,activation_id FROM trigger_routes WHERE {SCOPED} AND activation_id=ANY(:activations) "
+                "AND NOT disabled ORDER BY id FOR UPDATE"
+            ),
+            {**keys, "activations": activations},
+        )
+    ).all()
+    for route, _ in rows:
+        # Stopping a route is a safety control: it spends the route's reserve, so it works at a full quota.
+        await tx.session.execute(text("SELECT weave_control_begin('webhook',:id)"), {"id": route})
+        await tx.session.execute(
+            text(f"UPDATE trigger_routes SET disabled=true,revision=revision+1 WHERE {SCOPED} AND id=:id"),
+            {**keys, "id": route},
+        )
+    return sorted({cast(UUID, activation) for _, activation in rows})
