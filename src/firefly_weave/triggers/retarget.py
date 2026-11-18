@@ -39,7 +39,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import workflow
-from firefly_weave.runtime.repository import RuntimeRepository
+from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
 SourceKind = Literal["webhook", "kafka", "provider", "email", "event"]
 
@@ -160,6 +160,15 @@ def retarget_audit(outcome: RetargetOutcome) -> dict[str, str]:
     if outcome.from_binding_id is not None and outcome.to_binding_id is not None:
         details |= {"from_binding_id": str(outcome.from_binding_id), "to_binding_id": str(outcome.to_binding_id)}
     return details
+
+
+async def live_binding(tx: Transaction, binding: UUID) -> None:
+    """A source whose binding was revoked is stopped: a retarget never gives it a live binding back."""
+    rows = await RuntimeRepository(tx).rows(
+        f"SELECT revoked FROM connection_source_bindings WHERE {SCOPE} AND id=:id FOR UPDATE", id=binding
+    )
+    if not rows or rows[0]["revoked"]:
+        raise disabled()
 
 
 async def activation_facts(tx: Transaction, identifier: UUID) -> ActivationFacts | None:

@@ -286,3 +286,14 @@ async def test_the_mover_needs_what_creating_a_kafka_trigger_needs(kafka):
             await retarget(env, env.second.id, 1, actor=lacking)
     [row] = await stored(env, "SELECT revision,binding_id FROM broker_routes WHERE id=:id")
     assert (row["revision"], row["binding_id"]) == (1, env.route.binding_id)
+
+
+async def test_a_route_whose_binding_was_revoked_stays_stopped(kafka):
+    env = kafka
+    from firefly_weave.access.audit import AuditContext
+
+    await env.service.bindings.revoke(env.creator, env.scope, env.route.binding_id, context=AuditContext())
+    assert await refused(retarget(env, env.second.id, 1)) == (409, "WV-TRIGGER-DISABLED")
+    [row] = await stored(env, "SELECT revision,binding_id FROM broker_routes WHERE id=:id")
+    assert (row["revision"], row["binding_id"]) == (1, env.route.binding_id)
+    assert await stored(env, "SELECT id FROM connection_source_bindings WHERE source_id=:id AND NOT revoked") == []

@@ -199,3 +199,14 @@ async def test_the_mover_needs_what_creating_an_app_event_source_needs(events):
             await retarget(env, env.second.id, 1, actor=lacking)
     [row] = await stored(env, "SELECT revision,binding_id FROM provider_sources WHERE id=:id")
     assert (row["revision"], row["binding_id"]) == (1, env.events.binding_id)
+
+
+async def test_a_source_whose_binding_was_revoked_stays_stopped(events):
+    env = events
+    from firefly_weave.access.audit import AuditContext
+
+    await env.service.bindings.revoke(env.creator, env.scope, env.events.binding_id, context=AuditContext())
+    assert await refused(retarget(env, env.second.id, 1)) == (409, "WV-TRIGGER-DISABLED")
+    [row] = await stored(env, "SELECT revision,binding_id FROM provider_sources WHERE id=:id")
+    assert (row["revision"], row["binding_id"]) == (1, env.events.binding_id)
+    assert await stored(env, "SELECT id FROM connection_source_bindings WHERE source_id=:id AND NOT revoked") == []

@@ -215,7 +215,8 @@ as you: you need `trigger.manage`, `run.start`, `connection.manage` and
 `connection.bind`, as creating one does. Its old source binding is revoked and a
 new one is created for you in the same transaction, so the consumer that held
 the route's lease stops at its next check and the route is claimed again on the
-new activation. See
+new activation. A disabled route, or one whose source binding was revoked, stays
+stopped (HTTP 409 `WV-TRIGGER-DISABLED`): create a new route instead. See
 [Move a trigger to another version](../reference/api.md#move-a-trigger-to-another-version).
 
 ## Know what success looks like

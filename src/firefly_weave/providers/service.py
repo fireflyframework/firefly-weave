@@ -70,6 +70,7 @@ from firefly_weave.runtime.waits import TERMINAL
 from firefly_weave.triggers.retarget import (
     RetargetOutcome,
     checked_target,
+    live_binding,
     mapping_rule,
     require_revision,
     retarget_audit,
@@ -287,6 +288,7 @@ class ProviderIngressService:
             require_revision(expected, current.revision)
             if current.disabled:
                 raise stopped()
+            await live_binding(tx, current.binding_id)
             await checked_target(tx, current.activation_id, activation_id)
             assert current.activation_id is not None
             request = ProviderSourceRequest(
