@@ -23,7 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 // back reaches another account, environment or platform.
 import { signal } from "@angular/core";
 import { describeError } from "../../errors";
-import { testCopy } from "../../integrations/connection-copy";
+import { testCopy, testOrigin } from "../../integrations/connection-copy";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { connectedPrefix } from "../state/browser-store";
 import type { EnvironmentTestPolicy } from "../state/execution";
@@ -246,7 +246,7 @@ export class ConnectionsPort {
       message = ok
         ? null
         : (result.message ??
-          testCopy.failed(origin ?? "the server", result.reason));
+          testCopy.failed(testOrigin(origin ?? ""), result.reason));
     } catch (error) {
       message = describeError(error).message;
     } finally {

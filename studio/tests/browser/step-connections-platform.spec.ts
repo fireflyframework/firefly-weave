@@ -198,6 +198,8 @@ for (const size of sizes)
       await expect(field).toContainText(
         "api1.acme.test refused this connection's sign-in.",
       );
+      // The host, as the connection form says it, not the address.
+      await expect(field).not.toContainText("https://api1.acme.test refused");
       state.tests[revisionId(1)] = { ok: true, code: "ok" };
       await field.getByRole("button", { name: "Retry" }).click();
       await expect(field).toContainText("Tested just now");
