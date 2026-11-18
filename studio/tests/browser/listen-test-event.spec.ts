@@ -194,9 +194,8 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
   await expect(curl).toContainText(
     "with the value of the test secret orders-test first",
   );
-  await expect(dialog.getByLabel("Set the test secret")).toHaveText(
-    "weave platform secret set --handle orders-test",
-  );
+  // The platform here isn't on this computer: no local command to set it.
+  await expect(dialog.getByLabel("Set the test secret")).toHaveCount(0);
   // Listen and Stop listening live in the header only.
   await expect(
     dialog.getByRole("button", { name: "Stop listening", exact: true }),

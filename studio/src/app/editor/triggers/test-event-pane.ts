@@ -30,7 +30,7 @@ import {
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { listenBlocked, type ListenState } from "./test-listener";
-import { productionUrl, secretCommand } from "./webhook-help";
+import { localPlatform, productionUrl, secretCommand } from "./webhook-help";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
 import type { TriggerIntent } from "../state/canvas-sidecar";
@@ -328,7 +328,11 @@ export class TriggerEventPane {
   /** The command that sets the test secret's value on a local platform, or null. */
   testSecretCommand(): string | null {
     const handle = this.trigger()["testSecretRef"];
-    return typeof handle === "string" ? secretCommand(handle) : null;
+    const platform = this.host()?.profile?.baseUrl ?? "";
+    // The command reaches only a platform on this computer.
+    return typeof handle === "string" && localPlatform(platform)
+      ? secretCommand(handle)
+      : null;
   }
   /** Why this webhook can't listen here, or null when it can. */
   private blocked(): string | null {

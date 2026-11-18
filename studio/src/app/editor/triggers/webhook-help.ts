@@ -129,3 +129,13 @@ export function webhookUrls(urls: {
 export function productionUrl(baseUrl: string, webhookId: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/webhooks/${encodeURIComponent(webhookId)}`;
 }
+
+/** Whether a platform runs on this computer, where `weave platform secret set` reaches it. */
+export function localPlatform(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}

@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  localPlatform,
   productionUrl,
   secretCommand,
   secretCommands,
@@ -210,6 +211,23 @@ describe("the production URL", () => {
     expect(productionUrl("https://weave.example.test", "w-new")).toBe(
       "https://weave.example.test/webhooks/w-new",
     );
+  });
+});
+
+describe("a local platform", () => {
+  it("is one on this computer, where weave platform secret set reaches it", () => {
+    for (const url of [
+      "http://127.0.0.1:8081",
+      "http://localhost:8081/",
+      "http://[::1]:8081",
+    ])
+      expect(localPlatform(url), url).toBe(true);
+    for (const url of [
+      "https://weave.acme.example",
+      "http://10.0.0.5:8081",
+      "not a url",
+    ])
+      expect(localPlatform(url), url).toBe(false);
   });
 });
 
