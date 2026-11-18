@@ -624,6 +624,16 @@ weave-input-pane.is-compact .pane-source-field::before {
     align-items: stretch;
   }
 }
+/* After a real run ended without output: one row under its notice, from its start, on a phone too. */
+.pane-empty-actions.pane-real-actions {
+  justify-content: flex-start;
+  margin-top: 0;
+}
+@media (max-width: 480px) {
+  .pane-empty-actions.pane-real-actions {
+    flex-direction: row;
+  }
+}
 /* The panes' own actions (Execute, Set test output, Stop): 44 px targets on touch. */
 @media (max-width: 767px), (pointer: coarse) {
   .pane-empty-actions > button {

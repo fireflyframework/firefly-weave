@@ -202,6 +202,46 @@ for (const size of [
       await expect(
         sheet.getByLabel("Connection name", { exact: true }),
       ).toHaveValue("");
+    test("a real run that ended without output keeps one row of actions under its notice", async ({
+      page,
+    }) => {
+      const { details } = await openConnected(
+        page,
+        { bindable: { [PRODUCTION]: [bindable(1)] } },
+        withInput,
+      );
+      await routeStepTests(page, {
+        starts: [{ status: 202, json: accepted }],
+        views: [
+          view({
+            status: "failed",
+            error: {
+              code: "WV-STEP-HTTP_STATUS",
+              message: "The step failed: HTTP_STATUS.",
+            },
+            ended_at: "2026-11-17T10:00:02Z",
+          }),
+        ],
+      });
+      await details.open("crm-lookup");
+      await connectionSelect(details).click();
+      await options(page)
+        .filter({ hasText: /^acme-crm-1/ })
+        .click();
+      await (await executeIn(details, "Production")).click();
+      const output = await showOutput(details);
+      const notice = output.locator(".pane-real-notice");
+      await expect(notice).toContainText("A failed step returns no output.");
+      // Below 1280 px Output is a tab: its content is there before it shows.
+      await expect(notice).toBeVisible();
+      const execute = output.getByRole("button", { name: "Execute step" });
+      const set = output.getByRole("button", { name: "Set test output" });
+      const [n, a, b] = [await box(notice), await box(execute), await box(set)];
+      expect(Math.abs(a.y - b.y)).toBeLessThan(2);
+      expect(a.y).toBeGreaterThanOrEqual(n.y + n.height);
+      expect(Math.abs(a.x - n.x)).toBeLessThan(2);
+    });
+
       const panel = await box(sheet);
       const footer = await box(
         sheet.getByRole("button", { name: "Create connection" }),

@@ -274,7 +274,12 @@ import { describeError } from "../../../errors";
               role="status"
             >
               <weave-icon [name]="said.icon" [size]="16" />
-              <p>{{ said.text }}</p>
+              <div>
+                <p>{{ said.text }}</p>
+                @if (said.failed) {
+                  <p>A failed step returns no output.</p>
+                }
+              </div>
             </div>
           }
           @if (!pin && realFiles().length) {
@@ -454,6 +459,21 @@ import { describeError } from "../../../errors";
                   <span class="loading-spinner small" aria-hidden="true"></span>
                   <h4>Executing…</h4>
                 </div>
+              } @else if (!pin && realEnded()) {
+                <!-- A real run ended without output: the notice above says
+                     why; one row offers the next try. -->
+                <div class="pane-empty-actions pane-real-actions">
+                  @if (session().controller.canExecute()) {
+                    <button type="button" class="sm" (click)="execute()">
+                      <weave-icon name="execute" [size]="16" />Execute step
+                    </button>
+                  }
+                  @if (canPin) {
+                    <button type="button" class="sm" (click)="setOutput()">
+                      Set test output
+                    </button>
+                  }
+                </div>
               } @else if (!notice() && !stop && !realRun()) {
                 <!-- While a step test runs, the running block above stands in for it. -->
                 <div class="pane-empty">
@@ -587,7 +607,20 @@ export class OutputPane {
     return controller.realResult(target);
   }
   /** Why a real result shows no output, or how it ended when it didn't succeed. */
-  realWords(): { text: string; tone: string; icon: string } | null {
+  /** A real run of this step ended without output: failed, timed out or canceled. */
+  realEnded(): boolean {
+    const status = this.realOf()?.status;
+    return (
+      status === "failed" || status === "timed_out" || status === "cancelled"
+    );
+  }
+  realWords(): {
+    text: string;
+    tone: string;
+    icon: string;
+    /** Failed or timed out: no output comes back, as the Runs tab says. */
+    failed?: boolean;
+  } | null {
     const real = this.realOf();
     if (!real) return null;
     if (real.omitted)
@@ -603,6 +636,7 @@ export class OutputPane {
           text,
           tone: real.status === "cancelled" ? "info" : "danger",
           icon: real.status === "cancelled" ? "info" : "critical",
+          failed: real.status === "failed" || real.status === "timed_out",
         }
       : null;
   }

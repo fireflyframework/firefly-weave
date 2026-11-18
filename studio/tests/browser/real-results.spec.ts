@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // why the platform left an output out, how a failed run ended, files it
 // returned, and that it stays in memory until Pin output keeps it as test data
 // from that run.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   PRODUCTION,
   bindable,
@@ -121,6 +121,29 @@ test("an output the platform left out says why", async ({ page }) => {
   ).toHaveAttribute("aria-disabled", "true");
 });
 
+/**
+ * A real run that ended without output: the notice says why, no "No output
+ * yet" contradicts it, and one row offers Execute step and Set test output.
+ */
+async function endedWithoutOutput(pane: Locator, failed: boolean) {
+  const notice = pane.locator(".pane-real-notice");
+  if (failed)
+    await expect(notice).toContainText("A failed step returns no output.");
+  else
+    await expect(notice).not.toContainText("A failed step returns no output.");
+  await expect(pane).not.toContainText("No output yet");
+  await expect(pane).not.toContainText("Execute this step to see its output.");
+  await expect(
+    pane.getByRole("button", { name: "Generate sample" }),
+  ).toHaveCount(0);
+  const execute = pane.getByRole("button", { name: "Execute step" });
+  const set = pane.getByRole("button", { name: "Set test output" });
+  await expect(execute).toBeVisible();
+  await expect(set).toBeVisible();
+  const [a, b] = [(await execute.boundingBox())!, (await set.boundingBox())!];
+  expect(Math.abs(a.y - b.y)).toBeLessThan(2);
+}
+
 test("a failed test says so", async ({ page }) => {
   const { details } = await executed(
     page,
@@ -140,6 +163,7 @@ test("a failed test says so", async ({ page }) => {
   await expect(output(details)).not.toContainText(
     "The step failed: HTTP_STATUS.",
   );
+  await endedWithoutOutput(output(details), true);
 });
 
 test("a timed-out test says so", async ({ page }) => {
@@ -150,6 +174,18 @@ test("a timed-out test says so", async ({ page }) => {
   await expect(output(details)).toContainText(
     "crm-lookup didn't finish in Production within 30 s.",
   );
+  await endedWithoutOutput(output(details), true);
+});
+
+test("a canceled test says so, with no empty output under it", async ({
+  page,
+}) => {
+  const { details } = await executed(
+    page,
+    view({ status: "cancelled", ended_at: "2026-11-17T10:00:04Z" }),
+  );
+  await expect(output(details)).toContainText("Canceled.");
+  await endedWithoutOutput(output(details), false);
 });
 
 test("a real result isn't kept anywhere until pinned", async ({ page }) => {
