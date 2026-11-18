@@ -310,8 +310,13 @@ test.describe("Operate › Logs", () => {
     await expect(rows(page)).toHaveCount(6);
     await page.clock.runFor(30_000);
     expect(logs.reads).toHaveLength(1);
+    const heading = page.locator(".operate-heading");
+    await expect(heading).not.toContainText("Following");
     await page.getByRole("switch", { name: "Follow" }).check();
     await expect.poll(() => logs.reads.length).toBe(2);
+    // The heading says so beside its freshness, with the live dot.
+    await expect(heading.locator(".logs-follow")).toHaveText("Following");
+    await expect(heading.locator(".logs-follow .live-dot")).toBeVisible();
     logs.answer = {
       pages: {
         "": {
@@ -353,6 +358,7 @@ test.describe("Operate › Logs", () => {
     await page.getByRole("switch", { name: "Follow" }).uncheck();
     await page.clock.runFor(30_000);
     expect(logs.reads).toHaveLength(4);
+    await expect(heading).not.toContainText("Following");
   });
 
   test("Follow stops once the logs are refused", async ({ page }) => {

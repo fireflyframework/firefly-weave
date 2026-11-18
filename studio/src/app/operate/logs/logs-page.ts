@@ -87,6 +87,11 @@ const NAME_PROBLEM =
       </div>
       @if (searchable()) {
         <div class="actions">
+          @if (following()) {
+            <span class="logs-follow"
+              ><span class="live-dot" aria-hidden="true"></span>Following</span
+            >
+          }
           <weave-refresh-status
             [updatedAt]="store.updatedAt()"
             [busy]="poller.busy"
@@ -380,6 +385,22 @@ const NAME_PROBLEM =
   styles: `
     .logs-search {
       margin-bottom: var(--group-gap);
+    }
+    /* Follow is on: the live dot of the editor's Runs tab, never animated. */
+    .logs-follow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font: var(--type-caption);
+      color: var(--text);
+    }
+    .live-dot {
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: var(--radius-pill);
+      background: var(--live);
+      box-shadow: 0 0 0 4px var(--live-glow);
     }
     .filters {
       display: grid;
