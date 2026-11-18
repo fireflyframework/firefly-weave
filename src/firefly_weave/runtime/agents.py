@@ -53,6 +53,7 @@ from firefly_weave.contracts.agent_turns import (
 )
 from firefly_weave.contracts.language_features import MAX_RUN_AGENT_TOKENS
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.redaction_patterns import scrub
 from firefly_weave.runtime.agent_tools import (
     REPEATED_CALL_LIMIT,
     RULE_PATTERNS,
@@ -95,6 +96,8 @@ class ActivationValues:
     has_context: bool = False
     # Each tool's fixed values, by tool name.
     fixed: dict[str, JsonObject] = field(default_factory=dict)
+    # The hash of the conversation this activation loads and appends to (conversation memory only).
+    conversation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,8 @@ class AgentEffects:
     memory_append: list[JsonObject] | None = None
     # Tokens the transition's turn used, for the run's total.
     tokens: int = 0
+    # The hash of the conversation to load before turn 1.
+    load: str | None = None
 
 
 def parse_agent_key(key: str) -> AgentKey | None:
@@ -153,12 +158,16 @@ def activate(
     now: datetime,
     policy_context: int | None = None,
 ) -> AgentEffects:
-    """Start an agent: turn 1 with the instructions and notice, loaded memory as data, the prompt and the context."""
+    """Start an agent: turn 1 with the instructions and notice, loaded memory as data, the prompt and the context.
+
+    An agent with a conversation (``values.conversation``) first waits in phase ``memory`` for its conversation to be
+    loaded; :func:`memory_loaded` then sends turn 1.
+    """
     if node.rules not in DATA_NOTICES:
         raise UnsupportedRules(node.rules)
     messages: list[JsonObject] = []
     if memory:
-        messages.append({"role": "context", "content": {"memory": cast(JsonValue, memory)}})
+        messages.append(_memory_message(memory))
     messages.append({"role": "user", "content": values.prompt})
     if values.has_context:
         messages.append({"role": "context", "content": values.context})
@@ -166,14 +175,35 @@ def activate(
     state = AgentState(
         rules=node.rules,
         turn=1,
-        phase="turn",
+        phase="memory" if values.conversation is not None else "turn",
         instructions=values.instructions,
         fixed=values.fixed,
         messages=messages,
         deadline=now + timedelta(seconds=node.limits.timeout_seconds),
         context_tokens=context,
+        conversation=values.conversation,
     )
+    if values.conversation is not None:
+        return AgentEffects(state, load=values.conversation)
     return _next_turn(ir, node, state, run_tokens, forced=False)
+
+
+def memory_loaded(
+    ir: WorkflowIR, node: AgentNode, key: str, state: AgentState, entries: list[JsonObject], run_tokens: int
+) -> AgentEffects:
+    """The agent's conversation arrived: keep its newest ``window`` messages as whole exchanges, put them first as one
+    data message, and send turn 1."""
+    if state.phase != "memory":
+        raise ValueError("The agent isn't waiting for its memory")
+    kept = append_memory([], entries, node.memory.window)
+    messages = [_memory_message(kept), *state.messages] if kept else list(state.messages)
+    return _next_turn(
+        ir, node, state.model_copy(update={"messages": messages, "phase": "turn"}), run_tokens, forced=False
+    )
+
+
+def _memory_message(entries: list[JsonObject]) -> JsonObject:
+    return {"role": "context", "content": {"memory": cast(JsonValue, entries)}}
 
 
 def turn_completed(
@@ -403,8 +433,11 @@ def _complete(ir: WorkflowIR, node: AgentNode, state: AgentState, output: TurnOu
     if output.text:
         result["text"] = output.text
     remembered = None
-    if node.memory.scope == "run":
+    if node.memory.scope in ("run", "conversation"):
         prompt = next(message["content"] for message in state.messages if message.get("role") == "user")
+        if node.memory.scope == "conversation":
+            # A conversation outlives the run, so a credential pasted into a prompt must not be kept with it.
+            prompt = scrub(prompt, RULE_PATTERNS[state.rules])[0]
         answer = redact(profile.output_schema, output.result, _bundle(ir), RULE_PATTERNS[state.rules])
         remembered = [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
     return AgentEffects(None, complete=result, memory_append=remembered, tokens=tokens)

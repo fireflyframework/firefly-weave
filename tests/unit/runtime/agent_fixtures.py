@@ -25,7 +25,16 @@ from uuid import uuid4
 # The compiler tests own the agent workflow documents and their catalog; the runtime tests compile the same ones.
 sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
-from test_agent_workflows import CANCEL, LOOKUP, agent, catalog, workflow  # noqa: E402
+from test_agent_workflows import (  # noqa: E402
+    CANCEL,
+    CONVERSATION,
+    LOOKUP,
+    PROFILE,
+    agent,
+    catalog,
+    conversation_memory_enabled,
+    workflow,
+)
 
 from firefly_weave.compiler.api import CompiledArtifact, compile_source  # noqa: E402
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR  # noqa: E402
@@ -35,15 +44,18 @@ from firefly_weave.runtime.models import RunState, RuntimeEvent, TaskIntent, Tra
 
 __all__ = [
     "CANCEL",
+    "CONVERSATION",
     "INPUT",
     "LOOKUP",
     "NOW",
+    "PROFILE",
     "SHIPPED",
     "Run",
     "agent",
     "answering",
     "artifact",
     "compiled",
+    "conversation_memory_enabled",
     "final",
     "node_of_ir",
     "tasks",
