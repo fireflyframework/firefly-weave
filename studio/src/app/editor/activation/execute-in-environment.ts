@@ -91,7 +91,7 @@ export function sideEffectQuestion(
   return {
     title: "Execute steps that change data?",
     message: steps.length
-      ? `${listed(steps)} ${steps.length === 1 ? "changes" : "change"} data in ${environment}. Executing the workflow repeats the change.`
+      ? `${listed(steps)} ${steps.length === 1 ? "changes" : "change"} data in ${environment}. Executing the workflow repeats ${steps.length === 1 ? "the change" : "the changes"}.`
       : `This workflow changes data in ${environment}. Executing it repeats the change.`,
     confirmLabel: "Run it",
     cancelLabel: "Cancel",

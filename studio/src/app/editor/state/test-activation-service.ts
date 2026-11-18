@@ -223,7 +223,7 @@ export class TestActivationService {
         return refused({
           kind: "no-environment",
           message:
-            "Executing in an environment needs a platform. Connect Studio to one first.",
+            "Studio isn't connected to a platform anymore, so nothing ran. Connect it in Settings.",
         });
       const held = await this.activation(environment, bindings);
       if (!held.ok) return held;

@@ -167,7 +167,7 @@ test("a trigger that can't be created says why with Retry, and the activation st
     .click();
   const rows = dialog.getByRole("list", { name: "Triggers" });
   await expect(rows.getByRole("listitem")).toContainText([
-    /^Couldn't create orders-in: /,
+    /^Couldn't create webhook orders-in: /,
   ]);
   await expect(
     page

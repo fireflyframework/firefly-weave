@@ -69,7 +69,7 @@ describe("Execute workflow in an environment", () => {
     expect(
       sideEffectQuestion(["charge", "notify", "refund"], "local").message,
     ).toBe(
-      "charge, notify and refund change data in local. Executing the workflow repeats the change.",
+      "charge, notify and refund change data in local. Executing the workflow repeats the changes.",
     );
     expect(sideEffectQuestion([], "local").message).toBe(
       "This workflow changes data in local. Executing it repeats the change.",

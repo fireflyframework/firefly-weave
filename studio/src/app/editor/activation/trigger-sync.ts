@@ -146,9 +146,10 @@ async function run(
           : {}),
       },
     );
+    // The row names the kind, as the plan's rows do: "Kafka trigger orders".
     const name =
       typeof intent["name"] === "string" && intent["name"]
-        ? intent["name"]
+        ? `${NOUNS[kind]} ${intent["name"]}`
         : `the ${NOUNS[kind]}`;
     return outcome.ok
       ? {

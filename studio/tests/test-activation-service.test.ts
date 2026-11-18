@@ -282,7 +282,11 @@ describe("what a refusal says", () => {
     host.environmentChoice = null;
     expect(await service.execute({}, BINDINGS)).toMatchObject({
       ok: false,
-      refusal: { kind: "no-environment" },
+      refusal: {
+        kind: "no-environment",
+        message:
+          "Studio isn't connected to a platform anymore, so nothing ran. Connect it in Settings.",
+      },
     });
     expect(log).toEqual([]);
   });

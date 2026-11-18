@@ -284,7 +284,7 @@ describe("setting up triggers after an activation", () => {
       context(api),
     );
     expect(results.map((result) => result.text)).toEqual([
-      expect.stringMatching(/^Couldn't create orders-in: /),
+      expect.stringMatching(/^Couldn't create webhook orders-in: /),
       "Couldn't create this trigger: its trigger choice is no longer in the workflow.",
     ]);
     expect(attention(results)).toBe("2 triggers need attention.");
