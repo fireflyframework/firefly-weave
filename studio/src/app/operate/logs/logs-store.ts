@@ -83,9 +83,14 @@ export class RunLogsStore {
   private generation = 0;
   private refreshing: Promise<ReadResult> | null = null;
 
+  /**
+   * @param onFailure hears every failed read, so the shell can explain an
+   * ended sign-in with its own Sign in again
+   */
   constructor(
     private readonly host: LogsHost,
     private readonly unserved: Set<string> = unservedPlatforms,
+    private readonly onFailure: (error: unknown) => void = () => undefined,
   ) {}
 
   /** The run whose entries are shown, or "". */
@@ -222,6 +227,7 @@ export class RunLogsStore {
     }
   }
   private fail(error: unknown, environment: string, fresh: boolean) {
+    this.onFailure(error);
     const failure = logFailure(error);
     if (failure.kind === "unserved") this.unserved.add(environment);
     const keep =
@@ -263,12 +269,17 @@ export class LogSearchStore {
   /** The list reached the most entries it keeps. */
   readonly limited = signal(false);
   readonly appending = signal(false);
+  /** When an answer was last applied (epoch milliseconds). */
+  readonly updatedAt = signal<number | null>(null);
   private chain: Chain | null = null;
   private generation = 0;
 
+  /** @param onFailure hears every failed read, as RunLogsStore's does */
   constructor(
     private readonly host: LogsHost,
     private readonly unserved: Set<string> = unservedPlatforms,
+    private readonly onFailure: (error: unknown) => void = () => undefined,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   /** New filters: the entries of the old ones go at once. */
@@ -293,6 +304,7 @@ export class LogSearchStore {
     this.more.set(false);
     this.limited.set(false);
     this.appending.set(false);
+    this.updatedAt.set(null);
     this.state.set({ kind: "idle" });
   }
   private async first(
@@ -326,6 +338,7 @@ export class LogSearchStore {
         };
       this.show(withoutRepeats(merged.rows));
       this.state.set({ kind: "ready" });
+      this.updatedAt.set(this.now());
       return "applied";
     } catch (error) {
       if (generation !== this.generation || scope !== this.host.scope())
@@ -371,6 +384,7 @@ export class LogSearchStore {
     this.more.set(!!this.chain?.cursor && !this.limited());
   }
   private fail(error: unknown, environment: string) {
+    this.onFailure(error);
     const failure = logFailure(error);
     if (failure.kind === "unserved") this.unserved.add(environment);
     // Entries stay only beside a slow or failed read of the same filters.

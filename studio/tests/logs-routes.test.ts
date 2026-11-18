@@ -22,9 +22,22 @@ import {
   defaultLogsRoute,
   logsPath,
   logsRoute,
+  navEntryVisible,
+  operateCapabilities,
+  operatePages,
+  viewFromPath,
+  viewPath,
 } from "../src/app/operate/operate-routes";
 
 describe("the Logs page's address", () => {
+  it("comes after Metrics under Operate and needs run.read", () => {
+    expect(operatePages.slice(-2)).toEqual(["metrics", "logs"]);
+    expect(operateCapabilities.logs).toBe("run.read");
+    expect(navEntryVisible("logs", (c) => c === "status.read")).toBe(false);
+    expect(navEntryVisible("logs", (c) => c === "run.read")).toBe(true);
+    expect(viewPath("logs")).toBe("/operate/logs");
+    expect(viewFromPath("/operate/logs")).toEqual({ view: "logs", id: "" });
+  });
   it("reads the defaults from an empty address and each filter from its own", () => {
     expect(logsRoute("")).toEqual(defaultLogsRoute);
     expect(defaultLogsRoute).toEqual({

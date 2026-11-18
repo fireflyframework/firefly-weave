@@ -273,6 +273,26 @@ describe("the log across runs", () => {
     expect(paths()[2]).toContain("to=2026-11-18T10%3A54%3A00.000Z");
     expect(paths()[2]).toContain("cursor=c1");
   });
+  it("says when it last read, and passes every failure on to the shell", async () => {
+    const { host, pending } = platform();
+    const failures: unknown[] = [];
+    const store = new LogSearchStore(
+      host,
+      new Set(),
+      (error) => failures.push(error),
+      () => 1_700,
+    );
+    void store.search(query());
+    await pending[0].answer(page([across("a")]));
+    expect(store.updatedAt()).toBe(1_700);
+    const ended = new ApiError(401, {
+      code: "WV-AUTH-REQUIRED",
+      message: "Signed out",
+    });
+    void store.follow(query());
+    await pending[1].fail(ended);
+    expect(failures).toEqual([ended]);
+  });
   it("shows a withheld run's entry as a row without text", async () => {
     const { host, pending } = platform();
     const store = new LogSearchStore(host, new Set());

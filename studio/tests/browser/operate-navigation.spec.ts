@@ -125,6 +125,7 @@ for (const viewport of [
           "Email",
           "Operate",
           "Runs",
+          "Logs",
           "Settings",
           "Collapse sidebar",
         ]);

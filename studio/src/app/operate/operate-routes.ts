@@ -31,6 +31,7 @@ export const operatePages = [
   "workers",
   "clusters",
   "metrics",
+  "logs",
 ] as const;
 export type OperatePage = (typeof operatePages)[number];
 /** The Clusters records that have their own screen. */
@@ -60,6 +61,7 @@ export const operateCapabilities: Record<OperatePage, string> = {
   workers: "status.read",
   clusters: "deployment.read",
   metrics: "status.read",
+  logs: "run.read",
 };
 
 const isOperatePage = (view: string): view is OperatePage =>
