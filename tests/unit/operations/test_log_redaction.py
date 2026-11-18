@@ -46,6 +46,10 @@ SECRETS = {
     "SIGNATURE": "a94a8fe5" + "ccb19ba61c4c0873d391e987982fbbd3",
     "CODE": "SplxlOBe" + "ZQQYbYS6WxSbIA",
     "LEASED": "Leased/Val+" + "ue=42!",
+    "STRIPE": "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc",
+    "STRIPE_RESTRICTED": "rk_" + "live_" + "9Zx8Yw7Vu6Ts5Rq4Po3Nm2Lk",
+    "SLACK": "xo" + "xb-" + "123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx",
+    "GOOGLE": "AI" + "za" + "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY",
 }
 SECRETS["LEASED_URL"] = quote(SECRETS["LEASED"], safe="")
 SECRETS["GITHUB_TOKEN_SPLIT"] = SECRETS["GITHUB_TOKEN"][:2] + "​" + SECRETS["GITHUB_TOKEN"][2:]
@@ -136,6 +140,10 @@ CASES = [
     case("a session ID", "sessionid=<<PASSWORD>>", "PASSWORD"),
     case("a Cookie header as a pair", "[('Cookie', '<<COOKIE>>')]", "COOKIE"),
     case("an Authorization header as a pair", "headers=[(\"Authorization\", \"Basic <<BASIC>>\")]", "BASIC"),
+    case("a Stripe secret key in prose", "charging with <<STRIPE>> now", "STRIPE"),
+    case("a Stripe restricted key in JSON", '{"stripe": "<<STRIPE_RESTRICTED>>"}', "STRIPE_RESTRICTED"),
+    case("a Slack token in a URL", "https://hooks.example.test/post?t=x&bot=<<SLACK>>", "SLACK"),
+    case("a Google API key in prose", "maps client <<GOOGLE>> ready", "GOOGLE"),
 ]
 
 
@@ -166,6 +174,9 @@ IN_CONTEXT = [
     ("", "GITHUB_PAT", ""),
     ("", "AWS_KEY_ID", ""),
     ("", "OPENAI_KEY", ""),
+    ("", "STRIPE", ""),
+    ("", "SLACK", ""),
+    ("", "GOOGLE", ""),
     ("", "JWT", ""),
     ("", "PEM", ""),
     ("Authorization: Bearer ", "BEARER", ""),

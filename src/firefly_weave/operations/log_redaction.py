@@ -25,7 +25,7 @@ The SDK runs it on every entry a worker or connector writes, and the server runs
   JSON written inside a JSON string, where the quotes are escaped;
 - URL query parameters whose name holds token, key, sig, secret, password, code or auth;
 - what the shared pattern set catches: private key blocks, bearer tokens, JWTs, ``sk-``, ``AKIA``/``ASIA``,
-  GitHub tokens and URL user information.
+  GitHub tokens and URL user information; and Stripe keys, Slack tokens and Google API keys.
 
 Format characters are removed first, so an invisible character can't split a secret; control characters and line
 separators become spaces, so an entry is one line. A message keeps 512 characters, a field value 256, an entry 16
@@ -97,6 +97,13 @@ _KEY_VALUE: Final = re.compile(_SEPARATOR + _QUOTED + r"(?P<bare>\[redacted\]|[^
 _PARAMETER: Final = re.compile(r"(?<=[?&;])[A-Za-z0-9_.%-]{1,128}+(?==)")
 _PARAMETER_VALUE: Final = re.compile(r"=(?P<bare>\[redacted\]|[^&#\s\"'<>]++)")
 _SHARED: Final = PATTERN_SETS[1]
+# Key shapes logs hide besides the shared set, which stays as it is for what it already protects: Stripe secret and
+# restricted keys, Slack tokens, Google API keys.
+_SHAPES: Final = (
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}+"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}+"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+)
 
 
 @dataclass(frozen=True)
@@ -185,7 +192,7 @@ def _hidden(text: str, known: list[str], count: _Count) -> str:
     text = _keyed(text, _HEADER, _HEADER_VALUE, None, count)
     text = _keyed(text, _KEY, _KEY_VALUE, SECRET_NAME, count)
     text = _keyed(text, _PARAMETER, _PARAMETER_VALUE, SECRET_PARAMETER, count)
-    for pattern in _SHARED:
+    for pattern in (*_SHARED, *_SHAPES):
         text = pattern.sub(lambda match: count.hide(match.group(0)), text)
     return text
 
