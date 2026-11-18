@@ -383,8 +383,8 @@ wrote while they ran its steps. Both reads need `run.read`; the
   Entries over a quota are dropped and counted.
 - **Reading.** The log across runs reads the last hour by default, at most 7
   days, or 6 hours when it searches messages; a read that takes longer than 2
-  seconds stops with "Logs took too long to read". Test runs are left out
-  unless asked for. An entry of a run whose details are withheld shows as a row
+  seconds stops with `503` `WV-UNAVAILABLE` and asks for a narrower range or
+  filter. Test runs are left out unless asked for. An entry of a run whose details are withheld shows as a row
   without text.
 - **Retention.** Entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by
   default, at most 30). The operations loop prunes older ones in batches of
