@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // X-Weave-Event-Id when sent, which must match the body). Studio never has
 // the secret's value: the command reads it from $WEAVE_WEBHOOK_SECRET.
 import type { Json } from "../../forms/core/json";
+import type { TriggerIntent } from "../state/canvas-sidecar";
 
 const HANDLE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
@@ -58,6 +59,28 @@ export function secretCommand(handle: string): string | null {
   return HANDLE.test(handle)
     ? `weave platform secret set --handle ${handle}`
     : null;
+}
+
+export interface SecretCommand {
+  label: string;
+  command: string;
+}
+
+/**
+ * The commands that store a webhook's secrets: the production secret, and
+ * the test secret its test URL checks, which is never the same handle.
+ */
+export function secretCommands(trigger: TriggerIntent): SecretCommand[] {
+  const commands: SecretCommand[] = [];
+  const production = trigger["secretRef"];
+  const test = trigger["testSecretRef"];
+  const add = (label: string, handle: unknown) => {
+    const command = typeof handle === "string" ? secretCommand(handle) : null;
+    if (command) commands.push({ label, command });
+  };
+  add("Production secret", production);
+  if (test !== production) add("Test secret", test);
+  return commands;
 }
 
 export interface WebhookUrl {

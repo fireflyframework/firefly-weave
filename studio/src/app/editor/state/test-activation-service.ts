@@ -25,6 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 // when the editor closes or the draft changes. Calls run one at a time, so
 // two executions never create two activations.
 import { canonicalJson, type Json } from "../../forms/core/json";
+import { TEST_SECRET_REUSED } from "../triggers/trigger-forms";
 import type { TriggerIntent } from "./canvas-sidecar";
 import type {
   DraftTestActivation,
@@ -239,12 +240,16 @@ export class TestActivationService {
             : "Only a webhook listens for a test event.",
         });
       }
-      const secret = trigger["secretRef"];
+      // A test URL has its own secret: a signature doesn't cover the route, so
+      // an event signed for production must never start a test run.
+      const secret = trigger["testSecretRef"];
       if (typeof secret !== "string" || !secret)
         return refused({
           kind: "no-secret",
-          message: "Choose the webhook's secret first.",
+          message: "Choose the webhook's test secret first.",
         });
+      if (secret === trigger["secretRef"])
+        return refused({ kind: "no-secret", message: TEST_SECRET_REUSED });
       const environment = this.host.environment();
       if (!environment)
         return refused({

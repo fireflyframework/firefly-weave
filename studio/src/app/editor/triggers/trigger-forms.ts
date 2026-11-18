@@ -48,6 +48,9 @@ const MAX_TOPIC = 249;
 const NAME_RULE =
   "Use letters, numbers, dots, underscores or hyphens, starting with a letter or number.";
 const SECRET_NEEDED = "Choose the secret that signs requests.";
+/** A test URL never shares the production handle: a signature doesn't cover the route. */
+export const TEST_SECRET_REUSED =
+  "Use a test secret other than the production secret.";
 const CRON_NEEDED = "Choose when the schedule runs.";
 const TRIGGER_NAME_NEEDED = "Name the trigger.";
 const CLUSTER_NEEDED =
@@ -101,6 +104,15 @@ const webhookForm = (): FormSpec => ({
       placeholder: "orders-signing",
       requiredText: SECRET_NEEDED,
       hint: "The platform secret that signs requests. Studio never sees its value; create it with weave platform secret.",
+    },
+    {
+      id: "testSecretRef",
+      path: ["testSecretRef"],
+      type: "text",
+      label: "Test secret",
+      identifier: true,
+      placeholder: "orders-test-signing",
+      hint: "A secret of its own that signs test events, never the production one, so a production event can't start a test run. Create it with weave platform secret.",
     },
     inputSchema(
       "payload",
@@ -312,6 +324,13 @@ export function triggerProblems(intent: TriggerIntent): Record<string, string> {
     case "webhook":
       named(problems, "name", text(intent, "name"), "Name the webhook.");
       named(problems, "secretRef", text(intent, "secretRef"), SECRET_NEEDED);
+      {
+        const test = text(intent, "testSecretRef");
+        if (test !== undefined && !NAME.test(test))
+          problems["testSecretRef"] = NAME_RULE;
+        else if (test !== undefined && test === text(intent, "secretRef"))
+          problems["testSecretRef"] = TEST_SECRET_REUSED;
+      }
       if (!within(intent["maxBodyBytes"], 1, MAX_BODY_BYTES))
         problems["maxBodyBytes"] =
           "Use a size from 1 byte to 1 MiB (1,048,576 bytes).";

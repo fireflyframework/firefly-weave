@@ -294,10 +294,11 @@ describe("listening for a test event", () => {
     kind: "webhook" as const,
     name: "orders-in",
     secretRef: "orders-signing",
+    testSecretRef: "orders-test-signing",
     maxBodyBytes: 65536,
   };
 
-  it("listens on the activation for a webhook, with its secret and limits", async () => {
+  it("listens on the activation for a webhook, with its test secret and limits", async () => {
     const { api, service } = setup();
     const listening = {
       test_url: "https://weave.example/webhooks/test/x",
@@ -311,7 +312,7 @@ describe("listening for a test event", () => {
     expect(api.calls[1]).toEqual({
       method: "POST",
       path: "/test-activations/ta-1/listen",
-      body: { secret_ref: "orders-signing", max_body_bytes: 65536 },
+      body: { secret_ref: "orders-test-signing", max_body_bytes: 65536 },
     });
   });
 
@@ -332,17 +333,36 @@ describe("listening for a test event", () => {
     expect(log).toEqual([]);
   });
 
-  it("asks for the webhook's secret first, and for a platform", async () => {
-    const { log, host, service } = setup();
+  it("never listens with the production secret", async () => {
+    const { log, service } = setup();
+    for (const trigger of [
+      { ...HOOK, testSecretRef: undefined },
+      { ...HOOK, testSecretRef: "" },
+    ])
+      expect(await service.listen(trigger, BINDINGS)).toEqual({
+        ok: false,
+        refusal: {
+          kind: "no-secret",
+          message: "Choose the webhook's test secret first.",
+        },
+      });
     expect(
-      await service.listen({ ...HOOK, secretRef: undefined }, BINDINGS),
+      await service.listen(
+        { ...HOOK, testSecretRef: "orders-signing" },
+        BINDINGS,
+      ),
     ).toEqual({
       ok: false,
       refusal: {
         kind: "no-secret",
-        message: "Choose the webhook's secret first.",
+        message: "Use a test secret other than the production secret.",
       },
     });
+    expect(log).toEqual([]);
+  });
+
+  it("asks for a platform", async () => {
+    const { log, host, service } = setup();
     host.environmentChoice = null;
     expect(await service.listen(HOOK, BINDINGS)).toEqual({
       ok: false,

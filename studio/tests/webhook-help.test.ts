@@ -32,6 +32,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   secretCommand,
+  secretCommands,
   signedCurl,
   webhookUrls,
 } from "../src/app/editor/triggers/webhook-help";
@@ -140,6 +141,42 @@ describe("the secret command", () => {
   it("offers nothing for a handle the platform would refuse", () => {
     expect(secretCommand("bad name; rm -rf /")).toBeNull();
     expect(secretCommand("")).toBeNull();
+  });
+
+  it("gives the production and the test secret their own command", () => {
+    expect(
+      secretCommands({
+        id: "t",
+        kind: "webhook",
+        secretRef: "orders-signing",
+        testSecretRef: "orders-test",
+      }),
+    ).toEqual([
+      {
+        label: "Production secret",
+        command: "weave platform secret set --handle orders-signing",
+      },
+      {
+        label: "Test secret",
+        command: "weave platform secret set --handle orders-test",
+      },
+    ]);
+    expect(
+      secretCommands({ id: "t", kind: "webhook", secretRef: "orders-signing" }),
+    ).toEqual([
+      {
+        label: "Production secret",
+        command: "weave platform secret set --handle orders-signing",
+      },
+    ]);
+    expect(
+      secretCommands({
+        id: "t",
+        kind: "webhook",
+        secretRef: "same",
+        testSecretRef: "same",
+      }).map((item) => item.label),
+    ).toEqual(["Production secret"]);
   });
 });
 

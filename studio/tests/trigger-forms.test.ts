@@ -63,6 +63,15 @@ describe("trigger forms", () => {
         default: undefined,
       },
       {
+        id: "testSecretRef",
+        path: ["testSecretRef"],
+        scope: "step",
+        type: "text",
+        label: "Test secret",
+        required: false,
+        default: undefined,
+      },
+      {
         id: "payload",
         path: ["spec", "inputSchema"],
         scope: "workflow",
@@ -99,6 +108,10 @@ describe("trigger forms", () => {
     expect(form.fields[1].hint).toBe(
       "The platform secret that signs requests. Studio never sees its value; create it with weave platform secret.",
     );
+    expect([form.fields[2].identifier, form.fields[2].hint]).toEqual([
+      true,
+      "A secret of its own that signs test events, never the production one, so a production event can't start a test run. Create it with weave platform secret.",
+    ]);
   });
 
   it("asks a schedule when it runs and the run input it sends", () => {
@@ -253,6 +266,25 @@ describe("what a trigger still needs", () => {
         secretRef: "signing",
       }),
     ).toEqual({});
+  });
+
+  it("keeps the test secret a valid handle of its own", () => {
+    const hook = {
+      id: "t",
+      kind: "webhook" as const,
+      name: "orders-in",
+      secretRef: "signing",
+    };
+    expect(triggerProblems({ ...hook, testSecretRef: "signing-test" })).toEqual(
+      {},
+    );
+    expect(triggerProblems({ ...hook, testSecretRef: "bad name" })).toEqual({
+      testSecretRef:
+        "Use letters, numbers, dots, underscores or hyphens, starting with a letter or number.",
+    });
+    expect(triggerProblems({ ...hook, testSecretRef: "signing" })).toEqual({
+      testSecretRef: "Use a test secret other than the production secret.",
+    });
   });
 
   it("uses the spec's words for a Kafka trigger", () => {
