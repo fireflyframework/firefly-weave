@@ -24,7 +24,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from firefly_weave.operations.log_redaction import redact_entry, redact_text
+from firefly_weave.operations.log_redaction import INPUT_LIMIT, redact_entry, redact_text
 
 # Fake secret-shaped values, built from parts so that secret scanners reading this public repository raise no alert.
 PEM_BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
@@ -282,6 +282,15 @@ def test_a_leased_value_with_a_character_the_text_loses_is_still_hidden(leased):
     result = redact_text("value: " + leased + " end", known=frozenset({leased}))
     assert result.text == "value: [redacted] end"
     assert result.redactions == 1
+
+
+def test_a_leased_value_the_input_cut_would_split_is_hidden_whole():
+    leased = "LEASEDVALUE-0123456789"
+    # A private key block shrinks to [redacted], which brings the end of the 64 KiB input into the message.
+    block = "-----BEGIN PRIVATE KEY-----" + "A" * (INPUT_LIMIT - 27 - 25 - 1 - 8) + "-----END PRIVATE KEY----- "
+    result = redact_text(block + leased, known=frozenset({leased}))
+    assert result.text == "[redacted] [redacted]"
+    assert (result.redactions, result.truncated) == (2, True)
 
 
 def test_a_bearer_token_after_a_no_break_space_is_hidden():

@@ -207,10 +207,29 @@ def _hidden(text: str, known: list[str], count: _Count) -> str:
     return text
 
 
+def _cut(text: str, known: list[str], count: _Count) -> str:
+    """``text`` cut to ``INPUT_LIMIT`` characters; a leased value the cut would split is hidden whole instead, since
+    hidden values before it can shrink the text enough to bring its first part into what is kept."""
+    if len(text) <= INPUT_LIMIT:
+        return text
+    cut = INPUT_LIMIT
+    for form in known:
+        # Only an occurrence that starts before the limit and ends after it fits this range.
+        start = text.find(form, max(0, INPUT_LIMIT - len(form) + 1), INPUT_LIMIT + len(form) - 1)
+        if start != -1:
+            cut = min(cut, start)
+    if cut == INPUT_LIMIT:
+        return text[:INPUT_LIMIT]
+    count.value += 1
+    return text[:cut] + REDACTED
+
+
 def _redact(text: str, known: list[str], limit: int, count: _Count) -> tuple[str, bool]:
     truncated = len(text) > INPUT_LIMIT
+    # Read past the limit by the longest leased form (they are sorted longest first) to see one the cut would split.
+    window = text[: INPUT_LIMIT + (len(known[0]) if known else 0)]
     # Control characters become spaces before the patterns run, so a second pass reads the same words as the first.
-    text = _hidden(_cleaned(text[:INPUT_LIMIT]), known, count)
+    text = _hidden(_cut(_cleaned(window), known, count), known, count)
     if len(text) > limit:
         return text[:limit], True
     return text, truncated
