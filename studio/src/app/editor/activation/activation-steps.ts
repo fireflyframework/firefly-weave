@@ -237,6 +237,13 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       flex-basis: 100%;
       gap: var(--space-1);
     }
+    /* On a phone each control on a row is a full touch target. */
+    @media (max-width: 767px) {
+      .activation-connection select,
+      .activation-row button {
+        min-height: var(--control-touch, 44px);
+      }
+    }
     .activation-stop-it {
       display: inline-flex;
       align-items: center;
