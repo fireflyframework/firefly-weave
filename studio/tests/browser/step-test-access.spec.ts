@@ -104,7 +104,8 @@ test("switching workspace while a step runs drops its answer", async ({
   );
   const steps = await routeStepTests(page, {
     starts: [{ status: 202, json: accepted }],
-    views: [view(), succeeded({ marker: "LATE-ANSWER-91c" })],
+    // The one read is the late, final answer: it lands after the switch.
+    views: [succeeded({ name: "LATE-ANSWER-91c", open: 1 })],
     holdReads,
   });
   await details.open("crm-lookup");
@@ -122,7 +123,8 @@ test("switching workspace while a step runs drops its answer", async ({
   await page.getByRole("radio", { name: "Acme / Payments / Staging" }).check();
   await page.getByRole("button", { name: "Start working" }).click();
   release();
-  await expect.poll(() => steps.reads).toBeGreaterThan(0);
+  // Wait until the platform's late answer has reached the page.
+  await expect.poll(() => steps.answered).toBeGreaterThan(0);
   await details.open("crm-lookup");
   await expect(output(details)).not.toContainText("LATE-ANSWER-91c");
   await expect(output(details)).not.toContainText("From Production");

@@ -81,6 +81,8 @@ export interface StepTestScript {
 export interface StepTestRecorder {
   posts: Request[];
   reads: number;
+  /** Reads the platform has answered (a held read counts once it's answered). */
+  answered: number;
   cancels: number;
   drafts: Request[];
   /** Studio documents saved with the draft (test data, canvas). */
@@ -94,6 +96,7 @@ export async function routeStepTests(
   const recorder: StepTestRecorder = {
     posts: [],
     reads: 0,
+    answered: 0,
     cancels: 0,
     drafts: [],
     documents: [],
@@ -171,6 +174,7 @@ export async function routeStepTests(
     if (script.holdReads) await script.holdReads;
     await route
       .fulfill({ json: script.views[Math.min(index, script.views.length - 1)] })
+      .then(() => recorder.answered++)
       .catch(() => undefined);
   });
   await page.route(
