@@ -89,7 +89,7 @@ export function headerSubtitle(
   const slot = step.kind === "action" ? step["connection"] : undefined;
   if (typeof slot === "string" && slot) {
     // A slot's name reads like a protocol ("http"): name the connection chosen for it, or nothing.
-    const uses = stepSummary({ ...step, connection: undefined }, ctx.workflow);
+    const uses = stepSummary(step, ctx.workflow);
     return [kindLabel, uses, chosen(slot)].filter(Boolean).join(" · ");
   }
   const summary = stepSummary(step, ctx.workflow);

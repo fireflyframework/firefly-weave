@@ -123,6 +123,13 @@ for (const size of sizes)
         '.tile-node[data-tile="crm-lookup"] .tile-shape',
       );
       await expect(shape).toHaveClass(/\blive\b/);
+      // The tile names the action and its version, never the slot ("· http"):
+      // the canvas shows the shared workflow, not this computer's choice.
+      await expect(
+        page
+          .locator('.tile-node[data-tile="crm-lookup"] .tile-label span')
+          .first(),
+      ).toHaveText("acme.crm-lookup@1.0.0");
       release();
       await details.open("crm-lookup");
       await expect(output(details)).toContainText(
