@@ -247,3 +247,14 @@ async def test_the_mover_needs_what_creating_an_email_source_needs_and_may_start
             await retarget(env, env.second.id, 1, actor=lacking)
     [row] = await stored(env, "SELECT revision,principal_id FROM email_sources WHERE id=:id")
     assert (row["revision"], row["principal_id"]) == (1, env.creator.id)
+
+
+async def test_a_source_of_a_test_activation_never_moves(mail):
+    env = mail
+    from test_webhook_retarget import marked_test
+
+    test_activation = await marked_test(env.owner, env.second)
+    await change(env, "UPDATE email_sources SET activation_id=:a WHERE id=:id", a=test_activation)
+    assert await refused(retarget(env, env.second.id, 1)) == (404, "WV-NOT-FOUND")
+    [row] = await stored(env, "SELECT revision,activation_id FROM email_sources WHERE id=:id")
+    assert (row["revision"], row["activation_id"]) == (1, test_activation)

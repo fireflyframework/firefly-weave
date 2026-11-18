@@ -272,3 +272,39 @@ async def test_the_mover_needs_what_creating_a_webhook_needs(webhooks):
         with pytest.raises(AccessDenied):
             await env.service.retarget(lacking, env.scope, uuid4(), env.second.id, 1, context=AuditContext())
     assert (await retarget(env, env.second.id, 1)).revision == 2
+
+
+async def test_the_new_version_is_checked_as_the_mover_not_the_creator(webhooks):
+    env = webhooks
+    # The creator can no longer start runs; the mover can, so the move and the next event go through as the mover.
+    async with env.owner() as session, session.begin():
+        await session.execute(
+            text("DELETE FROM role_bindings WHERE principal_id=:p AND role='operator'"), {"p": env.creator.id}
+        )
+    moved = await retarget(env, env.second.id, 1)
+    assert moved.principal_id == env.mover.id
+    raw = b'{"eventId":"event-1","payload":3}'
+    receipt = await env.service.receive(env.trigger.id, raw, signed(raw))
+    async with env.owner() as session:
+        principal = await session.scalar(text("SELECT principal_id FROM runs WHERE id=:id"), {"id": receipt.run_id})
+    assert principal == env.mover.id
+
+
+async def test_an_activation_of_the_workflow_in_another_environment_is_not_found(webhooks):
+    env = webhooks
+    elsewhere, copied = uuid4(), uuid4()
+    async with env.owner() as session, session.begin():
+        await session.execute(
+            text("INSERT INTO environments VALUES(:id,:tenant,:project,'elsewhere')"),
+            {"id": elsewhere, "tenant": env.scope.tenant_id, "project": env.scope.project_id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO activation_revisions(id,tenant_id,project_id,environment_id,name,revision,version_id,"
+                "payload,test) SELECT :id,tenant_id,project_id,:environment,name,revision,version_id,"
+                "jsonb_set(payload,'{id}',to_jsonb(cast(:text_id AS text))),false FROM activation_revisions "
+                "WHERE id=:source"
+            ),
+            {"id": copied, "text_id": str(copied), "environment": elsewhere, "source": env.second.id},
+        )
+    assert await refused(retarget(env, copied, 1)) == (404, "WV-NOT-FOUND")
