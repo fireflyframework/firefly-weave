@@ -24,7 +24,7 @@ import { expect, test, type Download, type Page } from "@playwright/test";
 import { stringify } from "yaml";
 import { platform, versionId } from "./activation-po";
 import { command } from "./support";
-import { withNewEditor } from "./step-details-po";
+import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
 const WEBHOOK = "trigger-1b2c3d4e";
 const workflow = stringify({
@@ -210,6 +210,19 @@ test("a new webhook is created for the activation, kept for the environment, and
   expect(await storedChoice(page)).toMatchObject({
     resources: { development: "w-new" },
   });
+
+  // The webhook's step details show its production URL, with Copy.
+  await page
+    .locator(`.tile-node[data-tile="$trigger:${WEBHOOK}"] .tile-body`)
+    .dblclick();
+  const details = page.getByRole("dialog", {
+    name: "Step details: Webhook trigger",
+  });
+  await expect(
+    details.getByRole("textbox", { name: "Production URL" }),
+  ).toHaveValue(/\/webhooks\/w-new$/);
+  await new StepDetailsPage(page).close();
+  await expect(details).toHaveCount(0);
 
   dialog = await activateDialog(page);
   await expect(

@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  productionUrl,
   secretCommand,
   secretCommands,
   signedCurl,
@@ -178,6 +179,17 @@ describe("the signed cURL", () => {
     expect(
       JSON.parse(values[values.indexOf("--data-binary") + 1]).payload,
     ).toEqual({});
+  });
+});
+
+describe("the production URL", () => {
+  it("is the platform's webhook address for the created webhook", () => {
+    expect(productionUrl("https://weave.example.test/", "w-1 2")).toBe(
+      "https://weave.example.test/webhooks/w-1%202",
+    );
+    expect(productionUrl("https://weave.example.test", "w-new")).toBe(
+      "https://weave.example.test/webhooks/w-new",
+    );
   });
 });
 

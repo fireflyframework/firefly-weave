@@ -112,3 +112,8 @@ export function webhookUrls(urls: {
     });
   return lines;
 }
+
+/** The production URL of a created webhook: the platform's webhook address for its ID. */
+export function productionUrl(baseUrl: string, webhookId: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/webhooks/${encodeURIComponent(webhookId)}`;
+}

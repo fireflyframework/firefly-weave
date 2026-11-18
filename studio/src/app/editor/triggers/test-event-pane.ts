@@ -33,6 +33,7 @@ import { listenFor, stopListening } from "../activation/execute-in-environment";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { listenBlocked, type ListenState } from "./test-listener";
+import { productionUrl } from "./webhook-help";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
 import type { TriggerIntent } from "../state/canvas-sidecar";
@@ -60,6 +61,31 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
       <div class="pane-content trigger-event">
         @if (note(); as text) {
           <p class="pane-empty-text">{{ text }}</p>
+        }
+        @if (production(); as url) {
+          <label class="trigger-event-label" [attr.for]="productionId()"
+            >Production URL</label
+          >
+          <div class="trigger-event-copy">
+            <input
+              class="trigger-event-url"
+              readonly
+              [id]="productionId()"
+              [value]="url"
+              [attr.aria-describedby]="productionId() + '-hint'"
+            />
+            <button
+              type="button"
+              class="pane-generate"
+              (click)="copy(url, 'the production URL')"
+            >
+              Copy URL
+            </button>
+          </div>
+          <p class="pane-empty-text" [id]="productionId() + '-hint'">
+            Starts runs of the active version, signed with the production
+            secret.
+          </p>
         }
         @if (canListen()) {
           @let state = listenState();
@@ -242,6 +268,24 @@ export class TriggerEventPane {
   readonly host = input<StepDetailsHost | null>(null);
   private readonly dialogs = inject(DialogService);
   readonly urlId = computed(() => `trigger-test-url-${this.trigger().id}`);
+  readonly productionId = computed(
+    () => `trigger-production-url-${this.trigger().id}`,
+  );
+  /** The created webhook's production URL in the environment shown, or null before it is activated there. */
+  production(): string | null {
+    const host = this.host();
+    const trigger = this.trigger();
+    if (trigger.kind !== "webhook" || !host?.profile) return null;
+    const port = connectionsPort(host);
+    const resources = trigger["resources"];
+    const id =
+      port && resources && typeof resources === "object"
+        ? (resources as Record<string, unknown>)[port.environmentId]
+        : null;
+    return typeof id === "string" && id
+      ? productionUrl(host.profile.baseUrl, id)
+      : null;
+  }
   /** Why this webhook can't listen here, or null when it can. */
   private blocked(): string | null {
     const host = this.host();
