@@ -396,6 +396,43 @@ async function presence(
   }
 }
 
+/**
+ * Stop a resource this workflow no longer describes, so it starts nothing:
+ * `POST …/{id}/disable` (a schedule with the revision Studio read). Email
+ * sources have no stop operation.
+ */
+export async function stopResource(
+  api: TriggerApi,
+  kind: ResourceKind,
+  id: string,
+  revision: number,
+): Promise<{ ok: true } | { ok: false; refusal: ResourceRefusal }> {
+  if (kind === "email")
+    return {
+      ok: false,
+      refusal: {
+        kind: "incomplete",
+        status: 0,
+        code: "",
+        message:
+          "Studio can't stop an email source. Reset or remove it with the CLI.",
+      },
+    };
+  try {
+    await api.mutate<unknown>(
+      `${path(api, kind, id)}/disable`,
+      "POST",
+      undefined,
+      kind === "schedule" ? revision : undefined,
+    );
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ApiError)
+      return { ok: false, refusal: refusal(error) };
+    throw error;
+  }
+}
+
 const text = (intent: TriggerIntent, key: string) => {
   const value = intent[key];
   return typeof value === "string" && value.trim() ? value : undefined;

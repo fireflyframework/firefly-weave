@@ -25,6 +25,7 @@ import {
   moveSchedule,
   readResource,
   retarget,
+  stopResource,
   type TriggerApi,
 } from "../src/app/editor/activation/trigger-resources-api";
 
@@ -603,5 +604,56 @@ describe("creating a resource from a trigger choice", () => {
       refusal: { message: "Choose a Kafka connection before activating." },
     });
     expect(api.calls).toEqual([]);
+  });
+});
+
+describe("stopping a resource left behind", () => {
+  it.each([
+    ["webhook", "triggers", undefined],
+    ["broker", "broker-triggers", undefined],
+    ["provider", "provider-sources", undefined],
+    ["schedule", "schedules", 4],
+  ] as const)(
+    "stops a %s at %s/{id}/disable",
+    async (kind, collection, revision) => {
+      const api = new FakeApi();
+      api.answers = [{ disabled: true }];
+      expect(await stopResource(api, kind, "r-1", 4)).toEqual({ ok: true });
+      expect(api.calls[0]).toEqual({
+        method: "POST",
+        path: `${ENV}/${collection}/r-1/disable`,
+        body: undefined,
+        revision,
+      });
+    },
+  );
+
+  it("says an email source can't be stopped from Studio, without a request", async () => {
+    const api = new FakeApi();
+    expect(await stopResource(api, "email", "m-1", 1)).toEqual({
+      ok: false,
+      refusal: {
+        kind: "incomplete",
+        status: 0,
+        code: "",
+        message:
+          "Studio can't stop an email source. Reset or remove it with the CLI.",
+      },
+    });
+    expect(api.calls).toEqual([]);
+  });
+
+  it("answers the platform's refusal", async () => {
+    const api = new FakeApi();
+    api.answers = [
+      new ApiError(409, {
+        code: "WV-SCHEDULE-REVISION",
+        message: "Schedule revision changed",
+      }),
+    ];
+    expect(await stopResource(api, "schedule", "s-1", 2)).toMatchObject({
+      ok: false,
+      refusal: { kind: "changed" },
+    });
   });
 });
