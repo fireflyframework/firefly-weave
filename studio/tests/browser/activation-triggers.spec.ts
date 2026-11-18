@@ -332,3 +332,28 @@ test("a new webhook takes the activated version's input, not the draft's edited 
     expect.objectContaining({ name: "orders-in", payload_schema: published }),
   ]);
 });
+
+test("an activation answer without an ID sets up no triggers, and says so", async ({
+  page,
+}) => {
+  await platform(page);
+  const recorded = await routeWebhooks(page);
+  await page.route("**/environments/development/activations", (r) =>
+    r.request().method() === "POST"
+      ? r.fulfill({ status: 201, json: { name: "pets", revision: 1 } })
+      : r.fallback(),
+  );
+  await open(page);
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.locator(".toast").filter({
+      hasText:
+        "Activated pets 1.0.0. Studio didn't set up its triggers: the platform's answer didn't name the activation.",
+    }),
+  ).toBeVisible();
+  expect(recorded.created).toEqual([]);
+});

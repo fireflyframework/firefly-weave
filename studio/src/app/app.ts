@@ -8596,7 +8596,15 @@ export class App implements CanvasHost {
         "Activate version",
       );
       // The dialog sets the triggers up, then this closes it (activationTriggers).
-      this.activatedId = String(this.activation?.["id"] ?? "activated");
+      const id = this.activation?.["id"];
+      if (typeof id === "string" && id) this.activatedId = id;
+      else {
+        // No activation to set triggers up for: say so instead of guessing one.
+        this.closeActivation();
+        this.notify(
+          `Activated ${String(this.published["name"] ?? this.model.definition.metadata.name)} ${String(this.published["version"] ?? this.model.definition.metadata.version)}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
+        );
+      }
     } catch (e) {
       const plain = describeError(e);
       // An ended session already returned to pairing with its own explanation.
