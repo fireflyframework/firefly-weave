@@ -382,6 +382,21 @@ test.describe("a run's Logs section", () => {
     );
   });
 
+  for (const [status, words] of [
+    [403, "You need run.read"],
+    [409, "This run's details are withheld."],
+    [501, "This platform can't show logs yet."],
+  ] as const)
+    test(`a running run asks no more once its logs answer ${status}`, async ({
+      page,
+    }) => {
+      const runs = await platform(page, { [fixtureIds.running]: status });
+      await page.goto(`/operate/runs/${fixtureIds.running}`);
+      await expect(section(page)).toContainText(words);
+      await page.clock.runFor(90_000);
+      expect(runs.logs).toHaveLength(1);
+    });
+
   test("says what it can't show: no access, a withheld run, a slow read and no entries", async ({
     page,
   }) => {

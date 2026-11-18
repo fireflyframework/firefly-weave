@@ -352,6 +352,20 @@ test.describe("Operate › Logs", () => {
     expect(logs.reads).toHaveLength(4);
   });
 
+  test("Follow stops once the logs are refused", async ({ page }) => {
+    const logs = await platform(page);
+    await openLogs(page);
+    await expect(rows(page)).toHaveCount(6);
+    await page.getByRole("switch", { name: "Follow" }).check();
+    await expect.poll(() => logs.reads.length).toBe(2);
+    logs.answer = 403;
+    await page.clock.runFor(10_000);
+    await expect(page.locator("#main")).toContainText("You need run.read");
+    const asked = logs.reads.length;
+    await page.clock.runFor(120_000);
+    expect(logs.reads).toHaveLength(asked);
+  });
+
   test("keeps every filter but the message in the address, and Back restores them", async ({
     page,
   }) => {

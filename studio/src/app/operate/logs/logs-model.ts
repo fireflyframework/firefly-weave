@@ -321,6 +321,12 @@ export type LogFailure =
   | { kind: "slow"; error: PlainError }
   | { kind: "error"; error: PlainError };
 /**
+ * Whether no later read can change what a failed read showed: the person's
+ * access or the platform must change first, so polling stops.
+ */
+export const stopsReads = (kind: string) =>
+  kind === "refused" || kind === "withheld" || kind === "unserved";
+/**
  * An older platform (501) asks no more; a refusal shows the access state; a
  * withheld run answers its logs as it answers the run; a read the platform
  * stopped (503) says so in the platform's words, with Try again.

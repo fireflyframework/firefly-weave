@@ -63,6 +63,7 @@ import {
   levelChoices,
   rangeChoices,
   searchProblem,
+  stopsReads,
 } from "./logs-model";
 import { LogSearchStore } from "./logs-store";
 
@@ -588,9 +589,18 @@ export class LogsPage implements DoCheck, OnDestroy {
       this.store.forget();
       return Promise.resolve("dropped");
     }
-    return this.store.search(
-      executionLogQuery(this.route(), this.contains(), new Date()),
-    );
+    return this.store
+      .search(executionLogQuery(this.route(), this.contains(), new Date()))
+      .then((result) => {
+        this.stopIfBlocked();
+        return result;
+      });
+  }
+  /** Follow stops once no later read can change what the page shows. */
+  private stopIfBlocked() {
+    if (!stopsReads(this.store.state().kind)) return;
+    this.poller.stop();
+    this.following.set(false);
   }
   /** Follow, Refresh and Try again: the newest page of the same filters. */
   private async followRead(): Promise<boolean> {
@@ -600,6 +610,7 @@ export class LogsPage implements DoCheck, OnDestroy {
     const result = await this.store.follow(
       executionLogQuery(this.route(), this.contains(), new Date()),
     );
+    this.stopIfBlocked();
     if (result === "failed") throw new Error("The logs could not be read.");
     return result === "applied";
   }

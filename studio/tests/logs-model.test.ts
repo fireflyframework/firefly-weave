@@ -28,6 +28,7 @@ import {
   runCountText,
   runLogQuery,
   searchProblem,
+  stopsReads,
 } from "../src/app/operate/logs/logs-model";
 import { defaultLogsRoute } from "../src/app/operate/operate-routes";
 import type { RunLogEntry } from "../src/app/operate/run-contracts";
@@ -281,6 +282,15 @@ describe("what a failed log read shows", () => {
           "Logs took too long to read. Narrow the time range or the filters, or try again.",
       },
     });
+  });
+  it("stops reading only for what no later read can change", () => {
+    expect(stopsReads(failed(403, "WV-FORBIDDEN").kind)).toBe(true);
+    expect(stopsReads(failed(409, "WV-LEGACY-UNAVAILABLE").kind)).toBe(true);
+    expect(stopsReads(failed(501, "WV-UNAVAILABLE").kind)).toBe(true);
+    // A slow read, any other failure and an answer can change at the next read.
+    expect(stopsReads(failed(503, "WV-UNAVAILABLE").kind)).toBe(false);
+    expect(stopsReads(failed(409, "WV-REVISION").kind)).toBe(false);
+    expect(stopsReads("ready")).toBe(false);
   });
   it("shows anything else with its message and support code", () => {
     expect(failed(500, "WV-INTERNAL", "Broken").kind).toBe("error");

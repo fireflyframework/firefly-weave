@@ -30,7 +30,7 @@ import {
 import type { App } from "../../app";
 import { Icon } from "../../icon";
 import { LogEntries } from "../logs/log-entries";
-import { levelChoices, runCountText } from "../logs/logs-model";
+import { levelChoices, runCountText, stopsReads } from "../logs/logs-model";
 import { RunLogsStore } from "../logs/logs-store";
 import { environmentOf, scopeKeyOf } from "../operate-list";
 import type { LogsLevel } from "../operate-routes";
@@ -263,15 +263,16 @@ export class RunLogs implements DoCheck, OnDestroy {
     const id = this.runId();
     if (id && environmentOf(host) && id !== this.store.run)
       void this.store.open(id);
-    const live = this.live();
+    const blocked = stopsReads(this.store.state().kind);
+    const live = this.live() && !blocked;
     if (live && !this.following) {
       this.following = true;
       this.poller.start(false);
     } else if (!live && this.following) {
-      // The run ended: its last entries are read once more.
       this.following = false;
       this.poller.stop();
-      void this.store.refresh();
+      // The run ended: its last entries are read once more.
+      if (!blocked) void this.store.refresh();
     }
   }
   ngOnDestroy() {
@@ -280,6 +281,10 @@ export class RunLogs implements DoCheck, OnDestroy {
   }
   private async poll(): Promise<boolean> {
     const result = await this.store.refresh();
+    if (stopsReads(this.store.state().kind)) {
+      this.following = false;
+      this.poller.stop();
+    }
     if (result === "failed") throw new Error("The logs could not be read.");
     return result === "applied";
   }
