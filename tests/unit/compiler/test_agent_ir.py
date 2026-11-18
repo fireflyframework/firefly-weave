@@ -36,6 +36,7 @@ from firefly_weave.compiler.calls import called_references
 from firefly_weave.compiler.ir import AgentMemoryIR, AgentNode, UnsupportedIR, WorkflowIR, require_supported_ir
 from firefly_weave.compiler.scope import scope_at
 from firefly_weave.contracts import language_features
+from firefly_weave.contracts.agent_conversations import DEFAULT_CONVERSATION_TTL_SECONDS
 from firefly_weave.contracts.agent_turns import TURN_RULES
 from firefly_weave.contracts.language import language_manifest
 
@@ -283,3 +284,40 @@ def test_the_ir_keeps_a_conversation_with_its_key_and_lifetime():
     }
 
     assert AgentMemoryIR.model_validate(memory).model_dump(by_alias=True, mode="json") == memory
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_a_conversation_without_ttl_seconds_lowers_to_thirty_days():
+    memory = {key: value for key, value in CONVERSATION.items() if key != "ttlSeconds"}
+    document = workflow(agent(memory=memory))
+
+    assert agent_node(artifact(document)).memory.ttl_seconds == DEFAULT_CONVERSATION_TTL_SECONDS == 2_592_000
+    # The definition keeps what the author wrote; only the compiled workflow carries the default.
+    assert "ttlSeconds" not in document["spec"]["steps"][0]["memory"]
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_a_conversations_own_ttl_seconds_is_kept():
+    assert agent_node(artifact(workflow(agent(memory=CONVERSATION)))).memory.ttl_seconds == 3600
+
+
+@pytest.mark.parametrize(
+    ("document", "digest"),
+    [
+        (workflow(), "31600b16229771cc4a04a34f2171142cd887fd3afbdc5de725a952a14bf2760b"),
+        (
+            workflow(agent(memory={"scope": "run", "key": "orders"})),
+            "b7a2169322191b27b582726c40968bc5cb7a97e1af19ff1dea55a3e81e7b2110",
+        ),
+        (
+            workflow(agent(context={"ref": "/input/region"}, memory={"scope": "step", "window": 10})),
+            "a6e28e946527a048fafdf60274270bd0e6b5b8212d6ba4f6811d4873633bd107",
+        ),
+    ],
+    ids=["step", "run", "step-window"],
+)
+def test_step_and_run_memory_lower_as_before(document, digest):
+    # Digests recorded before conversation memory had a default lifetime.
+    result = compile_source(document, format="object", catalog=catalog())
+
+    assert result.artifact is not None and result.artifact.digest == digest

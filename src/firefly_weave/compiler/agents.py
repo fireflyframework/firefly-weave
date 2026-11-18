@@ -40,7 +40,7 @@ from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.schema_profile import SchemaLimits, schema_children
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility
-from firefly_weave.contracts.agent_conversations import CONVERSATION_KEY_LENGTH
+from firefly_weave.contracts.agent_conversations import CONVERSATION_KEY_LENGTH, DEFAULT_CONVERSATION_TTL_SECONDS
 from firefly_weave.contracts.agent_turns import (
     MAX_TURN_TEXT,
     TRANSCRIPT_BYTES,
@@ -611,10 +611,17 @@ def lower_agent(
         "instructions": value["instructions"],
         "prompt": value["prompt"],
         "tools": cast(JsonValue, tools),
-        "memory": value["memory"],
+        "memory": _lowered_memory(cast(JsonObject, value["memory"])),
         "limits": value["limits"],
         "rules": TURN_RULES,
     }
     if "context" in value:
         node["context"] = value["context"]
     return node
+
+
+def _lowered_memory(memory: JsonObject) -> JsonObject:
+    """The memory as the IR runs it: a conversation always carries its lifetime, 30 days unless the step sets one."""
+    if memory.get("scope") != "conversation" or "ttlSeconds" in memory:
+        return memory
+    return {**memory, "ttlSeconds": DEFAULT_CONVERSATION_TTL_SECONDS}
