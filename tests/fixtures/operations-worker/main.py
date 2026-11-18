@@ -16,6 +16,9 @@
 
 """Sleep fixture worker for local Operations: example-sleep@1.0.0 sleeps the requested time and reports it.
 
+Each task writes one log entry saying how long it slept, and a warning with the input's test-only ``note`` when
+there is one, so the log checks can plant secret-shaped text and prove it is redacted before it is stored.
+
 It signs in with a mounted client-credentials file, reaches the API only through private-origin entries the
 platform wrote, registers with its own host so placement and drains can find it, and finishes its active tasks
 when stopped. It never accepts database or administrator settings.
@@ -38,6 +41,7 @@ import httpx
 
 from firefly_weave import private_origins
 from firefly_weave.contracts.connectors import ConnectorFailure
+from firefly_weave.sdk.task_log import task_log
 from firefly_weave.sdk.token_relay import start_relay
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
@@ -67,6 +71,11 @@ async def sleep(lease: Any) -> dict[str, int]:
         raise ConnectorFailure("FIXTURE_FAULT", "unknown")
     milliseconds = int(lease.input["ms"])
     await asyncio.sleep(milliseconds / 1000)
+    log = task_log()
+    log.info(f"Slept for {milliseconds} ms", code="FIXTURE.SLEPT", ms=milliseconds)
+    note = lease.input.get("note")
+    if isinstance(note, str) and note:
+        log.warning(note, code="FIXTURE.NOTE")
     return {"slept_ms": milliseconds}
 
 
