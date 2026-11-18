@@ -361,7 +361,10 @@ test.describe("the test policy when the platform can't answer", () => {
       const { details } = await openConnected(
         page,
         { bindable: { [PRODUCTION]: [bindable(1)] } },
-        crmWorkflow(),
+        crmWorkflow(
+          {},
+          { with: { object: { customerId: { literal: "c-1042" } } } },
+        ),
       );
       let reads = 0;
       await page.route("**/environments/*/test-policy", async (route) => {
@@ -375,8 +378,15 @@ test.describe("the test policy when the platform can't answer", () => {
       });
       await details.open("crm-lookup");
       await expect.poll(() => reads).toBeGreaterThan(0);
-      // Nothing to wait for but time: the next read comes only after the pause.
-      await page.waitForTimeout(3000);
+      // Each key renders step details again, and every render looks at the
+      // policy: none of them may ask again before the pause is over.
+      const customer = details.dialog.getByLabel("Customer ID", {
+        exact: true,
+      });
+      await customer.click();
+      await customer.press("End");
+      await customer.pressSequentially("-17");
+      await expect(customer).toHaveValue("c-1042-17");
       expect(reads).toBeLessThanOrEqual(2);
     });
 });
