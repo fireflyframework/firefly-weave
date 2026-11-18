@@ -156,6 +156,18 @@ describe("a loop in the workflow model", () => {
     expect(loopOf(model)["items"]).toEqual({ ref: "/steps/load/output" });
   });
 
+  it("rewrites its result per item when the body step it reads is renamed", () => {
+    const workflow = withLoop([send()]);
+    (workflow.spec.steps[1]["body"] as { output: unknown }).output = {
+      ref: "/steps/send/output",
+    };
+    const model = opened(workflow);
+    expect(model.renameStep("send", "notify")).toBe(1);
+    expect((loopOf(model)["body"] as { output: unknown }).output).toEqual({
+      ref: "/steps/notify/output",
+    });
+  });
+
   it("tells a rename inside its body as a rename, and a different body as a change", () => {
     const before = withLoop([send()]);
     const after = structuredClone(before);
