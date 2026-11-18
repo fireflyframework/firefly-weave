@@ -490,6 +490,13 @@ async def test_no_excluded_value_of_a_stored_record_reaches_the_gateway(weave_ai
     assert incident["resolution"] == "accept_reconciled_result"
     assert set(incident["recent_events"]) <= RUNTIME_EVENT_TYPES and incident["other_events"] == 1
     assert resources[0]["data"]["placement"] == {"target": "alpha", "component": "engine"}
+    # The run as well, in its own ask (four attachments at most): its run views serve its log too, and neither
+    # the log's message nor its fields may reach the context.
+    assert (await ask(weave_ai, actor, {"run": seeded.run}, "run")).answer == "Explained"
+    run_body = weave_ai.transport.bodies[1].decode()
+    assert [canary for canary in CANARIES if canary in run_body] == []
+    [run] = json.loads(run_body)["attachments"]["resources"]
+    assert run["kind"] == "run" and run["data"]["workflow"]["name"]
 
 
 async def test_each_seeded_attention_kind_sends_a_title(weave_ai, seeded):
