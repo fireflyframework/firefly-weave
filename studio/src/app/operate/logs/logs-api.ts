@@ -19,7 +19,9 @@ SPDX-License-Identifier: Apache-2.0
 // runs (execution_logs.list). Every item goes through readLogRow, so what the
 // screen shows, the hidden-value count and the shortened mark included, comes
 // only from an entry whose every field has the contract's shape. A withheld
-// run's entry is a row with its ID only; anything else is unreadable.
+// run's entry is a row with its ID only; anything else is unreadable. An
+// answer that isn't a page of entries at all is a failed read.
+import { ApiError } from "../../api";
 import {
   logLevels,
   logSources,
@@ -139,9 +141,16 @@ export function readLogRow(item: unknown, across: boolean): LogRow | null {
   return run ? { kind: "entry", id, entry, run } : { kind: "unreadable", id };
 }
 
+/** What a failed read says when the answer isn't a page of entries. */
+const unreadableAnswer = () =>
+  new ApiError(502, {
+    code: "WV-STUDIO-ANSWER",
+    message: "Studio couldn't read the platform's answer.",
+  });
+
 function readPage(value: unknown, across: boolean): LogRows {
   if (!isRecord(value) || !Array.isArray(value["items"]))
-    return { rows: [], nextCursor: null };
+    throw unreadableAnswer();
   const rows = value["items"]
     .map((item) => readLogRow(item, across))
     .filter((row): row is LogRow => row !== null);
@@ -152,10 +161,10 @@ function readPage(value: unknown, across: boolean): LogRows {
   };
 }
 
-/** A runs.logs answer: the run's entries in time order. */
+/** A runs.logs answer: the run's entries in time order; throws for anything else. */
 export const readRunLogPage = (value: unknown): LogRows =>
   readPage(value, false);
-/** An execution_logs.list answer: entries across runs, newest first. */
+/** An execution_logs.list answer: entries across runs, newest first; throws for anything else. */
 export const readExecutionLogPage = (value: unknown): LogRows =>
   readPage(value, true);
 

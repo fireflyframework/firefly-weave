@@ -293,6 +293,16 @@ describe("the log across runs", () => {
     await pending[1].fail(ended);
     expect(failures).toEqual([ended]);
   });
+  it("shows an answer that isn't a page of entries as a failed read", async () => {
+    const { host, pending } = platform();
+    const store = new LogSearchStore(host, new Set());
+    void store.search(query());
+    await pending[0].answer("<html>");
+    const state = store.state();
+    expect(state.kind).toBe("error");
+    expect(state.kind === "error" && state.error.code).toBe("WV-STUDIO-ANSWER");
+    expect(store.rows()).toEqual([]);
+  });
   it("shows a withheld run's entry as a row without text", async () => {
     const { host, pending } = platform();
     const store = new LogSearchStore(host, new Set());

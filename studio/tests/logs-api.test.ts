@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { describeError } from "../src/app/errors";
 import {
   executionLogPath,
   readExecutionLogPage,
@@ -118,14 +119,31 @@ describe("reading log pages", () => {
       broken.map(() => "unreadable"),
     );
   });
-  it("leaves out an item without an ID and reads a page that isn't one as empty", () => {
+  it("leaves out an item without an ID and a cursor that isn't one", () => {
     expect(
       readExecutionLogPage({ items: [{ message: "x" }, 3], next_cursor: 9 }),
     ).toEqual({ rows: [], nextCursor: null });
-    expect(readExecutionLogPage("<html>")).toEqual({
-      rows: [],
-      nextCursor: null,
-    });
+  });
+  it("refuses an answer that isn't a page of entries, with a support code", () => {
+    for (const answer of [
+      "<html>",
+      { message: "HTTP 200" },
+      { items: {} },
+      null,
+    ])
+      for (const read of [readExecutionLogPage, readRunLogPage]) {
+        let thrown: unknown;
+        try {
+          read(answer);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(describeError(thrown), JSON.stringify(answer)).toEqual({
+          status: 502,
+          code: "WV-STUDIO-ANSWER",
+          message: "Studio couldn't read the platform's answer.",
+        });
+      }
   });
   it("reads a run's entries without a run of their own", () => {
     const page = readRunLogPage({ items: [entry()], next_cursor: null });
