@@ -126,6 +126,13 @@ def test_a_delivery_carries_no_values():
         Delivery(phase="try", operation_key="R:hold", answer="completed", output={"holdId": "h"})
 
 
+def test_a_delivery_code_is_a_failure_code_never_free_text():
+    assert Delivery(phase="try", operation_key="R:hold", answer="failed", code="SQL_ALREADY_UNDONE-2").code
+    for code in ("account 42 is closed", "lower_case", "", "A" * 65, "Ä_CODE"):
+        with pytest.raises(ValidationError):
+            Delivery(phase="try", operation_key="R:hold", answer="failed", code=code)
+
+
 def test_fence_codes_are_valid_worker_failure_codes():
     assert set(FENCE_CODES) == {"TXN_ALREADY_UNDONE", "TXN_NOT_APPLIED", "TXN_OTHER_DIRECTION"}
     for code in FENCE_CODES:

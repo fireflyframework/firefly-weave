@@ -50,6 +50,8 @@ type ConformanceCheck = Literal[
 ]
 type CheckReason = Literal["failed", "output", "input", "applied-late", "repeat", "timeout"]
 type Answer = Literal["completed", "failed"]
+# The pattern of a worker failure code (TaskError.code).
+FAILURE_CODE_PATTERN: Final = r"^[A-Z][A-Z0-9_-]{0,63}$"
 
 _CHECKS: Final[tuple[ConformanceCheck, ...]] = get_args(ConformanceCheck.__value__)
 # The checks of a step that reserves and is confirmed or cancelled, in the order they run.
@@ -100,8 +102,8 @@ class Delivery(ContractModel):
     phase: PhaseOperation
     operation_key: str = Field(min_length=1, max_length=512)
     answer: Answer
-    # The failure's code, when it failed.
-    code: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The failure's code, when it failed: a worker failure code, so a report never carries free text.
+    code: str | None = Field(default=None, pattern=FAILURE_CODE_PATTERN, exclude_if=lambda value: value is None)
     # "none" when the failure said nothing was applied.
     effect: Effect | None = Field(default=None, exclude_if=lambda value: value is None)
 
