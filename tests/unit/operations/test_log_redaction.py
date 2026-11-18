@@ -275,6 +275,17 @@ def test_a_field_that_is_not_a_scalar_is_kept_as_text_and_redacted():
     assert result.redactions == 1
 
 
+@pytest.mark.parametrize("value", ["界" * 256, '"' * 256], ids=["three-byte characters", "quotes written escaped"])
+def test_fields_past_the_stored_byte_limit_are_left_out_and_say_so(value):
+    wide = {f"field_{index:02d}": value for index in range(16)}
+    result = redact_entry("Wide", wide, known=frozenset())
+    # PostgreSQL writes the fields as {"key": "value", ...}; that text holds at most 8 KiB.
+    assert len(json.dumps(result.fields, ensure_ascii=False).encode()) <= 8192
+    assert 0 < len(result.fields) < 16
+    assert result.fields == dict(list(wide.items())[: len(result.fields)])
+    assert result.truncated
+
+
 def test_a_nested_field_loses_secret_named_keys_and_secrets_in_its_strings():
     password = SECRETS["PASSWORD"]
     result = redact_entry(

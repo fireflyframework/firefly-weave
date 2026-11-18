@@ -206,10 +206,14 @@ class ExecutionLogWriter:
                 },
             )
         except IntegrityError as error:
-            # The run went (a purge) after the lease was read.
             cause = getattr(error.orig, "__cause__", None)
-            if "23503" in (getattr(error.orig, "sqlstate", None), getattr(cause, "sqlstate", None)):
+            states = (getattr(error.orig, "sqlstate", None), getattr(cause, "sqlstate", None))
+            # The run went (a purge) after the lease was read.
+            if "23503" in states:
                 raise lease_gone() from None
+            # An entry past a stored limit the checks above missed: the batch is refused, not failed.
+            if "23514" in states:
+                raise CatalogError(422, "WV-VALIDATION", "A log entry is past a stored limit") from None
             raise
         if inserted != kept:
             raise lease_gone()

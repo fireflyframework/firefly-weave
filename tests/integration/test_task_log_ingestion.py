@@ -157,6 +157,40 @@ async def test_the_server_redacts_what_a_worker_left_in(worker_setup, access_db,
     assert SECRET not in str(dict(row))
 
 
+async def test_the_widest_valid_fields_are_stored_within_the_byte_limit(worker_setup, access_db, lease):
+    wide = [
+        TaskLogEntry(at=datetime.now(UTC), source="worker", level="info", message="Wide", fields=fields)
+        for fields in (
+            {f"field_{index:02d}": "界" * 256 for index in range(16)},
+            {f"field_{index:02d}": '"' * 256 for index in range(16)},
+            {f"field_{index:02d}": -5e-324 if index % 2 else 1.5e308 for index in range(16)},
+        )
+    ]
+    assert (await write(worker_setup, access_db, lease.proof, wide)).accepted == 3
+    async with access_db[1]() as tx:
+        rows = (
+            await tx.execute(text("SELECT octet_length(fields::text) AS size,fields,truncated FROM execution_logs"))
+        ).all()
+    assert all(size <= 8192 for size, _, _ in rows)
+    # Text fields past the limit are left out and the entry says so; numbers fit whole.
+    assert sorted((len(fields), truncated) for _, fields, truncated in rows) == [(10, True), (15, True), (16, False)]
+
+
+async def test_a_row_the_database_refuses_answers_invalid_not_failed(worker_setup, access_db, lease, monkeypatch):
+    from firefly_weave.operations import execution_logs
+
+    shaped = execution_logs.stored_entry
+
+    def too_long(entry):
+        return {**shaped(entry), "message": "m" * 600}
+
+    monkeypatch.setattr(execution_logs, "stored_entry", too_long)
+    with pytest.raises(CatalogError) as refused:
+        await write(worker_setup, access_db, lease.proof, entries())
+    assert (refused.value.status, refused.value.code) == (422, "WV-VALIDATION")
+    assert await stored(access_db) == []
+
+
 async def test_an_entry_dated_outside_the_lease_is_moved_inside_it(worker_setup, access_db, lease):
     early = entries(1, at=datetime(2000, 1, 1, tzinfo=UTC), position="early")
     late = entries(1, at=datetime.now(UTC) + timedelta(days=1), position="late")

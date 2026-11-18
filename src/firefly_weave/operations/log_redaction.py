@@ -29,7 +29,7 @@ The SDK runs it on every entry a worker or connector writes, and the server runs
 
 Format characters are removed first, so an invisible character can't split a secret; control characters and line
 separators become spaces, so an entry is one line. A message keeps 512 characters, a field value 256, an entry 16
-fields; fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose
+fields in 8 KiB as stored; fields whose name is secret-named are dropped, and so are such keys inside a nested field value, whose
 strings are redacted before it is written as JSON text. Each hidden value counts once, and text that is already
 redacted counts nothing, so a second pass changes nothing. Every pattern is linear on untrusted text. It imports
 only the standard library and ``firefly_weave.redaction_patterns``, so workers and the runner can use it too.
@@ -41,6 +41,7 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Final
 from urllib.parse import quote
 
@@ -57,6 +58,8 @@ KNOWN_MINIMUM: Final = 4
 SAFE_INTEGER: Final = 2**53 - 1
 # A field value nested deeper than this is left out.
 NESTING_LIMIT: Final = 32
+# The fields of one entry as PostgreSQL writes them, {"key": value, ...}, hold at most this many bytes.
+FIELDS_BYTES: Final = 8192
 
 # Field and key names that hold secrets: a field so named is dropped, a value assigned to one is hidden. Token
 # counts (input_tokens, max_tokens) and tokenizers are not secrets.
@@ -259,12 +262,21 @@ def _field(value: object, forms: list[str], count: _Count) -> tuple[str | int | 
     return redacted, cut or walk.cut
 
 
+def _stored_bytes(name: str, value: str | int | float | bool | None) -> int:
+    """The bytes ``"name": value`` takes where PostgreSQL writes JSON: strings escaped as JSON escapes them, and
+    numbers in full, without an exponent (1e300 is 301 digits)."""
+    written = format(Decimal(repr(value)), "f") if isinstance(value, float) else json.dumps(value, ensure_ascii=False)
+    return len(json.dumps(name, ensure_ascii=False).encode()) + 2 + len(written.encode())
+
+
 def redact_entry(message: str, fields: Mapping[str, object], *, known: frozenset[str] = frozenset()) -> RedactedEntry:
-    """A log entry without secrets: the message and every field value redacted, secret-named fields dropped."""
+    """A log entry without secrets: the message and every field value redacted, secret-named fields dropped, and
+    fields that would take the entry past ``FIELDS_BYTES`` left out."""
     count = _Count()
     forms = _known_forms(known)
     text, truncated = _redact(message, forms, MESSAGE_LIMIT, count)
     kept: dict[str, str | int | float | bool | None] = {}
+    size = 2  # the braces
     for name, raw in fields.items():
         if not isinstance(name, str) or _FIELD_KEY.fullmatch(name) is None:
             truncated = True
@@ -276,6 +288,11 @@ def redact_entry(message: str, fields: Mapping[str, object], *, known: frozenset
             truncated = True
             continue
         value, cut = _field(raw, forms, count)
+        added = _stored_bytes(name, value) + (2 if kept else 0)  # ", " between fields
+        if size + added > FIELDS_BYTES:
+            truncated = True
+            continue
+        size += added
         truncated = truncated or cut
         kept[name] = value
     return RedactedEntry(text, kept, count.value, truncated)
