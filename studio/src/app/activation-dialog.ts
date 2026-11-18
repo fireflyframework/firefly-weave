@@ -220,7 +220,19 @@ function onceEach(api: StudioApi): StudioApi {
                 </select>
                 @if (rowOf(slot.name); as row) {
                   @if (row.message) {
-                    <p class="hint">{{ row.message }}</p>
+                    @let way = connectionsLink(row.message);
+                    <p class="hint">
+                      {{ way.before }}
+                      @if (way.link) {
+                        <button
+                          type="button"
+                          class="text-link"
+                          (click)="openConnections.emit()"
+                        >
+                          {{ way.link }}
+                        </button>
+                      }
+                    </p>
                   } @else if (row.tested && choices[slot.name] === row.chosen) {
                     <p class="hint">{{ row.tested }}</p>
                   }
@@ -275,6 +287,11 @@ function onceEach(api: StudioApi): StudioApi {
           <span class="loading-spinner small"></span>Setting up the triggers…
         </p>
       }
+      @if (!activated() && missingConnection(); as missing) {
+        <p class="hint activation-missing" id="activation-missing">
+          {{ missing }}
+        </p>
+      }
       <div class="dialog-footer">
         @if (activated()) {
           <!-- The activation is done: the triggers' rows say what happened. -->
@@ -303,7 +320,11 @@ function onceEach(api: StudioApi): StudioApi {
               state() === 'loading' ||
               pinsLoading() ||
               !!picker()?.loading() ||
-              !!steps()?.blocked()
+              !!steps()?.blocked() ||
+              !!missingConnection()
+            "
+            [attr.aria-describedby]="
+              missingConnection() ? 'activation-missing' : null
             "
           >
             Activate version
@@ -358,6 +379,23 @@ export class ActivationDialog implements OnInit {
   readonly attentionText = signal("");
   private setUpFor = "";
   cancel = output<void>();
+  /** "Create one in Connections.": the dialog closes and Connections opens. */
+  openConnections = output<void>();
+  /** A message, and the words of it that open Connections, when it ends with them. */
+  connectionsLink(message: string): { before: string; link: string | null } {
+    const link = "Create one in Connections.";
+    return message.endsWith(link)
+      ? { before: message.slice(0, -link.length), link }
+      : { before: message, link: null };
+  }
+  /** Why Activate waits: a required slot with no connection chosen yet; null otherwise. */
+  missingConnection(): string | null {
+    if (this.state() !== "ready" || this.stopped()) return null;
+    const slot = this.activeSlots().find(
+      (item) => item.required && !(this.choices[item.name] ?? "").trim(),
+    );
+    return slot ? `Choose a connection for ${slot.name} first.` : null;
+  }
   state = signal<"loading" | "ready" | "forbidden" | "error">("loading");
   error = signal<{ message: string; code: string } | null>(null);
   connections = signal<BindableItem[]>([]);

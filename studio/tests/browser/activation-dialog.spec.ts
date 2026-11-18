@@ -179,10 +179,25 @@ test("a slot without a connection to bind says where to create one", async ({
   await bindable(page, []);
   await features(page, ["flow.forEach"], null);
   const dialog = await openActivation(page, [], false);
+  // The hint's last words are a link, so read the hint as a whole.
   await expect(
-    dialog.getByText(
-      /^No connection for weave-http 2\.0\.0 in .+\. Create one in Connections\.$/,
-    ),
+    dialog.locator(".hint").filter({
+      hasText:
+        /^\s*No connection for weave-http 2\.0\.0 in .+\.\s*Create one in Connections\.\s*$/,
+    }),
+  ).toBeVisible();
+  // A required slot without a connection keeps Activate off, and says why.
+  await expect(activate(page)).toBeDisabled();
+  await expect(
+    dialog.getByText("Choose a connection for pets first.", { exact: true }),
+  ).toBeVisible();
+  // The way out is a link: it closes the dialog and opens Connections.
+  await dialog
+    .getByRole("button", { name: "Create one in Connections.", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Connections", level: 1 }),
   ).toBeVisible();
 });
 
