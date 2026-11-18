@@ -179,6 +179,28 @@ async def test_a_slow_read_answers_unavailable(views, worker_setup, access_db, r
     assert "Narrow the time range" in slow.value.message
 
 
+async def test_the_code_filter_finds_failures_by_the_code_they_show(views, worker_setup, access_db, runs):
+    (first, _), (second, _) = runs
+    await owner(
+        access_db,
+        "UPDATE step_facts SET status='failed',ended_at=:at,error_code='not a code!' WHERE run_id=:run",
+        at=ago(3),
+        run=first,
+    )
+    await owner(
+        access_db,
+        "UPDATE run_facts SET status='failed',ended_at=:at,failed_error_code=:code WHERE run_id=:run",
+        at=ago(2),
+        run=second,
+        code="E" * 150,
+    )
+    shown = await read_all(views, worker_setup, ExecutionLogQuery(level="error"))
+    assert [(item.run_id, item.code) for item in shown] == [(second, "RUN.FAILED"), (first, "STEP.FAILED")]
+    for item in shown:
+        found = await read_all(views, worker_setup, ExecutionLogQuery(code=item.code))
+        assert [(entry.run_id, entry.code) for entry in found] == [(item.run_id, item.code)]
+
+
 async def test_failed_steps_and_runs_appear_as_engine_entries(views, worker_setup, access_db, runs):
     (first, _), (second, _) = runs
     await owner(

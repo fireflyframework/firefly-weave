@@ -57,6 +57,7 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.engine_log import (
     ENGINE_ENTRIES,
     RANKS,
+    code_sql,
     engine_entry,
     fact_entry_id,
     rank_sql,
@@ -276,7 +277,7 @@ _RUN_RANK = "CASE f.status WHEN 'cancelled' THEN {info} ELSE {error} END".format
     info=RANKS["info"], error=RANKS["error"]
 )
 _RUN_CODE = (
-    "CASE f.status WHEN 'failed' THEN coalesce(f.failed_error_code,'RUN.FAILED') "
+    "CASE f.status WHEN 'failed' THEN " + code_sql("f.failed_error_code", "RUN.FAILED") + " "
     "WHEN 'timed_out' THEN 'RUN.TIMED_OUT' ELSE 'RUN.CANCELED' END"
 )
 _RUNS_ENDED = (
@@ -288,7 +289,9 @@ _RUNS_ENDED = (
 _STEP_RANK = "CASE WHEN s.status='failed' AND s.handled IS NOT NULL THEN {warning} ELSE {error} END".format(
     warning=RANKS["warning"], error=RANKS["error"]
 )
-_STEP_CODE = "CASE s.status WHEN 'failed' THEN coalesce(s.error_code,'STEP.FAILED') ELSE 'STEP.TIMED_OUT' END"
+_STEP_CODE = (
+    "CASE s.status WHEN 'failed' THEN " + code_sql("s.error_code", "STEP.FAILED") + " ELSE 'STEP.TIMED_OUT' END"
+)
 _STEPS_ENDED = (
     "SELECT s.run_id,s.node_id,s.instance_key,s.status,s.ended_at AS at,s.error_code AS code,"
     "s.handled IS NOT NULL AS handled,f.workflow_name,f.workflow_version,f.test," + _AVAILABILITY + " "

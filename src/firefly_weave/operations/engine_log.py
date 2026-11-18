@@ -32,7 +32,8 @@ from firefly_weave.contracts.log_values import LogLevel
 from firefly_weave.contracts.run_views import LOG_LEVELS, ExecutionLogEntry, RunLogEntry
 from firefly_weave.operations.facts import author_instance
 
-_CODE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
+_CODE_PATTERN: Final = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"
+_CODE: Final = re.compile(_CODE_PATTERN)
 MESSAGE_LIMIT: Final = 512
 
 
@@ -89,6 +90,12 @@ def rank_sql(event_type: str, handled: str) -> str:
 
 def log_code(value: object) -> str | None:
     return value if isinstance(value, str) and _CODE.fullmatch(value) else None
+
+
+def code_sql(column: str, fallback: str) -> str:
+    """The code an entry shows, in SQL, so a filter on it finds what is shown: ``column`` when it is a log code (as
+    ``log_code`` decides), otherwise ``fallback``."""
+    return f"CASE WHEN {column} ~ '^{_CODE_PATTERN}$' THEN {column} ELSE '{fallback}' END"
 
 
 def _step(key: object) -> tuple[str | None, str]:
