@@ -119,18 +119,27 @@ function onceEach(api: StudioApi): StudioApi {
   standalone: true,
   imports: [Modal],
   template: `<weave-modal
-    [heading]="'Activate ' + workflowName()"
+    [heading]="(activated() ? 'Activated ' : 'Activate ') + workflowName()"
     [wide]="true"
     describedBy="activation-summary"
     (dismiss)="dismiss()"
   >
     <form class="dialog-form activation-form" (submit)="submit($event)">
-      <p id="activation-summary" class="dialog-message">
-        Activate <strong>{{ workflowName() }}</strong> in
-        <strong>{{ environmentLabel() }}</strong
-        >. New runs use this version; runs already in progress keep theirs.
-      </p>
-      @if (automaticCount && !stopped()) {
+      @if (activated()) {
+        <!-- Done: the toast's words, while the rows below say how each trigger went. -->
+        <p id="activation-summary" class="dialog-message">
+          Activated in {{ environmentLabel() }}.{{
+            attentionText() ? " " + attentionText() : ""
+          }}
+        </p>
+      } @else {
+        <p id="activation-summary" class="dialog-message">
+          Activate <strong>{{ workflowName() }}</strong> in
+          <strong>{{ environmentLabel() }}</strong
+          >. New runs use this version; runs already in progress keep theirs.
+        </p>
+      }
+      @if (automaticCount && !stopped() && !activated()) {
         <p class="automatic-choices">
           {{ automaticCount }} chosen for you ·
           <button type="button" class="text-link" (click)="toggleReview()">
@@ -345,6 +354,8 @@ export class ActivationDialog implements OnInit {
     first: boolean;
   }>();
   readonly settingUp = signal(false);
+  /** After the activation: "1 trigger needs attention.", or "" when every trigger went through. */
+  readonly attentionText = signal("");
   private setUpFor = "";
   cancel = output<void>();
   state = signal<"loading" | "ready" | "forbidden" | "error">("loading");
@@ -460,17 +471,20 @@ export class ActivationDialog implements OnInit {
     } finally {
       this.settingUp.set(false);
     }
+    this.attentionText.set(steps.attention() ?? "");
     this.triggers.emit({
       intents: steps.storedIntents(),
       attention: steps.attention(),
       first: true,
     });
-    steps.retried = () =>
+    steps.retried = () => {
+      this.attentionText.set(steps.attention() ?? "");
       this.triggers.emit({
         intents: steps.storedIntents(),
         attention: steps.attention(),
         first: false,
       });
+    };
   }
   /** Loads the checks and the called workflows and triggers steps from their own chunk. */
   async loadSteps() {

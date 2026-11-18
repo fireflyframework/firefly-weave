@@ -177,6 +177,13 @@ test("a trigger that can't be created says why with Retry, and the activation st
   await expect(
     dialog.getByRole("button", { name: "Activate version" }),
   ).toHaveCount(0);
+  // The dialog reads as done: the activation succeeded, one trigger didn't.
+  const done = page.getByRole("dialog", { name: "Activated pets 1.0.0" });
+  await expect(done).toBeVisible();
+  await expect(done.locator("#activation-summary")).toHaveText(
+    /^\s*Activated in .+\. 1 trigger needs attention\.\s*$/,
+  );
+  await expect(done.getByRole("button", { name: "Review" })).toHaveCount(0);
   await rows.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(rows.getByRole("listitem")).toContainText(["Created"]);
   expect(recorded.created).toHaveLength(1);
