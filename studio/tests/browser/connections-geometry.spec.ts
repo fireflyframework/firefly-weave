@@ -136,14 +136,31 @@ for (const size of [
       if (size.width < 768) {
         // On a phone the choices open as a sheet along the bottom edge, with 48 px rows.
         const list = page.getByRole("listbox", { name: "Connection options" });
-        await expect(list).toContainText("Connection for crm-lookup");
-        const sheet = await box(list);
+        // The sheet: the popup that holds the title row and the listbox.
+        const popup = page.locator(".choice-list:popover-open");
+        const title = popup.locator(".choice-sheet-title");
+        await expect(title).toContainText("Connection for crm-lookup");
+        const sheet = await box(popup);
         expect(sheet.y + sheet.height).toBeGreaterThanOrEqual(size.height - 1);
         expect(sheet.width).toBeGreaterThanOrEqual(size.width - 1);
         expect((await box(create)).height).toBeGreaterThanOrEqual(48);
         // A press above the sheet closes it.
         await page.mouse.click(size.width / 2, 40);
         await expect(list).toBeHidden();
+        // So does Close in its title row, a 44 px target.
+        await connectionSelect(details).click();
+        await expect(list).toBeVisible();
+        const close = page.getByRole("button", { name: "Close choices" });
+        const target = await box(close);
+        const row = await box(title);
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+        expect(
+          Math.abs(target.y + target.height / 2 - (row.y + row.height / 2)),
+        ).toBeLessThan(4);
+        await close.click();
+        await expect(list).toBeHidden();
+        await expect(connectionSelect(details)).toBeFocused();
       }
     });
 

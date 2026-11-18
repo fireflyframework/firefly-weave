@@ -112,11 +112,9 @@ let sequence = 0;
         <weave-icon [name]="icon()" />
       </button>
     </div>
+    <!-- The popup scrolls; inside it, a phone sheet's title row and the listbox. -->
     <div
       class="choice-list"
-      role="listbox"
-      [id]="id + '-list'"
-      [attr.aria-label]="label() + ' options'"
       [hidden]="!open()"
       [weaveAnchoredPopover]="open()"
       [popoverAnchor]="anchor"
@@ -124,56 +122,78 @@ let sequence = 0;
       (popoverClosed)="close()"
       (mousedown)="$event.preventDefault()"
     >
-      @if (open()) {
-        @if (sheetTitle()) {
-          <div class="choice-sheet-title" role="presentation">
-            {{ sheetTitle() }}
-          </div>
-        }
-        @for (option of filtered(); track option.value; let index = $index) {
-          @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
-            <div class="choice-rule" role="presentation"></div>
-          }
-          @if (option.group && option.group !== filtered()[index - 1]?.group) {
-            <div class="choice-group" role="presentation">
-              {{ option.group }}
-            </div>
-          }
-          <div
-            role="option"
-            class="choice-option"
-            [class.choice-action]="option.action"
-            [id]="id + '-option-' + index"
-            [attr.data-value]="option.value"
-            [attr.aria-selected]="value() === option.value"
-            [attr.aria-disabled]="option.disabled || null"
-            [class.active]="active() === index"
-            (mousemove)="hover(index)"
-            (click)="$event.preventDefault(); pick(index)"
+      @if (open() && sheetTitle()) {
+        <div class="choice-sheet-title">
+          <span>{{ sheetTitle() }}</span>
+          <!-- For touch and pointer; the keyboard closes the list with Escape
+               and keeps its focus in the field. -->
+          <button
+            type="button"
+            class="icon-button choice-sheet-close"
+            tabindex="-1"
+            aria-label="Close choices"
+            (click)="close()"
           >
-            @if (option.action) {
-              <span class="choice-label"
-                ><weave-icon name="plus" [size]="16" />{{ option.label }}</span
-              >
-            } @else {
-              <span>{{ option.label }}</span>
-            }
-            @if (option.description) {
-              <small
-                >{{ option.description }}
-                @if (option.note) {
-                  · <span class="choice-note">{{ option.note }}</span>
-                }
-              </small>
-            }
-            @if (value() === option.value) {
-              <weave-icon name="check" />
-            }
-          </div>
-        } @empty {
-          <p class="choice-empty" role="presentation">No matching choices.</p>
-        }
+            <weave-icon name="close" />
+          </button>
+        </div>
       }
+      <div
+        class="choice-options"
+        role="listbox"
+        [id]="id + '-list'"
+        [attr.aria-label]="label() + ' options'"
+      >
+        @if (open()) {
+          @for (option of filtered(); track option.value; let index = $index) {
+            @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
+              <div class="choice-rule" role="presentation"></div>
+            }
+            @if (
+              option.group && option.group !== filtered()[index - 1]?.group
+            ) {
+              <div class="choice-group" role="presentation">
+                {{ option.group }}
+              </div>
+            }
+            <div
+              role="option"
+              class="choice-option"
+              [class.choice-action]="option.action"
+              [id]="id + '-option-' + index"
+              [attr.data-value]="option.value"
+              [attr.aria-selected]="value() === option.value"
+              [attr.aria-disabled]="option.disabled || null"
+              [class.active]="active() === index"
+              (mousemove)="hover(index)"
+              (click)="$event.preventDefault(); pick(index)"
+            >
+              @if (option.action) {
+                <span class="choice-label"
+                  ><weave-icon name="plus" [size]="16" />{{
+                    option.label
+                  }}</span
+                >
+              } @else {
+                <span>{{ option.label }}</span>
+              }
+              @if (option.description) {
+                <small
+                  >{{ option.description }}
+                  @if (option.note) {
+                    · <span class="choice-note">{{ option.note }}</span>
+                  }
+                </small>
+              }
+              @if (value() === option.value) {
+                <weave-icon name="check" />
+              }
+            </div>
+          } @empty {
+            <p class="choice-empty" role="presentation">No matching choices.</p>
+          }
+        }
+      </div>
     </div>
   `,
   styles: [
@@ -328,9 +348,18 @@ let sequence = 0;
         background: var(--scrim);
       }
       .choice-list[data-side="sheet"] .choice-sheet-title {
-        display: block;
-        padding: var(--space-2) 10px var(--space-3);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        padding: 0 0 var(--space-1) 10px;
         font: var(--type-label);
+      }
+      .choice-sheet-close {
+        flex: none;
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
       }
       .choice-list[data-side="sheet"] .choice-option {
         align-content: center;
@@ -440,7 +469,7 @@ export class Select {
     }
     this.active.set(next);
     requestAnimationFrame(() => {
-      const list = this.host.querySelector<HTMLElement>('[role="listbox"]');
+      const list = this.host.querySelector<HTMLElement>(".choice-list");
       const row = list?.querySelector<HTMLElement>(
         `[id="${this.id}-option-${next}"]`,
       );
@@ -484,7 +513,7 @@ export class Select {
       if (event.key === "Home") next = 0;
       else if (event.key === "End") next = this.filtered().length - 1;
       else if (event.key.startsWith("Page")) {
-        const list = this.host.querySelector<HTMLElement>('[role="listbox"]');
+        const list = this.host.querySelector<HTMLElement>(".choice-list");
         next = list
           ? pageOptionIndex(list, this.active(), direction)
           : this.active() + direction;
