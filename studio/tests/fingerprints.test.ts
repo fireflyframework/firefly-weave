@@ -170,25 +170,49 @@ describe("fingerprints", () => {
     };
     expect(staleReason(pin as never, undefined)).toBe("settings");
   });
-  it("hash 200 steps quickly", () => {
-    const many: Step[] = Array.from({ length: 200 }, (_, index) => ({
-      id: `step-${index}`,
-      kind: "action",
-      uses: "crm.lookup@1.0.0",
-      with: {
-        object: {
-          id: index
-            ? { ref: `/steps/step-${index - 1}/output/id` }
-            : { ref: "/input/id" },
-          note: { literal: "x".repeat(200) },
-        },
-      },
-    }));
-    fingerprints(inputs(many));
-    const started = performance.now();
-    for (let round = 0; round < 5; round++) fingerprints(inputs(many));
-    // The browser gate (10 ms) runs in the performance suite; here a generous bound catches a quadratic slip.
-    expect((performance.now() - started) / 5).toBeLessThan(50);
+  it("hash 200 steps in time that grows linearly with the steps", () => {
+    // A chain of steps, each reading the one before it.
+    const chain = (length: number): FingerprintInputs =>
+      inputs(
+        Array.from({ length }, (_, index) => ({
+          id: `step-${index}`,
+          kind: "action",
+          uses: "crm.lookup@1.0.0",
+          with: {
+            object: {
+              id: index
+                ? { ref: `/steps/step-${index - 1}/output/id` }
+                : { ref: "/input/id" },
+              note: { literal: "x".repeat(200) },
+            },
+          },
+        })),
+      );
+    // The time of one hash, measured over `times` hashes in a row.
+    const duration = (hashed: FingerprintInputs, times: number) => {
+      const started = performance.now();
+      for (let time = 0; time < times; time++) fingerprints(hashed);
+      return (performance.now() - started) / times;
+    };
+    // How long hashing takes depends on the machine and its load, so the test
+    // compares two sizes on the same machine, far enough apart that noise can't
+    // blur them: eight times the steps take about eight times as long when the
+    // work is linear, and about sixty-four times as long when it is quadratic.
+    // The small chain is hashed eight times per measurement, so both
+    // measurements last about as long; the fastest of several alternating runs
+    // leaves out the pauses the hashing didn't cause. Absolute speed is checked
+    // in the browser performance suite (tests/browser/performance.spec.ts).
+    const small = chain(25);
+    const large = chain(200);
+    fingerprints(large);
+    let fastestSmall = Infinity;
+    let fastestLarge = Infinity;
+    for (let round = 0; round < 9; round++) {
+      fastestSmall = Math.min(fastestSmall, duration(small, 8));
+      fastestLarge = Math.min(fastestLarge, duration(large, 1));
+    }
+    expect(fastestLarge / fastestSmall).toBeLessThan(20);
+    expect(fingerprints(large).size).toBe(200);
   });
 });
 

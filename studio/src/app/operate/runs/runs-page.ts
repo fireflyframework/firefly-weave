@@ -89,6 +89,7 @@ import {
   runsQuery,
   type RunsFilters,
 } from "./runs-model";
+import { personLearned } from "./person-scope";
 import {
   instanceKey,
   type RunStepsView,
@@ -98,24 +99,6 @@ import {
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
-/**
- * Whether only the person behind the same platform, environment and sign-in
- * became known. Runs reads before Studio knows them, with the same session,
- * so nothing read belongs to anyone else; any other change of scope does.
- */
-function personLearned(before: string, after: string): boolean {
-  if (!before) return false;
-  const [environment, person, ended] = JSON.parse(before) as unknown[];
-  const [nextEnvironment, nextPerson, nextEnded] = JSON.parse(
-    after,
-  ) as unknown[];
-  return (
-    person === null &&
-    nextPerson !== null &&
-    environment === nextEnvironment &&
-    ended === nextEnded
-  );
-}
 /** The most runs one bulk action takes, one after another. */
 const BULK_LIMIT = 50;
 const STEP_PAGE = 200;

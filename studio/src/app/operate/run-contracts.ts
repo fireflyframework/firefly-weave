@@ -202,6 +202,18 @@ export interface RunLogPage {
   items: RunLogEntry[];
   next_cursor: string | null;
 }
+/** An entry of the log across runs, with the run it belongs to. */
+export interface ExecutionLogEntry extends RunLogEntry {
+  run_id: string;
+  workflow_name: string;
+  workflow_version: string;
+  test: boolean;
+}
+/** Entries newest first; an entry of a run whose details are withheld is a row with its ID only. */
+export interface ExecutionLogPage {
+  items: (ExecutionLogEntry | UnavailableRun)[];
+  next_cursor: string | null;
+}
 export interface RunSummaryQuery {
   workflow?: string;
   /** Needs `workflow`. */
@@ -245,6 +257,29 @@ export interface RunLogQuery {
   limit?: number;
   cursor?: string;
 }
+/**
+ * `execution_logs.list` query. The range is `[from, to)`: at most 7 days, or
+ * 6 hours with `contains`; without `from` it is the hour before `to` (now by
+ * default). The cursor is bound to every other value, `from` and `to` too.
+ */
+export interface ExecutionLogQuery {
+  /** RFC 3339. */
+  from?: string;
+  /** RFC 3339. */
+  to?: string;
+  workflow?: string;
+  /** The lowest level returned. */
+  level?: LogLevel;
+  code?: string;
+  /** A static step ID. */
+  node_id?: string;
+  /** 1 to 200 characters, matched whatever their case; never kept in an address. */
+  contains?: string;
+  include_test?: boolean;
+  /** 1 to 500; 100 by default. */
+  limit?: number;
+  cursor?: string;
+}
 
 export const isUnavailableRun = (
   item: RunSummaryItem,
@@ -275,7 +310,7 @@ export const childRunsQuery = (parent: RunSummary): RunSummaryQuery => ({
  * server as a space. Absent and empty values are left out.
  */
 export function runViewQuery(
-  query: RunSummaryQuery | RunStepQuery | RunLogQuery,
+  query: RunSummaryQuery | RunStepQuery | RunLogQuery | ExecutionLogQuery,
 ): string {
   const parts: string[] = [];
   for (const [name, value] of Object.entries(query)) {

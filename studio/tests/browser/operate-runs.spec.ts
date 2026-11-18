@@ -501,12 +501,10 @@ for (const viewport of [
       await expect(secret).toContainText(
         "This output is classified as secret.",
       );
-      // Logs are not served yet: the tab says so and asks for nothing.
-      await detail.getByRole("tab", { name: "Logs" }).click();
-      await expect(detail).toContainText(
-        "Logs aren't available from this platform yet.",
-      );
-      expect(runs.logs).toEqual([]);
+      // Steps keeps its two tabs; the run's log entries have their own section.
+      await expect(
+        detail.getByRole("tablist", { name: "Steps" }).getByRole("tab"),
+      ).toHaveText(["Timeline", "Input/Output"]);
       // A finished run is not read again.
       const read = runs.steps.length;
       await page.clock.runFor(6_000);

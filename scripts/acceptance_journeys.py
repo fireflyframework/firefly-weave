@@ -95,6 +95,7 @@ CAPABILITIES = (
     "kubernetes-operations",
     "metrics",
     "logs",
+    "container-logs",
     "alerts",
     "operations-explanations",
     # Acceptance and release

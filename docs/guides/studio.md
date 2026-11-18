@@ -1994,7 +1994,13 @@ value, as the run's detail does.
   the queue and the time it ran. Loop iterations sit under their step, and a
   step that called a workflow opens the run it called. **Input/Output** shows a
   step's recorded output only when you select **Show output**, and says why
-  when an output can't be shown. **Logs** aren't available yet. **Events**
+  when an output can't be shown. **Logs**, after **Steps**, lists the run's log
+  entries oldest first, so the newest is at the bottom: each entry's time to the
+  millisecond, level, source (**Engine**, **Worker**, **Connector** or **AI**),
+  step and message, how many values the platform hid ("1 value hidden"),
+  **Shortened** when a long message was cut, and a worker's code and fields under
+  the message. **Level** and **Step** narrow it; it shows every level and step
+  when a run opens. **Events**
   lists the recorded events in plain sentences, each with **View raw event**,
   and **Technical details** holds the run ID, the correlation key, the
   artifact, and the run data. While the run is still going, Studio reads it and
@@ -2017,6 +2023,35 @@ value, as the run's detail does.
   separate permission, a **Reason**, and the exact run ID, and the platform
   refuses it while references or active work remain. Deletion is never
   automatic.
+
+**Read logs across runs in Logs.** **Logs**, after **Metrics** under
+**Operate**, needs `run.read`. It lists the log entries of every run in the
+environment, newest first, from the last hour and from **Warning** up, without
+test runs. Each entry shows its time, level, step, source, and message, with its
+workflow, its version, and a link to its run; the entry of a run whose details
+are withheld reads "This run's details are withheld." without its text.
+
+- **Find entries** with **Time** (the last 15 minutes, hour, 6 hours, 24 hours
+  or 7 days), **Level**, **Workflow**, **Step** (a step ID), **Code**, **Message
+  contains** and **Include test runs**. The list updates as you change a filter.
+  The address keeps every filter except the message, which never leaves the
+  page, so a shared link never carries the text you searched for. A message
+  search covers at most 6 hours: with a longer range, Studio says "Narrow the
+  time range to 6 hours or less to search messages." and searches nothing.
+- **Follow** reads the newest entries every 10 seconds while the page is open
+  and visible, and puts them on top, so what you read stays where it is.
+  **Refresh** reads them at once, and **Load older entries** continues the list
+  you are reading.
+- In a narrow window, the filters fold behind a summary such as "Filters: last
+  6 hours · Error only" and **Change filters**.
+- If a read takes too long, Studio says "Logs took too long to read. Narrow the
+  time range or the filters, or try again." with **Try again**. A platform
+  that doesn't serve logs yet says "This platform can't show logs yet." once,
+  and Studio asks it no more until you reload the page.
+
+Worker and connector entries are kept for 7 days by default; [Run
+logs](../operations/observability.md#run-logs) explains where entries come from,
+how they are redacted, and their limits.
 
 [Manage runs and business cases](execution-management.md) explains business
 keys, archiving, and deletion in depth. To try a workflow without running it for

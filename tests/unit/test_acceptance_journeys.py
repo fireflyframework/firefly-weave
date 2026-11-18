@@ -156,6 +156,7 @@ def test_the_committed_map_is_valid():
         "compose-operations",
         "kubernetes-operations",
         "metrics",
+        "logs",
         "acceptance-foundations",
         "real-platform-journeys",
     ]
@@ -169,6 +170,9 @@ def test_the_committed_map_is_valid():
     for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.4", "J5.7", "J9.2/operations-controls"):
         assert enablement.missing(step) == (), step
     assert enablement.missing("J5.6") == ("alerts",)
+    # Run logs landed: J5.5 reads them; the deployment log reader waits for container logs.
+    assert enablement.missing("J5.5") == ()
+    assert enablement.missing("J0.4/deployment-log-reader") == ("container-logs",)
     # Step tests landed on the platform: J0 checks the role and the demo environment's test calls; executing a
     # step from Studio still waits for step execution.
     assert enablement.missing("J0.4/step-tester") == ()
