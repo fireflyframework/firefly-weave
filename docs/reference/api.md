@@ -287,6 +287,8 @@ that grows with each change.
   multiple, zero, signed, and zero-padded values are invalid.
 - A stale draft write answers HTTP 412 (`WV-ETAG`). Debug sessions and
   incidents keep their own conflict codes.
+- Triggers carry a revision too: a retarget without `If-Match` answers HTTP 422
+  (`WV-ETAG`), and one from an older revision HTTP 409 (`WV-REVISION`).
 - The SDK reports the real status and code instead of converting every
   revision conflict to one error.
 
@@ -611,6 +613,56 @@ out reads `output: null` with `omitted` naming why, such as
 ended. `POST {environment}/step-tests/{id}/answers` is published for AI agent
 steps and answers HTTP 501 `WV-UNAVAILABLE` until their runtime is served.
 
+### Draft test activations
+
+A **draft test activation** runs a whole saved draft for real, for Execute
+workflow in an environment. `POST {environment}/test-activations` with
+`{draft_id, draft_revision, bindings, acknowledged_side_effect,
+lifetime_seconds}` needs what a step test needs, for the whole draft: `step.test`,
+`catalog.read` on the project, test calls on, and `connection.bind` on every
+connection revision in `bindings`. `bindings` holds the connections, releases,
+assignment bindings and called workflows' activations an activation would. It
+answers HTTP 201 with the activation's ID, its artifact digest, its side effect
+and when it expires. The server refuses before writing anything:
+
+| Answer | When |
+| --- | --- |
+| 403 `WV-STEPTEST-DISABLED` | The environment's test calls are off |
+| 404 `WV-NOT-FOUND` | The draft or its revision isn't there |
+| 409 `WV-REVISION` | The draft was saved again after this revision |
+| 422 `WV-TESTACTIVATION-COMPILE` | The draft doesn't compile; `result.diagnostics` holds each problem's code, path and message |
+| 409 `WV-STEPTEST-CONFIRM` | The draft changes data and `acknowledged_side_effect` isn't exactly its strongest effect, counting agent tools and the whole tree of every pinned called workflow; `result` names the effect and the steps that cause it |
+| 422 `WV-TESTACTIVATION-LIFETIME` | A step may take longer than an hour |
+| 429 `WV-STEPTEST-BUSY` | The person started 30 test runs, step tests or test activations here in the last minute |
+
+It lives `lifetime_seconds` (900 by default, at most 3,600), never less than its
+longest step timeout, and its runs never run longer than an hour. It is a test
+activation: no list, lookup or call finds it.
+
+Only its creator can use it; anyone else gets 404:
+
+- `POST {environment}/test-activations/{id}/runs` with `{input}` starts a test
+  run (HTTP 201, a run view) without `run.start`, and an `Idempotency-Key` sent
+  again answers the same run. Step tests and draft test runs share the limits: 4
+  running and 30 started a minute per person and environment (HTTP 429
+  `WV-STEPTEST-BUSY`).
+- `POST {environment}/test-activations/{id}/listen` with `{secret_ref}` also
+  needs `trigger.manage` and answers `{test_url, expires_at}`: a signed webhook
+  URL, with no secret in it, whose events start test runs of the draft. Sign
+  requests as for any webhook (see
+  [Signed ingress](http-and-webhooks.md#signed-ingress)); listening again answers
+  the same URL. The trigger operations never list, stop or move it.
+- `DELETE {environment}/test-activations/{id}` retires it at once (HTTP 204) and
+  stops its test URL; runs already started go on.
+
+Runs and signed events after it expires, or after it is retired, answer HTTP 410
+`WV-TESTACTIVATION-EXPIRED`. A background sweep retires expired ones, stops their
+test URLs, and deletes them once no run retention keeps names them. Running a
+draft that calls other workflows also needs `run.start`, since each call starts a
+run of the called workflow's activation, flagged as a test run. Audits record
+`test_activation.create`, `.run`, `.listen` and `.retire` with identities and
+effects, never inputs or payloads.
+
 ### Health probes
 
 `GET /health/live` answers `{"status":"up"}` while the process runs, and
@@ -733,10 +785,31 @@ Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
 or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
-**Run summaries, steps, and logs.** `run_summaries.list` and `runs.steps` serve
-scoped operational metadata after checking both token and current permissions.
-`runs.logs` remains a published contract: an authorized request answers `501`
-with `WV-UNAVAILABLE`.
+**Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`,
+`runs.logs`, and `execution_logs.list` serve scoped operational data after
+checking both token and current permissions.
+
+- `runs.logs` merges the engine's entries, worded from the run's events (the
+  step and an error code only), with the entries its workers and connectors
+  wrote, oldest first. `level` keeps that level and above, `source` one source,
+  and `node_id` one static step. A run whose details are withheld answers as
+  `runs.read` does.
+- `execution_logs.list` reads entries across runs, newest first: what workers
+  and connectors wrote, and engine entries for runs that failed, timed out or
+  were canceled and steps that failed or timed out (`warning` when the failure
+  was handled). Without `from` it reads the hour before `to` (default: now). A
+  range longer than 7 days, or than 6 hours with `contains`, answers `422` with
+  `WV-FILTER`. `contains` finds text whatever its case and takes `%` and `_` as
+  plain characters; it searches only what workers and connectors wrote. Test
+  runs are left out unless you send `include_test=true`. An entry of a run whose
+  details are withheld is a row without text, and a search leaves those rows
+  out.
+- A log read that takes longer than 2 seconds answers `503` with
+  `WV-UNAVAILABLE`: narrow the range or the filters.
+- Log pages follow each entry's time, and a page never repeats an entry.
+  Workers send entries in batches, up to a few seconds after they write them,
+  so an entry that arrives after a page and is dated before its last entry
+  shows in a new read from the first page, not on the next page.
 
 - Run summaries and `runs.list` default to `order=started_desc`. They also accept
   `started_asc` and `updated_desc`; `runs.list` additionally accepts `order=id`.
@@ -747,7 +820,8 @@ with `WV-UNAVAILABLE`.
   last. `updated_desc` is a live view: updates can move a run between pages,
   so refresh from the first page to see its latest position. Steps sort by
   scheduled time, static step ID and full instance key; unknown times sort last.
-- `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
+- `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default);
+  `execution_logs.list` too (100 by default).
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
 - Test runs are left out unless you send `include_test=true`, and archived runs
@@ -1121,6 +1195,62 @@ body, and the caller holds `transaction.reconcile`. A transaction's
 with `run.read`, as run history does; write justifications with that audience in
 mind.
 
+## Move a trigger to another version
+
+A **retarget** moves a trigger to another activation of the same workflow in the
+same environment, so it keeps working when you activate a new version: a webhook
+keeps its URL, a Kafka trigger its topic and offsets, an app event source its
+provider setup, an email source its mailbox position, and a platform-event
+trigger its starts. Send the trigger's revision, which its read answers as the
+`ETag`, in `If-Match`, and the new activation in the body:
+
+```http
+POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/broker-triggers/{identifier}/retarget
+If-Match: "3"
+Content-Type: application/json
+
+{"activation_id": "<the new activation's ID>"}
+```
+
+The answer is the trigger at its next revision. The rules are the same for every
+kind:
+
+- **The trigger runs as you afterwards.** You need every capability creating
+  that kind of trigger needs, listed in the inventory below, and the new
+  activation must pass the readiness checks creating one runs. A platform-event
+  trigger whose runs may resolve their transaction also needs
+  `transaction.reconcile`.
+- **The new version must take what the trigger delivers.** A webhook or Kafka
+  trigger needs an input schema equal to its payload schema or to the current
+  version's input; an app event source needs an input that accepts what its
+  mapping makes of every event it dispatches; an email source needs an input that
+  accepts every received message; a platform-event trigger needs a version that
+  declares its events and sources. Otherwise HTTP 409 `WV-TRIGGER-SCHEMA-CHANGED`.
+- **Only a version of the same workflow.** Another workflow answers HTTP 409
+  `WV-TRIGGER-WORKFLOW`; a test activation, or one in another environment, isn't
+  found.
+- **A disabled trigger stays disabled** (HTTP 409 `WV-TRIGGER-DISABLED`), and so
+  does an email source that waits for a rebaseline until you rebaseline it.
+  Disabling a trigger moves its revision, so a retarget prepared before it answers
+  HTTP 409 `WV-REVISION`.
+- **Kafka triggers and app event sources get a new source binding** for you, and
+  their old one is revoked in the same transaction. A Kafka consumer that holds
+  the trigger's lease stops at its next check and the trigger is claimed again; an
+  email poll in flight admits nothing, and the next poll reads on from where the
+  last one stopped. Events an app event source or platform-event trigger accepted
+  before the move start the new version.
+- **The audit records identities only:** `trigger.retarget`, `broker.retarget`,
+  `provider.source.retarget`, `email.source.retarget` or
+  `event_trigger.retarget`, with the old and new activation and principal (and
+  binding) IDs.
+
+Schedules move with `schedules.save` and `If-Match`, as before.
+
+**Email sources.** `GET …/email/sources` and `GET …/email/sources/{identifier}`
+need `email.read` and show each source's `id`, `connection_revision_id`,
+`activation_id`, `mailbox`, `revision` and `disabled` (true while it waits for a
+rebaseline). They never show messages, policy or mailbox positions.
+
 ## Operation inventory
 
 The table lists every operation with its canonical path and the capability it
@@ -1310,6 +1440,7 @@ switches a rule off needs neither.
 | `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
 | `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
+| `execution_logs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/execution-logs` | run.read |
 | `runs.agent_log` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/agents/{key}/log` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
@@ -1330,6 +1461,7 @@ switches a rule off needs neither.
 | `tasks.heartbeat` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/heartbeat` | task.heartbeat |
 | `tasks.complete` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/complete` | task.complete |
 | `tasks.fail` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/fail` | task.complete |
+| `tasks.log` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/logs` | task.log |
 | `tasks.credentials` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/credentials` | credential.lease |
 | `subscriptions.save` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/subscriptions` | subscription.manage and connection.manage and connection.bind and source authority |
 | `subscriptions.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/subscriptions` | delivery.read |
@@ -1368,6 +1500,17 @@ switches a rule off needs neither.
 | `debug.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/debug/sessions` | simulate |
 | `debug.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}` | simulate |
 | `debug.command` | `POST /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}/commands` | simulate |
+| `triggers.retarget` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{identifier}/retarget` | trigger.manage and run.start |
+| `broker_triggers.retarget` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/broker-triggers/{identifier}/retarget` | trigger.manage and run.start and connection.manage and connection.bind |
+| `provider_sources.retarget` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/provider-sources/{identifier}/retarget` | trigger.manage and run.start and connection.manage and connection.bind |
+| `email_sources.retarget` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources/{identifier}/retarget` | email.manage and trigger.manage and connection.bind and run.start |
+| `event_triggers.retarget` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/retarget` | trigger.manage and run.start and run.read |
+| `email_sources.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources` | email.read |
+| `email_sources.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources/{identifier}` | email.read |
+| `test_activations.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-activations` | step.test |
+| `test_activations.run` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-activations/{identifier}/runs` | step.test |
+| `test_activations.listen` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-activations/{identifier}/listen` | step.test and trigger.manage |
+| `test_activations.retire` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/test-activations/{identifier}` | step.test |
 
 | `deployment_plans.approval` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans/{identifier}/approval` | deployment.read |
 | `deployment_jobs.reconcile` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-jobs/{identifier}/reconcile` | deployment.apply and deployment.approve |

@@ -32,6 +32,7 @@ from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import ActionContext, ResolvedSecret
 from firefly_weave.contracts.email import EmailReplyRequest, EmailSendRequest
+from firefly_weave.contracts.log_values import EXECUTION_LOG_DAILY_ENTRIES
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import (
     CompletionAcknowledgment,
@@ -39,6 +40,8 @@ from firefly_weave.contracts.workers import (
     LeaseProof,
     TaskError,
     TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
 )
 from firefly_weave.definitions.models import capacity_rejected
 from firefly_weave.email.service import EmailService
@@ -46,6 +49,7 @@ from firefly_weave.operations.execution import ReservedSlots, request_execution
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
+from firefly_weave.sdk.task_log import hide_leased
 from firefly_weave.workers.leases import TaskService
 
 if TYPE_CHECKING:
@@ -110,6 +114,14 @@ class ConnectorExecutionService:
             actor = await self.access.load_principal(principal_id, tx=tx)
             return await getattr(self.tasks, name)(tx, *args, actor=actor, scope=scope, context=AuditContext())
 
+    async def log(self, scope: Scope, principal_id: UUID, request: TaskLogRequest, daily_limit: int) -> TaskLogAccepted:
+        """A native handler's log entries, written as a remote worker's are: outside the project's operation lock."""
+        async with self.uow.open(scope, mutation=True, admission=False) as tx:
+            actor = await self.access.load_principal(principal_id, tx=tx)
+            return await self.tasks.log(
+                tx, request, actor=actor, scope=scope, context=AuditContext(), daily_limit=daily_limit
+            )
+
     async def execute(
         self, scope: Scope, principal_id: UUID, lease: TaskLease, *, reservation: ReservedSlots | None = None
     ) -> JsonValue:
@@ -137,7 +149,7 @@ class ConnectorExecutionService:
             if not active or slot not in invocation.connection.secret_refs:
                 raise ValueError("Credential unavailable")
             actor = await self.access.load_principal(principal_id)
-            return await current(
+            secret = await current(
                 partial(
                     self.tasks.credentials,
                     CredentialRequest(lease=lease.proof, connection_revision_id=invocation.connection.id, slot=slot),
@@ -147,6 +159,9 @@ class ConnectorExecutionService:
                 ),
                 "Credential unavailable",
             )
+            # The value never reaches this task's log entries.
+            hide_leased(lease.proof, secret.value)
+            return secret
 
         async def authorize() -> None:
             self.registry.require_operational()
@@ -229,8 +244,20 @@ class ConnectorExecutionService:
 class ServiceTransport:
     """The in-process worker transport, with the remote transport's replay policy (sdk/transport.py)."""
 
-    def __init__(self, service: ConnectorExecutionService, scope: Scope, principal_id: UUID, instance_id: UUID) -> None:
+    def __init__(
+        self,
+        service: ConnectorExecutionService,
+        scope: Scope,
+        principal_id: UUID,
+        instance_id: UUID,
+        *,
+        daily_log_entries: int = EXECUTION_LOG_DAILY_ENTRIES[0],
+    ) -> None:
         self.service, self.scope, self.principal_id, self.instance_id = service, scope, principal_id, instance_id
+        self.daily_log_entries = daily_log_entries
+
+    async def log(self, request: TaskLogRequest) -> TaskLogAccepted:
+        return await self.service.log(self.scope, self.principal_id, request, self.daily_log_entries)
 
     async def claim(self, limit: int) -> list[TaskLease]:
         from firefly_weave.definitions.models import CatalogError

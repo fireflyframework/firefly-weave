@@ -59,6 +59,7 @@ from firefly_weave.operations.alert_rules import AlertRuleService, AlertService
 from firefly_weave.operations.fact_positions import run_position
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.operations.retention_periods import RetentionPeriodService
+from firefly_weave.settings import Settings
 
 
 def _revision(request: Request) -> int | None:
@@ -92,9 +93,12 @@ class AlertController:
         addresses: AlertAddressService,
         alerts: AlertService,
         retention: RetentionPeriodService,
+        configured: Settings,
     ) -> None:
         self.rules, self.channels, self.settings = rules, channels, settings
         self.consents, self.addresses, self.alerts, self.retention = consents, addresses, alerts, retention
+        # The platform's own settings (the alert settings service is `settings`).
+        self.configured = configured
 
     @operation("alert_rules.list")
     async def rules_list(self, request: Request) -> JSONResponse:
@@ -355,6 +359,9 @@ class AlertController:
     @operation("operations_retention.read")
     async def retention_read(self, request: Request) -> JSONResponse:
         periods = await self.retention.read(
-            request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+            request.state.principal,
+            request_scope(request, environment=True),
+            context=request.state.audit_context,
+            log_retention_days=self.configured.execution_log_retention_days,
         )
         return JSONResponse(periods.model_dump(mode="json"))

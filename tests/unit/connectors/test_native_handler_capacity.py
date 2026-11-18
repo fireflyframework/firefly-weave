@@ -92,7 +92,8 @@ class Tasks:
 
     async def credentials(self, request, *, actor, scope, context):
         self.admit("credentials")
-        return SimpleNamespace(slot=request.slot)
+        # A leased value, as every resolved secret carries one.
+        return SimpleNamespace(slot=request.slot, value="leased-" + request.slot)
 
     async def credential_authority(self, request, *, actor, scope, context):
         self.admit("credential_authority")

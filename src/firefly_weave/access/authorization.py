@@ -70,6 +70,19 @@ class AuthorizationService:
         if not allowed:
             raise AccessDenied()
 
+    def require_somewhere(
+        self, principal: Principal, scope: Scope | None, capability: str, *, context: AuditContext | None = None
+    ) -> None:
+        """Refuse a caller who holds ``capability`` here for no resource at all, before the resource the request
+        names is known (a lease's worker and its release). The check with that resource still follows."""
+        held = principal.active and any(
+            capability in ROLE_CAPABILITIES[grant.role] and contains(grant.scope, scope) for grant in principal.grants
+        )
+        if not held or (principal.kind == "worker" and capability not in ROLE_CAPABILITIES["worker"]):
+            # Records the denial the way every refused check is recorded.
+            self.require(principal, scope, capability, context=context)
+            raise AccessDenied()
+
     def require_delegation(self, principal: Principal, grant: Grant, *, context: AuditContext | None = None) -> None:
         platform = any(g.role == "platform_admin" and not g.resources for g in principal.grants)
         administered = grant.scope is not None and any(

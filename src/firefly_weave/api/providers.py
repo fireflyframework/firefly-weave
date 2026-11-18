@@ -25,7 +25,8 @@ from starlette.responses import JSONResponse, Response
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import page_request, page_response
-from firefly_weave.contracts.providers import ProviderSourceRequest
+from firefly_weave.api.triggers import retarget_body, tagged
+from firefly_weave.contracts.providers import ProviderSource, ProviderSourceRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.providers.dispatcher import ProviderDispatcher
 from firefly_weave.providers.service import ProviderIngressService, denied
@@ -55,7 +56,21 @@ class ProviderController:
             UUID(request.path_params["identifier"]),
             context=request.state.audit_context,
         )
-        return JSONResponse(result.model_dump(mode="json"))
+        assert isinstance(result, ProviderSource)
+        return tagged(result, request)
+
+    @operation("provider_sources.retarget")
+    async def retarget(self, request: Request) -> JSONResponse:
+        expected, body = await retarget_body(request)
+        result = await self.ingress.retarget(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            body.activation_id,
+            expected,
+            context=request.state.audit_context,
+        )
+        return tagged(result, request)
 
     @operation("provider_sources.disable")
     async def disable(self, request: Request) -> JSONResponse:

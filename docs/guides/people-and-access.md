@@ -115,9 +115,13 @@ A worker identity stays limited to worker capabilities even if a human role is
 attached to it by mistake.
 
 **Running steps for real needs a role and an environment that allows it.** A
-step tester (`step_tester`) can run one step of a saved draft for real, but only
-where that environment's test calls are on, and only with connections they may
-bind. Test calls are off in every environment until someone with
+step tester (`step_tester`) can run one step of a saved draft for real, or the
+whole draft through a short-lived test activation (Execute workflow in an
+environment), but only where that environment's test calls are on, and only with
+connections they may bind. Listening for a test event on such an activation also
+needs `trigger.manage` (the `deployer` role), and running a draft that calls other
+workflows also needs `run.start` (the `operator` role). Only the person who
+created a test activation can run, listen through or retire it. Test calls are off in every environment until someone with
 `environment.manage` (a tenant administrator) turns them on; `weave platform
 up` turns them on in the local demo environment only. Read and change the
 setting with the API; the first save sends no `If-Match`, and later saves send

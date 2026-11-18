@@ -30,9 +30,17 @@ from uuid import UUID, uuid4
 
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.values import JsonValue
-from firefly_weave.contracts.workers import CompletionAcknowledgment, LeaseProof, TaskError, TaskLease
+from firefly_weave.contracts.workers import (
+    CompletionAcknowledgment,
+    LeaseProof,
+    TaskError,
+    TaskLease,
+    TaskLogAccepted,
+    TaskLogRequest,
+)
 from firefly_weave.sdk._retry import kind, raise_if_cancelled, retry_delay, unavailable
 from firefly_weave.sdk._settlement import lease_settlement
+from firefly_weave.sdk.task_log import INTERVAL_SECONDS, TaskLog, logging_task
 
 LOG = logging.getLogger(__name__)
 # The longest wait before claiming again after an outage: a longer one would leave a worker idle long after the
@@ -49,6 +57,12 @@ class Transport(Protocol):
     async def fail(self, lease: LeaseProof, error: TaskError) -> CompletionAcknowledgment: ...
 
 
+class LogTransport(Protocol):
+    """What a transport adds to carry ``task_log()`` entries; a transport without ``log`` drops them."""
+
+    async def log(self, request: TaskLogRequest) -> TaskLogAccepted: ...
+
+
 class Worker:
     def __init__(
         self,
@@ -58,6 +72,7 @@ class Worker:
         *,
         claim_retry_seconds: float = 0.5,
         max_claim_retry_seconds: float = 10.0,
+        log_interval_seconds: float = INTERVAL_SECONDS,
     ) -> None:
         if not 1 <= concurrency <= 100:
             raise ValueError("Concurrency must be 1..100")
@@ -66,8 +81,11 @@ class Worker:
             raise ValueError(
                 "The first claim retry wait must be positive and no longer than the longest, which is at most 300 s"
             )
+        if not 0 < log_interval_seconds <= 60:
+            raise ValueError("Log entries are sent at least every 60 s")
         self.client, self.handlers, self.concurrency = client, dict(handlers), concurrency
         self.claim_retry_seconds, self.max_claim_retry_seconds = claim_retry_seconds, max_claim_retry_seconds
+        self.log_interval_seconds = log_interval_seconds
         self.stopping = asyncio.Event()
         self.active: set[asyncio.Task[None]] = set()
         self.running = False
@@ -190,7 +208,11 @@ class Worker:
                 async with lease_settlement(lease.proof, absolute_deadline, valid_until=valid_until):
                     return await handler(lease)
 
-            execution = asyncio.create_task(execute_handler())
+            # task_log() inside the handler is this task's log; its entries go out while the lease holds.
+            log = TaskLog(lease.proof, getattr(self.client, "log", None), interval=self.log_interval_seconds)
+            with logging_task(log):
+                execution = asyncio.create_task(execute_handler())
+            log.start()
             renewal = asyncio.create_task(heartbeat())
             try:
                 done, _ = await asyncio.wait({execution, renewal}, return_when=asyncio.FIRST_COMPLETED)
@@ -200,14 +222,18 @@ class Worker:
                 try:
                     output = execution.result()
                 except ConnectorFailure as error:
+                    await log.close()
                     await self.client.fail(
                         lease.proof,
                         TaskError(completion_id=uuid4(), code=error.code, outcome=error.outcome, effect=error.effect),
                     )
                     return
                 except Exception:
+                    await log.close()
                     await self.client.fail(lease.proof, TaskError(completion_id=uuid4(), code="HANDLER_FAILED"))
                     return
+                # The last entries go out before the result, while the lease still holds.
+                await log.close()
                 # A failed completion transport is ambiguous; never re-execute the handler.
                 await self.client.complete(lease.proof, uuid4(), output)
             finally:
@@ -215,3 +241,5 @@ class Worker:
                 execution.cancel()
                 renewal.cancel()
                 await asyncio.gather(execution, renewal, return_exceptions=True)
+                # Without a result (a lost lease), what is left isn't sent.
+                await log.close(0)

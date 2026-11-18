@@ -124,6 +124,8 @@ the error never echoes a secret value; see
 | `WEAVE_SCHEDULER_DATABASE_URL` | Required for the startup compatibility inventory, including API-only processes | Separate execute-only catalog and scheduler URL; secret |
 | `WEAVE_OPERATIONS_POLICY` | `{}`; at most 32 KiB | JSON [operational policy](#operational-policy) that can only lower fixed per-project ceilings |
 | `WEAVE_TELEMETRY` | `{}`; at most 32 KiB | Disabled-by-default OTLP HTTP/protobuf export; see [observability](observability.md) |
+| `WEAVE_EXECUTION_LOG_RETENTION_DAYS` | `7`, range 1–30 | Days run log entries are kept; the operations loop prunes older ones. See [run logs](observability.md#run-logs) |
+| `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` | `200000`, range 1000–5000000 | Log entries an environment accepts per UTC day; more answer `429` with `WV-LOG-QUOTA` until the next day |
 | `WEAVE_DOCS_ENABLED` | `false` | Boolean; serves `/docs` and `/openapi.json` without authentication |
 
 ### Identity and sign-in

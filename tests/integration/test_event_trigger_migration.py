@@ -159,7 +159,8 @@ async def test_the_upgrade_adds_event_trigger_tables_with_exact_scope(upgraded):
             assert "exact_scope" in policies, table
             assert await connection.scalar(text(f"SELECT has_table_privilege('weave_app','{table}','DELETE')")) is False
         writable = {
-            "event_triggers": {"disabled", "disabled_at", "revision"},
+            # A retarget moves a trigger to another activation of its workflow, as the person who moves it.
+            "event_triggers": {"disabled", "disabled_at", "revision", "activation_id", "principal_id"},
             "event_trigger_starts": {"status", "code", "cause", "run_id", "started_at"},
             # An event's payload is written once and never changed.
             "event_trigger_payloads": set(),

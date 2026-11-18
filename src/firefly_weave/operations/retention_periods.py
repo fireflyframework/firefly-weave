@@ -32,7 +32,8 @@ from firefly_weave.operations import alert_loop, statistics
 from firefly_weave.persistence.uow import UnitOfWork
 
 
-def retention_periods() -> RetentionPeriods:
+def retention_periods(log_retention_days: int) -> RetentionPeriods:
+    """The periods each kind of record is kept; run log entries for the configured number of days."""
     kept: tuple[tuple[RetainedRecord, timedelta], ...] = (
         ("run_statistics_5m", statistics.RETENTION["5m"]),
         ("run_statistics_1h", statistics.RETENTION["1h"]),
@@ -42,6 +43,7 @@ def retention_periods() -> RetentionPeriods:
         ("change_requests", CHANGE_REQUESTS),
         ("alert_events", alert_loop.RETENTION),
         ("alerts", alert_loop.RETENTION),
+        ("execution_logs", timedelta(days=log_retention_days)),
     )
     return RetentionPeriods(
         items=[RetentionPeriod(record=record, seconds=int(period.total_seconds())) for record, period in kept]
@@ -53,7 +55,14 @@ class RetentionPeriodService:
     def __init__(self, uow: UnitOfWork, authorization: AuthorizationService) -> None:
         self.uow, self.authorization = uow, authorization
 
-    async def read(self, actor: Principal, scope: Scope, *, context: AuditContext) -> RetentionPeriods:
+    async def read(
+        self,
+        actor: Principal,
+        scope: Scope,
+        *,
+        context: AuditContext,
+        log_retention_days: int,
+    ) -> RetentionPeriods:
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Retention periods require an environment")
         self.authorization.require(actor, scope, "status.read", context=context)
@@ -61,4 +70,4 @@ class RetentionPeriodService:
             self.authorization.require(
                 await load_principal(tx.session, actor.id), scope, "status.read", context=context
             )
-        return retention_periods()
+        return retention_periods(log_retention_days)

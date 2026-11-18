@@ -16,9 +16,10 @@
 
 """Alerts have their own role: it reads and manages alerts, grants nothing else, and no other role gains it."""
 
-import importlib.util
 from pathlib import Path
 from uuid import uuid4
+
+from alembic.script import ScriptDirectory
 
 from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.models import Grant, Principal
@@ -31,13 +32,16 @@ MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations/versions"
 ALERT_CAPABILITIES = frozenset({"alert.read", "alert.manage"})
 
 
-def head_migration():
-    path = MIGRATIONS / f"{SCHEMA_VERSION}.py"
-    spec = importlib.util.spec_from_file_location("head_migration", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
+def newest_role_check() -> tuple[str, tuple[str, ...]]:
+    """The newest migration on the line to the schema version that rebuilds the role check, and its roles.
+
+    A migration that adds no role doesn't rebuild the check, so the walk passes it by.
+    """
+    for script in ScriptDirectory(str(MIGRATIONS.parent)).walk_revisions("base", SCHEMA_VERSION):
+        roles = getattr(script.module, "ROLES", None)
+        if roles is not None:
+            return script.revision, tuple(roles)
+    raise AssertionError("No migration rebuilds the role check")
 
 
 def test_the_alert_manager_role_reads_and_manages_alerts_only():
@@ -82,7 +86,6 @@ def test_default_accounts_cant_see_alerts_and_administrators_can_grant_it():
 
 
 def test_the_newest_role_check_accepts_every_role_and_nothing_new():
-    migration = head_migration()
-    assert migration.revision == SCHEMA_VERSION
-    assert set(migration.ROLES) == set(ROLE_CAPABILITIES)
-    assert len(set(migration.ROLES)) == len(migration.ROLES)
+    _, roles = newest_role_check()
+    assert set(roles) == set(ROLE_CAPABILITIES)
+    assert len(set(roles)) == len(roles)

@@ -38,6 +38,7 @@ from firefly_weave.connections.secrets import SecretGrant
 from firefly_weave.connectors.broker import BrokerPolicy
 from firefly_weave.connectors.dispatcher import ExecutorConfig
 from firefly_weave.contracts.client_configuration import ClientConfiguration, SignInFlow, SignInOption
+from firefly_weave.contracts.log_values import EXECUTION_LOG_DAILY_ENTRIES, EXECUTION_LOG_RETENTION_DAYS
 from firefly_weave.contracts.operational_policy import OperationsPolicy
 from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.operations.lumi_gateway import LumiGatewaySettings
@@ -53,6 +54,17 @@ def operations_from_env() -> OperationsPolicy:
         return OperationsPolicy.model_validate_json(raw)
     except (ValueError, UnicodeError):
         raise ValueError("Invalid WEAVE_OPERATIONS_POLICY configuration") from None
+
+
+def whole_number_from_env(name: str, bounds: tuple[int, int, int]) -> int:
+    """A whole number setting with its default and inclusive bounds; anything else names the variable."""
+    default, low, high = bounds
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    if not (len(raw) <= 9 and raw.isascii() and raw.isdigit() and low <= int(raw) <= high):
+        raise ValueError(f"{name} must be a whole number from {low} to {high}")
+    return int(raw)
 
 
 CLIENT_SIGN_IN_INVALID = "Invalid WEAVE_CLIENT_SIGN_IN configuration"
@@ -158,6 +170,12 @@ class Settings(BaseModel):
     database_url: SecretStr
     database_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     shutdown_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    execution_log_retention_days: int = Field(
+        default=EXECUTION_LOG_RETENTION_DAYS[0], ge=EXECUTION_LOG_RETENTION_DAYS[1], le=EXECUTION_LOG_RETENTION_DAYS[2]
+    )
+    execution_log_daily_entries: int = Field(
+        default=EXECUTION_LOG_DAILY_ENTRIES[0], ge=EXECUTION_LOG_DAILY_ENTRIES[1], le=EXECUTION_LOG_DAILY_ENTRIES[2]
+    )
 
     @model_validator(mode="after")
     def local_development_build(self) -> "Settings":
@@ -294,6 +312,12 @@ class Settings(BaseModel):
             ),
             secret_root=os.environ.get("WEAVE_SECRET_ROOT"),
             scheduler_enabled=enabled == "true",
+            execution_log_retention_days=whole_number_from_env(
+                "WEAVE_EXECUTION_LOG_RETENTION_DAYS", EXECUTION_LOG_RETENTION_DAYS
+            ),
+            execution_log_daily_entries=whole_number_from_env(
+                "WEAVE_EXECUTION_LOG_DAILY_ENTRIES", EXECUTION_LOG_DAILY_ENTRIES
+            ),
             scheduler_database_url=SecretStr(os.environ["WEAVE_SCHEDULER_DATABASE_URL"])
             if os.environ.get("WEAVE_SCHEDULER_DATABASE_URL")
             else None,

@@ -115,7 +115,7 @@ class DefinitionService:
         """Resolve an immutable execution pin under environment run authority.
 
         A normal start never finds a step test's activation. With ``test``, only a step test's own activation is
-        found, under ``step.test``, and only while it is neither retired nor expired.
+        found, under ``step.test``, and only while it is neither retired nor expired and test calls are on.
         """
         self.require(actor, scope, "step.test" if test else "run.start", context)
         if scope.environment_id is None:
@@ -141,6 +141,14 @@ class DefinitionService:
                 )
                 if not live:
                     raise CatalogError(410, "WV-TESTACTIVATION-EXPIRED", "This test activation has expired")
+                # Turning test calls off stops every test activation at once, whatever starts its run.
+                policy = await repository.rows(
+                    "SELECT test_calls FROM environment_test_policies WHERE tenant_id=:tenant "
+                    "AND project_id=:project AND environment_id=:environment",
+                    environment=scope.environment_id,
+                )
+                if not policy or policy[0]["test_calls"] != "enabled":
+                    raise CatalogError(403, "WV-STEPTEST-DISABLED", "Test calls are off in this environment")
             activation = Activation.model_validate_json(json.dumps(rows[0]["payload"]))
             latest = await repository.rows(
                 "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND project_id=:project "

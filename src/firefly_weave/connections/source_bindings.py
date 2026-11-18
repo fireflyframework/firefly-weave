@@ -201,25 +201,29 @@ class SourceBindingService:
 
     async def revoke(self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext) -> None:
         async with self.connections.uow.open(scope) as tx:
-            current = await load_principal(tx.session, actor.id)
-            self.connections.require(current, scope, "connection.manage", context)
-            rows = await RuntimeRepository(tx).rows(
-                f"SELECT revoked FROM connection_source_bindings WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
-            )
-            if not rows or rows[0]["revoked"]:
-                return
-            await RuntimeRepository(tx).execute("SELECT weave_control_begin('binding',:id)", id=identifier)
-            await RuntimeRepository(tx).execute(
-                f"UPDATE connection_source_bindings SET revoked=true,generation=generation+1 "
-                f"WHERE {SCOPE} AND id=:id AND NOT revoked",
-                id=identifier,
-            )
-            await audit(
-                tx.session,
-                current,
-                "connection.source.revoke",
-                str(identifier),
-                scope=scope,
-                capability="connection.manage",
-                context=context,
-            )
+            await self.revoke_in(tx, actor, identifier, context=context)
+
+    async def revoke_in(self, tx: Transaction, actor: Principal, identifier: UUID, *, context: AuditContext) -> None:
+        """Revoke a binding inside the caller's transaction, as when a source moves to a new binding."""
+        current = await load_principal(tx.session, actor.id)
+        self.connections.require(current, tx.scope, "connection.manage", context)
+        rows = await RuntimeRepository(tx).rows(
+            f"SELECT revoked FROM connection_source_bindings WHERE {SCOPE} AND id=:id FOR UPDATE", id=identifier
+        )
+        if not rows or rows[0]["revoked"]:
+            return
+        await RuntimeRepository(tx).execute("SELECT weave_control_begin('binding',:id)", id=identifier)
+        await RuntimeRepository(tx).execute(
+            f"UPDATE connection_source_bindings SET revoked=true,generation=generation+1 "
+            f"WHERE {SCOPE} AND id=:id AND NOT revoked",
+            id=identifier,
+        )
+        await audit(
+            tx.session,
+            current,
+            "connection.source.revoke",
+            str(identifier),
+            scope=tx.scope,
+            capability="connection.manage",
+            context=context,
+        )
