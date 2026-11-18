@@ -166,3 +166,13 @@ async def test_a_draft_run_that_outlives_its_activation_counts_until_its_own_tim
     error = await refused(run(env, second))
     assert (error.status, error.code) == (429, "WV-STEPTEST-BUSY")
     assert 3500 <= error.retry_after <= 3600
+
+
+async def test_with_test_calls_off_the_policy_answers_before_the_limits(drafts):  # noqa: F811
+    env = drafts
+    created = await env.create(env.tester, workflow("notify-moves", [NOTIFY]))
+    for _ in range(4):
+        await run(env, created)
+    await env.policy("disabled")
+    error = await refused(run(env, created))
+    assert (error.status, error.code) == (403, "WV-STEPTEST-DISABLED")
