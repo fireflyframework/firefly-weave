@@ -127,7 +127,10 @@ export interface EntryLine {
   step: string;
   message: string;
   flags: { icon: IconName; text: string }[];
-  /** A worker's code and fields, "ORDER.CHECKED  items=3"; "" for none. */
+  /**
+   * A worker's code and the fields its message doesn't already say,
+   * "ORDER.CHECKED  items=3"; "" for none.
+   */
   details: string;
 }
 
@@ -155,6 +158,15 @@ function fullDate(date: Date, timeZone?: string): string {
   return `${day}, ${clock(date, timeZone)}`;
 }
 const fieldText = (value: unknown) => (value === null ? "null" : String(value));
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whether the message already says the value, as a whole word of its own. */
+function said(message: string, value: unknown): boolean {
+  const text = fieldText(value);
+  return (
+    !!text &&
+    new RegExp(`(?<![\\w.-])${escaped(text)}(?![\\w.-])`).test(message)
+  );
+}
 
 /** One entry's words; its text is shown as given, never as markup. */
 export function entryLine(entry: RunLogEntry, timeZone?: string): EntryLine {
@@ -174,9 +186,10 @@ export function entryLine(entry: RunLogEntry, timeZone?: string): EntryLine {
       ? []
       : [
           ...(entry.code ? [entry.code] : []),
-          ...Object.entries(entry.fields).map(
-            ([key, value]) => `${key}=${fieldText(value)}`,
-          ),
+          // A field the sentence already says adds nothing under it.
+          ...Object.entries(entry.fields)
+            .filter(([, value]) => !said(entry.message, value))
+            .map(([key, value]) => `${key}=${fieldText(value)}`),
         ];
   return {
     time: clock(date, timeZone),

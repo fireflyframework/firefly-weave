@@ -122,6 +122,33 @@ describe("one log entry on screen", () => {
       "items=3  order=ORD-1041  cached=false  region=null  token=[redacted]",
     );
   });
+  it("leaves out a field whose value the message already says", () => {
+    expect(
+      entryLine(
+        entry({
+          source: "connector",
+          code: "HTTP.RESPONSE",
+          message: "POST smtp-relay.acme.example answered 550 in 312 ms",
+          fields: {
+            method: "POST",
+            host: "smtp-relay.acme.example",
+            status: 550,
+            duration_ms: 312,
+          },
+        }),
+        "UTC",
+      ).details,
+    ).toBe("HTTP.RESPONSE");
+    expect(
+      entryLine(
+        entry({
+          message: "Looked up 1 customer in billing-db",
+          fields: { customers: 1, attempt: 2, shard: "db1" },
+        }),
+        "UTC",
+      ).details,
+    ).toBe("CUSTOMER.LOOKED_UP  attempt=2  shard=db1");
+  });
   it("names an iteration of a step after the step", () => {
     expect(
       entryLine(entry({ node_id: "notify", instance_key: "notify[2]" }), "UTC")

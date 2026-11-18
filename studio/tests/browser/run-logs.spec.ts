@@ -249,9 +249,8 @@ for (const size of [
         "Looked up 1 customer in billing-db",
       );
       await expect(second.locator(".flag")).toHaveText("1 value hidden");
-      await expect(second.locator(".details")).toHaveText(
-        "CUSTOMER.LOOKED_UP  customers=1",
-      );
+      // The message already says "1 customer": only the code is added.
+      await expect(second.locator(".details")).toHaveText("CUSTOMER.LOOKED_UP");
       // Newest at the bottom.
       await expect(rowsOf(page).last().locator(".msg")).toContainText(
         "send failed: SMTP_REJECTED",
