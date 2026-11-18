@@ -88,6 +88,8 @@ class OperationsLoop:
         self.complete_until: datetime | None = None
         # Recompute chunk sizes per environment, in five-minute buckets: halved after a failure, grown after success.
         self.chunks: dict[str, int] = {}
+        # Log pruning batch sizes per environment: halved after a statement timeout, grown after a full batch.
+        self.log_batches: dict[str, int] = {}
 
     async def open(self) -> None:
         if self.task is not None or not self.settings.scheduler_enabled:
@@ -352,28 +354,38 @@ class OperationsLoop:
         return True
 
     async def maintain_logs(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
-        """Prune run log entries older than the retention period, a batch of 5,000 per unit while time is left.
+        """Prune run log entries older than the retention period, a batch of up to 5,000 per unit while time is left.
 
-        True when nothing old is left, or when time ran out after a batch was pruned: a backlog shrinks every visit.
+        A batch that outruns the statement timeout is halved and tried again at once, down to 500; the environment
+        keeps the smaller size until a full batch fits again. True when nothing old is left, or when time ran out
+        after a batch was pruned: a backlog shrinks every visit, even on a slow database.
         """
         if not isinstance(authority, _SchedulerScope):
             raise AccessDenied()
         from firefly_weave.operations import execution_logs
 
+        key = authority.scope.model_dump_json()
         progressed = False
         while True:
+            batch = self.log_batches.get(key, execution_logs.PRUNE_BATCH)
             try:
                 # Log entries are charged to no project, so pruning them takes no operation lock.
                 async with self._unit(authority, deadline_monotonic, mutation=True, admission=False) as tx:
-                    deleted = await execution_logs.prune(tx, self.clock(), self.settings.execution_log_retention_days)
+                    deleted = await execution_logs.prune(
+                        tx, self.clock(), self.settings.execution_log_retention_days, batch=batch
+                    )
             except QuantumIncomplete:
                 return progressed
             except Exception as error:
+                if execution_logs.statement_timed_out(error) and batch > execution_logs.PRUNE_MINIMUM:
+                    self.log_batches[key] = max(execution_logs.PRUNE_MINIMUM, batch // 2)
+                    continue
                 logging.getLogger(__name__).error("Operations log pruning failed (%s)", failure_cause(error))
                 return False
             progressed = True
-            if deleted < execution_logs.PRUNE_BATCH:
+            if deleted < batch:
                 return True
+            self.log_batches[key] = min(execution_logs.PRUNE_BATCH, batch * 2)
 
     async def close(self) -> None:
         try:

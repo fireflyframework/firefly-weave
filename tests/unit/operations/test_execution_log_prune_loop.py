@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.contracts.access import Scope
@@ -46,11 +47,15 @@ def loop(monkeypatch, outcomes, *, retention_days=7):
             raise QuantumIncomplete()
         yield outcome
 
-    async def prune(tx, now, days):
+    async def prune(tx, now, days, *, batch=execution_logs.PRUNE_BATCH):
         asked.append(days)
+        batches.append(batch)
         if isinstance(tx, Exception):
             raise tx
         return tx
+
+    batches: list[int] = []
+    subject.asked_batches = batches  # type: ignore[attr-defined]
 
     monkeypatch.setattr(subject, "_unit", unit)
     monkeypatch.setattr(execution_logs, "prune", prune)
@@ -72,6 +77,32 @@ async def test_a_backlog_is_pruned_a_batch_per_unit_until_less_than_a_batch_is_l
 async def test_running_out_of_time_after_a_batch_still_counts_as_progress(monkeypatch, outcomes, healthy):
     subject, _, _ = loop(monkeypatch, outcomes)
     assert await subject.maintain_logs(authority(), 0) is healthy
+
+
+class Canceled(Exception):
+    sqlstate = "57014"
+
+
+def timed_out() -> DBAPIError:
+    return DBAPIError("DELETE FROM execution_logs", None, Canceled())
+
+
+async def test_a_batch_that_outruns_the_statement_timeout_is_halved_and_grows_back_after_a_full_one(monkeypatch):
+    subject, _, _ = loop(monkeypatch, [timed_out(), timed_out(), 1250, 12, 30])
+    scope = authority()
+    assert await subject.maintain_logs(scope, 0) is True
+    assert subject.asked_batches == [5000, 2500, 1250, 2500]
+    # The environment keeps its smaller batch for the next visit.
+    assert await subject.maintain_logs(scope, 0) is True
+    assert subject.asked_batches[-1] == 2500
+
+
+async def test_a_timeout_at_the_smallest_batch_is_a_failure(monkeypatch, caplog):
+    subject, _, _ = loop(monkeypatch, [timed_out()] * 5)
+    with caplog.at_level(logging.ERROR):
+        assert await subject.maintain_logs(authority(), 0) is False
+    assert subject.asked_batches == [5000, 2500, 1250, 625, 500]
+    assert "Operations log pruning failed (DBAPIError)" in caplog.text
 
 
 async def test_a_failed_prune_is_logged_by_its_kind_and_leaves_the_visit_incomplete(monkeypatch, caplog):

@@ -467,11 +467,18 @@ class _Reader:
         try:
             result = await self.tx.session.execute(text(statement), {**self.params, **values})
         except DBAPIError as error:
-            cause = getattr(error.orig, "__cause__", None)
-            if "57014" in (getattr(error.orig, "sqlstate", None), getattr(cause, "sqlstate", None)):
+            if statement_timed_out(error):
                 raise CatalogError(503, "WV-UNAVAILABLE", SLOW_READ) from None
             raise
         return [dict(row) for row in result.mappings().all()]
+
+
+def statement_timed_out(error: BaseException) -> bool:
+    """Whether a statement was cancelled by its statement timeout (SQLSTATE 57014)."""
+    if not isinstance(error, DBAPIError):
+        return False
+    cause = getattr(error.orig, "__cause__", None)
+    return "57014" in (getattr(error.orig, "sqlstate", None), getattr(cause, "sqlstate", None))
 
 
 class RunLogReader(_Reader):
@@ -689,6 +696,8 @@ def _across_entry(stream: int, row: dict[str, Any]) -> ExecutionLogEntry:
 
 # Pruning: entries older than the retention period go in batches; day counters after 35 days.
 PRUNE_BATCH = 5000
+# A batch that outruns the statement timeout is halved, down to this many entries.
+PRUNE_MINIMUM = 500
 DAY_RETENTION = timedelta(days=35)
 
 
