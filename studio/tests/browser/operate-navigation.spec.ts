@@ -138,6 +138,10 @@ for (const viewport of [
       await expect(
         page.getByRole("button", { name: "Metrics", exact: true }),
       ).toBeVisible();
+      // Before Studio knows the person every entry shows: wait until it does.
+      await expect(
+        page.getByRole("button", { name: "Runs", exact: true }),
+      ).toHaveCount(0);
       if (viewport.width > 1280)
         expect(await navLabels(page)).toEqual([
           "Home",
