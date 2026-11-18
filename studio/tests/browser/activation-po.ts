@@ -133,6 +133,24 @@ export async function platform(page: Page, options: Platform = {}) {
       },
     }),
   );
+  // The activation dialog lists the connections this person can bind.
+  await page.route("**/environments/development/bindable-connections?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            connection_id: "33333333-3333-4333-8333-333333333333",
+            revision_id: revision,
+            name: "pets",
+            connector: "weave-http@2.0.0",
+            label: "pets",
+            enabled: true,
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
   await page.route("**/projects/project/connectors?*", (r) =>
     r.fulfill({
       json: {
@@ -309,13 +327,15 @@ export async function openActivation(
   page: Page,
   contracts: string[],
   review = true,
+  workflow = source,
 ) {
   const designer = new DesignerPage(page);
   await newWorkflow(page);
-  await designer.setSource(source);
+  await designer.setSource(workflow);
   // Selecting the worker action loads its contract, so its task type is known.
   await designer.selectStep("crm");
-  await expect.poll(() => contracts).toContain("a2");
+  if (contracts.length || review)
+    await expect.poll(() => contracts).toContain("a2");
   // On narrow layouts the inspector covers the toolbar; close it first.
   const close = page.getByRole("button", { name: "Close inspector" });
   if (await close.isVisible()) await close.click();
