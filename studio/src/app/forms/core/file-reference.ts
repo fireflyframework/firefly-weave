@@ -45,6 +45,14 @@ const object = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+/** A file's size as Studio writes it: "900 B", "120 KiB", "2.5 MiB". */
+export function fileSize(bytes: number): string {
+  return bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1048576
+      ? `${Math.ceil(bytes / 1024)} KiB`
+      : `${(bytes / 1048576).toFixed(1)} MiB`;
+}
 export function isFileSchema(schema: unknown): boolean {
   return (
     object(object(object(schema)["properties"])["kind"])["const"] ===

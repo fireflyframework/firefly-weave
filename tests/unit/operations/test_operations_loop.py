@@ -216,6 +216,7 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
+    monkeypatch.setattr(loop, "maintain_logs", swept)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
     assert pages == [(16, True)]
@@ -255,6 +256,7 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
+    monkeypatch.setattr(loop, "maintain_logs", swept)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
 
@@ -279,6 +281,7 @@ async def test_a_quantum_that_outlives_its_wall_clock_guard_is_cancelled(monkeyp
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
+    monkeypatch.setattr(loop, "maintain_logs", swept)
     async with asyncio.timeout(2):
         assert await loop.cycle() is False
 
@@ -305,6 +308,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
+    monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     async with saturated_requests():
         assert await loop.cycle() is True

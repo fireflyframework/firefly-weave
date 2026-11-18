@@ -588,7 +588,8 @@ SPDX-License-Identifier: Apache-2.0
   <weave-execute-dialog
     [question]="asked"
     (fix)="fixIssue($event)"
-    (confirm)="unpinAndExecute()"
+    (confirm)="confirmQuestion()"
+    (released)="releasesChosen($event)"
     (cancel)="closeQuestion()"
   />
 }

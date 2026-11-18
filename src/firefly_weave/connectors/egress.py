@@ -20,6 +20,7 @@ import asyncio
 import ipaddress
 import socket
 import ssl
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -32,6 +33,7 @@ from pyfly.client.ports.outbound import BoundedHttpClientPort
 
 from firefly_weave.connectors.http_logging import protected_http_diagnostics
 from firefly_weave.private_origins import PrivateOriginDenied, PrivateOrigins, Purpose
+from firefly_weave.sdk.task_log import task_log
 
 
 class EgressDenied(ValueError):
@@ -264,6 +266,26 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         await self.pool.aclose()
 
 
+def log_response(method: str, url: str, status: int, seconds: float) -> None:
+    """One entry in the running task's log: the method, the host (and a port other than the scheme's), the status
+    and the duration. Never the path, the query, a header or a body."""
+    scheme, host, port = origin(url)
+    if ":" in host:
+        host = f"[{host}]"
+    if port != (443 if scheme == "https" else 80):
+        host = f"{host}:{port}"
+    write = task_log().warning if status >= 400 else task_log().info
+    write(
+        f"{method} {host} answered {status}",
+        code="HTTP.RESPONSE",
+        source="connector",
+        method=method,
+        host=host,
+        status=status,
+        duration_ms=max(0, round(seconds * 1000)),
+    )
+
+
 class SecureHttpClient(BoundedHttpClientPort):
     """An invocation owns its pool; policy and credential contexts never share sockets."""
 
@@ -277,8 +299,13 @@ class SecureHttpClient(BoundedHttpClientPort):
                 policy, url, tls=kwargs.pop("tls", None), resolver=kwargs.pop("resolver", resolve)
             )
             client = HttpxClientAdapter(transport=transport, owns_transport=True, trust_env=False)
+            started = time.monotonic()
             try:
-                return await client.request_bounded(method, url, max_response_bytes=max_response_bytes, **kwargs)
+                response: httpx.Response = await client.request_bounded(
+                    method, url, max_response_bytes=max_response_bytes, **kwargs
+                )
+                log_response(method, url, response.status_code, time.monotonic() - started)
+                return response
             finally:
                 # Cleanup is bounded by terminating socket closes, including cancellation.
                 closing = asyncio.create_task(client.stop())

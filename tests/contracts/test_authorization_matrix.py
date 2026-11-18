@@ -166,11 +166,11 @@ def test_the_publish_probe_is_a_workflow_that_compiles():
 
 
 def test_rows_name_the_answers_a_permitted_call_may_give_and_until_when():
-    # Seen live: publishing the AI setup needs an AI worker the pr profile does not install, and run logs answer
-    # 501 until the logs capability lands. Once it lands, 501 is wrong again.
+    # Seen live: publishing the AI setup needs an AI worker the pr profile does not install. Run logs are served,
+    # so a 501 from them is wrong whether or not the Studio logs capability has landed.
     by_operation = {row.operation: row for row in ROWS}
     assert matrix.accepted(by_operation["ai_setup.publish"], {}) == {(422, "WV-AI-WORKER-MISSING")}
-    assert matrix.accepted(by_operation["runs.logs"], {"logs": False}) == {(501, "WV-UNAVAILABLE")}
+    assert matrix.accepted(by_operation["runs.logs"], {"logs": False}) == set()
     assert matrix.accepted(by_operation["runs.logs"], {"logs": True}) == set()
     assert matrix.accepted(by_operation["language.read"], {}) == set()
     journeys = __import__("tomllib").loads((ROOT / "tests/acceptance/journeys.toml").read_text(encoding="utf-8"))

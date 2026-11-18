@@ -35,7 +35,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0044_editor_trigger_retarget"
-down_revision = "0042_operations_alerts"
+down_revision = "0043_operations_logs"
 
 SOURCES = ("trigger_routes", "broker_routes", "provider_sources", "email_sources")
 PURGE = "public.weave_purge_test_activation(uuid,uuid,uuid,uuid)"

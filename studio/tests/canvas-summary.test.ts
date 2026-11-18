@@ -54,7 +54,7 @@ describe("node summaries", () => {
         uses: "sql.lookup@1.0.0",
         connection: "crm",
       }),
-    ).toBe("sql.lookup@1.0.0 · crm");
+    ).toBe("sql.lookup@1.0.0");
     expect(stepSummary(createStep("action", "a"))).toBe("Choose an action");
     expect(
       stepSummary({ ...createStep("wait", "w"), durationSeconds: 3600 }),

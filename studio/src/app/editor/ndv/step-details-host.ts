@@ -19,8 +19,9 @@ SPDX-License-Identifier: Apache-2.0
 // already has every member; nothing here is new state of its own.
 import type { CanvasRun } from "../canvas/run-state";
 import type { RunDataPort, RunViewPort } from "../runs-tab/run-port";
-import type { Signal } from "@angular/core";
+import type { Signal, WritableSignal } from "@angular/core";
 import type { Profile, StudioApi, Validation } from "../../api";
+import type { Identity } from "../../connection";
 import type { ContractGap } from "../../designer/contract-gaps";
 import type { SuggestedChange } from "../../designer/diagnostics-list";
 import type { StructuredCanvasAdapter } from "../../model";
@@ -48,6 +49,11 @@ export interface RunNotice {
   code: string | null;
   /** The simulation stopped there for want of test data (a step it can't run). */
   missing: boolean;
+}
+/** The steps of a draft that tried to execute for real without a connection for a slot (step ID to slot). */
+export interface RealSetup {
+  draft: string;
+  steps: ReadonlyMap<string, string>;
 }
 export interface StepDetailsHost {
   readonly model: StructuredCanvasAdapter;
@@ -126,6 +132,22 @@ export interface StepDetailsHost {
   readonly runNotice?: RunNotice | null;
   /** The open draft's ID. */
   readonly draftId?: string;
+  /** The open platform draft's saved revision; undefined before it's saved to the platform. */
+  readonly draftRevision?: number;
+  /** The workflow has changes autosave hasn't sent yet. */
+  readonly dirty?: boolean;
+  /** The open workflow is kept on this computer (opened from this computer's drafts). */
+  readonly keptLocally?: boolean;
+  /** The connected environment's name ("local"), or null before it's known. */
+  readonly environmentName?: string | null;
+  /** Who is signed in to the platform; the connection form decides between creating and asking an administrator. */
+  readonly identity?: Identity | null;
+  /** "Acme / Payments / Production", for the connection form. */
+  readonly workspaceText?: string;
+  /** The step executing for real now (Execute in an environment): the canvas draws its live border. */
+  readonly realStep?: WritableSignal<string | null>;
+  /** Steps whose Execute in an environment found no connection for a slot, per draft: their tile asks for one. */
+  readonly realSetup?: WritableSignal<RealSetup | null>;
   /** The run the canvas draws; on the Runs tab it names the steps changed since. */
   canvasRun?(): CanvasRun | null;
   /** Opens a run in Operate › Runs. */

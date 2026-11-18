@@ -75,6 +75,9 @@ STUDIO_FAMILIES = frozenset(
         "runs",
         # Run summaries back the editor's Runs tab and Operate; run.read is checked server-side.
         "run_summaries",
+        # Log entries across runs for Operate; run.read is checked server-side. Writing entries (tasks.log) is a
+        # worker's and stays out.
+        "execution_logs",
         "human_tasks",
         "human_assignments",
         "human_groups",

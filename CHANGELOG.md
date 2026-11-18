@@ -20,6 +20,73 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Runs, incidents, and workers
+
+- Workers and native connectors write log entries about the tasks they run.
+  In a handler, `task_log().info("Checked the order", code="ORDER.CHECKED",
+  items=3)` (from `firefly_weave.sdk.task_log`) writes an entry; the SDK
+  redacts it, including the credential values the task leased, sends entries
+  in batches of 50, every 2 seconds and before the task completes or fails,
+  and never fails a task because a send failed. Native HTTP calls write one
+  `HTTP.RESPONSE` entry with the method, host, status and duration, never the
+  path, query, headers or body.
+- `tasks.log` (`POST {environment}/tasks/logs`, capability `task.log`, which the
+  `worker` role now holds) stores up to 50 entries only while the worker holds
+  the task's current lease, and answers `409 WV-LOG-LEASE` otherwise. The
+  platform takes the run, step and attempt from the lease, redacts every entry
+  again by pattern (it never holds leased values, so workers hide those, as the
+  SDK does), leaves out fields past 8 KiB an entry, and keeps 200 entries or
+  64 KiB per attempt, 2,000 entries or 1 MiB per run, and
+  `WEAVE_EXECUTION_LOG_DAILY_ENTRIES` (200,000) per environment a day; a spent
+  quota answers `429 WV-LOG-QUOTA`.
+- Triggers move to new versions of their workflow. `POST …/retarget` on a
+  webhook, Kafka trigger, app event source, email source or platform-event
+  trigger moves it to another activation of the same workflow, with the
+  revision it read in `If-Match`; a webhook keeps its URL. The trigger then
+  runs as the person who moved it, who needs every capability creating it
+  needs, and the new version must take what the trigger delivers (`409
+  WV-TRIGGER-SCHEMA-CHANGED` otherwise). Kafka triggers and app event sources
+  get a new source binding and the old one is revoked.
+- Email sources can be listed and read with `email.read`
+  (`GET …/email/sources`), without mail, policy or mailbox positions.
+- Draft test activations run a whole saved draft for real as test runs:
+  `POST …/test-activations` (`step.test`, test calls on, the draft's side
+  effect acknowledged), then `…/runs`, `…/listen` for a signed test URL
+  (`trigger.manage`), and `DELETE` to retire it. Only its creator can use it,
+  it expires within an hour, no list finds it, and turning test calls off
+  stops it at once.
+
+### Operations
+
+- `runs.logs` now answers: a run's log merges the engine's entries, worded from
+  its events (the step and an error code only), with what its workers and
+  connectors wrote. The new `execution_logs.list` reads entries across runs,
+  newest first, with failed, timed-out and canceled runs and failed steps as
+  engine entries, filters by time, workflow, level, code, step and message
+  text, and leaves test runs out unless asked. Both need `run.read`; an entry
+  of a run whose details are withheld is a row without text.
+- Log entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default, 1 to
+  30), go with their run when it is purged, and count toward no usage;
+  `operations_retention.read` lists their period.
+
+### Studio, desktop app, and CLI
+
+- The Studio host bridge forwards webhooks, schedules, Kafka triggers, app
+  event sources and draft test activations; every operation is still
+  authorized by the server.
+- Step details list the connections you can use in the environment Studio is
+  connected to, test them, and keep your choice on this computer; Create
+  connection and Edit open the API connection form in a side sheet.
+- Execute in *environment* in step details runs one step of the saved draft for
+  real as a test run, asking first for steps that change data; its output shows
+  the run it came from, and Pin output keeps it as test data from that run.
+- File references in step data show as files, with Download for files a real run
+  returned.
+- Every change Studio sends names the signed-in person, so a change never runs as
+  someone else after a sign-in elsewhere.
+- The Studio guide no longer says that testing an HTTP connection sends no
+  request.
+
 ### Development and testing
 
 - CI has a manual job that runs the PostgreSQL integration tests against
@@ -28,6 +95,20 @@ SPDX-License-Identifier: Apache-2.0
   image, or the owned Docker context run in the release gate.
 - Every workflow job has a timeout, and Acceptance and Desktop installers wait
   for a draft pull request to be marked ready.
+
+### Versions and schema
+
+- `0043_operations_logs` adds the empty `execution_logs` and
+  `execution_log_days` tables and adds the role check again with the same
+  roles; see the upgrade guide. Upgrade CLIs and SDKs with the server:
+  `operations_retention.read` gains the record `execution_logs`, which earlier
+  clients refuse with `502 WV-WIRE`. A worker built with this SDK against an
+  earlier server drops its log entries and runs its tasks as before.
+- `0044_editor_trigger_retarget` adds `revision` to webhooks, Kafka triggers,
+  app event sources and email sources, lets a source get a new binding once
+  its old one is revoked, and lets the test activation purge remove listen
+  routes. Webhook, Kafka trigger and app event source answers add `revision`,
+  which earlier CLIs and SDKs refuse: upgrade them with the server.
 
 ## 0.1.0a19
 

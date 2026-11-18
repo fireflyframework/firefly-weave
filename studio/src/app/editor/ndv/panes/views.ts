@@ -34,6 +34,8 @@ import {
 import type { Step } from "../../../model";
 import { uiKey, type BrowserStorage } from "../../state/browser-store";
 import { studioStorage } from "../../state/studio-storage";
+import { isFileSchema } from "../../../forms/core/file-reference";
+import { fileValue } from "./file-value";
 
 export type DataView = "schema" | "table" | "json";
 export const VIEWS_KEY = uiKey("weave.ndv.views.v1");
@@ -117,16 +119,18 @@ export function schemaRows(schema: unknown, maxDepth = 4): TreeRow[] {
         typeof child["title"] === "string" && child["title"].trim()
           ? child["title"].trim()
           : key;
+      // A file is one value: its fields are never listed.
+      const file = isFileSchema(child);
       rows.push({
         key: `${prefix}/${escapeSegment(key)}`,
         label: key,
         title,
         depth,
-        typeLabel: typeLabel(child),
+        typeLabel: file ? "File" : typeLabel(child),
         types: schemaTypes(child),
         schema: child,
       });
-      if (depth + 1 < maxDepth && isObject(child["properties"]))
+      if (!file && depth + 1 < maxDepth && isObject(child["properties"]))
         visit(
           raw,
           depth + 1,
@@ -240,11 +244,14 @@ export function withSamples(
     // Input rows carry their reference; output rows their pointer below the output.
     const value = valueAt(data, root, row.ref ?? row.key);
     if (value === undefined) return row;
-    const text = Array.isArray(value)
-      ? `${value.length} ${value.length === 1 ? "item" : "items"}`
-      : value && typeof value === "object"
-        ? `${Object.keys(value).length} ${Object.keys(value).length === 1 ? "field" : "fields"}`
-        : JSON.stringify(value);
+    const file = fileValue(value, "sample");
+    const text = file
+      ? file.detail
+      : Array.isArray(value)
+        ? `${value.length} ${value.length === 1 ? "item" : "items"}`
+        : value && typeof value === "object"
+          ? `${Object.keys(value).length} ${Object.keys(value).length === 1 ? "field" : "fields"}`
+          : JSON.stringify(value);
     return {
       ...row,
       sample: text.length > 60 ? `${text.slice(0, 59)}…` : text,

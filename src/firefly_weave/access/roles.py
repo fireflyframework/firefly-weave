@@ -70,6 +70,9 @@ ROLE_CAPABILITIES = MappingProxyType(
         "step_tester": frozenset({"step.test"}),
         # Operations alerts: rules, channels and acknowledgements; grants nothing else.
         "alert_manager": frozenset({"alert.read", "alert.manage"}),
-        "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
+        # task.log writes log entries about a task the worker holds a current lease on.
+        "worker": frozenset(
+            {"worker.register", "task.claim", "task.heartbeat", "task.complete", "task.log", "credential.lease"}
+        ),
     }
 )

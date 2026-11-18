@@ -25,6 +25,8 @@ export interface PlainError {
 }
 
 const byCode: Record<string, string> = {
+  "WV-PRINCIPAL-CHANGED":
+    "You're now signed in as someone else, so Studio sent nothing. Check the account in Settings.",
   "WV-STUDIO-SESSION":
     "Your Studio session ended. Pair this window again to continue.",
   "WV-STUDIO-CSRF":

@@ -20,7 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 // (`<prefix>weave.lastExecution.<draftId>`), and out of date once what the
 // step's result depends on changes. DOM-free.
 import type { Json } from "../ndv/registry";
-import type { ExecuteResponse, ExecuteStatus, TraceStatus } from "./execution";
+import type {
+  ExecuteResponse,
+  ExecuteStatus,
+  StepTestOmission,
+  StepTestStatus,
+  TraceStatus,
+} from "./execution";
 import type { StepFingerprints } from "./fingerprints";
 import { instanceStep } from "./instance-keys";
 import type { Fingerprint } from "./test-data";
@@ -35,6 +41,22 @@ export interface LastResult {
   execution: Fingerprint;
   /** A decision's path in that run ("case:0", "default") and its result. */
   branch?: { name: string; output?: Json };
+  /**
+   * The step ran for real in an environment (a test run): where, and how it
+   * ended. Such a result stays in memory only: it is never kept on this computer.
+   */
+  real?: RealResult;
+}
+export interface RealResult {
+  runId: string;
+  environmentId: string;
+  environmentName: string;
+  status: StepTestStatus;
+  /** Why the platform left the output out; then there is no output. */
+  omitted?: StepTestOmission;
+  error?: { code: string; message: string };
+  /** The step test's limit, for "didn't finish within 120 s". */
+  timeoutSeconds?: number;
 }
 export interface LastResults {
   schemaVersion: 1;
@@ -163,9 +185,15 @@ export function pruneResults(
   return { ...results, steps };
 }
 
-/** The text kept, or null when it is larger than 1 MiB (then nothing is kept). */
+/**
+ * The text kept, or null when it is larger than 1 MiB (then nothing is kept).
+ * Results of real runs are left out: they stay in memory only.
+ */
 export function keptText(results: LastResults): string | null {
-  const text = JSON.stringify(results);
+  const steps = Object.fromEntries(
+    Object.entries(results.steps).filter(([, result]) => !result.real),
+  );
+  const text = JSON.stringify({ ...results, steps });
   return new TextEncoder().encode(text).length > LAST_RESULTS_MAX_BYTES
     ? null
     : text;

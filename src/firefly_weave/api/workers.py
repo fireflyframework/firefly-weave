@@ -29,6 +29,7 @@ from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import decode_cursor_v2, page_request, page_response, parse_query
 from firefly_weave.contracts.worker_queries import ReleaseUsageQuery, RetireStaleRequest, WorkerListQuery
 from firefly_weave.contracts.workers import (
+    TASK_LOG_BODY_BYTES,
     ClaimRequest,
     CompleteRequest,
     CredentialGrantRequest,
@@ -37,9 +38,12 @@ from firefly_weave.contracts.workers import (
     InstanceRequest,
     LeaseProof,
     ReleaseRequest,
+    TaskLogRequest,
     WorkerControlRequest,
 )
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import run_position
+from firefly_weave.settings import Settings
 from firefly_weave.workers.leases import TaskService
 from firefly_weave.workers.service import WorkerService
 
@@ -49,8 +53,8 @@ PREFIX = "/tenants/{tenant}/projects/{project}/environments/{environment}"
 @rest_controller
 @request_mapping("")
 class WorkerController:
-    def __init__(self, service: WorkerService, tasks: TaskService) -> None:
-        self.service, self.tasks = service, tasks
+    def __init__(self, service: WorkerService, tasks: TaskService, settings: Settings) -> None:
+        self.service, self.tasks, self.settings = service, tasks, settings
 
     def authority(self, request: Request) -> dict[str, Any]:
         return dict(
@@ -161,6 +165,20 @@ class WorkerController:
         async with self.service.definitions.transaction(authority["scope"], None) as tx:
             result = await self.tasks.fail(tx, body.lease, body.error, **authority)
         return JSONResponse(result.model_dump(mode="json"))
+
+    @operation("tasks.log")
+    async def log(self, request: Request) -> JSONResponse:
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > TASK_LOG_BODY_BYTES:
+                raise CatalogError(413, "WV-LOG-SIZE", "A log request holds at most 256 KiB")
+            raw.extend(chunk)
+        body = TaskLogRequest.model_validate_json(bytes(raw))
+        authority = self.authority(request)
+        # Log entries count toward no usage, so writing them never waits for or holds the project's operation lock.
+        async with self.service.definitions.uow.open(authority["scope"], mutation=True, admission=False) as tx:
+            result = await self.tasks.log(tx, body, daily_limit=self.settings.execution_log_daily_entries, **authority)
+        return JSONResponse(result.model_dump(mode="json"), status_code=202)
 
     @operation("tasks.context")
     async def context(self, request: Request) -> JSONResponse:

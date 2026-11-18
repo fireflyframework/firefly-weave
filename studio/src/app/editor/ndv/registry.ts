@@ -395,6 +395,8 @@ export interface NdvContext {
     slot(name: string): { connector: string; required: boolean } | null;
     devBinding(slot: string): {
       connectionId: string;
+      /** The connection's revision a step test sends for this slot. */
+      revisionId: string;
       name: string;
       tested: "ok" | "failed" | null;
     } | null;
@@ -481,11 +483,17 @@ export interface RealExecutionSupport {
    * Body for POST {ENV}/step-tests, or why the step can't run in an
    * environment. The body is the whole request except `draft_id` and
    * `draft_revision`: the editor adds the saved draft's when it sends it.
+   * `confirm` is a sentence of the kind's own that the confirmation shows
+   * (a cost notice, say). `kind` reads contracts the editor already has.
    */
   request(
     ctx: NdvContext,
+    kind: KindContext,
   ):
-    | { body: Omit<StepTestRequest, "draft_id" | "draft_revision"> }
+    | {
+        body: Omit<StepTestRequest, "draft_id" | "draft_revision">;
+        confirm?: string;
+      }
     | { blocked: string };
 }
 
