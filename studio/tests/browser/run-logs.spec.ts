@@ -261,6 +261,16 @@ for (const size of [
       await expect(logs).toContainText(
         "6 entries · engine entries come from the run's history; worker and connector entries are kept for 7 days.",
       );
+      // A hidden-value flag never pushes its message below the time.
+      const offset = (row: number) =>
+        rowsOf(page)
+          .nth(row)
+          .evaluate((entry) => {
+            const top = (selector: string) =>
+              entry.querySelector(selector)!.getBoundingClientRect().top;
+            return top(".msg-text") - top(".t time");
+          });
+      expect(Math.abs((await offset(1)) - (await offset(0)))).toBeLessThan(1);
       expect(runs.logs).toHaveLength(1);
       expect(runs.logs[0].searchParams.has("level")).toBe(false);
       expect(runs.logs[0].searchParams.has("node_id")).toBe(false);

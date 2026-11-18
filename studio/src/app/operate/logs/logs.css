@@ -108,12 +108,14 @@ SPDX-License-Identifier: Apache-2.0
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* The flags sit on the message's first line without making it taller, so the
+   message starts level with its time and level. */
 .meta {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-left: 6px;
-  vertical-align: 1px;
+  vertical-align: top;
   white-space: normal;
 }
 .flag {
