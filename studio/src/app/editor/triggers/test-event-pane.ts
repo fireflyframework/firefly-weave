@@ -62,36 +62,6 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
         @if (note(); as text) {
           <p class="pane-empty-text">{{ text }}</p>
         }
-        @if (production(); as url) {
-          <label class="trigger-event-label" [attr.for]="productionId()"
-            >Production URL</label
-          >
-          <div class="trigger-event-copy">
-            <input
-              class="trigger-event-url"
-              readonly
-              [id]="productionId()"
-              [value]="url"
-              [attr.aria-describedby]="productionId() + '-hint'"
-            />
-            <button
-              type="button"
-              class="pane-generate"
-              (click)="copy(url, 'the production URL')"
-            >
-              Copy URL
-            </button>
-          </div>
-          <p class="pane-empty-text" [id]="productionId() + '-hint'">
-            Starts runs of the active version, signed with the production
-            secret.
-          </p>
-        } @else if (unactivated(); as environment) {
-          <p class="pane-empty-text">
-            The production URL appears once you activate this workflow in
-            {{ environment }}.
-          </p>
-        }
         @if (canListen()) {
           @let state = listenState();
           @switch (state?.kind) {
@@ -161,6 +131,36 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
               </button>
             }
           }
+        }
+        @if (production(); as url) {
+          <label class="trigger-event-label" [attr.for]="productionId()"
+            >Production URL</label
+          >
+          <div class="trigger-event-copy">
+            <input
+              class="trigger-event-url"
+              readonly
+              [id]="productionId()"
+              [value]="url"
+              [attr.aria-describedby]="productionId() + '-hint'"
+            />
+            <button
+              type="button"
+              class="pane-generate"
+              (click)="copy(url, 'the production URL')"
+            >
+              Copy URL
+            </button>
+          </div>
+          <p class="pane-empty-text" [id]="productionId() + '-hint'">
+            Starts runs of the active version, signed with the production
+            secret.
+          </p>
+        } @else if (unactivated(); as environment) {
+          <p class="pane-empty-text">
+            The production URL appears once you activate this workflow in
+            {{ environment }}.
+          </p>
         }
         @if (pasting()) {
           <label class="trigger-event-label" [attr.for]="fieldId()">{{
