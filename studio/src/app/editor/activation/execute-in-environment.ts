@@ -96,7 +96,8 @@ export function sideEffectQuestion(
     confirmLabel: "Run it",
     cancelLabel: "Cancel",
     // Focus starts on Cancel: a held or repeated Enter mustn't run a change.
-    danger: true,
+    // Run it stays amber, as in the step's own Execute in <environment> question.
+    startOnCancel: true,
   };
 }
 

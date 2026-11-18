@@ -64,7 +64,7 @@ describe("Execute workflow in an environment", () => {
         "charge changes data in local. Executing the workflow repeats the change.",
       confirmLabel: "Run it",
       cancelLabel: "Cancel",
-      danger: true,
+      startOnCancel: true,
     });
     expect(
       sideEffectQuestion(["charge", "notify", "refund"], "local").message,

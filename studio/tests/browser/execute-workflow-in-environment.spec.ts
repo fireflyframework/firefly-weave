@@ -171,6 +171,13 @@ test("steps that change data are named before they run, and Cancel runs nothing"
       "crm-lookup changes data in Production. Executing the workflow repeats the change.",
     );
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    // Styled like the step's own Execute in Production question: amber, not red.
+    await expect(dialog.getByRole("button", { name: "Run it" })).toHaveClass(
+      /\bprimary\b/,
+    );
+    await expect(
+      dialog.getByRole("button", { name: "Run it" }),
+    ).not.toHaveClass(/danger/);
     return dialog;
   };
   let dialog = await ask();
