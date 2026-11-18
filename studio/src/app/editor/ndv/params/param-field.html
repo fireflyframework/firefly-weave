@@ -414,7 +414,13 @@ SPDX-License-Identifier: Apache-2.0
         }
         @case ("notice") {
           <p class="banner info param-notice" [id]="ids.control">
-            {{ spec.hint }}
+            @for (part of noticeParts(); track $index) {
+              @if ($odd) {
+                <code>{{ part }}</code>
+              } @else {
+                {{ part }}
+              }
+            }
           </p>
         }
         @case ("text") {

@@ -177,7 +177,7 @@ describe("trigger forms", () => {
       "Choose the email connection when you activate.",
       "Attachments arrive as metadata; their content is not in the run input.",
       "Only mail that arrives after the source starts begins runs.",
-      "Automatic replies have automated: true; branch on it to avoid reply loops.",
+      "Automatic replies have `automated: true`; branch on it to avoid reply loops.",
     ]);
     const input = form.fields[0];
     expect([input.scope, input.path]).toEqual([

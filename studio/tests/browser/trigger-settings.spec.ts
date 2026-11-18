@@ -285,5 +285,18 @@ for (const size of [
       await view.tileBody(`$trigger:${EMAIL}`).dblclick();
       await parameters(details);
       await expect(question).toHaveCount(0);
+      // Each of the email trigger's notes shows once, the reply flag as code.
+      for (const note of [
+        "Attachments arrive as metadata; their content is not in the run input.",
+        "Only mail that arrives after the source starts begins runs.",
+      ])
+        await expect(
+          details.locator(".sd-tabpanel:not([hidden])").getByText(note),
+        ).toHaveCount(1);
+      const replies = field(details, "automated");
+      await expect(replies.locator("code")).toHaveText("automated: true");
+      await expect(
+        replies.getByText(/branch on it to avoid reply loops/),
+      ).toHaveCount(1);
     });
   });

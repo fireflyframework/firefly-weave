@@ -235,7 +235,7 @@ const emailForm = (): FormSpec => ({
     notice(
       "automated",
       "Automatic replies",
-      "Automatic replies have automated: true; branch on it to avoid reply loops.",
+      "Automatic replies have `automated: true`; branch on it to avoid reply loops.",
     ),
   ],
 });
