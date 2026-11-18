@@ -102,6 +102,23 @@ describe("connections from the platform", () => {
     }
   });
 
+  it("keeps the named connector's connections when unrelated ones fill more pages than it reads", async () => {
+    let page = 0;
+    const { api } = fakeApi(() => {
+      page++;
+      return {
+        items: [
+          page === 3
+            ? item({ name: "orders-kafka", connector: "weave-kafka@1.0.0" })
+            : item({ name: `http-${page}` }),
+        ],
+        next_cursor: "more",
+      };
+    });
+    const items = await platformConnections(api).bindableNamed("weave-kafka");
+    expect(items.map((entry) => entry.name)).toEqual(["orders-kafka"]);
+  });
+
   it("stops after twenty pages", async () => {
     const { api, calls } = fakeApi(() => ({
       items: [item()],

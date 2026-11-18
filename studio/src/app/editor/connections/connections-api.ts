@@ -67,6 +67,7 @@ const REASONS: ReadonlySet<string> = new Set([
   "status",
 ]);
 const PAGE = 100;
+const everything = () => true;
 const MAX_PAGES = 20;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -148,7 +149,15 @@ export function platformConnections(
   environment?: string,
 ): ConnectionsApi {
   const scope = () => environment ?? api.environment;
-  async function pages(query: string): Promise<BindableItem[]> {
+  /**
+   * The bindable connections `keep` keeps, page by page. Past the page
+   * limit, what was kept is the answer; only a listing that kept nothing in
+   * that many pages fails.
+   */
+  async function pages(
+    query: string,
+    keep: (item: BindableItem) => boolean = everything,
+  ): Promise<BindableItem[]> {
     const base = `${scope()}/bindable-connections?${query}`;
     const items: BindableItem[] = [];
     let cursor: string | null = null;
@@ -156,11 +165,13 @@ export function platformConnections(
       const answer: unknown = await api.request(
         cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base,
       );
-      items.push(...readBindable(answer));
+      items.push(...readBindable(answer).filter(keep));
       const next = isRecord(answer) ? answer["next_cursor"] : null;
       if (typeof next !== "string" || !next) return items;
       cursor = next;
     }
+    // A listing filtered here may end with unrelated pages it can't read.
+    if (keep !== everything && items.length) return items;
     throw Error(
       "Too many connections to list here. Ask an administrator to narrow the environment's connections.",
     );
@@ -168,10 +179,8 @@ export function platformConnections(
   return {
     bindable: (connector) =>
       pages(`connector=${encodeURIComponent(connector)}&limit=${PAGE}`),
-    async bindableNamed(name) {
-      const items = await pages(`limit=${PAGE}`);
-      return items.filter((item) => item.connector.split("@")[0] === name);
-    },
+    bindableNamed: (name) =>
+      pages(`limit=${PAGE}`, (item) => item.connector.split("@")[0] === name),
     async test(revisionId) {
       try {
         return readTest(
