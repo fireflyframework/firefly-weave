@@ -124,21 +124,27 @@ export function workflowTestItem(
   const port = connectionsPort(host);
   if (!port || host.viewingRuns || !host.can("step.test")) return null;
   const environment = port.environment.name;
-  const running = port.runningWorkflowTest();
-  const reason = running
-    ? `Studio is starting the test run in ${environment}.`
-    : workflowTestReason({
-        environment,
-        policy: port.policyNow(),
-        readOnly: host.editingLocked
-          ? "This workflow is read only here."
-          : null,
-        unsaved: !!host.keptLocally && host.draftRevision === undefined,
-      });
+  // Read when the menu draws its rows or a row is picked, never while the
+  // editor bar draws: the bar mustn't ask for the test policy on every render.
+  const reason = () =>
+    port.runningWorkflowTest()
+      ? `Studio is starting the test run in ${environment}.`
+      : workflowTestReason({
+          environment,
+          policy: port.policyNow(),
+          readOnly: host.editingLocked
+            ? "This workflow is read only here."
+            : null,
+          unsaved: !!host.keptLocally && host.draftRevision === undefined,
+        });
   return {
     label: `Execute workflow in ${environment}`,
-    detail: reason ?? "Runs the whole workflow for real, as a test run",
-    disabled: !!reason,
+    get detail() {
+      return reason() ?? "Runs the whole workflow for real, as a test run";
+    },
+    get disabled() {
+      return !!reason();
+    },
     run: () => void executeWorkflowIn(host, dialogs),
   };
 }
