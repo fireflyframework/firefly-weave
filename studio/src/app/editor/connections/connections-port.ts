@@ -63,6 +63,9 @@ export type PortHost = Pick<
 
 /** A test policy read counts for a minute. */
 export const POLICY_TTL_MS = 60_000;
+/** After a failed policy read, the first pause before reading again; it doubles up to a minute. */
+export const POLICY_RETRY_MS = 5_000;
+export const POLICY_RETRY_MAX_MS = 60_000;
 
 /** One connector's connections, as the platform listed them. */
 export interface BindableList {
@@ -87,6 +90,8 @@ export class ConnectionsPort {
   >();
   private policyKept: { at: number; value: Policy } | null = null;
   private policyLoad: Promise<Policy | null> | null = null;
+  /** The last failed policy read, and how long to wait before the next one. */
+  private policyFailed: { at: number; pause: number } | null = null;
   /** The last failed test's sentence, per connection revision. */
   private readonly failures = new Map<string, string>();
   /** Slots whose binding was dropped this session, with why. */
@@ -263,11 +268,18 @@ export class ConnectionsPort {
     });
   }
 
-  /** The test policy as last read (for a minute), loading it when there is none or it's old. */
+  /**
+   * The test policy as last read (for a minute), loading it when there is none
+   * or it's old. Rendering calls this, so a read that failed isn't asked again
+   * until its pause is over: 5 seconds, doubling to a minute while it keeps failing.
+   */
   policyNow(): Policy | null {
     this.version();
     const kept = this.policyKept;
-    if (!kept || this.now() - kept.at > POLICY_TTL_MS) void this.policy();
+    const stale = !kept || this.now() - kept.at > POLICY_TTL_MS;
+    const failed = this.policyFailed;
+    const waiting = !!failed && this.now() - failed.at < failed.pause;
+    if (stale && !waiting) void this.policy();
     return kept?.value ?? null;
   }
   /** The environment's test policy; "unreadable" when this account can't read it, null when it couldn't be read. */
@@ -284,7 +296,15 @@ export class ConnectionsPort {
       }
       if (!this.alive) return null;
       this.policyLoad = null;
-      if (value) this.policyKept = { at: this.now(), value };
+      if (value) {
+        this.policyKept = { at: this.now(), value };
+        this.policyFailed = null;
+      } else {
+        const pause = this.policyFailed
+          ? Math.min(this.policyFailed.pause * 2, POLICY_RETRY_MAX_MS)
+          : POLICY_RETRY_MS;
+        this.policyFailed = { at: this.now(), pause };
+      }
       this.bump();
       return value;
     })();
@@ -296,7 +316,7 @@ export class ConnectionsPort {
     this.opening.set({ slot, seq: (this.opening()?.seq ?? 0) + 1 });
   }
 
-  /** Releases chosen this session for dependencies here (Ruling: one question per dependency). */
+  /** Releases chosen this session for dependencies here: one question per dependency. */
   readonly releases = new Map<string, string>();
   private service: StepTestService | null = null;
   /**

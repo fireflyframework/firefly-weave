@@ -350,3 +350,33 @@ test.describe("the Connection field across environments", () => {
     await expect(options(page).filter({ hasText: /^prod-crm/ })).toHaveCount(0);
   });
 });
+
+test.describe("the test policy when the platform can't answer", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  for (const failure of ["500", "network"] as const)
+    test(`a failing policy read (${failure}) is asked again only after a pause`, async ({
+      page,
+    }) => {
+      const { details } = await openConnected(
+        page,
+        { bindable: { [PRODUCTION]: [bindable(1)] } },
+        crmWorkflow(),
+      );
+      let reads = 0;
+      await page.route("**/environments/*/test-policy", async (route) => {
+        reads++;
+        if (failure === "500")
+          await route.fulfill({
+            status: 500,
+            json: { code: "WV-INTERNAL", message: "Internal error" },
+          });
+        else await route.abort("failed");
+      });
+      await details.open("crm-lookup");
+      await expect.poll(() => reads).toBeGreaterThan(0);
+      // Nothing to wait for but time: the next read comes only after the pause.
+      await page.waitForTimeout(3000);
+      expect(reads).toBeLessThanOrEqual(2);
+    });
+});
