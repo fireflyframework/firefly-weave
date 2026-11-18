@@ -106,7 +106,7 @@ SPDX-License-Identifier: Apache-2.0
           >
             {{
               choice === "input"
-                ? target() === "$trigger"
+                ? triggerTarget()
                   ? "Test event"
                   : "Input"
                 : choice === "parameters"
@@ -165,7 +165,7 @@ SPDX-License-Identifier: Apache-2.0
           >
             {{
               choice === "input"
-                ? target() === "$trigger"
+                ? triggerTarget()
                   ? "Test event"
                   : "Input"
                 : "Output"
@@ -184,6 +184,8 @@ SPDX-License-Identifier: Apache-2.0
     >
       @if (tablePanes()) {
         <ng-container #tableInputHost />
+      } @else if (triggerChoice(); as choice) {
+        <weave-trigger-event-pane [session]="session()" [trigger]="choice" />
       } @else if (target() === "$trigger") {
         <weave-test-event-pane [session]="session()" />
       } @else {
@@ -381,6 +383,9 @@ SPDX-License-Identifier: Apache-2.0
         @if (component()) {
           <ng-container #componentHost />
         } @else {
+          @if (triggerChoice(); as choice) {
+            <weave-trigger-setup [session]="session()" [trigger]="choice" />
+          }
           <weave-parameter-form [session]="session()" name="parameters" />
         }
       </div>

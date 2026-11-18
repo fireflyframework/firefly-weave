@@ -144,18 +144,9 @@ const webhookForm = (): FormSpec => ({
   ],
 });
 
+/** A schedule's calendar is set with its builder (above the fields); the form holds the run input. */
 const scheduleForm = (): FormSpec => ({
   fields: [
-    {
-      id: "cron",
-      path: ["cron"],
-      type: "custom",
-      component: "schedule-builder",
-      label: "When it runs",
-      required: true,
-      requiredText: CRON_NEEDED,
-      hint: "In UTC. A time missed while the platform was down is skipped.",
-    },
     {
       id: "input",
       path: ["input"],

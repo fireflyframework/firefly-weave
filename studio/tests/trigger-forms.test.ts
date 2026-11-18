@@ -114,18 +114,9 @@ describe("trigger forms", () => {
     ]);
   });
 
-  it("asks a schedule when it runs and the run input it sends", () => {
+  it("asks a schedule for the run input it sends; its calendar has a builder of its own", () => {
     const form = triggerForm("schedule");
     expect(shape(form.fields)).toEqual([
-      {
-        id: "cron",
-        path: ["cron"],
-        scope: "step",
-        type: "custom",
-        label: "When it runs",
-        required: true,
-        default: undefined,
-      },
       {
         id: "input",
         path: ["input"],
@@ -136,8 +127,7 @@ describe("trigger forms", () => {
         default: {},
       },
     ]);
-    expect(form.fields[1].mapping).toBe("fixed");
-    expect(form.fields[0].component).toBe("schedule-builder");
+    expect(form.fields[0].mapping).toBe("fixed");
   });
 
   it("asks a Kafka trigger for its name, cluster, topic and what to do with a message that can't start a run", () => {

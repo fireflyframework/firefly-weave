@@ -1,0 +1,192 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// A trigger choice's Test event pane: what the trigger can do here, and a
+// sample its run starts with. A webhook listens for a test event where Studio
+// is connected and test calls are on; anywhere else, and for Kafka, email and
+// app event triggers, the person pastes a sample instead. The sample becomes
+// the workflow's test input, as the input form's Test event does.
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  signal,
+} from "@angular/core";
+import type { FormSession } from "../ndv/params/form-session";
+import type { Json } from "../ndv/registry";
+import type { TriggerIntent } from "../state/canvas-sidecar";
+
+/** What a pasted sample is called, by trigger. */
+const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
+  webhook: "payload",
+  broker: "message",
+  email: "email",
+  provider: "event",
+  schedule: "run input",
+};
+
+@Component({
+  selector: "weave-trigger-event-pane",
+  standalone: true,
+  changeDetection: ChangeDetectionStrategy.Eager,
+  template: `<header class="sd-pane-head">
+      <h3 class="sd-pane-title">Test event</h3>
+    </header>
+    <div class="sd-pane-body">
+      <div class="pane-content trigger-event">
+        @if (note(); as text) {
+          <p class="pane-empty-text">{{ text }}</p>
+        }
+        @if (pasting()) {
+          <label class="trigger-event-label" [attr.for]="fieldId()">{{
+            label()
+          }}</label>
+          <textarea
+            class="trigger-event-sample"
+            rows="6"
+            spellcheck="false"
+            [id]="fieldId()"
+            [value]="draft()"
+            (input)="draft.set($any($event.target).value)"
+          ></textarea>
+          @if (problem()) {
+            <p class="pane-empty-text trigger-event-problem" role="alert">
+              {{ problem() }}
+            </p>
+          }
+          <div class="trigger-event-actions">
+            <button type="button" class="pane-generate" (click)="use()">
+              Use this sample
+            </button>
+            <button type="button" class="pane-generate" (click)="cancel()">
+              Cancel
+            </button>
+          </div>
+        } @else {
+          <button type="button" class="pane-generate" (click)="paste()">
+            {{ offer() }}
+          </button>
+        }
+        @if (sample() !== undefined) {
+          <pre class="pane-json" aria-label="Test event">{{ shown() }}</pre>
+        }
+      </div>
+    </div>`,
+  styles: `
+    .trigger-event {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-3);
+    }
+    .trigger-event-label {
+      font: var(--type-label);
+    }
+    .trigger-event-sample {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: calc(var(--sd-control) * 3);
+      padding: var(--space-2) var(--space-3);
+      font: var(--type-mono);
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--field-border);
+      border-radius: var(--radius-sm);
+      resize: vertical;
+    }
+    .trigger-event-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+    .trigger-event-actions .pane-generate {
+      margin-bottom: 0;
+    }
+    .trigger-event-problem {
+      color: var(--danger-text, var(--danger));
+    }
+  `,
+})
+export class TriggerEventPane {
+  readonly session = input.required<FormSession>();
+  readonly trigger = input.required<TriggerIntent>();
+  readonly pasting = signal(false);
+  readonly draft = signal("");
+  readonly problem = signal("");
+
+  private readonly noun = computed(
+    () => SAMPLE_NOUNS[this.trigger().kind] ?? "payload",
+  );
+  readonly fieldId = computed(() => `trigger-sample-${this.trigger().id}`);
+  readonly label = computed(() => `Sample ${this.noun()} (JSON)`);
+
+  /** What the trigger can't do here, in one line; null when there's nothing to say. */
+  note(): string | null {
+    const kind = this.trigger().kind;
+    if (kind === "webhook")
+      return "Listening needs a platform. Paste a sample payload instead.";
+    if (kind === "schedule")
+      return "A schedule starts each run with its run input.";
+    return null;
+  }
+  /** The pane's own button: Paste sample, or the trigger's Paste a sample … */
+  offer(): string {
+    const kind = this.trigger().kind;
+    return kind === "webhook" || kind === "schedule"
+      ? "Paste sample"
+      : `Paste a sample ${this.noun()}`;
+  }
+  sample(): Json | undefined {
+    return this.session().controller.testEvent();
+  }
+  shown(): string {
+    return JSON.stringify(this.sample(), null, 2);
+  }
+
+  paste() {
+    const current = this.sample();
+    this.draft.set(
+      current === undefined ? "" : JSON.stringify(current, null, 2),
+    );
+    this.problem.set("");
+    this.pasting.set(true);
+  }
+  cancel() {
+    this.pasting.set(false);
+    this.problem.set("");
+  }
+  async use() {
+    const session = this.session();
+    let value: Json;
+    try {
+      value = JSON.parse(this.draft()) as Json;
+    } catch {
+      this.problem.set('Paste JSON, such as {"customerId": "123"}.');
+      return;
+    }
+    const refused = await session.controller.setTestEvent(value);
+    if (!session.isCurrent()) return;
+    if (refused) {
+      this.problem.set(refused);
+      return;
+    }
+    this.pasting.set(false);
+    this.problem.set("");
+    session.announce("Pasted a sample test event.");
+  }
+}

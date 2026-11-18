@@ -749,15 +749,13 @@ export class CanvasView implements OnInit, DoCheck {
       manual: kind === "manual",
     };
   }
-  /** Double-click or Enter on a trigger: the input form opens its details; other triggers are set up when you activate. */
+  /** Double-click or Enter on a trigger opens its settings: the input form's, or the trigger choice's. */
   private openTrigger(tileId: string) {
     const h = this.host();
     const intent = this.intentOf(tileId);
     if (!intent || intent.kind === "manual")
       return void h.openWorkflowSection("spec/inputSchema");
-    h.notify(
-      `${TRIGGER_LABELS[intent.kind]} is set up when you activate this workflow.`,
-    );
+    void h.openTrigger(intent.id);
   }
 
   // -------------------------------------------------- insertion targets
