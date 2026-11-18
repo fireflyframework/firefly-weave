@@ -18,9 +18,10 @@
 
 Runs only through scripts/acceptance.py (the run stage), on the fixture worker J0.10 started on local-docker. One run
 of this step's own one-step workflow makes the fixture worker write two entries: how long it slept, and a warning
-with a note that carries secret-shaped text. The run's log then holds the engine's and the worker's step-scoped
-entries in time order, within the run's own times; the level and step filters narrow it; the log across runs lists
-the worker's entries newest first; and no answer holds the planted text, a canary value or a password.
+whose message and field carry a note with secret-shaped text outside any header. The run's log then holds the
+engine's and the worker's step-scoped entries in time order, within the run's own times; the level and step filters
+narrow it; the log across runs lists the worker's entries newest first; and no answer holds the planted text, a part
+of it, a canary value or a password.
 """
 
 from __future__ import annotations
@@ -60,8 +61,15 @@ def planted() -> list[str]:
 
 
 def note_of(values: list[str]) -> str:
+    """The note the fixture logs as a message and a field: no header, so the key and token patterns must hide them."""
     key, token = values
-    return f"Lookup key {key} was refused; retrying with Authorization: Bearer {token}"
+    return f"Lookup key {key} was refused for token {token}"
+
+
+def secret_parts(values: list[str]) -> list[str]:
+    """What a partial redaction could leave: the key's random part and each part of the token."""
+    key, token = values
+    return [key.removeprefix("sk-"), *token.split(".")]
 
 
 def instant(value: str) -> datetime:
@@ -147,7 +155,8 @@ def test_j5_05_a_run_logs_its_steps_with_times_and_filters_and_no_secret(run):
     assert all(item["worker_id"] == worker for item in written)
     slept, note = written
     assert (slept["level"], slept["message"], slept["fields"]) == ("info", f"Slept for {SLEEP_MS} ms", {"ms": SLEEP_MS})
-    assert note["level"] == "warning" and note["redactions"] >= 1 and "[redacted]" in note["message"]
+    assert note["level"] == "warning" and note["redactions"] >= 2 and "[redacted]" in note["message"]
+    assert "[redacted]" in str(note["fields"].get("note")), note["fields"].keys()
     # The step's engine entry names it too.
     finished = next(item for item in items if item["code"] == "STEP.SUCCEEDED")
     assert finished["source"] == "engine" and finished["node_id"] == "sleep", finished
@@ -163,7 +172,7 @@ def test_j5_05_a_run_logs_its_steps_with_times_and_filters_and_no_secret(run):
     assert all(item["workflow_name"] == WORKFLOW and item["test"] is False for item in own)
     # No answer holds the planted values, a canary value or a password.
     answers = json.dumps([journey[key] for key in ("everything", "warnings", "step", "across")])
-    assert leaked(answers, values) == 0, "a planted secret reached a log answer"
+    assert leaked(answers, values + secret_parts(values)) == 0, "a planted secret or a part of one reached a log answer"
     assert leaked(answers, run_secrets(run)) == 0, "a canary value or a password reached a log answer"
     (run.evidence / "operations-logs.json").write_text(
         json.dumps(

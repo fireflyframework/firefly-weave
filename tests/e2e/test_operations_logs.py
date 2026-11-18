@@ -19,9 +19,10 @@
 
 Run it with ``pytest -m real_operations`` and WEAVE_ACC_RUN_DIR set to an acceptance run that
 ``scripts/acceptance.py --stages prepare,up --keep`` left in place, as the other operations journeys. Without it the
-test is skipped. Its own workflow runs once on the fixture worker, whose note plants a key and a JWT-shaped bearer
-token made for this test: the run's log holds the worker's entries with the values hidden, and neither value is in
-the runs.logs or execution_logs.list answers or in any row of the platform's execution_logs table. Studio renders
+test is skipped. Its own workflow runs once on the fixture worker, whose note plants a key and a JWT-shaped token made
+for this test, outside any header, in an entry's message and in one of its fields: the run's log holds the worker's
+entries with the values hidden, and neither value, nor the key's random part, nor any part of the token, is in the
+runs.logs or execution_logs.list answers or in any row of the platform's execution_logs table. Studio renders
 entries as text, which its browser suites check.
 """
 
@@ -101,16 +102,22 @@ def test_a_workers_entries_reach_the_run_and_a_planted_secret_never_does(run):
     written = [item for item in items if item["source"] == "worker"]
     assert [item["code"] for item in written] == ["FIXTURE.SLEPT", "FIXTURE.NOTE"], written
     note = written[1]
-    assert note["redactions"] >= 1 and "[redacted]" in note["message"]
+    assert note["redactions"] >= 2 and "[redacted]" in note["message"]
+    assert "[redacted]" in str(note["fields"].get("note"))
+    planted = values + logs.secret_parts(values)
+    # Each value and part is in the note as planted, so its absence below means it was hidden.
+    assert logs.leaked(logs.note_of(values), planted) == len(planted)
     answers = json.dumps([journey[key] for key in ("everything", "warnings", "step", "across")])
-    assert logs.leaked(answers, values) == 0, "a planted secret reached a log answer"
+    assert logs.leaked(answers, planted) == 0, "a planted secret or a part of one reached a log answer"
     # The stored rows: the note as the platform keeps it, and no planted value anywhere in the table.
     run_id = str(UUID(journey["run"]))
     stored = platform_sql(
-        run, f"SELECT redactions, message FROM execution_logs WHERE run_id = '{run_id}' AND code = 'FIXTURE.NOTE'"
+        run,
+        "SELECT redactions, message, fields->>'note' FROM execution_logs"
+        f" WHERE run_id = '{run_id}' AND code = 'FIXTURE.NOTE'",
     ).strip()
-    redactions, _, message = stored.partition("|")
-    assert int(redactions) >= 1 and "[redacted]" in message
+    redactions, message, field = stored.split("|")
+    assert int(redactions) >= 2 and "[redacted]" in message and "[redacted]" in field
     table = platform_sql(run, "SELECT message || ' ' || fields::text FROM execution_logs")
     assert table.strip(), "the execution_logs table holds no row"
-    assert logs.leaked(table, values) == 0, "a planted secret reached the execution_logs table"
+    assert logs.leaked(table, planted) == 0, "a planted secret or a part of one reached the execution_logs table"
