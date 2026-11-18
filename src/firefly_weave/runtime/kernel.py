@@ -66,6 +66,7 @@ from firefly_weave.contracts.transactions import (
     UndoPhase,
     phase_key,
     split_phase,
+    undo_context,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.agent_tools import (
@@ -991,19 +992,18 @@ def _advance_owned(
             update(key, resume=[])
             proceed(list(transaction.resume))
 
-    def undo_context(key: str, item: ParticipantRecord) -> JsonObject:
+    def phase_context(key: str, item: ParticipantRecord) -> JsonObject:
         if current_state.run_id is None:
             raise KernelError("WV-RUNTIME-STATE")
-        scope = dict(item.scope)
-        steps = dict(cast(JsonObject, scope.pop("steps", {})))
-        steps[node_of(item.key)] = {"output": scope.pop("output", None)}
-        return {
-            "input": current_state.input,
-            "steps": steps,
-            "participant": {"operationKey": f"{current_state.run_id}:{item.key}", "outcome": item.outcome or "unknown"},
-            "transaction": {"id": f"{current_state.run_id}:{key}", "businessKey": record(key).business_key},
-            **scope,
-        }
+        return undo_context(
+            run_id=str(current_state.run_id),
+            transaction_key=key,
+            business_key=record(key).business_key,
+            participant_key=item.key,
+            outcome=item.outcome,
+            input=current_state.input,
+            scope=item.scope,
+        )
 
     def issue(key: str, index: int, phase: UndoPhase) -> None:
         """Dispatch a participant's confirm, cancel or undo as settlement work at its own instance key."""
@@ -1017,7 +1017,7 @@ def _advance_owned(
             id=key, branch=item.key, phase=phase, mode=item.mode, outcome=None if phase == "confirm" else item.outcome
         )
         try:
-            value = evaluate(cast(JsonObject, step.input.model_dump(by_alias=True)), undo_context(key, item))
+            value = evaluate(cast(JsonObject, step.input.model_dump(by_alias=True)), phase_context(key, item))
             if step.kind == "action":
                 guard(f"{node.path}/{phase}/with", "undo_input", value)
                 dependency = next(d for d in ir.dependencies if d.digest == step.dependency and d.kind == "Action")
