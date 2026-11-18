@@ -376,7 +376,15 @@ describe("Kafka, email and app events", () => {
   });
   const KAFKA: TriggerIntent = { id: "t-3", kind: "broker", name: "orders" };
   const EMAIL: TriggerIntent = { id: "t-4", kind: "email" };
-  const APP: TriggerIntent = { id: "t-5", kind: "provider", name: "support" };
+  const APP: TriggerIntent = {
+    id: "t-5",
+    kind: "provider",
+    name: "support",
+    provider: "telegram",
+    package: "weave-telegram",
+    packageVersion: "1.0.0",
+    schemaDigest: "a".repeat(64),
+  };
   const chosen = {
     emailConnection: {
       revisionId: "c-mail",
@@ -396,6 +404,21 @@ describe("Kafka, email and app events", () => {
     expect(plan([EMAIL])[0].text).toBe(
       "Start reading mail on the email connection chosen above",
     );
+  });
+
+  it("sends an app event source Studio can't describe to the CLI, and creates nothing", () => {
+    expect(
+      plan([
+        { id: "t-6", kind: "provider", name: "support", provider: "telegram" },
+      ]),
+    ).toEqual([
+      {
+        kind: "cli",
+        intentId: "t-6",
+        resourceKind: "provider",
+        text: "Create the app event source support with the CLI. Studio can't read app event schemas yet.",
+      },
+    ]);
   });
 
   it("moves a Kafka trigger by name and an email source by its connection", () => {

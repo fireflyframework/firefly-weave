@@ -65,7 +65,9 @@ export type TriggerRowKind =
   | "schedule-input"
   | "called"
   | "left-behind"
-  | "truncated";
+  | "truncated"
+  /** An app event source Studio can't describe (no package or schema digest): the CLI creates it. */
+  | "cli";
 export interface TriggerRow {
   kind: TriggerRowKind;
   text: string;
@@ -96,6 +98,12 @@ const text = (intent: TriggerIntent, key: string) => {
   const value = intent[key];
   return typeof value === "string" && value.trim() ? value : undefined;
 };
+
+/** An app event choice with everything creating its source needs, which only the platform's packages tell. */
+const describable = (intent: TriggerIntent) =>
+  ["provider", "package", "packageVersion", "schemaDigest"].every(
+    (key) => text(intent, key) !== undefined,
+  );
 
 /** The resource ID a trigger choice stored for this environment after creating it. */
 function storedId(intent: TriggerIntent, environmentId: string) {
@@ -213,6 +221,17 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
       continue;
     }
 
+    if (!resource && kind === "provider" && !describable(intent)) {
+      rows.push({
+        kind: "cli",
+        ...row,
+        text: `Create the app event source ${text(intent, "name") ?? ""} with the CLI. Studio can't read app event schemas yet.`.replace(
+          "source  with",
+          "source with",
+        ),
+      });
+      continue;
+    }
     if (!resource) {
       const connection = input.emailConnection;
       rows.push({
