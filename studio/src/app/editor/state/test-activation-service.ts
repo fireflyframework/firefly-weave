@@ -76,6 +76,11 @@ export type ServiceOutcome<T> =
 interface Held {
   key: string;
   activation: DraftTestActivation;
+  /**
+   * The listen settings its test URL checks, once it listens. Listening
+   * again answers that URL, so other settings need another activation.
+   */
+  listening?: string;
 }
 
 const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
@@ -139,6 +144,7 @@ export class TestActivationService {
   private async activation(
     environment: { id: string; name: string },
     bindings: DraftTestBindings,
+    listening?: string,
   ): Promise<ServiceOutcome<DraftTestActivation>> {
     const draft = await this.host.saveDraft();
     const key = [
@@ -150,7 +156,11 @@ export class TestActivationService {
     const held = this.held;
     if (
       held?.key === key &&
-      this.host.now() < Date.parse(held.activation.expires_at) - REUSE_MARGIN_MS
+      this.host.now() <
+        Date.parse(held.activation.expires_at) - REUSE_MARGIN_MS &&
+      (listening === undefined ||
+        held.listening === undefined ||
+        held.listening === listening)
     )
       return { ok: true, value: held.activation };
     await this.retireHeld();
@@ -257,24 +267,26 @@ export class TestActivationService {
           message:
             "Listening needs a platform. Paste a sample payload instead.",
         });
-      const held = await this.activation(environment, bindings);
-      if (!held.ok) return held;
       const request: DraftTestListenRequest = { secret_ref: secret };
       if (typeof trigger["maxBodyBytes"] === "number")
         request.max_body_bytes = trigger["maxBodyBytes"];
       if (typeof trigger["toleranceSeconds"] === "number")
         request.tolerance_seconds = trigger["toleranceSeconds"];
+      const settings = canonicalJson(request);
+      const held = await this.activation(environment, bindings, settings);
+      if (!held.ok) return held;
       const listening = this.settle(
         await listenForTestEvent(this.api, held.value.id, request),
         held.value,
         environment.name,
       );
-      return listening.ok
-        ? {
-            ok: true,
-            value: { listening: listening.value, activation: held.value },
-          }
-        : listening;
+      if (!listening.ok) return listening;
+      if (this.held?.activation.id === held.value.id)
+        this.held.listening = settings;
+      return {
+        ok: true,
+        value: { listening: listening.value, activation: held.value },
+      };
     });
   }
 

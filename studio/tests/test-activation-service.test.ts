@@ -333,6 +333,43 @@ describe("listening for a test event", () => {
     expect(log).toEqual([]);
   });
 
+  it.each([
+    ["the test secret", { testSecretRef: "orders-test-2" }],
+    ["the body limit", { maxBodyBytes: 1024 }],
+    ["the tolerance", { toleranceSeconds: 30 }],
+  ])(
+    "listens on a new activation after a change to %s, as the old URL checks the old settings",
+    async (_, change) => {
+      const { api, service } = setup();
+      const listening = {
+        test_url: "https://weave.example/webhooks/test/x",
+        expires_at: "2026-11-18T10:15:00Z",
+      };
+      api.answers = [
+        activation("ta-1"),
+        listening,
+        listening,
+        RUN,
+        {},
+        activation("ta-2"),
+        listening,
+      ];
+      await service.listen(HOOK, BINDINGS);
+      await service.listen(HOOK, BINDINGS);
+      await service.execute({}, BINDINGS);
+      await service.listen({ ...HOOK, ...change }, BINDINGS);
+      expect(api.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+        "POST /test-activations",
+        "POST /test-activations/ta-1/listen",
+        "POST /test-activations/ta-1/listen",
+        "POST /test-activations/ta-1/runs",
+        "DELETE /test-activations/ta-1",
+        "POST /test-activations",
+        "POST /test-activations/ta-2/listen",
+      ]);
+    },
+  );
+
   it("never listens with the production secret", async () => {
     const { log, service } = setup();
     for (const trigger of [
