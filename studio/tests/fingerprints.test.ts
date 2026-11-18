@@ -200,7 +200,8 @@ describe("fingerprints", () => {
     // work is linear, and about sixty-four times as long when it is quadratic.
     // The small chain is hashed eight times per measurement, so both
     // measurements last about as long; the fastest of several alternating runs
-    // leaves out the pauses the hashing didn't cause.
+    // leaves out the pauses the hashing didn't cause. Absolute speed is checked
+    // in the browser performance suite (tests/browser/performance.spec.ts).
     const small = chain(25);
     const large = chain(200);
     fingerprints(large);
