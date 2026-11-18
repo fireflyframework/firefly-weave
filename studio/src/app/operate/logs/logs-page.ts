@@ -53,6 +53,7 @@ import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
 import { asRunViewsApi } from "../run-contracts";
+import { personLearned } from "../runs/person-scope";
 import { LogEntries } from "./log-entries";
 import {
   FOLLOW_MS,
@@ -548,11 +549,26 @@ export class LogsPage implements DoCheck, OnDestroy {
     }
     const key = scopeKeyOf(this.host);
     if (key === this.scopeKey) return;
-    // Another platform, environment or person: nothing read before stays.
+    // Another platform, environment or person: nothing read before stays,
+    // and nothing typed before is sent, unless only the same session's
+    // person became known.
+    const learned = personLearned(this.scopeKey, key);
     this.scopeKey = key;
+    if (!learned) this.forgetTyped();
     this.store.forget();
     if (environmentOf(this.host) && this.host.identity && this.readable)
       void this.read();
+  }
+  /** What was typed for the person before: the message and refused names. */
+  private forgetTyped() {
+    if (this.typing) clearTimeout(this.typing);
+    this.typing = null;
+    this.draft.set("");
+    this.contains.set("");
+    this.stepProblem.set("");
+    this.codeProblem.set("");
+    this.showText(this.stepField(), this.route().step);
+    this.showText(this.codeField(), this.route().code);
   }
   private showText(
     field: ElementRef<HTMLInputElement> | undefined,

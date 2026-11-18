@@ -27,6 +27,7 @@ import { resolve } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import type { ExecutionLogEntry } from "../../src/app/operate/run-contracts";
 import { connected } from "./support";
+import { acmePlatform, platformHost, signInWaiting } from "./platform-host";
 
 const captures = resolve(
   process.env["STUDIO_OPERATE_CAPTURES"]?.trim() || "test-results/operate",
@@ -571,5 +572,73 @@ test.describe("Operate › Logs on a phone", () => {
       "Filters: last 6 hours · Error only · message contains “SMTP” · test runs included · following every 10 seconds",
     );
     await shot(page, "logs-page-360-summary");
+  });
+});
+
+test.describe("another person on the same environment", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("a message typed for the person before is never sent for the next one", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date(NOW) });
+    // Jane is signed in with a sign-in waiting in the background; John
+    // finishes it on the same environment while the page stays open.
+    let person = "jane";
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: {
+            ...current.identity(),
+            principal_id: `principal-${person}`,
+          },
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
+    });
+    const reads: { person: string; query: URLSearchParams }[] = [];
+    await page.route("**/execution-logs**", async (route) => {
+      reads.push({
+        person,
+        query: new URL(route.request().url()).searchParams,
+      });
+      await route
+        .fulfill({ json: { items: [], next_cursor: null } })
+        .catch(() => undefined);
+    });
+    const john = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Logs", exact: true }).click(),
+    );
+    const message = page.getByLabel("Message contains");
+    await message.fill("jane-private-search");
+    await page.clock.runFor(500);
+    await expect
+      .poll(() => reads.at(-1)?.query.get("contains"))
+      .toBe("jane-private-search");
+    await page.getByLabel("Step", { exact: true }).fill("not a step");
+    await page.getByLabel("Step", { exact: true }).press("Enter");
+    await expect(page.locator("#logs-step-problem")).toBeVisible();
+    // Her last search is out when John turns out to be signed in.
+    await message.fill("jane-private-search-2");
+    await page.clock.runFor(500);
+    await expect
+      .poll(() => reads.at(-1)?.query.get("contains"))
+      .toBe("jane-private-search-2");
+    person = "john";
+    await john();
+    await expect(message).toHaveValue("");
+    await expect(page.getByLabel("Step", { exact: true })).toHaveValue("");
+    await expect(page.locator("#logs-step-problem")).toHaveCount(0);
+    await page.clock.runFor(1_000);
+    await expect
+      .poll(() => reads.filter((read) => read.person === "john").length)
+      .toBeGreaterThan(0);
+    for (const read of reads.filter((item) => item.person === "john"))
+      expect(read.query.has("contains"), read.query.toString()).toBe(false);
   });
 });
