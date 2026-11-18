@@ -306,6 +306,7 @@ describe("moving a trigger to another activation", () => {
         code: "WV-SCHEDULE-REVISION",
         message: "Schedule revision changed",
       }),
+      { ...schedule, revision: 6 },
     ];
     expect(
       await moveSchedule(api, schedule, "a-3", {
@@ -317,6 +318,79 @@ describe("moving a trigger to another activation", () => {
       cron: "0 10 * * 1",
       activation_id: "a-3",
       input: { region: "us" },
+    });
+  });
+
+  it.each([
+    ["deleted", { status: "deleted" }],
+    [
+      "gone",
+      new ApiError(404, {
+        code: "WV-NOT-FOUND",
+        message: "Schedule not found",
+      }),
+    ],
+  ])(
+    "says a %s schedule is missing, though the platform answers as if it changed",
+    async (_, read) => {
+      const api = new FakeApi();
+      const schedule = {
+        id: "s-1",
+        cron: "0 9 * * 1",
+        timezone: "UTC" as const,
+        missed_policy: "skip" as const,
+        activation_id: "a-1",
+        input: null,
+        revision: 4,
+        principal_id: "p-1",
+        status: "enabled" as const,
+        next_due_at: "2026-11-23T09:00:00Z",
+        blocked_reason: null,
+      };
+      api.answers = [
+        new ApiError(409, {
+          code: "WV-SCHEDULE-REVISION",
+          message: "Schedule revision changed",
+        }),
+        read instanceof Error ? read : { ...schedule, ...read, revision: 5 },
+      ];
+      expect(await moveSchedule(api, schedule, "a-2")).toEqual({
+        ok: false,
+        refusal: {
+          kind: "missing",
+          status: 409,
+          code: "WV-SCHEDULE-REVISION",
+          message: expect.any(String),
+        },
+      });
+      expect(api.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+        `POST ${ENV}/schedules`,
+        `GET ${ENV}/schedules/s-1`,
+      ]);
+    },
+  );
+
+  it("says a Kafka trigger is missing when its route is gone, and when its connection no longer serves it", async () => {
+    const unavailable = () =>
+      new ApiError(422, {
+        code: "WV-CONNECTION",
+        message: "Connection requirements are unavailable or incompatible",
+      });
+    const gone = new FakeApi();
+    gone.answers = [unavailable(), unavailable()];
+    expect(await retarget(gone, "broker", "k-1", "a-2", 3)).toMatchObject({
+      ok: false,
+      refusal: { kind: "missing", status: 422, code: "WV-CONNECTION" },
+    });
+    expect(gone.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      `POST ${ENV}/broker-triggers/k-1/retarget`,
+      `GET ${ENV}/broker-triggers/k-1`,
+    ]);
+    const unserved = new FakeApi();
+    unserved.answers = [unavailable(), { ...WEBHOOK, id: "k-1" }];
+    expect(await retarget(unserved, "broker", "k-1", "a-2", 3)).toMatchObject({
+      ok: false,
+      refusal: { kind: "connection", status: 422, code: "WV-CONNECTION" },
     });
   });
 

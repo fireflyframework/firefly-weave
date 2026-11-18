@@ -159,6 +159,8 @@ export type RefusalKind =
   | "forbidden"
   | "missing"
   | "incomplete"
+  /** A Kafka trigger whose connection no longer serves its cluster and topic. */
+  | "connection"
   | "failed";
 export interface ResourceRefusal {
   kind: RefusalKind;
@@ -286,14 +288,14 @@ async function outcome<K extends ResourceKind>(
 }
 
 /** Move a trigger to another activation of the same workflow; `revision` is the one Studio read. */
-export function retarget<K extends RetargetKind>(
+export async function retarget<K extends RetargetKind>(
   api: TriggerApi,
   kind: K,
   id: string,
   activationId: string,
   revision: number,
 ): Promise<ResourceOutcome<K>> {
-  return outcome(kind, () =>
+  const moved = await outcome(kind, () =>
     api.mutate<ResourceViews[K]>(
       `${path(api, kind, id)}/retarget`,
       "POST",
@@ -301,6 +303,29 @@ export function retarget<K extends RetargetKind>(
       revision,
     ),
   );
+  // A Kafka trigger answers WV-CONNECTION both when its route is gone and
+  // when its connection no longer serves it; a read tells which.
+  if (
+    !moved.ok &&
+    kind === "broker" &&
+    moved.refusal.code === "WV-CONNECTION"
+  ) {
+    const state = await presence(api, kind, id);
+    if (state === "gone")
+      moved.refusal = {
+        ...moved.refusal,
+        kind: "missing",
+        message: "This Kafka trigger no longer exists.",
+      };
+    else if (state === "present")
+      moved.refusal = {
+        ...moved.refusal,
+        kind: "connection",
+        message:
+          "The Kafka connection no longer serves this trigger's cluster and topic.",
+      };
+  }
+  return moved;
 }
 
 /** What a schedule's step details changed since it was last saved. */
@@ -310,13 +335,13 @@ export interface ScheduleChanges {
 }
 
 /** Move a schedule to another activation by saving it, with the calendar and run input it has now. */
-export function moveSchedule(
+export async function moveSchedule(
   api: TriggerApi,
   schedule: ScheduleView,
   activationId: string,
   changes: ScheduleChanges = {},
 ): Promise<ResourceOutcome<"schedule">> {
-  return outcome("schedule", () =>
+  const moved = await outcome("schedule", () =>
     api.mutate<ScheduleView>(
       path(api, "schedule"),
       "POST",
@@ -331,6 +356,44 @@ export function moveSchedule(
       schedule.revision,
     ),
   );
+  // Saving a deleted or removed schedule answers WV-SCHEDULE-REVISION, as a
+  // stale revision does; a read tells which.
+  if (
+    !moved.ok &&
+    moved.refusal.code === "WV-SCHEDULE-REVISION" &&
+    (await presence(api, "schedule", schedule.id)) === "gone"
+  )
+    moved.refusal = {
+      ...moved.refusal,
+      kind: "missing",
+      message: "This schedule no longer exists.",
+    };
+  return moved;
+}
+
+/**
+ * Whether a resource still exists, read again after a refusal that doesn't
+ * say: gone (404, a Kafka route's WV-CONNECTION on read, a deleted
+ * schedule), present, or unknown when the read fails otherwise.
+ */
+async function presence(
+  api: TriggerApi,
+  kind: ResourceKind,
+  id: string,
+): Promise<"gone" | "present" | "unknown"> {
+  try {
+    const read = await readResource(api, kind, id);
+    return read.kind === "schedule" &&
+      (read.view as ScheduleView).status === "deleted"
+      ? "gone"
+      : "present";
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    return error.status === 404 ||
+      (kind === "broker" && error.code === "WV-CONNECTION")
+      ? "gone"
+      : "unknown";
+  }
 }
 
 const text = (intent: TriggerIntent, key: string) => {
