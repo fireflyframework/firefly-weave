@@ -490,6 +490,7 @@ export class ConnectionsPort {
       received: (event) => {
         if (port.alive) void keepTestEvent(host, event, port.environmentId);
       },
+      ownRuns: () => port.ownRuns,
     });
     this.listenerMade.set(listener);
     return listener;
@@ -502,6 +503,8 @@ export class ConnectionsPort {
   listeningTo(): string | null {
     return this.listenerMade()?.listeningTo() ?? null;
   }
+  /** Runs Execute workflow in the environment started on the test activation: never a test event. */
+  readonly ownRuns = new Set<string>();
   private readonly workflowTest = signal(false);
   /** True while Execute workflow in the environment is starting its test run. */
   runningWorkflowTest(): boolean {

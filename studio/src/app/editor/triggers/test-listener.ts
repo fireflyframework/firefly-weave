@@ -61,6 +61,10 @@ export function listenBlocked(
 export const LISTEN_POLL_MS = 2_000;
 /** Failed reads in a row before Studio stops listening. */
 const MAX_FAILURES = 3;
+/** The runs read start this long before this computer's clock, which may run ahead of the platform's. */
+export const CLOCK_SKEW_MS = 120_000;
+/** Runs read at a time: the test activation's own Execute runs may be among them. */
+const PAGE = 10;
 
 /** What listening needs of the test activations: the listen call, and retiring. */
 export interface ListenPort {
@@ -102,12 +106,19 @@ export interface ListenerOptions {
   now?: () => number;
   wait?: () => Promise<void>;
   received(event: ReceivedEvent): void;
+  /**
+   * Runs this editor started itself on the test activation (Execute workflow
+   * in the environment): they share it, but no test URL started them.
+   */
+  ownRuns?: () => ReadonlySet<string>;
 }
 
 export class TestEventListener {
   readonly state = signal<ListenState | null>(null);
   /** Bumped by every start and stop: a watch of an earlier one ends. */
   private ticket = 0;
+  /** Runs already taken as test events: listening again never takes them twice. */
+  private readonly taken = new Set<string>();
   private readonly now: () => number;
   private readonly wait: () => Promise<void>;
 
@@ -134,7 +145,7 @@ export class TestEventListener {
     payloadSample?: Json,
   ): { started: Promise<void>; done: Promise<void> } {
     const ticket = ++this.ticket;
-    const since = new Date(this.now()).toISOString();
+    const since = new Date(this.now() - CLOCK_SKEW_MS).toISOString();
     this.state.set({ kind: "starting", triggerId: trigger.id });
     const started = (async () => {
       let outcome;
@@ -218,7 +229,7 @@ export class TestEventListener {
       include_test: "true",
       started_after: since,
       order: "started_desc",
-      limit: "1",
+      limit: String(PAGE),
     });
     let failures = 0;
     for (;;) {
@@ -236,8 +247,18 @@ export class TestEventListener {
           `${api.environment}/run-summaries?${query}`,
         );
         if (ticket !== this.ticket) return;
-        const id = page.items?.[0]?.id;
-        if (typeof id === "string" && id) {
+        const own = this.options.ownRuns?.() ?? new Set<string>();
+        const id = (page.items ?? [])
+          .map((item) => item.id)
+          .find(
+            (run): run is string =>
+              typeof run === "string" &&
+              !!run &&
+              !own.has(run) &&
+              !this.taken.has(run),
+          );
+        if (id) {
+          this.taken.add(id);
           const record = readRunRecord(
             await api.request(
               `${api.environment}/runs/${encodeURIComponent(id)}`,

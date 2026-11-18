@@ -174,6 +174,7 @@ export async function executeWorkflowIn(
       service.execute(host.execution?.workflowInput() ?? {}, bindings),
     );
     if (outcome.ok) {
+      port.ownRuns.add(outcome.value.run.id);
       handOverLinkedRun(draftId, outcome.value.run.id);
       await host.selectTab?.("Runs");
       return;

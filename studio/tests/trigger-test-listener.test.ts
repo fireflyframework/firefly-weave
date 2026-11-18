@@ -91,11 +91,13 @@ class Fake implements ListenPort {
       this.failRead--;
       throw new ApiError(503, { code: "WV-UNAVAILABLE", message: "Down" });
     }
-    if (path.includes("/run-summaries"))
+    if (path.includes("/run-summaries")) {
+      const next = this.summaries.shift();
       return {
-        items: this.summaries.length ? [this.summaries.shift()] : [],
+        items: next === undefined ? [] : Array.isArray(next) ? next : [next],
         next_cursor: null,
       } as T;
+    }
     return this.run as T;
   }
   now() {
@@ -106,13 +108,18 @@ class Fake implements ListenPort {
   }
 }
 
-function listener(fake: Fake, received: ReceivedEvent[]) {
+function listener(
+  fake: Fake,
+  received: ReceivedEvent[],
+  ownRuns: ReadonlySet<string> = new Set(),
+) {
   return new TestEventListener({
     port: fake,
     api: fake,
     now: () => fake.now(),
     wait: () => fake.wait(),
     received: (event) => received.push(event),
+    ownRuns: () => ownRuns,
   });
 }
 
@@ -153,10 +160,28 @@ describe("listening for a test event", () => {
     expect(Object.fromEntries(query)).toMatchObject({
       activation_id: "a-1",
       include_test: "true",
-      started_after: new Date(START).toISOString(),
-      limit: "1",
+      // A little before this computer's clock, which may run ahead of the platform's.
+      started_after: new Date(START - 120_000).toISOString(),
+      limit: "10",
     });
     expect(fake.reads.at(-1)).toBe(`/runs/${RUN}`);
+  });
+
+  it("takes only a run the test URL started: not one Execute started, nor one it took before", async () => {
+    const fake = new Fake();
+    const received: ReceivedEvent[] = [];
+    const EXECUTED = "11111111-2222-4333-8444-555555555555";
+    const listen = listener(fake, received, new Set([EXECUTED]));
+    fake.summaries = [[{ id: EXECUTED }, { id: RUN }]];
+    await listen.start(HOOK, {}).done;
+    expect(received.map((event) => event.runId)).toEqual([RUN]);
+    // Listening again, the run already taken is not a new test event.
+    fake.summaries = [[{ id: RUN }], [{ id: RUN }]];
+    const again = listen.start(HOOK, {});
+    await again.started;
+    fake.clock = START + 15 * 60_000;
+    await again.done;
+    expect(received.map((event) => event.runId)).toEqual([RUN]);
   });
 
   it("keeps watching past a failed read, and gives up after three in a row", async () => {
