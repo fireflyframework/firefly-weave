@@ -156,6 +156,10 @@ spec:
     "view-tab-runs",
     { timeout: 60_000 },
   );
+  // Step details follows the run the signed request started.
+  await expect(details).toContainText(/You're looking at run [0-9a-f]{8}/, {
+    timeout: 60_000,
+  });
   await shot(page, "al-03-test-event-received");
   await details.getByRole("button", { name: "Close", exact: true }).click();
   await expect(details).toHaveCount(0);

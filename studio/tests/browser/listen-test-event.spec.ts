@@ -24,7 +24,8 @@ SPDX-License-Identifier: Apache-2.0
 // Paste sample.
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { PRODUCTION, crmWorkflow, openConnected } from "./connections-po";
-import { RUN_IDS, routeRuns, runFixture } from "./runs-po";
+import { parse } from "yaml";
+import { RUN_IDS, VERSIONS, routeRuns, runFixture } from "./runs-po";
 import { routeStepTests } from "./step-tests-po";
 import { StepDetailsPage } from "./step-details-po";
 import { allCapabilities } from "./support";
@@ -81,6 +82,12 @@ async function routeListening(page: Page): Promise<Listening> {
       },
     },
   ]);
+  // The run's version is this draft's own workflow, so the Runs tab draws it.
+  await page.route(`**/projects/*/workflows/${VERSIONS.test}/export`, (route) =>
+    route.fulfill({
+      json: { id: VERSIONS.test, document: parse(workflow.buffer.toString()) },
+    }),
+  );
   await page.route("**/environments/*/run-summaries**", (route) => {
     const url = new URL(route.request().url());
     if (!url.searchParams.get("activation_id")) return route.fallback();
@@ -204,6 +211,10 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
     "aria-labelledby",
     "view-tab-runs",
     { timeout: 10_000 },
+  );
+  // Step details shows the run the event started, as Execute's run is followed.
+  await expect(dialog).toContainText(
+    `You're looking at run ${RUN_IDS.test.slice(0, 8)}`,
   );
   // Reading a run, nothing listens: its input never becomes a cURL to paste.
   await expect(

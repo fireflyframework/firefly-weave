@@ -22,9 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 // a signed cURL, and the event's run opens in the Runs tab. A new version,
 // activated, moves the same webhook: its URL stays.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { platform, routeWebhooks } from "./activation-po";
-import { RUN_IDS, routeRuns, runFixture } from "./runs-po";
+import { RUN_IDS, VERSIONS, routeRuns, runFixture } from "./runs-po";
 import { allCapabilities, command, showView } from "./support";
 import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
@@ -70,6 +70,10 @@ async function routeListening(page: Page) {
       },
     },
   ]);
+  // The run's version is this workflow, so the Runs tab draws it.
+  await page.route(`**/projects/*/workflows/${VERSIONS.test}/export`, (route) =>
+    route.fulfill({ json: { id: VERSIONS.test, document: parse(workflow) } }),
+  );
   await page.route("**/environments/*/test-policy", (route) =>
     route.fulfill({ json: { test_calls: "enabled", revision: 1 } }),
   );
@@ -218,8 +222,9 @@ test("a webhook set up in step details is created at activation, listens for its
     "view-tab-runs",
     { timeout: 10_000 },
   );
+  // Step details follows the run the event started.
   await expect(details).toContainText(
-    "Received a test event. Its run is open in Runs.",
+    `You're looking at run ${RUN_IDS.test.slice(0, 8)}`,
   );
   await new StepDetailsPage(page).close();
   await showView(page, "Designer");
