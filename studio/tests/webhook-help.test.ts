@@ -111,10 +111,12 @@ describe("the signed cURL", () => {
       "Content-Type: application/json",
     ])
       expect(command).toContain(header);
-    expect(command).toContain('"$WEAVE_WEBHOOK_SECRET"');
+    // Read from the environment inside the signing tool, never expanded onto a command line.
+    expect(command).not.toContain('"$WEAVE_WEBHOOK_SECRET"');
+    expect(command).toContain("$ENV{WEAVE_WEBHOOK_SECRET}");
     expect(command).toContain(`curl -sS -X POST '${URL}'`);
     expect(command.split("\n")[0]).toBe(
-      "# Set WEAVE_WEBHOOK_SECRET to the secret's value first; Studio never sees it.",
+      "# Export WEAVE_WEBHOOK_SECRET with the secret's value first; no command line carries it, and Studio never sees it.",
     );
   });
 
@@ -123,12 +125,17 @@ describe("the signed cURL", () => {
     () => {
       const sample = {
         customerId: "123",
+        city: "Málaga",
         note: 'it\'s $HOME `here` \\ "quoted"',
       };
-      const { values } = run(
+      const { values, commandLines } = run(
         signedCurl({ url: URL, payloadSample: sample }),
         "s3cret-value",
       );
+      // No process shows the secret in its arguments while the command runs.
+      expect(commandLines).toContain("openssl");
+      expect(commandLines).not.toContain("s3cret-value");
+      expect(values.join(" ")).not.toContain("s3cret-value");
       const header = (name: string) =>
         values[
           values.findIndex((value) => value.startsWith(`${name}: `))
