@@ -209,7 +209,8 @@ export class ConnectionField implements DoCheck {
     const session = this.session(),
       spec = this.spec();
     if (this.readOnly() || !session.isCurrent()) return;
-    if (value === CREATE_CONNECTION) return session.createConnection(spec);
+    if (value === CREATE_CONNECTION)
+      return session.openConnectionSheet(spec, "create");
     const item = view.list?.items?.find(
       (entry) => entry.connectionId === value,
     );

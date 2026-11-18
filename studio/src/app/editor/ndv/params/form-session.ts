@@ -117,7 +117,11 @@ import {
   reconcilePathParts,
 } from "./url-template";
 import { normalizeIdentifier } from "./identifiers";
-import { connectionsPort } from "../../connections/connections-port";
+import {
+  connectionsPort,
+  type ConnectionsPort,
+} from "../../connections/connections-port";
+import type { CreatedConnection } from "../../../integrations/http-connection-form";
 import type { ConnectionView } from "../../connections/connection-view";
 import type { BindableItem } from "../../connections/connections-api";
 import {
@@ -2187,6 +2191,67 @@ export class FormSession {
     );
     if (needsTest(port.binding(workflow, slot), port.canManage, new Date()))
       await port.test(workflow, slot, item.origin);
+  }
+  /**
+   * Edit for a connected Connection field: the bound HTTP connection, for a
+   * person who manages connections; null when there is nothing to edit here.
+   */
+  connectionEditable(spec: ParamSpec): boolean {
+    const view = this.connectionView(spec);
+    return (
+      !!view?.item &&
+      !!view.connector &&
+      view.connector.split("@")[0] === "weave-http" &&
+      view.canManage &&
+      this.editable(spec)
+    );
+  }
+  /**
+   * Create connection or Edit in the side sheet: a saved connection is chosen
+   * for the step (a new revision of the bound one keeps its slot) and tested.
+   */
+  openConnectionSheet(spec: ParamSpec, mode: "create" | "edit"): void {
+    const view = this.connectionView(spec);
+    if (
+      !view?.connector ||
+      view.connector.split("@")[0] !== "weave-http" ||
+      !view.canManage ||
+      !this.editable(spec) ||
+      !this.isCurrent()
+    )
+      return;
+    if (mode === "edit" && !view.item) return;
+    const { port, connector } = view;
+    const slot =
+      view.slot ||
+      slotFor(this.host.model.definition, connector, view.slot).slot;
+    port.sheet.set({
+      request:
+        mode === "edit"
+          ? {
+              mode,
+              slot,
+              revisionId: view.item!.revisionId,
+              name: view.item!.name,
+            }
+          : { mode, slot },
+      saved: (created) =>
+        void this.connectionCreated(spec, port, connector, created),
+    });
+  }
+  private async connectionCreated(
+    spec: ParamSpec,
+    port: ConnectionsPort,
+    connector: string,
+    created: CreatedConnection,
+  ): Promise<void> {
+    await port.reload(connector);
+    if (!port.live || !this.isCurrent()) return;
+    const list = await port.listed(connector);
+    const item =
+      list.items?.find((entry) => entry.revisionId === created.id) ??
+      list.items?.find((entry) => entry.name === created.name);
+    if (item?.enabled) await this.chooseConnection(spec, item);
   }
   /** Retry: tests the step's connection again. */
   async retestConnection(spec: ParamSpec): Promise<void> {

@@ -496,6 +496,19 @@ SPDX-License-Identifier: Apache-2.0
      the value mode last, on the field's right edge. -->
 <ng-template #toolsTemplate>
   <div class="param-tools" (keydown)="toolsKey($event)">
+    @if (
+      spec.type === "connection" &&
+      !reason &&
+      session().connectionEditable(spec)
+    ) {
+      <button
+        type="button"
+        class="tertiary param-edit-connection"
+        (click)="session().openConnectionSheet(spec, 'edit')"
+      >
+        <weave-icon name="edit" [size]="16" />Edit
+      </button>
+    }
     @if (entry.option && !reason && !spec.required) {
       <button
         type="button"

@@ -21,6 +21,7 @@ import type { CanvasRun } from "../canvas/run-state";
 import type { RunDataPort, RunViewPort } from "../runs-tab/run-port";
 import type { Signal } from "@angular/core";
 import type { Profile, StudioApi, Validation } from "../../api";
+import type { Identity } from "../../connection";
 import type { ContractGap } from "../../designer/contract-gaps";
 import type { SuggestedChange } from "../../designer/diagnostics-list";
 import type { StructuredCanvasAdapter } from "../../model";
@@ -132,6 +133,10 @@ export interface StepDetailsHost {
   readonly dirty?: boolean;
   /** The connected environment's name ("local"), or null before it's known. */
   readonly environmentName?: string | null;
+  /** Who is signed in to the platform; the connection form decides between creating and asking an administrator. */
+  readonly identity?: Identity | null;
+  /** "Acme / Payments / Production", for the connection form. */
+  readonly workspaceText?: string;
   /** The run the canvas draws; on the Runs tab it names the steps changed since. */
   canvasRun?(): CanvasRun | null;
   /** Opens a run in Operate › Runs. */

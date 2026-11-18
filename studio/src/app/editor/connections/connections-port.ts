@@ -34,6 +34,8 @@ import {
   type ConnectionsApi,
 } from "./connections-api";
 import { DevBindings, followRevision, type DevBinding } from "./dev-bindings";
+import type { CreatedConnection } from "../../integrations/http-connection-form";
+import type { ConnectionSheetRequest } from "./connection-sheet";
 
 export type PortHost = Pick<
   StepDetailsHost,
@@ -72,6 +74,11 @@ export class ConnectionsPort {
   private readonly dropped = new Map<string, string>();
   /** Slots whose connection is being tested now. */
   private readonly testing = new Set<string>();
+  /** Create connection or Edit, open in the side sheet over step details. */
+  readonly sheet = signal<{
+    request: ConnectionSheetRequest;
+    saved(created: CreatedConnection): void;
+  } | null>(null);
   /** Fix and bind(): the Connection field of this slot opens its choices. */
   readonly opening = signal<{ slot: string; seq: number } | null>(null);
 

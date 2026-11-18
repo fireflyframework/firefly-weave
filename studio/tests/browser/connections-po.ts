@@ -274,3 +274,92 @@ export async function keptOnThisComputer(page: Page): Promise<string> {
     }),
   );
 }
+
+/** What the HTTP connection form asks before it creates: the project's HTTP connector, published and runnable. */
+export async function routeConnectionForm(
+  page: Page,
+  state: ConnectionsState,
+  created: { id: string; body: Record<string, unknown> }[],
+) {
+  const digest = "a".repeat(64);
+  await page.route("**/projects/*/capabilities", (r) =>
+    r.fulfill({ json: { connectors: ["weave-http-v2"] } }),
+  );
+  await page.route("**/projects/*/connector-descriptors/weave-http-v2", (r) =>
+    r.fulfill({
+      json: {
+        adapter: "weave-http-v2",
+        reference: HTTP,
+        digest,
+        manifest: {},
+        source: "{}",
+        implementation_version: "2.0.0",
+        capabilities: [],
+        bindings: [],
+        actions: [],
+        connection: { config_schema: {}, auth_schema: {} },
+        published_version_id: "c0000000-0000-4000-8000-000000000001",
+      },
+    }),
+  );
+  await page.route("**/projects/*/connectors?*", (r) =>
+    r.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  await page.route("**/environments/*/worker-releases?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            id: "d0000000-0000-4000-8000-000000000001",
+            image_digest: "sha256:" + "b".repeat(64),
+            capabilities: [
+              { taskType: "weave-connector-http-read", taskVersion: "2.0.0" },
+            ],
+            connector_bindings: [
+              {
+                connector_digest: digest,
+                action: "read",
+                adapter: "weave-http-v2",
+                task_reference: "weave-connector-http-read@2.0.0",
+              },
+            ],
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/environments/*/connections?*", (r) =>
+    r.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  // Creating a connection adds its revision to the environment's bindable list.
+  await page.route("**/environments/*/connections", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    const body = r.request().postDataJSON() as Record<string, unknown>;
+    const n = 50 + created.length;
+    const environment = environmentOf(r.request().url());
+    const list = (state.bindable[environment] ??= []);
+    const kept = list.find((item) => item["name"] === body["name"]);
+    const revision = id(2000 + n);
+    created.push({ id: revision, body });
+    if (kept) kept["revision_id"] = revision;
+    else
+      list.push(
+        bindable(n, {
+          name: body["name"],
+          label: body["name"],
+          revision_id: revision,
+          endpoint_origin: (body["config"] as { baseUrl: string }).baseUrl,
+        }),
+      );
+    await r.fulfill({
+      status: 201,
+      json: {
+        ...body,
+        id: revision,
+        revision: created.length,
+        connector: HTTP,
+      },
+    });
+  });
+}
