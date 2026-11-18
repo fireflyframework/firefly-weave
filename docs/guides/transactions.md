@@ -183,8 +183,15 @@ Creating a trigger needs `trigger.manage`, `run.start`, and `run.read`, and
 trigger's runs resolve their transaction once workflows can resolve
 transactions; until then it has no effect. Each run starts
 as the trigger's owner, who must still hold `run.start` and `run.read` when it
-starts: the run receives what the event says about a transaction. A trigger
-can't be edited. To change one, disable it with
+starts: the run receives what the event says about a transaction. A trigger's
+events and sources can't be edited. When you activate a new version of the
+workflow, move the trigger to it with `POST …/event-triggers/{id}/retarget`,
+sending the trigger's revision in `If-Match`; the new version must still declare
+the trigger's events and sources. The trigger keeps the starts it recorded, and
+its later runs, including starts already requested, run the new version as the
+person who moved it, who needs what creating it needs. See
+[Move a trigger to another version](../reference/api.md#move-a-trigger-to-another-version).
+To ask for other events, disable the trigger with
 `weave triggers events disable "$TRIGGER_ID"` and create another; disabling
 works even when the project's quota is spent, and no run starts after it
 returns.

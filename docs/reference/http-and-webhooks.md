@@ -51,7 +51,7 @@ acknowledgment means something different in each row.
 
 ## Create a signed run trigger
 
-A **trigger** is an immutable route that turns one signed HTTP request into a new
+A **trigger** is a route that turns one signed HTTP request into a new
 run of one activation, or into a signal for one waiting run. You need the
 `trigger.manage` capability (the `deployer` role) plus `run.start` for a run
 trigger or `run.signal` for a signal trigger (the `operator` role). Run the
@@ -154,10 +154,12 @@ end-to-end tests and was not run again for this page.
 creates a trigger (`weave triggers create`). The creator becomes the trigger's
 execution principal; there is no principal selector or delegation. A run trigger
 pins `activation_id`; a signal trigger pins `run_id` and one declared `signal`.
-`max_body_bytes` is at most 1 MiB and `tolerance_seconds` is 1 to 300. Triggers
-are immutable: to change a route, create a new trigger. `weave triggers disable
-ID` (`POST .../triggers/{id}/disable`) needs `trigger.manage`; `weave triggers
-list` and `read` show existing ones.
+`max_body_bytes` is at most 1 MiB and `tolerance_seconds` is 1 to 300. A run
+trigger can move to another version of its workflow and keep its URL (see
+[Keep the URL when you publish a new version](#keep-the-url-when-you-publish-a-new-version));
+anything else about a route never changes, so to change it, create a new trigger.
+`weave triggers disable ID` (`POST .../triggers/{id}/disable`) needs
+`trigger.manage`; `weave triggers list` and `read` show existing ones.
 
 **The envelope.** Send exact UTF-8 JSON bytes to `POST /webhooks/{id}`:
 
@@ -192,15 +194,63 @@ authentication, and only for an exact POST with a UUID. A dedicated database
 function owner, without login or row-security bypass, looks up just enough of the
 route to check the signature; the application cannot read across scopes. After
 the signature is valid, the service locks the trigger, checks that it is enabled
-and unchanged, reloads its creator's current grants, and writes the receipt and
-the run or signal in one transaction. The `202` is returned after commit. A
-disabled trigger or a revoked creator fails closed.
+and unchanged, reloads its principal's current grants (the creator's, or the
+person's who last moved it), and writes the receipt and the run or signal in one
+transaction. The `202` is returned after commit. A disabled trigger or a revoked
+principal fails closed.
 
 **Retries and duplicates.** The same event ID with the exact same body returns
 the same receipt, run, and signal IDs, including after a lost response. The same
 event ID with different bytes returns HTTP 409, even when the JSON means the same
 thing. A new, properly signed event ID is a new delivery. To retry outside the
 tolerance window, re-sign the same bytes with a fresh timestamp.
+
+## Keep the URL when you publish a new version
+
+When you activate a new version of a workflow, move its webhooks to the new
+activation instead of creating new ones: a moved webhook keeps its ID, so its
+`/webhooks/{id}` URL and its senders stay the same. Studio does this for you when
+you activate a workflow from the editor.
+
+1. Read the trigger and note its revision, which the response also sends as the
+   `ETag` header:
+
+    ```http
+    GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{id}
+    ```
+
+2. Move it, sending that revision as `If-Match` and the new activation's ID:
+
+    ```http
+    POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers/{id}/retarget
+    If-Match: "1"
+    Content-Type: application/json
+
+    {"activation_id": "<the new activation's ID>"}
+    ```
+
+    Expected: `200` with the trigger at its next revision, the new
+    `activation_id` and your principal ID as `principal_id`.
+
+A moved webhook starts runs **as the person who moved it**, never as its
+creator, so nobody can point someone else's authority at a version of their
+choosing. You need what creating the webhook needs: `trigger.manage` and
+`run.start`, and the new activation must pass the same readiness checks. Requests
+signed before the move and received after it start runs of the new version.
+
+| Answer | When |
+| --- | --- |
+| `404 WV-NOT-FOUND` | The trigger or the activation doesn't exist in this environment. |
+| `409 WV-TRIGGER-WORKFLOW` | The activation runs another workflow. Move a trigger only to a version of its own workflow. |
+| `409 WV-TRIGGER-SCHEMA-CHANGED` | The new version's input schema is neither the trigger's payload schema nor the current version's input. Create a new trigger for the changed input. |
+| `409 WV-TRIGGER-DISABLED` | The trigger is disabled. Create a new trigger; a disabled one stays disabled. |
+| `409 WV-TRIGGER-KIND` | The trigger delivers a signal to one run, so it has no activation to move. |
+| `409 WV-REVISION` | The trigger changed since you read it, for example it was disabled or moved. Read it again. |
+| `422 WV-ETAG` | `If-Match` is missing or isn't a positive revision. |
+
+Disabling a trigger also moves its revision. Kafka triggers, app event sources,
+email sources and platform-event triggers move the same way (see the
+[HTTP API reference](api.md#move-a-trigger-to-another-version)).
 
 ## What happens to a webhook and an outbound call
 

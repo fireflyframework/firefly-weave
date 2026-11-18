@@ -205,6 +205,19 @@ disables, and retries routes and lists metadata-only incidents. Revoke a source
 binding with `weave source-bindings revoke`. The same operations exist in the API
 and the typed SDK.
 
+**Move a route to a new version.** When you activate a new version of the
+workflow, move the route instead of creating another one: it keeps its topic,
+consumer position and incidents. `POST …/broker-triggers/{id}/retarget` with the
+route's revision in `If-Match` and `{"activation_id": …}` moves it to another
+activation of the same workflow, as long as the new version's input schema is
+the route's payload schema or the current version's input. The route then runs
+as you: you need `trigger.manage`, `run.start`, `connection.manage` and
+`connection.bind`, as creating one does. Its old source binding is revoked and a
+new one is created for you in the same transaction, so the consumer that held
+the route's lease stops at its next check and the route is claimed again on the
+new activation. See
+[Move a trigger to another version](../reference/api.md#move-a-trigger-to-another-version).
+
 ## Know what success looks like
 
 - **Publish.** A successful publish returns `topic`, `partition`, `offset`, and
