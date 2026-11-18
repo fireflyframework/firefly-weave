@@ -1376,6 +1376,88 @@ then pauses before it, and the run log offers **Next**, **Continue** and
 **Keys.** Press **?** in step details or on the canvas to list them, including
 **Ctrl+Enter** / **Cmd+Enter**, **L**, **I**, **O** and **F9**.
 
+### Use connections and execute steps in an environment
+
+When Studio is connected to a platform and an environment, a step's
+**Connection** field lists the connections you may use in that environment,
+grouped "In *environment*", each with its address. Choosing one fills the
+step's slot behind the scenes (the workflow's only slot for that connector, or
+a new one named after it) as one undo step. The workflow itself never names a
+connection: you choose the real connection again when you activate it.
+
+- **What the field shows.** The chosen connection, a test pill ("Tested just
+  now", "Tested 2 min ago", or "Test failed" with **Retry** and the reason,
+  such as "api.acme.test refused this connection's sign-in."), and a line such
+  as "In local · slot crm · https://api.acme.test". An address that starts
+  with `http://` is marked **Not encrypted**; it still works.
+- **When Studio tests.** Choosing a connection tests it when it wasn't tested
+  in the last 10 minutes, with one request to its address. Testing needs
+  permission to manage connections; without it Studio tests nothing and says
+  "Your account can't test connections in *environment*."
+- **A new step.** When you add a step and only one connection fits, Studio
+  chooses it and tests it. With several, the field stays empty until you
+  choose.
+- **Create connection** (the list's last choice) and **Edit** (beside the
+  field's label) open the API connection form in a side sheet over step
+  details. What you save becomes the step's connection and is tested. Studio
+  creates and edits HTTP connections here; other connections (email, file
+  servers, databases) are created with `weave platform integrations` or by an
+  administrator.
+- **A connection that's gone.** When a chosen connection is deleted, retired
+  or no longer allowed for you, the field says "acme-crm isn't available in
+  local anymore. Choose another connection." and forgets it.
+
+**Where choices are kept.** Studio keeps which connection each slot uses, per
+environment, on this computer only, under your account: connection IDs, the
+revision and the name, and when it was last tested. Nothing else, and never a
+secret.
+
+#### Execute in local
+
+**Execute in *environment*** (the Execute step button's menu) runs this one
+step for real, as a test run of the saved draft, through the platform's normal
+runtime. **Execute step** still simulates on this computer, and
+**Ctrl+Enter** / **Cmd+Enter** too.
+
+- **Who can.** People with the step tester role in that environment. The local
+  owner has it on `local`; others get it with `weave platform user grant`.
+  Without it the item isn't offered.
+- **Where.** Only in an environment whose test policy allows test calls.
+  `weave platform up` allows them on `local`; elsewhere the item reads "Test
+  calls are off in Production. Choose an environment where they're on to
+  execute steps there." See [People and access](people-and-access.md) for the
+  policy.
+- **What asks first.** A step whose action changes data (sends mail, writes or
+  moves files, or calls an API marked as changing data) asks every time:
+  "send-invoice changes data in local. Repeating it repeats the change." with
+  **Run it** and **Cancel**. **Cancel** sends nothing. Steps that only read run
+  at once. When several releases could run the step, Studio asks which one and
+  remembers the answer for this session.
+- **Before it runs.** Studio saves the draft first, and publishes the
+  workflow's own actions when the step calls one that isn't published yet. A
+  step without a connection for its slot says so, with **Fix**, and its tile
+  shows "Setup needed: choose a connection for slot crm" until you choose one.
+  A step that needs data from earlier steps offers **Execute previous steps**.
+- **While it runs.** Output reads "Executing send-invoice in local · 12 s" and
+  the step's tile has a live border. **Stop** cancels the test run on the
+  platform. Closing step details keeps following it.
+- **Where the run shows.** In the editor's **Runs** tab and in
+  **Operate › Runs** with **Include test runs**. When Studio stops waiting, it
+  says where to find the run, with **Open in Operate**.
+
+**Real results.** The step's Output shows what it returned, tagged "From
+local · run 3f2a…" (select the tag to open the run in Operate), with the
+output as the platform classified it: an output it left out says why, such as
+"This output is classified as secret." A failed run says "send-invoice failed
+in local:" with the error's code and message. Files show as files, with name,
+size and type, and **Download** when you may read files there.
+
+A real result stays in memory only: Studio never keeps it on this computer,
+and a later Execute step replaces it. **Pin output** keeps it as test data
+from that run. The platform then treats the workflow's test data as holding
+run data, so reading it back needs permission to read runs in that
+environment.
+
 ### Read a workflow's runs and debug them
 
 When you are connected, the **Runs** tab of a workflow lists its runs in the
@@ -1687,8 +1769,9 @@ you come from it:
   destination** for others.
 
 Select **Create connection**. Studio confirms the new revision, for example
-"Created pets (revision 1).", and offers **Check configuration (no request is
-sent)**. Under **Last step: let the connector use this connection**, it shows the
+"Created pets (revision 1).", and offers **Test connection**, which sends one
+request to the API's address with the connection's sign-in and says whether it
+answered, for example "Connected: api.pets.example answered.". Under **Last step: let the connector use this connection**, it shows the
 grant command with the real revision ID: on a platform on this computer, a
 command to run, with **Copy command**; on a shared platform, a command and its
 request file for an administrator, with **Copy for an administrator**. Select
