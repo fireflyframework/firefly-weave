@@ -258,6 +258,12 @@ test.describe("data inside a loop at 1440x900", () => {
     await page.keyboard.press("Enter");
     const list = page.getByRole("dialog", { name: "Items of lines" });
     await expect(list).toBeVisible();
+    await expect(list.getByLabel("Go to item")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(list).toBeHidden();
+    await expect(item).toBeFocused();
+    await expect(details.dialog).toBeVisible();
+    await page.keyboard.press("Enter");
     await list.getByLabel("Go to item").fill("7");
     await page.keyboard.press("Enter");
     await expect(item).toHaveAccessibleName("Item 7. Choose an item");

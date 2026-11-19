@@ -20,10 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 // and Next. The item button opens Go to item. Items count from 1 for people
 // and from 0 in instance keys.
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   ElementRef,
   inject,
+  Injector,
   input,
   output,
   signal,
@@ -434,6 +436,7 @@ export class IterationPicker {
   readonly pickerView = pickerView;
   readonly number = number;
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
 
   step(loop: PickerLoop, view: PickerView, by: -1 | 1): void {
     if (view.empty || (by < 0 ? view.first : view.last)) return;
@@ -443,11 +446,18 @@ export class IterationPicker {
     if (view.empty) return;
     this.invalid.set(null);
     this.open.set(this.open() === loop.loopId ? null : loop.loopId);
+    // Once the list is drawn: Go to item takes focus, so Escape reaches the list.
     if (this.open())
-      queueMicrotask(() =>
-        this.element.nativeElement
-          .querySelector<HTMLInputElement>(".picker-go input")
-          ?.select(),
+      afterNextRender(
+        () => {
+          const go =
+            this.element.nativeElement.querySelector<HTMLInputElement>(
+              ".picker-go input",
+            );
+          go?.focus();
+          go?.select();
+        },
+        { injector: this.injector },
       );
   }
   goTo(loop: PickerLoop, text: string, event: Event): void {
