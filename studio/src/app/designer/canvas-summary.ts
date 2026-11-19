@@ -168,5 +168,7 @@ export function incompleteChip(step: Step): string {
     (step["cases"] as { when?: unknown }[]).some((b) => b.when === undefined)
   )
     return "Choose a condition";
+  if ((step.kind as string) === "callWorkflow" && !step["uses"])
+    return "Choose a workflow to call";
   return "";
 }

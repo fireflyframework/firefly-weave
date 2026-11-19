@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import "@angular/compiler";
 import { describe, expect, it } from "vitest";
 import { buildCatalog } from "../src/app/editor/add-step/entries";
 import {
@@ -28,6 +29,7 @@ import type {
   Insertion,
   TriggerKind,
 } from "../src/app/editor/canvas/layout-ltr";
+import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { StructuredCanvasAdapter } from "../src/app/model";
 import {
   catalogInput,
@@ -180,6 +182,27 @@ describe("choosing an entry", () => {
     expect(host.model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
       "webhook",
     ]);
+  });
+
+  it("inserts a call step with its defaults, as one undo step, and opens it", async () => {
+    await loadKindRegistrations();
+    const host = fakeHost();
+    host.model.insert("transform");
+    const outcome = await insertEntry(
+      host,
+      pick("kind:callWorkflow"),
+      fresh(host, { owner: "root", index: 1 }),
+    );
+    expect(outcome).toBe("done");
+    expect(host.model.definition.spec.steps[1]).toEqual({
+      id: "call-workflow-1",
+      kind: "callWorkflow",
+      mode: "wait",
+      with: { literal: {} },
+    });
+    expect(host.calls).toEqual(["open call-workflow-1"]);
+    host.model.undo();
+    expect(ids(host.model)).toEqual(["transform-1"]);
   });
 
   it("makes the workflow callable with Called by a workflow, in one undo step", async () => {

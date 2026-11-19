@@ -20,7 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 // a published action. Each is one undo step, and the shell opens what was
 // added. A place that is gone, or a workflow that changed, refuses instead
 // of inserting elsewhere.
-import { kinds, type Kind, type StructuredCanvasAdapter } from "../../model";
+import {
+  kinds,
+  nextFreeId,
+  type Kind,
+  type StructuredCanvasAdapter,
+} from "../../model";
+import { ndvRegistry } from "../ndv/registry";
 import type { Insertion, TriggerKind } from "../canvas/layout-ltr";
 import { uniqueIdentifier } from "../ndv/params/identifiers";
 import { addTrigger, type TriggerChange } from "../state/canvas-sidecar";
@@ -187,6 +193,17 @@ export async function insertEntry(
       return "gone";
     }
     host.openInserted(id);
+    return "done";
+  }
+  const own = ndvRegistry.kind(insert.step);
+  if (own && !(kinds as readonly string[]).includes(insert.step)) {
+    // A kind the palette doesn't list (Call a workflow) is made by its descriptor.
+    const step = own.create(nextFreeId(own.idPrefix, model.stepIdSet()));
+    const failed = host.edit(() =>
+      model.insertSteps(request.at.owner, request.at.index, [step]),
+    );
+    if (failed) return "refused";
+    host.openInserted(step.id);
     return "done";
   }
   if (!(kinds as readonly string[]).includes(insert.step)) {

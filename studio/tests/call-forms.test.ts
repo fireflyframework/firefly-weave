@@ -71,6 +71,7 @@ const contracts: Record<string, Json> = {
     inputSchema: notifyInput,
     outputSchema: { type: "object" },
     callable: {},
+    source: "project",
   },
   "archive-order@0.2.0": {
     inputSchema: { type: "object" },
@@ -82,6 +83,25 @@ const contracts: Record<string, Json> = {
     outputSchema: { type: "object" },
     callable: {},
   },
+  "customer-profile@3.0.0": {
+    inputSchema: { $ref: "customer.json" },
+    outputSchema: { type: "object" },
+    callable: { allowedCallers: ["order-intake"] },
+    source: "local",
+    schemas: {
+      "customer.json": {
+        type: "object",
+        properties: { customerId: { type: "string", title: "Customer ID" } },
+        required: ["customerId"],
+      },
+    },
+  },
+  "notify-customer@1.1.0": {
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+    callable: { allowedCallers: ["billing-close"] },
+    source: "project",
+  },
 };
 /** Step details' view of the call kind: its expression fields and this form. */
 const CALL = {
@@ -90,6 +110,8 @@ const CALL = {
   form: callForm,
 } as unknown as StepKindDescriptor;
 
+/** What the editor says when a version isn't known, as its call sources would. */
+let notes: (uses?: string) => string | null = () => null;
 function context(step: Step): KindContext {
   const workflow = freshWorkflow();
   workflow.metadata.name = "order-intake";
@@ -100,6 +122,7 @@ function context(step: Step): KindContext {
     actionContract: () => null,
     tableContract: () => null,
     workflowContract: (uses) => contracts[uses] ?? null,
+    callNote: (uses) => notes(uses),
   };
 }
 const call = (extra: Record<string, unknown> = {}): Step => ({
@@ -224,6 +247,7 @@ describe("the Workflow field", () => {
   it("lists the versions this workflow may call, in their groups and with why one can't be chosen", async () => {
     const asked: unknown[] = [];
     const ndv = {
+      workflow: { metadata: { name: "order-intake" } },
       catalog: {
         workflows: async (filter?: { callableBy?: string }) => {
           asked.push(filter);
@@ -279,6 +303,14 @@ describe("the Workflow field", () => {
     ]);
     expect(asked).toEqual([{ callableBy: "order-intake" }]);
   });
+
+  it("keeps one list provider however often the form is drawn, so the list stays loaded", () => {
+    const first = shown(call()).field("Workflow")?.choices;
+    expect(typeof first).toBe("function");
+    expect(shown(call({ uses: NOTIFY })).field("Workflow")?.choices).toBe(
+      first,
+    );
+  });
 });
 
 describe("the Input field", () => {
@@ -322,6 +354,15 @@ describe("the Input field", () => {
     });
   });
 
+  it("reads rows through the project's shared schemas", () => {
+    const step = call({ uses: "customer-profile@3.0.0" });
+    const input = shown(step).field("Input");
+    expect(input).toMatchObject({ type: "fields" });
+    expect(childrenOf(input, step).map((row) => [row.label, row.path])).toEqual(
+      [["Customer ID", ["with", "customerId"]]],
+    );
+  });
+
   it("takes free-form input when Studio can't read the called workflow's input", () => {
     for (const uses of ["notify-customer@9.0.0", "customer-profile@2.0.0"]) {
       const { field } = shown(call({ uses }));
@@ -354,6 +395,80 @@ describe("the Input field", () => {
     });
     expect(childrenOf(input, step).map((row) => row.label)).toEqual([
       "Customer ID",
+    ]);
+  });
+});
+
+describe("the Workflow field's hint", () => {
+  it("says where the version lives and that this workflow may call it", () => {
+    expect(shown(call({ uses: NOTIFY })).field("Workflow")?.hint).toBe(
+      "In this project · callable by order-intake",
+    );
+    expect(
+      shown(call({ uses: "customer-profile@3.0.0" })).field("Workflow")?.hint,
+    ).toBe("On this computer · callable by order-intake");
+  });
+
+  it("says nothing while the version can't be called or isn't known", () => {
+    for (const uses of ["notify-customer@1.1.0", "unknown@1.0.0", ""])
+      expect(
+        shown(call({ uses })).field("Workflow")?.hint,
+        uses,
+      ).toBeUndefined();
+  });
+
+  it("says why the project's versions are missing, or that the chosen one can't be found", () => {
+    notes = (uses) =>
+      uses
+        ? `Studio can't find ${uses.replace("@", " ")} in this project.`
+        : "Connect to a platform to call published workflows.";
+    try {
+      expect(shown(call()).field("Workflow")?.hint).toBe(
+        "Connect to a platform to call published workflows.",
+      );
+      expect(
+        shown(call({ uses: "unknown@1.0.0" })).field("Workflow")?.hint,
+      ).toBe("Studio can't find unknown 1.0.0 in this project.");
+      expect(shown(call({ uses: NOTIFY })).field("Workflow")?.hint).toBe(
+        "In this project · callable by order-intake",
+      );
+    } finally {
+      notes = () => null;
+    }
+  });
+});
+
+describe("the Workflow field's buttons", () => {
+  const actions = (step: Step) => shown(step).field("Workflow")?.actions ?? [];
+  it("opens the called workflow once one is chosen", () => {
+    const opened: string[] = [];
+    const ndv = {
+      openWorkflow: (uses: string) => opened.push(uses),
+    } as unknown as NdvContext;
+    const step = call({ uses: NOTIFY });
+    const open = actions(step).find(
+      (action) => action.label === "Open workflow",
+    )!;
+    open.run(ndv);
+    expect(opened).toEqual([NOTIFY]);
+    // Nothing to open before a workflow is chosen.
+    expect(actions(call())).toEqual([]);
+  });
+
+  it("offers Choose another only for a version Studio can't find, and clears it in one step", () => {
+    expect(
+      actions(call({ uses: NOTIFY })).map((action) => action.label),
+    ).toEqual(["Open workflow"]);
+    const missing = call({ uses: "unknown@1.0.0" });
+    const choose = actions(missing).find(
+      (action) => action.label === "Choose another",
+    )!;
+    const edits: unknown[] = [];
+    choose.run({
+      edit: (changes: unknown, label: string) => edits.push([changes, label]),
+    } as unknown as NdvContext);
+    expect(edits).toEqual([
+      [[{ path: ["uses"], value: undefined }], "Choose another workflow"],
     ]);
   });
 });

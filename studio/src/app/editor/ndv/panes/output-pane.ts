@@ -240,6 +240,7 @@ import { describeError } from "../../../errors";
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
               [canExecute]="session().controller.canExecute()"
+              [executeLabel]="executeLabel()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
               (execute)="execute()"
@@ -466,7 +467,9 @@ import { describeError } from "../../../errors";
                 <div class="pane-empty-actions pane-real-actions">
                   @if (session().controller.canExecute()) {
                     <button type="button" class="sm" (click)="execute()">
-                      <weave-icon name="execute" [size]="16" />Execute step
+                      <weave-icon name="execute" [size]="16" />{{
+                        executeLabel()
+                      }}
                     </button>
                   }
                   @if (canPin) {
@@ -483,7 +486,11 @@ import { describeError } from "../../../errors";
                   /></span>
                   <h4>No output yet</h4>
                   <p>
-                    Execute this step to see its output.{{
+                    {{
+                      callStep()
+                        ? "Execute the workflow to see this step's output."
+                        : "Execute this step to see its output."
+                    }}{{
                       canPin
                         ? " You can also set test output, or generate a sample."
                         : ""
@@ -492,7 +499,9 @@ import { describeError } from "../../../errors";
                   <div class="pane-empty-actions">
                     @if (session().controller.canExecute()) {
                       <button type="button" class="sm" (click)="execute()">
-                        <weave-icon name="execute" [size]="16" />Execute step
+                        <weave-icon name="execute" [size]="16" />{{
+                          executeLabel()
+                        }}
                       </button>
                     }
                     @if (canPin) {
@@ -825,6 +834,14 @@ export class OutputPane {
   }
   openRun(id: string) {
     void this.session().host.viewRun?.({ id });
+  }
+  /** A step that calls a workflow: it runs only when the whole workflow executes. */
+  callStep(): boolean {
+    const { controller, target } = this.session();
+    return (controller.step(target)?.kind as string) === "callWorkflow";
+  }
+  executeLabel(): string {
+    return this.callStep() ? "Execute workflow" : "Execute step";
   }
   /** Execute step from the pane (its empty state, the stale pin's banner). */
   execute() {

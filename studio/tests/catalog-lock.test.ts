@@ -97,6 +97,15 @@ describe("the catalog lock", () => {
     });
   });
 
+  it("keeps the project's shared schemas, which a version's schemas may reference", () => {
+    const lock = parseCatalogLock({
+      definitions: [],
+      schemas: { "customer.json": { type: "object" }, broken: "not a schema" },
+    });
+    expect(lock!.schemas).toEqual({ "customer.json": { type: "object" } });
+    expect(parseCatalogLock({ definitions: [] })!.schemas).toEqual({});
+  });
+
   it("refuses an answer that isn't a catalog lock", () => {
     expect(parseCatalogLock(null)).toBeNull();
     expect(parseCatalogLock({ definitions: {} })).toBeNull();

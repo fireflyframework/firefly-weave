@@ -52,6 +52,10 @@ export function inferredOutput(step: Step, ctx: KindContext): Schema | null {
   return stepOutputSchema(ctx.workflow, step.id, {
     actionOutput: (uses) => specOf(ctx.actionContract(uses))["outputSchema"],
     decisionOutput: (uses) => specOf(ctx.tableContract(uses))["outputSchema"],
+    workflowOutput: (uses) => {
+      const contract = ctx.workflowContract(uses);
+      return isRecord(contract) ? contract["outputSchema"] : undefined;
+    },
   });
 }
 

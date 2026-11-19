@@ -154,6 +154,11 @@ import {
   publishTable,
 } from "../decision-grid/publish-table";
 import type { TableSpec } from "../decision-grid/rules-model";
+import {
+  callSources,
+  workflowRows,
+  type CallSources,
+} from "../calls/call-sources";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -173,6 +178,8 @@ export type ControllerHost = Pick<
   | "runView"
   | "profile"
   | "stepDataScope"
+  | "localDrafts"
+  | "callSources"
   | "api"
   | "diagnostics"
   | "diagnosticsDefinition"
@@ -846,7 +853,8 @@ export class StepDetailsController {
       features: this.features(),
       actionContract: (uses) => this.actionContract(uses),
       tableContract: (uses) => this.tableContract(uses),
-      workflowContract: () => null,
+      workflowContract: (uses) => this.callSources().contract(uses),
+      callNote: (uses) => this.callSources().note(uses),
       ownedAction: (uses) =>
         (owned[uses] as unknown as Json | undefined) ?? null,
       actionDraft: (uses) =>
@@ -1759,7 +1767,21 @@ export class StepDetailsController {
             ]
           : undefined;
       },
+      workflowOutput: (uses) => {
+        const contract = this.callSources().contract(uses);
+        return contract &&
+          typeof contract === "object" &&
+          !Array.isArray(contract)
+          ? contract["outputSchema"]
+          : undefined;
+      },
     };
+  }
+  /** The workflows a call step may call, for this window; the canvas reads them through the host too. */
+  callSources(): CallSources {
+    const sources = callSources(this.host);
+    this.host.callSources ??= sources;
+    return sources;
   }
 
   /**
@@ -1915,7 +1937,15 @@ export class StepDetailsController {
             return { uses, title: uses };
           }),
         contract: async (uses) => this.actionContract(uses),
-        workflows: async () => [],
+        workflows: async (filter) => {
+          const sources = this.callSources();
+          sources.refresh();
+          await sources.lock.read();
+          if (host.model !== model || model.opened !== opened) return [];
+          return workflowRows(
+            sources.list(filter?.callableBy ?? model.definition.metadata.name),
+          );
+        },
         tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),
         tables: async () => {
           if (this.tables) {

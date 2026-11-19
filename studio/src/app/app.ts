@@ -154,6 +154,7 @@ import {
 } from "./designer/step-picker";
 import type { CanvasHost, WorkflowSection } from "./editor/canvas/canvas-host";
 import { setupPhrase, type StepFacts } from "./editor/canvas/tile-facts";
+import type { CallSources } from "./editor/calls/call-sources";
 import {
   aiTaskSetup,
   deferredToSetup,
@@ -724,6 +725,8 @@ export class App implements CanvasHost {
   private title = inject(Title);
   /** Workflows kept on this computer (Studio's storage). */
   readonly localDrafts = new LocalDrafts();
+  /** The workflows a call step may call, once step details made them. */
+  callSources: CallSources | null = null;
   /** "On this computer", newest first; refreshed whenever it is shown. */
   localList: LocalDraftEntry[] = [];
   /** Storage refused a draft: the notice says so once, until dismissed. */
@@ -4118,7 +4121,8 @@ export class App implements CanvasHost {
         (this.catalogContracts.get(uses) as Json | undefined) ?? null,
       tableContract: (uses) =>
         (this.decisionContracts.get(uses) as Json | undefined) ?? null,
-      workflowContract: () => null,
+      workflowContract: (uses) => this.callSources?.contract(uses) ?? null,
+      callNote: (uses) => this.callSources?.note(uses) ?? null,
     };
   }
   async selectStep(id: string, open: boolean) {

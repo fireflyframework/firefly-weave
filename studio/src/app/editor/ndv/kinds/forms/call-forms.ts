@@ -24,7 +24,9 @@ import {
   describeField,
   fieldsOf,
   resolveSchema,
+  type ResolveOptions,
 } from "../../../../forms/core/resolve";
+import { allowsCaller } from "../../../calls/callable-catalog";
 import type { Step } from "../../../../model";
 import {
   isShownField,
@@ -33,6 +35,7 @@ import {
 } from "../../params/schema-params";
 import type {
   Choice,
+  FieldAction,
   FieldSpec,
   FormSpec,
   KindContext,
@@ -60,19 +63,32 @@ const calleeOf = (step: Step) => {
   const at = uses.indexOf("@");
   return { uses, name: at > 0 ? uses.slice(0, at) : "" };
 };
-/** The called workflow's input schema, or null when Studio can't read it (unknown, or a reference it can't follow). */
-function calleeInput(
+/** What step details know of the called version: its contract as `workflowContract` gives it. */
+function contractOf(
   step: Step,
   ctx: KindContext,
 ): Record<string, unknown> | null {
   const { uses } = calleeOf(step);
   const contract = uses ? ctx.workflowContract(uses) : null;
-  const input = schemaOf(isRecord(contract) ? contract["inputSchema"] : null);
-  if (!input) return null;
+  return isRecord(contract) ? contract : null;
+}
+/**
+ * The called workflow's input schema and where its references resolve, or
+ * null when Studio can't read it (unknown, or a reference it can't follow).
+ */
+function calleeInput(
+  step: Step,
+  ctx: KindContext,
+): { schema: Record<string, unknown>; resolve: ResolveOptions } | null {
+  const contract = contractOf(step, ctx);
+  const schema = schemaOf(contract?.["inputSchema"]);
+  if (!schema) return null;
+  const bundle = isRecord(contract?.["schemas"]) ? contract["schemas"] : {};
+  const resolve: ResolveOptions = { root: schema, bundle };
   const unresolved =
-    resolveSchema(input).unresolved.length > 0 ||
-    fieldsOf(input).some((field) => field.unresolved.length > 0);
-  return unresolved ? null : input;
+    resolveSchema(schema, resolve).unresolved.length > 0 ||
+    fieldsOf(schema, resolve).some((field) => field.unresolved.length > 0);
+  return unresolved ? null : { schema, resolve };
 }
 
 /** The step's expression fields: its input and its business key. */
@@ -80,7 +96,7 @@ export const callFields = (): FieldSpec[] => [
   {
     path: ["with"],
     label: "Input",
-    expectedSchema: (step, ctx) => calleeInput(step, ctx),
+    expectedSchema: (step, ctx) => calleeInput(step, ctx)?.schema ?? null,
   },
   {
     path: ["businessKey"],
@@ -90,23 +106,32 @@ export const callFields = (): FieldSpec[] => [
   },
 ];
 
-const workflowChoices = (caller: string) => (ndv: NdvContext) =>
-  ndv.catalog.workflows({ callableBy: caller }).then((rows) =>
-    rows.map(
-      (row): Choice => ({
-        value: row.uses,
-        label: row.title,
-        ...(row.group ? { group: row.group } : {}),
-        ...(row.description ? { description: row.description } : {}),
-        ...(row.disabled ? { disabled: row.disabled } : {}),
-      }),
-    ),
-  );
+/**
+ * The versions this workflow may call, from step details' catalog port. One
+ * function for every form, so the field keeps its list while the form is
+ * drawn again.
+ */
+const workflowChoices = (ndv: NdvContext) =>
+  ndv.catalog
+    .workflows({ callableBy: ndv.workflow.metadata.name })
+    .then((rows) =>
+      rows.map(
+        (row): Choice => ({
+          value: row.uses,
+          label: row.title,
+          ...(row.group ? { group: row.group } : {}),
+          ...(row.heading ? { heading: row.heading } : {}),
+          ...(row.description ? { description: row.description } : {}),
+          ...(row.note ? { note: row.note } : {}),
+          ...(row.disabled ? { disabled: row.disabled } : {}),
+        }),
+      ),
+    );
 
 /** Input: rows from the called workflow's input, free-form JSON when Studio can't read it. */
 function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
-  const input = calleeInput(step, ctx);
-  if (!input)
+  const called = calleeInput(step, ctx);
+  if (!called)
     return {
       fields: [
         {
@@ -119,13 +144,17 @@ function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
         },
       ],
     };
-  const info = describeField("input", input, { required: true });
+  const { schema: input, resolve } = called;
+  const info = describeField("input", input, { ...resolve, required: true });
   if (!isShownField(info)) return { fields: [] };
-  if (!fieldsOf(input).length)
+  if (!fieldsOf(input, resolve).length)
     return {
       fields: [{ ...paramFromField(info, ["with"], "", 0), label: "Input" }],
     };
-  const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });
+  const rows = paramsFromSchema(input, ["with"], {
+    idPrefix: "input.",
+    resolve,
+  });
   if (wholeMapping(step["with"]))
     return {
       fields: [
@@ -154,6 +183,55 @@ function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
   };
 }
 
+/**
+ * "In this project · callable by order-intake" once the version is known and
+ * allows this workflow; why it can't be found, or why the project's versions
+ * are missing, before.
+ */
+function workflowHint(step: Step, ctx: KindContext): Pick<ParamSpec, "hint"> {
+  const { uses } = calleeOf(step);
+  const contract = contractOf(step, ctx);
+  if (!contract) {
+    const note = ctx.callNote?.(uses || undefined);
+    return note ? { hint: note } : {};
+  }
+  const caller = ctx.workflow.metadata.name;
+  if (!caller || !allowsCaller(contract["callable"], caller)) return {};
+  const where =
+    contract["source"] === "project"
+      ? "In this project"
+      : contract["source"] === "local"
+        ? "On this computer"
+        : null;
+  return where ? { hint: `${where} · callable by ${caller}` } : {};
+}
+
+/** Open workflow, and Choose another while the chosen version can't be found here. */
+function workflowActions(step: Step, ctx: KindContext): FieldAction[] {
+  const { uses } = calleeOf(step);
+  if (!uses) return [];
+  const open: FieldAction = {
+    id: "open-workflow",
+    label: "Open workflow",
+    icon: "external",
+    run: (ndv) => ndv.openWorkflow?.(uses),
+  };
+  if (contractOf(step, ctx)) return [open];
+  return [
+    open,
+    {
+      id: "choose-another",
+      label: "Choose another",
+      icon: "refresh",
+      run: (ndv) =>
+        ndv.edit(
+          [{ path: ["uses"], value: undefined }],
+          "Choose another workflow",
+        ),
+    },
+  ];
+}
+
 /** The Parameters tab of a step that calls a workflow. */
 export function callForm(step: Step, ctx: KindContext): FormSpec {
   const { uses, name } = calleeOf(step);
@@ -166,13 +244,16 @@ export function callForm(step: Step, ctx: KindContext): FormSpec {
     required: true,
     requiredText: "Choose a workflow to call.",
     placeholder: "notify-customer@1.0.0",
-    choices: workflowChoices(ctx.workflow.metadata.name),
+    choices: workflowChoices,
+    actions: workflowActions(step, ctx),
+    ...workflowHint(step, ctx),
   };
   const mode: ParamSpec = {
     id: "mode",
     path: ["mode"],
     type: "select",
     label: "When it runs",
+    display: "segments",
     required: true,
     default: "wait",
     whenRemoved: "default",
@@ -195,6 +276,7 @@ export function callForm(step: Step, ctx: KindContext): FormSpec {
     path: ["onFailure"],
     type: "select",
     label: "If it fails",
+    display: "segments",
     choices: [
       { value: "stop", label: "Stop this workflow" },
       { value: "continue", label: "Continue with the result status" },

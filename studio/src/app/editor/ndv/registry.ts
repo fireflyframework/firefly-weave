@@ -67,8 +67,18 @@ export interface KindContext {
   actionContract(uses: string): Json | null;
   /** DecisionTable document. */
   tableContract(uses: string): Json | null;
-  /** Callee interface for `callWorkflow`: {inputSchema, outputSchema, callable}, or null when unknown. */
+  /**
+   * Callee interface for `callWorkflow`: {inputSchema, outputSchema,
+   * callable, source ("project" or "local"), schemas (shared schemas its
+   * schemas may reference)}, or null when unknown.
+   */
   workflowContract(uses: string): Json | null;
+  /**
+   * For a call step: why `uses` can't be found here ("Studio can't find …",
+   * not connected, no catalog read); without `uses`, why the project's
+   * workflows aren't offered; null when there's nothing to say.
+   */
+  callNote?(uses?: string): string | null;
   /** The recipe of an action this workflow owns (its method, path, timeout and retry), or null. */
   ownedAction?(uses: string): Json | null;
   /** The draft of a published action's next version kept on this computer, or null. */
@@ -131,6 +141,10 @@ export interface Choice {
   /** Why the choice can't be used; it stays visible. */
   disabled?: string;
   group?: string;
+  /** A heading inside the group (a workflow's name over its versions). */
+  heading?: string;
+  /** A caution in the warning ink; the choice stays usable. */
+  note?: string;
 }
 /** A button under a field (Edit table, New table). */
 export interface FieldAction {
@@ -228,8 +242,8 @@ export interface ParamSpec {
   expandChildren?: boolean;
   /** "Add recipient", "Add header". */
   addLabel?: string;
-  /** list only: chips for short identifier lists such as answers. */
-  display?: "rows" | "chips";
+  /** list: chips for short identifier lists such as answers; select: segments whatever the labels' length. */
+  display?: "rows" | "chips" | "segments";
   /**
    * fields only: shown as one more card after the cards of the list just
    * before it, above that list's add button (a decision's Otherwise, after
@@ -393,7 +407,9 @@ export interface NdvContext {
         title: string;
         disabled?: string;
         group?: string;
+        heading?: string;
         description?: string;
+        note?: string;
       }[]
     >;
     /** Published decision tables, newest version first, then those on this computer. */
@@ -424,6 +440,8 @@ export interface NdvContext {
   closeParameterComponent?(): void;
   /** A toast, with an action such as Undo. */
   notify?(text: string, action?: { label: string; run(): void }): void;
+  /** Opens a called workflow version: its draft on this computer, else the published version read-only. */
+  openWorkflow?(uses: string): void;
   /** The decision tables this step can read and change on this computer. */
   readonly tables?: StepTables;
 }

@@ -37,9 +37,11 @@ export interface LockedWorkflow {
   /** The definition as the platform published it. */
   document: JsonObject;
 }
-/** The workflow versions of a catalog lock, by `name@version`. */
+/** The workflow versions of a catalog lock, by `name@version`, and its shared schemas. */
 export interface CatalogLock {
   workflows: ReadonlyMap<string, LockedWorkflow>;
+  /** Schemas a definition's schemas reference by name (`customer.json`, `customer.json#/$defs/x`). */
+  schemas: Readonly<Record<string, JsonObject>>;
 }
 
 export type CatalogLockState =
@@ -69,7 +71,7 @@ const UNREADABLE = "Studio couldn't read this project's published workflows.";
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
-/** The workflows of a catalog lock answer, or null when it isn't one. */
+/** The workflows and shared schemas of a catalog lock answer, or null when it isn't one. */
 export function parseCatalogLock(value: unknown): CatalogLock | null {
   if (!isJsonObject(value) || !Array.isArray(value["definitions"])) return null;
   const workflows = new Map<string, LockedWorkflow>();
@@ -85,7 +87,15 @@ export function parseCatalogLock(value: unknown): CatalogLock | null {
     const uses = `${name}@${version}`;
     workflows.set(uses, { uses, name, version, document });
   }
-  return { workflows };
+  const schemas: Record<string, JsonObject> = {};
+  if (isJsonObject(value["schemas"]))
+    for (const [name, schema] of Object.entries(value["schemas"]))
+      if (isJsonObject(schema))
+        Object.defineProperty(schemas, name, {
+          value: schema,
+          enumerable: true,
+        });
+  return { workflows, schemas };
 }
 
 /**

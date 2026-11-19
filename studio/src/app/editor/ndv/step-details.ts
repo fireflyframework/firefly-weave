@@ -1132,7 +1132,23 @@ export class StepDetails {
 
   // ------------------------------------------------------- execute step
   executeLabel(): string {
-    return this.triggerTarget() ? "Execute workflow" : "Execute step";
+    return this.runsWorkflow() ? "Execute workflow" : "Execute step";
+  }
+  /** The primary button's tooltip: why a call step executes the whole workflow. */
+  executeTitle(): string {
+    return this.callTarget()
+      ? "A call runs only when the whole workflow executes."
+      : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+  }
+  /** A step that calls a workflow: it runs only when the whole workflow does. */
+  callTarget(): boolean {
+    return (
+      (this.controller().step(this.target())?.kind as string) === "callWorkflow"
+    );
+  }
+  /** What starts the workflow, or a call step: the primary button executes the whole workflow. */
+  runsWorkflow(): boolean {
+    return this.triggerTarget() || this.callTarget();
   }
   // ------------------------------------------------------- run mode
   /** "Run 1c0d7f8a": the run step details reads, on the Runs tab; "" otherwise. */
@@ -1212,8 +1228,8 @@ export class StepDetails {
       this.choosePane(this.layout() === "sheet" ? "pane" : "dataPane", "input");
   }
   executeItems(): RowMenuItem[] {
-    // A trigger executes the workflow: here, or in the environment.
-    if (this.triggerTarget()) {
+    // A trigger, or a call step, executes the workflow: here, or in the environment.
+    if (this.runsWorkflow()) {
       const real = this.controller().viewingRuns()
         ? null
         : workflowTestItem(this.host(), this.dialogs);
@@ -1515,7 +1531,7 @@ export class StepDetails {
     const id = this.target();
     const controller = this.controller();
     const workflow = host.model.definition;
-    const target: ExecuteTarget = isTriggerTarget(id)
+    const target: ExecuteTarget = this.runsWorkflow()
       ? { mode: "workflow" }
       : { mode, stepId: id };
     // Execute step shows every message of the step, required ones too.

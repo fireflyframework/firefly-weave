@@ -114,7 +114,7 @@ const compiler: Record<string, Copy> = {
   },
   CALL_MODE: {
     text: "This step can continue after the called run fails only when it waits for the called workflow's result.",
-    hint: "Set When it runs to Wait for its result, or clear If the called run fails.",
+    hint: "Set When it runs to Wait for its result, or clear If it fails.",
   },
   TXN_ORDER: {
     text: "This step can be undone, but it runs after a step that can't. Steps that can't be undone must come last in a transaction.",

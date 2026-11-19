@@ -246,13 +246,17 @@ export class ResourceField {
       .join(" ");
   }
   options(): SelectOption[] {
-    const options = this.choices().map((choice) => ({
-      value: String(choice.value),
-      label: choice.label,
-      description: choice.disabled ?? choice.description,
-      group: choice.group,
-      disabled: !!choice.disabled,
-    }));
+    const options = this.choices().map(
+      (choice): SelectOption => ({
+        value: String(choice.value),
+        label: choice.label,
+        description: choice.disabled ?? choice.description,
+        group: choice.group,
+        heading: choice.heading,
+        note: choice.note,
+        disabled: !!choice.disabled,
+      }),
+    );
     const value = this.value();
     if (value && !options.some((option) => option.value === value))
       options.unshift({

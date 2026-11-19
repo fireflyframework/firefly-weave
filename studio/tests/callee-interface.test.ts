@@ -92,6 +92,23 @@ describe("a called workflow's interface", () => {
     expect(callee.contract?.callable).toEqual({
       allowedCallers: ["order-intake"],
     });
+    expect(callee.contract?.source).toBe("project");
+  });
+
+  it("hands over the project's shared schemas a version's schemas may reference", () => {
+    const lock: CatalogLockState = {
+      kind: "ready",
+      lock: { ...parseCatalogLock(PROJECT.lock)!, schemas: { "a.json": {} } },
+    };
+    expect(find("notify-customer@1.10.0", lock).contract?.schemas).toEqual({
+      "a.json": {},
+    });
+    expect(find("lookup-customer@0.1.0", lock).contract?.schemas).toEqual({
+      "a.json": {},
+    });
+    expect(
+      find("lookup-customer@0.1.0", { kind: "offline" }).contract?.schemas,
+    ).toEqual({});
   });
 
   it("reads a draft on this computer from its document", () => {
@@ -101,6 +118,8 @@ describe("a called workflow's interface", () => {
       inputSchema: { type: "object" },
       outputSchema: { type: "object" },
       callable: { allowedCallers: ["order-intake"] },
+      source: "local",
+      schemas: {},
     });
   });
 
@@ -117,6 +136,8 @@ describe("a called workflow's interface", () => {
       inputSchema: null,
       outputSchema: null,
       callable: null,
+      source: "local",
+      schemas: {},
     });
   });
 

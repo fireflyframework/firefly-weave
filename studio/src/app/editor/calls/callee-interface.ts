@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // What a call step knows about the workflow it calls: its input, its result
 // and who may call it, read from the project's catalog lock or from a draft
 // on this computer, and the step's own output as the compiler infers it
-// (compiler/calls.py call_output_schema, pinned by
+// (forms/core/call-output.ts, pinned by
 // studio/tests/fixtures/callable-corpus.json).
 import {
   isJsonObject,
@@ -26,6 +26,8 @@ import {
   type JsonObject,
 } from "../../forms/core/json";
 import { lockNote, type LocalCallee } from "./callable-catalog";
+
+export { callOutputSchema } from "../../forms/core/call-output";
 import type { CatalogLockState } from "./catalog-lock";
 
 /** A called workflow's interface: what `KindContext.workflowContract` answers. */
@@ -34,6 +36,10 @@ export interface CalleeContract {
   outputSchema: JsonObject | null;
   /** The version's `spec.callable`, or null when it has none. */
   callable: Json | null;
+  /** Published in this project, or a draft on this computer. */
+  source: "project" | "local";
+  /** The project's shared schemas, which the input and result may reference. */
+  schemas: Readonly<Record<string, JsonObject>>;
 }
 export type Callee =
   | {
@@ -51,44 +57,11 @@ export type Callee =
   /** The project's versions can't be read here, and no draft on this computer has it. */
   | { state: "unavailable"; contract: null; message: string };
 
-/** The result status a waiting call that continues on failure reports (compiler/calls.py CALL_STATUSES). */
-const CALL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"];
-
-/**
- * A call step's output: null for a call that doesn't wait, the result status
- * around the called workflow's output when a waiting call continues on
- * failure, or that output itself. An unknown output is any value.
- */
-export function callOutputSchema(
-  mode: unknown,
-  onFailure: unknown,
-  calleeOutput: JsonObject | null,
-): JsonObject {
-  if (mode === "detach") return { type: "null" };
-  const output = calleeOutput ?? {};
-  if (onFailure !== "continue") return output;
-  return {
-    type: "object",
-    properties: {
-      status: { type: "string", enum: CALL_STATUSES },
-      runId: { type: "string", format: "uuid" },
-      output,
-      error: {
-        type: "object",
-        properties: {
-          code: { type: "string" },
-          message: { type: "string" },
-        },
-        required: ["code", "message"],
-        additionalProperties: false,
-      },
-    },
-    required: ["status", "runId"],
-    additionalProperties: false,
-  };
-}
-
-function contractOf(document: unknown): CalleeContract {
+function contractOf(
+  document: unknown,
+  source: CalleeContract["source"],
+  schemas: CalleeContract["schemas"],
+): CalleeContract {
   const spec =
     isJsonObject(document) && isJsonObject(document["spec"])
       ? document["spec"]
@@ -99,6 +72,8 @@ function contractOf(document: unknown): CalleeContract {
     inputSchema: schema(spec["inputSchema"]),
     outputSchema: schema(spec["outputSchema"]),
     callable: spec["callable"] ?? null,
+    source,
+    schemas,
   };
 }
 
@@ -123,11 +98,12 @@ export function findCallee(
   const { lock } = sources;
   const published =
     lock.kind === "ready" ? lock.lock.workflows.get(uses) : undefined;
+  const schemas = lock.kind === "ready" ? lock.lock.schemas : {};
   if (published)
     return {
       state: "found",
       source: "project",
-      contract: contractOf(published.document),
+      contract: contractOf(published.document, "project", schemas),
     };
   const draft = sources.drafts.find(
     (entry) => entry.name === name && entry.version === version,
@@ -136,7 +112,7 @@ export function findCallee(
     return {
       state: "found",
       source: "local",
-      contract: contractOf(draft.document),
+      contract: contractOf(draft.document, "local", schemas),
     };
   if (lock.kind === "loading") return { state: "loading", contract: null };
   if (lock.kind === "ready")

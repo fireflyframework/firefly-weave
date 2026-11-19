@@ -27,6 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 // - `fail` (and a group whose paths cannot complete) ends reachability.
 // The compiler stays authoritative; this module only drives suggestions.
 
+import { callOutputSchema } from "./call-output";
 import { typeLabels, pluralTypeLabels } from "./type-labels";
 
 type JsonObject = Record<string, unknown>;
@@ -80,6 +81,8 @@ export interface ScopeOptions {
   /** Output schema of a published action by its `uses` reference. */
   actionOutput?: (uses: string) => unknown;
   decisionOutput?: (uses: string) => unknown;
+  /** Output schema of a called workflow version by its `uses` reference. */
+  workflowOutput?: (uses: string) => unknown;
   /** Deepest property path expanded below a root (default 4). */
   maxDepth?: number;
   /** Total suggestions, roots included (default 200). */
@@ -465,7 +468,17 @@ class Walker {
                 : this.options.actionOutput)?.(step["uses"])
             : undefined,
         );
-      else if (kind === "llm") {
+      else if (kind === "callWorkflow") {
+        const called =
+          typeof step["uses"] === "string"
+            ? this.options.workflowOutput?.(step["uses"])
+            : undefined;
+        schema = callOutputSchema(
+          step["mode"],
+          step["onFailure"],
+          isObject(called) ? called : null,
+        );
+      } else if (kind === "llm") {
         const profile = this.profiles[String(step["profile"] ?? "")];
         schema = {
           type: "object",

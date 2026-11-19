@@ -43,6 +43,28 @@ export interface SelectOption {
   action?: boolean;
   /** A short caution after the description ("Not encrypted"), in the warning ink. */
   note?: string;
+  /** A heading inside the group (a workflow's name over its versions); the row then shows what follows it. */
+  heading?: string;
+}
+
+/** The heading that starts at this option: a new one, or the same one in a new group; else null. */
+export function headingAt(
+  options: readonly SelectOption[],
+  index: number,
+): string | null {
+  const option = options[index];
+  if (!option?.heading) return null;
+  const before = options[index - 1];
+  return before?.heading === option.heading && before.group === option.group
+    ? null
+    : option.heading;
+}
+/** An option's text in the list: under its heading, what follows the heading in its label. */
+export function optionText(option: SelectOption): string {
+  const prefix = option.heading ? `${option.heading} ` : "";
+  return prefix && option.label.startsWith(prefix)
+    ? option.label.slice(prefix.length)
+    : option.label;
 }
 
 export function selectOptions(
@@ -156,6 +178,11 @@ let sequence = 0;
                 {{ option.group }}
               </div>
             }
+            @if (headingAt(filtered(), index); as heading) {
+              <div class="choice-heading" role="presentation">
+                {{ heading }}
+              </div>
+            }
             <div
               role="option"
               class="choice-option"
@@ -164,6 +191,7 @@ let sequence = 0;
               [attr.data-value]="option.value"
               [attr.aria-selected]="value() === option.value"
               [attr.aria-disabled]="option.disabled || null"
+              [attr.aria-label]="option.heading ? option.label : null"
               [class.active]="active() === index"
               (mousemove)="hover(index)"
               (click)="$event.preventDefault(); pick(index)"
@@ -175,7 +203,9 @@ let sequence = 0;
                   }}</span
                 >
               } @else {
-                <span>{{ option.label }}</span>
+                <span [class.choice-under]="!!option.heading">{{
+                  optionText(option)
+                }}</span>
               }
               @if (option.description) {
                 <small
@@ -184,6 +214,10 @@ let sequence = 0;
                     · <span class="choice-note">{{ option.note }}</span>
                   }
                 </small>
+              } @else if (option.note) {
+                <small
+                  ><span class="choice-note">{{ option.note }}</span></small
+                >
               }
               @if (value() === option.value) {
                 <weave-icon name="check" />
@@ -387,6 +421,15 @@ let sequence = 0;
         padding: 10px 10px 4px;
         color: var(--muted);
       }
+      .choice-heading {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 10px 2px;
+        color: var(--text);
+      }
+      .choice-under {
+        padding-left: 12px;
+      }
       .choice-empty {
         font-size: 13px;
         padding: 8px;
@@ -397,6 +440,8 @@ let sequence = 0;
   ],
 })
 export class Select {
+  protected readonly headingAt = headingAt;
+  protected readonly optionText = optionText;
   label = input.required<string>();
   options = input<readonly SelectOption[]>([]);
   value = input("");

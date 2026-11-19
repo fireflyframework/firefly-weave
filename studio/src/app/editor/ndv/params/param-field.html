@@ -359,6 +359,7 @@ SPDX-License-Identifier: Apache-2.0
                   type="button"
                   role="radio"
                   [id]="$first ? ids.control : null"
+                  [attr.aria-label]="option.label"
                   [attr.aria-checked]="selectedIndex() === option.value"
                   [disabled]="!!reason || option.disabled"
                   [attr.title]="option.description ?? null"

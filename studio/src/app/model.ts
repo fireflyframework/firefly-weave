@@ -386,7 +386,9 @@ function expressionPaths(step: Step): (string | number)[][] {
         isRecord(step["branches"]) ? step["branches"] : {},
       ).map((name) => ["branches", name, "output"]);
     default:
-      return [];
+      return (step.kind as string) === "callWorkflow"
+        ? [["with"], ["businessKey"]]
+        : [];
   }
 }
 const readPath = (root: unknown, path: (string | number)[]) =>
@@ -627,7 +629,8 @@ export class StructuredCanvasAdapter {
       for (const s of steps) {
         if (!s.id || ids.has(s.id)) throw Error("Steps must have unique IDs.");
         ids.add(s.id);
-        if (!kinds.includes(s.kind))
+        // A call step comes from its own descriptor, not the palette's kinds.
+        if (!kinds.includes(s.kind) && (s.kind as string) !== "callWorkflow")
           throw Error(
             `Unsupported step ${s.kind}; source is preserved. The last valid graph is read-only.`,
           );

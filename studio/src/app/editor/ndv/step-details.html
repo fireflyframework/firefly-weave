@@ -315,7 +315,7 @@ SPDX-License-Identifier: Apache-2.0
                 <button
                   type="button"
                   [class.primary]="executePrimary()"
-                  [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
+                  [title]="executeTitle()"
                   (click)="execute('step')"
                 >
                   <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
