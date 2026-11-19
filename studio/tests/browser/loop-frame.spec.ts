@@ -283,6 +283,17 @@ test.describe("Loop frames at 1440x900", () => {
     expect(ring.width).toBeGreaterThan(0);
     // Inside the band: the ring never draws over the frame's border.
     expect(ring.offset).toBeLessThanOrEqual(-ring.width);
+    // The sentence keyboard focus shows lets the pointer through to the steps under it.
+    const tip = canvas.root.locator('.frame-tip[data-frame-tip="orders"]');
+    await expect(tip).toBeVisible();
+    expect(
+      await tip.evaluate((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return element.contains(
+          document.elementFromPoint(x + width / 2, y + height / 2),
+        );
+      }),
+    ).toBe(false);
     await page.keyboard.press("Enter");
     await expect(
       page.getByRole("dialog", { name: "Step details: orders" }),
@@ -323,6 +334,52 @@ test.describe("Loop frames at 1440x900", () => {
       "transform-1",
     ]);
     expect(await stepsOf(page, "loop-1")).toEqual([]);
+  });
+});
+
+test.describe("Editing inside a loop at 1440x900", () => {
+  test.use({
+    viewport: { width: 1440, height: 900 },
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
+
+  test("the right arrow enters an empty loop's slot, Enter opens Add a step there, and the left arrow goes back", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, EMPTY);
+    await canvas.tileBody("fetch").click();
+    await page.keyboard.press("ArrowRight");
+    await expect(header(canvas, "loop-1")).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    const slot = canvas.insertTarget("Add a step to For each item of loop-1");
+    await expect(slot).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(header(canvas, "loop-1")).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(slot).toBeFocused();
+    await page.keyboard.press("Enter");
+    await canvas.pick("Transform");
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "loop-1")).toEqual(["transform-1"]);
+  });
+
+  test("a copied loop pastes after the focused step with new IDs for it and its steps", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await canvas.tileBody("orders").click();
+    await page.keyboard.press("ControlOrMeta+c");
+    await canvas.tileBody("summarize").click();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(frame(canvas, "orders-1")).toBeVisible();
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "root")).toEqual([
+      "fetch",
+      "orders",
+      "summarize",
+      "orders-1",
+    ]);
+    expect(await stepsOf(page, "orders-1")).toEqual(["check-1", "send-1"]);
   });
 });
 

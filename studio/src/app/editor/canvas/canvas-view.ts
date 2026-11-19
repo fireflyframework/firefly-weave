@@ -2258,6 +2258,13 @@ export class CanvasView implements OnInit, DoCheck {
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
     if (event.defaultPrevented || target.closest("[role=menu]")) return;
+    const slotFor =
+      target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
+    if (slotFor && this.slotKey(event, slotFor)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const typing = typingIn(target);
     const onStep =
       target === this.root().nativeElement ||
@@ -2444,8 +2451,19 @@ export class CanvasView implements OnInit, DoCheck {
     else void h.deselect();
   }
   /** Arrow keys: focus (and select) the neighbor in that direction. */
-  private moveFocus(from: string, direction: Direction): boolean {
-    const next = neighbor(this.layout(), from || this.active(), direction);
+  private moveFocus(
+    from: string,
+    direction: Direction,
+    /** From an empty loop's slot: on past the loop. */
+    pastBody = false,
+  ): boolean {
+    const start = from || this.active();
+    // An empty loop's "Add a step" is the way into its body.
+    if (direction === "next" && !pastBody && this.emptyLoop(start)) {
+      this.focusLater(start, this.slotSelector(start));
+      return true;
+    }
+    const next = neighbor(this.layout(), start, direction);
     if (!next) return true;
     if (this.places().has(next)) this.choose(only(next));
     this.focusTileLater(next);
@@ -2478,6 +2496,35 @@ export class CanvasView implements OnInit, DoCheck {
     return true;
   }
   private focusTileLater(id: string) {
+    this.focusLater(id, `[data-tile="${CSS.escape(id)}"] .tile-body`);
+  }
+  /** A loop whose body is empty: its frame holds an "Add a step" slot. */
+  private emptyLoop(id: string): boolean {
+    return this.layout().slots.some(
+      (slot) => slot.tile === id && slot.owner === `${id}/body`,
+    );
+  }
+  private slotSelector(loop: string): string {
+    return `.lane-slot[data-slot-for="${CSS.escape(loop)}"]`;
+  }
+  /**
+   * ← and → on an empty loop's "Add a step": back to the loop's header, or
+   * on past the loop, as from a body's last step. Enter is the button's own.
+   */
+  private slotKey(event: KeyboardEvent, loop: string): boolean {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+      return false;
+    if (!this.emptyLoop(loop)) return false;
+    if (event.key === "ArrowLeft") {
+      if (this.places().has(loop)) this.choose(only(loop));
+      this.focusTileLater(loop);
+      return true;
+    }
+    if (event.key === "ArrowRight") return this.moveFocus(loop, "next", true);
+    return false;
+  }
+  /** Focuses an element of a tile's group once the canvas has drawn that tile in view. */
+  private focusLater(id: string, selector: string) {
     this.cdr.markForCheck();
     afterNextRender(
       () => {
@@ -2489,9 +2536,7 @@ export class CanvasView implements OnInit, DoCheck {
         afterNextRender(
           () =>
             this.root()
-              .nativeElement.querySelector<HTMLElement>(
-                `[data-tile="${CSS.escape(id)}"] .tile-body`,
-              )
+              .nativeElement.querySelector<HTMLElement>(selector)
               ?.focus({ preventScroll: true }),
           { injector: this.injector },
         );

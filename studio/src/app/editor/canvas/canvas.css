@@ -398,6 +398,11 @@ weave-canvas-view,
 .canvas-v2 .frame-tip.pointer {
   animation-delay: 300ms;
 }
+/* Shown by keyboard focus, it lets the pointer through to the steps under
+   it; shown by the pointer, it keeps it, so the pointer can move onto it. */
+.canvas-v2 .frame-tip:not(.pointer) {
+  pointer-events: none;
+}
 @keyframes frame-tip-in {
   from {
     opacity: 0;
