@@ -731,98 +731,6 @@ def test_j4_08_two_agents_share_one_run_memory(run, orders):
         assert_turns_counted(log)
 
 
-# J4.15: a conversation remembered across runs.
-
-
-@pytest.mark.journey_step("J4.15")
-def test_j4_15_a_second_run_for_one_customer_remembers_the_first(run, orders):
-    from firefly_weave.contracts.agent_conversations import conversation_key_hash
-
-    orders_control(run, "/_control/reset", "POST")
-    key_hash = conversation_key_hash(CONVERSATION_WORKFLOW, "C-4")
-
-    async def conversation(customer: str, question: str, label: str) -> tuple[UUID, Any]:
-        async with run.client("builder") as client:
-            run_id = await start(client, run, "conversation", label, {"customerId": customer, "question": question})
-            return run_id, await settle(client, run_id)
-
-    async def forget() -> None:
-        # A conversation an earlier attempt of this journey left is deleted first, so the first run starts empty.
-        async with run.client("builder") as client:
-            await client.delete_agent_conversation(CONVERSATION_WORKFLOW, key="C-4")
-            await client.delete_agent_conversation(CONVERSATION_WORKFLOW, key="C-9")
-
-    asyncio.run(forget())
-    first, first_view = asyncio.run(conversation("C-4", "What is the status of order A-17?", "15-first"))
-    second, second_view = asyncio.run(conversation("C-4", "What order did I ask about before?", "15-second"))
-    other, other_view = asyncio.run(conversation("C-9", "What order did I ask about before?", "15-other"))
-
-    async def evidence() -> dict[str, Any]:
-        async with run.cli("builder") as weave:
-            logs = {
-                label: agent_log(weave, run_id, "support")
-                for label, run_id in (("first", first), ("second", second), ("other", other))
-            }
-            listed = weave.run.weave(
-                *weave.arguments("agent-conversations", "list", "--workflow", CONVERSATION_WORKFLOW)
-            )
-            weave.run.require(listed)
-            read_back = read(weave, "agent-conversations", "read", "--workflow", CONVERSATION_WORKFLOW, "--key", "C-4")
-            deleted = read(weave, "agent-conversations", "delete", "--workflow", CONVERSATION_WORKFLOW, "--key", "C-4")
-            assert_replays(weave, second)
-            return {
-                "logs": logs,
-                "listed": listed.stdout,
-                "read": read_back,
-                "deleted": deleted,
-            }
-
-    found = asyncio.run(evidence())
-    after, after_view = asyncio.run(conversation("C-4", "What order did I ask about before?", "15-after"))
-
-    async def after_log() -> dict[str, Any]:
-        async with run.cli("builder") as weave:
-            return agent_log(weave, after, "support")
-
-    found["logs"]["after"] = asyncio.run(after_log())
-    logs = found["logs"]
-    record(
-        run,
-        "J4.15",
-        run_ids=[str(first), str(second), str(other), str(after)],
-        statuses=[view.state.status for view in (first_view, second_view, other_view, after_view)],
-        logs=logs,
-    )
-    for view in (first_view, second_view, other_view, after_view):
-        assert (view.state.status, view.state.incident) == ("succeeded", None), view.state
-    # The first run looks the order up; the second answers from what the first was asked and answered.
-    assert calls(logs["first"], "lookup_order") and TOKEN in json.dumps(first_view.state.output), first_view.state
-    assert "A-17" in json.dumps(second_view.state.output), second_view.state
-    assert logs["first"]["memory"] == {
-        "scope": "conversation",
-        "loaded": 0,
-        "conversation": {"key_hash": key_hash, "version": 0, "expired": False},
-    }
-    assert logs["second"]["memory"]["loaded"] >= 2
-    assert logs["second"]["memory"]["conversation"] == {"key_hash": key_hash, "version": 1, "expired": False}
-    # Another customer's conversation is its own, and starts empty.
-    assert logs["other"]["memory"]["loaded"] == 0
-    assert logs["other"]["memory"]["conversation"]["key_hash"] == conversation_key_hash(CONVERSATION_WORKFLOW, "C-9")
-    # The CLI lists and reads by key hash; the key itself never appears in what it prints.
-    listed = json.loads(found["listed"])
-    assert "C-4" not in found["listed"]
-    mine = [item for item in listed["items"] if item["key_hash"] == key_hash]
-    assert [item["message_count"] for item in mine] == [4]
-    prompts = [message["content"] for message in found["read"]["messages"] if message["role"] == "user"]
-    assert prompts == ["What is the status of order A-17?", "What order did I ask about before?"]
-    assert found["deleted"]["deleted"] is True and str(second) in found["deleted"]["loaded_by"]
-    # After the delete the next run for C-4 starts the conversation over.
-    assert logs["after"]["memory"]["loaded"] == 0
-    for log in logs.values():
-        assert (log["status"], log["stop"]) == ("succeeded", "final"), log
-        assert_turns_counted(log)
-
-
 # J4.9 and J4.10: reviews.
 
 
@@ -1233,6 +1141,111 @@ def _until(read: Callable[[], Any], done: Callable[[Any], bool], seconds: float,
             return value
         assert time.monotonic() < deadline, f"{what} after {seconds:.0f} s"
         time.sleep(2)
+
+
+# J4.15: a conversation remembered across runs. It runs before J4.14, which stops the computer's Ollama.
+
+
+@pytest.mark.journey_step("J4.15")
+def test_j4_15_a_second_run_for_one_customer_remembers_the_first(run, orders):
+    from firefly_weave.contracts.agent_conversations import conversation_key_hash
+
+    orders_control(run, "/_control/reset", "POST")
+    key_hash = conversation_key_hash(CONVERSATION_WORKFLOW, "C-4")
+
+    async def conversation(customer: str, question: str, label: str) -> tuple[UUID, Any]:
+        async with run.client("builder") as client:
+            run_id = await start(client, run, "conversation", label, {"customerId": customer, "question": question})
+            return run_id, await settle(client, run_id)
+
+    async def forget() -> None:
+        # A conversation an earlier attempt of this journey left is deleted first, so the first run starts empty.
+        # Deleting a conversation needs run.purge, which only an execution manager holds: the owner here.
+        async with run.client("owner") as client:
+            await client.delete_agent_conversation(CONVERSATION_WORKFLOW, key="C-4")
+            await client.delete_agent_conversation(CONVERSATION_WORKFLOW, key="C-9")
+
+    asyncio.run(forget())
+    first, first_view = asyncio.run(conversation("C-4", "What is the status of order A-17?", "15-first"))
+    second, second_view = asyncio.run(conversation("C-4", "What order did I ask about before?", "15-second"))
+    other, other_view = asyncio.run(conversation("C-9", "What order did I ask about before?", "15-other"))
+    for view in (first_view, second_view, other_view):
+        assert (view.state.status, view.state.incident) == ("succeeded", None), view.state
+
+    async def evidence() -> dict[str, Any]:
+        async with run.cli("builder") as weave:
+            logs = {
+                label: agent_log(weave, run_id, "support")
+                for label, run_id in (("first", first), ("second", second), ("other", other))
+            }
+            listed = weave.run.weave(
+                *weave.arguments("agent-conversations", "list", "--workflow", CONVERSATION_WORKFLOW)
+            )
+            weave.run.require(listed)
+            # Recorded before the reads, so a conversation that was never stored still leaves the runs' memory logs.
+            record(
+                run,
+                "J4.15",
+                run_ids=[str(first), str(second), str(other)],
+                statuses=[view.state.status for view in (first_view, second_view, other_view)],
+                listed=[item["key_hash"] for item in json.loads(listed.stdout)["items"]],
+                logs=logs,
+            )
+            read_back = read(weave, "agent-conversations", "read", "--workflow", CONVERSATION_WORKFLOW, "--key", "C-4")
+            assert_replays(weave, second)
+        async with run.cli("owner") as weave:
+            deleted = read(weave, "agent-conversations", "delete", "--workflow", CONVERSATION_WORKFLOW, "--key", "C-4")
+            return {
+                "logs": logs,
+                "listed": listed.stdout,
+                "read": read_back,
+                "deleted": deleted,
+            }
+
+    found = asyncio.run(evidence())
+    after, after_view = asyncio.run(conversation("C-4", "What order did I ask about before?", "15-after"))
+
+    async def after_log() -> dict[str, Any]:
+        async with run.cli("builder") as weave:
+            return agent_log(weave, after, "support")
+
+    found["logs"]["after"] = asyncio.run(after_log())
+    logs = found["logs"]
+    record(
+        run,
+        "J4.15",
+        run_ids=[str(first), str(second), str(other), str(after)],
+        statuses=[view.state.status for view in (first_view, second_view, other_view, after_view)],
+        logs=logs,
+    )
+    for view in (first_view, second_view, other_view, after_view):
+        assert (view.state.status, view.state.incident) == ("succeeded", None), view.state
+    # The first run looks the order up; the second answers from what the first was asked and answered.
+    assert calls(logs["first"], "lookup_order") and TOKEN in json.dumps(first_view.state.output), first_view.state
+    assert "A-17" in json.dumps(second_view.state.output), second_view.state
+    assert logs["first"]["memory"] == {
+        "scope": "conversation",
+        "loaded": 0,
+        "conversation": {"key_hash": key_hash, "version": 0, "expired": False},
+    }
+    assert logs["second"]["memory"]["loaded"] >= 2
+    assert logs["second"]["memory"]["conversation"] == {"key_hash": key_hash, "version": 1, "expired": False}
+    # Another customer's conversation is its own, and starts empty.
+    assert logs["other"]["memory"]["loaded"] == 0
+    assert logs["other"]["memory"]["conversation"]["key_hash"] == conversation_key_hash(CONVERSATION_WORKFLOW, "C-9")
+    # The CLI lists and reads by key hash; the key itself never appears in what it prints.
+    listed = json.loads(found["listed"])
+    assert "C-4" not in found["listed"]
+    mine = [item for item in listed["items"] if item["key_hash"] == key_hash]
+    assert [item["message_count"] for item in mine] == [4]
+    prompts = [message["content"] for message in found["read"]["messages"] if message["role"] == "user"]
+    assert prompts == ["What is the status of order A-17?", "What order did I ask about before?"]
+    assert found["deleted"]["deleted"] is True and str(second) in found["deleted"]["loaded_by"]
+    # After the delete the next run for C-4 starts the conversation over.
+    assert logs["after"]["memory"]["loaded"] == 0
+    for log in logs.values():
+        assert (log["status"], log["stop"]) == ("succeeded", "final"), log
+        assert_turns_counted(log)
 
 
 @pytest.mark.journey_step("J4.14")
