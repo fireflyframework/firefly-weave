@@ -173,7 +173,7 @@ def conversation_hash(workflow: str, key: str | None, key_hash: str | None) -> s
     """The key hash a conversation is named by: ``key`` hashed with ``workflow`` on this machine, or ``key_hash`` as
     given. Exactly one is required; a key is never sent."""
     if (key is None) == (key_hash is None):
-        raise ValueError("Name a conversation by its key or its key hash, not both")
+        raise ValueError("Name a conversation by exactly one of key and key_hash")
     if key is not None:
         return conversation_key_hash(_CONVERSATION_WORKFLOW.validate_python(workflow), key)
     return _CONVERSATION_KEY_HASH.validate_python(key_hash)

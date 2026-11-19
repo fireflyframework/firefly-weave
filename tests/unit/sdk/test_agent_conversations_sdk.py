@@ -25,7 +25,7 @@ import pytest
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agent_conversations import conversation_key_hash
-from firefly_weave.sdk.client import WeaveClient
+from firefly_weave.sdk.client import WeaveClient, conversation_hash
 
 SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
 ENVIRONMENT = f"/api/v1/tenants/{SCOPE.tenant_id}/projects/{SCOPE.project_id}/environments/{SCOPE.environment_id}"
@@ -138,3 +138,10 @@ async def test_the_sdk_refuses_a_workflow_that_isnt_a_name_before_any_request():
             await client.read_agent_conversation("../runs", key_hash=HASH)
 
     assert calls == []
+
+
+@pytest.mark.parametrize("names", [{}, {"key": "C-4", "key_hash": HASH}], ids=["neither", "both"])
+def test_a_conversation_named_by_neither_or_both_says_exactly_one_is_needed(names):
+    with pytest.raises(ValueError) as refused:
+        conversation_hash("support-chat", names.get("key"), names.get("key_hash"))
+    assert str(refused.value) == "Name a conversation by exactly one of key and key_hash"
