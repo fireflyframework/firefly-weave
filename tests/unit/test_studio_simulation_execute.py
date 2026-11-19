@@ -440,8 +440,10 @@ def test_a_called_workflow_that_returns_null_gives_null_to_the_call():
         workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
     )
     assert answer["status"] == "completed", answer
-    assert [(e["nodeId"], e["status"], e["output"]) for e in answer["trace"] if e.get("frame") is None] == [
-        ("enrich", "completed", None)
+    # The call gets null; the called workflow's own step shows in its frame.
+    assert [(e["nodeId"], e["status"], e.get("output"), e.get("frame")) for e in answer["trace"]] == [
+        ("enrich", "completed", None, None),
+        ("check", "completed", {"eligible": True}, "enrich"),
     ]
 
 
