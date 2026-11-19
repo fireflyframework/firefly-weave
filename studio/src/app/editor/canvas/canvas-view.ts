@@ -19,6 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // tile, handle and edge; @foblex/flow pans and zooms it. The editor that
 // hosts the canvas owns the workflow and every command: the canvas keeps
 // its own view (zoom, pan, what the pointer is on) and asks the host to act.
+import { activatedAsIs } from "../triggers/trigger-activated";
+import { triggerChoiceTarget } from "../triggers/trigger-target";
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -177,6 +179,12 @@ const NO_BORDERS: TileBorders = {
   live: false,
   error: false,
 };
+/** The trigger choice when an activation took the settings it has now: its tile shows a summary. */
+const activatedIntent = (intent: TriggerIntent | null) =>
+  intent && activatedAsIs(intent) ? intent : undefined;
+/** A webhook listening for its test event wears the live border. */
+const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
+const LISTENING = "Listening for test event";
 
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
@@ -231,6 +239,8 @@ export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
 export class CanvasView implements OnInit, DoCheck {
   /** The editor: it owns the workflow and runs every command. */
   host = input.required<CanvasHost>();
+  /** The trigger choice listening for a test event now: its tile pulses. */
+  readonly listening = input<string | null>(null);
   private readonly root = viewChild.required<ElementRef<HTMLElement>>("root");
   /** The flow library keeps a selection of its own, filled only by the selection box. */
   private readonly flow = viewChild(FFlowComponent);
@@ -556,6 +566,7 @@ export class CanvasView implements OnInit, DoCheck {
       _gapsVersion: number,
       pins: ReadonlyMap<string, { stale: string | null }>,
       _runStamp: unknown,
+      listening: string | null,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -583,6 +594,8 @@ export class CanvasView implements OnInit, DoCheck {
             pin: tile.step ? pins.get(tile.id) : undefined,
             simulated: run?.mode === "simulated",
             recorded: isRecordedRun(run) ? run : null,
+            listening:
+              !!listening && tile.id === triggerChoiceTarget(listening),
           },
         );
       });
@@ -603,6 +616,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.pasteGapsVersion,
       viewing ? NO_PINS : h.pinStates(),
       h.runStamp?.() ?? null,
+      viewing ? null : this.listening(),
     );
   }
   private position(tile: LtrTile): Point {
@@ -622,6 +636,7 @@ export class CanvasView implements OnInit, DoCheck {
       active: boolean;
       run: TileRun;
       pulse: boolean;
+      listening?: boolean;
       /** The first line of the step's note when it shows on the canvas. */
       note: string;
       /** Its pinned output, and why it may be out of date. */
@@ -655,9 +670,9 @@ export class CanvasView implements OnInit, DoCheck {
         step: false,
         icon: trigger?.icon ?? "",
         title: trigger ? trigger.title : "End",
-        subtitle: trigger?.subtitle ?? "",
+        subtitle: state.listening ? LISTENING : (trigger?.subtitle ?? ""),
         name: trigger
-          ? `${trigger.title} trigger, ${trigger.subtitle}`
+          ? `${trigger.title} trigger, ${state.listening ? LISTENING : trigger.subtitle}`
           : "End, workflow result",
         tooltip: trigger
           ? trigger.manual
@@ -665,7 +680,8 @@ export class CanvasView implements OnInit, DoCheck {
             : `${trigger.title} · ${trigger.subtitle}`
           : "Open the workflow result",
         badge: null,
-        borders: NO_BORDERS,
+        borders: state.listening ? LISTENING_BORDERS : NO_BORDERS,
+        listening: !!state.listening,
         selected: false,
       };
     }
@@ -745,19 +761,21 @@ export class CanvasView implements OnInit, DoCheck {
   private triggerText(tileId: string) {
     const kind = this.intentOf(tileId)?.kind ?? "manual";
     return {
-      ...triggerTile(kind, this.host().model.definition),
+      ...triggerTile(
+        kind,
+        this.host().model.definition,
+        activatedIntent(this.intentOf(tileId)),
+      ),
       manual: kind === "manual",
     };
   }
-  /** Double-click or Enter on a trigger: the input form opens its details; other triggers are set up when you activate. */
+  /** Double-click or Enter on a trigger opens its settings: the input form's, or the trigger choice's. */
   private openTrigger(tileId: string) {
     const h = this.host();
     const intent = this.intentOf(tileId);
     if (!intent || intent.kind === "manual")
       return void h.openWorkflowSection("spec/inputSchema");
-    h.notify(
-      `${TRIGGER_LABELS[intent.kind]} is set up when you activate this workflow.`,
-    );
+    void h.openTrigger(intent.id);
   }
 
   // -------------------------------------------------- insertion targets

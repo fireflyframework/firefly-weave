@@ -69,7 +69,8 @@ describe("Operate routes", () => {
       view: "overview",
       id: "",
     });
-    expect(viewFromPath("/operate/logs")).toBeNull();
+    expect(viewFromPath("/operate/logs")).toEqual({ view: "logs", id: "" });
+    expect(viewFromPath("/operate/no-such-page")).toBeNull();
     expect(viewFromPath("/tasks")).toEqual({ view: "tasks", id: "" });
     expect(viewFromPath("/")).toBeNull();
   });
@@ -112,6 +113,7 @@ describe("Operate routes", () => {
       "operate/workers",
       "operate/clusters",
       "operate/metrics",
+      "operate/logs",
       "operate/runs/:id",
       "operate/workers/releases",
       "operate/workers/releases/:id",
@@ -221,6 +223,7 @@ describe("Operate routes", () => {
       "workers",
       "clusters",
       "metrics",
+      "logs",
       "tasks",
     ])
       expect(navEntryVisible(entry, null)).toBe(true);
@@ -236,6 +239,9 @@ describe("Operate routes", () => {
     // Metrics reads run statistics, which need status.read like the summary.
     expect(navEntryVisible("metrics", holds)).toBe(false);
     expect(navEntryVisible("metrics", (c) => c === "status.read")).toBe(true);
+    // Logs reads run log entries, which need run.read like the runs.
+    expect(navEntryVisible("logs", holds)).toBe(true);
+    expect(navEntryVisible("logs", (c) => c === "status.read")).toBe(false);
     // Pages outside Operate never hide: their own pages explain access.
     expect(navEntryVisible("tasks", holds)).toBe(true);
     expect(navEntryVisible("connections", () => false)).toBe(true);

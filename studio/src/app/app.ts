@@ -21,9 +21,13 @@ import {
   emptyCanvas,
   readCanvas,
   removeTrigger,
+  triggerIntents,
+  withTriggerIntents,
   type CanvasSidecar,
+  type TriggerIntent,
 } from "./editor/state/canvas-sidecar";
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
+import { triggerChoiceTarget } from "./editor/triggers/trigger-target";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
 import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
 import { placeMark } from "./editor/add-step/place";
@@ -252,6 +256,7 @@ import { ClustersPage } from "./operate/clusters/clusters-page";
 import { WorkersPage } from "./operate/workers/workers-page";
 import { IncidentsPage } from "./operate/incidents/incidents-page";
 import { MetricsPage } from "./operate/metrics/metrics-page";
+import { LogsPage } from "./operate/logs/logs-page";
 import { OverviewPage } from "./operate/overview/overview-page";
 import { RunsPage } from "./operate/runs/runs-page";
 import {
@@ -293,6 +298,7 @@ export type View =
   | "workers"
   | "clusters"
   | "metrics"
+  | "logs"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -532,6 +538,7 @@ const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
     RecordsView,
     ClustersPage,
     MetricsPage,
+    LogsPage,
     WorkersPage,
     IncidentsPage,
     OverviewPage,
@@ -853,6 +860,7 @@ export class App implements CanvasHost {
     { id: "workers", label: "Workers" },
     { id: "clusters", label: "Clusters" },
     { id: "metrics", label: "Metrics" },
+    { id: "logs", label: "Logs" },
     { id: "settings", label: "Settings" },
   ];
   private readonly navSections: [string, View[]][] = [
@@ -861,7 +869,15 @@ export class App implements CanvasHost {
     ["Work", ["tasks", "email"]],
     [
       "Operate",
-      ["overview", "runs", "incidents", "workers", "clusters", "metrics"],
+      [
+        "overview",
+        "runs",
+        "incidents",
+        "workers",
+        "clusters",
+        "metrics",
+        "logs",
+      ],
     ],
   ];
   private navCache: {
@@ -3070,12 +3086,16 @@ export class App implements CanvasHost {
         detail: this.blocker("simulate"),
         run: () => void this.runCommand("simulate"),
       });
-    for (const command of this.secondaryCommands)
+    for (const command of this.secondaryCommands) {
+      const blocked = this.blocker(command);
+      // A blocked command is marked disabled and still says why, as its own button does.
       items.push({
         label: commandLabels[command],
-        detail: this.blocker(command),
+        detail: blocked,
+        ...(blocked ? { blocked: true } : {}),
         run: () => void this.runCommand(command),
       });
+    }
     if (this.profile)
       items.push({ label: "Save to file", run: () => void this.export() });
     if (narrow)
@@ -4105,6 +4125,20 @@ export class App implements CanvasHost {
     const node = this.nodes.find((n) => n.step.id === id);
     if (node) await this.select(node, open);
   }
+  /** A trigger choice's settings in step details; without step details, a note that they're set at activation. */
+  async openTrigger(id: string) {
+    if (stepDetailsEnabled(this as StepDetailsHost)) {
+      await this.openStepDetails(triggerChoiceTarget(id));
+      return;
+    }
+    const kind = triggerIntents(this.model.canvas).find(
+      (intent) => intent.id === id,
+    )?.kind;
+    if (kind)
+      this.notify(
+        `${TRIGGER_LABELS[kind]} is set up when you activate this workflow.`,
+      );
+  }
   /** The workflow settings, focused on Inputs or Result. */
   async openWorkflowSection(section: WorkflowSection) {
     if (stepDetailsEnabled(this as StepDetailsHost)) {
@@ -4235,6 +4269,10 @@ export class App implements CanvasHost {
     if (!current()) return;
     if (kind === "manual") {
       void this.openStepDetails("$trigger");
+      return;
+    }
+    if (stepDetailsEnabled(this as StepDetailsHost)) {
+      void this.openStepDetails(triggerChoiceTarget(id));
       return;
     }
     this.notify(
@@ -6819,6 +6857,7 @@ export class App implements CanvasHost {
       this.view === "overview" ||
       this.view === "clusters" ||
       this.view === "metrics" ||
+      this.view === "logs" ||
       this.view === "workers" ||
       this.view === "incidents"
     )
@@ -8477,6 +8516,49 @@ export class App implements CanvasHost {
     if (this.busy) return;
     this.showActivation = false;
     this.activationError = null;
+    this.activatedId = "";
+  }
+  /** The activation that just succeeded: the dialog sets its triggers up before it closes. */
+  activatedId = "";
+  /** The activation dialog's way to fix a trigger: it closes, and that trigger's step details open. */
+  openTriggerFromActivation(id: string) {
+    // The dialog stays while the activation runs: nothing opens behind it.
+    if (this.busy) return;
+    this.closeActivation();
+    void this.openTrigger(id);
+  }
+  /** The activation dialog's way to create a missing connection: it closes, and Connections opens. */
+  openConnectionsFromActivation() {
+    if (this.busy) return;
+    this.closeActivation();
+    void this.navigate("connections");
+  }
+  /** The dialog set the triggers up: keep what it made, say how it went, and close unless one needs attention. */
+  activationTriggers(event: {
+    intents: TriggerIntent[] | null;
+    attention: string | null;
+    first: boolean;
+  }) {
+    if (event.intents)
+      this.changeCanvas(withTriggerIntents(this.model.canvas, event.intents));
+    if (!event.first) return;
+    const name = String(
+      this.published?.["name"] ?? this.model.definition.metadata.name,
+    );
+    const version = String(
+      this.published?.["version"] ?? this.model.definition.metadata.version,
+    );
+    if (event.attention) {
+      this.notify(`Activated ${name} ${version}. ${event.attention}`);
+      this.cdr.markForCheck();
+      return;
+    }
+    this.closeActivation();
+    this.notify(
+      `Activated ${name} ${version} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
+      { label: "Start run", run: () => void this.runCommand("run") },
+    );
+    this.cdr.markForCheck();
   }
   /** Human task assignments declared anywhere in the workflow. */
   get workflowAssignments() {
@@ -8526,17 +8608,16 @@ export class App implements CanvasHost {
         undefined,
         "Activate version",
       );
-      this.showActivation = false;
-      const name = String(
-        this.published["name"] ?? this.model.definition.metadata.name,
-      );
-      const version = String(
-        this.published["version"] ?? this.model.definition.metadata.version,
-      );
-      this.notify(
-        `Activated ${name} ${version} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
-        { label: "Start run", run: () => void this.runCommand("run") },
-      );
+      // The dialog sets the triggers up, then this closes it (activationTriggers).
+      const id = this.activation?.["id"];
+      if (typeof id === "string" && id) this.activatedId = id;
+      else {
+        // No activation to set triggers up for: say so instead of guessing one.
+        this.closeActivation();
+        this.notify(
+          `Activated ${String(this.published["name"] ?? this.model.definition.metadata.name)} ${String(this.published["version"] ?? this.model.definition.metadata.version)}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
+        );
+      }
     } catch (e) {
       const plain = describeError(e);
       // An ended session already returned to pairing with its own explanation.

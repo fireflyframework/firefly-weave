@@ -86,6 +86,39 @@ SPDX-License-Identifier: Apache-2.0
   someone else after a sign-in elsewhere.
 - The Studio guide no longer says that testing an HTTP connection sends no
   request.
+- A run's page in Operate › Runs has a **Logs** section after **Steps**: the
+  run's log entries oldest first, each with its time, level, source, step and
+  message, how many values the platform hid, whether a long message was
+  shortened, and a worker's code and fields; **Level** and **Step** narrow it,
+  and while the run is still going new entries arrive at the bottom every 5
+  seconds.
+- **Operate › Logs** (needs `run.read`) searches log entries across the
+  environment's runs: the last hour from Warning up by default, filters for
+  time (up to 7 days), level, workflow, step, code, message text (6 hours at
+  most) and test runs, **Follow** every 10 seconds, and **Load older
+  entries**. Every filter but the message is kept in the address; the message
+  never leaves the page.
+- The activation dialog checks that the platform runs the workflow's language
+  features, chooses each required connection from this computer's dev binding
+  or the only one you may bind (an optional one only from a dev binding), pins
+  each called workflow's current activation, and says what activating does to
+  each trigger: create it, move it with the same URL, or leave an earlier
+  version's running with **Stop it**. After the activation it sets the
+  triggers up row by row and names each one it created, moved or stopped; a
+  row that fails says why with **Retry** and never undoes the activation.
+- Trigger step details: a webhook's name, secret and separate test secret,
+  with its production URL after activation; a schedule's calendar with its
+  next five times; a Kafka trigger's cluster and topic; an email trigger's
+  input; an app event source's app and event. **Listen for test event** gives
+  a webhook a test URL and a signed cURL that reads the test secret from your
+  shell, never from its command line, and the request's payload becomes the
+  workflow's test input.
+- **Execute workflow in *environment*** runs the saved draft for real as a
+  test run, asks first when steps change data there, and follows the run in
+  the Runs tab. The test activation behind it is retired when the draft
+  changes, the editor closes, or you switch account or environment.
+- Publish… in the More menu is disabled with its reason when your account
+  can't publish.
 
 ### Development and testing
 
@@ -95,6 +128,10 @@ SPDX-License-Identifier: Apache-2.0
   image, or the owned Docker context run in the release gate.
 - Every workflow job has a timeout, and Acceptance and Desktop installers wait
   for a draft pull request to be marked ready.
+- The fixture worker writes a log entry for each task, and a warning with a
+  test-only `note` input, which the acceptance journeys and
+  `tests/e2e/test_operations_logs.py` use to prove a planted secret never
+  reaches log answers or stored entries.
 
 ### Versions and schema
 

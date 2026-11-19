@@ -224,30 +224,36 @@ test("activation binds each connection slot to an environment connection", async
   await connected(page);
   const connections = {
     items: [
+      // As bindable_connections.list answers: what this person may bind.
       {
-        id: "0f8fad5b-d9cb-469f-a165-70867728950e",
+        connection_id: "5d1f0c8e-9b7a-4c3e-8f2d-1a6b4c9e7d30",
+        revision_id: "0f8fad5b-d9cb-469f-a165-70867728950e",
         name: "orders-db",
-        revision: 3,
         connector: "weave-postgresql@1.0.0",
-        adapter: "postgresql",
+        label: "orders-db",
+        enabled: true,
       },
       {
-        id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        connection_id: "6e2a1d9f-0c8b-4d4f-9a3e-2b7c5d0f8e41",
+        revision_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
         name: "crm-prod",
-        revision: 1,
         connector: "crm@1.0.0",
-        adapter: "http",
+        label: "crm-prod",
+        enabled: true,
       },
     ],
     next_cursor: null,
   };
   let connectionRequests = 0;
-  await page.route("**/environments/development/connections?*", (r) => {
-    connectionRequests++;
-    return connectionRequests === 1
-      ? r.fulfill({ status: 500, json: { code: "WV-INTERNAL" } })
-      : r.fulfill({ json: connections });
-  });
+  await page.route(
+    "**/environments/development/bindable-connections?*",
+    (r) => {
+      connectionRequests++;
+      return connectionRequests === 1
+        ? r.fulfill({ status: 500, json: { code: "WV-INTERNAL" } })
+        : r.fulfill({ json: connections });
+    },
+  );
   await page.route("**/projects/project/workflows", (r) =>
     r.fulfill({
       status: 201,
@@ -289,7 +295,7 @@ test("activation binds each connection slot to an environment connection", async
   await expect(dialog).toContainText("could not complete this request");
   await expect(dialog).toContainText("Support code: WV-INTERNAL");
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await expect(dialog).toContainText("picked automatically");
+  await expect(dialog).toContainText("chosen for you");
   await dialog.getByRole("button", { name: "Review", exact: true }).click();
   await expect(dialog).toContainText("orders-db");
   await dialog.getByRole("button", { name: "Activate version" }).click();
@@ -314,7 +320,7 @@ test("activation without connection permission accepts revision IDs", async ({
       (capability) => capability !== "catalog.read",
     ),
   });
-  await page.route("**/environments/development/connections?*", (r) =>
+  await page.route("**/environments/development/bindable-connections?*", (r) =>
     r.fulfill({ status: 403, json: { code: "WV-DENIED" } }),
   );
   await page.route("**/projects/project/workflows", (r) =>
@@ -344,9 +350,7 @@ test("activation without connection permission accepts revision IDs", async ({
     .click();
   await command(page, "Activate…");
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText(
-    "Your account cannot list connections in this environment.",
-  );
+  await expect(dialog).toContainText("You can't bind connections in");
   await dialog.getByLabel(/^crm/).fill("not-a-uuid");
   await dialog.getByRole("button", { name: "Activate version" }).click();
   await expect(dialog).toContainText("must be a revision ID");
@@ -362,7 +366,7 @@ test("activation keeps its dialog open while it runs and shows failures inline",
       (capability) => capability !== "catalog.read",
     ),
   });
-  await page.route("**/environments/development/connections?*", (r) =>
+  await page.route("**/environments/development/bindable-connections?*", (r) =>
     r.fulfill({ status: 403, json: { code: "WV-DENIED" } }),
   );
   await page.route("**/projects/project/workflows", (r) =>

@@ -24,6 +24,8 @@ import {
   ChangeDetectionStrategy,
   Component,
   type DoCheck,
+  type OnDestroy,
+  inject,
   input,
   viewChild,
 } from "@angular/core";
@@ -49,6 +51,12 @@ import { AddStepPanel } from "../editor/add-step/add-step-panel";
 import { handOverLinkedRun, parseRunsLink } from "../editor/runs-tab/run-links";
 import { RunsView } from "../editor/runs-tab/runs-view";
 import type { App } from "../app";
+import { DialogService } from "../dialog";
+import { workflowTestItem } from "../editor/activation/execute-in-environment";
+import { connectionsPort } from "../editor/connections/connections-port";
+
+/** The narrowest window whose editor bar has room for Execute workflow's split. */
+const SPLIT_MIN_WIDTH = 1024;
 
 @Component({
   selector: "weave-designer",
@@ -83,6 +91,30 @@ import type { App } from "../app";
     `
       :host {
         display: contents;
+      }
+      /* Execute workflow and its menu read as one control, as in step details;
+         both stay children of the toolbar group, whose rules size them. */
+      .execute-workflow.has-ways {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+      .execute-more {
+        margin-inline-start: -6px;
+      }
+      .execute-more ::ng-deep .row-menu-toggle {
+        width: var(--control-md);
+        min-width: var(--control-md);
+        padding: 0;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+        background: var(--accent);
+        border-color: var(--accent);
+        border-left-color: var(--accent-press);
+        color: var(--on-accent);
+      }
+      /* The bar hides its menus' icons on a phone; this one is only its chevron. */
+      .execute-more ::ng-deep .row-menu-toggle weave-icon {
+        display: inline-flex;
       }
       .editor-views button weave-icon {
         margin-right: 6px;
@@ -314,9 +346,11 @@ import type { App } from "../app";
             @if (h.editorNext && h.execution) {
               <!-- The Runs tab reads runs that happened: nothing executes there. -->
               @if (h.tab !== "Runs") {
+                @let ways = executeWays();
                 <button
                   type="button"
                   class="primary execute-workflow"
+                  [class.has-ways]="ways.length > 0"
                   aria-label="Execute workflow"
                   title="Execute workflow (Ctrl/Cmd+Enter)"
                   (click)="h.executeWorkflow()"
@@ -327,6 +361,14 @@ import type { App } from "../app";
                     ></span
                   >
                 </button>
+                @if (ways.length) {
+                  <weave-row-menu
+                    class="execute-more"
+                    label="More ways to execute"
+                    icon="chevronDown"
+                    [items]="ways"
+                  />
+                }
               }
             } @else {
               <button
@@ -399,8 +441,9 @@ import type { App } from "../app";
                 ><span class="compact-save-label">Save</span>
               </button>
             }
-            @if (h.moreItems.length) {
-              <weave-row-menu label="More" text="More" [items]="h.moreItems" />
+            @let more = moreMenu();
+            @if (more.length) {
+              <weave-row-menu label="More" text="More" [items]="more" />
             }
             <button
               type="button"
@@ -680,7 +723,7 @@ import type { App } from "../app";
           }
         } @else if (h.editorNext) {
           @defer (on immediate) {
-            <weave-canvas-view [host]="h" />
+            <weave-canvas-view [host]="h" [listening]="listeningTrigger()" />
           } @placeholder {
             <p class="connecting-status designer-loading" role="status">
               <span class="loading-spinner small"></span>Opening the canvas…
@@ -1455,7 +1498,11 @@ import type { App } from "../app";
       <weave-step-details-mount [host]="h" [canvas]="canvas()" />
     }`,
 })
-export class DesignerView implements DoCheck {
+export class DesignerView implements DoCheck, OnDestroy {
+  /** Leaving the editor retires its test activation, and listening stops. */
+  ngOnDestroy(): void {
+    connectionsPort(this.host())?.editorClosed();
+  }
   /** The editor shell. */
   host = input.required<App>();
   /**
@@ -1465,6 +1512,11 @@ export class DesignerView implements DoCheck {
    */
   ngDoCheck(): void {
     const h = this.host();
+    // A test activation of another draft or revision is retired as the draft changes.
+    connectionsPort(h)?.draftNow(() => ({
+      draftId: h.draftId ?? "",
+      draftRevision: h.draftRevision,
+    }));
     if (!h.designerLink) return;
     const link = parseRunsLink(h.designerLink);
     h.designerLink = "";
@@ -1473,6 +1525,32 @@ export class DesignerView implements DoCheck {
     if (h.tab !== "Runs") void h.selectTab("Runs");
   }
   readonly canvas = viewChild(CanvasView);
+  private readonly dialogs = inject(DialogService);
+  /** The webhook listening for its test event, whose tile pulses; null when none listens. */
+  listeningTrigger(): string | null {
+    return connectionsPort(this.host())?.listeningTo() ?? null;
+  }
+  /** Execute workflow's other ways: Execute workflow in the environment Studio is connected to. */
+  executeWays(): RowMenuItem[] {
+    // Below 1024 px the bar has no room for the split: More offers it instead.
+    if (this.host().windowWidth < SPLIT_MIN_WIDTH) return [];
+    const item = workflowTestItem(this.host(), this.dialogs);
+    return item ? [item] : [];
+  }
+  /**
+   * More: the shell's commands and, when the bar has no room for the split,
+   * Execute workflow in the environment, after Execute workflow (a phone's
+   * More holds it) or first.
+   */
+  moreMenu(): RowMenuItem[] {
+    const h = this.host();
+    const items = h.moreItems;
+    if (h.windowWidth >= SPLIT_MIN_WIDTH) return items;
+    const real = workflowTestItem(h, this.dialogs);
+    if (!real) return items;
+    const at = items.findIndex((item) => item.label === "Execute workflow");
+    return [...items.slice(0, at + 1), real, ...items.slice(at + 1)];
+  }
   private viewMenu: { key: string; items: RowMenuItem[] } | null = null;
   /**
    * The view switcher's menu: the views, the one shown checked. Built again

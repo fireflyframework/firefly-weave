@@ -67,6 +67,8 @@ export interface CanvasHost {
   deselect(): Promise<boolean>;
   /** Shows the workflow settings at their Inputs or Result section. */
   openWorkflowSection(section: WorkflowSection): Promise<void>;
+  /** Opens a trigger choice's settings (webhook, schedule, Kafka, email, app event). */
+  openTrigger(id: string): Promise<void>;
   /** Opens today's step picker for an insertion point, next to an element or a point. */
   openPicker(
     insert: Insertion,

@@ -46,6 +46,10 @@ import {
   type CatalogEntry,
 } from "./support";
 import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
+import type {
+  ExecutionLogEntry,
+  RunLogEntry,
+} from "../../src/app/operate/run-contracts";
 import {
   HostOptions,
   PlatformHost,
@@ -136,6 +140,11 @@ import {
   type TableDocumentFixture,
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
+import {
+  platform as activationPlatform,
+  revision as activationRevision,
+  versionId as activationVersion,
+} from "./activation-po";
 import {
   PRODUCTION,
   bindable as connectionBindable,
@@ -1758,6 +1767,25 @@ async function openDebugRuns(page: Page) {
 }
 
 type Scene = (tour: Tour) => Promise<void>;
+/** A workflow whose triggers are chosen on the canvas: one step, any input. */
+const TRIGGER_WORKFLOW = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: pets
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+  outputSchema:
+    type: object
+  steps:
+    - id: check
+      kind: transform
+      value:
+        ref: /input
+  output:
+    literal: {}
+`;
 /** Generates and pins a step's sample output, then closes step details. */
 async function pinSample(details: StepDetailsPage, id: string) {
   await details.open(id);
@@ -1780,6 +1808,146 @@ async function changeScoreMapping(page: Page) {
       "/steps/lookup/output/customerId",
     ),
   );
+}
+
+/** A run's log entry for the tour; each call gives the next ID. */
+let tourLogs = 0;
+function tourLog(facts: Partial<RunLogEntry>): RunLogEntry {
+  return {
+    id: `cc000000-0000-4000-8000-${String(++tourLogs).padStart(12, "0")}`,
+    at: "2026-10-07T10:00:00.000Z",
+    source: "engine",
+    level: "info",
+    code: null,
+    message: "",
+    node_id: null,
+    instance_key: "",
+    attempt: null,
+    worker_id: null,
+    fields: {},
+    redactions: 0,
+    truncated: false,
+    ...facts,
+  };
+}
+const tourWorker = "0f1e2d3c-4b5a-4968-8776-655443322110";
+/** The failed run's entries, oldest first: every level, a hidden value and a code. */
+const tourRunLogs = (): RunLogEntry[] => [
+  tourLog({
+    at: "2026-10-07T10:00:00.204Z",
+    code: "RUN.STARTED",
+    message: "Run started",
+  }),
+  tourLog({
+    at: "2026-10-07T10:00:00.611Z",
+    source: "worker",
+    code: "CUSTOMER.LOOKED_UP",
+    message: "Looked up 1 customer in billing-db",
+    node_id: "fetch",
+    attempt: 1,
+    worker_id: tourWorker,
+    fields: { customers: 1 },
+    redactions: 1,
+  }),
+  tourLog({
+    at: "2026-10-07T10:00:04.720Z",
+    code: "STEP.SUCCEEDED",
+    message: "fetch finished",
+    node_id: "fetch",
+  }),
+  tourLog({
+    at: "2026-10-07T10:01:01.702Z",
+    source: "connector",
+    level: "warning",
+    code: "HTTP.RESPONSE",
+    message: "POST smtp-relay.acme.example answered 550 in 312 ms",
+    node_id: "send",
+    attempt: 3,
+    worker_id: tourWorker,
+  }),
+  tourLog({
+    at: "2026-10-07T10:01:03.918Z",
+    level: "error",
+    code: "SMTP_REJECTED",
+    message: "send failed: SMTP_REJECTED",
+    node_id: "send",
+  }),
+];
+/** Entries across runs, newest first: hidden values, a shortened entry and a withheld run. */
+function tourAcrossLogs(): (ExecutionLogEntry | Record<string, unknown>)[] {
+  const across = (
+    facts: Partial<RunLogEntry>,
+    run: string,
+  ): ExecutionLogEntry => ({
+    ...tourLog({
+      source: "worker",
+      level: "warning",
+      node_id: "fetch",
+      attempt: 1,
+      worker_id: tourWorker,
+      ...facts,
+    }),
+    run_id: run,
+    workflow_name: "invoice-approval",
+    workflow_version: "1.3.0",
+    test: false,
+  });
+  const running = "8d2c6a1f-1b2c-4d3e-8f40-5a6b7c8d9e0f";
+  const failed = "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12";
+  const now = Date.now();
+  const at = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  return [
+    across(
+      {
+        at: at(8),
+        code: "CUSTOMER.SKIPPED",
+        message:
+          "The customer lookup skipped 2 records with an unexpected status",
+        fields: { skipped: 2 },
+        redactions: 2,
+      },
+      running,
+    ),
+    across(
+      {
+        at: at(12),
+        message:
+          "Query plan for the customer lookup: Seq Scan on customers (cost=0.00..18334.00 rows=1000000 width=244) " +
+          "Filter: ((region)::text = 'EU'::text) Rows Removed by Filter: 982211 Planning Time: 0.114 ms " +
+          "Execution Time: 412.880 ms; consider an index on customers(region) so the lookup stays under the step's 2 s budget",
+        truncated: true,
+      },
+      running,
+    ),
+    {
+      id: "7b9e3d21-2e4f-4c60-9bac-1d2e3f4a5b6c",
+      unavailable: true,
+      omissions: [{ path: "", reason: "classification_unavailable" }],
+    },
+    across(
+      {
+        at: at(729),
+        source: "engine",
+        level: "error",
+        code: "SMTP_REJECTED",
+        message: "send failed: SMTP_REJECTED",
+        node_id: "send",
+        attempt: null,
+        worker_id: null,
+      },
+      failed,
+    ),
+    across(
+      {
+        at: at(730),
+        source: "connector",
+        code: "HTTP.RESPONSE",
+        message: "POST smtp-relay.acme.example answered 550 in 312 ms",
+        node_id: "send",
+      },
+      failed,
+    ),
+  ];
 }
 
 const scenes: Record<string, Scene> = {
@@ -5054,6 +5222,236 @@ spec:
     await expect(output).toContainText("From Production · run");
     await shot("198-real-result");
   },
+  async "activation-triggers"({ page, shot }) {
+    // The dialog's Triggers step: a new webhook, a new Kafka trigger on its
+    // connection, an earlier version's webhook left behind; then, after
+    // Activate, the rows that failed with Retry.
+    await activationPlatform(page);
+    const failed = (r: Route) =>
+      r.fulfill({
+        status: 500,
+        json: {
+          code: "WV-INTERNAL",
+          message: "The platform couldn't store it.",
+        },
+      });
+    await page.route("**/environments/development/triggers?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "w-old",
+              name: "orders-old",
+              kind: "run",
+              activation_id: "activation-old",
+              secret_ref: "orders-signing",
+              payload_schema: { type: "object" },
+              max_body_bytes: 1048576,
+              tolerance_seconds: 300,
+              principal_id: "p-1",
+              disabled: false,
+              revision: 3,
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/environments/development/triggers", failed);
+    await page.route("**/environments/development/broker-triggers", failed);
+    for (const list of ["broker-triggers", "schedules", "provider-sources"])
+      await page.route(`**/environments/development/${list}?*`, (r) =>
+        r.fulfill({ json: { items: [], next_cursor: null } }),
+      );
+    await page.route(
+      "**/environments/development/bindable-connections?*",
+      (r) =>
+        r.fulfill({
+          json: {
+            items: [
+              {
+                connection_id: "33333333-3333-4333-8333-333333333333",
+                revision_id: activationRevision,
+                name: "pets",
+                connector: "weave-http@2.0.0",
+                enabled: true,
+              },
+              {
+                connection_id: "66666666-6666-4666-8666-666666666666",
+                revision_id: "55555555-5555-4555-8555-555555555555",
+                name: "orders-kafka",
+                connector: "weave-kafka@1.0.0",
+                enabled: true,
+              },
+            ],
+            next_cursor: null,
+          },
+        }),
+    );
+    await page.route("**/environments/development/activations?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "activation-old",
+              name: "pets",
+              revision: 1,
+              retired: false,
+              request: { version_id: "22222222-2222-4222-8222-222222222222" },
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/projects/project/workflows?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            { id: activationVersion, name: "pets", version: "1.0.0" },
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              name: "pets",
+              version: "0.9.0",
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await useNewEditor(page);
+    await page.reload();
+    await page.getByLabel("Choose a workflow file").setInputFiles([
+      {
+        name: "pets.yaml",
+        mimeType: "application/yaml",
+        buffer: Buffer.from(TRIGGER_WORKFLOW),
+      },
+      {
+        name: "pets.canvas.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 2,
+            kind: "weave.studio/canvas",
+            triggers: [
+              {
+                id: "trigger-1b2c3d4e",
+                kind: "webhook",
+                name: "orders-in",
+                secretRef: "orders-signing",
+              },
+              {
+                id: "trigger-3d4e5f6a",
+                kind: "broker",
+                name: "orders",
+                clusterId: "orders-cluster",
+                topic: "orders",
+                deadLetterPolicy: "receipt",
+              },
+            ],
+          }),
+        ),
+      },
+    ]);
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    await command(page, "Publish…");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Publish version" })
+      .click();
+    await command(page, "Activate…");
+    const dialog = page.getByRole("dialog");
+    const rows = dialog.getByRole("list", { name: "Triggers" });
+    await expect(rows.getByRole("listitem")).toHaveCount(3);
+    await shot("220-activation-triggers", { end: ".modal-panel" });
+    await dialog
+      .getByRole("button", { name: "Activate version", exact: true })
+      .click();
+    await expect(rows.getByRole("button", { name: "Retry" })).toHaveCount(2);
+    await shot("221-activation-triggers-retry", { end: ".modal-panel" });
+  },
+  async "webhook-listening"({ page, shot }) {
+    // A webhook's step details, connected with test calls on: Listen for test
+    // event, then the test URL with its signed cURL while the tile pulses.
+    await openConnected(page, {
+      bindable: { [PRODUCTION]: [] },
+      capabilities: [
+        ...allCapabilities,
+        "compile",
+        "step.test",
+        "trigger.manage",
+      ],
+    });
+    await routeStepTests(page, { starts: [], views: [] });
+    await page.route("**/environments/*/test-activations", (r) =>
+      r.fulfill({
+        status: 201,
+        json: {
+          id: "ta-1",
+          activation_id: "a7a7a7a7-1111-4222-8333-444455556666",
+          artifact_digest: "a".repeat(64),
+          side_effect: "read_only",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      }),
+    );
+    await page.route("**/environments/*/test-activations/*/listen", (r) =>
+      r.fulfill({
+        json: {
+          test_url: "https://platform.test/hooks/test/7c1d",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      }),
+    );
+    await page.route("**/environments/*/run-summaries**", (r) =>
+      new URL(r.request().url()).searchParams.get("activation_id")
+        ? r.fulfill({ json: { items: [], next_cursor: null } })
+        : r.fallback(),
+    );
+    await page.getByLabel("Choose a workflow file").setInputFiles([
+      crmWorkflow(),
+      {
+        name: "order-intake.canvas.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 2,
+            kind: "weave.studio/canvas",
+            triggers: [
+              {
+                id: "trigger-1b2c3d4e",
+                kind: "webhook",
+                name: "orders-in",
+                secretRef: "orders-signing",
+                testSecretRef: "orders-test",
+              },
+            ],
+          }),
+        ),
+      },
+    ]);
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    const show = page.getByRole("button", { name: "Show canvas", exact: true });
+    if (await show.isVisible()) await show.click();
+    await page
+      .locator('.tile-node[data-tile="$trigger:trigger-1b2c3d4e"] .tile-body')
+      .dblclick();
+    const details = page.getByRole("dialog", {
+      name: "Step details: Webhook trigger",
+      exact: true,
+    });
+    await expect(details).toBeVisible();
+    await shot("222-webhook-step-details");
+    await details
+      .locator(".sd-actions")
+      .getByRole("button", { name: "Listen for test event", exact: true })
+      .click();
+    await expect(
+      details.getByRole("textbox", { name: "Make a POST request to:" }),
+    ).toBeVisible();
+    await shot("223-webhook-listening");
+  },
   async "connections-policy-off"({ page, shot }) {
     const { details } = await openConnected(
       page,
@@ -5226,6 +5624,49 @@ spec:
       detail.getByRole("button", { name: "Debug in editor" }),
     ).toBeVisible();
     await shot("191-operate-debug-button");
+  },
+  // Operate › Logs: entries across runs from the last hour, Warning and up;
+  // on a narrow screen the filters fold behind their summary.
+  async "operate-logs"({ page, shot, size }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read"],
+      environmentName: "local",
+    });
+    await page.route(`${environment}/execution-logs?*`, (r) =>
+      r.fulfill({ json: { items: tourAcrossLogs(), next_cursor: "older" } }),
+    );
+    await open(page, "Logs");
+    await expect(
+      page
+        .getByRole("table", { name: "Log entries" })
+        .locator(".entry:not(.head)"),
+    ).toHaveCount(5);
+    await shot("192-logs-page", { end: ".page-content" });
+    if (size.width < 768) {
+      await page.getByRole("button", { name: "Change filters" }).click();
+      await expect(page.getByLabel("Time", { exact: true })).toBeFocused();
+      await shot("193-logs-filters", { end: ".page-content" });
+    }
+  },
+  // A run's Logs section, after its Steps: every level, newest at the bottom.
+  async "run-logs"({ page, shot }) {
+    await openRunsTab(page, {
+      logs: tourRunLogs(),
+      // The run detail's own reads, which the Runs tab's platform leaves out.
+      before: async () => {
+        await page.route("**/environments/*/runs/*/lifecycle", (r) =>
+          r.fulfill({ json: { archived: false, purged: false, revision: 1 } }),
+        );
+        await page.route("**/environments/*/runs/*/history?*", (r) =>
+          r.fulfill({ json: { events: [], next_cursor: null } }),
+        );
+      },
+    });
+    await page.goto(`/operate/runs/${RUN_IDS.failed}`);
+    const logs = page.getByRole("region", { name: "Logs", exact: true });
+    await expect(logs.locator(".entry:not(.head)")).toHaveCount(5);
+    await logs.scrollIntoViewIfNeeded();
+    await shot("194-run-logs", { end: ".record-detail, .page-content" });
   },
 };
 

@@ -1,0 +1,303 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Log entries, a run's Logs section and the Logs page, in design tokens
+   only. The entries follow their own width, not the window's: fixed tracks
+   from 760 px of table, time and level leading each entry below, and time
+   above level on a phone. A message wraps at any character and never hides. */
+:host {
+  --section-gap: var(--space-6);
+  --group-gap: var(--space-3);
+  --target: var(--control-md);
+  display: block;
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host {
+    --section-gap: var(--space-4);
+    --group-gap: var(--space-2);
+    --target: var(--control-touch);
+  }
+}
+
+/* ---------------------------------------------------------------- entries */
+.entries {
+  container: entries / inline-size;
+  border: thin solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.entry {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 2px var(--space-3);
+  align-items: start;
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: thin solid var(--line);
+  font: var(--type-small);
+}
+.entry:last-child {
+  border-bottom: 0;
+}
+.entry > * {
+  min-width: 0;
+}
+/* The column heads stay for screen readers while the entries stack. */
+.entry.head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.entry .msg,
+.entry .wf {
+  grid-column: 1 / -1;
+}
+.t {
+  font: var(--type-mono);
+  line-height: 20px;
+  color: var(--subtle);
+  white-space: nowrap;
+}
+.lv {
+  font: var(--type-caption);
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--neutral-ink);
+}
+.lv[data-tone="info"] {
+  color: var(--info-ink);
+}
+.lv[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+.lv[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.src,
+.step,
+.wf {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.wf a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* The flags sit on the message's first line without making it taller, so the
+   message starts level with its time and level. */
+.meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: 6px;
+  vertical-align: top;
+  white-space: normal;
+}
+.flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  font: var(--type-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.details {
+  display: block;
+  margin-top: 2px;
+  font: var(--type-mono);
+  color: var(--subtle);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.entry.withheld .msg {
+  color: var(--muted);
+  font-style: italic;
+}
+.entry.withheld :is(.lv, .wf, .step, .src) {
+  display: none;
+}
+@container entries (min-width: 480px) {
+  .entry {
+    grid-template-columns: 112px 72px minmax(0, 1fr);
+  }
+  .entry .wf {
+    grid-column: auto;
+  }
+}
+/* A container query styles what is inside the container, so the wide
+   tracks are set on it here and read by its entries below. */
+.entries {
+  --cols: 112px 72px 92px 96px minmax(0, 3fr);
+}
+.entries.with-run {
+  --cols: 112px 72px minmax(0, 1.1fr) 96px 92px minmax(0, 3fr);
+}
+@container entries (min-width: 760px) {
+  .entry {
+    grid-template-columns: var(--cols);
+  }
+  .entry .wf,
+  .entry .msg {
+    grid-column: auto;
+  }
+  .entry.head {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    padding-block: 6px;
+    background: var(--sunken);
+    font: var(--type-caption);
+    color: var(--muted);
+  }
+  .entry.withheld :is(.lv, .wf, .step, .src) {
+    display: block;
+  }
+}
+.numeric,
+.t {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loading: rows shaped like the entries, never shimmering. */
+.entries.loading .entry {
+  min-height: 36px;
+  align-items: center;
+}
+.bar {
+  display: block;
+  width: 80%;
+  height: 10px;
+  border-radius: var(--radius-xs);
+  background: var(--skeleton);
+}
+.bar.wide {
+  width: 75%;
+}
+/* A bar per column; the columns that stack under time and level have none. */
+@container entries (max-width: 759px) {
+  .bar.mid {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- states */
+.logs-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
+  border: thin dashed var(--border);
+  border-radius: var(--radius-md);
+}
+.logs-empty .badge {
+  display: grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--muted);
+}
+.logs-empty .empty-title {
+  margin: 0;
+  font: var(--type-title-sm);
+  color: var(--text);
+}
+.logs-empty p {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.logs-access {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.logs-access weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+code {
+  margin: 0;
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  font: var(--type-mono);
+  color: var(--text);
+}
+.logs-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.logs-notice > p {
+  flex: 1 1 18em;
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: 0;
+}
+.logs-notice weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.logs-notice .support-code {
+  flex-basis: 100%;
+}
+.logs-notice button {
+  min-height: var(--target);
+}
+.hint {
+  margin: 0;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.logs-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.logs-footer button {
+  min-height: var(--target);
+}

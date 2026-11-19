@@ -632,11 +632,13 @@ export async function command(page: Page, name: string) {
     return button.click();
   }
   await toolbar.getByRole("button", { name: "More", exact: true }).click();
-  await page
-    .getByRole("menuitem", {
-      name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
-    })
-    .click();
+  const item = page.getByRole("menuitem", {
+    name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  });
+  // A blocked item is aria-disabled like its button, and still says why when pressed.
+  await item.click({
+    force: (await item.getAttribute("aria-disabled")) === "true",
+  });
 }
 /** Whether Undo can run: the toolbar's button, or More's item on phones. */
 export async function canUndo(page: Page) {
