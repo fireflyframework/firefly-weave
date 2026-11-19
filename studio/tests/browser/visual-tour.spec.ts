@@ -5721,11 +5721,46 @@ spec:
         }),
       ),
       async (p) => {
+        // The first one it calls is kept on this computer, with the input it takes.
+        await p.addInitScript(
+          (source) => {
+            if (localStorage.getItem("local:weave.localDrafts.v1")) return;
+            const savedAt = "2026-11-18T10:00:00Z";
+            localStorage.setItem(
+              "local:weave.localDrafts.v1",
+              JSON.stringify([
+                { id: "d-w1", name: "workflow-1", version: "1.0.0", savedAt },
+              ]),
+            );
+            localStorage.setItem(
+              "local:weave.localDraft.d-w1",
+              JSON.stringify({ source, format: "yaml", layout: null, savedAt }),
+            );
+          },
+          stringify({
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "workflow-1", version: "1.0.0" },
+            spec: {
+              inputSchema: {
+                type: "object",
+                properties: { customerId: { type: "string" } },
+              },
+              outputSchema: { type: "object" },
+              callable: {},
+              steps: [],
+              output: { literal: {} },
+            },
+          }),
+        );
         await offline(p);
         await withLanguageFeatures(p, ["flow.callWorkflow"]);
       },
     );
     await details.openWithKeyboard("call-1");
+    await expect(details.field("input")).toContainText(
+      "From workflow-1's input",
+    );
     await details.dialog
       .locator(".sd-actions")
       .getByRole("button", { name: "Execute workflow", exact: true })
@@ -5734,6 +5769,16 @@ spec:
       "This test would run 51 called workflows. Studio can run at most 50 in one test.",
     );
     await shot("229-call-limit", { tabs: 0 });
+    // From the editor bar, the run log says it.
+    await details.close();
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Run log" }).locator(".run-log-refusal"),
+    ).toContainText("This test would run 51 called workflows.");
+    await shot("230-call-limit-run-log");
   },
 };
 
