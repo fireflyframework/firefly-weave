@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A loop on the canvas is a frame around its body: the header on top, its
 // steps on the row the loop sits on, 64 units in from the frame's sides,
-// with the room under them that their labels need. Sizes are the mockups'
-// (design criteria 2.1), in canvas units.
+// with the room under them that their labels need. Sizes are in canvas
+// units.
 import { describe, expect, it } from "vitest";
 import {
   LTR,

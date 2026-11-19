@@ -237,7 +237,7 @@ weave-canvas-view,
 }
 
 /* A loop: a frame around the steps it repeats, whose header band is the
-   loop's tile (criteria 3.1 of the loop mockups). The frame has no fill, so
+   loop's tile: the loop has no tile of its own. The frame has no fill, so
    the canvas shows through, and its border is the edges' dim stroke; only
    selected, live and error color it. The header names the loop and its list
    on one line and shortens instead of wrapping: "For each item in" goes
@@ -466,7 +466,7 @@ weave-canvas-view,
 }
 
 /* A recorded run's item chip: at screen size above the frame's top right,
-   its right edge on the frame's (criteria 3.3 of the loop mockups). */
+   its right edge on the frame's, so it reads as the loop's own control. */
 .canvas-v2 .item-chip-spot {
   position: absolute;
   z-index: 6;

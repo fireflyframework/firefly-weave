@@ -259,7 +259,8 @@ export class NodeTile {
   readonly frameBand = computed(() => frameHeaderHeight(this.zoom()));
   /**
    * A loop's whole header doesn't fit its band: "For each item in" leaves
-   * sight first (criteria 3.2), then the suffix and the list shorten.
+   * sight first, since the loop's name and list say what it does, then the
+   * suffix and the list shorten.
    */
   readonly tight = signal(false);
   private readonly frameTitle =
