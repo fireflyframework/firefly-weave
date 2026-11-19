@@ -163,9 +163,14 @@ let sequence = 0;
           <button type="button" (click)="cancel.emit()">Close</button>
         </div>
       } @else if (asked.kind === "real") {
+        <!-- A step's own sentence (an AI task's cost) says what running it does. -->
         <p class="dialog-message" [id]="messageId">
-          {{ asked.stepId }} changes data in {{ asked.environment }}. Repeating
-          it repeats the change.{{ asked.extra ? " " + asked.extra : "" }}
+          @if (asked.extra) {
+            {{ asked.extra }}
+          } @else {
+            {{ asked.stepId }} changes data in {{ asked.environment }}.
+            Repeating it repeats the change.
+          }
         </p>
         <div class="dialog-actions">
           <!-- Focus starts on Cancel: a held or repeated Enter mustn't run a change. -->
