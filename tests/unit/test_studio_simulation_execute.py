@@ -472,6 +472,48 @@ def test_after_a_signal_a_step_the_simulator_cant_carry_on_with_is_named_and_wha
     assert "v-123" not in logged and "a defect in the runtime" not in logged
 
 
+def loop_over(items: list[int]) -> dict[str, Any]:
+    """A loop of up to two items over ``items``."""
+    return {
+        "id": "orders",
+        "kind": "forEach",
+        "items": {"literal": items},
+        "maxItems": 2,
+        "body": {
+            "steps": [{"id": "each", "kind": "transform", "value": {"ref": "/item"}}],
+            "output": {"literal": None},
+        },
+    }
+
+
+# A run timeout gives the simulation a deadline to advance to; the run still stops at the loop.
+@pytest.mark.parametrize("timeout", [None, 3600], ids=["no run timeout", "a run timeout"])
+def test_a_loop_with_more_items_than_its_limit_fails_the_run_at_the_loop(timeout):
+    document = json.loads(workflow(loop_over([1, 2, 3]), AFTER))
+    if timeout is not None:
+        document["spec"]["timeoutSeconds"] = timeout
+    answer = run(json.dumps(document))
+    assert answer["status"] == "failed"
+    assert [(e["nodeId"], e["status"]) for e in answer["trace"]] == [("orders", "failed")]
+    assert [(d["code"], d["message"]) for d in answer["diagnostics"]] == [
+        ("WV-RUNTIME-LOOP-LIMIT", "A loop's list was longer than its item limit.")
+    ]
+
+
+def test_a_loop_over_its_limit_in_a_called_workflow_fails_the_call_and_the_run():
+    callee = callee_definition()
+    callee["spec"]["steps"] = [loop_over([1, 2, 3])]
+    callee["spec"]["output"] = {"literal": None}
+    answer = run(workflow(CALL, AFTER), definitions=[ACTION, callee], workflows={"enrich@1.0.0": {"mocks": {}}})
+    assert answer["status"] == "failed"
+    assert [(e["nodeId"], e["status"], e.get("frame")) for e in answer["trace"]] == [
+        ("enrich", "failed", None),
+        ("orders", "failed", "enrich"),
+    ]
+    assert [(f["key"], f["status"]) for f in answer["frames"]] == [("enrich", "failed")]
+    assert [d["code"] for d in answer["diagnostics"]] == ["WV-RUNTIME-LOOP-LIMIT"]
+
+
 def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():
     secret = json.loads(json.dumps(ACTION))
     secret["spec"]["outputSchema"]["properties"]["eligible"]["x-secret"] = True
