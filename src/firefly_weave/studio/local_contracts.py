@@ -178,6 +178,8 @@ class Blocked(_HostBody):
     nodeId: ResourceName
     instanceKey: InstanceKeyTextOrEmpty
     message: str = Field(min_length=1, max_length=2000)
+    # The called workflow's frame the step is in; omitted for a step of the simulated workflow itself.
+    frame: FrameKey | None = None
 
 
 class ExecuteResponse(_HostBody):

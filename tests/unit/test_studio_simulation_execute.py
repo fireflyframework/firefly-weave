@@ -440,7 +440,9 @@ def test_a_called_workflow_that_returns_null_gives_null_to_the_call():
         workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
     )
     assert answer["status"] == "completed", answer
-    assert [(e["nodeId"], e["status"], e["output"]) for e in answer["trace"]] == [("enrich", "completed", None)]
+    assert [(e["nodeId"], e["status"], e["output"]) for e in answer["trace"] if e.get("frame") is None] == [
+        ("enrich", "completed", None)
+    ]
 
 
 def test_after_a_signal_a_step_the_simulator_cant_carry_on_with_is_named_and_what_ran_is_kept(caplog, monkeypatch):
