@@ -492,12 +492,17 @@ _STDIN_KEY_BYTES = 256 * 4 + 2
 
 
 def _stdin_key() -> str:
-    """A conversation key read as one line from standard input; a terminal is fine, a key is not a secret."""
+    """A conversation key read as one line from standard input; a terminal is fine, a key is not a secret.
+
+    At a terminal the line ends with Enter. Piped input must hold that one line only: anything after it is refused.
+    """
     import sys
 
-    raw = sys.stdin.buffer.read(_STDIN_KEY_BYTES + 1)
+    raw = sys.stdin.buffer.readline(_STDIN_KEY_BYTES + 1)
     if len(raw) > _STDIN_KEY_BYTES:
         raise ValueError("The key read from standard input is too long")
+    if not sys.stdin.isatty() and sys.stdin.buffer.read(1):
+        raise ValueError("Standard input must hold the key as one line")
     text = raw.decode("utf-8")
     for ending in ("\r\n", "\n"):
         if text.endswith(ending):

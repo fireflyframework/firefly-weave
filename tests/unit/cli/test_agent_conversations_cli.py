@@ -156,3 +156,27 @@ def test_the_cli_refuses_a_standard_input_key_it_cant_use_before_sending(monkeyp
     result, calls = run_cli(monkeypatch, "read", "--workflow", "support-chat", *names, stdin=stdin)
 
     assert result.exit_code == 2 and calls == []
+
+
+class Terminal:
+    """Standard input at a terminal: a line ends with Enter, and reading to the end would wait for Ctrl-D."""
+
+    def __init__(self, line: bytes) -> None:
+        self.line = line
+
+    def readline(self, limit: int = -1) -> bytes:
+        return self.line
+
+    def read(self, size: int = -1) -> bytes:
+        raise AssertionError("Reading past the line waits at a terminal until Ctrl-D")
+
+
+def test_a_key_typed_at_a_terminal_ends_with_enter(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from firefly_weave.cli.remote import _stdin_key
+
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=Terminal(b"C-4777\n"), isatty=lambda: True))
+
+    assert _stdin_key() == "C-4777"
