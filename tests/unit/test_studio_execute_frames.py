@@ -238,3 +238,37 @@ def test_a_step_on_a_path_not_taken_isn_t_mistaken_for_a_called_workflow_s_step_
     assert ("send", "notify") in {(e["nodeId"], e.get("frame")) for e in answer["trace"]}
     assert answer["status"] == "blocked", answer
     assert answer["blocked"]["message"] == "With this test data, route takes Otherwise, so send isn't reached."
+
+
+def test_a_step_two_calls_deep_without_test_data_blocks_in_the_inner_frame():
+    # order-intake → notify-customer (step enrich) → customer-profile, whose call audit has nothing to run it.
+    deep = document(
+        "customer-profile",
+        "2.1.0",
+        call("audit", "audit-trail@1.0.0"),
+        value("lookup-profile", {"tier": "gold"}),
+        output="lookup-profile",
+    )
+    audit = document("audit-trail", "1.0.0", value("log", {"kept": True}), output="log")
+    workflows = {"notify-customer@1.0.0": local(NOTIFY), "customer-profile@2.1.0": local(deep)}
+    answer = run(*CALLER_STEPS, workflows=workflows, definitions=[NOTIFY, deep, audit])
+    assert answer["status"] == "blocked", answer
+    assert answer["blocked"] == {
+        "reason": "missing_mock",
+        "nodeId": "audit",
+        "instanceKey": "",
+        "frame": "notify/enrich",
+        "message": "Step audit in customer-profile needs test data.",
+    }
+    assert [(e["nodeId"], e["status"], e.get("frame")) for e in answer["trace"]][-2:] == [
+        ("enrich", "waiting", "notify"),
+        ("audit", "waiting", "notify/enrich"),
+    ]
+    assert {frame["key"]: frame["status"] for frame in answer["frames"]} == {
+        "notify": "waiting",
+        "notify/enrich": "waiting",
+    }
+    # Test output under customer-profile's own test data answers it.
+    workflows["customer-profile@2.1.0"] = local(deep, {"node:audit": {"kept": True}})
+    fixed = run(*CALLER_STEPS, workflows=workflows, definitions=[NOTIFY, deep, audit])
+    assert fixed["status"] == "completed", fixed
