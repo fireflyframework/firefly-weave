@@ -233,8 +233,12 @@ passed  cancel-twice
 6 of 7 checks passed.
 ```
 
+A step that arrives after its cancel or undo passes only when your system refuses
+it itself: a failure with your own code and `effect: none`. A handler that
+raised, or a refusal that doesn't say it changed nothing, fails the check.
+
 The command exits 0 when every check passes, 1 when one fails, and 2 when it
-can't start, with a `WV-CONFORMANCE-*` code: for example a step that isn't undone
+can't start or stops on an unexpected error, with a `WV-CONFORMANCE-*` code: for example a step that isn't undone
 by actions, a value the step reads that `--steps` doesn't give, or a handler or
 connection secret that is missing. In CI, use `--output json` and the exit code.
 The report and its errors never show an input, an output, or a secret.

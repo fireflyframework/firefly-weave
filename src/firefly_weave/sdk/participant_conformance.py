@@ -636,6 +636,13 @@ def _first_failure(check: ConformanceCheck, deliveries: Sequence[tuple[Request, 
             return "failed"
         if move == "late" and isinstance(answer, Completed):
             return "applied-late"
+        # Only the participant's own refusal, saying it changed nothing, proves the late step was kept out.
+        if (
+            move == "late"
+            and isinstance(answer, Failed)
+            and (answer.code == "HANDLER_FAILED" or answer.effect != "none")
+        ):
+            return "unrefused-late"
         if isinstance(answer, Completed) and not answer.valid:
             return "output"
     return None

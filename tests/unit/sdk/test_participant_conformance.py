@@ -160,8 +160,8 @@ class System:
     """A participant system kept in a dict. ``tombstones``, ``replays`` and ``empty_cancels`` turn off one part of
     the contract each; ``hang`` names a capability that never answers; ``outputs`` overrides answers."""
 
-    def __init__(self, *, tombstones=True, replays=True, empty_cancels=True, hang=None, outputs=None):
-        self.tombstones, self.replays, self.empty_cancels = tombstones, replays, empty_cancels
+    def __init__(self, *, tombstones=True, replays=True, empty_cancels=True, hang=None, outputs=None, late=None):
+        self.tombstones, self.replays, self.empty_cancels, self.late = tombstones, replays, empty_cancels, late
         self.hang, self.outputs = hang, outputs or {}
         self.answers: dict[str, object] = {}
         self.steps: dict[str, str] = {}
@@ -181,7 +181,12 @@ class System:
             phase, branch = lease.transaction.phase, lease.transaction.branch_key
             if phase in {"try", "forward"}:
                 if self.steps.get(branch) == "undone":
-                    raise ConnectorFailure("TXN_ALREADY_UNDONE", "failed", effect="none")
+                    if self.late == "raises":
+                        raise KeyError(branch)
+                    if self.late == "handler-failed":
+                        raise ConnectorFailure("HANDLER_FAILED", "failed", effect="none")
+                    effect = "unknown" if self.late == "unknown" else "none"
+                    raise ConnectorFailure("TXN_ALREADY_UNDONE", "failed", effect=effect)
                 self.steps[branch] = "applied"
                 self.counter += 1
                 answer = {"holdId": f"h-{self.counter}"} if capability == HOLD else {"id": f"a-{self.counter}"}
@@ -321,6 +326,17 @@ async def test_a_participant_without_tombstones_fails_only_the_late_try():
     report = await run(System(tombstones=False))
     assert not report.passed
     assert failures(report) == {"try-after-cancel": "applied-late"}
+
+
+async def test_a_late_step_passes_only_on_the_participants_own_refusal():
+    for late in ("raises", "unknown", "handler-failed"):
+        assert failures(await run(System(late=late))) == {"try-after-cancel": "unrefused-late"}
+        assert failures(await run(System(late=late), "add")) == {"forward-after-compensate": "unrefused-late"}
+    refused = next(item for item in (await run(System())).checks if item.check == "try-after-cancel")
+    assert refused.passed and (refused.deliveries[-1].code, refused.deliveries[-1].effect) == (
+        "TXN_ALREADY_UNDONE",
+        "none",
+    )
 
 
 async def test_a_participant_that_applies_a_repeat_twice_fails_the_repeat_checks():

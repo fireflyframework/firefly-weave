@@ -137,7 +137,10 @@ def test_fence_codes_are_valid_worker_failure_codes():
     assert set(FENCE_CODES) == {"TXN_ALREADY_UNDONE", "TXN_NOT_APPLIED", "TXN_OTHER_DIRECTION"}
     for code in FENCE_CODES:
         assert TaskError.model_validate({"completion_id": uuid4(), "code": code}).code == code
-    assert set(CHECK_REASONS) == {"failed", "output", "input", "applied-late", "repeat", "timeout"}
+    assert set(CHECK_REASONS) == {"failed", "output", "input", "applied-late", "repeat", "timeout", "unrefused-late"}
+    assert CHECK_REASONS["unrefused-late"] == (
+        "The step after its cancel or undo failed without saying it changed nothing."
+    )
     assert all(code.startswith("WV-CONFORMANCE-") for code in CONFORMANCE_MESSAGES)
     for message in (*FENCE_CODES.values(), *CHECK_REASONS.values(), *CONFORMANCE_MESSAGES.values()):
         assert message.endswith(".") and "{" not in message

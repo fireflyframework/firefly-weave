@@ -48,7 +48,7 @@ type ConformanceCheck = Literal[
     "forward-twice",
     "compensate-twice",
 ]
-type CheckReason = Literal["failed", "output", "input", "applied-late", "repeat", "timeout"]
+type CheckReason = Literal["failed", "output", "input", "applied-late", "repeat", "timeout", "unrefused-late"]
 type Answer = Literal["completed", "failed"]
 # The pattern of a worker failure code (TaskError.code).
 FAILURE_CODE_PATTERN: Final = r"^[A-Z][A-Z0-9_-]{0,63}$"
@@ -67,7 +67,7 @@ FENCE_CODES: Final[Mapping[str, str]] = MappingProxyType(
         "TXN_OTHER_DIRECTION": "The step was already confirmed, or already cancelled or undone.",
     }
 )
-# Why a check failed, in fixed words, so a report never carries a value.
+# Why a check failed, in fixed words, so a report never carries a value. Append-only.
 CHECK_REASONS: Final[Mapping[CheckReason, str]] = MappingProxyType(
     {
         "failed": "A request that must succeed failed.",
@@ -76,6 +76,7 @@ CHECK_REASONS: Final[Mapping[CheckReason, str]] = MappingProxyType(
         "applied-late": "The step was applied after its cancel or undo.",
         "repeat": "A repeated request answered differently from the first.",
         "timeout": "A request took longer than its action's time limit.",
+        "unrefused-late": "The step after its cancel or undo failed without saying it changed nothing.",
     }
 )
 # Why the check couldn't start; fixed words, never a value. Append-only.
@@ -92,6 +93,7 @@ CONFORMANCE_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
             "A connection slot of the step has no usable --connection file or --secret variable."
         ),
         "WV-CONFORMANCE-DEPENDENCY": "Checking a PostgreSQL step needs the server extra (firefly-weave[server]).",
+        "WV-CONFORMANCE-FAILED": "The check stopped on an unexpected error, so it reports no result.",
     }
 )
 
