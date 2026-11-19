@@ -2336,11 +2336,11 @@ export class App implements CanvasHost {
    */
   private readonly openedFromFiles = new Set<string>();
   /**
-   * A published version opens under an identity of its own, set before its
-   * workflow replaces the one open: the draft open until now keeps its last
-   * change and its canvas, and is never saved over.
+   * A published version opens under an identity of its own, set before
+   * `load` replaces the workflow open: the draft open until now keeps its
+   * last change and its canvas, and is never saved over.
    */
-  private openPublished(record: Record<string, unknown>) {
+  openPublished(record: Record<string, unknown>, load: () => void) {
     void this.flushDraftCanvas();
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
@@ -2348,6 +2348,22 @@ export class App implements CanvasHost {
     this.published = record;
     this.draftCanvasPending = null;
     this.draftCanvasKept = "memory";
+    load();
+    this.resetValidation();
+    this.changed();
+    this.dirty = false;
+    this.openTestData();
+    this.view = "designer";
+    this.activation = null;
+    this.saveState = "Published";
+    this.openTab();
+    void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
+  }
+  /** Opens a workflow a call step calls, or one that calls this one: its draft here, else its published version. */
+  openWorkflow(uses: string) {
+    void import("./editor/calls/open-workflow").then((open) =>
+      open.openCalledWorkflow(this, uses),
+    );
   }
   /** Opens a platform draft in the designer. */
   private openPlatformDraft(
@@ -6979,36 +6995,18 @@ export class App implements CanvasHost {
         const d = detail["definition"] ?? detail["document"];
         if (d && typeof d === "object" && this.libraryCollection === "drafts")
           this.openPlatformDraft(detail, d as Workflow);
-        else if (d && typeof d === "object") {
-          this.openPublished(record);
-          this.model.replace(d as Workflow);
-          this.resetValidation();
-          this.changed();
-          this.dirty = false;
-          this.openTestData();
-          this.view = "designer";
-          this.activation = null;
-          this.saveState = "Published";
-          this.openTab();
-          void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
-        } else if (typeof detail["source"] === "string") {
-          this.openPublished(record);
-          this.model.setSource(
-            detail["source"],
-            detail["format"] === "json" ? "json" : "yaml",
-          );
-          this.model.clearHistory();
-          this.model.selected = "";
-          this.resetValidation();
-          this.changed();
-          this.dirty = false;
-          this.openTestData();
-          this.view = "designer";
-          this.activation = null;
-          this.saveState = "Published";
-          this.openTab();
-          void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
-        } else
+        else if (d && typeof d === "object")
+          this.openPublished(record, () => this.model.replace(d as Workflow));
+        else if (typeof detail["source"] === "string")
+          this.openPublished(record, () => {
+            this.model.setSource(
+              detail["source"] as string,
+              detail["format"] === "json" ? "json" : "yaml",
+            );
+            this.model.clearHistory();
+            this.model.selected = "";
+          });
+        else
           throw Error(
             "This export cannot be opened. Its source remains available through the API.",
           );

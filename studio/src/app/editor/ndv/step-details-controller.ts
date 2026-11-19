@@ -2045,6 +2045,7 @@ export class StepDetailsController {
       },
       notify: (text, action) => host.notify(text, action),
       tables: this.stepTables(target, model, opened),
+      openWorkflow: (uses) => host.openWorkflow?.(uses),
     };
     return ctx;
   }

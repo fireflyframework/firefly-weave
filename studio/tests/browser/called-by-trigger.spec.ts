@@ -112,6 +112,33 @@ async function open(
       const result = await connected(p);
       await withLanguageFeatures(p, ["flow.callWorkflow"]);
       await p.route(/\/projects\/[^/]+\/catalog$/, catalog);
+      // The published versions, for Open on a caller.
+      await p.route(/\/projects\/[^/]+\/workflows\?/, (route) =>
+        route.fulfill({
+          json: {
+            items: LOCK.definitions.map((locked, index) => ({
+              id: `v-${index}`,
+              name: locked.document.metadata.name,
+              version: locked.document.metadata.version,
+            })),
+            next_cursor: null,
+          },
+        }),
+      );
+      await p.route(
+        /\/projects\/[^/]+\/workflows\/v-(\d+)\/export$/,
+        (route) => {
+          const index = Number(
+            /v-(\d+)\/export$/.exec(route.request().url())![1],
+          );
+          return route.fulfill({
+            json: {
+              id: `v-${index}`,
+              document: LOCK.definitions[index].document,
+            },
+          });
+        },
+      );
       return result;
     },
   );
@@ -384,6 +411,24 @@ test.describe("the Called by a workflow trigger", () => {
   });
 });
 
+test.describe("opening a caller", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Open on a caller opens its published version", async ({ page }) => {
+    const details = await open(page);
+    const dialog = await openTrigger(page, details);
+    await dialog.getByRole("button", { name: "Open order-intake" }).click();
+    await expect(
+      page.getByText(
+        "Opened order-intake 1.2.0 from this project. Your changes start a new draft.",
+      ),
+    ).toBeVisible();
+    await expect(page.locator(".editor-identity")).toContainText(
+      "order-intake",
+    );
+  });
+});
+
 test.describe("when the callers can't show", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -433,5 +478,13 @@ test.describe("on a phone", () => {
       "Calls this workflow but isn't allowed. Its next activation will fail.",
     );
     await expect(callers.locator(".cb-wide").first()).toBeHidden();
+    // Open is an icon named for its workflow, 44 px square.
+    const openCaller = details.dialog.getByRole("button", {
+      name: "Open order-intake",
+    });
+    await expect(openCaller.locator(".cb-open-text")).toBeHidden();
+    const box = (await openCaller.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
   });
 });
