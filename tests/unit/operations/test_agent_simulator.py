@@ -28,7 +28,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
-from agent_fixtures import INPUT, NOW, agent, answering, artifact, plain, workflow  # noqa: E402
+from agent_fixtures import (  # noqa: E402
+    INPUT,
+    NOW,
+    agent,
+    answering,
+    artifact,
+    conversation_memory_enabled,  # noqa: F401 - a fixture
+    plain,
+    workflow,
+)
 from pydantic import ValidationError  # noqa: E402
 from test_agent_kernel import looped  # noqa: E402
 from test_agent_workflows import LOOKUP, catalog, order_action, orders_connector  # noqa: E402
@@ -679,3 +688,122 @@ def test_studio_checks_a_call_mock_for_secrets_by_every_tool():
         execute(request, None)
 
     assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-SECRET_VALUE", ["/mocks/node:support#1.1"])
+
+
+# Conversation memory in a simulation: a load is answered from the saved turns' seed, never from a store.
+SEED = [
+    {"role": "user", "content": "What is the status of order A-17?"},
+    {"role": "assistant", "content": "A-17 has shipped."},
+]
+BY_REGION = {"scope": "conversation", "key": {"ref": "/input/region"}, "window": 24}
+
+
+def remembering(*steps):
+    return (
+        artifact(plain(answering(workflow(*steps))))
+        if steps
+        else artifact(plain(answering(workflow(agent(memory=BY_REGION)))))
+    )
+
+
+def memory_of(simulator, key="support#1"):
+    first = simulator.data.inputs[key]["messages"][0]
+    return first["content"]["memory"] if first["role"] == "context" and "memory" in first["content"] else []
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_the_simulator_answers_a_load_from_its_seed_only():
+    flow = remembering()
+    entries = {"support": turns({"final": "A-17."}, memory=SEED)}
+    simulator = simulate(with_ai_turns(flow, {}, entries), flow)
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.status == "succeeded" and memory_of(simulator) == SEED
+    [loaded] = [event for event in simulator.data.events if event.type == "memory_loaded"]
+    assert loaded.data["version"] == 0 and loaded.data["expired"] is False and loaded.data["messages"] == SEED
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_a_seed_alone_seeds_the_conversation_while_a_pin_answers_the_turn():
+    flow = remembering()
+    entries = {"support": {"turns": [], "memory": SEED}}
+    pin = {
+        "result": "A-17.",
+        "usage": NO_USAGE | {"toolCalls": 0},
+        "turns": 1,
+        "stopReason": "final",
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+    }
+    simulator = simulate(with_ai_turns(flow, {"node:support": pin}, entries), flow)
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.status == "succeeded" and memory_of(simulator) == SEED
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_an_instance_keys_seed_wins_over_the_steps():
+    flow = artifact(plain(looped(agent(memory={**BY_REGION, "key": {"ref": "/item"}}))))
+    own = [{"role": "user", "content": "About A-18?"}, {"role": "assistant", "content": "Delivered."}]
+    entries = {"support": turns({"final": "x"}, memory=SEED), "support[1]": turns({"final": "y"}, memory=own)}
+    simulator = Simulator(
+        flow, mocks=with_ai_turns(flow, {}, entries), input={**INPUT, "orders": ["A-17", "A-18"]}, now=NOW
+    )
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.status == "succeeded"
+    assert memory_of(simulator, "support[0]#1") == SEED and memory_of(simulator, "support[1]#1") == own
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_without_a_seed_the_conversation_starts_empty():
+    flow = remembering()
+    simulator = simulate(with_ai_turns(flow, {}, {"support": turns({"final": "A-17."})}), flow)
+
+    view = simulator.continue_until_breakpoint()
+
+    assert view.status == "succeeded" and memory_of(simulator) == []
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_an_append_changes_nothing_in_the_session():
+    first = agent(memory=BY_REGION)
+    second = agent(id="followup", memory=BY_REGION, prompt={"literal": "And before?"})
+    document = answering(workflow(first, second))
+    document["spec"]["output"] = {"ref": "/steps/followup/output/result"}
+    flow = artifact(plain(document))
+    entries = {"support": turns({"final": "A-17."}, memory=SEED), "followup": turns({"final": "Nothing."})}
+    simulator = simulate(with_ai_turns(flow, {}, entries), flow)
+
+    view = simulator.continue_until_breakpoint()
+
+    # The first agent's exchange is never carried to the second one with the same key.
+    assert view.status == "succeeded" and memory_of(simulator, "followup#1") == []
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+@pytest.mark.parametrize(
+    "seed",
+    [
+        [{"role": "tool", "content": "x"}],
+        [{"role": "user", "content": "x" * 140_000}, {"role": "assistant", "content": "y" * 140_000}],
+    ],
+    ids=["tool-role", "over-256-kib"],
+)
+def test_a_seed_that_breaks_the_conversation_shape_is_refused_at_load(seed):
+    flow = remembering()
+
+    with pytest.raises(DebugError) as refused:
+        simulate(with_ai_turns(flow, {}, {"support": turns({"final": "A-17."}, memory=seed)}), flow)
+
+    assert refused.value.code == "WV-DEBUG-MOCK-OUTPUT"
+
+
+def test_a_seed_passes_studios_local_contracts_unchanged():
+    from firefly_weave.contracts.studio_documents import ai_turns_problems
+
+    assert ai_turns_problems(turns({"final": "A-17."}, memory=SEED)) == []
+    assert ai_turns_problems({"turns": [], "memory": SEED}) == []
