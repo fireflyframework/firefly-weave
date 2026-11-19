@@ -20,6 +20,7 @@ each completed exchange, scrubbed and redacted."""
 import hashlib
 import json
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from agent_fixtures import (
@@ -50,8 +51,9 @@ from firefly_weave.runtime.agents import (
     tool_failed,
     turn_completed,
 )
+from firefly_weave.runtime.conversations import record_memory
 from firefly_weave.runtime.kernel import KernelError
-from firefly_weave.runtime.models import Deadline, MemoryIntent, StepChange
+from firefly_weave.runtime.models import Deadline, MemoryIntent, RunState, RuntimeEvent, StepChange, Transition
 
 pytestmark = pytest.mark.usefixtures("conversation_memory_enabled")
 
@@ -474,3 +476,161 @@ def test_a_run_memory_workflows_transitions_keep_their_bytes():
     joined = b"\n".join(item.model_dump_json().encode() for item in history)
 
     assert hashlib.sha256(joined).hexdigest() == "ecaf90a80a01d5d0ddc7504b05382bf6888466e0a2ec6c79091092c4415375a1"
+
+
+# What the run service writes for a transition: recorded at the SQL boundary. The SQL itself runs against PostgreSQL
+# in tests/integration/test_agent_conversations.py.
+class Recorder:
+    """A repository that records each statement and answers the reads a test programs, by a fragment of their SQL."""
+
+    def __init__(self, answers: dict[str, list[list[dict]]] | None = None) -> None:
+        self.statements: list[tuple[str, dict]] = []
+        self.answers = {fragment: list(replies) for fragment, replies in (answers or {}).items()}
+
+    async def execute(self, sql: str, **values) -> None:
+        self.statements.append((sql, values))
+
+    async def rows(self, sql: str, **values) -> list[dict]:
+        self.statements.append((sql, values))
+        for fragment, replies in self.answers.items():
+            if fragment in sql and replies:
+                return replies.pop(0)
+        return []
+
+    def writes(self, table: str) -> list[tuple[str, dict]]:
+        return [(sql, values) for sql, values in self.statements if table in sql and "activation_revisions" not in sql]
+
+
+RUN = uuid4()
+APPEND = {"role": "user", "content": "Where is A-17?"}, {"role": "assistant", "content": "Shipped."}
+
+
+def memory_transition(*intents, status="waiting") -> tuple[RuntimeEvent, Transition]:
+    event = RuntimeEvent(id=uuid4(), type="task_completed", timestamp=NOW, sequence=7, data={})
+    return event, Transition(state=RunState(status=status), commands=list(intents))
+
+
+def load_intent(key_hash=CUSTOMER_HASH, node_id="support") -> MemoryIntent:
+    return MemoryIntent(op="load", node_id=node_id, workflow="support-desk", key_hash=key_hash)
+
+
+def append_intent(key_hash=CUSTOMER_HASH) -> MemoryIntent:
+    return MemoryIntent(
+        op="append",
+        node_id="support",
+        workflow="support-desk",
+        key_hash=key_hash,
+        messages=list(APPEND),
+        window=24,
+        ttl_seconds=3600,
+    )
+
+
+TEST_RUN = {"activation_revisions": [[{"test": True}]]}
+
+
+async def test_a_load_intent_records_one_pending_load_with_the_events_sequence():
+    repository = Recorder()
+
+    await record_memory(repository, RUN, *memory_transition(load_intent()))
+
+    [(sql, values)] = repository.writes("agent_memory_loads")
+    assert sql.startswith("INSERT INTO agent_memory_loads")
+    assert values["run"] == RUN and values["node"] == "support" and values["sequence"] == 7
+    assert values["key_hash"] == CUSTOMER_HASH and values["workflow"] == "support-desk" and values["test"] is False
+    assert values["at"] == NOW
+
+
+async def test_a_test_runs_load_is_recorded_as_a_test():
+    repository = Recorder(TEST_RUN)
+
+    await record_memory(repository, RUN, *memory_transition(load_intent()))
+
+    [(_, values)] = repository.writes("agent_memory_loads")
+    assert values["test"] is True
+
+
+async def test_an_append_for_a_test_run_writes_nothing():
+    repository = Recorder(TEST_RUN)
+
+    await record_memory(repository, RUN, *memory_transition(append_intent()))
+
+    assert repository.writes("agent_conversations") == []
+
+
+async def test_a_new_conversation_is_inserted_with_its_exchange_and_lifetime():
+    repository = Recorder({"INSERT INTO agent_conversations": [[{"version": 1}]]})
+
+    await record_memory(repository, RUN, *memory_transition(append_intent()))
+
+    [(sql, values)] = repository.writes("agent_conversations")
+    assert "ON CONFLICT DO NOTHING" in sql
+    assert json.loads(values["messages"]) == list(APPEND)
+    assert values["expires"] == NOW + timedelta(seconds=3600) and values["run"] == RUN
+
+
+async def test_an_existing_conversation_is_locked_then_appended_to():
+    stored = [{"messages": list(APPEND), "version": 3, "expires_at": NOW + timedelta(hours=1)}]
+    repository = Recorder({"FOR UPDATE": [stored]})
+
+    await record_memory(repository, RUN, *memory_transition(append_intent()))
+
+    insert, locked, update = repository.writes("agent_conversations")
+    assert "FOR UPDATE" in locked[0] and update[0].startswith("UPDATE agent_conversations")
+    assert "version=version+1" in update[0]
+    assert json.loads(update[1]["messages"]) == [*APPEND, *APPEND]
+    assert update[1]["expires"] == NOW + timedelta(seconds=3600) and update[1]["run"] == RUN
+
+
+async def test_an_append_to_an_expired_conversation_starts_it_over():
+    stored = [
+        {
+            "messages": [{"role": "user", "content": "Old"}, {"role": "assistant", "content": "Gone"}],
+            "version": 3,
+            "expires_at": NOW,
+        }
+    ]
+    repository = Recorder({"FOR UPDATE": [stored]})
+
+    await record_memory(repository, RUN, *memory_transition(append_intent()))
+
+    *_, update = repository.writes("agent_conversations")
+    assert json.loads(update[1]["messages"]) == list(APPEND) and "version=version+1" in update[0]
+
+
+async def test_an_append_keeps_the_newest_window():
+    stored = [{"messages": exchanges(12), "version": 12, "expires_at": NOW + timedelta(hours=1)}]
+    repository = Recorder({"FOR UPDATE": [stored]})
+
+    await record_memory(repository, RUN, *memory_transition(append_intent()))
+
+    *_, update = repository.writes("agent_conversations")
+    assert json.loads(update[1]["messages"]) == [*exchanges(12)[2:], *APPEND]
+
+
+async def test_two_appends_in_one_transition_lock_their_rows_in_key_hash_order():
+    high, low = "f" * 64, "0" * 64
+    repository = Recorder({"INSERT INTO agent_conversations": [[{"version": 1}], [{"version": 1}]]})
+
+    await record_memory(repository, RUN, *memory_transition(append_intent(high), append_intent(low)))
+
+    inserted = [values["key_hash"] for sql, values in repository.writes("agent_conversations") if "INSERT" in sql]
+    assert inserted == [low, high]
+
+
+async def test_a_terminal_transition_drops_its_runs_pending_loads():
+    repository = Recorder()
+
+    await record_memory(repository, RUN, *memory_transition(status="cancelled"))
+
+    [(sql, values)] = repository.writes("agent_memory_loads")
+    assert sql.startswith("UPDATE agent_memory_loads SET dropped=true,delivered_at=:at")
+    assert "delivered_at IS NULL" in sql and values["run"] == RUN
+
+
+async def test_a_transition_without_conversation_memory_writes_nothing():
+    repository = Recorder()
+
+    await record_memory(repository, RUN, *memory_transition())
+
+    assert repository.statements == []

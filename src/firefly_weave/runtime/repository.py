@@ -352,6 +352,10 @@ class RuntimeRepository:
                     node=command.node_id,
                     deadline=command.deadline,
                 )
+        from firefly_weave.runtime.conversations import record_memory
+
+        # Conversation loads and appends belong to this transaction: a rolled-back completion appends nothing.
+        await record_memory(self, view.id, event, result)
         if isinstance(view, RunView):
             from firefly_weave.runtime.calls import record_calls
 
