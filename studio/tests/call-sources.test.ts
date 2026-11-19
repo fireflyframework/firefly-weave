@@ -114,7 +114,7 @@ function sources(options: { connected?: boolean; canRead?: boolean } = {}) {
       capability === "catalog.read" && options.canRead !== false,
     localDrafts: drafts,
   };
-  return { made: new CallSources(host), asked, drafts };
+  return { made: new CallSources(host), asked, drafts, host };
 }
 const settle = () => new Promise((done) => setTimeout(done, 0));
 
@@ -126,6 +126,21 @@ describe("the workflows a step may call", () => {
     await settle();
     made.list("order-intake");
     expect(asked).toEqual(["/studio/api/api/v1/tenants/t/projects/p/catalog"]);
+  });
+
+  it("reads the lock again for another account", async () => {
+    const { made, asked, host } = sources();
+    made.list("order-intake");
+    await settle();
+    (host as { stepDataScope?: string }).stepDataScope = "account-2";
+    made.list("order-intake");
+    await settle();
+    expect(asked).toHaveLength(2);
+  });
+
+  it("doesn't call a version missing while the project's versions load", () => {
+    const { made } = sources();
+    expect(made.note("missing@1.0.0")).toBeNull();
   });
 
   it("lists the project's versions, then the drafts on this computer", async () => {

@@ -97,6 +97,22 @@ describe("themed choice options", () => {
       "0.1.0",
       "Plain",
     ]);
+    // The same name heads its versions again in the next group.
+    const across = [
+      {
+        value: "a@1",
+        label: "a 1.0.0",
+        group: "In this project",
+        heading: "a",
+      },
+      {
+        value: "a@0",
+        label: "a 0.1.0",
+        group: "On this computer",
+        heading: "a",
+      },
+    ];
+    expect(headingAt(across, 1)).toBe("a");
     expect(optionText({ value: "x", label: "other 1.0.0", heading: "a" })).toBe(
       "other 1.0.0",
     );
