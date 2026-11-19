@@ -16,8 +16,15 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // One tile: its card (shape by role, icon, corner badge) and its label
-// block. The canvas places it and handles its clicks; the tile only draws.
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+// block. A loop's tile is the header band of its frame, and draws the frame
+// around its body too. The canvas places it and handles its clicks; the
+// tile only draws.
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+} from "@angular/core";
 import { Icon } from "../../icon";
 import {
   labelScale,
@@ -25,7 +32,20 @@ import {
   type Point,
   type TileShape,
 } from "./layout-ltr";
+import { frameHeaderHeight } from "./loop-frame";
 import type { TileBadge, TileBorders } from "./tile-facts";
+
+/** A loop's frame: its tile is the header band at the frame's top. */
+export interface FrameView {
+  /** The whole frame's height, in canvas units. */
+  height: number;
+  /** The list as a formula prints it; "…" until it is chosen. */
+  items: string;
+  /** No list yet: "loop-1 For each item in …" stays whole. */
+  pending: boolean;
+  /** "· up to 4 at a time", or "". */
+  suffix: string;
+}
 
 export interface TileView {
   id: string;
@@ -58,6 +78,8 @@ export interface TileView {
   listening?: boolean;
   selected: boolean;
   tabIndex: 0 | -1;
+  /** Set on a loop's tile. */
+  frame?: FrameView | null;
 }
 
 @Component({
@@ -66,17 +88,22 @@ export interface TileView {
   imports: [Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `@let v = view();
+    <!-- A loop's header shows its whole sentence in the canvas's own tooltip, on hover and on keyboard focus. -->
     <button
       type="button"
       class="tile-body f-drag-blocker"
       data-action="tile"
+      [class.frame-header]="!!v.frame"
+      [class.frame-pending]="!!v.frame?.pending"
       [attr.data-shape]="v.shape"
       [attr.aria-label]="v.name"
-      [attr.title]="v.tooltip"
+      [attr.title]="v.frame ? null : v.tooltip"
       [attr.aria-pressed]="v.step ? v.selected : null"
       [attr.tabindex]="v.tabIndex"
       [style.outline-width.px]="focusWidth()"
-      [style.outline-offset.px]="focusWidth()"
+      [style.outline-offset.px]="v.frame ? -focusWidth() : focusWidth()"
+      [style.--frame-band.px]="v.frame ? frameBand() : null"
+      [style.--frame-text-scale]="v.frame ? labelScale() : null"
     >
       <span
         class="tile-shape"
@@ -86,7 +113,17 @@ export interface TileView {
         [class.listening]="!!v.listening"
         [class.error]="v.borders.error"
       ></span>
-      @if (v.kind !== "end") {
+      @if (v.frame; as frame) {
+        <span class="frame-title">
+          <weave-icon class="frame-icon" name="forEach" />
+          <span class="frame-name">{{ v.title }}</span>
+          <span class="frame-lead">For each item in</span>
+          <span class="frame-items">{{ frame.items }}</span>
+          @if (frame.suffix) {
+            <span class="frame-suffix">{{ frame.suffix }}</span>
+          }
+        </span>
+      } @else if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
       }
       @if (!issueBadge() && v.badge; as badge) {
@@ -101,6 +138,18 @@ export interface TileView {
         </span>
       }
     </button>
+    @if (v.frame; as frame) {
+      <!-- The frame's border, behind the body's steps: no fill, so the canvas shows through. -->
+      <span
+        class="loop-frame"
+        [attr.data-frame]="v.id"
+        [style.height.px]="frame.height"
+        [class.selected]="v.borders.selected"
+        [class.live]="v.borders.live"
+        [class.error]="v.borders.error"
+        aria-hidden="true"
+      ></span>
+    }
     @if (issueBadge(); as badge) {
       <button
         type="button"
@@ -123,12 +172,14 @@ export interface TileView {
         </span>
       </button>
     }
-    @if (v.kind !== "trigger") {
+    @if (v.kind !== "trigger" && !v.frame) {
       <span class="handle handle-in" aria-hidden="true"></span>
     }
-    @if (v.title) {
+    <!-- A loop's name and list are in its header: under the frame, only what its data holds and its note. -->
+    @if (v.frame ? v.output || v.note : v.title) {
       <div
         class="tile-label"
+        [class.frame-label]="!!v.frame"
         [class.has-note]="!!v.note"
         [class.has-output]="!!v.output"
         [style.top.px]="v.labelTop"
@@ -136,9 +187,11 @@ export interface TileView {
         [style.--label-width.px]="v.shape === 'end' ? null : labelWidth()"
         aria-hidden="true"
       >
-        <strong [attr.title]="v.title">{{ v.title }}</strong>
-        @if (v.subtitle) {
-          <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
+        @if (!v.frame) {
+          <strong [attr.title]="v.title">{{ v.title }}</strong>
+          @if (v.subtitle) {
+            <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
+          }
         }
         @if (v.output) {
           <span
@@ -173,4 +226,6 @@ export class NodeTile {
   focusWidth() {
     return Math.ceil(2 / this.zoom());
   }
+  /** A loop's header band keeps 24 px on screen as the canvas zooms out. */
+  readonly frameBand = computed(() => frameHeaderHeight(this.zoom()));
 }

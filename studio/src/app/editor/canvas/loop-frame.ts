@@ -43,17 +43,75 @@ export const FRAME = {
   after: 48,
 } as const;
 
+/**
+ * The header's parts: the list as a formula prints it (null until it is
+ * chosen) and "· up to 4 at a time" when more than one item runs at a time.
+ */
+export function loopHeaderParts(
+  step: Step,
+  print: (expression: unknown) => string | null = printFormula,
+): { items: string | null; suffix: string } {
+  const concurrency = step["concurrency"];
+  return {
+    items: step["items"] === undefined ? null : print(step["items"]) || null,
+    suffix:
+      typeof concurrency === "number" && concurrency > 1
+        ? `· up to ${concurrency} at a time`
+        : "",
+  };
+}
+
 /** "For each item in input.orders · up to 4 at a time"; "…" until the list is chosen. */
 export function loopHeader(
   step: Step,
   print: (expression: unknown) => string | null = printFormula,
 ): string {
-  const items =
-    step["items"] === undefined ? null : print(step["items"]) || null;
-  const concurrency = step["concurrency"];
-  const atATime =
-    typeof concurrency === "number" && concurrency > 1
-      ? ` · up to ${concurrency} at a time`
-      : "";
-  return `For each item in ${items ?? "…"}${atATime}`;
+  const { items, suffix } = loopHeaderParts(step, print);
+  return `For each item in ${items ?? "…"}${suffix ? ` ${suffix}` : ""}`;
+}
+
+/**
+ * The header band's height as drawn, in canvas units: the 32-unit band,
+ * kept at least 24 px on screen as the canvas zooms out, and never over the
+ * body's steps 24 units under it.
+ */
+export function frameHeaderHeight(zoom: number): number {
+  return Math.min(FRAME.header + FRAME.top, Math.max(FRAME.header, 24 / zoom));
+}
+
+/**
+ * An edge that ends at a frame's side: into a loop (it goes on to the
+ * body's first step) or out of the body (it goes on to the step after).
+ * Arrowheads point at steps, never at a frame.
+ */
+export function endsAtFrame(
+  edge: { key: string; enters: string | null },
+  loops: ReadonlySet<string>,
+): boolean {
+  return (
+    (edge.enters !== null && loops.has(edge.enters)) ||
+    edge.key.slice(edge.key.lastIndexOf(">") + 1).startsWith("$exit:")
+  );
+}
+
+/**
+ * The steps drawn selected, of those a selection covers: a selected loop's
+ * frame says the steps it repeats come with it, so they draw as they are;
+ * the steps of a selected decision or parallel step draw selected.
+ */
+export function drawnSelected(
+  covered: ReadonlySet<string>,
+  selected: readonly string[],
+  parentOf: (id: string) => string | null,
+  loops: ReadonlySet<string>,
+): Set<string> {
+  const own = new Set(selected);
+  const throughLoop = (id: string): boolean => {
+    for (let parent = parentOf(id); parent; parent = parentOf(parent)) {
+      if (loops.has(parent)) return true;
+      if (own.has(parent)) return false;
+    }
+    return false;
+  };
+  return new Set([...covered].filter((id) => own.has(id) || !throughLoop(id)));
 }

@@ -227,6 +227,19 @@ SPDX-License-Identifier: Apache-2.0
               }
             </div>
           }
+          @if (frameTip(); as tip) {
+            <span
+              class="frame-tip f-drag-blocker"
+              [class.pointer]="tip.pointer"
+              [attr.data-frame-tip]="tip.id"
+              [style.left.px]="tip.x"
+              [style.top.px]="tip.y"
+              [style.max-width.px]="tip.width"
+              [style.--tip-scale]="tip.scale"
+              aria-hidden="true"
+              >{{ tip.text }}</span
+            >
+          }
           <!-- A run that happened connects nothing: no handles. -->
           @for (output of viewingRuns() ? [] : l.handles; track output.key) {
             <span
