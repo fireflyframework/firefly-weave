@@ -609,6 +609,22 @@ weave-input-pane.is-compact .pane-source-field::before {
   border-radius: var(--radius-sm);
   background: var(--sunken);
 }
+/* A call that can't run without test data or its workflow: a warning. */
+.pane-notice[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+}
+.pane-notice[data-tone="warning"] .pane-notice-text {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.pane-notice[data-tone="warning"] .pane-notice-text weave-icon {
+  /* On the first line's center. */
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning-ink);
+}
 .pane-notice-text {
   margin: 0;
   font: var(--type-small);

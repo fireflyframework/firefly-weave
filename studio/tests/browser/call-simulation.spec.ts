@@ -185,6 +185,9 @@ test.describe("executing a workflow that calls another", () => {
     await expect(notice).toContainText(
       "Call notify-customer needs test data or the workflow itself.",
     );
+    // A warning, with the warning sign other warnings have.
+    await expect(notice).toHaveAttribute("data-tone", "warning");
+    await expect(notice.locator("weave-icon[name=warning]")).toBeVisible();
     await expect(
       notice.getByRole("button", { name: "Open workflow" }),
     ).toBeVisible();

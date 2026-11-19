@@ -396,8 +396,17 @@ import { describeError } from "../../../errors";
             }
           }
           @if (notice(); as said) {
-            <div class="pane-notice" role="status">
-              <p class="pane-notice-text">{{ said.message }}</p>
+            <div
+              class="pane-notice"
+              role="status"
+              [attr.data-tone]="said.reason === 'callee' ? 'warning' : null"
+            >
+              <p class="pane-notice-text">
+                @if (said.reason === "callee") {
+                  <weave-icon name="warning" [size]="16" aria-hidden="true" />
+                }
+                {{ said.message }}
+              </p>
               @if (said.action; as act) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="act.run()">
