@@ -291,8 +291,8 @@ test.describe("the Called by a workflow trigger", () => {
     await details.close();
     expect(await callable(page)).toEqual({ allowedCallers: ["order-intake"] });
     await openTrigger(page, details);
-    await any.check();
-    // From a list of names, Any workflow asks first.
+    // From a list of names, Any workflow asks first; Only stays chosen meanwhile.
+    await any.click();
     await page
       .getByRole("dialog", {
         name: "Let any workflow in this project call notify-customer?",
@@ -319,6 +319,9 @@ test.describe("the Called by a workflow trigger", () => {
     await expect(
       question.getByRole("button", { name: "Cancel", exact: true }),
     ).toBeFocused();
+    // Behind the question, Only these workflows stays chosen until it's answered.
+    await expect(only).toBeChecked();
+    await expect(chips).toHaveText(ALLOWED);
     await question.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(only).toBeChecked();
     await expect(only).toBeFocused();
@@ -441,6 +444,20 @@ test.describe("when the callers can't show", () => {
     await expect(dialog.locator(".cb-none")).toContainText(
       "Connect to a platform to see which workflows call this one.Studio reads the callers from the project's published workflows.",
     );
+  });
+
+  test("while it reads, a spinner says so", async ({ page }) => {
+    const details = await open(
+      page,
+      { allowedCallers: ALLOWED },
+      () => new Promise(() => undefined),
+    );
+    const dialog = await openTrigger(page, details);
+    const reading = dialog.locator(".cb-section").last().getByRole("status");
+    await expect(reading).toHaveText(
+      "Reading this project's published workflows.",
+    );
+    await expect(reading.locator(".loading-spinner")).toBeVisible();
   });
 
   test("a failed read offers Try again, which reads the callers", async ({

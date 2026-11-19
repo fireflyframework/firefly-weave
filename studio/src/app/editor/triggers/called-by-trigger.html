@@ -242,16 +242,23 @@ SPDX-License-Identifier: Apache-2.0
       }
     </ul>
   } @else {
-    <div class="cb-none">
-      <p class="cb-none-title">{{ view.title }}</p>
-      @if (view.detail) {
-        <p>{{ view.detail }}</p>
-      }
-      @if (view.retry) {
-        <button type="button" class="sm cb-retry" (click)="refresh()">
-          <weave-icon name="refresh" [size]="16" />Try again
-        </button>
-      }
-    </div>
+    @if (view.loading) {
+      <p class="cb-none cb-loading" role="status">
+        <span class="loading-spinner small" aria-hidden="true"></span
+        >{{ view.title }}
+      </p>
+    } @else {
+      <div class="cb-none">
+        <p class="cb-none-title">{{ view.title }}</p>
+        @if (view.detail) {
+          <p>{{ view.detail }}</p>
+        }
+        @if (view.retry) {
+          <button type="button" class="sm cb-retry" (click)="refresh()">
+            <weave-icon name="refresh" [size]="16" />Try again
+          </button>
+        }
+      </div>
+    }
   }
 </section>

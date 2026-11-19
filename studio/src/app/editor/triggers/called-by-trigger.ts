@@ -63,7 +63,13 @@ interface Box {
 /** The Called by section: the callers, or why there are none to show. */
 type CallersView =
   | { kind: "callers"; callers: Caller[] }
-  | { kind: "empty"; title: string; detail: string; retry?: boolean };
+  | {
+      kind: "empty";
+      title: string;
+      detail: string;
+      retry?: boolean;
+      loading?: boolean;
+    };
 
 const SCHEMA_PATH: Record<Side, string[]> = {
   input: ["spec", "inputSchema"],
@@ -154,16 +160,19 @@ export class CalledByTrigger {
     const session = this.session();
     const model = session.host.model;
     const opened = model.opened;
+    // Only these workflows stays chosen behind the question until it's answered.
+    const only = this.radio("only");
+    if (only) only.checked = true;
     const sure = await session.confirm(anyCallerQuestion(this.name(), names));
     const same =
       this.session() === session &&
       model.opened === opened &&
       this.names().length > 0;
     if (!sure || !same) {
-      // Cancel keeps Only these workflows: the radio the arrow key moved goes back.
-      const only = this.radio("only");
-      if (only) only.checked = true;
-      // After the question hands focus back to the radio that opened it.
+      // Cancel keeps Only these workflows; focus goes back to it once the
+      // question has handed focus back to the radio that opened it.
+      const kept = this.radio("only");
+      if (kept) kept.checked = true;
       setTimeout(() => this.radio("only")?.focus());
       return;
     }
@@ -316,6 +325,7 @@ export class CalledByTrigger {
           kind: "empty",
           title: "Reading this project's published workflows.",
           detail: "",
+          loading: true,
         };
       case "failed":
         return {
