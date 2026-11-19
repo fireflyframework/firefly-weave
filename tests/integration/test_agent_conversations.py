@@ -752,6 +752,14 @@ async def test_no_answer_and_no_audit_row_holds_a_raw_key(platform):
         assert "C-4777" not in answer.model_dump_json()
     audits = await owner_rows(platform, "SELECT to_jsonb(a)::text AS row FROM access_audit a")
     assert audits and all("C-4777" not in row["row"] for row in audits)
+    # The read is audited by its target alone, before the delete.
+    actions = await owner_rows(
+        platform, "SELECT action,target FROM access_audit WHERE action LIKE 'agent_conversation.%' ORDER BY id"
+    )
+    assert actions == [
+        {"action": "agent_conversation.read", "target": f"{WORKFLOW}/{key_hash}"},
+        {"action": "agent_conversation.delete", "target": f"{WORKFLOW}/{key_hash}"},
+    ]
 
 
 async def test_a_workflows_conversations_are_purged_1000_at_a_time(platform):

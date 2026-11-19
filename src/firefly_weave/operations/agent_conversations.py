@@ -17,8 +17,9 @@
 """Agent conversations in an environment: listing, reading and deleting them, and the lifetime sweep.
 
 Reading needs ``run.read`` and deleting ``run.purge``, checked on the token's principal before any unit opens and on
-the stored principal inside it. A conversation is named by its workflow and key hash, never by its key, so no answer
-and no audit row ever holds a key. An expired conversation is never listed or read, even before the sweep deletes it.
+the stored principal inside it. Reading one conversation, deleting one and purging a workflow's are audited. A
+conversation is named by its workflow and key hash, never by its key, so no answer and no audit row ever holds a key.
+An expired conversation is never listed or read, even before the sweep deletes it.
 """
 
 import hashlib
@@ -176,11 +177,15 @@ class AgentConversationService:
     async def read(
         self, actor: Principal, scope: Scope, workflow: str, key_hash: str, *, context: AuditContext
     ) -> AgentConversation:
-        """One live conversation with its messages; 404 when it was never stored or has expired."""
+        """One live conversation with its messages; 404 when it was never stored or has expired.
+
+        Each read is audited by its workflow and key hash, whether or not a conversation was found, never with its
+        messages: reading a conversation reads what a person said.
+        """
         workflow, key_hash = conversation_name(workflow, key_hash)
         self._precheck(actor, scope, "run.read", context)
-        async with self.uow.open(scope, mutation=False) as tx:
-            await self._current(tx, actor, scope, "run.read", context)
+        async with self.uow.open(scope) as tx:
+            current = await self._current(tx, actor, scope, "run.read", context)
             row = (
                 (
                     await tx.session.execute(
@@ -193,6 +198,15 @@ class AgentConversationService:
                 )
                 .mappings()
                 .first()
+            )
+            await audit(
+                tx.session,
+                current,
+                "agent_conversation.read",
+                f"{workflow}/{key_hash}",
+                scope=scope,
+                capability="run.read",
+                context=context,
             )
         if row is None:
             raise CatalogError(404, "WV-AGENT-CONVERSATION-NOT-FOUND", NOT_FOUND)

@@ -181,3 +181,67 @@ async def test_the_controller_decodes_the_list_query_as_the_wire_sends_it():
 
     assert response.status_code == 200
     assert (seen["query"].workflow, seen["query"].limit, seen["query"].cursor) == ("support-chat", 10, None)
+
+
+class Rows:
+    def __init__(self, row) -> None:
+        self.row = row
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.row
+
+
+@pytest.mark.parametrize("stored", [True, False], ids=["found", "not-found"])
+async def test_a_read_is_audited_with_only_its_target(monkeypatch, stored):
+    from datetime import UTC, datetime
+
+    from firefly_weave.operations import agent_conversations as module
+
+    at = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+    row = {
+        "workflow": "support-chat",
+        "key_hash": HASH,
+        "message_count": 2,
+        "version": 1,
+        "created_at": at,
+        "updated_at": at,
+        "expires_at": at,
+        "last_run_id": uuid4(),
+        "messages": [{"role": "user", "content": "C-4777 asked"}, {"role": "assistant", "content": "Shipped."}],
+    }
+    audits, opened = [], []
+
+    class Unit:
+        @asynccontextmanager
+        async def open(self, scope, *, mutation=True):
+            opened.append(mutation)
+            yield SimpleNamespace(session=SimpleNamespace(execute=execute))
+
+    async def execute(statement, values):
+        return Rows(row if stored else None)
+
+    async def load(session, identifier):
+        return actor
+
+    async def recorded(session, current, action, target, **values):
+        audits.append((action, target, values.get("details")))
+
+    actor = principal("viewer")
+    monkeypatch.setattr(module, "load_principal", load)
+    monkeypatch.setattr(module, "audit", recorded)
+    service = AgentConversationService(Unit(), AuthorizationService())  # type: ignore[arg-type]
+
+    if stored:
+        read = await service.read(actor, SCOPE, "support-chat", HASH, context=CONTEXT)
+        assert read.key_hash == HASH
+    else:
+        with pytest.raises(CatalogError) as missing:
+            await service.read(actor, SCOPE, "support-chat", HASH, context=CONTEXT)
+        assert missing.value.code == "WV-AGENT-CONVERSATION-NOT-FOUND"
+
+    # The audit row is written in a unit that can write, and names the conversation by its hash only.
+    assert opened == [True]
+    assert audits == [("agent_conversation.read", f"support-chat/{HASH}", None)]

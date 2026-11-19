@@ -924,9 +924,10 @@ See [AI agent steps](ai-agents.md#conversation-memory).
 
 A `key_hash` that isn't 64 lowercase hex characters, or a `workflow` that isn't
 a resource name, answers `422` with `WV-AGENT-CONVERSATION-KEY` before anything
-is read. Every delete and purge is audited as `agent_conversation.delete` (target
-`<workflow>/<key_hash>`) or `agent_conversation.purge_workflow` (target
-`<workflow>`), with no key.
+is read. Every read, delete and purge is audited as `agent_conversation.read` or
+`agent_conversation.delete` (target `<workflow>/<key_hash>`) or
+`agent_conversation.purge_workflow` (target `<workflow>`), with no key and no
+messages.
 
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read
 incident facts after checking both token and current permissions; they never
