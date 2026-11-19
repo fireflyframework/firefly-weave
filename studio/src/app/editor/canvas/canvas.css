@@ -361,6 +361,10 @@ weave-canvas-view,
 .canvas-v2 .frame-run[data-tone="failed"] {
   color: var(--danger-ink);
 }
+/* A cancelled run cut the loop off: said quietly, it wasn't a failure. */
+.canvas-v2 .frame-run[data-tone="stopped"] {
+  color: var(--muted);
+}
 .canvas-v2 .frame-live-dot {
   width: 0.67em;
   height: 0.67em;
@@ -412,6 +416,11 @@ weave-canvas-view,
 }
 .canvas-v2 .tile-label.frame-label span {
   justify-self: start;
+}
+/* A loop's summary ("20 items, 2 skipped") at screen size, never cut: it may
+   run past the frame's right edge. */
+.canvas-v2 .tile-label.frame-label {
+  width: max-content;
 }
 /* The header's whole sentence under its band, at screen size. It waits a
    moment, so crossing a header with the pointer or walking past it with the

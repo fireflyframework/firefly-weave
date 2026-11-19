@@ -687,6 +687,7 @@ export class CanvasView implements OnInit, DoCheck {
               !!listening && tile.id === triggerChoiceTarget(listening),
             frame: tile.step ? frames.get(tile.id) : undefined,
             loop: loopRun,
+            ended: !!run?.ended,
           },
         );
       });
@@ -740,6 +741,8 @@ export class CanvasView implements OnInit, DoCheck {
       frame?: LtrFrame;
       /** A loop's progress in the simulation played back. */
       loop?: LoopRun;
+      /** The simulation's playback has ended: the whole run has played. */
+      ended?: boolean;
     },
   ): TileView {
     const h = this.host();
@@ -790,6 +793,10 @@ export class CanvasView implements OnInit, DoCheck {
     const failedItem = recordedRun?.items.find(
       (item) => item.status === "failed",
     );
+    // A cancelled run cut the loop off at this item.
+    const stoppedItem = recordedRun?.items.find(
+      (item) => item.status === "stopped",
+    );
     const frameRun = state.loop
       ? frameRunOf(state.loop)
       : failedItem
@@ -803,7 +810,13 @@ export class CanvasView implements OnInit, DoCheck {
             tone: "failed" as const,
             progress: null,
           }
-        : null;
+        : stoppedItem
+          ? {
+              text: `canceled at item ${(stoppedItem.index + 1).toLocaleString("en-US")}`,
+              tone: "stopped" as const,
+              progress: null,
+            }
+          : null;
     const frame = state.frame
       ? frameView(tile.step, state.frame, frameRun)
       : null;
@@ -846,8 +859,9 @@ export class CanvasView implements OnInit, DoCheck {
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
     // A loop the run finished says how many items it had under its frame;
     // a failed one says it in its header, and its failed step shows the code.
+    // Under the frame once the whole playback has ended, not while later steps play.
     const finishedLoop =
-      state.loop?.status === "done" && state.loop.count !== null
+      state.loop?.status === "done" && state.ended && state.loop.count !== null
         ? state.loop
         : recordedRun && state.run === "done"
           ? recordedRun
@@ -869,16 +883,18 @@ export class CanvasView implements OnInit, DoCheck {
       title: tile.id,
       subtitle: summary || kindLabel,
       // The Runs tab draws the run only: nothing from the editor's executions.
+      // A loop's frame says nothing under it while its playback runs.
       output: fact
         ? fact.text
-        : this.viewingRuns()
+        : this.viewingRuns() || (state.frame && state.loop && !state.ended)
           ? ""
           : (h.summaryOf?.(tile.id) ?? ""),
       outputTone: fact?.tone ?? null,
       name: tileName({
         id: tile.id,
         kindLabel,
-        summary,
+        // A loop's summary under its frame is in its name, whole.
+        summary: state.frame && fact ? `${summary}, ${fact.text}` : summary,
         status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,

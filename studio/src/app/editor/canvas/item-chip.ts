@@ -48,7 +48,8 @@ const ICONS: Readonly<Record<RecordedItem["status"], string>> = {
   finished: "ok",
   failed: "failCircle",
   running: "spinner",
-  "not-run": "revoke",
+  // The dashed circle: nothing ran.
+  "not-run": "typeAny",
   // The run's own icons, as the Runs list draws a cancelled or timed-out run.
   stopped: "off",
   "timed-out": "schedule",
@@ -268,7 +269,11 @@ export function typedItem(text: string, count: number): number | null {
         color: var(--success-ink);
       }
       [data-status="not-run"] > .chip-status,
-      .item-option[data-status="not-run"] .item-status {
+      .item-option[data-status="not-run"] .item-status,
+      [data-status="stopped"] > .chip-status,
+      .item-option[data-status="stopped"] .item-status,
+      [data-status="timed-out"] > .chip-status,
+      .item-option[data-status="timed-out"] .item-status {
         color: var(--neutral-ink);
       }
       /* A phone, or a coarse pointer: one 44 px button that opens a sheet. */

@@ -54,7 +54,7 @@ export interface FrameView {
   /** While a run shows: "7 of 20", "20 of 20" or "failed at item 4", and how far it is (0 to 1). */
   run?: {
     text: string;
-    tone: "live" | "done" | "failed";
+    tone: "live" | "done" | "failed" | "stopped";
     progress: number | null;
   } | null;
 }

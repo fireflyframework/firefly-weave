@@ -275,6 +275,17 @@ describe("a recorded run's loops", () => {
     expect(failedFirst(mixed).map((item) => item.index)).toEqual([
       0, 1, 2, 3, 4,
     ]);
+    // The chip opens on a failure first, else on the first item the run cut off.
+    expect(defaultPick(mixed)).toBe(0);
+    const [stopped] = recordedLoops(workflow(), cancelled, [
+      fact("check[0]", "succeeded"),
+      fact("send[0]", "succeeded"),
+      fact("check[1]", "succeeded"),
+      fact("send[1]", "succeeded"),
+      fact("check[2]", "cancelled"),
+    ]);
+    expect(defaultPick(stopped)).toBe(2);
+    expect(defaultPick(late)).toBe(0);
   });
 
   it("lists a nested loop once per item of the loop around it", () => {

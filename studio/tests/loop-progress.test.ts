@@ -154,6 +154,32 @@ describe("a loop's progress during a playback", () => {
     expect(
       loopProgress(nested, 4, { orders: 1, "lines[0]": 2 }, around, false)[0],
     ).toMatchObject({ finished: 0, status: "running" });
+    // The second line fails: the inner loop failed at item 2, and the outer at item 1.
+    const failing: TraceStep[] = [
+      step("orders", "", "failed", "forEach"),
+      step("check", "check[0]"),
+      step("lines", "lines[0]", "failed", "forEach"),
+      step("reserve", "reserve[0][0]"),
+      step("reserve", "reserve[0][1]", "failed"),
+    ];
+    const failed = loopProgress(
+      failing,
+      failing.length,
+      { orders: 1, "lines[0]": 2 },
+      around,
+      true,
+    );
+    expect(
+      failed.map(({ id, within, status, failedAt }) => ({
+        id,
+        within,
+        status,
+        failedAt,
+      })),
+    ).toEqual([
+      { id: "orders", within: [], status: "failed", failedAt: 1 },
+      { id: "lines", within: [0], status: "failed", failedAt: 2 },
+    ]);
   });
 });
 

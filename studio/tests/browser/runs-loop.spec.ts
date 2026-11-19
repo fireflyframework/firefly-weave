@@ -28,6 +28,7 @@ import {
   type RunFixture,
   type RunsPlatform,
 } from "./runs-po";
+import { tokenColor } from "./support";
 
 const ROWS = ["Ada", "Bo", "Cy", "Di", "Ed"].map((name) => ({ name }));
 /** invoice-approval with a loop: fetch, then send for each row of its output. */
@@ -316,10 +317,19 @@ test.describe("A cancelled loop at 1440x900", () => {
     page,
   }) => {
     const { chip } = await openLoopRun(page, cancelledRun());
+    // The chip opens on the first item the run cut off.
     const item = chip.getByRole("button", { name: /Choose an item$/ });
     await expect(item).toHaveAccessibleName(
-      "Item 1 of 5, Finished. Choose an item",
+      "Item 2 of 5, Stopped. Choose an item",
     );
+    // The header says where the run stopped, quietly: it wasn't a failure.
+    const run = page.locator(
+      '.canvas-v2 .tile-node[data-tile="orders"] .frame-run',
+    );
+    await expect(run).toHaveText("· canceled at item 2");
+    expect(
+      await run.evaluate((element) => getComputedStyle(element).color),
+    ).toBe(await tokenColor(page, "--muted"));
     await item.click();
     const list = page.getByRole("dialog", { name: "Items of orders" });
     const options = list.getByRole("option");
@@ -331,6 +341,15 @@ test.describe("A cancelled loop at 1440x900", () => {
       /Item 5\s*Not run/,
     ]);
     await expect(list.getByText("Failed", { exact: true })).toHaveCount(0);
+    // Not run is the dashed circle; Stopped keeps the cancelled run's icon; both neutral.
+    const icon = (n: number) => options.nth(n).locator(".item-status");
+    await expect(icon(1)).toHaveAttribute("data-icon", "off");
+    await expect(icon(3)).toHaveAttribute("data-icon", "typeAny");
+    const neutral = await tokenColor(page, "--neutral-ink");
+    for (const n of [1, 3])
+      expect(
+        await icon(n).evaluate((element) => getComputedStyle(element).color),
+      ).toBe(neutral);
   });
 });
 

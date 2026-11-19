@@ -279,9 +279,12 @@ export function failedFirst(loop: RecordedLoop): RecordedItem[] {
   ];
 }
 
-/** The item a recorded loop opens on: its first failed one, else its first. */
+/** The item a recorded loop opens on: its first failed one, else the first a cancelled or timed-out run cut off, else its first. */
 export function defaultPick(loop: RecordedLoop): number {
-  return loop.items.find((item) => item.status === "failed")?.index ?? 0;
+  const first = (statuses: readonly RecordedItem["status"][]) =>
+    loop.items.find((item) => statuses.includes(item.status))?.index;
+  // A failure first, else the first item a cancelled or timed-out run cut off.
+  return first(["failed"]) ?? first(["stopped", "timed-out"]) ?? 0;
 }
 
 /**

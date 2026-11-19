@@ -120,6 +120,28 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
   }) => {
     await openExecuteWorkflow(page, SENT);
     await execute(page);
+    // The summary under the frame waits for the playback's end: not while
+    // summarize, after the loop, still plays.
+    const midway = page.waitForFunction(
+      () => {
+        const done =
+          document
+            .querySelector('.tile-node[data-tile="orders"] .frame-run')
+            ?.getAttribute("data-tone") === "done";
+        const later = document.querySelector(
+          '.tile-node[data-tile="summarize"] .live',
+        );
+        return done && later
+          ? {
+              summary: !!document.querySelector(
+                '.tile-node[data-tile="orders"] .tile-output',
+              ),
+            }
+          : null;
+      },
+      undefined,
+      { polling: "raf", timeout: 10_000 },
+    );
     // While the items run, the frame is live and counts them.
     await page.waitForFunction(
       () =>
@@ -129,6 +151,7 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
       undefined,
       { polling: "raf", timeout: 10_000 },
     );
+    expect(await (await midway).jsonValue()).toEqual({ summary: false });
     await expect(runText(page)).toHaveText("· 3 of 3");
     await expect(runText(page)).toHaveAttribute("data-tone", "done");
     // The at-a-time suffix steps aside while a run status shows.
@@ -186,8 +209,28 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
     await openExecuteWorkflow(page, SKIPPED);
     await execute(page);
     await expect(runText(page)).toHaveText("· 5 of 5");
-    await expect(
-      page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
-    ).toHaveText("5 items, 2 skipped");
+    const summary = page.locator(
+      '.canvas-v2 .tile-node[data-tile="orders"] .tile-output',
+    );
+    await expect(summary).toHaveText("5 items, 2 skipped");
+    // Zoomed out to 40%, it stays whole at screen size, past the frame if need be.
+    const tools = page.locator(".canvas-v2");
+    for (let i = 0; i < 12; i++) {
+      const level = await tools.locator(".zoom-level").textContent();
+      if (parseInt(level ?? "100", 10) <= 40) break;
+      await tools.getByRole("button", { name: "Zoom out" }).click();
+    }
+    await expect(tools.locator(".zoom-level")).toHaveText(
+      /^\s*(40|3\d|2\d)%\s*$/,
+    );
+    expect(
+      await summary.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
+    // Its full text is in the loop's name.
+    await expect(header(page)).toHaveAccessibleName(
+      /· 5 of 5, 5 items, 2 skipped/,
+    );
   });
 });
