@@ -829,7 +829,10 @@ export class StepDetailsController {
   /** What formula previews read: the test input and pinned output. */
   previewData(): PreviewData {
     return {
-      input: () => this.testEvent(),
+      // The same precedence as the Input pane: the test input, else the
+      // sample the last Execute went through (a loop's items come from it).
+      input: () =>
+        this.testEvent() ?? this.host.execution?.sampleUsed() ?? undefined,
       // The same precedence as the Output pane: a pin, else the last result;
       // inside a loop, for the item picked.
       output: (id) => this.pickedStepData(id)?.value,
@@ -839,6 +842,7 @@ export class StepDetailsController {
         this.testData.version(),
         this.testData.generation(),
         this.host.execution?.results() ?? null,
+        this.host.execution?.sampleUsed() ?? null,
       ],
     };
   }

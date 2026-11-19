@@ -25,6 +25,7 @@ import {
   Injector,
   runInInjectionContext,
   signal,
+  type WritableSignal,
 } from "@angular/core";
 import { InputPane } from "../src/app/editor/ndv/panes/input-pane";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -119,6 +120,8 @@ function opened(
       }),
       last: signal(null),
       running: () => null,
+      // The sample an Execute without test input went through.
+      sampleUsed: signal<Json | null>(null),
     },
   } as unknown as ControllerHost;
   // With the browser's formula previews, as step details mount them.
@@ -147,6 +150,28 @@ describe("data inside a loop's body", () => {
         orders: { item: ORDERS[1], index: 1 },
         lines: { item: { sku: "z" }, index: 0 },
       },
+    });
+  });
+
+  it("goes through the sample the last Execute used when there's no test input", () => {
+    const { host, controller } = opened();
+    controller.testEvent = () => undefined;
+    controller.iterations.pick("orders", 1);
+    expect(controller.loopData("send")).toBeNull();
+    (host.execution!.sampleUsed as WritableSignal<Json | null>).set({
+      orders: ORDERS,
+    });
+    expect(controller.loopData("send")).toEqual({
+      item: { sku: "z" },
+      index: 0,
+      loops: {
+        orders: { item: ORDERS[1], index: 1 },
+        lines: { item: { sku: "z" }, index: 0 },
+      },
+    });
+    expect(value(controller, "after", "/input/orders")).toEqual({
+      ok: true,
+      value: ORDERS,
     });
   });
 
