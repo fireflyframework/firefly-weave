@@ -23,6 +23,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from starlette.datastructures import QueryParams
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, AuthorizationService
@@ -153,3 +154,30 @@ async def test_the_controller_sends_the_path_and_the_idempotency_key_to_the_serv
 
     assert seen == {"workflow": "support-chat", "confirm": "support-chat", "key": "purge-1"}
     assert response.status_code == 200
+
+
+async def test_the_controller_decodes_the_list_query_as_the_wire_sends_it():
+    seen = {}
+
+    class Recording:
+        async def list(self, actor, scope, query, *, context):
+            seen["query"] = query
+            from firefly_weave.contracts.public import Page
+
+            return Page[object](items=[], next_cursor=None)
+
+    controller = AgentConversationController(Recording())  # type: ignore[arg-type]
+    request = SimpleNamespace(
+        path_params={
+            "tenant": str(SCOPE.tenant_id),
+            "project": str(SCOPE.project_id),
+            "environment": str(SCOPE.environment_id),
+        },
+        query_params=QueryParams({"workflow": "support-chat", "limit": "10"}),
+        state=SimpleNamespace(principal=principal("viewer"), audit_context=CONTEXT),
+    )
+
+    response = await controller.list(request)  # type: ignore[arg-type]
+
+    assert response.status_code == 200
+    assert (seen["query"].workflow, seen["query"].limit, seen["query"].cursor) == ("support-chat", 10, None)

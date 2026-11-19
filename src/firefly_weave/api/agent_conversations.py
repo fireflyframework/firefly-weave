@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
+from firefly_weave.api.transport import parse_query
 from firefly_weave.contracts.agent_conversations import AgentConversationQuery, ConversationPurgeRequest
 from firefly_weave.operations.agent_conversations import AgentConversationService
 
@@ -35,7 +36,7 @@ class AgentConversationController:
 
     @operation("agent_conversations.list")
     async def list(self, request: Request) -> JSONResponse:
-        query = AgentConversationQuery.model_validate(dict(request.query_params))
+        query = parse_query(request.query_params, AgentConversationQuery)
         result = await self.service.list(
             request.state.principal,
             request_scope(request, environment=True),
