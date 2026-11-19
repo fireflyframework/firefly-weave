@@ -16,6 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Shared route mocks for the integration editor, round-trip and layout specs.
+import { execFile } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
+import { promisify } from "node:util";
+import { python, repository } from "../python-path";
 import { expect, Locator, Page } from "@playwright/test";
 
 /** Exercise a native or shared Select through its public keyboard/pointer UI. */
@@ -658,4 +662,30 @@ export async function registerTarget(page: Page) {
   await page
     .getByRole("button", { name: "Register a cluster", exact: true })
     .click();
+}
+
+/** What a field can read, from the Studio host's own scope_at with the repository's Python. */
+const SCOPE_AT = `
+import json, sys
+from firefly_weave.compiler.parser import parse_source
+from firefly_weave.compiler.scope import scope_at
+body = json.loads(sys.stdin.read())
+document = parse_source(body["source"], format=body["format"]).value
+print(json.dumps(scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)))
+`;
+export async function hostScope(page: Page) {
+  await page.route("**/studio/local/scope", async (route) => {
+    const child = promisify(execFile)(python, ["-c", SCOPE_AT], {
+      cwd: repository,
+      env: { ...process.env, PYTHONPATH: resolvePath(repository, "src") },
+    });
+    child.child.stdin?.end(route.request().postData() ?? "{}");
+    const { stdout } = await child;
+    await route.fulfill({ json: JSON.parse(stdout) }).catch(() => undefined);
+  });
+}
+/** Where a drop maps the field: its right side, clear of the pill's own controls. */
+async function rightSide(target: Locator) {
+  const area = (await target.boundingBox())!;
+  return { x: Math.max(4, area.width - 48), y: area.height / 2 };
 }

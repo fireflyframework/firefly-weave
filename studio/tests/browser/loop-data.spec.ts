@@ -19,16 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // current item and the loops around it, their fields drag in as the loop's
 // own references, and the picker chooses which item the step shows. The
 // Studio host (the repository's Python) answers what each field can read.
-import { execFile } from "node:child_process";
-import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { parse } from "yaml";
-import { python, repository } from "../python-path";
 import { openWorkflow } from "./canvas-po";
 import { formulaText } from "./formula-po";
 import { StepDetailsPage, yamlFile } from "./step-details-po";
-import { sourceText } from "./support";
+import { hostScope, sourceText } from "./support";
 
 /** orders over input.orders holds check and lines; lines over item.lines holds send; after follows the loop. */
 const NESTED_SOURCE = `apiVersion: weave/v1alpha1
@@ -89,31 +85,6 @@ const FORMULA = yamlFile(
   ),
 );
 
-/** What a field can read, from the Studio host's own scope_at with the repository's Python. */
-const SCOPE_AT = `
-import json, sys
-from firefly_weave.compiler.parser import parse_source
-from firefly_weave.compiler.scope import scope_at
-body = json.loads(sys.stdin.read())
-document = parse_source(body["source"], format=body["format"]).value
-print(json.dumps(scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)))
-`;
-async function hostScope(page: Page) {
-  await page.route("**/studio/local/scope", async (route) => {
-    const child = promisify(execFile)(python, ["-c", SCOPE_AT], {
-      cwd: repository,
-      env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
-    });
-    child.child.stdin?.end(route.request().postData() ?? "{}");
-    const { stdout } = await child;
-    await route.fulfill({ json: JSON.parse(stdout) }).catch(() => undefined);
-  });
-}
-/** Where a drop maps the field: its right side, clear of the pill's own controls. */
-async function rightSide(target: Locator) {
-  const area = (await target.boundingBox())!;
-  return { x: Math.max(4, area.width - 48), y: area.height / 2 };
-}
 async function open(page: Page, file = NESTED) {
   await hostScope(page);
   await openWorkflow(page, file);
