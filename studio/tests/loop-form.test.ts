@@ -109,6 +109,10 @@ describe("a loop's settings", () => {
     });
     expect(spec("concurrency")).toMatchObject({ type: "number", min: 1 });
     expect(spec("maxItems")).toMatchObject({ type: "number", min: 1 });
+    // The platform fails the run when the list holds more: nothing is left out.
+    expect(spec("maxItems").hint).toBe(
+      "The most items the list may hold. A longer list fails the run.",
+    );
   });
 
   it("asks for a list, and offers lists first in the data picker", () => {

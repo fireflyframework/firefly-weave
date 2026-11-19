@@ -484,6 +484,15 @@ export class StepDetailsController {
     if (output.kind === "loading") run.read(stepId);
     return output;
   }
+  /**
+   * A step's data for the item picked in the loops around it: its own run
+   * (`check[1]`, or a pin for that item) first, else the step's (a pin for
+   * every item). Outside loops, and on the Runs tab, the step's.
+   */
+  pickedStepData(id: string): ReturnType<StepDetailsController["stepData"]> {
+    const key = this.viewingRuns() ? null : this.iterations.instanceKey(id);
+    return (key ? this.stepData(key) : undefined) ?? this.stepData(id);
+  }
   /** Try again after a failed read of a step's outputs. */
   retryRunOutput(target: string): void {
     this.run()?.read(instanceStep(target));
@@ -765,8 +774,9 @@ export class StepDetailsController {
   previewData(): PreviewData {
     return {
       input: () => this.testEvent(),
-      // The same precedence as the Output pane: a pin, else the last result.
-      output: (id) => this.stepData(id)?.value,
+      // The same precedence as the Output pane: a pin, else the last result;
+      // inside a loop, for the item picked.
+      output: (id) => this.pickedStepData(id)?.value,
       stamp: () => [
         this.run()?.version() ?? null,
         this.host.model.revision,
@@ -1923,7 +1933,7 @@ export class StepDetailsController {
             pointer(fieldPath),
             this.scopeOptions(),
           ).steps) {
-            const output = this.stepData(visible.id)?.value;
+            const output = this.pickedStepData(visible.id)?.value;
             if (output !== undefined) steps[visible.id] = { output };
           }
           // Inside a loop's body: the picked item of each loop around the step.

@@ -75,9 +75,13 @@ const ORDERS = [
   { id: "b", lines: [{ sku: "z" }] },
 ];
 
-function opened(input: Json | undefined = { orders: ORDERS }) {
+function opened(
+  input: Json | undefined = { orders: ORDERS },
+  source = SOURCE,
+  results: Record<string, Json> = {},
+) {
   const model = new StructuredCanvasAdapter();
-  model.setSource(SOURCE, "yaml");
+  model.setSource(source, "yaml");
   const host = {
     model,
     perform: (edit: () => void) => edit(),
@@ -95,8 +99,16 @@ function opened(input: Json | undefined = { orders: ORDERS }) {
     diagnosticsDefinition: null,
     cacheDecisionContract: () => undefined,
     can: () => true,
+    // The last execution's results, by instance key, as last-results.ts keeps them.
     execution: {
-      results: signal(null),
+      results: signal({
+        schemaVersion: 1,
+        at: "2026-11-19T10:00:00Z",
+        status: "completed",
+        steps: Object.fromEntries(
+          Object.entries(results).map(([key, output]) => [key, { output }]),
+        ),
+      }),
       last: signal(null),
       running: () => null,
     },
@@ -214,6 +226,57 @@ describe("data inside a loop's body", () => {
     expect(mapped("/loops/orders/item/id")).toBe("Item 2 of 2");
     // A formula that reads no item keeps the data's own source.
     expect(mapped("/input/orders")).toBe("From test input");
+  });
+});
+
+describe("an earlier step inside the same loop", () => {
+  const CHECKED = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: checked, version: 1.0.0}
+spec:
+  inputSchema: {type: object, properties: {orders: {type: array}}}
+  outputSchema: {}
+  steps:
+    - id: orders
+      kind: forEach
+      items: {ref: /input/orders}
+      concurrency: 1
+      maxItems: 1000
+      collect: all
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item/id}}
+          - {id: send, kind: transform, value: {ref: /steps/check/output}}
+        output: {ref: /item}
+  output: {literal: null}
+`;
+  it("previews with its output for the picked item", () => {
+    const { controller } = opened({ orders: ORDERS }, CHECKED, {
+      "check[0]": "from item 1",
+      "check[1]": "from item 2",
+    });
+    controller.iterations.pick("orders", 1);
+    expect(value(controller, "send", "/steps/check/output")).toEqual({
+      ok: true,
+      value: "from item 2",
+    });
+    expect(
+      controller.ndvContext("send").sample.context(["value"])?.steps,
+    ).toEqual({ check: { output: "from item 2" } });
+    controller.iterations.pick("orders", 0);
+    expect(value(controller, "send", "/steps/check/output")).toEqual({
+      ok: true,
+      value: "from item 1",
+    });
+    // Data kept for the step itself holds for every item.
+    const shared = opened({ orders: ORDERS }, CHECKED, {
+      check: "for every item",
+    }).controller;
+    shared.iterations.pick("orders", 1);
+    expect(value(shared, "send", "/steps/check/output")).toEqual({
+      ok: true,
+      value: "for every item",
+    });
   });
 });
 

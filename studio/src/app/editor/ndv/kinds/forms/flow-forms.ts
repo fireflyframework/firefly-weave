@@ -184,7 +184,8 @@ export const loopForm = (): FormSpec => ({
       min: 1,
       default: 1000,
       whenRemoved: "default",
-      hint: "The most items to run. Items past it are left out.",
+      // The platform fails the run when the list holds more; it leaves nothing out.
+      hint: "The most items the list may hold. A longer list fails the run.",
     },
     {
       id: "collect",
