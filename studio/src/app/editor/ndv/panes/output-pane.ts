@@ -36,6 +36,7 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
+import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
 import { DataTable } from "./data-table";
 import { PathList } from "./path-list";
 import { ScriptEditor } from "./script-editor";
@@ -141,6 +142,7 @@ import { describeError } from "../../../errors";
     OutputEditor,
     ScriptEditor,
     RunStepLogs,
+    IterationPicker,
   ],
   template: `@let none = noOutput();
     @let pin = pinned();
@@ -275,6 +277,10 @@ import { describeError } from "../../../errors";
         </button>
       }
     </div>
+    @let around = pickerRows();
+    @if (around.length) {
+      <weave-iteration-picker [loops]="around" (picked)="pick($event)" />
+    }
     <div class="sd-pane-body">
       <div class="pane-content" [class.is-editing]="editing()">
         @if (editing()) {
@@ -1090,6 +1096,15 @@ export class OutputPane {
       controller.pinOfTarget(controller.pinKey(target)) ??
       controller.pinOfTarget(target)
     );
+  }
+  /** The same picker row as the Input pane's: both show the same item. None outside loops or on the Runs tab. */
+  pickerRows(): PickerLoop[] {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return [];
+    return loopRows(controller.iterations, target, (id) => controller.step(id));
+  }
+  pick({ loopId, index }: { loopId: string; index: number }) {
+    this.session().controller.iterations.pick(loopId, index);
   }
   /** The item picked inside a loop's body, one-based and as people count; null elsewhere. */
   pickedItem(): string | null {

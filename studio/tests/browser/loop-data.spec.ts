@@ -263,6 +263,12 @@ test.describe("data inside a loop at 1440x900", () => {
     await expect(picker).toContainText(
       "Execute previous steps to see the items.",
     );
+    // On the current item, the row says it: the empty state keeps only its buttons.
+    await expect(pane.getByLabel("Input source")).toHaveValue("item");
+    await expect(pane.getByText("No input data yet")).toHaveCount(0);
+    await expect(
+      pane.getByRole("button", { name: "Execute previous steps" }),
+    ).toBeVisible();
     const previous = lines.getByRole("button", { name: "Previous item" });
     await expect(previous).toHaveAttribute("aria-disabled", "true");
     await lines.getByRole("button", { name: "Next item" }).click();

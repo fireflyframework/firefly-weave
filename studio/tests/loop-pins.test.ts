@@ -26,6 +26,7 @@ import {
   type ControllerHost,
 } from "../src/app/editor/ndv/step-details-controller";
 import { TestDataService } from "../src/app/editor/state/test-data-service";
+import { itemPicks } from "../src/app/editor/state/iterations";
 import type { StoreBackend } from "../src/app/editor/state/browser-store";
 import { TEST_DATA_MAX_BYTES } from "../src/app/editor/state/test-data";
 import { StructuredCanvasAdapter } from "../src/app/model";
@@ -125,6 +126,79 @@ function setup() {
   const controller = new StepDetailsController(host, () => 1000);
   return { model, host, controller, testData };
 }
+
+describe("Debug in editor on a failed item", () => {
+  it("picks the item the run failed at in each loop around the step", () => {
+    const { model } = setup();
+    expect(itemPicks(model.definition, "send[3]")).toEqual([
+      { loopId: "orders", index: 3 },
+    ]);
+    expect(itemPicks(model.definition, "orders")).toEqual([]);
+    // Nested: the outer loop's item first.
+    const nested = {
+      spec: {
+        steps: [
+          {
+            id: "orders",
+            kind: "forEach",
+            body: {
+              steps: [
+                {
+                  id: "lines",
+                  kind: "forEach",
+                  body: { steps: [{ id: "reserve", kind: "transform" }] },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(itemPicks(nested, "reserve[1][0]")).toEqual([
+      { loopId: "orders", index: 1 },
+      { loopId: "lines", index: 0 },
+    ]);
+    // A repeated activation's suffix isn't an item.
+    expect(itemPicks(model.definition, "send[1]#2")).toEqual([
+      { loopId: "orders", index: 1 },
+    ]);
+  });
+
+  it("opens step details on that item once, and keeps a pick made after", () => {
+    const { controller, host } = setup();
+    Object.assign(host, {
+      draftId: "draft-1",
+      runNotice: {
+        draftId: "draft-1",
+        runId: "run-1",
+        key: "send[3]",
+        code: "SMTP_REJECTED",
+        missing: false,
+      },
+    });
+    controller.pickRunItem("send");
+    expect(controller.iterations.picks("send")).toEqual([
+      { loopId: "orders", index: 3 },
+    ]);
+    controller.iterations.pick("orders", 0);
+    controller.pickRunItem("send");
+    expect(controller.iterations.instanceKey("send")).toBe("send[0]");
+    // Another draft's stop picks nothing.
+    const other = setup();
+    Object.assign(other.host, {
+      draftId: "draft-2",
+      runNotice: {
+        draftId: "draft-1",
+        runId: "run-1",
+        key: "send[3]",
+        code: null,
+        missing: false,
+      },
+    });
+    other.controller.pickRunItem("send");
+    expect(other.controller.iterations.instanceKey("send")).toBe("send[0]");
+  });
+});
 
 describe("pins inside a loop's body", () => {
   it("pins the picked item under its instance key, or the step for every item", async () => {

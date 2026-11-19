@@ -239,7 +239,7 @@ import { instanceStep } from "../../state/instance-keys";
                   {{ missing }} hasn't run yet. Execute previous steps, or map
                   from the fields below.
                 </p>
-              } @else {
+              } @else if (!pickerSaysExecute()) {
                 <h4>No input data yet</h4>
                 <p>
                   Execute the previous steps to see what this step receives, or
@@ -394,6 +394,10 @@ export class InputPane implements OnInit {
     for (const row of rows)
       if (!row.known) queueMicrotask(() => this.countLoop(row.loopId));
     return rows;
+  }
+  /** The picker row already says "Execute previous steps to see the items.": the empty state keeps only its buttons. */
+  pickerSaysExecute(): boolean {
+    return this.pickerRows().some((row) => !row.known && row.index === 0);
   }
   pick({ loopId, index }: { loopId: string; index: number }) {
     this.session().controller.iterations.pick(loopId, index);

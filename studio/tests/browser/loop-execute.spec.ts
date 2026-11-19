@@ -95,6 +95,32 @@ test.describe("one item of a loop at 1440x900", () => {
     await expect(output).toContainText("Bo");
   });
 
+  test("the Output pane picks the same item, and Execute names it", async ({
+    page,
+  }) => {
+    const { details } = await openExecuteWorkflow(page, LOOP);
+    await details.open("send");
+    const out = pane(details, "output").getByRole("group", {
+      name: "Items of orders",
+    });
+    await out.getByRole("button", { name: "Next item" }).click();
+    await expect(
+      pane(details, "input")
+        .getByRole("group", { name: "Items of orders" })
+        .getByRole("button", { name: /Choose an item$/ }),
+    ).toHaveAccessibleName("Item 2 of 3. Choose an item");
+    await expect(executeButton(details.dialog)).toHaveAttribute(
+      "title",
+      "Execute step on item 2 (Ctrl/Cmd+Enter)",
+    );
+    await moreWays(details.dialog).click();
+    await expect(
+      page.getByRole("menuitem", {
+        name: /^Execute previous steps for item 2/,
+      }),
+    ).toBeVisible();
+  });
+
   test("Execute previous steps stops before the item picked", async ({
     page,
   }) => {

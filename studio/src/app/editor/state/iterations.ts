@@ -67,6 +67,21 @@ interface Kept {
   items: string;
 }
 
+/** The item of each loop around an instance (`send[3]`, `reserve[1][0]`), as picks: outermost first. */
+export function itemPicks(
+  definition: unknown,
+  key: string,
+): { loopId: string; index: number }[] {
+  const stepId = key.replace(/[[#~].*$/, "");
+  const loops = enclosingLoops(definition, stepId).reverse();
+  const items = [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map(
+    (match) => Number(match[1]),
+  );
+  return loops.flatMap((loopId, depth) =>
+    items[depth] === undefined ? [] : [{ loopId, index: items[depth] }],
+  );
+}
+
 export class Iterations {
   private readonly changed = signal(0);
   /** Changes when a pick or a count changes. */

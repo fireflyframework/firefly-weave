@@ -1148,9 +1148,20 @@ export class StepDetails {
   }
   /** The primary button's tooltip: why a call step executes the whole workflow. */
   executeTitle(): string {
+    const item = this.pickedItem();
     return this.callTarget()
       ? "A call runs only when the whole workflow executes."
-      : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+      : item && !this.runsWorkflow()
+        ? `Execute step on item ${item} (Ctrl/Cmd+Enter)`
+        : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+  }
+  /** Inside a loop's body: the item picked, as people count it ("3", "2 › 1"); null elsewhere. */
+  pickedItem(): string | null {
+    const key = this.controller().iterations.instanceKey(this.target());
+    if (!key) return null;
+    return [...key.matchAll(/\[(\d+)\]/g)]
+      .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+      .join(" › ");
   }
   /** A step that calls a workflow: it runs only when the whole workflow does. */
   callTarget(): boolean {
@@ -1258,9 +1269,12 @@ export class StepDetails {
       return [...here, ...(real ? [real] : [])];
     }
     const real = this.realItem();
+    const item = this.pickedItem();
     return [
       {
-        label: "Execute previous steps",
+        label: item
+          ? `Execute previous steps for item ${item}`
+          : "Execute previous steps",
         detail:
           "Runs from the trigger up to this step, reusing pinned and current results",
         run: () => void this.execute("before"),
@@ -1530,6 +1544,12 @@ export class StepDetails {
   private readonly executeHook = effect(() => {
     const controller = this.controller();
     controller.executeHook = (mode) => void this.execute(mode);
+  });
+  /** Debug in editor stopped at one item of a loop: step details open on that item. */
+  private readonly runItem = effect(() => {
+    const target = this.target();
+    const controller = this.controller();
+    untracked(() => controller.pickRunItem(target));
   });
   /**
    * Execute step (or Execute previous steps): asks first about errors in the

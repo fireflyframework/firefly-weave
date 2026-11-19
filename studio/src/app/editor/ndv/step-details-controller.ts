@@ -145,7 +145,7 @@ import {
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
-import { Iterations } from "../state/iterations";
+import { Iterations, itemPicks } from "../state/iterations";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ActionDraftEntry } from "../state/action-drafts";
@@ -200,6 +200,8 @@ export type ControllerHost = Pick<
   | "execution"
   | "runAccount"
   | "environmentName"
+  | "runNotice"
+  | "draftId"
 >;
 /** A diagnostic of one step, located in it. */
 /** Whether a schema marks any value secret, anywhere in it. */
@@ -506,6 +508,27 @@ export class StepDetailsController {
     if (output.kind === "loading") run.read(stepId);
     return output;
   }
+  private debuggedItem: string | null = null;
+  /**
+   * Debug in editor stopped at one item of a loop (send[3]): step details
+   * open on that item, once for each stop; a pick made after stays.
+   */
+  pickRunItem(target: string): void {
+    const notice = this.host.runNotice;
+    if (
+      !notice ||
+      notice.draftId !== this.host.draftId ||
+      notice.key === this.debuggedItem ||
+      instanceStep(notice.key) !== target
+    )
+      return;
+    this.debuggedItem = notice.key;
+    for (const { loopId, index } of itemPicks(
+      this.host.model.definition,
+      notice.key,
+    ))
+      this.iterations.pick(loopId, index);
+  }
   /** Where a pin of this step goes: the item picked inside a loop's body (send[2]), else the step. */
   pinKey(target: string): string {
     return (
@@ -530,7 +553,8 @@ export class StepDetailsController {
     const run = this.run();
     if (!run) return { ok: false, reason: "" };
     run.version();
-    return run.received(instanceStep(target));
+    // Inside a loop: the input of the iteration shown, recomputed from the run.
+    return run.received(instanceStep(target), this.runKey(target));
   }
 
   // --------------------------------------------------- executed data

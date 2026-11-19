@@ -28,6 +28,7 @@ import {
   type RunFixture,
   type RunsPlatform,
 } from "./runs-po";
+import { StepDetailsPage } from "./step-details-po";
 import { tokenColor } from "./support";
 
 const ROWS = ["Ada", "Bo", "Cy", "Di", "Ed"].map((name) => ({ name }));
@@ -179,8 +180,12 @@ function cancelledRun(): RunFixture {
 }
 
 /** The Runs tab on the loop run, its version answered as the loop workflow. */
-async function openLoopRun(page: Page, run: RunFixture, collect = "all") {
-  const workflow = loopWorkflow(collect);
+async function openLoopRun(
+  page: Page,
+  run: RunFixture,
+  collect = "all",
+  workflow: object = loopWorkflow(collect),
+) {
   const opened = await openRunsTab(page, {
     runs: [run],
     workflow,
@@ -307,6 +312,29 @@ test.describe("A recorded loop at 1440x900", () => {
     await expect(
       page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
     ).toHaveText("5 items, 2 skipped");
+  });
+});
+
+test.describe("A recorded loop's step details at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("recompute what the failed item's step received from the run", async ({
+    page,
+  }) => {
+    // send maps its input from the current item, as an action does.
+    const workflow = JSON.parse(
+      JSON.stringify(loopWorkflow()).replace(
+        '"id":"send","kind":"transform","value":',
+        '"id":"send","kind":"action","uses":"mail.send@1.0.0","with":',
+      ),
+    );
+    await openLoopRun(page, failedRun(), "all", workflow);
+    const details = new StepDetailsPage(page);
+    await details.open("send");
+    // Item 4 failed at send: its input, from the run's own data.
+    await expect(
+      details.dialog.locator("weave-input-pane .pane-received"),
+    ).toContainText('"to": "Di"');
   });
 });
 
