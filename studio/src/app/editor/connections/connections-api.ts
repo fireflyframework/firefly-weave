@@ -49,6 +49,12 @@ export interface ConnectionTest {
 
 export interface ConnectionsApi {
   bindable(connector: string): Promise<BindableItem[]>;
+  /**
+   * The bindable connections of any version of a connector, such as
+   * weave-kafka: the platform matches only an exact `name@version`, so this
+   * lists them all and keeps the connector's.
+   */
+  bindableNamed(name: string): Promise<BindableItem[]>;
   test(revisionId: string): Promise<ConnectionTest>;
   policy(): Promise<EnvironmentTestPolicy | "unreadable">;
 }
@@ -61,6 +67,7 @@ const REASONS: ReadonlySet<string> = new Set([
   "status",
 ]);
 const PAGE = 100;
+const everything = () => true;
 const MAX_PAGES = 20;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -142,24 +149,38 @@ export function platformConnections(
   environment?: string,
 ): ConnectionsApi {
   const scope = () => environment ?? api.environment;
-  return {
-    async bindable(connector) {
-      const base = `${scope()}/bindable-connections?connector=${encodeURIComponent(connector)}&limit=${PAGE}`;
-      const items: BindableItem[] = [];
-      let cursor: string | null = null;
-      for (let page = 0; page < MAX_PAGES; page++) {
-        const answer: unknown = await api.request(
-          cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base,
-        );
-        items.push(...readBindable(answer));
-        const next = isRecord(answer) ? answer["next_cursor"] : null;
-        if (typeof next !== "string" || !next) return items;
-        cursor = next;
-      }
-      throw Error(
-        "Too many connections to list here. Ask an administrator to narrow the environment's connections.",
+  /**
+   * The bindable connections `keep` keeps, page by page. Past the page
+   * limit, what was kept is the answer; only a listing that kept nothing in
+   * that many pages fails.
+   */
+  async function pages(
+    query: string,
+    keep: (item: BindableItem) => boolean = everything,
+  ): Promise<BindableItem[]> {
+    const base = `${scope()}/bindable-connections?${query}`;
+    const items: BindableItem[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const answer: unknown = await api.request(
+        cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base,
       );
-    },
+      items.push(...readBindable(answer).filter(keep));
+      const next = isRecord(answer) ? answer["next_cursor"] : null;
+      if (typeof next !== "string" || !next) return items;
+      cursor = next;
+    }
+    // A listing filtered here may end with unrelated pages it can't read.
+    if (keep !== everything && items.length) return items;
+    throw Error(
+      "Too many connections to list here. Ask an administrator to narrow the environment's connections.",
+    );
+  }
+  return {
+    bindable: (connector) =>
+      pages(`connector=${encodeURIComponent(connector)}&limit=${PAGE}`),
+    bindableNamed: (name) =>
+      pages(`limit=${PAGE}`, (item) => item.connector.split("@")[0] === name),
     async test(revisionId) {
       try {
         return readTest(

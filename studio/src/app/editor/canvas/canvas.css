@@ -175,6 +175,16 @@ weave-canvas-view,
 .canvas-v2 .tile-shape.live.pulse {
   animation: canvas-live-pulse var(--dur-expressive) var(--ease) 1;
 }
+/* A webhook listening for its test event pulses until it stops; still
+   with reduced motion, where the live border alone says it. */
+.canvas-v2 .tile-shape.live.listening {
+  animation: canvas-live-pulse 1.6s var(--ease) infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-v2 .tile-shape.live.listening {
+    animation: none;
+  }
+}
 .canvas-v2 .tile-shape.error {
   border-color: var(--danger);
   box-shadow: inset 0 0 0 1px var(--danger);

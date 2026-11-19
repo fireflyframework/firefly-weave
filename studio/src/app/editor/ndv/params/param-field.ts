@@ -357,6 +357,9 @@ export class ParamField {
       this.spec().type === "resource" ? this.loadChoices() : this.choices;
     const line = this.session().line(this.spec(), this.entry());
     if (line.kind === "error" || line.kind === "warning") return line;
+    // A notice's text is its banner: the line under it would say it again.
+    if (this.spec().type === "notice" && line.kind === "hint")
+      return { kind: "none" as const, text: "" };
     if (this.choicesError) {
       const load = this.loadedChoices;
       return {
@@ -405,6 +408,10 @@ export class ParamField {
         ? { kind: "hint" as const, text: this.spec().hint! }
         : { kind: "none" as const, text: "" };
     return line;
+  }
+  /** A notice's text in parts: odd parts were between backticks, and read as code. */
+  noticeParts(): string[] {
+    return (this.spec().hint ?? "").split("`");
   }
   /** An unfinished condition row, once the rows were left. */
   conditionsProblem(): string {

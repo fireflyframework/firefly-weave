@@ -15,6 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import {
+  activatedAsIs,
+  settingsKey,
+} from "../src/app/editor/triggers/trigger-activated";
+import type { TriggerIntent } from "../src/app/editor/state/canvas-sidecar";
 import { describe, expect, it } from "vitest";
 import { isIconName } from "../src/app/icon";
 import { freshWorkflow } from "../src/app/model";
@@ -59,6 +64,49 @@ describe("trigger tiles", () => {
     });
     workflow.spec["callable"] = { allowedCallers: ["order-intake", "billing"] };
     expect(triggerTile("called", workflow).subtitle).toBe("2 allowed callers");
+  });
+
+  it("says a trigger is set up at activation until it is activated with the settings it has now", () => {
+    const workflow = freshWorkflow();
+    // The canvas passes the choice only once an activation took its settings.
+    const settled = (intent: TriggerIntent) =>
+      activatedAsIs(intent) ? intent : undefined;
+    const hook = {
+      id: "trigger-1b2c3d4e",
+      kind: "webhook" as const,
+      name: "orders-in",
+      secretRef: "signing",
+    };
+    expect(triggerTile("webhook", workflow, settled(hook)).subtitle).toBe(
+      "Set up at activation",
+    );
+    const activated = {
+      ...hook,
+      resources: { env: "w-1" },
+      activated: { env: settingsKey(hook) },
+    };
+    expect(triggerTile("webhook", workflow, settled(activated)).subtitle).toBe(
+      "orders-in",
+    );
+    expect(
+      triggerTile(
+        "webhook",
+        workflow,
+        settled({ ...activated, name: "orders-new" }),
+      ).subtitle,
+    ).toBe("Set up at activation");
+    const schedule = {
+      id: "trigger-2c3d4e5f",
+      kind: "schedule" as const,
+      cron: "0 9 * * 1",
+    };
+    expect(
+      triggerTile(
+        "schedule",
+        workflow,
+        settled({ ...schedule, activated: { env: settingsKey(schedule) } }),
+      ).subtitle,
+    ).toBe("0 9 * * 1 UTC");
   });
 
   it("names and describes every trigger, with an icon Studio draws", () => {
