@@ -192,6 +192,24 @@ export classifies a call's output by every tool the call may have run, narrowed
 by the action or workflow its evidence names, so a value a tool marks secret
 stays out.
 
+An agent with [conversation memory](ai-agents.md#conversation-memory) records a
+`memory_loaded` event at its own key before its first turn. Its data has
+`node_id`, `key_hash`, the conversation's `version`, `expired`, `test` (a test
+run, which loads nothing), `messages` (the exchanges it loaded, as the model
+read them) and, for a stored conversation that couldn't be read,
+`code: "AGENT.MEMORY_UNREADABLE"`. History and exports keep the messages: they
+were scrubbed and redacted when they were remembered, and reading a run's
+history needs the same `run.read` as reading the conversation. An export of a
+run therefore carries the exchanges that run loaded.
+
+Replay never reads a conversation, so a run replays the same after its
+conversation was changed, expired or deleted. The event that started the agent
+names the load it asked for in its evidence, and the `memory_loaded` event's
+evidence holds a receipt: the load, the version, expiry and test flag, and a
+digest of the messages. A receipt that doesn't match the load or the event's
+data makes the report `inconsistent` with `WV-REPLAY-MEMORY`; a missing receipt
+or load makes it `incomplete` with `WV-REPLAY-MEMORY-PROVENANCE`.
+
 ## Handled step failures in a history
 
 A step whose On error setting handles a failure records a `step_failed` event

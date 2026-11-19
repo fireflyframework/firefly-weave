@@ -60,7 +60,7 @@
 "agents" = true
 "agent-editor" = false
 "ai-acceptance" = false
-"agent-memory" = false
+"agent-memory" = true
 "run-view-contracts" = false
 "operations-studio" = false
 "run-views" = true
@@ -188,6 +188,9 @@ J15 = ["SC1", "SC7"]
 "J4.12" = ["real-platform-journeys", "agents"]
 "J4.13" = ["real-platform-journeys", "agents"]
 "J4.14" = ["real-platform-journeys", "agents"]
+# Conversation memory from the SDK and CLI: a second run for one customer remembers the first, another customer
+# starts empty, and a deleted conversation starts over. Studio's own conversation step stays with the agent editor.
+"J4.15" = ["real-platform-journeys", "agents", "agent-memory"]
 # J5 platform administration (operator); J5.1 belongs to the operations reads above.
 "J5.2" = ["real-platform-journeys", "run-views", "compose-operations"]
 "J5.3" = ["real-platform-journeys", "run-views", "compose-operations"]

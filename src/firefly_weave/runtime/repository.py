@@ -352,6 +352,10 @@ class RuntimeRepository:
                     node=command.node_id,
                     deadline=command.deadline,
                 )
+        from firefly_weave.runtime.conversations import record_memory
+
+        # Conversation loads and appends belong to this transaction: a rolled-back completion appends nothing.
+        await record_memory(self, view.id, event, result)
         if isinstance(view, RunView):
             from firefly_weave.runtime.calls import record_calls
 
@@ -625,7 +629,10 @@ class RuntimeRepository:
             "AND NOT c.delivered AND c.status IN ('succeeded','failed','cancelled','timed_out')) "
             # A participant task revoked before any worker claimed it is reported to its transaction
             # (index task_intents_revoked).
-            "OR EXISTS (SELECT 1 FROM task_intents t WHERE t.run_id=runs.id AND t.status='revoked')) "
+            "OR EXISTS (SELECT 1 FROM task_intents t WHERE t.run_id=runs.id AND t.status='revoked') "
+            # An AI agent waits for its conversation: the load is delivered under this run's lock
+            # (index agent_memory_loads_pending).
+            "OR EXISTS (SELECT 1 FROM agent_memory_loads l WHERE l.run_id=runs.id AND l.delivered_at IS NULL)) "
             "AND (id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) OR EXISTS "
             "(SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
@@ -955,6 +962,11 @@ class RuntimeRepository:
                         )
                     }
                 )
+        from firefly_weave.runtime.conversations import memory_evidence
+
+        loads, memory_receipt = await memory_evidence(self, view.id, event, result)
+        if loads or memory_receipt is not None:
+            evidence = evidence.model_copy(update={"issued_memory_loads": loads, "memory_receipt": memory_receipt})
         await self.execute(
             "INSERT INTO run_event_evidence VALUES(:tenant,:project,:environment,:run,:id,:sequence,"
             "cast(:evidence AS jsonb))",

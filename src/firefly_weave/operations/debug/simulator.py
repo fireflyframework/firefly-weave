@@ -53,6 +53,7 @@ from firefly_weave.operations.debug.ai_turns import (
     auto_approves,
     check_agent_mock,
     is_sequence,
+    memory_seed,
     pinned_turn,
     scripted_turn,
     tool_values,
@@ -112,6 +113,7 @@ from firefly_weave.runtime.models import (
     ControlCommand,
     Deadline,
     HumanTaskIntent,
+    MemoryIntent,
     RunState,
     RuntimeEvent,
     TaskIntent,
@@ -929,6 +931,17 @@ class Simulator:
                 d.inputs[_path(key, command.node_id)] = command.input
                 if not self._task(key, run, called, command.node_id, command.action_reference):
                     return False
+            elif isinstance(command, MemoryIntent) and command.op == "load":
+                # A conversation is answered from the saved turns' seed only; an append changes nothing.
+                messages = memory_seed(called.mocks, command.node_id)
+                data: JsonObject = {
+                    "node_id": command.node_id,
+                    "key_hash": command.key_hash,
+                    "version": 0,
+                    "expired": False,
+                    "messages": cast(JsonValue, messages),
+                }
+                run.pending.append(self._event("memory_loaded", data))
         return True
 
     def _task(

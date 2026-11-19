@@ -45,6 +45,7 @@ from firefly_weave.cli.runs import runs
 from firefly_weave.cli.schedule import schedule
 from firefly_weave.cli.schema import schema
 from firefly_weave.cli.studio import StudioLaunchError, studio
+from firefly_weave.cli.transactions import transactions
 from firefly_weave.cli.triggers import triggers
 from firefly_weave.cli.workers import workers
 from firefly_weave.cli.workflow import workflow
@@ -94,11 +95,21 @@ class OfflineGroup(click.Group):
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         sections = (
             ("Start here", ("init", "platform", "studio", "docs")),
-            ("Author locally", ("workflow", "schema", "connector")),
+            ("Author locally", ("workflow", "schema", "connector", "transactions")),
             ("Human work and email", ("human-tasks", "human-assignments", "human-groups", "email")),
             (
                 "Connect to a platform",
-                ("auth", "definitions", "connections", "run", "runs", "incident", "schedule", "workers"),
+                (
+                    "auth",
+                    "definitions",
+                    "connections",
+                    "run",
+                    "runs",
+                    "agent-conversations",
+                    "incident",
+                    "schedule",
+                    "workers",
+                ),
             ),
             (
                 "Integrations and delivery",
@@ -129,12 +140,14 @@ class OfflineGroup(click.Group):
             "workflow": "Validate, compile, and simulate local workflows.",
             "schema": "Inspect and export definition schemas.",
             "connector": "Import OpenAPI, build no-code HTTP actions, or package connectors.",
+            "transactions": "Check that a step Weave undoes handles every request it can get.",
             "auth": "Connect to a platform, sign in, and choose a workspace.",
             "definitions": "Publish and activate workflows and actions.",
             "connections": "Configure and test integration connections.",
             "files": "Upload, download and inspect workflow files.",
             "run": "Cancel or retry runs; replay exported history.",
             "runs": "Start and inspect workflow runs.",
+            "agent-conversations": "List, read and delete what AI agents remember across runs.",
             "incident": "Inspect and resolve workflow incidents.",
             "schedule": "Manage scheduled runs and view occurrences.",
             "workers": "Register workers and manage their releases.",
@@ -205,6 +218,7 @@ class OfflineGroup(click.Group):
                 "definitions",
                 "connections",
                 "runs",
+                "agent-conversations",
                 "workers",
                 "triggers",
                 "broker-triggers",
@@ -287,6 +301,7 @@ workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)
 cli.add_command(connector)
+cli.add_command(transactions)
 cli.add_command(worker)
 cli.add_command(operations)
 cli.add_command(admin)
@@ -311,6 +326,7 @@ for public_group in (
     family("source-bindings", "source_bindings"),
     family("subscriptions", "subscriptions"),
     family("deliveries", "deliveries"),
+    family("agent-conversations", "agent_conversations"),
 ):
     cli.add_command(public_group)
 

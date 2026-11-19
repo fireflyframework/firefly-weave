@@ -95,6 +95,93 @@ def test_commands_are_recorded_with_exit_codes_and_the_stage_deadline():
         acceptance.Recorder(deadline=time.monotonic() - 1).run([sys.executable, "-c", "pass"])
 
 
+def failing_recorder(tmp_path):
+    """A prepare-stage Recorder on a private folder whose run has the canary wv-canary-0123, and the environment
+    of a command whose ERROR names it, so the canary is in the command's output but not in its argv."""
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "canaries.json").write_text(json.dumps({"acme": "wv-canary-0123"}), encoding="utf-8")
+    recorder = acceptance.Recorder(deadline=time.monotonic() + 30, private=private, stage="prepare")
+    return private, recorder, {"ERROR": "registry refused wv-canary-0123"}
+
+
+def test_a_failed_command_keeps_its_output_in_the_private_folder_redacted_and_out_of_the_job_log(tmp_path):
+    private, recorder, env = failing_recorder(tmp_path)
+    recorder.run([sys.executable, "-c", "pass"])
+    script = "import os, sys; print('built 3 layers'); sys.exit(os.environ['ERROR'])"
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", script], env=env)
+    (log,) = (private / "commands" / "prepare").glob("2-*.log")
+    assert f"exited 1; its output is in private/commands/prepare/{log.name}" in str(failed.value)
+    # The job log is public: without show_error the message carries none of the output.
+    assert "refused" not in str(failed.value)
+    saved = log.read_text(encoding="utf-8")
+    assert "built 3 layers" in saved and "registry refused [redacted]" in saved
+    assert "wv-canary-0123" not in saved
+
+
+def test_a_command_that_shows_its_error_ends_the_message_with_its_last_lines_redacted(tmp_path):
+    _, recorder, env = failing_recorder(tmp_path)
+    script = (
+        "import os, sys\nfor n in range(60):\n    print(f'step {n}', file=sys.stderr)\nsys.exit(os.environ['ERROR'])"
+    )
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", script], env=env, show_error=True)
+    assert "wv-canary-0123" not in str(failed.value)
+    shown = str(failed.value).splitlines()
+    assert shown[-41:] == [
+        "The last lines of its error output:",
+        *[f"step {n}" for n in range(21, 60)],
+        "registry refused [redacted]",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("variable", "proxy", "shown"),
+    [
+        *[
+            (
+                name,
+                "http://builder:s3%40lt@proxy.example:3128",
+                "via http://[redacted]@proxy.example:3128 as [redacted]",
+            )
+            for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+        ],
+        # A proxy written without a scheme, as curl and pip accept it.
+        ("https_proxy", "builder:s3%40lt@proxy.example:3128", "via [redacted]@proxy.example:3128 as [redacted]"),
+    ],
+)
+def test_a_proxys_credentials_in_a_failed_commands_output_show_only_as_redacted(
+    tmp_path, monkeypatch, variable, proxy, shown
+):
+    for name in acceptance.PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, proxy)
+    private, recorder, _ = failing_recorder(tmp_path)
+    # The command prints the proxy as configured, then its user:password percent-decoded.
+    env = {"ERROR": f"refused via {proxy} as builder:s3@lt"}
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", "import os, sys; sys.exit(os.environ['ERROR'])"], env=env, show_error=True)
+    (log,) = (private / "commands" / "prepare").glob("*.log")
+    for text in (str(failed.value), log.read_text(encoding="utf-8")):
+        assert f"refused {shown}" in text
+        assert "s3" not in text
+
+
+def test_a_failure_whose_output_cannot_be_redacted_names_only_the_command_and_saves_nothing(tmp_path, monkeypatch):
+    private, recorder, env = failing_recorder(tmp_path)
+
+    def unreadable(private):
+        raise ValueError("people/ada.json holds wv-canary-0123")
+
+    monkeypatch.setattr(acceptance.acceptance_evidence, "run_secrets", unreadable)
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", "import os, sys; sys.exit(os.environ['ERROR'])"], env=env, show_error=True)
+    # Output that could not be redacted is neither shown nor saved, and the error's own text stays out too.
+    assert str(failed.value).endswith(" exited 1; its output could not be saved: ValueError")
+    assert not (private / "commands").exists()
+
+
 def test_a_failed_stage_skips_run_but_still_collects_scans_and_cleans_up(tmp_path):
     plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, {"profile": "pr"})
     order = []

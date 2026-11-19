@@ -98,6 +98,7 @@ platform; the others need the `client` extra and either a
 | Create a starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; [quickstart](../quickstart.md) |
 | Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate` (`--error KEY=CODE` makes a step fail on purpose, `--pending KEY` leaves a step or phase without a result, and command files take `resolve` and `cancel`), `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
 | Export the language schemas | `schema export` | Base package |
+| Check that a step inside a transaction handles every request Weave can send it | `transactions conformance` | Base package; a PostgreSQL step needs the `server` extra; [make a system safe to undo](../guides/transaction-participants.md) |
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
 | Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
 | Run built-in HTTP connector Actions locally | `platform integrations`, `platform secret` (new in 0.1.0a7) | A running local platform |
@@ -107,6 +108,7 @@ platform; the others need the `client` extra and either a
 | Publish and activate definitions | `definitions` (with `drafts` and `activations`), `remote compile`, `validate`, `catalog` | Grants in the project; [CLI tutorial](../guides/cli-tutorial.md) |
 | Create and test integration connections | `connections` | `connection.manage`; [no-code REST integration](../connectors/http-without-code.md) |
 | Start, inspect, and manage runs | `runs` (with `incidents` and `debug`), `run replay` | Grants in the environment; [manage runs](../guides/execution-management.md) |
+| List, read, or delete what AI agents remember across runs | `agent-conversations list`, `read`, `delete`, `purge-workflow` | `run.read` to list and read, `run.purge` to delete; `--key` puts the key in shell history and the process list, so prefer `--key-stdin` or `--key-hash` (from the SDK's `conversation_hash`); [conversation memory](ai-agents.md#conversation-memory) |
 | Claim or complete human tasks | `human-tasks`, `human-assignments`, `human-groups` | [Human tasks](../guides/human-tasks.md) |
 | Transfer and inspect workflow files | `files upload`, `download`, `list`, `read`, `delete` | `file_manager` to upload/manage; `file_reader` to read; [file tutorial](../guides/files.md) |
 | Read or reply to email conversations | `email` | An email connection; [email workflow](../guides/email.md) |
@@ -269,6 +271,23 @@ and export errors use the same envelope with one `WV-CLI-*` diagnostic and exit
 2, and never include raw input values or exception text.
 `schema export --output json` reports the folder and file names;
 `version --output json` reports the package, API, and IR versions.
+
+**Check a step that takes part in a transaction.** `transactions conformance`
+sends one step's requests to your own worker handlers or PostgreSQL database in
+every order Weave can deliver them, and reports each check. It applies real
+changes, so run it against a test system:
+
+```sh
+weave transactions conformance move.workflow.yaml --step hold \
+  --catalog catalog.lock.json --input input.json \
+  --handlers transaction_participant:handlers --output json
+```
+
+For a PostgreSQL step, use a connection file you wrote, and name only that
+connection's own secret variable with `--secret`. It exits 0 when every check
+passes, 1 when one fails, and 2 with a `WV-CONFORMANCE-*` or `WV-CLI-*` code when
+it can't start or stops on an unexpected error. See
+[Make a system safe to undo](../guides/transaction-participants.md#check-it).
 
 **Keep credentials out of definitions.** Artifacts contain your literals and
 dependency declarations. Local compilation never resolves secret references or
@@ -618,6 +637,15 @@ weave connections test "$CONNECTION_ID" --output json
 # Read run history and replay it on the platform.
 weave runs history "$RUN_ID" --limit 50 --output json
 weave runs replay "$RUN_ID" --output json
+# Read an AI agent's conversation by its key: the key is hashed with the workflow here and never sent.
+weave agent-conversations read --workflow support-chat --key "$CUSTOMER_ID" --output json
+# Read the key from standard input instead, to keep it out of shell history and the process list.
+printf '%s\n' "$CUSTOMER_ID" | weave agent-conversations read --workflow support-chat --key-stdin --output json
+# Delete it; the answer lists up to 100 runs that loaded it. --key-hash names it by its hash instead.
+weave agent-conversations delete --workflow support-chat --key "$CUSTOMER_ID" --output json
+# Delete up to 1,000 of a workflow's conversations; repeat with a new key while "more" is true.
+weave agent-conversations purge-workflow --workflow support-chat --confirm-workflow support-chat \
+  --idempotency-key erase-1 --output json
 # List the calls a run made, with each child run's ID and status.
 weave runs calls "$RUN_ID" --output json
 # List a run's transactions: state, steps, cause and resolution, never business values.

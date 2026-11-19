@@ -245,9 +245,16 @@ async def test_upkeep_gets_its_own_budget_after_a_revalidation_that_spent_the_qu
         return True
 
     monkeypatch.setattr(loop, "maintain_logs", prune)
+
+    async def forget(scope, deadline):
+        order.append(("conversations", deadline))
+        assert deadline > clock["now"]
+        return True
+
+    monkeypatch.setattr(loop, "forget_conversations", forget)
     await loop._environment(authority())
-    assert [name for name, _ in order] == ["revalidate", "upkeep", "sweep", "logs"]
-    assert order[1][1] == order[2][1] == order[3][1] == clock["now"] + operations.UPKEEP_SECONDS
+    assert [name for name, _ in order] == ["revalidate", "upkeep", "sweep", "logs", "conversations"]
+    assert order[1][1] == order[2][1] == order[3][1] == order[4][1] == clock["now"] + operations.UPKEEP_SECONDS
 
 
 def test_a_never_seen_worker_counts_as_drained_only_while_it_drains_with_no_lease():

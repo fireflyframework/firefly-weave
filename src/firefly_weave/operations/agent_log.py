@@ -55,6 +55,7 @@ from firefly_weave.contracts.agent_log import (
     MAX_AGENT_LOG_PAGE,
     AgentCall,
     AgentCallReview,
+    AgentConversationUse,
     AgentError,
     AgentLog,
     AgentLogPage,
@@ -164,13 +165,15 @@ def assemble(
     intents: Sequence[TurnRecord],
     state: AgentState | None = None,
     withheld: Mapping[str, JsonValue] | None = None,
+    conversation: AgentConversationUse | None = None,
 ) -> AgentLog:
     """The log of the agent activation at ``key``.
 
     ``steps`` are step facts, ``outputs`` the outputs completed keys recorded, ``intents`` what turn tasks recorded
     about their inputs, and ``state`` the agent's state while it runs. ``withheld`` holds the completed keys whose
     values the page's byte limit left out, with a turn's shape (``kind``, ``toolCalls`` names, ``usage``,
-    ``droppedToolCalls``) or None for a call. Records of other keys are ignored.
+    ``droppedToolCalls``) or None for a call. Records of other keys are ignored. ``conversation`` is the
+    conversation an agent with conversation memory loaded, from its delivered load.
     """
     node = next((item for item in ir.graph.nodes if item.id == node_of(key)), None)
     if not isinstance(node, AgentNode):
@@ -207,7 +210,9 @@ def assemble(
         error=_error(activation.error_code) if activation is not None and status == "failed" else None,
         started_at=started,
         ended_at=ended,
-        memory=AgentMemoryUse(scope=node.memory.scope, loaded=first.memory if first is not None else 0),
+        memory=AgentMemoryUse(
+            scope=node.memory.scope, loaded=first.memory if first is not None else 0, conversation=conversation
+        ),
         turns=rows,
         totals=AgentTotals(
             turns=len(rows),
@@ -670,6 +675,25 @@ class AgentLogRepository:
             )
         return records
 
+    async def conversations(self, run_id: UUID, keys: list[str]) -> dict[str, AgentConversationUse]:
+        """The conversation each of ``keys`` loaded: its newest delivered load, in one read for the page."""
+        if not keys:
+            return {}
+        rows = await self.rows(
+            "SELECT DISTINCT ON (node_id) node_id,key_hash,version,expired,test FROM agent_memory_loads "
+            "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment AND run_id=:run "
+            "AND node_id=ANY(cast(:keys AS text[])) AND delivered_at IS NOT NULL AND NOT dropped "
+            "ORDER BY node_id,issued_sequence DESC",
+            run=run_id,
+            keys=keys,
+        )
+        return {
+            row["node_id"]: AgentConversationUse(
+                key_hash=row["key_hash"], version=row["version"], expired=row["expired"], test=row["test"]
+            )
+            for row in rows
+        }
+
     async def agents(self, run_id: UUID, keys: list[str]) -> dict[str, AgentState]:
         """The running agents among ``keys``, from the run's state."""
         if not keys:
@@ -735,6 +759,10 @@ class AgentLogService:
             ]
             intents = await repository.turns(run_id, turns)
             states = await repository.agents(run_id, visible)
+            node = next(item for item in ir.graph.nodes if isinstance(item, AgentNode) and item.id == step)
+            conversations = (
+                await repository.conversations(run_id, visible) if node.memory.scope == "conversation" else {}
+            )
             items = [
                 assemble(
                     ir,
@@ -744,6 +772,7 @@ class AgentLogService:
                     intents=intents,
                     state=states.get(name),
                     withheld=withheld,
+                    conversation=conversations.get(name),
                 )
                 for name in visible
             ]

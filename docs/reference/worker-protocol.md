@@ -216,8 +216,13 @@ when recovery creates a new generation.
     | --- | --- |
     | The same confirm, cancel or undo arrives twice | Change nothing the second time and answer as the first (use the operation key) |
     | A cancel arrives for a reservation that never went through | Succeed: there is nothing to release |
+    | A step arrives after its cancel or undo | Refuse it and change nothing; a fence or the PostgreSQL connector does this by its operation key |
     | A step hangs past its time limit | Nothing; Weave treats its outcome as unknown and undoes it, so the undo must cope with a step that did or didn't apply |
     | A confirm arrives after the reservation expired | Fail with a code the action lists in `definiteFailures`, or report `effect: none`; the transaction is then in doubt for a person |
+
+  [Make a system safe to undo](../guides/transaction-participants.md) shows how
+  an SDK worker does this with a fence in its own PostgreSQL database, and how to
+  check it with `weave transactions conformance`.
 
   A person may later retry a stuck confirm, cancel or undo. An action runs again
   with the same operation key, as the next generation of the same task. One that

@@ -150,8 +150,9 @@ def test_the_committed_map_is_valid():
         "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
-        # The platform runs AI agents; their Studio editor, memory and acceptance stay off.
+        # The platform runs AI agents and their conversation memory; their Studio editor and acceptance stay off.
         "agents",
+        "agent-memory",
         "run-views",
         "compose-operations",
         "kubernetes-operations",
@@ -202,7 +203,7 @@ def test_the_committed_map_is_valid():
     assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
 
 
-AGENT_STEPS = tuple(f"J4.{n}" for n in range(7, 15))
+AGENT_STEPS = tuple(f"J4.{n}" for n in range(7, 16))
 
 
 def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
@@ -220,6 +221,8 @@ def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
     # The agent that calls a workflow as a tool needs the workflow call runtime too.
     assert "workflow-call-runtime" in enablement.steps["J4.11"]
     assert enablement.checks("J4.9") == ("J4.9/injected-cancel",)
+    # The conversation step needs conversation memory too.
+    assert "agent-memory" in enablement.steps["J4.15"]
 
 
 def orders_fixture():

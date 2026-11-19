@@ -27,7 +27,8 @@ from typing import Literal, cast
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.ir import ActionNode, AgentNode, AgentToolIR, IRNode, WorkflowIR
 from firefly_weave.compiler.schemas import _Failure, payload_issues
-from firefly_weave.contracts.agent_turns import MAX_TURN_TOOL_CALLS, TurnOutput, call_id
+from firefly_weave.contracts.agent_conversations import ConversationMessage
+from firefly_weave.contracts.agent_turns import MAX_TURN_TOOL_CALLS, TurnOutput, call_id, wire_json
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import InstanceKey, InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.studio_documents import ai_turns_problems
@@ -37,7 +38,7 @@ from firefly_weave.operations.debug.transactions import step_instance
 from firefly_weave.operations.redaction import classify
 from firefly_weave.runtime import agent_tools
 from firefly_weave.runtime.agent_tools import AgentKeyRef, tool_schema
-from firefly_weave.runtime.agents import parse_agent_key
+from firefly_weave.runtime.agents import MEMORY_BYTES, parse_agent_key
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow, action_schemas, validate, workflow
 
@@ -77,11 +78,12 @@ def ai_task_mocks(artifact: CompiledArtifact, entries: Mapping[str, object]) -> 
 
 
 def ai_agent_mocks(artifact: CompiledArtifact, entries: Mapping[str, object]) -> dict[str, JsonValue]:
-    """``agent:<key>`` mocks for the AI agents that have saved turns, keyed like the entries.
+    """``agent:<key>`` mocks for the AI agents that have saved turns or a conversation seed, keyed like the entries.
 
     A key is a step ID (every activation) or an instance key (one activation). The simulator replays an entry's
-    turns one per turn task and checks them when the session starts, as it checks every mock. Entries without
-    turns give no mock, and entries for keys that name no AI agent, or no iteration it can run, are left alone.
+    turns one per turn task, answers a conversation load with its ``memory`` seed, and checks both when the session
+    starts, as it checks every mock. Entries with neither give no mock, and entries for keys that name no AI agent, or
+    no iteration it can run, are left alone.
     """
     nodes = {node.id: node for node in workflow(artifact).graph.nodes}
     return {
@@ -89,9 +91,20 @@ def ai_agent_mocks(artifact: CompiledArtifact, entries: Mapping[str, object]) ->
         for key, entry in entries.items()
         if isinstance(_reached(nodes, key), AgentNode)
         and isinstance(entry, dict)
-        and isinstance(entry.get("turns"), list)
-        and entry["turns"]
+        and ((isinstance(entry.get("turns"), list) and entry["turns"]) or "memory" in entry)
     }
+
+
+def memory_seed(mocks: Mapping[str, JsonValue], instance: str) -> list[JsonObject]:
+    """The conversation a simulated agent loads at ``instance``: the ``memory`` seed of its saved turns, the
+    instance's own entry first, then its step's; empty without one. The simulator never reads a stored conversation,
+    and an append changes nothing in the session."""
+    for key in dict.fromkeys(("agent:" + instance, "agent:" + node_of(instance))):
+        entry = mocks.get(key)
+        seed = entry.get("memory") if isinstance(entry, dict) else None
+        if isinstance(seed, list):
+            return [cast(JsonObject, message) for message in seed]
+    return []
 
 
 def _reached(nodes: Mapping[str, IRNode], key: str) -> IRNode | None:
@@ -195,6 +208,12 @@ def check_agent_mock(ir: WorkflowIR, mock: AgentMock, value: JsonValue) -> None:
             entry = cast(JsonObject, value)
             for turn in range(1, len(cast(list[JsonValue], entry["turns"])) + 1):
                 _check_turn(ir, mock.node, cast(JsonObject, scripted_turn(mock.node, entry, turn)))
+            seed = entry.get("memory", [])
+            # A seed is what a stored conversation could hold: user and assistant messages, 256 KiB at most.
+            for message in cast(list[JsonValue], seed):
+                ConversationMessage.model_validate(message)
+            if len(wire_json(seed).encode()) > MEMORY_BYTES:
+                raise ValueError("The conversation seed holds more than a conversation keeps")
         elif mock.kind == "tool":
             tool = cast(AgentToolIR, mock.tool)
             values = tool_values(value)

@@ -134,6 +134,7 @@ def test_limits_follow_their_sources():
 def test_features_are_what_the_target_runs():
     assert ADVERTISED_FEATURES == (
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
@@ -144,6 +145,7 @@ def test_features_are_what_the_target_runs():
     )
     assert language_manifest().features == [
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",

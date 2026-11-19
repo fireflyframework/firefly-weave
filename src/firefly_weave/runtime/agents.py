@@ -34,7 +34,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final, Literal, cast
 
+from pydantic import ValidationError
+
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR
+from firefly_weave.contracts.agent_conversations import (
+    CONVERSATION_MESSAGES,
+    ConversationMessage,
+)
 from firefly_weave.contracts.agent_turns import (
     DATA_NOTICES,
     TOOL_RESULT_BYTES,
@@ -53,6 +59,7 @@ from firefly_weave.contracts.agent_turns import (
 )
 from firefly_weave.contracts.language_features import MAX_RUN_AGENT_TOKENS
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.redaction_patterns import scrub
 from firefly_weave.runtime.agent_tools import (
     REPEATED_CALL_LIMIT,
     RULE_PATTERNS,
@@ -95,6 +102,8 @@ class ActivationValues:
     has_context: bool = False
     # Each tool's fixed values, by tool name.
     fixed: dict[str, JsonObject] = field(default_factory=dict)
+    # The hash of the conversation this activation loads and appends to (conversation memory only).
+    conversation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +119,8 @@ class AgentEffects:
     memory_append: list[JsonObject] | None = None
     # Tokens the transition's turn used, for the run's total.
     tokens: int = 0
+    # The hash of the conversation to load before turn 1.
+    load: str | None = None
 
 
 def parse_agent_key(key: str) -> AgentKey | None:
@@ -153,12 +164,16 @@ def activate(
     now: datetime,
     policy_context: int | None = None,
 ) -> AgentEffects:
-    """Start an agent: turn 1 with the instructions and notice, loaded memory as data, the prompt and the context."""
+    """Start an agent: turn 1 with the instructions and notice, loaded memory as data, the prompt and the context.
+
+    An agent with a conversation (``values.conversation``) first waits in phase ``memory`` for its conversation to be
+    loaded; :func:`memory_loaded` then sends turn 1.
+    """
     if node.rules not in DATA_NOTICES:
         raise UnsupportedRules(node.rules)
     messages: list[JsonObject] = []
     if memory:
-        messages.append({"role": "context", "content": {"memory": cast(JsonValue, memory)}})
+        messages.append(_memory_message(memory))
     messages.append({"role": "user", "content": values.prompt})
     if values.has_context:
         messages.append({"role": "context", "content": values.context})
@@ -166,14 +181,73 @@ def activate(
     state = AgentState(
         rules=node.rules,
         turn=1,
-        phase="turn",
+        phase="memory" if values.conversation is not None else "turn",
         instructions=values.instructions,
         fixed=values.fixed,
         messages=messages,
         deadline=now + timedelta(seconds=node.limits.timeout_seconds),
         context_tokens=context,
+        conversation=values.conversation,
     )
+    if values.conversation is not None:
+        return AgentEffects(state, load=values.conversation)
     return _next_turn(ir, node, state, run_tokens, forced=False)
+
+
+def memory_loaded(
+    ir: WorkflowIR,
+    node: AgentNode,
+    key: str,
+    state: AgentState,
+    entries: list[JsonObject],
+    run_tokens: int,
+    *,
+    test: bool = False,
+) -> AgentEffects:
+    """The agent's conversation arrived: keep its newest ``window`` messages as whole exchanges, put them first as one
+    data message, and send turn 1. A test run's agent remembers it is one, so its exchange is never appended."""
+    if state.phase != "memory":
+        raise ValueError("The agent isn't waiting for its memory")
+    kept = append_memory([], entries, node.memory.window)
+    messages = [_memory_message(kept), *state.messages] if kept else list(state.messages)
+    loaded = state.model_copy(update={"messages": messages, "phase": "turn", "test": test})
+    return _next_turn(ir, node, loaded, run_tokens, forced=False)
+
+
+def loaded_entries(state: AgentState, data: JsonObject) -> list[JsonObject]:
+    """The remembered messages a ``memory_loaded`` event hands the waiting agent, after checking that it is for this
+    agent's conversation and well formed. Raises ``ValueError`` for anything else.
+
+    An expired conversation and a test run's load carry no messages.
+    """
+    if state.phase != "memory" or state.conversation is None:
+        raise ValueError("The agent isn't waiting for its memory")
+    if set(data) - _LOADED_FIELDS or data.get("key_hash") != state.conversation:
+        raise ValueError("The load is for another conversation")
+    version, expired, test = data.get("version"), data.get("expired"), data.get("test", False)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+        raise ValueError("A load names the conversation's version")
+    if not isinstance(expired, bool) or not isinstance(test, bool):
+        raise ValueError("A load says whether the conversation expired and whether the run is a test")
+    messages, code = data.get("messages"), data.get("code")
+    if code is not None and code != UNREADABLE_CONVERSATION:
+        raise ValueError("A load's only code says its stored conversation was unreadable")
+    empty = expired or test or code is not None
+    if not isinstance(messages, list) or len(messages) > CONVERSATION_MESSAGES or (empty and messages):
+        raise ValueError("A load carries at most 200 messages, none when expired, unreadable or for a test run")
+    try:
+        return [ConversationMessage.model_validate(entry).model_dump(mode="json") for entry in messages]
+    except ValidationError:
+        raise ValueError("A remembered message is a user or assistant entry") from None
+
+
+_LOADED_FIELDS: Final = frozenset({"node_id", "key_hash", "version", "expired", "test", "code", "messages"})
+# The code a load carries when its stored conversation failed validation: it loads empty.
+UNREADABLE_CONVERSATION: Final = "AGENT.MEMORY_UNREADABLE"
+
+
+def _memory_message(entries: list[JsonObject]) -> JsonObject:
+    return {"role": "context", "content": {"memory": cast(JsonValue, entries)}}
 
 
 def turn_completed(
@@ -403,8 +477,11 @@ def _complete(ir: WorkflowIR, node: AgentNode, state: AgentState, output: TurnOu
     if output.text:
         result["text"] = output.text
     remembered = None
-    if node.memory.scope == "run":
+    if node.memory.scope == "run" or (node.memory.scope == "conversation" and not state.test):
         prompt = next(message["content"] for message in state.messages if message.get("role") == "user")
+        if node.memory.scope == "conversation":
+            # A conversation outlives the run, so a credential pasted into a prompt must not be kept with it.
+            prompt = scrub(prompt, RULE_PATTERNS[state.rules])[0]
         answer = redact(profile.output_schema, output.result, _bundle(ir), RULE_PATTERNS[state.rules])
         remembered = [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
     return AgentEffects(None, complete=result, memory_append=remembered, tokens=tokens)

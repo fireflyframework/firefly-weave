@@ -32,7 +32,7 @@ RANDOM = "random"
 # The demo environment's scope (tenant, project and environment IDs); without one, three new UUIDs.
 DEMO_SCOPE = "demo-scope"
 TABLES = ("operations", "controls")
-KEYS = {"capability", "identifier", "query", "body", "collection", "kind", "key", "answers"}
+KEYS = {"capability", "identifier", "query", "body", "collection", "kind", "key", "workflow", "key_hash", "answers"}
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,9 @@ class Row:
     kind: str | None = None
     # The AI agent step or activation of operations whose path has a key.
     key: str | None = None
+    # The workflow and key hash of operations whose path names an agent conversation.
+    workflow: str | None = None
+    key_hash: str | None = None
 
 
 def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
@@ -61,8 +64,8 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
         for operation, row in data[table].items():
             if set(row) - KEYS or "capability" not in row or row.get("identifier", RANDOM) != RANDOM:
                 raise ValueError(
-                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection, kind, key'
-                    " and answers"
+                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection, kind, key,'
+                    " workflow, key_hash and answers"
                 )
             for answer in row.get("answers", ()):
                 if set(answer) - {"status", "code", "until"} or not {"status", "code"} <= set(answer):
@@ -79,6 +82,8 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
                     tuple(row.get("answers", ())),
                     row.get("kind"),
                     row.get("key"),
+                    row.get("workflow"),
+                    row.get("key_hash"),
                 )
             )
     return ROOT / data["baseline"], rows
