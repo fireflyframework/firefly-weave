@@ -119,6 +119,8 @@ function setup() {
     diagnostics: null,
     diagnosticsDefinition: null,
     cacheDecisionContract: () => undefined,
+    cacheContract: () => undefined,
+    refreshView: () => undefined,
     can: () => true,
     testData,
     openTestData: () => false,
@@ -211,6 +213,21 @@ describe("pins inside a loop's body", () => {
     ).toBeNull();
     expect(Object.keys(testData.data().pins ?? {}).sort()).toEqual([
       "send",
+      "send[2]",
+    ]);
+  });
+
+  it("pins from step details for the item picked in the loop", async () => {
+    const { controller, testData } = setup();
+    controller.iterations.pick("orders", 2);
+    const sample = controller.ndvContext("send").sample!;
+    expect(await sample.setPin({ to: "item 3" })).toEqual({ ok: true });
+    expect(Object.keys(testData.data().pins ?? {})).toEqual(["send[2]"]);
+    // Another item picked: its own pin, the first one kept.
+    controller.iterations.pick("orders", 0);
+    expect(await sample.setPin({ to: "item 1" })).toEqual({ ok: true });
+    expect(Object.keys(testData.data().pins ?? {}).sort()).toEqual([
+      "send[0]",
       "send[2]",
     ]);
   });
