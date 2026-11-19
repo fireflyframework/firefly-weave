@@ -501,19 +501,24 @@ describe("an AI task run for real", () => {
 });
 
 describe("which step tests run without asking", () => {
-  const local = {
-    body: stepTestBody(task(true).workflow, task(true).step, BOUND.revisionId, {
-      prompt: "p",
-      context: null,
-    }),
-  };
-  local.body.acknowledged_side_effect = "non_idempotent";
+  /** An AI task's step test whose kind accepts the AI action's effect. */
+  const localBody = () => ({
+    body: {
+      ...stepTestBody(task(true).workflow, task(true).step, BOUND.revisionId, {
+        prompt: "p",
+        context: null,
+      }),
+      acknowledged_side_effect: "non_idempotent" as const,
+    },
+  });
   it("an AI task on a local connection, for the AI action's own effect", () => {
+    const local = localBody();
     expect(withoutAsking(local, "non_idempotent")).toBe("non_idempotent");
     // The action's contract isn't loaded yet: the AI action's effect is known.
     expect(withoutAsking(local, null)).toBe("non_idempotent");
   });
   it("never another action, another effect, or a step with a question", () => {
+    const local = localBody();
     const action = {
       body: { ...local.body, kind: "action", uses: "acme.crm-cancel@1.0.0" },
     };
@@ -532,6 +537,7 @@ describe("which step tests run without asking", () => {
     expect(withoutAsking(unacknowledged, "non_idempotent")).toBeNull();
   });
   it("after the question, an AI task acknowledges the AI action's effect", () => {
+    const local = localBody();
     expect(effectToAcknowledge(local.body, null)).toBe("non_idempotent");
     expect(effectToAcknowledge(local.body, "idempotency_key")).toBe(
       "idempotency_key",
