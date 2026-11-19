@@ -85,6 +85,15 @@ describe("the iteration picker's row", () => {
       last: false,
       note: "The number of items shows once the previous steps have run.",
     });
+    // Up to bounds Next when nobody knows the count, as it bounds Go to item.
+    expect(
+      pickerView(loop({ index: 998, known: false, count: 0, limit: 1000 }))
+        .last,
+    ).toBe(false);
+    expect(
+      pickerView(loop({ index: 999, known: false, count: 0, limit: 1000 }))
+        .last,
+    ).toBe(true);
   });
 
   it("says an empty list runs nothing, with every control off", () => {

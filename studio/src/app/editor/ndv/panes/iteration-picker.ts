@@ -75,7 +75,8 @@ export function pickerView(loop: PickerLoop): PickerView {
       item,
       name: `${item}. Choose an item`,
       first: loop.index === 0,
-      last: false,
+      // Up to bounds the items a run reaches, as it bounds Go to item.
+      last: loop.index >= loop.limit - 1,
       empty: false,
       note:
         loop.index === 0
