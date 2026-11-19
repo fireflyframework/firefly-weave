@@ -259,6 +259,22 @@ async function platform(page: Page): Promise<Platform> {
   await page.route(`${environment}/connections?*`, (r) =>
     r.fulfill({ json: { items: created(), next_cursor: null } }),
   );
+  // The activation dialog lists what this person may bind.
+  await page.route(`${environment}/bindable-connections?*`, (r) =>
+    r.fulfill({
+      json: {
+        items: created().map((item) => ({
+          connection_id: "5d1f0c8e-9b7a-4c3e-8f2d-1a6b4c9e7d30",
+          revision_id: item.id,
+          name: String(item["name"] ?? "pets"),
+          connector: item.connector,
+          label: String(item["name"] ?? "pets"),
+          enabled: true,
+        })),
+        next_cursor: null,
+      },
+    }),
+  );
   await page.route(`${environment}/connections`, (r) => {
     state.connections.push(r.request());
     return r.fulfill({ status: 201, json: created().at(-1) });

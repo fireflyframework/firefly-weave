@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // is on and its waits make sense, where an owned action keeps its retry and
 // timeout, where the step sits and what runs it, and whether anything
 // differs from the defaults.
+import { isTriggerTarget } from "../../triggers/trigger-target";
 import type { Step, Workflow } from "../../../model";
 import type { StepNote } from "../../state/canvas-sidecar";
 import { implementationText, sideEffectText } from "../header";
@@ -109,7 +110,7 @@ export const settingsChanged = (
 
 /** Where the step sits, in the words of the breadcrumb; the trigger starts the workflow. */
 export function placementText(workflow: Workflow, target: string): string {
-  if (target === "$trigger") return "Starts the workflow";
+  if (isTriggerTarget(target)) return "Starts the workflow";
   if (target.startsWith("$")) return "";
   return breadcrumb(workflow, target);
 }

@@ -349,6 +349,23 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
   platform's sign-in now belongs to someone else, it refuses the change with
   `409 WV-PRINCIPAL-CHANGED` before anything runs, and Studio doesn't send it
   again.
+- **Execute workflow in an environment.** Studio saves the draft, then keeps
+  one test activation per environment, draft revision and bindings, until a
+  minute before it expires. It binds the connections this computer bound to
+  the workflow's slots, asks before steps that change data with the steps
+  `WV-STEPTEST-CONFIRM` names, and opens the run in the Runs tab.
+- **Listening for a test event.** Listening needs `step.test` and
+  `trigger.manage`. Studio sends the webhook's test secret handle
+  (`testSecretRef`), never its production one, then reads
+  `GET {ENV}/run-summaries?activation_id=…&include_test=true&started_after=…`
+  every 2 seconds, from two minutes before this computer's clock, until a run
+  starts that Execute workflow didn't start and listening didn't take before,
+  the URL expires, or three reads in a row fail. The run's input becomes the workflow's test input, with
+  `source: "test-call"`, `runId` and `runEnvironmentId`. Stop listening
+  deletes the test activation, which retires its test URL.
+- **Retiring.** Studio deletes its test activation when the editor's draft is
+  another one or another saved revision, when the editor closes, and when the
+  account, environment or platform changes; listening on it ends.
 - **Following.** Studio reads a step test every second for 30 seconds, then
   every 2 seconds, until it ends or its timeout plus a minute passes; a read
   that fails waits twice as long (at most 30 seconds), and three in a row stop
@@ -364,6 +381,54 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 | 422 | `WV-STEPTEST-INPUT`, `WV-SCHEMA-SECRET_VALUE`, `WV-STEPTEST-CONNECTION`, `WV-STEPTEST-RELEASE`, `WV-STEPTEST-KIND`, `WV-STEPTEST-TOOL-MOCK`, `WV-TESTACTIVATION-COMPILE`, `WV-TESTACTIVATION-LIFETIME`, `WV-ETAG` |
 | 429 | `WV-STEPTEST-BUSY` |
 | 503 | `WV-COMPATIBILITY` |
+
+## Trigger choices
+
+A workflow's trigger choices live in its canvas sidecar (`triggers`), one per
+trigger tile, each with an `id` and a `kind` and the settings its step details
+hold. Studio creates or moves the platform resource behind each one when the
+workflow is activated.
+
+An email trigger starts runs with the received message, so the workflow's input
+must take one. Studio reads that message's schema, with its definitions inlined,
+from its host at `GET /studio/contracts/email-message`, a read-only route that
+answers only a paired session, like the other contract routes.
+
+### What Studio keeps about a trigger's resource
+
+When an activation creates or moves a trigger choice's resource, Studio keeps
+two fields in the choice, both keyed by environment ID:
+
+| Field | Value |
+| --- | --- |
+| `resources` | The ID of the webhook, schedule, Kafka trigger, email source or app event source in that environment. |
+| `activated` | A key of the choice's settings when that activation took them: its fields other than `id`, `resources` and `activated`, as canonical JSON. |
+
+The next activation in that environment moves the stored resource instead of
+creating one, so a webhook keeps its ID and its URL. A tile reads "Set up at
+activation" until `activated` holds the key of the settings the choice has now.
+A webhook's production URL is `{platform URL}/webhooks/{resources[environment]}`.
+
+### The activation dialog
+
+The dialog reads, before Activate:
+
+| Step | Read | Rows |
+| --- | --- | --- |
+| Checks | `GET {PROJECT}/language` and the version's export (`artifact.executable.features`) | The first feature the platform doesn't run stops the dialog. |
+| Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot. A required slot is chosen for the person from this computer's dev binding, else the connection named like the slot when exactly one candidate has that name, else the only candidate; an optional one only from a dev binding. The listing has no revision number, so several revisions with the slot's name are left for the person. |
+| Called workflows | The version's export (`document`), `GET {PROJECT}/workflows` and `GET {ENV}/activations` | Each callee's current activation, sent as `workflow_activation_ids`; a callee without one blocks Activate. |
+| Triggers | `GET {ENV}/triggers`, `schedules`, `broker-triggers`, `email/sources` and `provider-sources` | One row per trigger choice: create, move, a schedule to save, a choice the CLI sets up, or a resource this workflow ran that is left behind, with **Stop it**. |
+
+A new Kafka, email or app event trigger chooses its connection on its own row:
+Studio lists every bindable connection (`GET {ENV}/bindable-connections`,
+without `connector`) and keeps those of `weave-kafka` or `weave-email` at any
+version, or the app's exact package. After the activation succeeds, Studio sets
+the triggers up row by row: it creates what's missing, moves a resource with
+the revision it read (`If-Match`), saves a moved schedule with its calendar and
+input, and disables what the person ticked. A failure stays on its row with
+**Retry**, which reads the resource again first, and never undoes the
+activation.
 
 ## Storage on this computer
 

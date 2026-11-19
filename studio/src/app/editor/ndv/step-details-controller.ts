@@ -51,10 +51,18 @@ import {
   CANVAS_TOO_BIG,
   canvasBytes,
   stepNotesOf,
+  triggerIntents,
   withStepNote,
+  withTriggerIntents,
   type CanvasSidecar,
   type StepNote,
+  type TriggerIntent,
 } from "../state/canvas-sidecar";
+import {
+  triggerForm as triggerSettingsForm,
+  triggerProblems,
+} from "../triggers/trigger-forms";
+import { isTriggerChoice, triggerChoiceOf } from "../triggers/trigger-target";
 import {
   CANVAS_MAX_BYTES,
   type DataSource,
@@ -206,6 +214,24 @@ export interface StepDiagnostic {
   at: Path;
   suggestedEdit?: unknown;
 }
+/**
+ * A trigger choice's invalid settings, as its fields show them. An empty
+ * required field says so itself; these are the values the platform would refuse.
+ */
+function choiceDiagnostics(choice: TriggerIntent): StepDiagnostic[] {
+  return Object.entries(triggerProblems(choice))
+    .filter(([field]) => {
+      const value = choice[field];
+      return value !== undefined && value !== "";
+    })
+    .map(([field, message]) => ({
+      code: "WV-STUDIO-TRIGGER",
+      severity: "error",
+      message,
+      path: `/${field}`,
+      at: [field],
+    }));
+}
 export interface CommitOutcome {
   ok: boolean;
   /** Labels of fields the change hid and cleared. */
@@ -213,6 +239,9 @@ export interface CommitOutcome {
 }
 
 const PSEUDO = new Set(["$trigger", "$end", "$workflow"]);
+/** The input form, End, the workflow's settings, or a trigger choice: no step of the workflow. */
+const pseudo = (target: string): boolean =>
+  PSEUDO.has(target) || isTriggerChoice(target);
 const pointer = (path: Path) =>
   path
     .map((s) => "/" + String(s).replace(/~/g, "~0").replace(/\//g, "~1"))
@@ -826,7 +855,7 @@ export class StepDetailsController {
     };
   }
   step(target: string): Step | null {
-    if (PSEUDO.has(target)) return null;
+    if (pseudo(target)) return null;
     return (
       this.host.model.nodes().find((node) => node.step.id === target)?.step ??
       null
@@ -860,7 +889,20 @@ export class StepDetailsController {
     const document = this.host.catalogContracts.get(uses);
     return (document?.["spec"] as Json | undefined) ?? null;
   }
+  /** The trigger choice a target names, or null. */
+  triggerChoice(target: string): TriggerIntent | null {
+    return triggerChoiceOf(this.host.model.canvas, target);
+  }
   subject(target: string): FormSubject {
+    const choice = this.triggerChoice(target);
+    if (choice)
+      return {
+        // A trigger choice's settings sit where a step's fields do.
+        step: choice as unknown as Step,
+        workflow: this.host.model.definition,
+        action: null,
+        roots: choice.kind === "provider" ? [["mapping"]] : [],
+      };
     const step = this.step(target);
     const descriptor = this.descriptor(target);
     if (!step || !descriptor)
@@ -904,6 +946,8 @@ export class StepDetailsController {
   }
   parameters(target: string): FormSpec {
     if (target === "$trigger") return triggerForm();
+    const choice = this.triggerChoice(target);
+    if (choice) return triggerSettingsForm(choice.kind);
     if (target === "$end") return endForm();
     if (target === "$workflow") return workflowSettingsForm();
     const step = this.step(target);
@@ -1389,7 +1433,7 @@ export class StepDetailsController {
     if (!this.pendingStore().size) return;
     const ids = new Set(this.host.model.nodes().map((node) => node.step.id));
     this.pendingStore().prune(
-      (target) => PSEUDO.has(target) || target === open || ids.has(target),
+      (target) => pseudo(target) || target === open || ids.has(target),
     );
   }
 
@@ -1597,6 +1641,11 @@ export class StepDetailsController {
   }
 
   private write(target: string, changes: FormChange[]): VersionMove[] {
+    const choice = this.triggerChoice(target);
+    if (choice) {
+      this.writeTriggerChoice(choice, changes);
+      return [];
+    }
     const model = this.host.model;
     const stepEdits: Edit[] = [];
     const workflowEdits: Edit[] = [];
@@ -1667,6 +1716,31 @@ export class StepDetailsController {
       : [];
   }
 
+  /** A trigger choice's settings go to the canvas sidecar; the workflow's input (its payload) to the workflow. */
+  private writeTriggerChoice(choice: TriggerIntent, changes: FormChange[]) {
+    const model = this.host.model;
+    let subject: FormSubject = {
+      step: choice as unknown as Step,
+      workflow: model.definition,
+      action: null,
+      roots: [],
+    };
+    for (const change of changes) subject = applyChange(subject, change);
+    if (subject.workflow !== model.definition)
+      model.updateWorkflow(subject.workflow);
+    const updated = subject.step as unknown as TriggerIntent;
+    const next = withTriggerIntents(
+      model.canvas,
+      triggerIntents(model.canvas).map((intent) =>
+        intent.id === choice.id
+          ? { ...updated, id: choice.id, kind: choice.kind }
+          : intent,
+      ),
+    );
+    if (canvasBytes(next) > CANVAS_MAX_BYTES) throw new Error(CANVAS_TOO_BIG);
+    model.canvas = next;
+  }
+
   scopeOptions(): ScopeOptions {
     return {
       actionOutput: (uses) =>
@@ -1694,6 +1768,8 @@ export class StepDetailsController {
    * expression (`["with", "parameters", "customerId"]`).
    */
   diagnostics(target: string): StepDiagnostic[] {
+    const choice = this.triggerChoice(target);
+    if (choice) return choiceDiagnostics(choice);
     const result = this.host.diagnostics;
     if (!result) return [];
     const out: StepDiagnostic[] = [];
@@ -1703,7 +1779,7 @@ export class StepDetailsController {
         d["path"],
         this.host.diagnosticsDefinition,
       );
-      const mine = PSEUDO.has(target)
+      const mine = pseudo(target)
         ? where.stepId === "$workflow"
         : where.stepId === target;
       if (!mine) continue;

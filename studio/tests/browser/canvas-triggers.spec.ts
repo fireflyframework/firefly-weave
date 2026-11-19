@@ -61,7 +61,7 @@ for (const size of [
       await page.setViewportSize(size);
     });
 
-    test("trigger choices draw as tiles that say they are set up when you activate", async ({
+    test("trigger choices draw as tiles that say they are set up when you activate, and open their settings", async ({
       page,
     }) => {
       const view = await openStoredWorkflow(page, {
@@ -91,10 +91,13 @@ for (const size of [
       await view.tileBody("$trigger:trigger-1b2c3d4e").focus();
       await page.keyboard.press("Enter");
       await expect(
-        toast(page, "Webhook is set up when you activate this workflow."),
+        page.getByRole("dialog", {
+          name: "Step details: Webhook trigger",
+          exact: true,
+        }),
       ).toBeVisible();
       await expect(
-        page.getByRole("dialog", { name: /^Step details: / }),
+        toast(page, "Webhook is set up when you activate this workflow."),
       ).toHaveCount(0);
     });
 
