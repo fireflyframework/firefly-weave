@@ -66,6 +66,7 @@ browser bundle does not have them; to see the same screens,
 | Wait for an external event | **Wait for signal** | `signal` | Weave waits, up to a timeout, for an authorized, schema-valid signal with the configured name |
 | Ask a person to decide | **Human task** | `humanTask` | Weave creates an assigned task with a form and allowed decisions |
 | Stop with a business error | **Fail** | `fail` | Weave records the supplied error code and message |
+| Run another workflow | **Call a workflow** | `callWorkflow` | Weave starts a run of an exact published version as a child run, and waits for its result unless the call doesn't wait |
 
 Start and End mark the boundaries of the process. They are fixed visual nodes,
 not extra executable steps. **Start** is also a button: select it to open the
@@ -171,6 +172,7 @@ duration in whole seconds." Leave an optional duration empty to remove it.
 | Wait for signal | **Signal name**, **Timeout**, **Payload schema** | Defines which event can resume the wait and what data is accepted |
 | Human task | **Assignment binding**, **Title**, **Context**, **Decisions**, **Due after**, **Expires after**, **Form schema** | Defines who may claim the work and what a valid decision contains |
 | Fail | **Error code**, **Message** | Gives operators and calling products a business failure they can recognize |
+| Call a workflow | **Workflow**, **Input**, **When it runs**, **If it fails**, and **Business key** under **Add option** | Chooses the version to run, what it receives, and whether this workflow waits for it and stops when it fails |
 
 Every step also has a unique ID. References to earlier step results use that ID;
 moving steps can change what they may read. The compiler checks those
@@ -412,6 +414,19 @@ claims, eligibility, and audit history.
 **Error code** accepts letters, numbers, dots, underscores, and hyphens.
 **Message** starts empty and must contain your failure reason. A Fail step ends its path, so no later step on
 that path runs and nothing after it can read data from that path.
+
+### Call a workflow
+
+**Workflow** lists the versions this workflow may call: the project's published
+ones under **In this project**, drafts on this computer under **On this
+computer**. **Input** has a row for each of the called workflow's input fields.
+**When it runs** is **Wait for its result** or **Start it and continue**. A call
+that waits also has **If it fails**: **Stop this workflow** or **Continue with
+the result status**. A call runs only when the whole workflow executes, and the run
+log shows the called workflow's steps under it. See
+[Call a workflow](studio.md#call-a-workflow) for the whole path, and
+[Let other workflows call this one](studio.md#let-other-workflows-call-this-one)
+for the workflow being called.
 
 ### Call an API
 
