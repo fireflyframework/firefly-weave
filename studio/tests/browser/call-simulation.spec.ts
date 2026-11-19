@@ -227,3 +227,54 @@ test.describe("executing a workflow that calls another", () => {
     await expect(pane.locator(".pane-json")).toContainText('"Pinned"');
   });
 });
+
+test.describe("a test with more called workflows than the host runs", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Execute workflow from the editor bar says so in the run log, and sends nothing", async ({
+    page,
+  }) => {
+    const steps = Array.from({ length: 51 }, (_, at) => ({
+      id: `call-${at + 1}`,
+      kind: "callWorkflow",
+      uses: `workflow-${at + 1}@1.0.0`,
+      mode: "wait",
+      with: { literal: {} },
+    }));
+    await openStepFixture(
+      page,
+      yamlFile(
+        "many-calls.yaml",
+        stringify({
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "many-calls", version: "1.0.0" },
+          spec: {
+            inputSchema: { type: "object" },
+            outputSchema: { type: "object" },
+            steps,
+            output: { literal: {} },
+          },
+        }),
+      ),
+      async (p) => {
+        const result = await connected(p);
+        await withLanguageFeatures(p, ["flow.callWorkflow"]);
+        return result;
+      },
+    );
+    const calls = await localAuthoring(page);
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    const log = page.getByRole("region", { name: "Run log" });
+    const refusal = log.locator(".run-log-refusal");
+    await expect(refusal).toHaveText(
+      "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    );
+    await expect(refusal).toHaveAttribute("data-tone", "warning");
+    await expect(log.locator(".run-log-status")).toHaveText("Didn't start");
+    expect(executions(calls)).toHaveLength(0);
+  });
+});

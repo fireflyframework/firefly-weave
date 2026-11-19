@@ -7528,6 +7528,7 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
     this.lastTarget = target;
+    this.executeRefusal.set(null);
     let outcome = await service.execute(target, options);
     if (outcome.kind === "busy") return outcome;
     const draftId = this.draftId;
@@ -7547,19 +7548,25 @@ export class App implements CanvasHost {
     if (outcome.kind === "done") {
       this.runLogOpen.set(true);
       this.playRun(outcome.response);
-    } else if (outcome.kind !== "stale")
-      this.runAnnouncement.set({
-        text:
-          outcome.kind === "refused" || outcome.kind === "failed"
-            ? outcome.message
-            : outcome.kind === "conflict"
-              ? "A definition on this computer differs from the project's catalog, so the test run didn't start."
-              : "The test run didn't start.",
-        urgent: true,
-      });
+    } else if (outcome.kind !== "stale") {
+      const text =
+        outcome.kind === "refused" || outcome.kind === "failed"
+          ? outcome.message
+          : outcome.kind === "conflict"
+            ? "A definition on this computer differs from the project's catalog, so the test run didn't start."
+            : "The test run didn't start.";
+      this.runAnnouncement.set({ text, urgent: true });
+      // Execute workflow reports in the run log, as a run that stops does.
+      if (target.mode === "workflow") {
+        this.executeRefusal.set(text);
+        this.runLogOpen.set(true);
+      }
+    }
     this.cdr.markForCheck();
     return outcome;
   }
+  /** Why the last Execute workflow didn't start, for the run log; null once one starts. */
+  readonly executeRefusal = signal<string | null>(null);
   /**
    * Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter
    * on the canvas. With breakpoints it runs as a session the run log steps

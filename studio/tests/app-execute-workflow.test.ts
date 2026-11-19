@@ -67,6 +67,8 @@ describe("Execute workflow", () => {
     ] as const) {
       const app = Object.create(App.prototype) as App;
       const announced: { text: string }[] = [];
+      const refused: (string | null)[] = [];
+      const opened: boolean[] = [];
       Object.assign(app, {
         execution: { execute: vi.fn(async () => outcome) },
         ensureApplied: async () => true,
@@ -75,10 +77,15 @@ describe("Execute workflow", () => {
         runAnnouncement: {
           set: (value: { text: string }) => announced.push(value),
         },
+        executeRefusal: { set: (value: string | null) => refused.push(value) },
+        runLogOpen: { set: (value: boolean) => opened.push(value) },
         cdr: { markForCheck: () => undefined },
       });
       await app.executeIn({ mode: "workflow" });
       expect(announced.map((a) => a.text)).toEqual([words]);
+      // The run log opens on it, cleared first as each execution starts.
+      expect(refused).toEqual([null, words]);
+      expect(opened).toEqual([true]);
     }
   });
 

@@ -62,6 +62,8 @@ export interface RunLogHost {
   readonly execution: ExecutionService | null;
   readonly runLogOpen: Signal<boolean>;
   readonly runSession: Signal<HostSession | null>;
+  /** Why the last Execute workflow didn't start, such as too many called workflows; null once one starts. */
+  readonly executeRefusal?: Signal<string | null>;
   readonly breakpoints: Signal<ReadonlySet<string>>;
   lastTarget: ExecuteTarget | null;
   toggleRunLog(): void;
@@ -404,7 +406,14 @@ export function runStatus(
         </button>
       </form>
     }
-    @if (list.length) {
+    @if (host().executeRefusal?.(); as refused) {
+      <!-- Nothing ran: what stopped it, in place of the last run's steps. -->
+      <p class="run-log-refusal" data-tone="warning">
+        <weave-icon name="warning" [size]="16" aria-hidden="true" />{{
+          refused
+        }}
+      </p>
+    } @else if (list.length) {
       <ul class="run-log-list" aria-label="Steps that ran">
         @for (entry of list; track entry.id) {
           <li class="run-log-row">
@@ -613,6 +622,7 @@ export class RunLogPanel {
   }
   status(): string {
     const host = this.host();
+    if (host.executeRefusal?.()) return "Didn't start";
     const session = host.runSession();
     if (session) {
       const view = session.view as {
