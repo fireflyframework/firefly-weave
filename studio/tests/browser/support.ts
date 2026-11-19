@@ -684,8 +684,3 @@ export async function hostScope(page: Page) {
     await route.fulfill({ json: JSON.parse(stdout) }).catch(() => undefined);
   });
 }
-/** Where a drop maps the field: its right side, clear of the pill's own controls. */
-async function rightSide(target: Locator) {
-  const area = (await target.boundingBox())!;
-  return { x: Math.max(4, area.width - 48), y: area.height / 2 };
-}
