@@ -45,6 +45,8 @@ export interface TraceStep {
   status: "running" | "waiting" | "completed" | "failed";
   /** A loop's entry: how many results its output list holds. */
   results?: number;
+  /** The incident a failed entry stopped the run with, when the answer says (WV-RUNTIME-LOOP-LIMIT). */
+  code?: string;
 }
 /** One run of a loop at a point of the playback. */
 export interface LoopRun {
@@ -61,7 +63,11 @@ export interface LoopRun {
   failedAt: number | null;
   /** Once done, how many results it returned (Skip empty results leaves some out); null otherwise. */
   results: number | null;
+  /** It failed before its first item because its list was longer than Up to; absent otherwise. */
+  overLimit?: true;
 }
+/** The incident a loop over more items than its Up to opens. */
+export const LOOP_LIMIT = "WV-RUNTIME-LOOP-LIMIT";
 
 /** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
 const iterationOf = (key: string): number[] =>
@@ -92,6 +98,8 @@ export function loopProgress(
   >();
   const last = new Map<string, Map<number, number>>();
   const failures = new Map<string, Set<number>>();
+  // A loop the run stopped at, by its own failed entry, and the incident it opened.
+  const stopped = new Map<string, string | null>();
   const keyOf = (id: string, within: readonly number[]) =>
     id + within.map((index) => `[${index}]`).join("");
   trace.forEach((entry, position) => {
@@ -104,6 +112,12 @@ export function loopProgress(
           within,
           results: entry.results ?? null,
         });
+      if (
+        entry.status === "failed" &&
+        position < played &&
+        position === trace.length - 1
+      )
+        stopped.set(key, entry.code ?? null);
     }
     const iteration = iterationOf(entry.instanceKey);
     loopsAround(entry.nodeId).forEach((loop, depth) => {
@@ -128,8 +142,10 @@ export function loopProgress(
     const failed = [...(failures.get(key) ?? [])];
     const failedAt = failed.length ? Math.min(...failed) + 1 : null;
     const count = counts[key] ?? null;
+    // The run stopped at the loop itself, before any of its items ran.
+    const failedItself = stopped.has(key) && !last.get(key)?.size;
     const status =
-      failedAt !== null
+      failedAt !== null || failedItself
         ? "failed"
         : ended || (count !== null && finished >= count)
           ? "done"
@@ -142,6 +158,9 @@ export function loopProgress(
       status,
       failedAt,
       results: status === "done" ? run.results : null,
+      ...(failedItself && stopped.get(key) === LOOP_LIMIT
+        ? { overLimit: true as const }
+        : {}),
     };
   });
 }

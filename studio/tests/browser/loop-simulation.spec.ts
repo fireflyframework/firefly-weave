@@ -103,6 +103,20 @@ const SKIPPED = workflow(
 `,
 );
 
+/** Three orders, but Up to 2: the loop fails before its first item, as a real run does. */
+const OVER = workflow(
+  "order-limit",
+  [{ name: "a" }, { name: "b" }, { name: "c" }],
+  `      concurrency: 1
+      maxItems: 2
+      collect: all
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item}}
+        output: {ref: /item}
+`,
+);
+
 const header = (page: Page) =>
   page.locator('.canvas-v2 .tile-node[data-tile="orders"] .frame-header');
 const runText = (page: Page) => header(page).locator(".frame-run");
@@ -200,6 +214,22 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
     );
     // The steps inside the loop show only under its items.
     await expect(log.locator('[data-entry="send"]')).toHaveCount(0);
+  });
+
+  test("a loop over its Up to fails before its first item and says why", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openExecuteWorkflow(page, OVER);
+    await execute(page);
+    await expect(runText(page)).toHaveText("· failed: list longer than Up to");
+    await expect(runText(page)).toHaveAttribute("data-tone", "failed");
+    await expect(
+      page.locator('.canvas-v2 .loop-frame[data-frame="orders"]'),
+    ).toHaveClass(/\berror\b/);
+    await expect(page.locator(".canvas-run-alert")).toHaveText(
+      "orders failed: its list is longer than Up to.",
+    );
   });
 
   test("a loop that skips empty results says how many it left out", async ({

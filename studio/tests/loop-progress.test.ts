@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // many items finished at each step of the playback, then how it ended.
 import "@angular/compiler";
 import { describe, expect, it } from "vitest";
+import { loopRunText } from "../src/app/editor/canvas/loop-frame";
 import {
   loopProgress,
   type TraceStep,
@@ -101,6 +102,46 @@ describe("a loop's progress during a playback", () => {
     expect(
       loopProgress(twice, twice.length, {}, around, true)[0].failedAt,
     ).toBe(1);
+  });
+
+  it("fails a loop that failed itself before its first item, and keeps why", () => {
+    const over: TraceStep[] = [
+      step("fetch"),
+      {
+        ...step("orders", "", "failed", "forEach"),
+        code: "WV-RUNTIME-LOOP-LIMIT",
+      },
+    ];
+    expect(loopProgress(over, over.length, {}, around, true)[0]).toMatchObject({
+      status: "failed",
+      finished: 0,
+      failedAt: null,
+      overLimit: true,
+    });
+    // Not yet while its entry plays.
+    expect(loopProgress(over, 1, {}, around, false)[0].status).toBe("running");
+    // Without a code the reason isn't known.
+    const failed = [step("fetch"), step("orders", "", "failed", "forEach")];
+    const run = loopProgress(failed, failed.length, {}, around, true)[0];
+    expect(run).toMatchObject({ status: "failed", failedAt: null });
+    expect(run.overLimit).toBeUndefined();
+    // A loop whose items ran before a later step failed didn't fail itself.
+    const later: TraceStep[] = [
+      ...OK.slice(0, -1).map((entry) =>
+        entry.kind === "forEach"
+          ? { ...entry, status: "failed" as const }
+          : entry,
+      ),
+      step("summarize", "", "failed"),
+    ];
+    expect(
+      loopProgress(later, later.length, { orders: 3 }, around, true)[0],
+    ).toMatchObject({ status: "done", failedAt: null, finished: 3 });
+    // The frame's header says it.
+    expect(
+      loopRunText(loopProgress(over, over.length, {}, around, true)[0]),
+    ).toBe("failed: list longer than Up to");
+    expect(loopRunText(run)).toBe("failed");
   });
 
   it("says which item failed once its failure has played", () => {
@@ -231,6 +272,31 @@ describe("the playback's frames", () => {
     expect(finalAnnouncement(response(failed, "failed"))).toBe(
       "orders failed at item 2.",
     );
+  });
+
+  it("says a loop failed before its first item, and why when the run says", () => {
+    const over = [step("fetch"), step("orders", "", "failed", "forEach")];
+    const answer = (codes: string[]) =>
+      ({
+        ...response(over, "failed"),
+        loops: [],
+        diagnostics: codes.map((code) => ({
+          code,
+          severity: "error",
+          stage: "evaluation",
+          message: "A loop's list was longer than its item limit.",
+          path: "",
+        })),
+      }) as ExecuteResponse;
+    expect(finalAnnouncement(answer(["WV-RUNTIME-LOOP-LIMIT"]), around)).toBe(
+      "orders failed: its list is longer than Up to.",
+    );
+    // The frame reads the same reason from the playback.
+    expect(
+      playbackFrames(answer(["WV-RUNTIME-LOOP-LIMIT"]), true).at(-1)
+        ?.trace?.[1],
+    ).toMatchObject({ code: "WV-RUNTIME-LOOP-LIMIT" });
+    expect(finalAnnouncement(answer([]), around)).toBe("orders failed.");
   });
 });
 

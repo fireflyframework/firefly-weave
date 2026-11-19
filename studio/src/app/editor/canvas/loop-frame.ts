@@ -138,9 +138,15 @@ export function loopRunText(run: {
   count: number | null;
   status: "running" | "done" | "failed";
   failedAt: number | null;
+  overLimit?: true;
 }): string {
-  if (run.status === "failed" && run.failedAt !== null)
-    return `failed at item ${run.failedAt.toLocaleString("en-US")}`;
+  if (run.status === "failed")
+    return run.failedAt !== null
+      ? `failed at item ${run.failedAt.toLocaleString("en-US")}`
+      : // Before its first item: the reason when the run says it.
+        run.overLimit
+        ? "failed: list longer than Up to"
+        : "failed";
   const finished = run.finished.toLocaleString("en-US");
   return run.count === null
     ? `${finished} finished`

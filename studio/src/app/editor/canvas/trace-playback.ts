@@ -19,23 +19,38 @@ SPDX-License-Identifier: Apache-2.0
 // current tile gets the live border, finished ones the check, a failed one
 // the error. With reduced motion only the last frame is shown. DOM-free.
 import type { ExecuteResponse } from "../state/execution";
-import { loopProgress, type CanvasRun, type TraceStep } from "./run-state";
+import {
+  LOOP_LIMIT,
+  loopProgress,
+  type CanvasRun,
+  type TraceStep,
+} from "./run-state";
 
 export const PLAYBACK_STEP_MS = 120;
 
 /** The steps of the trace a playback reads: this workflow's, not a called one's. */
-export const stepsOf = (response: ExecuteResponse): TraceStep[] =>
-  response.trace
-    .filter((entry) => !entry.frame)
-    .map(({ nodeId, instanceKey, kind, status, output }) => ({
-      nodeId,
-      instanceKey,
-      kind,
-      status,
-      ...(kind === "forEach" && Array.isArray(output)
-        ? { results: output.length }
-        : {}),
-    }));
+export function stepsOf(response: ExecuteResponse): TraceStep[] {
+  const top = response.trace.filter((entry) => !entry.frame);
+  // The loop the run stopped at failed itself on its Up to: the answer's diagnostic.
+  const overLimit = (response.diagnostics ?? []).some(
+    (problem) => problem.code === LOOP_LIMIT,
+  );
+  return top.map(({ nodeId, instanceKey, kind, status, output }, index) => ({
+    nodeId,
+    instanceKey,
+    kind,
+    status,
+    ...(kind === "forEach" && Array.isArray(output)
+      ? { results: output.length }
+      : {}),
+    ...(overLimit &&
+    kind === "forEach" &&
+    status === "failed" &&
+    index === top.length - 1
+      ? { code: LOOP_LIMIT }
+      : {}),
+  }));
+}
 /** Each loop instance's count, as the simulator reports it (`orders`, `lines[2]`). */
 export const countsOf = (response: ExecuteResponse): Record<string, number> =>
   Object.fromEntries(
@@ -143,7 +158,12 @@ export function finalAnnouncement(
     loopsAround ?? loopsInTrace(trace),
     true,
   ).find((loop) => loop.status === "failed");
-  if (failed) return `${failed.id} failed at item ${failed.failedAt}.`;
+  if (failed)
+    return failed.failedAt !== null
+      ? `${failed.id} failed at item ${failed.failedAt}.`
+      : failed.overLimit
+        ? `${failed.id} failed: its list is longer than Up to.`
+        : `${failed.id} failed.`;
   if (response.status === "completed") {
     const count = new Set(
       response.trace
