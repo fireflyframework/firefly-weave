@@ -223,6 +223,11 @@ test.describe("A recorded loop at 1440x900", () => {
     await expect(options.first()).toContainText("SMTP_REJECTED");
     await expect(options.first()).toContainText("Failed");
     await expect(options).toHaveCount(6);
+    // Go to item is 64 × 32, as the list's other controls.
+    const field = (await list.getByRole("textbox").boundingBox())!;
+    expect([Math.round(field.width), Math.round(field.height)]).toEqual([
+      64, 32,
+    ]);
     await page.keyboard.press("ArrowDown");
     await expect(options.nth(1)).toBeFocused();
     await expect(options.nth(1)).toContainText("Finished");

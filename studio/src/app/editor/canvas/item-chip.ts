@@ -321,11 +321,13 @@ export function typedItem(text: string, count: number): number | null {
       .item-go input {
         width: 64px;
         height: 32px;
+        min-height: 32px;
         box-sizing: border-box;
       }
       .item-list[data-side="sheet"] .item-go input {
         width: 80px;
         height: 44px;
+        min-height: 44px;
       }
       .item-options {
         overflow: auto;
