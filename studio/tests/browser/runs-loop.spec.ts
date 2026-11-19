@@ -194,8 +194,12 @@ test.describe("A recorded loop at 1440x900", () => {
       "Item 3 of 5, Finished. Choose an item",
     );
     await expect.poll(() => tileState(page, "send")).toBe("done");
-    // The frame keeps the run's state.
+    // The frame keeps the run's state, and its header the item it failed at.
     await expect(frame).toHaveClass(/\berror\b/);
+    const head = page.locator('.canvas-v2 .tile-node[data-tile="orders"]');
+    await expect(head.locator(".frame-run")).toHaveText("· failed at item 4");
+    // The code shows on the failed step, not under the frame.
+    await expect(head.locator(".tile-output")).toHaveCount(0);
     await chip.getByRole("button", { name: "Next item" }).click();
     await chip.getByRole("button", { name: "Next item" }).click();
     await expect(item).toHaveAccessibleName(

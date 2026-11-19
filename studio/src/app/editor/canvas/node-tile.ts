@@ -51,6 +51,12 @@ export interface FrameView {
   pending: boolean;
   /** "· up to 4 at a time", or "". */
   suffix: string;
+  /** While a run shows: "7 of 20", "20 of 20" or "failed at item 4", and how far it is (0 to 1). */
+  run?: {
+    text: string;
+    tone: "live" | "done" | "failed";
+    progress: number | null;
+  } | null;
 }
 
 export interface TileView {
@@ -126,10 +132,26 @@ export interface TileView {
           <span class="frame-name">{{ v.title }}</span>
           <span class="frame-lead">For each item in</span>
           <span class="frame-items">{{ frame.items }}</span>
-          @if (frame.suffix) {
+          <!-- A run's status takes the at-a-time suffix's place and never shortens. -->
+          @if (frame.run; as run) {
+            <span class="frame-run" [attr.data-tone]="run.tone"
+              >·
+              @if (run.tone === "live") {
+                <span class="frame-live-dot" aria-hidden="true"></span>
+              }
+              {{ run.text }}</span
+            >
+          } @else if (frame.suffix) {
             <span class="frame-suffix">{{ frame.suffix }}</span>
           }
         </span>
+        @if (frame.run?.tone === "live" && frame.run?.progress !== null) {
+          <span
+            class="frame-progress"
+            [style.--frame-progress]="frame.run?.progress"
+            aria-hidden="true"
+          ></span>
+        }
       } @else if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
       }

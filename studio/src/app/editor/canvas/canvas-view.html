@@ -442,6 +442,8 @@ SPDX-License-Identifier: Apache-2.0
   <p class="sr-only canvas-run-status" role="status">
     {{ said && !said.urgent ? said.text : "" }}
   </p>
+  <!-- A loop's progress while a simulation plays, at most every 2 s. -->
+  <p class="sr-only canvas-loop-status" role="status">{{ loopSaid }}</p>
   <p class="sr-only canvas-run-alert" role="alert">
     {{ said?.urgent ? said.text : "" }}
   </p>

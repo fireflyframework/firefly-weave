@@ -131,6 +131,7 @@ import {
   frameHeaderHeight,
   loopHeaderParts,
   loopResultText,
+  loopRunText,
 } from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
@@ -145,6 +146,8 @@ import {
   frameRun,
   framedStep,
   isRecordedRun,
+  loopProgress,
+  type LoopRun,
   type RecordedLoop,
   type RecordedRun,
 } from "./run-state";
@@ -197,10 +200,39 @@ const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
 const LISTENING = "Listening for test event";
 
 /** What a loop's frame draws around its body, from its layout. */
-function frameView(step: Step, frame: LtrFrame): FrameView {
+function frameView(
+  step: Step,
+  frame: LtrFrame,
+  run: FrameView["run"] = null,
+): FrameView {
   const { items, suffix } = loopHeaderParts(step);
-  return { height: frame.height, items: items ?? "…", pending: !items, suffix };
+  return {
+    height: frame.height,
+    items: items ?? "…",
+    pending: !items,
+    suffix,
+    run,
+  };
 }
+/** A loop's run, as its header says it: its words, its tone and how far it is. */
+function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
+  return {
+    text: loopRunText(loop),
+    tone:
+      loop.status === "running"
+        ? "live"
+        : loop.status === "failed"
+          ? "failed"
+          : "done",
+    progress: loop.count ? Math.min(1, loop.finished / loop.count) : null,
+  };
+}
+/** A loop's tile follows its items: live while they run, failed once one failed. */
+const LOOP_TILE_RUN: Readonly<Record<LoopRun["status"], TileRun>> = {
+  running: "live",
+  failed: "failed",
+  done: "done",
+};
 
 const modified = (event: KeyboardEvent) =>
   event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
@@ -482,6 +514,7 @@ export class CanvasView implements OnInit, DoCheck {
       );
     }
     this.syncSelection();
+    this.sayLoopProgress();
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
@@ -620,8 +653,15 @@ export class CanvasView implements OnInit, DoCheck {
         (id) => places.get(id)?.parent ?? null,
         new Set(frames.keys()),
       );
+      // In a simulation played back, each loop's progress at this frame.
+      const progress = this.loopRuns(layout, run);
       return layout.tiles.map((tile) => {
-        const state = tile.step ? tileRun(tile.id, run) : null;
+        const loopRun = progress?.filter((each) => each.id === tile.id).at(-1);
+        const state = loopRun
+          ? LOOP_TILE_RUN[loopRun.status]
+          : tile.step
+            ? tileRun(tile.id, run)
+            : null;
         return this.tileView(
           tile,
           ctx,
@@ -646,6 +686,7 @@ export class CanvasView implements OnInit, DoCheck {
             listening:
               !!listening && tile.id === triggerChoiceTarget(listening),
             frame: tile.step ? frames.get(tile.id) : undefined,
+            loop: loopRun,
           },
         );
       });
@@ -697,6 +738,8 @@ export class CanvasView implements OnInit, DoCheck {
       recorded?: RecordedRun | null;
       /** A loop's frame: the tile is its header band. */
       frame?: LtrFrame;
+      /** A loop's progress in the simulation played back. */
+      loop?: LoopRun;
     },
   ): TileView {
     const h = this.host();
@@ -740,11 +783,39 @@ export class CanvasView implements OnInit, DoCheck {
     const descriptor = ndvRegistry.kind(tile.kind);
     const kindLabel = descriptor?.label ?? h.label(tile.kind);
     // A loop's header says what it goes over: "For each item in input.orders".
-    const frame = state.frame ? frameView(tile.step, state.frame) : null;
-    const summary = state.frame
-      ? state.frame.header
-      : (descriptor?.summary(tile.step, ctx) ?? "");
     const recorded = state.recorded;
+    // A recorded loop keeps the item it failed at in its header, whichever item its chip shows.
+    const recordedRun =
+      recorded && state.frame ? this.recordedLoop(tile.id, recorded) : null;
+    const failedItem = recordedRun?.items.find(
+      (item) => item.status === "failed",
+    );
+    const frameRun = state.loop
+      ? frameRunOf(state.loop)
+      : failedItem
+        ? {
+            text: loopRunText({
+              finished: 0,
+              count: null,
+              status: "failed",
+              failedAt: failedItem.index + 1,
+            }),
+            tone: "failed" as const,
+            progress: null,
+          }
+        : null;
+    const frame = state.frame
+      ? frameView(tile.step, state.frame, frameRun)
+      : null;
+    const summary = frame
+      ? `For each item in ${frame.items}${
+          frameRun
+            ? ` · ${frameRun.text}`
+            : frame.suffix
+              ? ` ${frame.suffix}`
+              : ""
+        }`
+      : (descriptor?.summary(tile.step, ctx) ?? "");
     // A run that happened shows what it did, not the draft's errors, setup or pins.
     const shown = recorded
       ? {
@@ -773,16 +844,24 @@ export class CanvasView implements OnInit, DoCheck {
     const badge = tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
-    // A loop the run finished says how many items it had under its frame.
-    const loop =
-      recorded && state.frame && state.run === "done"
-        ? this.recordedLoop(tile.id, recorded)
-        : null;
-    const fact = loop
-      ? { text: loopResultText(loop.count, loop.results), tone: null }
-      : recorded
-        ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-        : null;
+    // A loop the run finished says how many items it had under its frame;
+    // a failed one says it in its header, and its failed step shows the code.
+    const finishedLoop =
+      state.loop?.status === "done" && state.loop.count !== null
+        ? state.loop
+        : recordedRun && state.run === "done"
+          ? recordedRun
+          : null;
+    const fact = finishedLoop
+      ? {
+          text: loopResultText(finishedLoop.count!, finishedLoop.results),
+          tone: null,
+        }
+      : recordedRun
+        ? null
+        : recorded
+          ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+          : null;
     return {
       ...common,
       step: true,
@@ -960,6 +1039,58 @@ export class CanvasView implements OnInit, DoCheck {
   private readonly loopsMemo = memo(
     (layout: LtrLayout) => new Set(layout.frames.map((frame) => frame.id)),
   );
+  /** The loops around each step, outermost first, read from the layout. */
+  private loopsAroundOf(layout: LtrLayout) {
+    const loops = this.loopsMemo(layout);
+    const places = this.places();
+    return (id: string): readonly string[] => {
+      const around: string[] = [];
+      for (
+        let parent = places.get(id)?.parent ?? null;
+        parent;
+        parent = places.get(parent)?.parent ?? null
+      )
+        if (loops.has(parent)) around.unshift(parent);
+      return around;
+    };
+  }
+  private readonly loopRunsMemo = memo(
+    (layout: LtrLayout, run: CanvasRun | null): LoopRun[] | null =>
+      run?.trace
+        ? loopProgress(
+            run.trace,
+            run.at ?? 0,
+            run.counts ?? {},
+            this.loopsAroundOf(layout),
+            !!run.ended,
+          )
+        : null,
+  );
+  /** Each loop's progress in the simulation played back at this frame; null without one. */
+  private loopRuns(layout: LtrLayout, run: CanvasRun | null): LoopRun[] | null {
+    return this.loopRunsMemo(layout, run);
+  }
+  /** "orders, 7 of 20": the loops' progress, said at most every 2 s while a simulation plays. */
+  loopSaid = "";
+  private loopSaidAt = 0;
+  private sayLoopProgress() {
+    const run = this.viewingRuns() ? null : this.host().canvasRun();
+    const progress =
+      run && !run.ended ? this.loopRuns(this.layout(), run) : null;
+    if (!progress) {
+      this.loopSaid = "";
+      return;
+    }
+    const text = progress
+      .filter((loop) => !loop.within.length)
+      .map((loop) => `${loop.id}, ${loopRunText(loop)}`)
+      .join("; ");
+    const now = Date.now();
+    if (text && text !== this.loopSaid && now - this.loopSaidAt >= 2000) {
+      this.loopSaid = text;
+      this.loopSaidAt = now;
+    }
+  }
   /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
   handleOffset(tile: string): number {
     return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;

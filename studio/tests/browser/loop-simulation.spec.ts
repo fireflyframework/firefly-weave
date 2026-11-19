@@ -1,0 +1,193 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// Execute workflow with a loop, simulated by the repository's own Python
+// through the local authoring routes: the frame's header follows the items
+// as the playback runs ("2 of 3"), then says how the loop ended ("3 of 3",
+// "failed at item 3"); under the frame, how many items it had.
+import { expect, test, type Page } from "@playwright/test";
+import { openExecuteWorkflow } from "./execute-po";
+import { hasPython } from "./local-authoring";
+import { yamlFile } from "./step-details-po";
+
+test.skip(!hasPython, "Create the Python development environment first.");
+
+const workflow = (name: string, rows: unknown[], loop: string) =>
+  yamlFile(
+    `${name}.yaml`,
+    `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: ${name}, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: fetch
+      kind: transform
+      value: {literal: {rows: ${JSON.stringify(rows)}}}
+    - id: orders
+      kind: forEach
+      items: {ref: /steps/fetch/output/rows}
+${loop}    - id: summarize
+      kind: transform
+      value: {literal: done}
+  output: {literal: null}
+`,
+  );
+/** Three orders, two at a time: check, then send. */
+const SENT = workflow(
+  "order-notify",
+  [{ name: "a" }, { name: "b" }, { name: "c" }],
+  `      concurrency: 2
+      maxItems: 1000
+      collect: all
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item}}
+          - {id: send, kind: transform, value: {ref: /item/name}}
+        output: {ref: /item}
+`,
+);
+/** Four orders; the third isn't ok, so its path ends in a failure. */
+const REJECTED = workflow(
+  "order-reject",
+  [
+    { name: "a", ok: true },
+    { name: "b", ok: true },
+    { name: "c", ok: false },
+    { name: "d", ok: true },
+  ],
+  `      concurrency: 1
+      maxItems: 1000
+      collect: all
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item}}
+          - id: route
+            kind: switch
+            cases:
+              - when: {ref: /item/ok}
+                steps: [{id: send, kind: transform, value: {ref: /item/name}}]
+                output: {literal: null}
+            default:
+              steps: [{id: reject, kind: fail, code: SMTP_REJECTED, message: rejected}]
+              output: {literal: null}
+        output: {ref: /item}
+`,
+);
+/** Five orders; Skip empty results leaves out the two without a note. */
+const SKIPPED = workflow(
+  "order-notes",
+  [{ note: "x" }, { note: null }, { note: "y" }, { note: null }, { note: "z" }],
+  `      concurrency: 1
+      maxItems: 1000
+      collect: nonNull
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item}}
+        output: {ref: /item/note}
+`,
+);
+
+const header = (page: Page) =>
+  page.locator('.canvas-v2 .tile-node[data-tile="orders"] .frame-header');
+const runText = (page: Page) => header(page).locator(".frame-run");
+const execute = (page: Page) =>
+  page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" })
+    .click();
+
+test.describe("A loop in Execute workflow at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the frame follows the items as the run plays, then says how many finished", async ({
+    page,
+  }) => {
+    await openExecuteWorkflow(page, SENT);
+    await execute(page);
+    // While the items run, the frame is live and counts them.
+    await page.waitForFunction(
+      () =>
+        document.querySelector(
+          '.tile-node[data-tile="orders"] .frame-run[data-tone="live"]',
+        ) !== null,
+      undefined,
+      { polling: "raf", timeout: 10_000 },
+    );
+    await expect(runText(page)).toHaveText("· 3 of 3");
+    await expect(runText(page)).toHaveAttribute("data-tone", "done");
+    // The at-a-time suffix steps aside while a run status shows.
+    await expect(header(page).locator(".frame-suffix")).toHaveCount(0);
+    await expect(header(page)).toHaveAccessibleName(
+      /For each item in steps\.fetch\.output\.rows · 3 of 3/,
+    );
+    await expect(
+      page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
+    ).toHaveText("3 items");
+  });
+
+  test("a loop that fails names the item on its frame and when the run ends", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openExecuteWorkflow(page, REJECTED);
+    await execute(page);
+    await expect(runText(page)).toHaveText("· failed at item 3");
+    await expect(runText(page)).toHaveAttribute("data-tone", "failed");
+    await expect(
+      page.locator('.canvas-v2 .loop-frame[data-frame="orders"]'),
+    ).toHaveClass(/\berror\b/);
+    await expect(
+      page.locator('.canvas-v2 .tile-node[data-tile="reject"] .tile-badge'),
+    ).toHaveAttribute("data-badge", "failed");
+    await expect(page.locator(".canvas-run-alert")).toHaveText(
+      "orders failed at item 3.",
+    );
+    // The run log says where it failed, item by item.
+    const log = page.getByRole("region", { name: "Run log" });
+    await expect(log.locator(".run-log-status")).toHaveText(
+      "Failed at reject, item 3",
+    );
+    await expect(log.locator('[data-entry="orders"]')).toContainText(
+      "2 of 4 items finished",
+    );
+    const items = log.getByRole("list", { name: "Items of orders" });
+    await expect(items.getByRole("button")).toHaveText([
+      /Item 1\s*check, route, send/,
+      /Item 2\s*check, route, send/,
+      /Item 3\s*Failed at reject/,
+    ]);
+    await expect(items.locator(".run-log-not-run")).toHaveText(
+      "Item 4 didn't run.",
+    );
+    // The steps inside the loop show only under its items.
+    await expect(log.locator('[data-entry="send"]')).toHaveCount(0);
+  });
+
+  test("a loop that skips empty results says how many it left out", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openExecuteWorkflow(page, SKIPPED);
+    await execute(page);
+    await expect(runText(page)).toHaveText("· 5 of 5");
+    await expect(
+      page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
+    ).toHaveText("5 items, 2 skipped");
+  });
+});

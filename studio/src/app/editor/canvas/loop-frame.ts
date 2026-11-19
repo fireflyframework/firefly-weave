@@ -127,3 +127,22 @@ export function loopResultText(count: number, results: number | null): string {
   const skipped = results === null ? 0 : count - results;
   return skipped > 0 ? `${items}, ${skipped} skipped` : items;
 }
+
+/**
+ * The run status at the end of a loop's header while a run shows: "7 of 20",
+ * "20 of 20" once done, "failed at item 4"; "7 finished" when the run
+ * doesn't say how many items there are.
+ */
+export function loopRunText(run: {
+  finished: number;
+  count: number | null;
+  status: "running" | "done" | "failed";
+  failedAt: number | null;
+}): string {
+  if (run.status === "failed" && run.failedAt !== null)
+    return `failed at item ${run.failedAt.toLocaleString("en-US")}`;
+  const finished = run.finished.toLocaleString("en-US");
+  return run.count === null
+    ? `${finished} finished`
+    : `${finished} of ${run.count.toLocaleString("en-US")}`;
+}

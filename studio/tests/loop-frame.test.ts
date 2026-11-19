@@ -24,6 +24,7 @@ import {
   frameHeaderHeight,
   loopHeader,
   loopHeaderParts,
+  loopRunText,
 } from "../src/app/editor/canvas/loop-frame";
 import { createStep, type Step } from "../src/app/model";
 
@@ -178,5 +179,27 @@ describe("the steps drawn selected", () => {
         loops,
       ),
     ).toEqual(new Set(["fetch", "check"]));
+  });
+});
+
+describe("a loop's run status in its header", () => {
+  it("says how many items finished of how many, or the item it failed at", () => {
+    const run = (extra: Record<string, unknown>) => ({
+      finished: 7,
+      count: 20,
+      status: "running" as const,
+      failedAt: null,
+      ...extra,
+    });
+    expect(loopRunText(run({}))).toBe("7 of 20");
+    expect(loopRunText(run({ finished: 20, status: "done" }))).toBe("20 of 20");
+    expect(loopRunText(run({ status: "failed", failedAt: 4 }))).toBe(
+      "failed at item 4",
+    );
+    // Without a count, how many finished.
+    expect(loopRunText(run({ count: null }))).toBe("7 finished");
+    expect(loopRunText(run({ count: 1200, finished: 1000 }))).toBe(
+      "1,000 of 1,200",
+    );
   });
 });

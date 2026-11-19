@@ -225,3 +225,39 @@ SPDX-License-Identifier: Apache-2.0
     height: 44px;
   }
 }
+
+/* A loop's row: how far it got, a 64 px bar; under it, each item it ran,
+   nested loops' items too ("Item 2 › 1"), and the items that didn't run. */
+.run-log-progress {
+  position: relative;
+  width: 64px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+}
+.run-log-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--progress, 0) * 100%);
+  background: var(--success-ink);
+}
+.run-log-entry[data-status="failed"] .run-log-progress::after {
+  background: var(--danger-ink);
+}
+.run-log-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-log-item {
+  padding-inline-start: calc(var(--space-3) + 24px);
+  min-height: 28px;
+}
+.run-log-not-run {
+  padding: var(--space-1) var(--space-3) var(--space-1)
+    calc(var(--space-3) + 24px);
+  color: var(--muted);
+  font: var(--type-caption);
+}

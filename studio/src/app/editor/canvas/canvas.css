@@ -347,6 +347,48 @@ weave-canvas-view,
   text-overflow: ellipsis;
   margin-left: 0.33em;
 }
+/* While a run shows, its status ends the header and never shortens: "· 7 of
+   20" with a live dot, "· 20 of 20", or "· failed at item 4" in danger ink. A
+   2 px line along the band's bottom grows with each finished item. */
+.canvas-v2 .frame-run {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  margin-left: 0.33em;
+  color: var(--text);
+}
+.canvas-v2 .frame-run[data-tone="failed"] {
+  color: var(--danger-ink);
+}
+.canvas-v2 .frame-live-dot {
+  width: 0.67em;
+  height: 0.67em;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0.2em var(--live-glow);
+}
+.canvas-v2 .frame-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(2px * var(--frame-text-scale, 1));
+  background: var(--line);
+}
+.canvas-v2 .frame-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--frame-progress, 0) * 100%);
+  background: var(--live);
+  transition: width var(--dur) var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-v2 .frame-progress::after {
+    transition: none;
+  }
+}
 /* No list yet: "loop-1 For each item in …" stays whole. */
 .canvas-v2 .frame-pending .frame-items {
   flex: none;

@@ -27,6 +27,123 @@ export interface CanvasRun {
   active: readonly string[];
   /** Steps it finished. */
   done: readonly string[];
+  /** A simulation played back: its whole trace, how far the playback is, and each loop's count. */
+  trace?: readonly TraceStep[];
+  /** Entries before it have played; the one at it is playing. */
+  at?: number;
+  /** A loop's instance key (`orders`, `lines[2]`) to how many items it had. */
+  counts?: Readonly<Record<string, number>>;
+  /** The playback ended: the whole trace has played. */
+  ended?: boolean;
+}
+/** One step of a simulated run's trace, as the playback reads it. */
+export interface TraceStep {
+  nodeId: string;
+  /** "" when it is the step ID. */
+  instanceKey: string;
+  kind: string;
+  status: "running" | "waiting" | "completed" | "failed";
+  /** A loop's entry: how many results its output list holds. */
+  results?: number;
+}
+/** One run of a loop at a point of the playback. */
+export interface LoopRun {
+  /** The loop step. */
+  id: string;
+  /** The item of each loop around it, outermost first; [] at the top level. */
+  within: readonly number[];
+  /** Items finished so far. */
+  finished: number;
+  /** How many items it has; null when the simulation doesn't say. */
+  count: number | null;
+  status: "running" | "done" | "failed";
+  /** The failed item, one-based; null while none failed. */
+  failedAt: number | null;
+  /** Once done, how many results it returned (Skip empty results leaves some out); null otherwise. */
+  results: number | null;
+}
+
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+
+/**
+ * Each run of each loop at a point of the playback: the entries before `at`
+ * have played (all of them once it `ended`). An item is finished once its
+ * last entry in the whole trace has played and completed, and failed once a
+ * step failed in it; a loop is done when every item it has finished.
+ * `loopsAround` names the loops around a step, outermost first.
+ */
+export function loopProgress(
+  trace: readonly TraceStep[],
+  at: number,
+  counts: Readonly<Record<string, number>>,
+  loopsAround: (stepId: string) => readonly string[],
+  ended: boolean,
+): LoopRun[] {
+  const played = ended ? trace.length : Math.min(at, trace.length);
+  // Each loop's runs, in the order they started; each item's last entry,
+  // and the items a step failed in once that failure played.
+  const runs = new Map<
+    string,
+    { id: string; within: number[]; results: number | null }
+  >();
+  const last = new Map<string, Map<number, number>>();
+  const failures = new Map<string, Set<number>>();
+  const keyOf = (id: string, within: readonly number[]) =>
+    id + within.map((index) => `[${index}]`).join("");
+  trace.forEach((entry, position) => {
+    if (entry.kind === "forEach" && position <= played) {
+      const within = iterationOf(entry.instanceKey);
+      const key = keyOf(entry.nodeId, within);
+      if (!runs.has(key))
+        runs.set(key, {
+          id: entry.nodeId,
+          within,
+          results: entry.results ?? null,
+        });
+    }
+    const iteration = iterationOf(entry.instanceKey);
+    loopsAround(entry.nodeId).forEach((loop, depth) => {
+      if (iteration.length <= depth) return;
+      const key = keyOf(loop, iteration.slice(0, depth));
+      let items = last.get(key);
+      if (!items) last.set(key, (items = new Map()));
+      items.set(iteration[depth], position);
+      // A failure inside an item, nested loops included, fails it.
+      if (entry.status === "failed" && position < played) {
+        let failed = failures.get(key);
+        if (!failed) failures.set(key, (failed = new Set()));
+        failed.add(iteration[depth]);
+      }
+    });
+  });
+  return [...runs].map(([key, run]) => {
+    let finished = 0;
+    for (const position of last.get(key)?.values() ?? [])
+      if (position < played && trace[position].status === "completed")
+        finished++;
+    const failed = [...(failures.get(key) ?? [])];
+    const failedAt = failed.length ? Math.min(...failed) + 1 : null;
+    const count = counts[key] ?? null;
+    const status =
+      failedAt !== null
+        ? "failed"
+        : ended || (count !== null && finished >= count)
+          ? "done"
+          : "running";
+    return {
+      id: run.id,
+      within: run.within,
+      finished,
+      count,
+      status,
+      failedAt,
+      results: status === "done" ? run.results : null,
+    };
+  });
 }
 /**
  * A run that happened, drawn on the Runs tab over the open draft: the steps

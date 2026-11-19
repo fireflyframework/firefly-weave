@@ -33,7 +33,9 @@ import { Icon } from "../../icon";
 import type { Step, Workflow } from "../../model";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Json } from "../ndv/registry";
-import { allSteps } from "../ndv/step-walk";
+import { allSteps, childLists } from "../ndv/step-walk";
+import { loopProgress } from "../canvas/run-state";
+import { countsOf, stepsOf } from "../canvas/trace-playback";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
 import type {
   ExecuteResponse,
@@ -70,6 +72,12 @@ export interface RunLogEntry {
   summary: string | null;
   stale: boolean;
   breakpoint: boolean;
+  /** A loop's row: how far it got, its items (nested loops' too), the items that didn't run. */
+  loop?: {
+    progress: number | null;
+    items: LoopLogItem[];
+    notRun: string[];
+  };
 }
 
 const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
@@ -79,6 +87,116 @@ const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
   running: "wait",
   current: "play",
 };
+
+/** One item of a loop in the run log: "Item 3", what it went through, where it failed. */
+export interface LoopLogItem {
+  label: string;
+  status: "completed" | "failed" | "running";
+  /** "check, send", "Failed at send", "at send". */
+  text: string;
+  /** The step its row opens: where it failed, else the last one it reached. */
+  step: string;
+}
+/** One run of a loop in the run log. */
+export interface LoopLog {
+  id: string;
+  within: readonly number[];
+  /** "20 of 20 items", "3 of 20 items finished", "2 items". */
+  summary: string;
+  /** How far it got, 0 to 1; null without a count. */
+  progress: number | null;
+  items: LoopLogItem[];
+  /** "Items 5 to 20 didn't run."; null when every item ran. */
+  notRun: string | null;
+}
+const plural = (count: number) =>
+  `${count.toLocaleString("en-US")} ${count === 1 ? "item" : "items"}`;
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+/** "Item 3", or "Item 2 › 1" inside the second item of the loop around it. */
+const itemLabel = (within: readonly number[], index: number) =>
+  `Item ${[...within, index].map((at) => at + 1).join(" › ")}`;
+
+/**
+ * Each run of each loop in an execution, for the run log: how many items
+ * finished, each item with the steps it went through (or where it failed),
+ * and the items that didn't run. `loopsAround` names the loops around a step.
+ */
+export function loopLog(
+  response: ExecuteResponse,
+  loopsAround: (stepId: string) => readonly string[],
+): LoopLog[] {
+  const trace = stepsOf(response);
+  return loopProgress(
+    trace,
+    trace.length,
+    countsOf(response),
+    loopsAround,
+    true,
+  ).map((run) => {
+    const depth = run.within.length;
+    const items = new Map<number, { steps: string[]; last: TraceStatus }>();
+    let failure: { index: number; step: string } | null = null;
+    for (const entry of trace) {
+      if (loopsAround(entry.nodeId)[depth] !== run.id) continue;
+      const iteration = iterationOf(entry.instanceKey);
+      if (
+        iteration.length <= depth ||
+        iteration.slice(0, depth).join() !== run.within.join()
+      )
+        continue;
+      const index = iteration[depth];
+      let item = items.get(index);
+      if (!item) items.set(index, (item = { steps: [], last: entry.status }));
+      if (!item.steps.includes(entry.nodeId)) item.steps.push(entry.nodeId);
+      item.last = entry.status;
+      if (entry.status === "failed" && !failure)
+        failure = { index, step: entry.nodeId };
+    }
+    const reached = [...items.keys()].sort((a, b) => a - b);
+    const logged = reached.map((index): LoopLogItem => {
+      const item = items.get(index)!;
+      const last = item.steps[item.steps.length - 1];
+      if (failure?.index === index)
+        return {
+          label: itemLabel(run.within, index),
+          status: "failed",
+          text: `Failed at ${failure.step}`,
+          step: failure.step,
+        };
+      const running = item.last === "running" || item.last === "waiting";
+      return {
+        label: itemLabel(run.within, index),
+        status: running ? "running" : "completed",
+        text: running ? `at ${last}` : item.steps.join(", "),
+        step: last,
+      };
+    });
+    const count = run.count;
+    const first = reached.length ? reached[reached.length - 1] + 2 : 1;
+    return {
+      id: run.id,
+      within: run.within,
+      summary:
+        count === null
+          ? plural(run.finished)
+          : run.status === "done"
+            ? `${run.finished.toLocaleString("en-US")} of ${plural(count)}`
+            : `${run.finished.toLocaleString("en-US")} of ${plural(count)} finished`,
+      progress: count ? Math.min(1, run.finished / count) : null,
+      items: logged,
+      notRun:
+        count === null || first > count
+          ? null
+          : first === count
+            ? `${itemLabel(run.within, count - 1)} didn't run.`
+            : `Items ${first.toLocaleString("en-US")} to ${count.toLocaleString("en-US")} didn't run.`,
+    };
+  });
+}
 
 /** The header's words for an execution's answer. */
 export function runStatus(
@@ -101,7 +219,12 @@ export function runStatus(
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
     const failed = response.trace.find((entry) => entry.status === "failed");
-    return failed ? `Failed at ${failed.nodeId}` : "Failed";
+    // Inside a loop, the item too: "Failed at send, item 4".
+    const iteration = failed ? iterationOf(failed.instanceKey) : [];
+    const item = iteration.length
+      ? `, item ${iteration.map((at) => at + 1).join(" › ")}`
+      : "";
+    return failed ? `Failed at ${failed.nodeId}${item}` : "Failed";
   }
   if (response.status === "limit") return "Stopped at the simulation's limit";
   if (target?.mode === "before") return `Paused before ${target.stepId}`;
@@ -225,7 +348,44 @@ export function runStatus(
               @if (entry.breakpoint) {
                 <span class="run-log-breakpoint" title="Breakpoint"></span>
               }
+              @if (entry.loop?.progress !== null && entry.loop) {
+                <span
+                  class="run-log-progress"
+                  [style.--progress]="entry.loop.progress"
+                  aria-hidden="true"
+                ></span>
+              }
             </button>
+            @if (entry.loop; as loop) {
+              <ul
+                class="run-log-items"
+                [attr.aria-label]="'Items of ' + entry.id"
+              >
+                @for (item of loop.items; track item.label) {
+                  <li class="run-log-row">
+                    <button
+                      type="button"
+                      class="run-log-entry run-log-item"
+                      [attr.data-status]="item.status"
+                      [attr.aria-label]="item.label + ': ' + item.text"
+                      (click)="host().openEntry(item.step)"
+                    >
+                      <weave-icon
+                        class="run-log-icon"
+                        [name]="icons[item.status]"
+                        [size]="16"
+                        aria-hidden="true"
+                      />
+                      <strong class="run-log-step">{{ item.label }}</strong>
+                      <span class="run-log-summary">{{ item.text }}</span>
+                    </button>
+                  </li>
+                }
+                @for (note of loop.notRun; track note) {
+                  <li class="run-log-not-run">{{ note }}</li>
+                }
+              </ul>
+            }
           </li>
         }
       </ul>
@@ -303,20 +463,60 @@ export class RunLogPanel {
     }
     const last = host.execution?.last();
     if (!last) return [];
+    // The steps inside a loop show under its row, item by item.
+    const around = this.loopsAround();
+    const loops = loopLog(last, around);
     const seen = new Map<string, RunLogEntry>();
     for (const entry of last.trace) {
-      if (entry.frame) continue;
+      if (entry.frame || around(entry.nodeId).length) continue;
+      const runs = loops.filter(
+        (loop) =>
+          loop.id === entry.nodeId || around(loop.id)[0] === entry.nodeId,
+      );
+      const own = runs.find((loop) => loop.id === entry.nodeId);
       seen.set(entry.nodeId, {
         id: entry.nodeId,
-        status: entry.status,
-        summary:
-          entry.status === "completed" ? host.summaryOf(entry.nodeId) : null,
+        status:
+          own && entry.status !== "failed"
+            ? own.items.some((item) => item.status === "failed")
+              ? "failed"
+              : entry.status
+            : entry.status,
+        summary: own
+          ? own.summary
+          : entry.status === "completed"
+            ? host.summaryOf(entry.nodeId)
+            : null,
         stale: stale.has(entry.instanceKey || entry.nodeId),
         breakpoint: marks.has(entry.nodeId),
+        ...(own
+          ? {
+              loop: {
+                progress: own.progress,
+                items: runs.flatMap((loop) => loop.items),
+                notRun: runs.flatMap((loop) =>
+                  loop.notRun ? [loop.notRun] : [],
+                ),
+              },
+            }
+          : {}),
       });
     }
     return [...seen.values()];
   });
+  /** The loops around each step of the workflow, outermost first. */
+  private loopsAround(): (stepId: string) => readonly string[] {
+    const around = new Map<string, readonly string[]>();
+    const walk = (steps: readonly Step[], outer: readonly string[]) => {
+      for (const step of steps) {
+        if (outer.length) around.set(step.id, outer);
+        const inner = step.kind === "forEach" ? [...outer, step.id] : outer;
+        for (const list of childLists(step)) walk(list, inner);
+      }
+    };
+    walk(this.host().model.definition.spec.steps ?? [], []);
+    return (stepId) => around.get(stepId) ?? [];
+  }
   /** What the run waits for that the test data doesn't answer: a signal or a person. */
   question() {
     const host = this.host();
