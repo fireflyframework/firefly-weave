@@ -7818,6 +7818,7 @@ export class App implements CanvasHost {
     this.execution?.forget();
     this.runSession.set(null);
     this.playback.set(null);
+    this.executeRefusal.set(null);
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;

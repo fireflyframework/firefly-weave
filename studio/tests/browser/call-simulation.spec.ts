@@ -234,31 +234,37 @@ test.describe("executing a workflow that calls another", () => {
 test.describe("a test with more called workflows than the host runs", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("Execute workflow from the editor bar says so in the run log, and sends nothing", async ({
-    page,
-  }) => {
-    const steps = Array.from({ length: 51 }, (_, at) => ({
-      id: `call-${at + 1}`,
-      kind: "callWorkflow",
-      uses: `workflow-${at + 1}@1.0.0`,
-      mode: "wait",
-      with: { literal: {} },
-    }));
+  const workflowFile = (name: string, steps: unknown[]) =>
+    yamlFile(
+      `${name}.yaml`,
+      stringify({
+        apiVersion: "weave/v1alpha1",
+        kind: "Workflow",
+        metadata: { name, version: "1.0.0" },
+        spec: {
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          steps,
+          output: { literal: {} },
+        },
+      }),
+    );
+  const LIMIT =
+    "This test would run 51 called workflows. Studio can run at most 50 in one test.";
+
+  /** many-calls, 51 calls, run from the editor bar: the host never sees it. */
+  async function refuse(page: Page) {
     await openStepFixture(
       page,
-      yamlFile(
-        "many-calls.yaml",
-        stringify({
-          apiVersion: "weave/v1alpha1",
-          kind: "Workflow",
-          metadata: { name: "many-calls", version: "1.0.0" },
-          spec: {
-            inputSchema: { type: "object" },
-            outputSchema: { type: "object" },
-            steps,
-            output: { literal: {} },
-          },
-        }),
+      workflowFile(
+        "many-calls",
+        Array.from({ length: 51 }, (_, at) => ({
+          id: `call-${at + 1}`,
+          kind: "callWorkflow",
+          uses: `workflow-${at + 1}@1.0.0`,
+          mode: "wait",
+          with: { literal: {} },
+        })),
       ),
       async (p) => {
         const result = await connected(p);
@@ -272,12 +278,45 @@ test.describe("a test with more called workflows than the host runs", () => {
       .getByRole("button", { name: "Execute workflow" })
       .click();
     const log = page.getByRole("region", { name: "Run log" });
-    const refusal = log.locator(".run-log-refusal");
-    await expect(refusal).toHaveText(
-      "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    await expect(log.locator(".run-log-refusal")).toHaveText(LIMIT);
+    return { calls, log };
+  }
+
+  test("Execute workflow from the editor bar says so in the run log, and sends nothing", async ({
+    page,
+  }) => {
+    const { calls, log } = await refuse(page);
+    await expect(log.locator(".run-log-refusal")).toHaveAttribute(
+      "data-tone",
+      "warning",
     );
-    await expect(refusal).toHaveAttribute("data-tone", "warning");
     await expect(log.locator(".run-log-status")).toHaveText("Didn't start");
     expect(executions(calls)).toHaveLength(0);
+  });
+
+  test("another workflow opened afterwards has its own run log, without the refusal", async ({
+    page,
+  }) => {
+    const { log } = await refuse(page);
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await page
+      .getByLabel("Choose a workflow file")
+      .setInputFiles(
+        workflowFile("other-flow", [
+          { id: "shape", kind: "transform", value: { literal: {} } },
+        ]),
+      );
+    await expect(
+      page.getByRole("heading", { name: "other-flow", exact: true, level: 1 }),
+    ).toBeVisible();
+    // The run log stays open across workflows; open it if a layout closed it.
+    if (!(await log.isVisible())) {
+      await page.getByLabel("Workflow canvas", { exact: true }).focus();
+      await page.keyboard.press("l");
+    }
+    await expect(log).toBeVisible();
+    await expect(log.locator(".run-log-refusal")).toHaveCount(0);
+    await expect(log).not.toContainText(LIMIT);
+    await expect(log.locator(".run-log-status")).not.toHaveText("Didn't start");
   });
 });
