@@ -49,7 +49,7 @@ from firefly_weave.compiler.parser import ParseFailure, parse_source
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectorAdapter
 from firefly_weave.contracts.definitions import ConnectorImplementation, WorkerImplementation
 from firefly_weave.contracts.limits import Limits
-from firefly_weave.contracts.participants import CHECK_REASONS, ConformanceReport
+from firefly_weave.contracts.participants import CHECK_REASONS, CONFORMANCE_MESSAGES, ConformanceReport
 from firefly_weave.contracts.values import JsonObject
 
 if TYPE_CHECKING:
@@ -135,6 +135,10 @@ def conformance(
         ctx.exit(EXIT_USAGE)
     except LocalError as error:
         emit_result(error_result(error.code, str(error)), output)
+        ctx.exit(EXIT_USAGE)
+    except Exception:
+        # Exit 1 means only that a check failed; anything else stops the check without showing its text.
+        emit_result(error_result("WV-CONFORMANCE-FAILED", CONFORMANCE_MESSAGES["WV-CONFORMANCE-FAILED"]), output)
         ctx.exit(EXIT_USAGE)
     if output == "json":
         click.echo(canonical_bytes(report.model_dump(mode="json")).decode())

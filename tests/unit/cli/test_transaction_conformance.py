@@ -19,6 +19,7 @@
 
 import json
 import sys
+import types
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,6 +29,7 @@ from click.testing import CliRunner
 
 from firefly_weave.cli.main import cli
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.definitions import load_definition
 
 CATALOG = yaml.safe_load(Path("tests/fixtures/transactions/catalog.yaml").read_text(encoding="utf-8"))
@@ -330,3 +332,56 @@ def test_the_cli_reference_lists_the_check():
     (row,) = [line for line in reference.splitlines() if line.startswith("|") and "`transactions conformance`" in line]
     assert "transaction-participants.md" in row
     assert "weave transactions conformance move.workflow.yaml --step hold" in reference
+
+
+def test_an_unexpected_error_stops_the_check_with_a_fixed_message(project, monkeypatch):
+    import firefly_weave.sdk.participant_conformance as conformance
+
+    _, handlers, run = project
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError(f"stopped while holding {CANARY_INPUT}")
+
+    monkeypatch.setattr(conformance, "check_step", broken)
+    for arguments in ((), ("--output", "json")):
+        result = run("--handlers", f"{handlers()}:handlers", *arguments)
+        assert result.exit_code == 2
+        assert "WV-CONFORMANCE-FAILED" in result.output and CANARY_INPUT not in result.output
+
+
+def test_a_connector_failure_never_shows_the_connection_secret(project, monkeypatch):
+    tmp_path, handlers, run = project
+    (tmp_path / "conn.json").write_text(
+        json.dumps({"name": "sql", "connector_version_id": str(uuid4()), "secretRef": {"password": "sql-password"}}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    class Connector:
+        def __init__(self, policy):
+            self.policy = policy
+
+        async def execute(self, input, context):
+            secret = (await context.credentials("password")).value
+            calls.append(context.operation_key)
+            if len(calls) == 1:
+                raise ConnectorFailure(f"refused with {secret}", "failed")
+            if len(calls) == 2:
+                raise RuntimeError(f"could not reach the database as {secret}")
+            raise ConnectorFailure("SQL_FAILED", "failed")
+
+    fake = types.ModuleType("firefly_weave.connectors.postgresql")
+    fake.PostgresConnector, fake.PostgresPolicy = Connector, lambda **settings: settings
+    monkeypatch.setitem(sys.modules, "firefly_weave.connectors.postgresql", fake)
+    module = handlers(names=CAPABILITIES[:2])
+    arguments = ["--handlers", f"{module}:handlers", "--connection", f"sql={tmp_path / 'conn.json'}"]
+    arguments += ["--secret", "sql.password=PARTICIPANT_SECRET"]
+    env = {"PARTICIPANT_SECRET": CANARY_SECRET}
+    text = run(*arguments, workflow="sql.workflow.yaml", env=env).output
+    calls.clear()
+    report = run(*arguments, "--output", "json", workflow="sql.workflow.yaml", env=env).output
+    assert len(calls) >= 3
+    for output in (text, report):
+        assert CANARY_SECRET not in output
+    codes = {delivery.get("code") for check in json.loads(report)["checks"] for delivery in check["deliveries"]}
+    assert codes - {None} == {"HANDLER_FAILED", "SQL_FAILED"}
