@@ -199,6 +199,9 @@ function frameView(step: Step, frame: LtrFrame): FrameView {
   return { height: frame.height, items: items ?? "…", pending: !items, suffix };
 }
 
+const modified = (event: KeyboardEvent) =>
+  event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
@@ -2276,11 +2279,24 @@ export class CanvasView implements OnInit, DoCheck {
       event.stopPropagation();
       return;
     }
+    // On its way to an empty loop's Add a step, keys act on that slot:
+    // Enter opens it, and the commands about steps wait for it.
+    if (pending?.slot && event.key === "Enter" && !modified(event)) {
+      const slot = this.root().nativeElement.querySelector<HTMLElement>(
+        this.slotSelector(pending.id),
+      );
+      this.pendingFocus = null;
+      if (slot) this.insertAt(slot);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const typing = typingIn(target);
     const onStep =
-      target === this.root().nativeElement ||
-      target.classList.contains("tile-body") ||
-      (!!pending && !pending.slot);
+      !pending?.slot &&
+      (target === this.root().nativeElement ||
+        target.classList.contains("tile-body") ||
+        !!pending);
     const command = canvasCommand(event, {
       platform: this.platform,
       typing,
@@ -2527,8 +2543,7 @@ export class CanvasView implements OnInit, DoCheck {
    * on past the loop, as from a body's last step. Enter is the button's own.
    */
   private slotKey(event: KeyboardEvent, loop: string): boolean {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
-      return false;
+    if (modified(event)) return false;
     if (!this.emptyLoop(loop)) return false;
     if (event.key === "ArrowLeft") {
       if (this.places().has(loop)) this.choose(only(loop));

@@ -479,6 +479,31 @@ test.describe("Editing inside a loop at 1440x900", () => {
     expect(await stepsOf(page, "orders")).toEqual(["check"]);
   });
 
+  test("keys pressed before an empty body's Add a step takes focus act on it, never on a step", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, EMPTY);
+    await canvas.closeInspector();
+    await canvas.tileBody("fetch").focus();
+    // Delete on its way to the slot deletes nothing.
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Delete");
+    const slot = canvas.insertTarget("Add a step to For each item of loop-1");
+    await expect(slot).toBeFocused();
+    await expect(canvas.tile("loop-1")).toHaveCount(1);
+    await expect(canvas.tile("fetch")).toHaveCount(1);
+    // Enter on its way there opens Add a step for the body.
+    await page.keyboard.press("ArrowLeft");
+    await expect(header(canvas, "loop-1")).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await canvas.pick("Transform");
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "loop-1")).toEqual(["transform-1"]);
+    expect(await stepsOf(page, "root")).toEqual(["fetch", "loop-1"]);
+  });
+
   test("a copied loop pastes after the focused step with new IDs for it and its steps", async ({
     page,
   }) => {
