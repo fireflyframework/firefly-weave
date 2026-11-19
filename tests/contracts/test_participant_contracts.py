@@ -128,7 +128,7 @@ def test_a_delivery_carries_no_values():
 
 def test_a_delivery_code_is_a_failure_code_never_free_text():
     assert Delivery(phase="try", operation_key="R:hold", answer="failed", code="SQL_ALREADY_UNDONE-2").code
-    for code in ("account 42 is closed", "lower_case", "", "A" * 65, "Ä_CODE"):
+    for code in ("hold 42 is gone", "lower_case", "", "A" * 65, "Ä_CODE"):
         with pytest.raises(ValidationError):
             Delivery(phase="try", operation_key="R:hold", answer="failed", code=code)
 
