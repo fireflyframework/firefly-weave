@@ -158,6 +158,8 @@ export interface ParamSpec {
   required?: boolean;
   /** The language default: a placeholder or a preselected choice. */
   default?: Json;
+  /** An expression field's default when it is a mapping, such as a loop's result per item, `{ref: "/item"}`. */
+  defaultExpression?: Expression;
   /** An example value, when there is no default. */
   placeholder?: string;
   /** One short sentence under the field. */

@@ -77,7 +77,8 @@ describe("built-in step kinds", () => {
         .kinds()
         .map((d) => d.kind)
         .sort(),
-    ).toEqual([...kinds].sort());
+      // A loop has step details before Add step lists it with the others.
+    ).toEqual([...kinds, "forEach"].sort());
   });
 
   it("creates the classic editor's defaults and ID prefixes", () => {
@@ -120,6 +121,7 @@ describe("built-in step kinds", () => {
       signal: ["signal", "wait", "signal", false, "signal"],
       humanTask: ["human", "human", "humanTask", false, "human"],
       fail: ["fail", "flow", "fail", false, null],
+      forEach: ["loop", "flow", "forEach", false, null],
     });
   });
 
