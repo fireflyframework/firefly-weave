@@ -98,6 +98,7 @@ platform; the others need the `client` extra and either a
 | Create a starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; [quickstart](../quickstart.md) |
 | Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate` (`--error KEY=CODE` makes a step fail on purpose, `--pending KEY` leaves a step or phase without a result, and command files take `resolve` and `cancel`), `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
 | Export the language schemas | `schema export` | Base package |
+| Check that a step inside a transaction handles every request Weave can send it | `transactions conformance` | Base package; a PostgreSQL step needs the `server` extra; [make a system safe to undo](../guides/transaction-participants.md) |
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
 | Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
 | Run built-in HTTP connector Actions locally | `platform integrations`, `platform secret` (new in 0.1.0a7) | A running local platform |
@@ -269,6 +270,23 @@ and export errors use the same envelope with one `WV-CLI-*` diagnostic and exit
 2, and never include raw input values or exception text.
 `schema export --output json` reports the folder and file names;
 `version --output json` reports the package, API, and IR versions.
+
+**Check a step that takes part in a transaction.** `transactions conformance`
+sends one step's requests to your own worker handlers or PostgreSQL database in
+every order Weave can deliver them, and reports each check. It applies real
+changes, so run it against a test system:
+
+```sh
+weave transactions conformance move.workflow.yaml --step hold \
+  --catalog catalog.lock.json --input input.json \
+  --handlers transaction_participant:handlers --output json
+```
+
+For a PostgreSQL step, use a connection file you wrote, and name only that
+connection's own secret variable with `--secret`. It exits 0 when every check
+passes, 1 when one fails, and 2 with a `WV-CONFORMANCE-*` or `WV-CLI-*` code when
+it can't start or stops on an unexpected error. See
+[Make a system safe to undo](../guides/transaction-participants.md#check-it).
 
 **Keep credentials out of definitions.** Artifacts contain your literals and
 dependency declarations. Local compilation never resolves secret references or

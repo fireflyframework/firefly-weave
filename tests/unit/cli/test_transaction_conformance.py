@@ -323,3 +323,10 @@ def test_help_lists_transactions_under_author_locally():
     assert "Check that a step Weave undoes handles every request it can get." in " ".join(section.split())
     result = CliRunner().invoke(cli, ["help", "transactions", "conformance"])
     assert result.exit_code == 0 and "--step" in result.output
+
+
+def test_the_cli_reference_lists_the_check():
+    reference = (Path(__file__).resolve().parents[3] / "docs/reference/cli.md").read_text(encoding="utf-8")
+    (row,) = [line for line in reference.splitlines() if line.startswith("|") and "`transactions conformance`" in line]
+    assert "transaction-participants.md" in row
+    assert "weave transactions conformance move.workflow.yaml --step hold" in reference

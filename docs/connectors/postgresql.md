@@ -313,6 +313,19 @@ CREATE TABLE weave_connector.operations (
   records while deliveries may recur. No library or application retry silently
   re-executes a business command.
 
+**Inside a transaction.** Use `idempotent-command` for a step inside a workflow
+transaction and for its confirm, cancel, or undo, and keep them on the same
+connection slot, which is the default. A first cancel or undo of a step whose
+key has no row in the operation table yet records the step's key with
+`request_hash` set to `tombstone`, in the same external transaction as the
+cancel's own statement. A request for that step that arrives later fails
+`SQL_ALREADY_UNDONE` before its statement runs, and changes nothing. A cancel
+of a step that is still committing waits for it, then undoes it. A `command`
+step never reads the operation table, so it is not protected, and neither is a
+step whose cancel runs on another connection slot. The operation table keeps
+its shape and its grants; `weave transactions conformance` checks a step, see
+[Make a system safe to undo](../guides/transaction-participants.md).
+
 **Authority checks.** Before connecting, before the business statement, and
 immediately before `COMMIT`, the connector requires the active invocation's
 `ActionContext.authorize` callback. Native execution rechecks the live lease, the
@@ -348,6 +361,7 @@ carry codes only, never driver text, SQL, bind values, or credentials.
 | `SQL_MAPPING` | A returned column needs a mapping, or a value does not match its mapping | Add the required mapping from the table above |
 | `SQL_RESULT_LIMIT` or `SQL_OUTPUT` | The rows or bytes exceed `maxRows` or `maxBytes`, or the result fails the output schema | Narrow the query, raise the limits within bounds, or fix the output schema |
 | `SQL_IDEMPOTENCY_CONFLICT` | An operation key was reused for a different request | Investigate the earlier operation before sending a new one |
+| `SQL_ALREADY_UNDONE` | A step of a transaction arrived after its cancel or undo, which recorded the step as undone; nothing was applied | Nothing to fix: the transaction already undid the step. A step and its cancel on different connection slots never meet this check |
 | `SQL_AUTHORITY` | An authority check before connecting, before the statement, or before `COMMIT` failed: the lease, pins, release capability, or connection grant is missing or changed | Check the release's `weave workers grant` for this connection revision and capability, and the executor's `worker` role |
 | `TIMEOUT` | The attempt deadline, the statement timeout, or a lock wait ran out | Check `statementTimeoutMs`, the Action's timeout, and locks on the table |
 | `SQL_STATUS` | The database returned an unexpected command tag; the transaction was rolled back | Check the table against the [accepted shapes](#tables-the-connector-accepts) before running the command again |

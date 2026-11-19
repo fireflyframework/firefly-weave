@@ -17,8 +17,11 @@
 
 """The fence's table name and table text; its behavior is tested on PostgreSQL."""
 
+import re
 import subprocess
 import sys
+import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -62,3 +65,23 @@ def test_importing_the_fence_starts_no_driver():
     probe = "import sys, firefly_weave.sdk.participants; print(sorted({'asyncpg', 'psycopg'} & set(sys.modules)))"
     done = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=True, timeout=60)
     assert done.stdout.strip() == "[]"
+
+
+GUIDE = Path(__file__).resolve().parents[3] / "docs/guides/transaction-participants.md"
+EXAMPLE = Path(__file__).resolve().parents[3] / "examples/transaction_participant.py"
+
+
+def code_blocks(text: str, language: str) -> list[str]:
+    return [textwrap.dedent(block) for block in re.findall(rf"^ *```{language}\n(.*?)^ *```$", text, re.M | re.S)]
+
+
+def test_the_guide_shows_the_table_the_fence_creates():
+    assert code_blocks(GUIDE.read_text(encoding="utf-8"), "sql") == [Fence().ddl()]
+
+
+def test_the_guide_quotes_the_tested_example():
+    example = EXAMPLE.read_text(encoding="utf-8")
+    quoted = code_blocks(GUIDE.read_text(encoding="utf-8"), "python")
+    assert len(quoted) == 3
+    for block in quoted:
+        assert block in example
