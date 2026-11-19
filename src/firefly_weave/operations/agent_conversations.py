@@ -29,9 +29,10 @@ _SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environm
 async def sweep(tx: Transaction, now: datetime, *, batch: int = SWEEP_BATCH) -> int:
     """Delete one batch of the environment's expired conversations, the longest expired first; returns how many went.
 
-    Rows another transaction holds (an append in flight) are skipped, and the delete checks the expiry again, so a
-    conversation an append refreshed meanwhile is kept. An expired conversation is never loaded, listed or read, so a
-    sweep that falls behind leaves nothing visible.
+    Rows another transaction holds (an append in flight) are skipped. Each chosen row is locked as it is chosen, and
+    PostgreSQL checks the expiry again on the row's newest version before locking it, so a conversation an append
+    refreshed meanwhile is never taken. An expired conversation is never loaded, listed or read, so a sweep that falls
+    behind leaves nothing visible.
     """
     # The batch is materialized once: as an IN subquery its LIMIT and SKIP LOCKED could run again per row and
     # delete more than one batch.
@@ -41,7 +42,7 @@ async def sweep(tx: Transaction, now: datetime, *, batch: int = SWEEP_BATCH) -> 
             f"WHERE {_SCOPE} AND expires_at<=:now ORDER BY expires_at LIMIT :batch FOR UPDATE SKIP LOCKED), "
             "gone AS (DELETE FROM agent_conversations c USING batch b "
             f"WHERE c.{_SCOPE.replace(' AND ', ' AND c.')} AND c.workflow=b.workflow AND c.key_hash=b.key_hash "
-            "AND c.expires_at<=:now RETURNING 1) SELECT count(*) FROM gone"
+            "RETURNING 1) SELECT count(*) FROM gone"
         ),
         {
             "tenant": tx.scope.tenant_id,
