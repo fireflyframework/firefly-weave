@@ -24,9 +24,13 @@ import type {
   BindableConnection,
   AiModel,
 } from "../../../integrations/ai-setup-api";
+import type { Json } from "../../../forms/core/json";
 import type { SelectOption } from "../../../forms/ui/select";
 import type { Step, Workflow } from "../../../model";
+import type { SideEffect, StepTestRequest } from "../../state/execution";
+import type { AiTurnsEntry } from "../../state/test-data";
 import { FormWriteError, type FormChange } from "../params/value-io";
+import type { NdvContext, RealExecutionSupport } from "../registry";
 import {
   isRecord,
   profileNameOf,
@@ -413,4 +417,226 @@ export function aiTurnsProblem(entry: unknown): string | null {
   if ("runId" in entry && !("source" in entry && "runEnvironmentId" in entry))
     return "";
   return null;
+}
+
+// ------------------------------------------------- saved turns, usage and step tests
+export const CHOOSE_MODEL = "Choose a model first.";
+export const BIND_AI = "Bind this step's AI connection first.";
+export const RESULT_MISMATCH = "The sample doesn't match the result fields.";
+/** What a replayed turn used: no model call. */
+export const NO_USAGE = { requests: 0, inputTokens: 0, outputTokens: 0 };
+/** An AI task's timeout when its settings name none. */
+export const DEFAULT_TIMEOUT_SECONDS = 120;
+/** The platform runs a step test for at most five minutes. */
+export const STEP_TEST_MAX_SECONDS = 300;
+
+/** Where a saved turn came from, with the run a real answer came from. */
+export type TurnProvenance =
+  | { source: "simulated" | "manual" }
+  | { source: "test-call" | "run"; runId: string; runEnvironmentId: string };
+
+const TYPES: Record<string, (value: unknown) => boolean> = {
+  string: (value) => typeof value === "string",
+  object: isRecord,
+  array: Array.isArray,
+  number: (value) => typeof value === "number",
+  integer: (value) => Number.isInteger(value),
+  boolean: (value) => typeof value === "boolean",
+  null: (value) => value === null,
+};
+/**
+ * Whether a value has the type the result fields name. Only the type: the
+ * Studio host checks the whole schema when it replays the turn.
+ */
+function fitsType(schema: unknown, value: unknown): boolean {
+  if (!isRecord(schema)) return true;
+  const type = schema["type"];
+  const types =
+    typeof type === "string" ? [type] : Array.isArray(type) ? type : null;
+  return !types || types.some((name) => TYPES[String(name)]?.(value) ?? true);
+}
+const modelOf = (profile: Record_ | null): string =>
+  typeof profile?.["model"] === "string" ? profile["model"] : "";
+
+/** The result fields of an AI task that has a model (text when none are set); null without a model. */
+export function resultSchemaOf(workflow: Workflow, step: Step): Json | null {
+  const profile = profileOf(workflow, step);
+  if (!modelOf(profile)) return null;
+  return (profile?.["outputSchema"] as Json | undefined) ?? { ...TEXT_RESULT };
+}
+
+/** The saved turn an AI task replays: one final answer, with where it came from. */
+export function aiTaskTurn(
+  workflow: Workflow,
+  step: Step,
+  value: Json,
+  provenance: TurnProvenance,
+): { entry: AiTurnsEntry } | { problem: string } {
+  const profile = profileOf(workflow, step);
+  if (!modelOf(profile)) return { problem: CHOOSE_MODEL };
+  if (!fitsType(profile?.["outputSchema"], value))
+    return { problem: RESULT_MISMATCH };
+  const entry: AiTurnsEntry = { turns: [{ final: value }], ...provenance };
+  return aiTurnsProblem(entry) === null
+    ? { entry }
+    : { problem: RESULT_MISMATCH };
+}
+
+/**
+ * What a simulated AI task returns for a saved entry, as the Studio host's
+ * simulator answers: the final answer, no usage, the step's provider and
+ * model. Undefined when the entry isn't one final turn.
+ */
+export function aiTaskReplay(
+  workflow: Workflow,
+  step: Step,
+  entry: unknown,
+): Json | undefined {
+  const profile = profileOf(workflow, step);
+  if (!modelOf(profile) || aiTurnsProblem(entry) !== null) return undefined;
+  const turns = (entry as { turns: Record_[] }).turns;
+  if (turns.length !== 1 || !("final" in turns[0])) return undefined;
+  return {
+    result: turns[0]["final"] as Json,
+    usage: { ...NO_USAGE },
+    provider: String(profile?.["provider"] ?? ""),
+    model: modelOf(profile),
+  };
+}
+
+const count = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) >= 0;
+const plural = (n: number, word: string) =>
+  `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
+/** "1 request · 812 in · 64 out tokens" for an AI task's output; null without usage counts. */
+export function usageLine(output: unknown): string | null {
+  const usage = isRecord(output) ? output["usage"] : null;
+  if (!isRecord(usage)) return null;
+  const { requests, inputTokens, outputTokens } = usage;
+  if (!count(requests) || !count(inputTokens) || !count(outputTokens))
+    return null;
+  return `${plural(requests, "request")} · ${inputTokens.toLocaleString("en-US")} in · ${plural(outputTokens, "out token")}`;
+}
+
+const slotOf = (step: Step): string =>
+  typeof step["connection"] === "string" && step["connection"]
+    ? step["connection"]
+    : AI_SLOT;
+
+/** The step test of an AI task, without `draft_id` and `draft_revision`, which the editor adds. */
+export function stepTestBody(
+  workflow: Workflow,
+  step: Step,
+  revisionId: string,
+  input: { prompt: Json; context: Json },
+): Omit<StepTestRequest, "draft_id" | "draft_revision"> {
+  const timeout = profileOf(workflow, step)?.["timeoutSeconds"];
+  const seconds =
+    typeof timeout === "number" && timeout > 0
+      ? Math.ceil(timeout)
+      : DEFAULT_TIMEOUT_SECONDS;
+  return {
+    kind: "llm",
+    step_id: step.id,
+    uses: AI_ACTION,
+    profile: profileNameOf(step),
+    input,
+    connections: { [slotOf(step)]: revisionId },
+    timeout_seconds: Math.min(seconds, STEP_TEST_MAX_SECONDS),
+  };
+}
+
+/**
+ * The AI connections Studio listed in this session, by revision: their label
+ * and whether they're local. The bindable list names no credential, so a
+ * connection served over plain HTTP (beside the platform) counts as local and
+ * free; any other, or one never listed, may bill.
+ */
+const listed = new Map<string, { label: string; local: boolean }>();
+export function rememberConnections(
+  connections: readonly BindableConnection[],
+): void {
+  for (const connection of connections)
+    listed.set(connection.revision_id, {
+      label: connection.label || connection.name,
+      local: local(connection),
+    });
+}
+/** The cost sentence before a step test on a connection that may bill; null for a local one. */
+export function costNotice(
+  model: string,
+  revisionId: string,
+  name: string,
+): string | null {
+  const known = listed.get(revisionId);
+  if (known?.local) return null;
+  return `This calls ${model} on ${known?.label ?? name} and may incur cost.`;
+}
+
+/**
+ * Execute in an environment for an AI task: the prompt and context worked out
+ * from the data step details has, sent with the step's settings to the
+ * connection bound to its slot.
+ */
+export function aiTaskRequest(
+  ctx: NdvContext,
+): ReturnType<RealExecutionSupport["request"]> {
+  const { workflow, step } = ctx;
+  const model = modelOf(profileOf(workflow, step));
+  if (!model) return { blocked: CHOOSE_MODEL };
+  const bound = ctx.connections.devBinding(slotOf(step));
+  if (!bound) return { blocked: BIND_AI };
+  const read = (field: "prompt" | "context") => {
+    const expression = step[field];
+    return isRecord(expression)
+      ? ctx.evaluate(expression, [field])
+      : { ok: true, value: null };
+  };
+  const prompt = read("prompt");
+  const context = read("context");
+  if (!prompt.ok || !context.ok)
+    return {
+      blocked: `${step.id} needs data from earlier steps. Execute previous steps first.`,
+    };
+  const body = stepTestBody(workflow, step, bound.revisionId, {
+    prompt: (prompt.value ?? null) as Json,
+    context: (context.value ?? null) as Json,
+  });
+  const confirm = costNotice(model, bound.revisionId, bound.name);
+  // A local model call costs nothing and changes nothing: the step accepts
+  // the action's effect itself, so step details doesn't ask.
+  return confirm
+    ? { body, confirm }
+    : { body: { ...body, acknowledged_side_effect: AI_EFFECT } };
+}
+
+/** The AI action's declared effect: every call is a new model request (it isn't repeated). */
+export const AI_EFFECT: SideEffect = "non_idempotent";
+const isAiAction = (body: StepTestBody): boolean =>
+  body.kind === "llm" && body.uses === AI_ACTION;
+type StepTestBody = Omit<StepTestRequest, "draft_id" | "draft_revision">;
+
+/**
+ * The effect a step test acknowledges without asking, or null to ask: only an
+ * AI task's call of the AI action on a local connection (its kind says so in
+ * the body and has no cost to name), and only for that action's own effect.
+ * `effect` is the action's as Studio read it; null when not loaded yet.
+ */
+export function withoutAsking(
+  request: { body: StepTestBody; confirm?: string },
+  effect: SideEffect | null,
+): SideEffect | null {
+  return !request.confirm &&
+    isAiAction(request.body) &&
+    request.body.acknowledged_side_effect === AI_EFFECT &&
+    (effect ?? AI_EFFECT) === AI_EFFECT
+    ? AI_EFFECT
+    : null;
+}
+/** The effect a confirmed step test acknowledges: the action's, or the AI action's own when not loaded yet. */
+export function effectToAcknowledge(
+  body: StepTestBody,
+  effect: SideEffect | null,
+): SideEffect | null {
+  return effect ?? (isAiAction(body) ? AI_EFFECT : null);
 }

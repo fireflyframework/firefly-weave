@@ -58,6 +58,7 @@ import {
   type DataView,
 } from "./views";
 import type { FormSession } from "../params/form-session";
+import { usageLine } from "../kinds/ai-task-model";
 import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import {
@@ -235,6 +236,9 @@ import { describeError } from "../../../errors";
         <span class="pill pane-source-tag">Simulated</span>
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
+      }
+      @if (usage(); as line) {
+        <span class="pane-count pane-usage">{{ line }}</span>
       }
       @let paths = this.paths();
       <span class="pane-count">{{
@@ -1059,6 +1063,13 @@ export class OutputPane {
   /** Execute step from the pane (its empty state, the stale pin's banner). */
   execute() {
     this.session().controller.requestExecute("step");
+  }
+  /** An AI task's model requests and tokens for the output shown ("1 request · 812 in · 64 out tokens"). */
+  usage(): string | null {
+    const { controller, target } = this.session();
+    return controller.descriptor(target)?.script === "ai-turns"
+      ? usageLine(this.event())
+      : null;
   }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {

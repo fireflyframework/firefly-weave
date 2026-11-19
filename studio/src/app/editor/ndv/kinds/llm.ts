@@ -18,8 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 // The AI task descriptor: a model chosen connection first, a prompt, and
 // options that tune the step's AI settings. Its canvas subtitle is the model.
+// Execute step replays its saved turn; Execute in an environment calls the
+// model for real through the connection bound to its slot.
 import { registerKind, type StepKindDescriptor } from "../registry";
-import { SETUP, profileOf } from "./ai-task-model";
+import { SETUP, aiTaskRequest, profileOf } from "./ai-task-model";
 import { llmForm, llmSettings } from "./forms/llm-form";
 import { common } from "./shared";
 
@@ -35,6 +37,7 @@ export const llmKind: StepKindDescriptor = {
   ],
   pinnable: true,
   script: "ai-turns",
+  real: { request: aiTaskRequest },
   form: llmForm,
   settings: llmSettings,
 };

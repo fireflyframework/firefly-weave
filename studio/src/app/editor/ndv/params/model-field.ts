@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // An AI step's Model field: the approved models of every AI connection the
 // person may use, grouped by connection, with what each model can do, and Set
 // up AI for a connection that doesn't exist yet. Choosing one writes the
-// step's AI settings, its connection slot and its action as one undo step.
+// step's AI settings, its connection slot and its action as one undo step,
+// and keeps the chosen connection as the slot's binding on this computer for
+// Execute in an environment (never in the test data).
 import {
   ChangeDetectionStrategy,
   Component,
@@ -34,6 +36,7 @@ import {
   type BindableConnection,
 } from "../../../integrations/ai-setup-api";
 import type { StudioApi } from "../../../api";
+import { connectionsPort } from "../../connections/connections-port";
 import {
   AI_CONNECTOR,
   chooseModel,
@@ -42,6 +45,7 @@ import {
   parseModelValue,
   profileNameOf,
   profileOf,
+  rememberConnections,
   sharingNote,
   type BoundTo,
   type ConnectionModels,
@@ -62,6 +66,8 @@ async function loadModels(api: StudioApi): Promise<ConnectionModels[]> {
     (connection: BindableConnection) =>
       connection.enabled && connection.connector === AI_CONNECTOR,
   );
+  // Execute in an environment asks about cost for connections that aren't local.
+  rememberConnections(connections);
   return Promise.all(
     connections.map(async (connection) => {
       try {
@@ -236,6 +242,29 @@ export class ModelField {
     if (this.readOnly() || !this.canSetUp()) return;
     this.session().host.openAiConnectionDialog?.({});
   }
+  /** Keeps the chosen connection as the slot's binding in this environment; says so when it can't. */
+  private async bind(
+    session: FormSession,
+    slot: string,
+    connection: BindableConnection,
+  ): Promise<void> {
+    const port = connectionsPort(session.host);
+    if (!port) return;
+    const workflow = session.host.model.definition.metadata.name;
+    const kept = await port.setBinding(workflow, slot, {
+      connectionId: connection.connection_id,
+      revisionId: connection.revision_id,
+      name: connection.name,
+    });
+    if (!port.live || !session.isCurrent()) return;
+    port.bound(session.host, slot);
+    if (!kept)
+      session.host.notify(
+        `${connection.name} is the connection for slot ${slot} for now, but Studio couldn't keep the choice on this computer.`,
+        undefined,
+        "danger",
+      );
+  }
   choose(value: string): void {
     const session = this.session();
     if (this.readOnly() || !session.isCurrent()) return;
@@ -265,7 +294,12 @@ export class ModelField {
         chosen.set(name, group.connection.revision_id);
         chosenFor.set(session.host.api, chosen);
       }
-      session.commit(changes, this.spec().id);
+      if (!session.commit(changes, this.spec().id)) return;
+      const slot = changes.find(
+        (change) => change.scope === "step" && change.path[0] === "connection",
+      )?.value;
+      if (typeof slot === "string")
+        void this.bind(session, slot, group.connection);
     } catch (error) {
       if (error instanceof FormWriteError) session.host.notify(error.message);
       else throw error;

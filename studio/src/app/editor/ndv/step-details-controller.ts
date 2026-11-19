@@ -65,11 +65,18 @@ import {
 import { isTriggerChoice, triggerChoiceOf } from "../triggers/trigger-target";
 import {
   CANVAS_MAX_BYTES,
+  type AiTurnsEntry,
   type DataSource,
   type HumanEntry,
   type Provenance,
   type SignalEntry,
 } from "../state/test-data";
+import {
+  aiTaskReplay,
+  aiTaskTurn,
+  resultSchemaOf,
+  type TurnProvenance,
+} from "./kinds/ai-task-model";
 import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
@@ -536,7 +543,7 @@ export class StepDetailsController {
         stale: pin.stale,
       };
     const result = this.lastResult(key);
-    if (!result || result.output === undefined) return undefined;
+    if (!result || result.output === undefined) return this.replayedTurn(key);
     const step = this.step(stepId);
     const now = this.prints().get(stepId)?.execution;
     const stale = now === result.execution ? null : ("upstream" as const);
@@ -563,16 +570,70 @@ export class StepDetailsController {
     if (value === undefined) return undefined;
     return { value, source: "simulated", stale };
   }
+  /** An AI task not executed yet: what Execute step returns for its saved turn. */
+  private replayedTurn(key: string) {
+    const step = this.step(instanceStep(key));
+    const entry = this.scriptOf(key);
+    if (!step || !entry || this.answerSection(key) !== "aiTurns") return;
+    const replayed = aiTaskReplay(this.host.model.definition, step, entry);
+    const schema = this.descriptor(step.id)?.outputSchema(
+      step,
+      this.kindContext(),
+    );
+    const value =
+      replayed === undefined ? undefined : safeSample(schema ?? {}, replayed);
+    return value === undefined
+      ? undefined
+      : { value, source: "simulated" as const, stale: null };
+  }
+  /** An AI task's answer kept as the turn Execute step replays; null when kept, else why not. */
+  private async keepTurn(
+    target: string,
+    value: Json,
+    provenance: TurnProvenance,
+  ): Promise<string | null> {
+    const locked = this.readOnlyReason(target);
+    if (locked) return locked;
+    const step = this.step(instanceStep(target));
+    if (!step) return "This step's output can't be pinned.";
+    const made = aiTaskTurn(
+      this.host.model.definition,
+      step,
+      value,
+      provenance,
+    );
+    if ("problem" in made) return made.problem;
+    const kept = await this.setScript(target, made.entry as unknown as Json);
+    return kept.ok ? null : kept.message;
+  }
   /**
    * Pin output on a real result: kept as test data that came from a run, with
    * the run and its environment, so the platform reads it back only for
-   * people who may read that run. Null when pinned, else why not.
+   * people who may read that run. Null when pinned, else why not. An AI
+   * task's answer becomes the turn Execute step replays instead.
    */
   async pinReal(target: string): Promise<string | null> {
     const real = this.realResult(target);
     const data = this.stepData(target);
     if (!real || data?.source !== "test-call")
       return "There's no output from a real run to pin.";
+    if (this.answerSection(target) === "aiTurns") {
+      const answer = isJsonObject(data.value)
+        ? data.value["result"]
+        : undefined;
+      if (answer === undefined)
+        return "There's no output from a real run to pin.";
+      const refused = await this.keepTurn(target, answer, {
+        source: "test-call",
+        runId: real.runId,
+        runEnvironmentId: real.environmentId,
+      });
+      if (!refused)
+        this.host.notify(
+          `Kept this answer as test data for ${target}. Execute step replays it.`,
+        );
+      return refused;
+    }
     return this.pin(target, data.value, "test-call", {
       runId: real.runId,
       runEnvironmentId: real.environmentId,
@@ -600,14 +661,16 @@ export class StepDetailsController {
   }
 
   // --------------------------------------------------- test answers
-  /** Where a step's test answer lives: signals, humans, or nowhere. */
-  private answerSection(key: string): "signals" | "humans" | null {
+  /** Where a step's test answer lives: signals, humans, AI turns, or nowhere. */
+  private answerSection(key: string): "signals" | "humans" | "aiTurns" | null {
     const kind = this.step(instanceStep(key))?.kind as string | undefined;
     return kind === "signal"
       ? "signals"
       : kind === "humanTask"
         ? "humans"
-        : null;
+        : this.descriptor(instanceStep(key))?.script === "ai-turns"
+          ? "aiTurns"
+          : null;
   }
   /** A signal's or a person's test answer: the iteration's first, then the step's; null without one. */
   scriptOf(key: string): Json | null {
@@ -636,15 +699,19 @@ export class StepDetailsController {
       };
     const service = this.testData;
     const previous = service.data();
-    // A time-out or an expiry is no value: it has no source.
+    // A time-out or an expiry is no value: it has no source. An AI turn
+    // keeps where it came from (a sample, a real run), else it's typed in.
     const entry =
       value === null
         ? null
         : ((typeof value === "object" && value !== null && "outcome" in value
             ? value
-            : { ...(value as object), source: "manual" }) as unknown as
+            : section === "aiTurns"
+              ? { source: "manual", ...(value as object) }
+              : { ...(value as object), source: "manual" }) as unknown as
             | SignalEntry
-            | HumanEntry);
+            | HumanEntry
+            | AiTurnsEntry);
     const pointer = `/${section}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
     const outcome = await service.change(
       withScript(previous, section, key, entry, new Date().toISOString()),
@@ -734,14 +801,21 @@ export class StepDetailsController {
         if (outcome.ok) this.host.notify(`Kept pinned output for ${target}.`);
       });
   }
-  /** Pins a sample made from the step's output fields. */
+  /**
+   * Pins a sample made from the step's output fields. An AI task keeps a
+   * sample answer made from its result fields as the turn Execute step replays.
+   */
   async generateOutput(target: string): Promise<string | null> {
     const locked = this.readOnlyReason(target);
     if (locked) return locked;
     const step = this.step(target);
-    const schema = step
-      ? this.descriptor(target)?.outputSchema(step, this.kindContext())
-      : null;
+    const answer = !!step && this.answerSection(target) === "aiTurns";
+    const schema = !step
+      ? null
+      : answer
+        ? resultSchemaOf(this.host.model.definition, step)
+        : this.descriptor(target)?.outputSchema(step, this.kindContext());
+    if (answer && !schema) return "Choose a model first.";
     if (!schema) return "Studio doesn't know this step's output fields yet.";
     let sample: Json;
     try {
@@ -750,7 +824,9 @@ export class StepDetailsController {
       // anyOf, allOf, an unknown format or bounds no value meets.
       return CANT_SAMPLE;
     }
-    return this.pin(target, sample, "schema");
+    return answer
+      ? this.keepTurn(target, sample, { source: "simulated" })
+      : this.pin(target, sample, "schema");
   }
   /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
   private offerUndo(
