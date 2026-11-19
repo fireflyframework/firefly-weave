@@ -362,9 +362,6 @@ function expressionRefs(
 /** The expression fields of a step, as paths relative to the step. */
 function expressionPaths(step: Step): (string | number)[][] {
   switch (step.kind) {
-    case "action":
-    case "decisionTable":
-      return [["with"]];
     case "llm":
       return [["prompt"], ["context"]];
     case "transform":
@@ -386,9 +383,9 @@ function expressionPaths(step: Step): (string | number)[][] {
         isRecord(step["branches"]) ? step["branches"] : {},
       ).map((name) => ["branches", name, "output"]);
     default:
-      return (step.kind as string) === "callWorkflow"
-        ? [["with"], ["businessKey"]]
-        : [];
+      // An action's, a decision table's or a call's input, and a call's
+      // business key; a step without them reads nothing there.
+      return [["with"], ["businessKey"]];
   }
 }
 const readPath = (root: unknown, path: (string | number)[]) =>
