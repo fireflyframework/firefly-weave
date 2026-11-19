@@ -145,12 +145,14 @@ export interface TileView {
             <span class="frame-suffix">{{ frame.suffix }}</span>
           }
         </span>
-        @if (frame.run?.tone === "live" && frame.run?.progress !== null) {
-          <span
-            class="frame-progress"
-            [style.--frame-progress]="frame.run?.progress"
-            aria-hidden="true"
-          ></span>
+        @if (frame.run; as run) {
+          @if (run.tone === "live" && run.progress !== null) {
+            <span
+              class="frame-progress"
+              [style.--frame-progress]="run.progress"
+              aria-hidden="true"
+            ></span>
+          }
         }
       } @else if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
