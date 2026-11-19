@@ -222,6 +222,15 @@ export function loopSources(
   const [input, ...before] = [...inputSources({ steps })].reverse();
   return [...loops, input, ...before.reverse()];
 }
+/** A loop source's parts: whose item (null for the innermost loop) and whether it is the position. */
+export function loopSource(
+  source: string,
+): { loop: string | null; index: boolean } | null {
+  if (source === "item" || source === "index")
+    return { loop: null, index: source === "index" };
+  const named = /^loop(-index)?:(.+)$/.exec(source);
+  return named ? { loop: named[2], index: !!named[1] } : null;
+}
 export const defaultSource = (sources: Source[]): string =>
   sources[0]?.id ?? "input";
 

@@ -43,7 +43,8 @@ import { DataTree } from "./data-tree";
 import { enclosingLoops, stepPointerOf } from "../../formula/loops";
 import {
   IterationPicker,
-  pickerLoops,
+  loopRows,
+  pickerView,
   type PickerLoop,
 } from "./iteration-picker";
 import { DataTable } from "./data-table";
@@ -53,6 +54,7 @@ import {
   defaultSource,
   filterRows,
   inputSources,
+  loopSource,
   loopSources,
   radioKey,
   rootOf,
@@ -390,14 +392,8 @@ export class InputPane implements OnInit {
   pickerRows(): PickerLoop[] {
     const { controller, target } = this.session();
     if (controller.viewingRuns() || target.startsWith("$")) return [];
-    const iterations = controller.iterations;
-    const rows = pickerLoops(
-      iterations.picks(target),
-      (loopId) => iterations.counts(loopId),
-      (loopId) => {
-        const limit = controller.step(loopId)?.["maxItems"];
-        return typeof limit === "number" && limit > 0 ? limit : 1000;
-      },
+    const rows = loopRows(controller.iterations, target, (id) =>
+      controller.step(id),
     );
     // Outside the render: counting writes signals when its answer arrives.
     for (const row of rows)
@@ -557,6 +553,13 @@ export class InputPane implements OnInit {
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
+    const looped = loopSource(source);
+    if (looped) {
+      // A loop's picked item or its position, from the current data.
+      const data = controller.loopData(this.session().target);
+      const loop = looped.loop ? data?.loops?.[looped.loop] : data;
+      return looped.index ? loop?.index : loop?.item;
+    }
     if (source === "received") {
       const received = controller.runReceived(this.session().target);
       return received.ok ? (received.value as Json) : undefined;
@@ -598,6 +601,15 @@ export class InputPane implements OnInit {
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {
+    const looped = loopSource(source);
+    if (looped) {
+      // Which item: as the picker names it.
+      const rows = this.pickerRows();
+      const row = looped.loop
+        ? rows.find((loop) => loop.loopId === looped.loop)
+        : rows.at(-1);
+      return row ? pickerView(row).item : "";
+    }
     const run = this.session().controller.run();
     if (source === "received") return "Recomputed from the run's data";
     if (run) return `From ${run.label()}`;

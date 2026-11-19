@@ -26,13 +26,12 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { parse } from "yaml";
 import { python, repository } from "../python-path";
 import { openWorkflow } from "./canvas-po";
+import { formulaText } from "./formula-po";
 import { StepDetailsPage, yamlFile } from "./step-details-po";
 import { sourceText } from "./support";
 
 /** orders over input.orders holds check and lines; lines over item.lines holds send; after follows the loop. */
-const NESTED = yamlFile(
-  "order-lines.yaml",
-  `apiVersion: weave/v1alpha1
+const NESTED_SOURCE = `apiVersion: weave/v1alpha1
 kind: Workflow
 metadata: {name: order-lines, version: 1.0.0}
 spec:
@@ -79,7 +78,15 @@ spec:
       kind: transform
       value: {ref: /input/orders}
   output: {literal: null}
-`,
+`;
+const NESTED = yamlFile("order-lines.yaml", NESTED_SOURCE);
+/** The same, with lines' Items a formula, which step details edit in the formula editor. */
+const FORMULA = yamlFile(
+  "order-lines-formula.yaml",
+  NESTED_SOURCE.replace(
+    "items: {ref: /item/lines}",
+    "items: {op: {name: coalesce, args: [{ref: /item/lines}, {literal: []}]}}",
+  ),
 );
 
 /** What a field can read, from the Studio host's own scope_at with the repository's Python. */
@@ -107,9 +114,9 @@ async function rightSide(target: Locator) {
   const area = (await target.boundingBox())!;
   return { x: Math.max(4, area.width - 48), y: area.height / 2 };
 }
-async function open(page: Page) {
+async function open(page: Page, file = NESTED) {
   await hostScope(page);
-  await openWorkflow(page, NESTED);
+  await openWorkflow(page, file);
   return new StepDetailsPage(page);
 }
 
@@ -281,6 +288,32 @@ test.describe("data inside a loop at 1440x900", () => {
     );
     // Counting the items never loops change detection.
     expect(errors).toEqual([]);
+  });
+});
+
+test.describe("the Result panel inside a loop at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("names the picked item and holds a compact picker that keeps it open", async ({
+    page,
+  }) => {
+    const details = await open(page, FORMULA);
+    // lines' Items read the current item of orders, the loop around it.
+    await details.open("lines");
+    // The formula editor shows the Result panel while it has focus.
+    await formulaText(details.field("items")).click();
+    const result = details.dialog.getByRole("region", {
+      name: "Result of Items",
+    });
+    await expect(result).toBeVisible();
+    const picker = result.getByRole("group", { name: "Items of orders" });
+    const item = picker.getByRole("button", { name: /Choose an item$/ });
+    await expect(item).toHaveAccessibleName("Item 1. Choose an item");
+    // Compact: the buttons only, no loop name.
+    await expect(result.locator(".picker-name")).toHaveCount(0);
+    await picker.getByRole("button", { name: "Next item" }).click();
+    await expect(item).toHaveAccessibleName("Item 2. Choose an item");
+    await expect(result).toBeVisible();
   });
 });
 

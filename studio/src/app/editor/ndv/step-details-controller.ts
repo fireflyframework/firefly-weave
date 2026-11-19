@@ -119,6 +119,7 @@ import {
   type NdvContext,
   type ParamSpec,
   type Path,
+  type SampleContext,
   type StaleReason,
   type StepKindDescriptor,
 } from "./registry";
@@ -808,6 +809,32 @@ export class StepDetailsController {
         }),
       };
     return this.picked.iterations;
+  }
+  /**
+   * The picked item of each loop around a step, from the loop's Items
+   * evaluated against the current data (an inner loop's with the outer
+   * loop's item); null outside loops or while an item isn't in the data.
+   */
+  loopData(
+    stepId: string,
+  ): Pick<SampleContext, "item" | "index" | "loops"> | null {
+    const picks = this.iterations.picks(stepId);
+    if (!picks.length) return null;
+    const loops: NonNullable<SampleContext["loops"]> = {};
+    for (const { loopId, index } of picks) {
+      const items = this.step(loopId)?.["items"];
+      if (!items || typeof items !== "object") return null;
+      const listed = this.previews.preview(
+        items as Expression,
+        ["items"],
+        this.ndvContext(loopId),
+      );
+      if (!listed?.ok || !Array.isArray(listed.value)) return null;
+      if (index >= listed.value.length) return null;
+      loops[loopId] = { item: listed.value[index] as Json, index };
+    }
+    const innermost = loops[picks[picks.length - 1].loopId];
+    return { item: innermost.item, index: innermost.index, loops };
   }
   private addedBy = new Map<string, Set<string>>();
   private touchedBy = new Map<string, Set<string>>();
@@ -1899,9 +1926,11 @@ export class StepDetailsController {
             const output = this.stepData(visible.id)?.value;
             if (output !== undefined) steps[visible.id] = { output };
           }
-          return input === undefined && !Object.keys(steps).length
+          // Inside a loop's body: the picked item of each loop around the step.
+          const looped = this.loopData(step.id);
+          return input === undefined && !Object.keys(steps).length && !looped
             ? null
-            : { input: input ?? {}, steps };
+            : { input: input ?? {}, steps, ...looped };
         },
         resolvedInput: () => {
           // What the step received in the last execution (an action's input).

@@ -30,7 +30,8 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { AnchoredPopover } from "../../../forms/ui/anchored-popover";
-import type { LoopCount, LoopPick } from "../../state/iterations";
+import type { Step } from "../../../model";
+import type { Iterations, LoopCount, LoopPick } from "../../state/iterations";
 
 /** One loop around the step, as its picker row shows it. */
 export interface PickerLoop {
@@ -117,6 +118,39 @@ export function pickerLoops(
   }));
 }
 
+/** The picker's rows for a step in step details, from the draft's picks and counts and each loop's Up to. */
+export function loopRows(
+  iterations: Iterations,
+  target: string,
+  step: (id: string) => Step | null,
+): PickerLoop[] {
+  return pickerLoops(
+    iterations.picks(target),
+    (loopId) => iterations.counts(loopId),
+    (loopId) => {
+      const limit = step(loopId)?.["maxItems"];
+      return typeof limit === "number" && limit > 0 ? limit : 1000;
+    },
+  );
+}
+
+/** Which loop's item a formula reads: the innermost for item and index, the named one for loops; null when none. */
+export function readLoop(
+  pointers: readonly string[],
+  rows: readonly PickerLoop[],
+): PickerLoop | null {
+  for (const pointer of pointers) {
+    const [root, id] = pointer.slice(1).split("/");
+    if (root === "item" || root === "index") return rows.at(-1) ?? null;
+    if (root === "loops") {
+      const named = id?.replace(/~1/g, "/").replace(/~0/g, "~");
+      const row = rows.find((loop) => loop.loopId === named);
+      if (row) return row;
+    }
+  }
+  return null;
+}
+
 /** The item a typed number goes to (from 0), or null when it isn't one of the loop's items. */
 export function goToItem(text: string, loop: PickerLoop): number | null {
   const typed = text.trim();
@@ -131,14 +165,17 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
   standalone: true,
   imports: [Icon, AnchoredPopover],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { "[class.compact]": "compact()" },
   template: `@for (loop of loops(); track loop.loopId) {
       @let view = pickerView(loop);
       <div class="picker-row" [attr.data-loop]="loop.loopId">
-        <weave-icon class="picker-icon" name="forEach" [size]="16" />
-        <span class="picker-name">
-          <strong>{{ loop.loopId }}</strong>
-          <span>{{ loop.role }}</span>
-        </span>
+        @if (!compact()) {
+          <weave-icon class="picker-icon" name="forEach" [size]="16" />
+          <span class="picker-name">
+            <strong>{{ loop.loopId }}</strong>
+            <span>{{ loop.role }}</span>
+          </span>
+        }
         <div
           class="picker-group"
           role="group"
@@ -216,7 +253,7 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
           }
         </div>
       </div>
-      @if (view.note) {
+      @if (view.note && !compact()) {
         <p class="picker-note">{{ view.note }}</p>
       }
     }
@@ -343,6 +380,24 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
       color: var(--danger-ink);
       font-size: 12px;
     }
+    /* The Result panel's source line: the buttons only, 24 px. */
+    :host(.compact) {
+      display: inline-block;
+      border-bottom: 0;
+    }
+    :host(.compact) .picker-row {
+      min-block-size: 0;
+      padding: 0;
+    }
+    :host(.compact) .picker-group button {
+      min-inline-size: 24px;
+      min-block-size: 24px;
+      padding: 0 4px;
+      font-size: 12px;
+    }
+    :host(.compact) .picker-item {
+      min-inline-size: 88px;
+    }
     .picker-announce {
       position: absolute;
       inline-size: 1px;
@@ -355,6 +410,8 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
 })
 export class IterationPicker {
   readonly loops = input.required<readonly PickerLoop[]>();
+  /** The Result panel's source line: Previous, the item and Next only. */
+  readonly compact = input(false);
   readonly picked = output<{ loopId: string; index: number }>();
   /** The loop whose Go to item is open. */
   readonly open = signal<string | null>(null);

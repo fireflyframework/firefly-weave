@@ -152,7 +152,13 @@ import {
   type HeldFact,
   type StepDetailsRequest,
 } from "../step-details-service";
-import { previewText, sourceLabel } from "../../formula/preview";
+import { previewText, referencesOf, sourceLabel } from "../../formula/preview";
+import {
+  loopRows,
+  pickerView,
+  readLoop,
+  type PickerLoop,
+} from "../panes/iteration-picker";
 import { checkFormula, type CheckScope } from "../../formula/check";
 import type { EditorRequest } from "../../formula/codemirror/formula-editor";
 import type { CompletionScope } from "../../formula/complete";
@@ -1260,9 +1266,23 @@ export class FormSession {
   /** Where a value's data comes from, for the Result panel. */
   previewSource(spec: ParamSpec, value: ParamValue): string {
     void spec;
-    return value.mode === "mapped"
-      ? sourceLabel(value.expression, this.controller.previewData())
-      : "";
+    if (value.mode !== "mapped") return "";
+    // Reading a loop's item: the item picked, as the picker names it.
+    const [loop] = this.previewLoops(value);
+    return loop
+      ? pickerView(loop).item
+      : sourceLabel(value.expression, this.controller.previewData());
+  }
+  /** The loop whose item a value reads, as the Result panel's compact picker shows it; none otherwise. */
+  previewLoops(value: ParamValue): PickerLoop[] {
+    if (value.mode !== "mapped") return [];
+    const loop = readLoop(
+      referencesOf(value.expression),
+      loopRows(this.controller.iterations, this.target, (id) =>
+        this.controller.step(id),
+      ),
+    );
+    return loop ? [loop] : [];
   }
 
   /**
