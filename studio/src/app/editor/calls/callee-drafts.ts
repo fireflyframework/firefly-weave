@@ -24,7 +24,11 @@ import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { LocalDrafts } from "../../local-drafts";
 import { calledReferenceSites } from "../activation/callee-pins";
 import type { CalledWorkflows, LocalSource } from "../state/execute-request";
-import { callSources, type CallSourcesHost } from "./call-sources";
+import {
+  CALLERS_WAIT_MS,
+  callSources,
+  type CallSourcesHost,
+} from "./call-sources";
 
 /** `name@version` split; null when it isn't one. */
 function split(reference: string): [string, string] | null {
@@ -104,9 +108,21 @@ export function studioCallees(host: CalleesHost): CalledWorkflows {
 /**
  * The documents of the workflows it reaches, for the host's checks and
  * compiles: a call's output then has fields, so a pin on it can be checked.
- * The drafts here, and the published versions Studio has read.
+ * The drafts here, and the published versions Studio has read. It waits for
+ * the project's published workflows, at most 3 s, so right after a workflow
+ * opens a draft doesn't run in place of the published version it repeats;
+ * Execute reads the callees after it.
  */
-export function calleeDefinitions(host: CalleesHost): JsonObject[] {
+export async function calleeDefinitions(
+  host: CalleesHost,
+): Promise<JsonObject[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    callSources(host)
+      .lock.read()
+      .catch(() => undefined),
+    new Promise((done) => (timer = setTimeout(done, CALLERS_WAIT_MS))),
+  ]).finally(() => clearTimeout(timer));
   const published = publishedOf(host);
   const reached = calledWorkflows(
     host.localDrafts,

@@ -18,9 +18,15 @@ SPDX-License-Identifier: Apache-2.0
 // The workflows an execution reaches: the ones it calls, and through the
 // drafts on this computer among them, the ones those call; each draft here
 // goes with its source so the host runs it.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
-import { calledWorkflows } from "../src/app/editor/calls/callee-drafts";
+import type { StudioApi } from "../src/app/api";
+import {
+  calledWorkflows,
+  calleeDefinitions,
+  studioCallees,
+  type CalleesHost,
+} from "../src/app/editor/calls/callee-drafts";
 import { LocalDrafts, type DraftStorage } from "../src/app/local-drafts";
 
 function memoryStorage(): DraftStorage {
@@ -123,5 +129,62 @@ describe("the workflows an execution reaches", () => {
       sources: {},
       references: ["lookup-customer@0.1.0"],
     });
+  });
+});
+
+describe("the workflows an execution sends right after a workflow opens", () => {
+  const published = calling("lookup-customer", "0.1.0");
+  // The project's catalog may still be on its way when Execute starts.
+  const host = (answer: () => Promise<unknown>): CalleesHost => ({
+    profile: {
+      name: "acme",
+      baseUrl: "https://weave.example",
+      tenantId: "t",
+      projectId: "p",
+      environmentId: "e",
+    },
+    stepDataScope: "account-1",
+    api: {
+      project: "/studio/api/api/v1/tenants/t/projects/p",
+      request: answer,
+    } as unknown as StudioApi,
+    can: () => true,
+    localDrafts: drafts({
+      doc: calling("lookup-customer", "0.1.0", "audit-trail@2.0.0"),
+      format: "yaml",
+    }),
+    model: {
+      definition: calling("order-intake", "1.2.0", "lookup-customer@0.1.0"),
+    },
+  });
+
+  it("waits for the project's published workflows, so the published version wins over a draft of it", async () => {
+    let answer!: (lock: unknown) => void;
+    const opened = host(() => new Promise((done) => (answer = done)));
+    const documents = calleeDefinitions(opened);
+    await new Promise((done) => setTimeout(done, 0));
+    answer({ definitions: [{ document: published, digest: "0".repeat(64) }] });
+    expect(await documents).toEqual([published]);
+    expect(studioCallees(opened)).toEqual({
+      sources: {},
+      references: ["lookup-customer@0.1.0"],
+    });
+  });
+
+  it("sends the draft when the project's workflows can't be read within 3 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const opened = host(() => new Promise(() => {}));
+      let documents: unknown[] | null = null;
+      void calleeDefinitions(opened).then((found) => (documents = found));
+      await vi.advanceTimersByTimeAsync(2_900);
+      expect(documents).toBeNull();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(documents).toEqual([
+        calling("lookup-customer", "0.1.0", "audit-trail@2.0.0"),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

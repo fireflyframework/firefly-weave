@@ -44,7 +44,7 @@ export { studioCallees } from "../calls/callee-drafts";
 export async function studioDefinitions(
   host: StudioDefinitionsHost & CalleesHost,
 ) {
-  return [...(await definitionsOf(host)), ...calleeDefinitions(host)];
+  return [...(await definitionsOf(host)), ...(await calleeDefinitions(host))];
 }
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
