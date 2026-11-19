@@ -115,6 +115,31 @@ async function stepsOf(page: Page, owner: string): Promise<string[]> {
   return (steps ?? []).map((step) => step.id);
 }
 
+/** Drags a step by its card onto an insert target, as a person does. */
+async function dragTo(
+  page: Page,
+  canvas: CanvasPage,
+  id: string,
+  target: string,
+) {
+  const from = (await canvas.tileBody(id).boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    from.x + from.width / 2 + 12,
+    from.y + from.height / 2 + 12,
+    {
+      steps: 4,
+    },
+  );
+  await expect(canvas.root).toHaveClass(/\brevealing\b/);
+  const box = (await canvas.insertTarget(target).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+    steps: 10,
+  });
+  await page.mouse.up();
+}
+
 const contains = (outer: DOMRect, inner: DOMRect) =>
   inner.left >= outer.left &&
   inner.right <= outer.right &&
@@ -377,6 +402,81 @@ test.describe("Editing inside a loop at 1440x900", () => {
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
     await expect(canvas.tileBody("$end")).toBeFocused();
+  });
+
+  test("a step dragged into a loop's body joins it, and dragged out again leaves it", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await canvas.closeInspector();
+    await dragTo(
+      page,
+      canvas,
+      "summarize",
+      "Move summarize between check and send",
+    );
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "orders")).toEqual([
+      "check",
+      "summarize",
+      "send",
+    ]);
+    await canvas.ready();
+    await dragTo(page, canvas, "summarize", "Move summarize after orders");
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "root")).toEqual([
+      "fetch",
+      "orders",
+      "summarize",
+    ]);
+    expect(await stepsOf(page, "orders")).toEqual(["check", "send"]);
+  });
+
+  test("an empty body's Add a step takes a dropped step", async ({ page }) => {
+    const canvas = await openWorkflow(page, EMPTY);
+    await canvas.closeInspector();
+    await dragTo(
+      page,
+      canvas,
+      "fetch",
+      "Move fetch to For each item of loop-1",
+    );
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "loop-1")).toEqual(["fetch"]);
+  });
+
+  test("Move to… offers every place but the loop's own body", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await canvas.closeInspector();
+    await canvas.tileBody("orders").hover();
+    await canvas.root
+      .getByRole("button", { name: "More commands for orders", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Move to…" }).click();
+    await expect(
+      canvas.insertTarget("Move orders after summarize"),
+    ).toBeVisible();
+    await expect(
+      canvas.insertTarget("Move orders between check and send"),
+    ).toHaveCount(0);
+  });
+
+  test("a step deleted from a loop's body comes back with Undo and goes again with Redo", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await canvas.closeInspector();
+    await canvas.tileBody("send").click();
+    await page.keyboard.press("Delete");
+    await expect(canvas.tile("send")).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(canvas.tile("send")).toHaveCount(1);
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(canvas.tile("send")).toHaveCount(0);
+    await canvas.closeInspector();
+    expect(await stepsOf(page, "orders")).toEqual(["check"]);
   });
 
   test("a copied loop pastes after the focused step with new IDs for it and its steps", async ({

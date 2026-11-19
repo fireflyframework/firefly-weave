@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Editing the steps inside a loop: copy and paste a loop with its body,
-// paste into a body, and what the steps pasted there can read.
+// paste into a body, select and move steps in and out of it.
 import { describe, expect, it } from "vitest";
 import {
   copySteps,
@@ -25,6 +25,16 @@ import {
   type ClipboardContent,
   type PastePlan,
 } from "../src/app/editor/state/clipboard";
+import {
+  contiguity,
+  extended,
+  moveAllowed,
+  only,
+  selectionOf,
+  type StepPlace,
+} from "../src/app/editor/state/selection";
+import { layoutLtr } from "../src/app/editor/canvas/layout-ltr";
+import { placesOf } from "../src/app/editor/canvas/navigation";
 import { StructuredCanvasAdapter, type Step } from "../src/app/model";
 
 const source = `apiVersion: weave/v1alpha1
@@ -64,6 +74,10 @@ const plan = (...args: Parameters<typeof planPaste>): PastePlan => {
   if ("reason" in planned) throw new Error(planned.reason);
   return planned;
 };
+const places = (adapter = model()): Map<string, StepPlace> =>
+  placesOf(
+    layoutLtr(adapter.definition, { role: () => undefined, triggers: [] }),
+  );
 const body = (step: Step) =>
   (step["body"] as { steps: Step[]; output: unknown }).steps;
 
@@ -149,5 +163,43 @@ describe("copying and pasting a loop", () => {
         reason,
       })),
     ).toEqual([{ stepId: "send-1", target: "check", reason: "later" }]);
+  });
+});
+
+describe("selecting and moving steps inside a loop", () => {
+  it("copies consecutive steps of a body, never a body step with a step outside the loop", () => {
+    const where = places();
+    expect(contiguity(selectionOf(["check", "send"]), where)).toMatchObject({
+      ok: true,
+      owner: "orders/body",
+      from: 0,
+      to: 1,
+    });
+    expect(contiguity(selectionOf(["send", "summarize"]), where)).toEqual({
+      ok: false,
+      reason: "spread",
+    });
+  });
+
+  it("extends a selection along the body with Shift and the arrows, never past its end", () => {
+    const where = places();
+    expect(extended(only("check"), where, "downstream").ids).toEqual([
+      "check",
+      "send",
+    ]);
+    expect(
+      extended(selectionOf(["check", "send"], "send"), where, "downstream").ids,
+    ).toEqual(["check", "send"]);
+  });
+
+  it("moves a step into a loop's body and out of it, never the loop into its own body", () => {
+    const where = places();
+    expect(
+      moveAllowed(where, "summarize", { owner: "orders/body", index: 1 }),
+    ).toBe(true);
+    expect(moveAllowed(where, "check", { owner: "root", index: 3 })).toBe(true);
+    expect(
+      moveAllowed(where, "orders", { owner: "orders/body", index: 1 }),
+    ).toBe(false);
   });
 });
