@@ -29,10 +29,10 @@ digit-first segments belong to AI agent turns.
 
 from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, Final, Literal, Protocol, get_args
+from typing import Any, Final, Literal, Protocol, cast, get_args
 
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, instance_view, split_instance
-from firefly_weave.contracts.values import JsonObject
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, instance_view, node_of, split_instance
+from firefly_weave.contracts.values import JsonObject, JsonValue
 
 type TransactionState = Literal[
     "open",
@@ -180,6 +180,32 @@ def split_phase(key: str) -> tuple[str, UndoPhase] | None:
     if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in _PHASES:
         return None
     return key.rpartition("#")[0], _PHASES[parsed.segments[0]]
+
+
+def undo_context(
+    *,
+    run_id: str,
+    transaction_key: str,
+    business_key: str | None,
+    participant_key: str,
+    outcome: str | None,
+    input: JsonValue,
+    scope: Mapping[str, JsonValue],
+) -> JsonObject:
+    """What a confirm, cancel or undo's ``with`` is evaluated over: the run's input, ``steps`` with the step's own
+    output, the ``participant`` (its operation key and what is known of its outcome), the ``transaction`` (its ID and
+    business key) and the loop roots the step recorded. ``scope`` is what the step recorded when it was dispatched,
+    plus its ``output``. The runtime and the participant check both build phase inputs from this."""
+    roots = dict(scope)
+    steps = dict(cast(JsonObject, roots.pop("steps", {})))
+    steps[node_of(participant_key)] = {"output": roots.pop("output", None)}
+    return {
+        "input": input,
+        "steps": steps,
+        "participant": {"operationKey": f"{run_id}:{participant_key}", "outcome": outcome or "unknown"},
+        "transaction": {"id": f"{run_id}:{transaction_key}", "businessKey": business_key},
+        **roots,
+    }
 
 
 def dispatch_effect(calls: bool, action_digests: Iterable[str], dependencies: Sequence[Mapping[str, Any]]) -> Effect:

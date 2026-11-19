@@ -253,18 +253,20 @@ The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
 A debug session simulates a transaction with mocks for each step and for its
 confirm, cancel, and undo; see
 [Simulate transactions](../reference/simulation.md#simulate-transactions).
-A simulation can't show how the systems you call behave, so also try these by
-hand on a test activation:
+A simulation can't show how the systems you call behave. Check a step against
+your own worker or PostgreSQL database with `weave transactions conformance`:
+it sends the step's requests in every order Weave can deliver them (a repeat, a
+cancel of a step that never ran, the step after its cancel) and reports each
+check. [Make a system safe to undo](transaction-participants.md) explains the
+command, the SDK's fence, and what the PostgreSQL connector records.
 
-- send the same confirm, cancel or undo twice: the second must change nothing;
-- cancel a reservation that never went through: the cancel must succeed;
-- let a step hang past its time limit: Weave treats its outcome as unknown and
-  undoes it;
-- confirm a reservation after it expired: the confirm must fail with a code the
-  action lists in `definiteFailures` or report `effect: none`.
+The check doesn't wait for a reservation to expire, so also try this by hand on
+a test activation: confirm a reservation after it expired; the confirm must fail
+with a code the action lists in `definiteFailures` or report `effect: none`.
 
 ## Next steps
 
+- [Make a system safe to undo](transaction-participants.md)
 - [Workflow language: Transactions](../contracts.md#transactions)
 - [Worker protocol: tasks of a transaction](../reference/worker-protocol.md)
 - [Integration events: transaction events](../reference/integration-events.md)

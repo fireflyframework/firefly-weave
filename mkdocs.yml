@@ -101,6 +101,7 @@ nav:
       - Call another workflow: guides/call-workflows.md
       - Handle step errors: guides/handle-step-errors.md
       - Undo steps together with a transaction: guides/transactions.md
+      - Make a system safe to undo: guides/transaction-participants.md
       - Work with files: guides/files.md
       - Connect FTP and cloud drives: guides/file-connectors.md
       - Evaluate decision tables: reference/decision-tables.md
