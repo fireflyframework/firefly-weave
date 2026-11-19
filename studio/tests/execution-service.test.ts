@@ -28,6 +28,7 @@ import {
 import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
 import { sampleFromSchema } from "../src/app/editor/ndv/panes/sample";
 import type { StudioTestData } from "../src/app/editor/state/test-data";
+import { finalRun } from "../src/app/editor/canvas/trace-playback";
 import type { Workflow } from "../src/app/model";
 import { RESPONSE, print } from "./execution-fixtures";
 
@@ -346,6 +347,76 @@ describe("the execution service", () => {
       instanceKey: "",
       message: "Call notify-customer needs test data or the workflow itself.",
     });
+  });
+
+  it("never reads a called workflow's step as this workflow's step with the same ID", async () => {
+    // order-intake and the notify-customer it calls both have a step "send":
+    // the called one failed, order-intake continued and ran its own.
+    const { service, sent } = fixture({
+      ...WORKFLOW,
+      spec: {
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            onFailure: "continue",
+            with: { literal: {} },
+          },
+          { id: "send", kind: "action", uses: "mail.send@1.0.0", with: {} },
+        ],
+      },
+    } as unknown as Workflow);
+    await service.open("d-1");
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    const step = (nodeId: string, status: string, output: unknown) => ({
+      index: 0,
+      nodeId,
+      instanceKey: "",
+      kind: "action",
+      status,
+      output,
+    });
+    sent[0].answer({
+      ...RESPONSE,
+      trace: [
+        step("notify", "completed", { status: "failed" }),
+        { ...step("send", "failed", undefined), frame: "notify" },
+        step("send", "completed", { by: "order-intake" }),
+      ],
+      frames: [
+        {
+          key: "notify",
+          workflow: "notify-customer@1.0.0",
+          callNode: "notify",
+          status: "failed",
+        },
+      ],
+    });
+    const outcome = await running;
+    const response = outcome.kind === "done" ? outcome.response : null;
+    // What every reader gets: the step the Runs tab stops at, the canvas, the last results.
+    expect(response?.trace.some((item) => item.status === "failed")).toBe(
+      false,
+    );
+    expect(finalRun(service.last()!).current).toEqual([]);
+    expect(finalRun(service.last()!).done).toEqual(["notify", "send"]);
+    expect(service.results()?.steps["send"]).toMatchObject({
+      status: "completed",
+      output: { by: "order-intake" },
+    });
+    // The run log alone gets what ran inside notify-customer.
+    expect(
+      service.called()?.trace.map((item) => [item.nodeId, item.status]),
+    ).toEqual([["send", "failed"]]);
+    expect(service.called()?.frames.map((frame) => frame.status)).toEqual([
+      "failed",
+    ]);
+    // Opening another draft forgets them with the answer.
+    await service.open("d-2");
+    expect(service.called()).toBeNull();
   });
 
   it("sends a sample of the input fields when there is no test input", async () => {

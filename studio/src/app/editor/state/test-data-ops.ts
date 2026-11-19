@@ -129,6 +129,33 @@ export function withoutPin(
   return stamped(withSection(data, "pins", pins), now);
 }
 
+/**
+ * Sets the test output of a step inside a called workflow: under that
+ * workflow's mocks (`notify-customer@1.0.0`), so it answers the step
+ * wherever that workflow runs in a test.
+ */
+export function withCalleeMock(
+  data: StudioTestData,
+  reference: string,
+  key: string,
+  output: Json,
+  now: string,
+): StudioTestData {
+  const mocks = data.workflows?.[reference]?.mocks ?? {};
+  return stamped(
+    {
+      ...data,
+      workflows: {
+        ...(data.workflows ?? {}),
+        [reference]: {
+          mocks: { ...mocks, [key]: { output, source: "manual" } },
+        },
+      },
+    },
+    now,
+  );
+}
+
 /** An entry's frame: the sub-workflow it applies in, or "" for this workflow. */
 const frameOf = (entry: unknown): string =>
   typeof entry === "object" &&

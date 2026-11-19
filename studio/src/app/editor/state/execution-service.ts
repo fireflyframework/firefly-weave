@@ -34,9 +34,10 @@ import { sampleFromSchema } from "../ndv/panes/sample";
 import type { Json } from "../ndv/registry";
 import type { StoreBackend } from "./browser-store";
 import {
-  calleeBlock,
   executeRequest,
+  splitCalls,
   tooManyCallees,
+  type CalledRuns,
   type CalledWorkflows,
 } from "./execute-request";
 import type {
@@ -133,8 +134,10 @@ export class ExecutionService {
   readonly running = signal<ExecuteTarget | null>(null);
   /** The open draft's last results. */
   readonly results = signal<LastResults | null>(null);
-  /** The last answer, for the run log and a decision's paths. */
+  /** The last answer, for the run log and a decision's paths: this workflow's steps only. */
   readonly last = signal<ExecuteResponse | null>(null);
+  /** What the last answer ran inside the workflows it called, for the run log alone. */
+  readonly called = signal<CalledRuns | null>(null);
   /** The last execution ran with a sample of the input fields (no test input). */
   readonly sampledInput = signal(false);
   /** That sample of the input fields, shown as the workflow input it ran with. */
@@ -158,6 +161,7 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.called.set(null);
     this.sampleUsed.set(null);
     this.resultsDraft = draftId;
     const place = this.host.place();
@@ -213,6 +217,7 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.called.set(null);
     this.sampleUsed.set(null);
     this.dropSession();
   }
@@ -261,6 +266,7 @@ export class ExecutionService {
       this.resultsDraft = draft.id;
       this.results.set(null);
       this.last.set(null);
+      this.called.set(null);
     }
     // Only test data feeds the steps when asked (a run's data reproduced as it was).
     const previous = options.fresh ? null : this.results();
@@ -313,11 +319,8 @@ export class ExecutionService {
       return answer.kind === "busy" && this.stopped
         ? { kind: "busy", stopping: true }
         : answer;
-    if (answer.blocked)
-      answer = {
-        ...answer,
-        blocked: calleeBlock(draft.workflow, answer.blocked),
-      };
+    const { response, called } = splitCalls(draft.workflow, answer);
+    answer = response;
     this.stopped = false;
     let results = withExecution(
       previous,
@@ -328,6 +331,7 @@ export class ExecutionService {
     if (prints) results = pruneResults(results, (id) => prints.has(id));
     this.results.set(results);
     this.last.set(answer);
+    this.called.set(called);
     this.sampledInput.set(sampled);
     // Only a sample with fields is worth showing: none keeps "Add test input".
     const sample = body.input as Json | undefined;

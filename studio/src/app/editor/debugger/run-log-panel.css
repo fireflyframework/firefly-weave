@@ -170,6 +170,140 @@ SPDX-License-Identifier: Apache-2.0
   border-radius: 50%;
   background: var(--danger-ink);
 }
+.run-log-entry[data-status="failed"] .run-log-summary {
+  color: var(--danger-ink);
+}
+/* Called workflows: a raised row under the call, then its steps in a group
+   with a rule on the left; each level inside goes 22 px further in. */
+.run-log-frames,
+.run-log-frame-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-log-frame-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: calc(100% - 40px);
+  min-height: 36px;
+  margin: 2px 12px 2px 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--text);
+  font: var(--type-small);
+  text-align: start;
+  white-space: nowrap;
+}
+.run-log-frame-row:hover {
+  border-color: var(--border-hover);
+}
+.run-log-frame-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.run-log-frame-row[data-status="failed"] .run-log-icon {
+  color: var(--danger-ink);
+}
+.run-log-frame-row[data-status="completed"] .run-log-icon {
+  color: var(--success-ink);
+}
+.run-log-chevron {
+  flex: none;
+  color: var(--muted);
+}
+.run-log-frame-row .run-log-icon {
+  flex: none;
+}
+/* Never wider than the panel: the version shortens first, down to 2.5 em. */
+.run-log-frame-name,
+.run-log-frame-version,
+.run-log-frame-item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-log-frame-name {
+  flex: 0 1 auto;
+  font: var(--type-label);
+}
+.run-log-frame-version {
+  flex: 0 100 auto;
+  min-width: 2.5em;
+  color: var(--muted);
+}
+.run-log-frame-item {
+  flex: 0 50 auto;
+  color: var(--muted);
+}
+.run-log-frame-status {
+  flex: none;
+  margin-left: auto;
+  font: var(--type-caption);
+  color: var(--info-ink);
+}
+.run-log-frame-row[data-status="failed"] .run-log-frame-status {
+  color: var(--danger-ink);
+}
+.run-log-frame-steps {
+  margin: 0 4px 4px 36px;
+  padding: 2px 0;
+  border-left: 2px solid var(--line);
+}
+.run-log-frame-steps .run-log-frame-row {
+  width: calc(100% - 10px);
+  margin-right: 0;
+  margin-left: 10px;
+}
+.run-log-frame-steps .run-log-frame-steps {
+  margin-right: 0;
+  margin-left: 22px;
+}
+.run-log-inside {
+  padding-left: 14px;
+}
+.run-log-inside[data-status="needs"] .run-log-icon,
+.run-log-inside[data-status="needs"] .run-log-summary {
+  color: var(--warning-ink);
+}
+.run-log-inside-note {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-1) calc(14px + 16px + var(--space-2));
+  font: var(--type-small);
+  color: var(--warning-ink);
+}
+.run-log-name {
+  white-space: nowrap;
+}
+/* Set test output shows on hover and on focus of its row; always where it
+   is needed, and on touch. */
+.run-log-set {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  font: var(--type-label);
+  white-space: nowrap;
+  opacity: 0;
+}
+.run-log-inside:hover .run-log-set,
+.run-log-set:focus-visible,
+.run-log-set.shown {
+  opacity: 1;
+}
+.run-log-set-form {
+  padding: var(--space-2) var(--space-3) var(--space-2) 14px;
+  border-bottom: 0;
+}
+.run-log-set-actions {
+  display: flex;
+  gap: var(--space-2);
+}
 .run-log-note {
   margin: 0;
   padding: var(--space-2) var(--space-3);
@@ -217,8 +351,17 @@ SPDX-License-Identifier: Apache-2.0
   .run-log-controls button,
   .run-log-question button,
   .run-log-decision,
-  .run-log-close {
+  .run-log-close,
+  .run-log-frame-row {
     min-height: 44px;
+  }
+  .run-log-frame-steps .run-log-frame-steps {
+    margin-left: 16px;
+  }
+  .run-log-set {
+    height: 44px;
+    min-height: 44px;
+    opacity: 1;
   }
   .run-log-close {
     width: 44px;

@@ -22,9 +22,11 @@ import {
   calleeBlock,
   executeRequest,
   sliceStepIds,
+  splitCalls,
   tooManyCallees,
   type ExecuteParts,
 } from "../src/app/editor/state/execute-request";
+import type { ExecuteResponse } from "../src/app/editor/state/execution";
 import type { StudioTestData } from "../src/app/editor/state/test-data";
 
 const t = (id: string) => ({ id, kind: "transform", value: { literal: id } });
@@ -397,6 +399,77 @@ describe("an execution request with called workflows", () => {
     expect(calleeBlock(WORKFLOW, block("notify"))).toEqual(block("notify"));
     expect(calleeBlock(CALLING, block("notify", "notify[1]"))).toEqual(
       block("notify", "notify[1]"),
+    );
+  });
+});
+
+describe("the host's answer about called workflows", () => {
+  const entry = (nodeId: string, frame?: string) => ({
+    index: 0,
+    nodeId,
+    instanceKey: "",
+    kind: "transform",
+    status: "completed" as const,
+    ...(frame ? { frame } : {}),
+  });
+  const answer = (blocked?: ExecuteResponse["blocked"]): ExecuteResponse => ({
+    status: blocked ? "blocked" : "completed",
+    compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+    trace: [entry("notify"), entry("render", "notify"), entry("send")],
+    frames: [
+      {
+        key: "notify",
+        workflow: "notify-customer@1.0.0",
+        callNode: "notify",
+        status: blocked ? "waiting" : "completed",
+      },
+    ],
+    ...(blocked ? { blocked } : {}),
+  });
+
+  it("keeps only this workflow's steps in the answer and hands what ran inside called workflows apart", () => {
+    const { response, called } = splitCalls(CALLING, answer());
+    expect(response.trace.map((item) => item.nodeId)).toEqual([
+      "notify",
+      "send",
+    ]);
+    expect(response.frames).toBeUndefined();
+    expect(called?.trace.map((item) => [item.nodeId, item.frame])).toEqual([
+      ["render", "notify"],
+    ]);
+    expect(called?.frames.map((frame) => frame.key)).toEqual(["notify"]);
+    // Nothing called: nothing apart.
+    const plain = { ...answer(), trace: [entry("send")], frames: [] };
+    expect(splitCalls(CALLING, plain).called).toBeNull();
+  });
+
+  it("names a stop inside a called workflow on this workflow's call that runs it", () => {
+    const inside = {
+      reason: "missing_mock" as const,
+      nodeId: "enrich",
+      instanceKey: "" as const,
+      frame: "notify",
+      message: "Step enrich in notify-customer needs test data.",
+    };
+    const { response, called } = splitCalls(CALLING, answer(inside));
+    expect(response.blocked).toEqual({ ...inside, nodeId: "notify" });
+    expect(called?.blocked).toEqual(inside);
+    // One item's call in a loop, two calls deep: the item's call is where it stopped.
+    const deep = { ...inside, frame: "notify[2]/enrich", nodeId: "lookup" };
+    expect(splitCalls(CALLING, answer(deep)).response.blocked).toEqual({
+      ...deep,
+      nodeId: "notify",
+      instanceKey: "notify[2]",
+    });
+    // A stop in this workflow keeps the call's own words.
+    const own = {
+      reason: "missing_mock" as const,
+      nodeId: "notify",
+      instanceKey: "" as const,
+      message: "Step notify needs test data.",
+    };
+    expect(splitCalls(CALLING, answer(own)).response.blocked?.reason).toBe(
+      "callee",
     );
   });
 });

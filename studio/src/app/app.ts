@@ -7655,34 +7655,25 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
   }
   /**
-   * The run log's answer to "Send signal …" or "Decide for …": kept as the
-   * step's test answer (checked like all test data), then the last execution
-   * runs again, so the next one doesn't ask.
+   * Keeps what the run log changed in test data (a test answer, test output
+   * inside a called workflow), checked like all test data at `pointer`;
+   * then, when asked, the last execution runs again with it.
    */
-  async answerScript(
-    section: "signals" | "humans",
-    stepId: string,
-    entry: SignalEntry | HumanEntry,
+  async keepForRunLog(
+    change: (data: StudioTestData, now: string) => StudioTestData,
+    pointer: string,
+    executeAgain: boolean,
   ): Promise<boolean> {
     const service = await this.requireTestData();
-    const tools = await this.loadTools();
-    const escape = (key: string) =>
-      key.replace(/~/g, "~0").replace(/\//g, "~1");
     const outcome = await service.change(
-      tools.testDataOps.withScript(
-        service.data(),
-        section,
-        stepId,
-        { ...entry, source: "manual" } as SignalEntry | HumanEntry,
-        new Date().toISOString(),
-      ),
-      [`/${section}/${escape(stepId)}`],
+      change(service.data(), new Date().toISOString()),
+      [pointer],
     );
     if (!outcome.ok) {
       this.notify(outcome.message, undefined, "danger");
       return false;
     }
-    if (this.lastTarget) await this.executeIn(this.lastTarget);
+    if (executeAgain && this.lastTarget) await this.executeIn(this.lastTarget);
     return true;
   }
   /** An entry's step details, on its Input or Output when asked. */

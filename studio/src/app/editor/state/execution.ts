@@ -133,6 +133,8 @@ export interface Blocked {
   nodeId: string;
   instanceKey: InstanceKey | "";
   message: string;
+  /** The called workflow's frame the step is in; absent for a step of the executed workflow. */
+  frame?: FrameKey;
 }
 export interface ExecuteResponse {
   status: ExecuteStatus;

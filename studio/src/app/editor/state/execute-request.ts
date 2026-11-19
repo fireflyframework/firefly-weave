@@ -26,8 +26,11 @@ import type { Json } from "../ndv/registry";
 import type {
   Blocked,
   ExecuteRequest,
+  ExecuteResponse,
   ExecuteTarget,
+  FrameView,
   MockKey,
+  TraceEntry,
 } from "./execution";
 import { instanceStep } from "./instance-keys";
 import type { LastResults } from "./last-results";
@@ -246,4 +249,49 @@ export function calleeBlock(workflow: Workflow, blocked: Blocked): Blocked {
     reason: "callee",
     message: `Call ${at > 0 ? uses.slice(0, at) : uses} needs test data or the workflow itself.`,
   };
+}
+
+/** What an execution ran inside the workflows it called: for the run log, never read as this workflow's steps. */
+export interface CalledRuns {
+  /** Each called workflow's run, in the order the calls started. */
+  frames: FrameView[];
+  /** The steps that ran inside them, each with its frame, in the order they ran. */
+  trace: TraceEntry[];
+  /** Where the run stopped inside one, as the host says it: that workflow's step, and its frame. */
+  blocked: Blocked | null;
+}
+
+/**
+ * The host's answer as the editor reads it: only this workflow's steps in
+ * the trace, and a stop inside a called workflow named on this workflow's
+ * call that runs it, so a called workflow's step never passes for one of
+ * this workflow's with the same ID. What ran inside called workflows goes
+ * apart, for the run log (null when nothing was called).
+ */
+export function splitCalls(
+  workflow: Workflow,
+  answer: ExecuteResponse,
+): { response: ExecuteResponse; called: CalledRuns | null } {
+  const { frames = [], ...rest } = answer;
+  const inside = answer.trace.filter((entry) => entry.frame);
+  const stop = answer.blocked;
+  const response: ExecuteResponse = {
+    ...rest,
+    trace: answer.trace.filter((entry) => !entry.frame),
+  };
+  if (stop?.frame) {
+    // The call of this workflow the stop is under: the frame's first key.
+    const call = stop.frame.split("/")[0];
+    const step = instanceStep(call);
+    response.blocked = {
+      ...stop,
+      nodeId: step,
+      instanceKey: call === step ? "" : call,
+    };
+  } else if (stop) response.blocked = calleeBlock(workflow, stop);
+  const called =
+    frames.length || inside.length
+      ? { frames, trace: inside, blocked: stop?.frame ? stop : null }
+      : null;
+  return { response, called };
 }
