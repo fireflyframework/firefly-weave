@@ -363,6 +363,22 @@ test.describe("Editing inside a loop at 1440x900", () => {
     expect(await stepsOf(page, "loop-1")).toEqual(["transform-1"]);
   });
 
+  test("arrow keys pressed in quick succession go into an empty loop's slot and on past the loop", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, EMPTY);
+    await canvas.tileBody("fetch").focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      canvas.insertTarget("Add a step to For each item of loop-1"),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(canvas.tileBody("$end")).toBeFocused();
+  });
+
   test("a copied loop pastes after the focused step with new IDs for it and its steps", async ({
     page,
   }) => {

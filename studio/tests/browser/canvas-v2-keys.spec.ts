@@ -458,6 +458,22 @@ test.describe("the canvas keyboard map", () => {
   });
 });
 
+test("arrow keys pressed in quick succession each move one step", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const canvas = await openWorkflow(page);
+  await canvas.tileBody("$trigger:manual").focus();
+  // No wait between the presses: a key held down repeats as fast.
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(canvas.tileBody("route")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect(canvas.tileBody("prepare-request")).toBeFocused();
+});
+
 test.describe("the canvas keyboard map on a phone", () => {
   test.use({ viewport: { width: 360, height: 640 } });
 

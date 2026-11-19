@@ -273,6 +273,11 @@ export class CanvasView implements OnInit, DoCheck {
   private focusedHeader = "";
   /** The canvas's width on screen when a header's tooltip was asked for: the tooltip stays inside it. */
   private tipRoom = 0;
+  /**
+   * Where a key sent focus, until it lands there a render or two later (a
+   * tile, or an empty loop's slot): the keys pressed meanwhile go on from it.
+   */
+  private pendingFocus: { id: string; slot: boolean } | null = null;
   /** A press on an output handle, a "+" or a step, until it is a click or a drag. */
   private press: {
     kind: "handle" | "tile";
@@ -1467,6 +1472,8 @@ export class CanvasView implements OnInit, DoCheck {
   pointerDown(event: PointerEvent) {
     this.downAt = { x: event.clientX, y: event.clientY };
     this.cancelledPointer = null;
+    // The pointer takes over: a focus a key sent elsewhere doesn't land.
+    this.pendingFocus = null;
     this.boxAdditive = event.shiftKey;
     const target = event.target as Element;
     if (
@@ -2258,8 +2265,12 @@ export class CanvasView implements OnInit, DoCheck {
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
     if (event.defaultPrevented || target.closest("[role=menu]")) return;
-    const slotFor =
-      target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
+    const pending = this.pendingFocus;
+    const slotFor = pending
+      ? pending.slot
+        ? pending.id
+        : undefined
+      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
     if (slotFor && this.slotKey(event, slotFor)) {
       event.preventDefault();
       event.stopPropagation();
@@ -2268,7 +2279,8 @@ export class CanvasView implements OnInit, DoCheck {
     const typing = typingIn(target);
     const onStep =
       target === this.root().nativeElement ||
-      target.classList.contains("tile-body");
+      target.classList.contains("tile-body") ||
+      (!!pending && !pending.slot);
     const command = canvasCommand(event, {
       platform: this.platform,
       typing,
@@ -2282,8 +2294,11 @@ export class CanvasView implements OnInit, DoCheck {
   run(command: KeymapCommand, target: HTMLElement): boolean {
     const h = this.host();
     const places = this.places();
-    // Focus on a tile acts on it; focus on the canvas, on the selection's focus.
+    // Focus on a tile acts on it, or on the tile a key is sending it to;
+    // focus on the canvas, on the selection's focus.
+    const pending = this.pendingFocus;
     const focus =
+      (pending && !pending.slot ? pending.id : null) ??
       target.closest("[data-tile]")?.getAttribute("data-tile") ??
       this.selection.focus ??
       "";
@@ -2460,7 +2475,7 @@ export class CanvasView implements OnInit, DoCheck {
     const start = from || this.active();
     // An empty loop's "Add a step" is the way into its body.
     if (direction === "next" && !pastBody && this.emptyLoop(start)) {
-      this.focusLater(start, this.slotSelector(start));
+      this.focusLater(start, this.slotSelector(start), true);
       return true;
     }
     const next = neighbor(this.layout(), start, direction);
@@ -2523,21 +2538,30 @@ export class CanvasView implements OnInit, DoCheck {
     if (event.key === "ArrowRight") return this.moveFocus(loop, "next", true);
     return false;
   }
-  /** Focuses an element of a tile's group once the canvas has drawn that tile in view. */
-  private focusLater(id: string, selector: string) {
+  /**
+   * Focuses an element of a tile's group once the canvas has drawn that
+   * tile in view. A later key that sends focus elsewhere first wins.
+   */
+  private focusLater(id: string, selector: string, slot = false) {
+    const pending = { id, slot };
+    this.pendingFocus = pending;
     this.cdr.markForCheck();
     afterNextRender(
       () => {
+        if (this.pendingFocus !== pending) return;
         // The canvas moves its own view first, and the step takes focus
         // once it is drawn there. A focus that scrolled the flow would move
         // the view again, from where the step was before.
         this.revealTile(id);
         this.cdr.markForCheck();
         afterNextRender(
-          () =>
+          () => {
+            if (this.pendingFocus !== pending) return;
+            this.pendingFocus = null;
             this.root()
               .nativeElement.querySelector<HTMLElement>(selector)
-              ?.focus({ preventScroll: true }),
+              ?.focus({ preventScroll: true });
+          },
           { injector: this.injector },
         );
       },
