@@ -224,6 +224,11 @@ export function recordedLoops(
       .map(([name, items]) => {
         const prefix = name ? name.split(",").map(Number) : [];
         const recorded = run.loops[instance(prefix)];
+        const binding = run.completed[instance(prefix)];
+        const output =
+          binding && typeof binding === "object"
+            ? (binding as { output?: unknown }).output
+            : undefined;
         const count =
           recorded ?? Math.max(0, ...[...items.keys()].map((i) => i + 1));
         return {
@@ -236,6 +241,7 @@ export function recordedLoops(
             (_, index): RecordedItem =>
               items.get(index) ?? { index, status: "not-run", code: null },
           ),
+          results: Array.isArray(output) ? output.length : null,
         };
       })
       .sort((a, b) => compareIndexes(a.within, b.within));

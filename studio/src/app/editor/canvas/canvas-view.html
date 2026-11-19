@@ -227,6 +227,22 @@ SPDX-License-Identifier: Apache-2.0
               }
             </div>
           }
+          @for (chip of itemChips(); track chip.id) {
+            <div
+              class="item-chip-spot f-drag-blocker"
+              [attr.data-chip]="chip.id"
+              [style.left.px]="chip.x"
+              [style.top.px]="chip.y"
+              [style.--chip-scale]="chip.scale"
+            >
+              <weave-item-chip
+                [loop]="chip.loop"
+                [index]="chip.index"
+                [tabIndex]="0"
+                (picked)="pickItem(chip.id, $event)"
+              />
+            </div>
+          }
           @if (frameTip(); as tip) {
             <span
               class="frame-tip f-drag-blocker"

@@ -144,8 +144,10 @@ import {
   frameRun,
   framedStep,
   isRecordedRun,
+  type RecordedLoop,
   type RecordedRun,
 } from "./run-state";
+import { ItemChip } from "./item-chip";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
@@ -170,6 +172,7 @@ import {
   type Unreadable,
 } from "../state/clipboard";
 import {
+  loopResultText,
   runText,
   tileBadge,
   tileBorders,
@@ -205,6 +208,17 @@ const modified = (event: KeyboardEvent) =>
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
+/** A loop's item chip on the Runs tab, at its frame's top right. */
+interface ChipView {
+  id: string;
+  /** The frame's top right corner, in canvas units, less the chip's 6 px gap. */
+  x: number;
+  y: number;
+  /** Drawn at screen size whatever the zoom. */
+  scale: number;
+  loop: RecordedLoop;
+  index: number;
+}
 /** A step's hover toolbar, or a chosen trigger's (one Remove button). */
 interface ToolbarView {
   id: string;
@@ -242,6 +256,7 @@ export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
     CanvasTools,
     SelectionToolbar,
     NotesLayer,
+    ItemChip,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -758,9 +773,16 @@ export class CanvasView implements OnInit, DoCheck {
     const badge = tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
-    const fact = recorded
-      ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-      : null;
+    // A loop the run finished says how many items it had under its frame.
+    const loop =
+      recorded && state.frame && state.run === "done"
+        ? this.recordedLoop(tile.id, recorded)
+        : null;
+    const fact = loop
+      ? { text: loopResultText(loop.count, loop.results), tone: null }
+      : recorded
+        ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+        : null;
     return {
       ...common,
       step: true,
@@ -941,6 +963,59 @@ export class CanvasView implements OnInit, DoCheck {
   /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
   handleOffset(tile: string): number {
     return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;
+  }
+  /**
+   * A loop's run in a recorded run: the one in the items picked on the
+   * loops around it; null when the run has none.
+   */
+  private recordedLoop(id: string, run: RecordedRun): RecordedLoop | null {
+    const loops = this.loopsMemo(this.layout());
+    const places = this.places();
+    const within: number[] = [];
+    for (
+      let parent = places.get(id)?.parent ?? null;
+      parent;
+      parent = places.get(parent)?.parent ?? null
+    )
+      if (loops.has(parent)) within.unshift(run.picks?.[parent] ?? 0);
+    return (
+      run.loops?.find(
+        (loop) => loop.id === id && loop.within.join() === within.join(),
+      ) ?? null
+    );
+  }
+  private readonly chipsOnFramesMemo = memo(
+    (layout: LtrLayout, run: CanvasRun | null, zoom: number): ChipView[] => {
+      if (!isRecordedRun(run) || !run.picks || !run.loops?.length) return [];
+      return layout.frames.flatMap((frame) => {
+        const loop = this.recordedLoop(frame.id, run);
+        if (!loop) return [];
+        return [
+          {
+            id: frame.id,
+            x: frame.x + frame.width,
+            y: frame.y - 6 / zoom,
+            scale: 1 / zoom,
+            loop,
+            index: run.picks?.[frame.id] ?? 0,
+          },
+        ];
+      });
+    },
+  );
+  /** The item chips above the frames of a recorded run's loops (the Runs tab). */
+  itemChips(): ChipView[] {
+    if (!this.viewingRuns()) return [];
+    return this.chipsOnFramesMemo(
+      this.layout(),
+      this.host().canvasRun(),
+      this.view.zoom,
+    );
+  }
+  /** A chip's item was chosen: the run draws the loop's steps in it. */
+  pickItem(loop: string, index: number): void {
+    const run = this.host().canvasRun();
+    if (isRecordedRun(run)) run.pick?.(loop, index);
   }
   private readonly chipsMemo = memo((layout: LtrLayout): SubNodeView[] => {
     if (!layout.subNodes.length) return [];

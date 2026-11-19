@@ -414,6 +414,23 @@ weave-canvas-view,
   }
 }
 
+/* A recorded run's item chip: at screen size above the frame's top right,
+   its right edge on the frame's (criteria 3.3 of the loop mockups). */
+.canvas-v2 .item-chip-spot {
+  position: absolute;
+  z-index: 6;
+  width: 0;
+  height: 0;
+}
+.canvas-v2 .item-chip-spot weave-item-chip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  pointer-events: auto;
+  transform: scale(var(--chip-scale, 1));
+  transform-origin: right bottom;
+}
+
 /* Corner badge */
 .canvas-v2 .tile-badge {
   position: absolute;

@@ -50,6 +50,8 @@ export interface RecordedLoop {
   /** The count is the run's own. */
   known: boolean;
   items: readonly RecordedItem[];
+  /** How many results it returned, when the run kept its output; null otherwise. */
+  results: number | null;
 }
 export interface RecordedRun extends CanvasRun {
   mode: "real";
@@ -57,6 +59,8 @@ export interface RecordedRun extends CanvasRun {
   loops?: readonly RecordedLoop[];
   /** Loop step ID to the item its steps show (zero-based); absent: every item at once. */
   picks?: Readonly<Record<string, number>>;
+  /** Shows another item of a loop (zero-based). */
+  pick?: (loop: string, index: number) => void;
   /** Steps changed since the run's version. */
   changed: readonly string[];
   /** Steps the run's version didn't have. */

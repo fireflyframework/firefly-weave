@@ -305,6 +305,22 @@ describe("a recorded run's loops", () => {
     expect(second.canvas.picks).toEqual({ orders: 1 });
   });
 
+  it("knows how many results a loop returned when the run kept its output", () => {
+    const loops = recordedLoops(
+      workflow(),
+      record({
+        steps: {
+          fetch: { output: { orders: ORDERS } },
+          orders: { output: [1, 2, 3] },
+        },
+      }),
+      FACTS,
+    );
+    expect(loops.find((loop) => loop.id === "orders")?.results).toBe(3);
+    // The run keeps no output of a loop inside another loop.
+    expect(loops.find((loop) => loop.id === "lines")?.results).toBeNull();
+  });
+
   it("says how many items a loop had and how many results it left out", () => {
     expect(loopResultText(20, 20)).toBe("20 items");
     expect(loopResultText(20, 18)).toBe("20 items, 2 skipped");
