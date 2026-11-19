@@ -218,6 +218,32 @@ All operations use `/api/v1/tenants/{tenant}/projects/{project}/operations/reten
 Use the typed [SDK](../reference/sdk.md) with a project scope. The CLI, the SDK,
 and HTTP share the same authorization and response contracts.
 
+## AI agent conversations
+
+[Conversation memory](../reference/ai-agents.md#conversation-memory) keeps what
+an AI agent remembers across runs apart from runs, so retention plans leave
+it alone:
+
+- **Lifetime.** Each completed run's exchange keeps the conversation for the
+  step's `ttlSeconds` more: 30 days by default, 1 hour to 365 days per step. An
+  expired conversation is never loaded, listed or read. The operations loop
+  deletes expired conversations on a later visit, up to 500 per environment
+  each time; one that is refreshed before then is kept.
+- **Deleting.** People with `run.purge` delete one conversation, by key (hashed
+  by the SDK or CLI) or key hash, or every conversation of a workflow, 1,000 at
+  a time: `weave agent-conversations delete --workflow <name> --key <key>`, or
+  `weave agent-conversations purge-workflow`. Both are audited. A run still
+  running when its conversation is deleted starts a new conversation with its
+  own exchange when it completes.
+- **Copies in runs.** Each run that loaded a conversation keeps the loaded
+  messages in its `memory_loaded` event and its turn inputs until that run is
+  purged. Purging a run leaves the conversation. A delete answers `loaded_by`,
+  up to 100 runs that loaded the conversation (`more_loaded_by` says when there
+  are more), so an erasure can purge those runs too.
+- **Environments.** Deleting an environment deletes its conversations.
+- **Backups** keep deleted conversations until the backups rotate; see
+  [Backup and restore](backup-restore.md).
+
 ## Next steps
 
 - Check capacity limits in [configuration](configuration.md#operational-policy).
