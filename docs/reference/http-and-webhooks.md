@@ -206,6 +206,13 @@ activation, give it a secret handle of its own, never a production webhook's:
 otherwise an event sent to that production webhook could be replayed to the test
 URL within the tolerance window and start a test run.
 
+**Production URL and test URL.** A webhook created by an activation has a
+production URL, `{platform URL}/webhooks/{id}`, that starts runs of the active
+version. A draft test activation that listens has a test URL of its own, which
+starts test runs of the saved draft and stops working when the test activation
+expires or is deleted. Both take the same signed request; sign each with its own
+secret handle.
+
 **Retries and duplicates.** The same event ID with the exact same body returns
 the same receipt, run, and signal IDs, including after a lost response. The same
 event ID with different bytes returns HTTP 409, even when the JSON means the same

@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // run in, entering decision paths, parallel branches and loop bodies): the
 // breadcrumb at the top of step details, Previous and Next step, and the
 // neighbor buttons. Lanes come from each kind's registered containers.
+import { isTriggerTarget } from "../triggers/trigger-target";
 import { conditionSummary } from "../../designer/conditions";
 import { getAt } from "../../forms/core/json";
 import type { Step, Workflow } from "../../model";
@@ -117,7 +118,7 @@ export function outlineOrder(workflow: Workflow): string[] {
 export function outlineRank(workflow: Workflow): (target: string) => number {
   const order = outlineOrder(workflow);
   return (target) => {
-    if (target === "$trigger") return -1;
+    if (isTriggerTarget(target)) return -1;
     const at = order.indexOf(target);
     if (at >= 0) return at;
     return target === "$end" ? order.length : order.length + 1;

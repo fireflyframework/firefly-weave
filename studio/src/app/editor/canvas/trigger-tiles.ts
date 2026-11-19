@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // What a trigger says, on its tile and in Add a step: its name, icon, what
 // it does, the words people search with, and the tile's subtitle. Triggers
 // other than the input form are created when the workflow is activated.
+import type { TriggerIntent } from "../state/canvas-sidecar";
 import type { Workflow } from "../../model";
 import type { CanvasSidecar } from "../state/canvas-sidecar";
 import type { TriggerKind } from "./layout-ltr";
@@ -68,6 +69,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export function triggerTile(
   kind: TriggerKind,
   workflow: Workflow,
+  /** The trigger choice, when an activation took the settings it has now. */
+  activated?: TriggerIntent,
 ): { icon: string; title: string; subtitle: string } {
   const icon = TRIGGER_ICONS[kind];
   const title = TRIGGER_LABELS[kind];
@@ -87,7 +90,21 @@ export function triggerTile(
         : "Any workflow here",
     };
   }
-  return { icon, title, subtitle: SET_UP_LATER };
+  // Set up at activation until an activation took the settings it has now.
+  const intent = activated;
+  if (!intent) return { icon, title, subtitle: SET_UP_LATER };
+  const name = typeof intent["name"] === "string" ? intent["name"] : "";
+  const cron = typeof intent["cron"] === "string" ? intent["cron"] : "";
+  return {
+    icon,
+    title,
+    subtitle:
+      kind === "schedule"
+        ? `${cron} UTC`
+        : kind === "email"
+          ? "Reads its mailbox"
+          : name || SET_UP_LATER,
+  };
 }
 
 /** Where a trigger tile's note is kept: the input form's under "$trigger", as step details writes it. */

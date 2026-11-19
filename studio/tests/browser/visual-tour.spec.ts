@@ -141,6 +141,11 @@ import {
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
+  platform as activationPlatform,
+  revision as activationRevision,
+  versionId as activationVersion,
+} from "./activation-po";
+import {
   PRODUCTION,
   bindable as connectionBindable,
   connectionSelect,
@@ -1762,6 +1767,25 @@ async function openDebugRuns(page: Page) {
 }
 
 type Scene = (tour: Tour) => Promise<void>;
+/** A workflow whose triggers are chosen on the canvas: one step, any input. */
+const TRIGGER_WORKFLOW = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: pets
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+  outputSchema:
+    type: object
+  steps:
+    - id: check
+      kind: transform
+      value:
+        ref: /input
+  output:
+    literal: {}
+`;
 /** Generates and pins a step's sample output, then closes step details. */
 async function pinSample(details: StepDetailsPage, id: string) {
   await details.open(id);
@@ -5197,6 +5221,236 @@ spec:
     const output = await showOutput(details);
     await expect(output).toContainText("From Production · run");
     await shot("198-real-result");
+  },
+  async "activation-triggers"({ page, shot }) {
+    // The dialog's Triggers step: a new webhook, a new Kafka trigger on its
+    // connection, an earlier version's webhook left behind; then, after
+    // Activate, the rows that failed with Retry.
+    await activationPlatform(page);
+    const failed = (r: Route) =>
+      r.fulfill({
+        status: 500,
+        json: {
+          code: "WV-INTERNAL",
+          message: "The platform couldn't store it.",
+        },
+      });
+    await page.route("**/environments/development/triggers?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "w-old",
+              name: "orders-old",
+              kind: "run",
+              activation_id: "activation-old",
+              secret_ref: "orders-signing",
+              payload_schema: { type: "object" },
+              max_body_bytes: 1048576,
+              tolerance_seconds: 300,
+              principal_id: "p-1",
+              disabled: false,
+              revision: 3,
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/environments/development/triggers", failed);
+    await page.route("**/environments/development/broker-triggers", failed);
+    for (const list of ["broker-triggers", "schedules", "provider-sources"])
+      await page.route(`**/environments/development/${list}?*`, (r) =>
+        r.fulfill({ json: { items: [], next_cursor: null } }),
+      );
+    await page.route(
+      "**/environments/development/bindable-connections?*",
+      (r) =>
+        r.fulfill({
+          json: {
+            items: [
+              {
+                connection_id: "33333333-3333-4333-8333-333333333333",
+                revision_id: activationRevision,
+                name: "pets",
+                connector: "weave-http@2.0.0",
+                enabled: true,
+              },
+              {
+                connection_id: "66666666-6666-4666-8666-666666666666",
+                revision_id: "55555555-5555-4555-8555-555555555555",
+                name: "orders-kafka",
+                connector: "weave-kafka@1.0.0",
+                enabled: true,
+              },
+            ],
+            next_cursor: null,
+          },
+        }),
+    );
+    await page.route("**/environments/development/activations?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "activation-old",
+              name: "pets",
+              revision: 1,
+              retired: false,
+              request: { version_id: "22222222-2222-4222-8222-222222222222" },
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/projects/project/workflows?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            { id: activationVersion, name: "pets", version: "1.0.0" },
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              name: "pets",
+              version: "0.9.0",
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await useNewEditor(page);
+    await page.reload();
+    await page.getByLabel("Choose a workflow file").setInputFiles([
+      {
+        name: "pets.yaml",
+        mimeType: "application/yaml",
+        buffer: Buffer.from(TRIGGER_WORKFLOW),
+      },
+      {
+        name: "pets.canvas.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 2,
+            kind: "weave.studio/canvas",
+            triggers: [
+              {
+                id: "trigger-1b2c3d4e",
+                kind: "webhook",
+                name: "orders-in",
+                secretRef: "orders-signing",
+              },
+              {
+                id: "trigger-3d4e5f6a",
+                kind: "broker",
+                name: "orders",
+                clusterId: "orders-cluster",
+                topic: "orders",
+                deadLetterPolicy: "receipt",
+              },
+            ],
+          }),
+        ),
+      },
+    ]);
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    await command(page, "Publish…");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Publish version" })
+      .click();
+    await command(page, "Activate…");
+    const dialog = page.getByRole("dialog");
+    const rows = dialog.getByRole("list", { name: "Triggers" });
+    await expect(rows.getByRole("listitem")).toHaveCount(3);
+    await shot("220-activation-triggers", { end: ".modal-panel" });
+    await dialog
+      .getByRole("button", { name: "Activate version", exact: true })
+      .click();
+    await expect(rows.getByRole("button", { name: "Retry" })).toHaveCount(2);
+    await shot("221-activation-triggers-retry", { end: ".modal-panel" });
+  },
+  async "webhook-listening"({ page, shot }) {
+    // A webhook's step details, connected with test calls on: Listen for test
+    // event, then the test URL with its signed cURL while the tile pulses.
+    await openConnected(page, {
+      bindable: { [PRODUCTION]: [] },
+      capabilities: [
+        ...allCapabilities,
+        "compile",
+        "step.test",
+        "trigger.manage",
+      ],
+    });
+    await routeStepTests(page, { starts: [], views: [] });
+    await page.route("**/environments/*/test-activations", (r) =>
+      r.fulfill({
+        status: 201,
+        json: {
+          id: "ta-1",
+          activation_id: "a7a7a7a7-1111-4222-8333-444455556666",
+          artifact_digest: "a".repeat(64),
+          side_effect: "read_only",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      }),
+    );
+    await page.route("**/environments/*/test-activations/*/listen", (r) =>
+      r.fulfill({
+        json: {
+          test_url: "https://platform.test/hooks/test/7c1d",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      }),
+    );
+    await page.route("**/environments/*/run-summaries**", (r) =>
+      new URL(r.request().url()).searchParams.get("activation_id")
+        ? r.fulfill({ json: { items: [], next_cursor: null } })
+        : r.fallback(),
+    );
+    await page.getByLabel("Choose a workflow file").setInputFiles([
+      crmWorkflow(),
+      {
+        name: "order-intake.canvas.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 2,
+            kind: "weave.studio/canvas",
+            triggers: [
+              {
+                id: "trigger-1b2c3d4e",
+                kind: "webhook",
+                name: "orders-in",
+                secretRef: "orders-signing",
+                testSecretRef: "orders-test",
+              },
+            ],
+          }),
+        ),
+      },
+    ]);
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    const show = page.getByRole("button", { name: "Show canvas", exact: true });
+    if (await show.isVisible()) await show.click();
+    await page
+      .locator('.tile-node[data-tile="$trigger:trigger-1b2c3d4e"] .tile-body')
+      .dblclick();
+    const details = page.getByRole("dialog", {
+      name: "Step details: Webhook trigger",
+      exact: true,
+    });
+    await expect(details).toBeVisible();
+    await shot("222-webhook-step-details");
+    await details
+      .locator(".sd-actions")
+      .getByRole("button", { name: "Listen for test event", exact: true })
+      .click();
+    await expect(
+      details.getByRole("textbox", { name: "Make a POST request to:" }),
+    ).toBeVisible();
+    await shot("223-webhook-listening");
   },
   async "connections-policy-off"({ page, shot }) {
     const { details } = await openConnected(

@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // the workflow's): what each field reads, writes, shows under itself and
 // offers in its menu. Components read through it; every write goes through
 // the controller as an undo step.
+import { isTriggerChoice } from "../../triggers/trigger-target";
 import {
   canonicalJson,
   formatPointer,
@@ -1564,7 +1565,8 @@ export class FormSession {
         field: NOTES,
         fix: { kind: "focus", label: "Fix" },
       });
-    const pseudo = this.target.startsWith("$");
+    // A trigger choice's settings are its own fields, as a step's are.
+    const pseudo = this.target.startsWith("$") && !isTriggerChoice(this.target);
     const scoped = specs.filter(
       (placed) =>
         (placed.spec.scope ?? "step") === (pseudo ? "workflow" : "step"),

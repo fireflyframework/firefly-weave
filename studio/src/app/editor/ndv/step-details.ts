@@ -23,6 +23,12 @@ SPDX-License-Identifier: Apache-2.0
 // it) — there is nothing to save: every edit is already in the workflow as
 // an undo step.
 import {
+  listenFor,
+  stopListening,
+  workflowTestItem,
+} from "../activation/execute-in-environment";
+import { listenBlocked } from "../triggers/test-listener";
+import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -87,6 +93,8 @@ import { allSteps } from "./step-walk";
 import { stepDetailsSheet } from "../state/canvas-commands";
 import type { SheetSection } from "../state/keymap";
 import { TestEventPane } from "./panes/test-event-pane";
+import { TriggerEventPane } from "../triggers/test-event-pane";
+import { TriggerSetup } from "../triggers/trigger-setup";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
 import { revealTop, scrollingParent, visibleBox } from "./scroll-area";
@@ -127,7 +135,13 @@ import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import { reservedActionNames } from "./owned/insert-owned";
 import { SettingsTab } from "./settings/settings-tab";
 import { retryOn, settingsChanged } from "./settings/settings-rules";
-import { stepNotesOf } from "../state/canvas-sidecar";
+import { stepNotesOf, type TriggerIntent } from "../state/canvas-sidecar";
+import {
+  TRIGGER_DESCRIPTIONS,
+  TRIGGER_ICONS,
+  TRIGGER_LABELS,
+} from "../canvas/trigger-tiles";
+import { isTriggerTarget } from "../triggers/trigger-target";
 import type {
   ExecuteNotice,
   StepDetailsController,
@@ -281,6 +295,8 @@ const visible = (element: HTMLElement): boolean =>
     InputPane,
     OutputPane,
     TestEventPane,
+    TriggerEventPane,
+    TriggerSetup,
     CloseGuard,
     ExecuteDialog,
     SettingsTab,
@@ -753,7 +769,18 @@ export class StepDetails {
     return this.target().startsWith("$");
   }
   name(): string {
-    return targetName(this.target());
+    const choice = this.triggerChoice();
+    return choice
+      ? `${TRIGGER_LABELS[choice.kind]} trigger`
+      : targetName(this.target());
+  }
+  /** The trigger choice these step details show, or null. */
+  triggerChoice(): TriggerIntent | null {
+    return this.controller().triggerChoice(this.target());
+  }
+  /** The input form or a trigger choice: what starts the workflow. */
+  triggerTarget(): boolean {
+    return isTriggerTarget(this.target());
   }
   layout(): "three" | "two" | "sheet" {
     const width = this.host().windowWidth;
@@ -763,6 +790,8 @@ export class StepDetails {
   }
   private iconOf(id: string): string {
     if (id === "$trigger") return "manualTrigger";
+    const choice = this.controller().triggerChoice(id);
+    if (choice) return TRIGGER_ICONS[choice.kind];
     if (id === "$end") return "check";
     const step = this.controller().step(id);
     return step
@@ -789,6 +818,8 @@ export class StepDetails {
   private liveSubtitle(): string {
     if (this.target() === "$trigger")
       return "Manual form · starts a run with its input fields";
+    const choice = this.triggerChoice();
+    if (choice) return TRIGGER_DESCRIPTIONS[choice.kind];
     if (this.target() === "$end") return "End · what the workflow returns";
     const step = this.controller().step(this.target());
     return step
@@ -831,13 +862,13 @@ export class StepDetails {
     );
   }
   next(): string | null {
-    if (this.target() === "$trigger") return this.firstStep();
+    if (this.triggerTarget()) return this.firstStep();
     return this.pseudo()
       ? null
       : adjacent(this.host().model.definition, this.target(), 1);
   }
   neighborList(): { before: string[]; after: string[] } {
-    if (this.target() === "$trigger")
+    if (this.triggerTarget())
       return {
         before: [],
         after: [this.firstStep()].filter((id): id is string => !!id),
@@ -855,7 +886,7 @@ export class StepDetails {
     }));
   }
   neighborName(id: string): string {
-    return id === "$trigger" ? "trigger" : id;
+    return isTriggerTarget(id) ? "trigger" : id;
   }
   neighborIcon(id: string): string {
     return this.iconOf(id);
@@ -1101,7 +1132,7 @@ export class StepDetails {
 
   // ------------------------------------------------------- execute step
   executeLabel(): string {
-    return this.target() === "$trigger" ? "Execute workflow" : "Execute step";
+    return this.triggerTarget() ? "Execute workflow" : "Execute step";
   }
   // ------------------------------------------------------- run mode
   /** "Run 1c0d7f8a": the run step details reads, on the Runs tab; "" otherwise. */
@@ -1154,8 +1185,50 @@ export class StepDetails {
       connectionsPort(this.host())?.runningTests()?.running() ?? null;
     return running?.stepId === this.target() ? running : null;
   }
+  /** A webhook's header button listens for its test event, where it can. */
+  listensHere(): boolean {
+    const choice = this.triggerChoice();
+    if (choice?.kind !== "webhook" || this.controller().viewingRuns())
+      return false;
+    const host = this.host();
+    return !listenBlocked(this.controller().environmentOf(), (role) =>
+      host.can(role),
+    );
+  }
+  /** True while this webhook listens for its test event. */
+  listening(): boolean {
+    const choice = this.triggerChoice();
+    return (
+      !!choice && connectionsPort(this.host())?.listeningTo() === choice.id
+    );
+  }
+  toggleListen(): void {
+    const choice = this.triggerChoice();
+    if (!choice) return;
+    if (this.listening()) return stopListening(this.host());
+    listenFor(this.host(), choice, this.dialogs, this.controller().testEvent());
+    // The test URL shows in the Test event pane: behind its tab on a narrow window.
+    if (!this.showPane("input"))
+      this.choosePane(this.layout() === "sheet" ? "pane" : "dataPane", "input");
+  }
   executeItems(): RowMenuItem[] {
-    if (this.target() === "$trigger") return [];
+    // A trigger executes the workflow: here, or in the environment.
+    if (this.triggerTarget()) {
+      const real = this.controller().viewingRuns()
+        ? null
+        : workflowTestItem(this.host(), this.dialogs);
+      // Listening takes the button: Execute workflow moves to the menu.
+      const here: RowMenuItem[] = this.listensHere()
+        ? [
+            {
+              label: "Execute workflow",
+              detail: "Runs the workflow on this computer from its test event",
+              run: () => void this.execute("step"),
+            },
+          ]
+        : [];
+      return [...here, ...(real ? [real] : [])];
+    }
     const real = this.realItem();
     return [
       {
@@ -1442,8 +1515,9 @@ export class StepDetails {
     const id = this.target();
     const controller = this.controller();
     const workflow = host.model.definition;
-    const target: ExecuteTarget =
-      id === "$trigger" ? { mode: "workflow" } : { mode, stepId: id };
+    const target: ExecuteTarget = isTriggerTarget(id)
+      ? { mode: "workflow" }
+      : { mode, stepId: id };
     // Execute step shows every message of the step, required ones too.
     controller.reveal(id);
     const runs =

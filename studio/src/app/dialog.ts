@@ -273,6 +273,11 @@ export interface DialogOptions {
   alternateLabel?: string;
   /** Starts on the main answer even beside an alternate one, when the main answer loses nothing. */
   startOnConfirm?: boolean;
+  /**
+   * Starts on Cancel with the main answer in its usual style: a question
+   * whose answer changes data elsewhere, where a held Enter mustn't run it.
+   */
+  startOnCancel?: boolean;
   danger?: boolean;
   fields?: DialogField[];
 }
@@ -441,9 +446,11 @@ export class DialogHost {
   }
   /** A destructive answer anywhere in a question without fields: start on Cancel. */
   startsOnCancel(request: DialogRequest) {
-    const { fields, danger, alternateLabel, startOnConfirm } = request.options;
+    const { fields, danger, alternateLabel, startOnConfirm, startOnCancel } =
+      request.options;
     return (
-      !fields?.length && (!!danger || (!!alternateLabel && !startOnConfirm))
+      !fields?.length &&
+      (!!danger || !!startOnCancel || (!!alternateLabel && !startOnConfirm))
     );
   }
   paragraphsOf(request: DialogRequest): string[] {

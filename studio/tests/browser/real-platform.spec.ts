@@ -566,7 +566,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   const integrations = JSON.parse(
     readFileSync(join(platformDir, "integrations.json"), "utf8"),
   ) as { release_id: string };
-  await expect(activate).toContainText("picked automatically");
+  await expect(activate).toContainText("chosen for you");
   await activate.getByRole("button", { name: "Review", exact: true }).click();
   await expect(activate.getByLabel(/^weave-http@2\.0\.0/)).toHaveValue(
     integrations.release_id,

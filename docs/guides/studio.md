@@ -1788,6 +1788,43 @@ names stored secrets by handle only. Send it with **Copy request**, **Download c
 address, **Authentication**, **Secret names**, and **Destinations**, never secret
 values; **Technical details** holds the adapter and the revision ID.
 
+### Set up triggers, listen for a test event, and execute in an environment
+
+Double-click a trigger, or select it and press Enter, to open its step
+details: **Test event**, **Parameters** and **Output**.
+
+- **Parameters** hold what the platform needs to create the trigger: a
+  webhook's name, its production secret and a test secret of its own; a
+  schedule's calendar (**Repeats**, **Every**, **Day**, **At (UTC)**, or a
+  **Cron** expression) with its next five times; a Kafka trigger's cluster,
+  topic and what happens when a message can't start a run. Choosing an email
+  trigger asks whether to replace the workflow's input with the email message.
+- **Test event** holds the sample a run starts with: select **Paste sample**
+  (or **Paste a sample message**, **email** or **event**), paste JSON, and
+  select **Use this sample**.
+- **Listen for test event.** A webhook, when Studio is connected to an
+  environment with test calls on, listens for a real request instead. Select
+  **Listen for test event**: Studio saves the draft and shows a test URL
+  under **Make a POST request to:**, a signed cURL to send it, and **Stop
+  listening**, while the trigger's tile pulses. Export
+  `WEAVE_WEBHOOK_SECRET` with the value of the webhook's test secret, which the
+  pane names, never the production one: `read -rs WEAVE_WEBHOOK_SECRET && export
+  WEAVE_WEBHOOK_SECRET` keeps the value out of your shell's history. On a local
+  platform, the pane also shows the `weave platform secret set` command that sets
+  that secret's value. Then run the cURL; it stops if the secret isn't exported. The
+  request's payload becomes the workflow's test input, and its run opens in
+  the **Runs** tab, marked **Test**. Listening needs the step tester and
+  trigger manager roles; without them, or with test calls off, the pane says
+  why and offers **Paste sample**.
+- **Execute workflow in an environment.** Next to **Execute workflow**, select
+  **More ways to execute**, then **Execute workflow in _environment_**. Studio
+  saves the draft and runs it for real, as a test run, with the connections
+  you chose on this computer. When steps change data there, Studio names them
+  and asks first: "charge changes data in local. Executing the workflow
+  repeats the change." The run opens in the **Runs** tab, which follows it
+  over the canvas. Test runs stay out of **Operate › Runs** unless you select
+  **Include test runs**. With test calls off, the entry says why.
+
 ### Activate and run the workflow
 
 Publish the workflow, then select **Activate…**. The activation dialog, titled
@@ -1798,6 +1835,27 @@ under **items picked automatically**; select **Review** to inspect it. Integrati
 versions, task versions, and people and teams use the same review. Select **Activate version**;
 a failure is shown inside the dialog so you can correct the bindings. Then select
 **Start run…**, as described in the next section.
+
+The dialog checks the workflow before you activate it:
+
+- **This platform doesn't run loops yet (flow.forEach). Update the platform
+  first.** The platform lacks a language feature the version uses; nothing can
+  be activated until it does.
+- **Called workflows** lists each workflow this one calls, with the activation
+  it pins, such as **notify-customer 1.0.0 · activation 3**. **Activate
+  notify-customer first** means that workflow has no current activation here.
+- **Triggers** says what activating does to each trigger: "Create webhook
+  orders-in", "Move webhook orders-in from 1.0.0 to 1.1.0 (the URL stays the
+  same)", or a trigger an earlier version ran that stays behind, with **Stop
+  it**. A new Kafka, email or app event trigger asks for its **Connection** on
+  its row.
+
+After **Activate version**, the dialog stays open while it sets the triggers
+up, each row then reads **Created**, **Moved** or **Stopped**. A trigger that
+can't be set up says why, with **Retry**; the activation stays, and the message
+reads "Activated orders 1.2.0. 1 trigger needs attention." The webhook's step
+details then show its **Production URL** with **Copy URL**; activating a later
+version moves the same webhook, so its URL doesn't change.
 
 ## Save, publish, activate and run
 

@@ -410,6 +410,13 @@ class StudioController:
 
         return JSONResponse(DeploymentRequest.model_json_schema(), headers={"Cache-Control": "no-store"})
 
+    @get_mapping("/studio/contracts/email-message")
+    async def email_message_contract(self, request: Request) -> Response:
+        """The run input an email source starts a run with: one received message, its definitions inlined."""
+        from firefly_weave.triggers.retarget import email_input_schema
+
+        return JSONResponse(email_input_schema(), headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/llm-profile")
     async def llm_profile_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.llm import LLMProfile

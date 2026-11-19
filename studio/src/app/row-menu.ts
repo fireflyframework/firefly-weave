@@ -42,12 +42,23 @@ export interface RowMenuItem {
   danger?: boolean;
   disabled?: boolean;
   /**
+   * Can't run now, for the reason in `detail`: marked disabled, yet picking
+   * it still runs it, so a command can say why (as its toolbar button does).
+   */
+  blocked?: boolean;
+  /**
    * Set on every item of a choice: the item is a radio item, and the checked
    * one shows a check. Left out, the item is a plain menu item.
    */
   checked?: boolean;
   run: () => void;
 }
+
+/** Shown as disabled: a disabled item, or a blocked one. */
+export const markedDisabled = (item: RowMenuItem): boolean =>
+  !!(item.disabled || item.blocked);
+/** Picking it runs it: every item but a disabled one. */
+export const runsWhenPicked = (item: RowMenuItem): boolean => !item.disabled;
 
 let sequence = 0;
 
@@ -94,7 +105,7 @@ let sequence = 0;
             [attr.aria-checked]="item.checked ?? null"
             tabindex="-1"
             [class.danger]="item.danger"
-            [attr.aria-disabled]="item.disabled ? 'true' : null"
+            [attr.aria-disabled]="markedDisabled(item) ? 'true' : null"
             (click)="pick(item)"
           >
             <span>{{ item.label }}</span>
@@ -240,8 +251,9 @@ export class RowMenu {
       this.close();
     } else if (event.key === "Tab") this.close(false);
   }
+  readonly markedDisabled = markedDisabled;
   pick(item: RowMenuItem) {
-    if (item.disabled) return;
+    if (!runsWhenPicked(item)) return;
     this.close();
     item.run();
   }
