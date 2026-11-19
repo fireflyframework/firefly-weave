@@ -45,6 +45,8 @@ export interface SelectOption {
   note?: string;
   /** A heading inside the group (a workflow's name over its versions); the row then shows what follows it. */
   heading?: string;
+  /** A short fact at the end of the row's first line ("Draft"), in the muted ink. */
+  aside?: string;
 }
 
 /** The heading that starts at this option: a new one, or the same one in a new group; else null. */
@@ -187,6 +189,7 @@ let sequence = 0;
               role="option"
               class="choice-option"
               [class.choice-action]="option.action"
+              [class.choice-version]="!!option.heading"
               [id]="id + '-option-' + index"
               [attr.data-value]="option.value"
               [attr.aria-selected]="value() === option.value"
@@ -203,9 +206,12 @@ let sequence = 0;
                   }}</span
                 >
               } @else {
-                <span [class.choice-under]="!!option.heading">{{
-                  optionText(option)
-                }}</span>
+                <span class="choice-line"
+                  ><span>{{ optionText(option) }}</span>
+                  @if (option.aside) {
+                    <small class="choice-aside">{{ option.aside }}</small>
+                  }
+                </span>
               }
               @if (option.description) {
                 <small
@@ -427,8 +433,21 @@ let sequence = 0;
         padding: 6px 10px 2px;
         color: var(--text);
       }
-      .choice-under {
-        padding-left: 12px;
+      /* A version under its workflow's name: it and its sentence line up, indented. */
+      .choice-version {
+        padding-left: 22px;
+      }
+      .choice-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+      .choice-aside {
+        flex: none;
+      }
+      .choice-version[aria-disabled="true"]:not(.active) {
+        color: var(--disabled-ink);
       }
       .choice-empty {
         font-size: 13px;

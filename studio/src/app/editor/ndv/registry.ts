@@ -145,6 +145,8 @@ export interface Choice {
   heading?: string;
   /** A caution in the warning ink; the choice stays usable. */
   note?: string;
+  /** A short fact at the end of the row ("Draft"). */
+  aside?: string;
 }
 /** A button under a field (Edit table, New table). */
 export interface FieldAction {
@@ -203,6 +205,8 @@ export interface ParamSpec {
   requiredText?: string;
   /** Buttons in the field's action row, under its control: commands, not fields. */
   actions?: FieldAction[];
+  /** From 768 px up, the action row sits beside the control; on a phone, under the field's hint. */
+  actionsBeside?: boolean;
   min?: number;
   max?: number;
   /**
@@ -399,7 +403,8 @@ export interface NdvContext {
     /**
      * Workflows a step may call; with callableBy, those that don't allow that
      * caller carry `disabled`. `group` says where a version lives ("In this
-     * project", "On this computer"); `description` is a line under it.
+     * project", "On this computer"); `description` is a line under it, and
+     * `aside` a short fact at the end of the row ("Draft").
      */
     workflows(filter?: { callableBy?: string }): Promise<
       {
@@ -410,6 +415,7 @@ export interface NdvContext {
         heading?: string;
         description?: string;
         note?: string;
+        aside?: string;
       }[]
     >;
     /** Published decision tables, newest version first, then those on this computer. */

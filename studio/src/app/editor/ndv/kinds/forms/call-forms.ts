@@ -123,6 +123,7 @@ const workflowChoices = (ndv: NdvContext) =>
           ...(row.heading ? { heading: row.heading } : {}),
           ...(row.description ? { description: row.description } : {}),
           ...(row.note ? { note: row.note } : {}),
+          ...(row.aside ? { aside: row.aside } : {}),
           ...(row.disabled ? { disabled: row.disabled } : {}),
         }),
       ),
@@ -246,6 +247,7 @@ export function callForm(step: Step, ctx: KindContext): FormSpec {
     placeholder: "notify-customer@1.0.0",
     choices: workflowChoices,
     actions: workflowActions(step, ctx),
+    actionsBeside: true,
     ...workflowHint(step, ctx),
   };
   const mode: ParamSpec = {

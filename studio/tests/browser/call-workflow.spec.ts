@@ -52,13 +52,52 @@ const workflow = stringify({
   },
 });
 
-/** order-intake, connected to a project whose catalog lock is the corpus's. */
-async function open(page: Page) {
+/** A callable draft kept on this computer: lookup-customer 0.1.0. */
+const draft = {
+  entry: {
+    id: "d1",
+    name: "lookup-customer",
+    version: "0.1.0",
+    savedAt: "2026-11-18T10:00:00Z",
+  },
+  document: {
+    source: stringify({
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "lookup-customer", version: "0.1.0" },
+      spec: {
+        inputSchema: { type: "object" },
+        outputSchema: { type: "object" },
+        callable: {},
+        steps: [],
+        output: { literal: {} },
+      },
+    }),
+    format: "yaml",
+    layout: null,
+    savedAt: "2026-11-18T10:00:00Z",
+  },
+};
+
+/** order-intake, connected to a project whose catalog lock is the corpus's; with `drafts`, lookup-customer is kept on this computer. */
+async function open(page: Page, options: { drafts?: boolean } = {}) {
   const asked: string[] = [];
   const details = await openStepFixture(
     page,
     yamlFile("order-intake.yaml", workflow),
     async (p) => {
+      if (options.drafts)
+        await p.addInitScript((kept) => {
+          if (localStorage.getItem("local:weave.localDrafts.v1")) return;
+          localStorage.setItem(
+            "local:weave.localDrafts.v1",
+            JSON.stringify([kept.entry]),
+          );
+          localStorage.setItem(
+            `local:weave.localDraft.${kept.entry.id}`,
+            JSON.stringify(kept.document),
+          );
+        }, draft);
       const result = await connected(p);
       await withLanguageFeatures(p, ["text.concat", "flow.callWorkflow"]);
       await p.route(/\/projects\/[^/]+\/catalog$/, (route) => {
@@ -111,7 +150,7 @@ test.describe("calling a workflow from a step", () => {
   test("lists each workflow's versions under its name, the ones it can't call disabled with why", async ({
     page,
   }) => {
-    const { details, asked } = await open(page);
+    const { details, asked } = await open(page, { drafts: true });
     await addCall(page, details);
     await details.field("workflow").getByRole("combobox").click();
     const list = page.getByRole("listbox", { name: "Workflow options" });
@@ -126,6 +165,22 @@ test.describe("calling a workflow from a step", () => {
     await expect(refused).toContainText(
       "This workflow version does not allow calls from order-intake; add order-intake to its callable.allowedCallers in a new version.",
     );
+    // A version it can't call is in the disabled ink, its sentence lined up under it.
+    const ink = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--disabled-ink)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    await expect(refused.locator(".choice-line")).toHaveCSS("color", ink);
+    const version = await refused.locator(".choice-line").boundingBox();
+    const sentence = await refused.locator("small").boundingBox();
+    expect(sentence!.x).toBe(version!.x);
+    // A draft on this computer says so at the end of its row.
+    const kept = list.getByRole("option", { name: "lookup-customer 0.1.0" });
+    await expect(kept.locator(".choice-aside")).toHaveText("Draft");
     await list.getByRole("option", { name: "notify-customer 1.0.0" }).click();
     await expect(tile(page, "call-workflow-1")).toContainText(
       "notify-customer 1.0.0",
@@ -136,8 +191,41 @@ test.describe("calling a workflow from a step", () => {
     await expect(details.field("workflow")).toContainText(
       "In this project · callable by order-intake",
     );
+    // Open workflow sits beside the select.
+    const select = await details
+      .field("workflow")
+      .getByRole("combobox")
+      .boundingBox();
+    const openButton = await details
+      .field("workflow")
+      .getByRole("button", { name: "Open workflow" })
+      .boundingBox();
+    expect(openButton!.x).toBeGreaterThan(select!.x + select!.width);
+    expect(openButton!.y + openButton!.height).toBeCloseTo(
+      select!.y + select!.height,
+      0,
+    );
     // The project's lock is read once for the window.
     expect(asked).toHaveLength(1);
+  });
+
+  test("on a phone, Open workflow follows the hint", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 780 });
+    const { details } = await open(page);
+    await addCall(page, details);
+    await details.field("workflow").getByRole("combobox").click();
+    await page
+      .getByRole("listbox", { name: "Workflow options" })
+      .getByRole("option", { name: "notify-customer 1.0.0" })
+      .click();
+    const field = details.field("workflow");
+    const hint = await field
+      .getByText("In this project · callable by order-intake")
+      .boundingBox();
+    const openButton = await field
+      .getByRole("button", { name: "Open workflow" })
+      .boundingBox();
+    expect(openButton!.y).toBeGreaterThanOrEqual(hint!.y + hint!.height);
   });
 
   test("maps the called workflow's input, and a call that doesn't wait loses If it fails", async ({
@@ -164,9 +252,18 @@ test.describe("calling a workflow from a step", () => {
       .click();
     await mode.getByRole("radio", { name: "Start it and continue" }).click();
     await expect(details.field("onFailure")).toHaveCount(0);
-    await expect(tile(page, "call-workflow-1")).toContainText(
-      "notify-customer 1.0.0 · Doesn't wait",
+    // The tile names the version, and says on a line of its own, in the info tone, that it doesn't wait.
+    const called = tile(page, "call-workflow-1");
+    await expect(called.locator(".tile-output")).toHaveText("Doesn't wait");
+    await expect(called.locator(".tile-output")).toHaveAttribute(
+      "data-tone",
+      "info",
     );
+    await expect(
+      page.getByRole("button", {
+        name: /^call-workflow-1, Call a workflow, notify-customer 1\.0\.0, doesn't wait,/,
+      }),
+    ).toBeVisible();
     await mode.getByRole("radio", { name: "Wait for its result" }).click();
     await expect(
       details

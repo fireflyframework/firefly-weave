@@ -28,6 +28,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.is-option]="entry.option"
   [class.has-error]="line.kind === 'error' || !!local"
   [class.is-readonly]="!!reason"
+  [class.has-actions-beside]="!!spec.actionsBeside && !!spec.actions?.length"
   (focusout)="left($event)"
 >
   <div class="param-label-row">

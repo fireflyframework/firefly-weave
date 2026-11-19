@@ -256,13 +256,14 @@ describe("the catalog port's rows", () => {
       title: "lookup-customer 0.1.0",
       group: "On this computer",
       heading: "lookup-customer",
-      description: "Draft",
+      aside: "Draft",
     });
     expect(rows.find((row) => row.uses === "broken-draft@0.1.0")).toEqual({
       uses: "broken-draft@0.1.0",
       title: "broken-draft 0.1.0",
       group: "On this computer",
       heading: "broken-draft",
+      aside: "Draft",
       note: "Studio can't tell whether broken-draft 0.1.0 allows this workflow.",
     });
   });

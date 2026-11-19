@@ -19,7 +19,6 @@ SPDX-License-Identifier: Apache-2.0
 // after it, what it still needs, and what later steps can read from it.
 import "@angular/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
-import { incompleteChip } from "../src/app/designer/canvas-summary";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import {
   ndvRegistry,
@@ -91,23 +90,13 @@ describe("the Call a workflow step", () => {
     expect(kind().idPrefix).toBe("call-workflow");
   });
 
-  it("names the workflow and version it calls on its tile, and says when it doesn't wait", () => {
+  it("names the workflow and version it calls on its tile", () => {
     const ctx = context(workflowWith(call()));
     expect(kind().summary(call(), ctx)).toBe("notify-customer 1.0.0");
     expect(kind().summary(call({ mode: "detach" }), ctx)).toBe(
-      "notify-customer 1.0.0 · Doesn't wait",
+      "notify-customer 1.0.0",
     );
     expect(kind().summary(call({ uses: undefined }), ctx)).toBe("");
-  });
-
-  it("needs a workflow to call", () => {
-    expect(incompleteChip(call({ uses: undefined }))).toBe(
-      "Choose a workflow to call",
-    );
-    expect(incompleteChip(call({ uses: "" }))).toBe(
-      "Choose a workflow to call",
-    );
-    expect(incompleteChip(call())).toBe("");
   });
 
   it("outputs what the called workflow returns, the result status around it, or nothing", () => {

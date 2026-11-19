@@ -35,16 +35,11 @@ export const callKind: StepKindDescriptor = {
   idPrefix: "call-workflow",
   create: newCallStep,
   fields: callFields,
-  /** "notify-customer 1.0.0", and "· Doesn't wait" for a call that doesn't. */
+  /** "notify-customer 1.0.0"; the tile says on a line of its own when the call doesn't wait. */
   summary: (step) => {
     const uses = typeof step["uses"] === "string" ? step["uses"] : "";
     const at = uses.indexOf("@");
-    if (at <= 0) return "";
-    const called = `${uses.slice(0, at)} ${uses.slice(at + 1)}`;
-    // Two phrases: the called version, and that the call doesn't wait for it.
-    return step["mode"] === "detach"
-      ? [called, "Doesn't wait"].join(" · ")
-      : called;
+    return at > 0 ? `${uses.slice(0, at)} ${uses.slice(at + 1)}` : "";
   },
   outputSchema: (step, ctx) => {
     const uses = typeof step["uses"] === "string" ? step["uses"] : "";

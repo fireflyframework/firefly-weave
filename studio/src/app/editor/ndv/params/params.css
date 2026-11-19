@@ -2437,6 +2437,30 @@ weave-formula-field > button.formula-expand {
   color: var(--muted);
   cursor: not-allowed;
 }
+/* Beside the control from 768 px up; on a phone, the control's wrapper steps
+   aside so the row follows the field's hint (Open workflow). */
+.param.has-actions-beside > .param-control {
+  display: contents;
+}
+.param.has-actions-beside .param-actions {
+  order: 1;
+}
+@media (min-width: 768px) {
+  .param.has-actions-beside > .param-control {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+  }
+  .param.has-actions-beside > .param-control > weave-resource-field {
+    flex: 1;
+    min-width: 0;
+  }
+  .param.has-actions-beside .param-actions {
+    order: 0;
+    flex: none;
+    margin-top: 0;
+  }
+}
 .param-action-why {
   flex-basis: 100%;
   text-align: right;

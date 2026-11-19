@@ -49,7 +49,8 @@ export interface WorkflowRow {
   /** The workflow's name, which heads its versions in the list. */
   heading: string;
   disabled?: string;
-  description?: string;
+  /** "Draft" for a version on this computer, at the end of its row. */
+  aside?: string;
   /** Why Studio can't tell whether the version allows this workflow; it stays choosable. */
   note?: string;
 }
@@ -65,11 +66,8 @@ export function workflowRows(list: CallableList): WorkflowRow[] {
     group: item.source === "project" ? PROJECT : LOCAL,
     heading: item.name,
     ...(item.disabled ? { disabled: item.disabled } : {}),
-    ...(item.warning
-      ? { note: item.warning }
-      : item.source === "local"
-        ? { description: "Draft" }
-        : {}),
+    ...(item.source === "local" ? { aside: "Draft" } : {}),
+    ...(item.warning ? { note: item.warning } : {}),
   }));
 }
 

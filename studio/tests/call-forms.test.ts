@@ -270,7 +270,7 @@ describe("the Workflow field", () => {
               uses: "lookup-customer@0.1.0",
               title: "lookup-customer 0.1.0",
               group: "On this computer",
-              description: "Draft",
+              aside: "Draft",
             },
           ];
         },
@@ -298,7 +298,7 @@ describe("the Workflow field", () => {
         value: "lookup-customer@0.1.0",
         label: "lookup-customer 0.1.0",
         group: "On this computer",
-        description: "Draft",
+        aside: "Draft",
       },
     ]);
     expect(asked).toEqual([{ callableBy: "order-intake" }]);

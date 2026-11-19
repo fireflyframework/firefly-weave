@@ -254,6 +254,7 @@ export class ResourceField {
         group: choice.group,
         heading: choice.heading,
         note: choice.note,
+        aside: choice.aside,
         disabled: !!choice.disabled,
       }),
     );
