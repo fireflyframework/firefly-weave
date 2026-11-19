@@ -245,3 +245,59 @@ async def test_a_read_is_audited_with_only_its_target(monkeypatch, stored):
     # The audit row is written in a unit that can write, and names the conversation by its hash only.
     assert opened == [True]
     assert audits == [("agent_conversation.read", f"support-chat/{HASH}", None)]
+
+
+@pytest.mark.parametrize(
+    ("capability_role", "call"),
+    [
+        ("viewer", lambda s, actor: s.list(actor, SCOPE, AgentConversationQuery(), context=CONTEXT)),
+        ("viewer", lambda s, actor: s.read(actor, SCOPE, "support-chat", HASH, context=CONTEXT)),
+        ("execution_manager", lambda s, actor: s.delete(actor, SCOPE, "support-chat", HASH, context=CONTEXT)),
+        (
+            "execution_manager",
+            lambda s, actor: s.purge_workflow(
+                actor,
+                SCOPE,
+                "support-chat",
+                ConversationPurgeRequest(confirm_workflow="support-chat"),
+                "k",
+                context=CONTEXT,
+            ),
+        ),
+    ],
+    ids=["list", "read", "delete", "purge"],
+)
+async def test_a_grant_revoked_after_the_token_was_issued_is_refused_inside_the_transaction(
+    monkeypatch, capability_role, call
+):
+    # The token still carries the role; the principal stored now no longer does. Nothing is read or audited.
+    from firefly_weave.operations import agent_conversations as module
+
+    statements, audits = [], []
+
+    class Unit:
+        @asynccontextmanager
+        async def open(self, scope, *, mutation=True):
+            yield SimpleNamespace(session=SimpleNamespace(execute=execute))
+
+    async def execute(statement, values=None):
+        statements.append(str(statement))
+        raise AssertionError("A query ran for a principal that lost its grant")
+
+    token = principal(capability_role)
+    stored = Principal(id=token.id, kind="human", grants=())
+
+    async def load(session, identifier):
+        assert identifier == token.id
+        return stored
+
+    async def recorded(session, current, action, target, **values):
+        audits.append(action)
+
+    monkeypatch.setattr(module, "load_principal", load)
+    monkeypatch.setattr(module, "audit", recorded)
+    service = AgentConversationService(Unit(), AuthorizationService())  # type: ignore[arg-type]
+
+    with pytest.raises(AccessDenied):
+        await call(service, token)
+    assert (statements, audits) == ([], [])
