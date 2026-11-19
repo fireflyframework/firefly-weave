@@ -45,6 +45,7 @@ from firefly_weave.cli.runs import runs
 from firefly_weave.cli.schedule import schedule
 from firefly_weave.cli.schema import schema
 from firefly_weave.cli.studio import StudioLaunchError, studio
+from firefly_weave.cli.transactions import transactions
 from firefly_weave.cli.triggers import triggers
 from firefly_weave.cli.workers import workers
 from firefly_weave.cli.workflow import workflow
@@ -94,7 +95,7 @@ class OfflineGroup(click.Group):
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         sections = (
             ("Start here", ("init", "platform", "studio", "docs")),
-            ("Author locally", ("workflow", "schema", "connector")),
+            ("Author locally", ("workflow", "schema", "connector", "transactions")),
             ("Human work and email", ("human-tasks", "human-assignments", "human-groups", "email")),
             (
                 "Connect to a platform",
@@ -129,6 +130,7 @@ class OfflineGroup(click.Group):
             "workflow": "Validate, compile, and simulate local workflows.",
             "schema": "Inspect and export definition schemas.",
             "connector": "Import OpenAPI, build no-code HTTP actions, or package connectors.",
+            "transactions": "Check that a step Weave undoes handles every request it can get.",
             "auth": "Connect to a platform, sign in, and choose a workspace.",
             "definitions": "Publish and activate workflows and actions.",
             "connections": "Configure and test integration connections.",
@@ -287,6 +289,7 @@ workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)
 cli.add_command(connector)
+cli.add_command(transactions)
 cli.add_command(worker)
 cli.add_command(operations)
 cli.add_command(admin)

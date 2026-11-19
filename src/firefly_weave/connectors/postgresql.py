@@ -43,6 +43,13 @@ from firefly_weave.contracts.connectors import (
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
+# The request_hash of a step's row that its cancel or undo wrote before the step arrived; a request fingerprint is
+# 64 hexadecimal characters, so it never equals this.
+TOMBSTONE = "tombstone"
+# Phases of a step's own request, and the phases that undo it.
+_STEP_PHASES = frozenset({"try", "forward"})
+_UNDO_PHASES = frozenset({"cancel", "compensate"})
+
 
 @dataclass(frozen=True)
 class PostgresPolicy:
@@ -305,6 +312,7 @@ class PostgresConnector:
                     )
                 ).hexdigest()
                 if invocation.action == "idempotent-command":
+                    phase = context.transaction.phase if context.transaction is not None else None
                     # Unique insert waits for a concurrent transaction; no business statement is replayed.
                     inserted = await connection.fetchval(
                         "INSERT INTO weave_connector.operations(scope,operation_key,request_hash) VALUES($1,$2,$3) "
@@ -320,9 +328,23 @@ class PostgresConnector:
                             scope,
                             context.operation_key,
                         )
+                        if prior is not None and prior["request_hash"] == TOMBSTONE and phase in _STEP_PHASES:
+                            # The step's cancel or undo came first: it must never apply.
+                            raise ConnectorFailure("SQL_ALREADY_UNDONE", "failed", effect="none")
                         if prior is None or prior["request_hash"] != fingerprint or prior["result"] is None:
                             raise ConnectorFailure("SQL_IDEMPOTENCY_CONFLICT", "failed")
                         result = json.loads(prior["result"])
+                    elif phase in _UNDO_PHASES and context.transaction is not None:
+                        # A first cancel or undo records its step as undone when the step has no row yet, so the
+                        # step refuses to apply if it arrives later. A step still committing holds its row: this
+                        # insert waits for it, then finds it and leaves it alone.
+                        await connection.execute(
+                            "INSERT INTO weave_connector.operations(scope,operation_key,request_hash) "
+                            "VALUES($1,$2,$3) ON CONFLICT(scope,operation_key) DO NOTHING",
+                            scope,
+                            context.transaction.branch_key,
+                            TOMBSTONE,
+                        )
                 if result is None:
                     statement = await connection.prepare(plan.sql)
                     attributes = statement.get_attributes()

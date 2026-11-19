@@ -55,6 +55,16 @@ SPDX-License-Identifier: Apache-2.0
   (`trigger.manage`), and `DELETE` to retire it. Only its creator can use it,
   it expires within an hour, no list finds it, and turning test calls off
   stops it at once.
+- Systems that take part in transactions can now prove they are safe to undo.
+  `weave transactions conformance WORKFLOW --step ID` sends a step's own
+  requests, as Weave builds them, in every order Weave can deliver them (a
+  repeat, a cancel of a step that never ran, a step that arrives after its
+  cancel) to an SDK worker or a PostgreSQL step, and reports each check without
+  business values. SDK workers get `firefly_weave.sdk.participants.Fence`, which
+  records each request in the worker's own PostgreSQL transaction. The built-in
+  PostgreSQL connector now records a cancel or undo of an `idempotent-command`
+  step, so a request for that step that arrives later fails `SQL_ALREADY_UNDONE`
+  and changes nothing; the operation table keeps its shape.
 
 ### Operations
 
