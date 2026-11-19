@@ -69,8 +69,13 @@ def conversations() -> None:
         CHECK(expires_at>updated_at),
         PRIMARY KEY({KEY},workflow,key_hash),{ENVIRONMENT})""")
     op.execute(f"CREATE INDEX agent_conversations_expiry ON agent_conversations({KEY},expires_at)")
+    # The listing's order, newest update first, with and without a workflow filter: each page walks an index.
     op.execute(
-        f"CREATE INDEX agent_conversations_recent ON agent_conversations({KEY},workflow,updated_at DESC,key_hash)"
+        f"CREATE INDEX agent_conversations_recent ON agent_conversations({KEY},workflow,updated_at DESC,key_hash DESC)"
+    )
+    op.execute(
+        f"CREATE INDEX agent_conversations_updated ON agent_conversations({KEY},updated_at DESC,workflow DESC,"
+        "key_hash DESC)"
     )
     secure(
         "agent_conversations",

@@ -25,7 +25,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Grant
@@ -678,6 +678,78 @@ async def test_a_conversation_is_listed_newest_first_and_read_by_its_key_hash(pl
     assert [item.key_hash for item in first.items + rest.items] == [item.key_hash for item in page.items]
     assert rest.next_cursor is None and page.items[0].message_count == 2 and page.items[0].version == 1
     assert [message.content for message in read.messages] == ["Where is A-18?", "Delivered."]
+
+
+async def seed_live(platform, count: int, workflows: int) -> None:
+    """``count`` live conversations spread over ``workflows`` workflows, each updated at its own moment."""
+    async with UnitOfWork(platform.db[0]).open(platform.scope) as tx:
+        await tx.session.execute(
+            text(
+                "INSERT INTO agent_conversations(tenant_id,project_id,environment_id,workflow,key_hash,messages,"
+                "version,last_run_id,created_at,updated_at,expires_at) SELECT :tenant,:project,:environment,"
+                "'flow-'||(n%:workflows),encode(sha256(convert_to('k'||n,'UTF8')),'hex'),'[]'::jsonb,1,:run,"
+                "now()-n*interval '1 second',now()-n*interval '1 second',now()+interval '1 day' "
+                "FROM generate_series(1,:count) n"
+            ),
+            {
+                "tenant": platform.scope.tenant_id,
+                "project": platform.scope.project_id,
+                "environment": platform.scope.environment_id,
+                "workflows": workflows,
+                "run": uuid4(),
+                "count": count,
+            },
+        )
+    async with platform.db[1]() as session:
+        await session.execute(text("ANALYZE agent_conversations"))
+        await session.commit()
+
+
+def plan_nodes(plan: dict):
+    yield plan
+    for child in plan.get("Plans", []):
+        yield from plan_nodes(child)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "index"),
+    [(None, "agent_conversations_updated"), ("flow-7", "agent_conversations_recent")],
+    ids=["environment", "one-workflow"],
+)
+async def test_listing_reads_its_index_in_order_without_sorting(platform, workflow, index):
+    # Enough rows that a scan and a sort cost more than walking the index; both pages run the service's own statement.
+    await seed_live(platform, 20_000, 20)
+    service = await conversations(platform)
+    engine = platform.db[0].kw["bind"].sync_engine
+    captured: list[tuple[str, object]] = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "FROM agent_conversations" in statement:
+            captured.append((statement, parameters))
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        first = await service.list(
+            platform.author, platform.scope, AgentConversationQuery(workflow=workflow), context=platform.context
+        )
+        await service.list(
+            platform.author,
+            platform.scope,
+            AgentConversationQuery(workflow=workflow, cursor=first.next_cursor),
+            context=platform.context,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(captured) == 2 and first.next_cursor is not None
+    for statement, parameters in captured:
+        async with UnitOfWork(platform.db[0]).open(platform.scope, mutation=False) as tx:
+            connection = await tx.session.connection()
+            value = (await connection.exec_driver_sql("EXPLAIN (FORMAT JSON) " + statement, parameters)).scalar()
+        plan = (json.loads(value) if isinstance(value, str) else value)[0]["Plan"]
+        kinds = [(node["Node Type"], node.get("Index Name")) for node in plan_nodes(plan)]
+        assert ("Index Scan", index) in kinds, kinds
+        assert not {kind for kind, _ in kinds} & {"Sort", "Incremental Sort", "Seq Scan", "Bitmap Heap Scan"}, kinds
 
 
 async def test_an_expired_conversation_is_never_listed_or_read(platform):
