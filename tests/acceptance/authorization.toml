@@ -287,6 +287,27 @@ capability = "run.read"
 identifier = "random"
 key = "support"
 
+# AI agents' conversations: a permitted read names a conversation nobody stored, so it answers 404; a permitted delete
+# answers 200 with deleted false, and a permitted purge of a workflow with none answers 200 with deleted 0.
+[operations."agent_conversations.list"]
+capability = "run.read"
+
+[operations."agent_conversations.read"]
+capability = "run.read"
+workflow = "support-chat"
+key_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+answers = [{ status = 404, code = "WV-AGENT-CONVERSATION-NOT-FOUND" }]
+
+[operations."agent_conversations.delete"]
+capability = "run.purge"
+workflow = "support-chat"
+key_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[operations."agent_conversations.purge_workflow"]
+capability = "run.purge"
+workflow = "support-chat"
+body = { confirm_workflow = "support-chat" }
+
 # Step tests: a permitted call names a random draft, so it answers 404 (or 403 WV-STEPTEST-DISABLED where test calls
 # are off) and nothing runs; a random step test is another person's as much as a missing one, so it answers 404.
 [operations."step_tests.answer"]

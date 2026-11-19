@@ -54,6 +54,7 @@ from firefly_weave.compiler.ir import (
     WorkflowIR,
 )
 from firefly_weave.compiler.schemas import validate_payload
+from firefly_weave.contracts.agent_conversations import CONVERSATION_KEY_LENGTH, conversation_key_hash
 from firefly_weave.contracts.agent_turns import TurnOutput
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
@@ -85,6 +86,8 @@ from firefly_weave.runtime.agents import (
     append_memory,
     budget_granted,
     call_key,
+    loaded_entries,
+    memory_loaded,
     parse_agent_key,
     review_decided,
     review_key,
@@ -133,6 +136,7 @@ from firefly_weave.runtime.models import (
     IncidentState,
     JoinState,
     LoopState,
+    MemoryIntent,
     ParticipantRecord,
     RunEnding,
     RunState,
@@ -1651,7 +1655,8 @@ def _advance_owned(
             accept(completion)
 
     def start_agent(node: AgentNode, key: str) -> None:
-        """Activate an AI agent: evaluate its texts once, load its run memory, arm its deadline, send turn 1."""
+        """Activate an AI agent: evaluate its texts once, load its run memory, arm its deadline, then send turn 1 or,
+        with conversation memory, ask for the conversation first."""
 
         def text(expression: object) -> str:
             value = mapping(node, key, cast(JsonObject, cast(ContractModel, expression).model_dump(by_alias=True)))
@@ -1668,12 +1673,21 @@ def _advance_owned(
             for tool in node.tools
             if tool.fixed is not None
         }
+        conversation = None
+        if node.memory.scope == "conversation":
+            # Only the key's hash leaves this function: the raw value stays in the run's input or step outputs.
+            key_value = mapping(
+                node, key, cast(JsonObject, cast(ContractModel, node.memory.key).model_dump(by_alias=True))
+            )
+            validate(ir, {"type": "string", "minLength": 1, "maxLength": CONVERSATION_KEY_LENGTH}, key_value)
+            conversation = conversation_key_hash(ir.metadata.name, cast(str, key_value))
         values = ActivationValues(
             instructions=text(node.instructions),
             prompt=text(node.prompt),
             context=context,
             has_context=node.context is not None,
             fixed=fixed,
+            conversation=conversation,
         )
         memory = current_state.memories.get(cast(str, node.memory.key), []) if node.memory.scope == "run" else []
         try:
@@ -1699,6 +1713,10 @@ def _advance_owned(
             current_state.agents.pop(key, None)
         else:
             current_state.agents[key] = effects.state
+        if effects.load is not None:
+            result.commands.append(
+                MemoryIntent(op="load", node_id=key, workflow=ir.metadata.name, key_hash=effects.load)
+            )
         if effects.turn is not None and effects.state is not None:
             dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
             definition = load_definition(dependency.document)
@@ -1756,6 +1774,21 @@ def _advance_owned(
         if effects.complete is not None:
             if not agent_guard(node, key, key, "agent_output", effects.complete, prior):
                 return
+            if effects.memory_append is not None and node.memory.scope == "conversation":
+                # Remembered only once the output guard passed: a refused answer is never kept.
+                if prior is None or prior.conversation is None:
+                    raise KernelError("WV-RUNTIME-STATE")
+                result.commands.append(
+                    MemoryIntent(
+                        op="append",
+                        node_id=key,
+                        workflow=ir.metadata.name,
+                        key_hash=prior.conversation,
+                        messages=effects.memory_append,
+                        window=node.memory.window,
+                        ttl_seconds=node.memory.ttl_seconds,
+                    )
+                )
             complete(node, key, effects.complete)
             close_agent(key)
             queue.append(successor(key))
@@ -2030,6 +2063,20 @@ def _advance_owned(
         assert isinstance(node, AgentNode)
         agent_failed(node, key, "WV-AGENT-TIMEOUT", current_state.agents.get(key))
 
+    def agent_memory_loaded(node: AgentNode, key: str, completion: RuntimeEvent) -> None:
+        """The agent's conversation arrived: the pure loop checks it and sends turn 1."""
+        nonlocal current
+        state = current_state.agents.get(key)
+        if state is None:
+            raise KernelError("WV-RUNTIME-EVENT")
+        current = key
+        try:
+            entries = loaded_entries(state, completion.data)
+        except ValueError:
+            raise KernelError("WV-RUNTIME-EVENT") from None
+        test = completion.data.get("test", False) is True
+        agent_effects(node, key, memory_loaded(ir, node, key, state, entries, current_state.agent_tokens, test=test))
+
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state
         identifier = completion.data.get("node_id")
@@ -2058,6 +2105,9 @@ def _advance_owned(
                 return
             if completion.type == "wait_elapsed" and "#" not in identifier:
                 agent_timeout(identifier, completion)
+                return
+            if completion.type == "memory_loaded" and "#" not in identifier:
+                agent_memory_loaded(node, identifier, completion)
                 return
             raise KernelError("WV-RUNTIME-EVENT")
         if completion.type == "step_failed":

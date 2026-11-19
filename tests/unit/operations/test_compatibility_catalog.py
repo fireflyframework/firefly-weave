@@ -406,7 +406,12 @@ def test_an_unknown_feature_name_is_ir_unsupported_even_with_a_valid_digest(text
     assert classify_requirement("run", text, ConnectorRegistry(), features=("text.join",)) == "ir_unsupported"
 
 
-def test_the_platform_classifies_against_the_features_it_advertises(text):
+def test_the_platform_classifies_against_the_features_it_advertises(text, monkeypatch):
+    from firefly_weave.contracts import language_features
+
+    # Every language feature is advertised today; a platform without ai.memory stands for one that isn't.
+    without = tuple(feature for feature in language_features.ADVERTISED_FEATURES if feature != "ai.memory")
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", without)
     assert classify_requirement("activation", text, ConnectorRegistry()) is None
     executable = text["artifact"]["executable"]
     executable["features"] = ["ai.memory"]

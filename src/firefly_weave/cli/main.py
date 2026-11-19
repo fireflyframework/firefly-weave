@@ -99,7 +99,17 @@ class OfflineGroup(click.Group):
             ("Human work and email", ("human-tasks", "human-assignments", "human-groups", "email")),
             (
                 "Connect to a platform",
-                ("auth", "definitions", "connections", "run", "runs", "incident", "schedule", "workers"),
+                (
+                    "auth",
+                    "definitions",
+                    "connections",
+                    "run",
+                    "runs",
+                    "agent-conversations",
+                    "incident",
+                    "schedule",
+                    "workers",
+                ),
             ),
             (
                 "Integrations and delivery",
@@ -137,6 +147,7 @@ class OfflineGroup(click.Group):
             "files": "Upload, download and inspect workflow files.",
             "run": "Cancel or retry runs; replay exported history.",
             "runs": "Start and inspect workflow runs.",
+            "agent-conversations": "List, read and delete what AI agents remember across runs.",
             "incident": "Inspect and resolve workflow incidents.",
             "schedule": "Manage scheduled runs and view occurrences.",
             "workers": "Register workers and manage their releases.",
@@ -207,6 +218,7 @@ class OfflineGroup(click.Group):
                 "definitions",
                 "connections",
                 "runs",
+                "agent-conversations",
                 "workers",
                 "triggers",
                 "broker-triggers",
@@ -314,6 +326,7 @@ for public_group in (
     family("source-bindings", "source_bindings"),
     family("subscriptions", "subscriptions"),
     family("deliveries", "deliveries"),
+    family("agent-conversations", "agent_conversations"),
 ):
     cli.add_command(public_group)
 

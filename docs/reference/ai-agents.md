@@ -22,7 +22,8 @@ This page lists the fields of the `agent` step, its limits, how its tool calls a
 step lets a model work in turns: each turn, the model answers or calls the tools the step declares, and the platform
 runs those calls as durable work before the next turn.
 
-The step needs the `ai.agent` language feature, which the platform advertises in its capabilities.
+The step needs the `ai.agent` language feature, which the platform advertises in its capabilities. Conversation
+memory also needs `ai.memory`; see [Conversation memory](#conversation-memory).
 
 ## Step fields
 
@@ -91,10 +92,56 @@ tasks anyway, so any assigned person may review.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `scope` | `step` | `step` (one activation) or `run` (shared by activations with the same `key`). |
-| `key` | — | The run memory's name; required for `run`. |
-| `window` | 24 (2 to 200) | How many messages are kept. |
+| `scope` | `step` | `step` (one activation), `run` (shared by activations with the same `key`) or `conversation` (kept across runs under an expression's value). |
+| `key` | — | The run memory's name for `run`; an expression for `conversation`. |
+| `window` | 24 (2 to 200) | How many messages are kept and loaded. |
+| `ttlSeconds` | 2,592,000 (3,600 to 31,536,000) | For `conversation` only: how long a conversation is kept after its last exchange. |
 | `contextTokens` | 8,192 (512 to 262,144) | The context the turns fit, capped by the AI policy. |
+
+### Conversation memory
+
+With `scope: conversation`, an agent remembers a conversation across runs. Each run evaluates `key`, for example
+`{"ref": "/input/customerId"}`, and loads what earlier runs with the same key remembered before its first turn. When
+the agent completes, its prompt and final answer are appended to the conversation. It needs the `ai.memory` language
+feature.
+
+```json
+"memory": {"scope": "conversation", "key": {"ref": "/input/customerId"}, "window": 24, "ttlSeconds": 86400}
+```
+
+- **The key.** It must evaluate to text of 1 to 256 characters (`WV-COMP-AGENT_MEMORY` when it can't, and
+  `WV-SCHEMA-INVALID_INSTANCE` at run time like a bad prompt). It can't read a value marked secret
+  (`WV-COMP-AI_SECRET_INPUT`). The platform never stores or sends the key: it keeps the SHA-256 of the workflow's
+  name, a zero byte and the key's value. The hash is pseudonymous, not anonymous: anyone who can guess a key can
+  compute its hash.
+- **One conversation per workflow and key** in an environment. Another workflow, or the same workflow renamed,
+  starts its own conversation for the same key. Another environment never sees it.
+- **What is kept.** For each completed run: the prompt, after the secret patterns (bearer tokens, JWT-shaped
+  strings, PEM blocks, `sk-`, `AKIA` and `ghp_` keys, user information in URLs) are replaced with `[redacted]`, and
+  the final answer, redacted by the step's output schema (`x-secret`, `writeOnly`) and the same patterns. Nothing
+  else is kept: not the instructions, the context, tool calls and results, reviews, or intermediate turns. Ordinary
+  personal data in a prompt, such as a name, is kept as written.
+- **Only completed agents remember.** An agent that fails, times out, is cancelled, or whose answer its output
+  schema refuses adds nothing.
+- **What the model sees.** The newest `window` messages, as whole exchanges, go first as one data message under the
+  data notice, before the prompt. They are data, never instructions: they change no tools, budgets, reviews or fixed
+  values, and a changing tool's calls still wait for a person. When a turn doesn't fit its context, remembered
+  exchanges are dropped first, oldest first.
+- **Waiting for the conversation.** The platform loads the conversation within about a second (the next recovery
+  scan), and the agent's `timeoutSeconds` already counts.
+- **Lifetime.** Each append keeps the conversation for `ttlSeconds` more. An expired conversation is never loaded,
+  listed or read; it loads as empty, and the next append starts it over. See [Retention](../operations/retention.md).
+- **Test runs** (step tests, draft test activations and the workflows they call) neither load nor remember: their
+  agents start with an empty conversation. To test with memory, use a seed in the saved turns; see
+  [Simulation](simulation.md).
+
+!!! warning "Take the key from a verified identity"
+    Anyone who can start a run with a given key reads that conversation through the agent's answers and adds to it.
+    Take the key from something the trigger verified, such as a signed webhook's field or an authenticated
+    principal's data, never from free text a caller controls.
+
+People with `run.read` list and read conversations, and people with `run.purge` delete one or purge a workflow's;
+see the [API reference](api.md), the SDK and `weave agent-conversations`.
 
 ## Limits
 
@@ -152,7 +199,7 @@ activation's key, such as `support[2]` inside a loop.
 | `status` | `running`, `waiting` (a review or a person must act), `succeeded`, `failed`, `cancelled` or `timed_out`. |
 | `stop` | `final` or `forced_final` for an agent that answered; otherwise null. |
 | `error` | The code of a failed agent, such as `WV-AGENT-BUDGET`. |
-| `memory` | The memory `scope` and how many remembered messages the first turn `loaded`. |
+| `memory` | The memory `scope` and how many remembered messages the first turn `loaded`. With conversation memory, `conversation` has the `key_hash`, the `version` loaded, whether it had `expired`, and `test` for a test run. |
 | `turns` | Each turn: `turn`, `forced` (the forced final turn), `input_tokens`, `output_tokens`, `started_at`, `ended_at`, `final` (the answer of the turn that answered), `calls`, `dropped_tool_calls` and `error`. |
 | `totals` | `turns`, `tool_calls`, `input_tokens`, `output_tokens` and `duration_ms` (null while the agent runs). |
 

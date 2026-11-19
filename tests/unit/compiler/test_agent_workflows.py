@@ -21,11 +21,14 @@ from typing import cast
 
 import pytest
 
+from firefly_weave.compiler import language_support
 from firefly_weave.compiler.agent_tools import TOOL_RESOLVERS, default_approval, model_parameters
 from firefly_weave.compiler.agents import reads_secret
 from firefly_weave.compiler.analyzer import analyze
+from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import ToolTargetKind
+from firefly_weave.compiler.language_support import unsupported_uses
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
@@ -194,13 +197,14 @@ def workflow(*steps, profile=None):
         "kind": "Workflow",
         "metadata": {"name": "support-desk", "version": "1.0.0"},
         "spec": {
-            "inputSchema": INPUT,
+            # Each document gets its own copy: a test that changes one never changes another's.
+            "inputSchema": copy.deepcopy(INPUT),
             "outputSchema": {},
             "connections": {
                 "ai": {"connector": "weave-agentic-provider@1.0.0"},
                 "orders": {"connector": "orders@1.0.0"},
             },
-            "llmProfiles": {"support": profile or PROFILE},
+            "llmProfiles": {"support": copy.deepcopy(profile or PROFILE)},
             "steps": list(steps) or [agent()],
             "output": {"literal": None},
         },
@@ -754,10 +758,73 @@ def test_secret_inputs_are_refused_in_an_ai_tasks_prompt():
     assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in found
 
 
-def test_conversation_memory_waits_for_its_feature():
-    step = agent(memory={"scope": "conversation", "key": {"ref": "/input/message"}, "window": 24})
+CONVERSATION = {"scope": "conversation", "key": {"ref": "/input/message"}, "window": 24, "ttlSeconds": 3600}
 
-    assert ("WV-COMP-UNSUPPORTED_FEATURE", "error", "/spec/steps/0/memory/scope") in errors(workflow(step))
+
+def test_conversation_memory_needs_ai_memory_where_it_isnt_compiled(monkeypatch):
+    monkeypatch.setattr(language_support, "COMPILED_FEATURES", language_support.COMPILED_FEATURES - {"ai.memory"})
+    document = workflow(agent(memory=CONVERSATION))
+
+    assert [(use.path, use.feature) for use in unsupported_uses(document)] == [
+        ("/spec/steps/0/memory/scope", "ai.memory")
+    ]
+    assert errors(document) == [("WV-COMP-UNSUPPORTED_FEATURE", "error", "/spec/steps/0/memory/scope")]
+
+
+def test_step_and_run_memory_need_no_feature_beyond_ai_agent(monkeypatch):
+    monkeypatch.setattr(language_support, "COMPILED_FEATURES", language_support.COMPILED_FEATURES - {"ai.memory"})
+
+    assert unsupported_uses(workflow(agent(memory={"scope": "run", "key": "orders"}))) == []
+
+
+def test_a_conversation_agent_compiles_with_ai_memory():
+    document = workflow(agent(memory=CONVERSATION))
+    result = compile_source(document, format="object", catalog=catalog())
+
+    assert errors(document) == []
+    assert result.ok and result.artifact is not None
+    assert result.artifact.executable["features"] == ["ai.agent", "ai.memory"]
+
+
+def test_a_conversation_key_must_read_as_a_string():
+    memory = {**CONVERSATION, "key": {"ref": "/input/count"}}
+    document = with_input(workflow(agent(memory=memory)), count={"type": "integer"})
+
+    assert errors(document) == [("WV-COMP-AGENT_MEMORY", "error", "/spec/steps/0/memory/key")]
+
+
+def test_a_conversation_key_longer_than_256_characters_is_refused():
+    memory = {**CONVERSATION, "key": {"literal": "C" * 257}}
+
+    assert errors(workflow(agent(memory=memory))) == [("WV-COMP-AGENT_MEMORY", "error", "/spec/steps/0/memory/key")]
+
+
+def test_a_conversation_key_that_reads_a_secret_is_refused():
+    memory = {**CONVERSATION, "key": {"ref": "/input/apiKey"}}
+
+    assert errors(workflow(agent(memory=memory))) == [("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/memory/key")]
+
+
+def test_a_conversation_key_with_a_broken_reference_is_reported_at_the_key():
+    memory = {**CONVERSATION, "key": {"ref": "/steps/missing/output"}}
+
+    assert "/spec/steps/0/memory/key/ref" in [path for _, _, path in errors(workflow(agent(memory=memory)))]
+
+
+@pytest.mark.parametrize(("concurrency", "warned"), [(2, True), (1, False)])
+def test_conversation_memory_inside_a_loop_that_runs_items_in_parallel_warns(concurrency, warned):
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/orders"},
+        "concurrency": concurrency,
+        "body": {"steps": [agent(memory={**CONVERSATION, "key": {"ref": "/item"}})], "output": {"literal": None}},
+    }
+
+    found = diagnostics(workflow(loop))
+
+    assert (("WV-COMP-AGENT_MEMORY", "warning", "/spec/steps/0/body/steps/0/memory/key") in found) is warned
+    assert [item for item in found if item[1] == "error"] == []
 
 
 def test_run_memory_shared_by_parallel_agents_warns():

@@ -27,6 +27,16 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
+from firefly_weave.contracts.agent_conversations import (
+    AgentConversation,
+    AgentConversationDeletion,
+    AgentConversationQuery,
+    AgentConversationSummary,
+    ConversationKeyHash,
+    ConversationPurge,
+    ConversationPurgeRequest,
+    ConversationWorkflow,
+)
 from firefly_weave.contracts.agent_log import AgentLogKeyText, AgentLogPage, AgentLogQuery
 from firefly_weave.contracts.ai import (
     AIConnectionTestRequest,
@@ -357,6 +367,10 @@ class Operation:
                 if name == "kind"
                 else AgentLogKeyText
                 if name == "key"
+                else ConversationWorkflow
+                if name == "workflow"
+                else ConversationKeyHash
+                if name == "key_hash"
                 else UUID,
             )
             for name in re.findall(r"{([^}]+)}", self.path)
@@ -2008,6 +2022,38 @@ OPERATIONS = {
             AgentLogPage,
             "run.read",
             query=AgentLogQuery,
+        ),
+        Operation(
+            "agent_conversations.list",
+            ENVIRONMENT + "/agent-conversations",
+            "GET",
+            Page[AgentConversationSummary],
+            "run.read",
+            page=True,
+            query=AgentConversationQuery,
+        ),
+        Operation(
+            "agent_conversations.read",
+            ENVIRONMENT + "/agent-conversations/{workflow}/{key_hash}",
+            "GET",
+            AgentConversation,
+            "run.read",
+        ),
+        Operation(
+            "agent_conversations.delete",
+            ENVIRONMENT + "/agent-conversations/{workflow}/{key_hash}",
+            "DELETE",
+            AgentConversationDeletion,
+            "run.purge",
+        ),
+        Operation(
+            "agent_conversations.purge_workflow",
+            ENVIRONMENT + "/agent-conversations/{workflow}/purge",
+            "POST",
+            ConversationPurge,
+            "run.purge",
+            ConversationPurgeRequest,
+            idempotency=True,
         ),
         Operation(
             "incidents.run_list",

@@ -377,6 +377,13 @@ class AgentMemoryIR(ContractModel):
     ttl_seconds: PositiveInt | None = Field(default=None, alias="ttlSeconds", exclude_if=lambda value: value is None)
     context_tokens: int = Field(ge=512, le=262144, alias="contextTokens")
 
+    @model_validator(mode="after")
+    def conversation_is_complete(self) -> AgentMemoryIR:
+        # A conversation is keyed by an expression's value and kept for a lifetime the compiler always writes.
+        if self.scope == "conversation" and (isinstance(self.key, str) or self.key is None or self.ttl_seconds is None):
+            raise ValueError("A conversation needs an expression key and ttlSeconds")
+        return self
+
 
 class AgentNode(HandlesErrors, Node):
     """An AI agent: the kernel runs its loop, one turn task on ``dependency`` (the turn action) at a time."""
@@ -726,6 +733,8 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
                 expressions.append(node.context)
             if not isinstance(node.memory.key, (str, type(None))):
                 expressions.append(node.memory.key)
+            if node.memory.scope in language_features.MEMORY_SCOPE_FEATURES:
+                features.add(language_features.MEMORY_SCOPE_FEATURES[node.memory.scope])
             for tool in node.tools:
                 if tool.target in language_features.TOOL_TARGET_FEATURES:
                     features.add(language_features.TOOL_TARGET_FEATURES[tool.target])

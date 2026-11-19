@@ -645,6 +645,29 @@ answer to a question. `{"sequence": [...]}` gives one value per call, in the
 order the calls run. A call that finds the sequence used up stops the
 simulation with `WV-DEBUG-MISSING_MOCK`.
 
+**Conversation seeds.** An agent with
+[conversation memory](ai-agents.md#conversation-memory) asks for its
+conversation before its first turn. The simulator answers with the `memory` of
+the agent's saved turns: up to 200 `{"role": "user" | "assistant", "content": …}`
+messages, at most 256 KiB, checked when the session starts
+(`WV-DEBUG-MOCK-OUTPUT`). The instance key's entry wins over the step's, and
+without a seed the conversation starts empty. The simulator never reads a stored
+conversation, and an agent's completed exchange changes nothing in the session,
+so a second agent with the same key needs its own seed. An entry may hold only a
+seed (`"turns": []`) when a pin answers the agent's turns.
+
+```json
+{
+  "agent:support": {
+    "turns": [{"final": "You asked about order A-17."}],
+    "memory": [
+      {"role": "user", "content": "What is the status of order A-17?"},
+      {"role": "assistant", "content": "A-17 has shipped."}
+    ]
+  }
+}
+```
+
 **Which key answers.** `AGENT` is the agent's step ID (every activation) or an
 instance key such as `support[2]` (one activation inside a loop). The most
 specific key wins:

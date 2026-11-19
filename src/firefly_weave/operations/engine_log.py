@@ -68,6 +68,13 @@ ENGINE_ENTRIES: Final = MappingProxyType(
         "incident_resolved": EngineTemplate("info", "INCIDENT.RESOLVED", "Incident resolved"),
         "cancelled": EngineTemplate("info", "RUN.CANCELED", "Run canceled"),
         "call_completed": EngineTemplate("info", "CALL.COMPLETED", "{step} call finished"),
+        # Says only that the conversation was loaded: never its messages or its key hash.
+        "memory_loaded": EngineTemplate(
+            "info",
+            None,
+            "{step} couldn't read its conversation and started without it: {code}",
+            "{step} loaded its conversation",
+        ),
     }
 )
 HANDLED_SUFFIX: Final = "; the failure was handled"

@@ -234,6 +234,7 @@ POSITIONS = [
 def test_text_loops_calls_transactions_and_triggers_compile_and_nothing_is_advertised_that_is_not_compiled():
     assert set(COMPILED_FEATURES) == {
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
@@ -409,6 +410,7 @@ def test_the_scan_walks_an_agents_tools_and_memory_and_reports_the_step_until_it
         ("/spec/steps/0/instructions/op/name", "text.concat"),
         ("/spec/steps/0/kind", "ai.agent"),
         ("/spec/steps/0/memory/key/op/name", "text.concat"),
+        ("/spec/steps/0/memory/scope", "ai.memory"),
         ("/spec/steps/0/tools/1/fixed/object/reason/op/name", "text.join"),
     ]
 

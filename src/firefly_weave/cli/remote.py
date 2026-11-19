@@ -196,6 +196,25 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     raise ValueError("A plan identifier is required")
 
             body = None
+            conversation: dict[str, str] = {}
+            if operation_id.startswith("agent_conversations."):
+                from firefly_weave.sdk.client import conversation_hash
+
+                # A conversation is named by its workflow and key hash; a key is hashed here and never sent.
+                workflow = str(options.get("conversation_workflow") or "")
+                if "{workflow}" in operation.path:
+                    conversation["workflow"] = workflow
+                if "{key_hash}" in operation.path:
+                    key = options.get("conversation_key")
+                    if options.get("key_stdin"):
+                        if key is not None or options.get("key_hash") is not None:
+                            raise ValueError("Name a conversation by one of --key, --key-stdin and --key-hash")
+                        key = _stdin_key()
+                    conversation["key_hash"] = conversation_hash(workflow, key, options.get("key_hash"))
+                if operation_id == "agent_conversations.purge_workflow":
+                    from firefly_weave.contracts.agent_conversations import ConversationPurgeRequest
+
+                    body = ConversationPurgeRequest(confirm_workflow=options["confirm_workflow"])
             if options.get("request_path"):
                 path = options["request_path"]
                 with path.open("rb") as stream:
@@ -219,6 +238,8 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     query[key] = str(options[key]).lower() if isinstance(options[key], bool) else options[key]
             if operation_id.startswith("run_statistics."):
                 query = statistics_query(operation_id, options)
+            if operation_id == "agent_conversations.list" and options.get("conversation_workflow") is not None:
+                query = {"workflow": options["conversation_workflow"], **query}
             async with WeaveClient(base_url, provider, scope) as sdk:
                 if operation_id == "activations.create" and options.get("pin_current_calls"):
                     from firefly_weave.contracts.catalog import ActivationRequest
@@ -249,6 +270,7 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     idempotency_key=options.get("idempotency_key"),
                     query=query or None,
                     **({"key": options["key"]} if options.get("key") is not None else {}),
+                    **conversation,
                 )
                 if operation_id.startswith("connections."):
                     from firefly_weave.cli.connections import plain_http_notice
@@ -363,7 +385,31 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
             click.Option(["--limit"], type=click.IntRange(1, 20), help="Activations per page (default 20)."),
             click.Option(["--cursor"]),
         ]
-    if operation.request is not None:
+    if operation_id.startswith("agent_conversations."):
+        params.append(
+            click.Option(
+                ["--workflow", "conversation_workflow"],
+                required="{workflow}" in operation.path,
+                help="The workflow's name.",
+            )
+        )
+    if "{key_hash}" in operation.path:
+        params += [
+            click.Option(
+                ["--key", "conversation_key"],
+                help="The conversation's key, such as a customer ID; hashed with --workflow here and never sent.",
+            ),
+            click.Option(
+                ["--key-stdin"],
+                is_flag=True,
+                help="Read the key as one line from standard input, one trailing newline removed, so it stays out "
+                "of shell history and the process list.",
+            ),
+            click.Option(["--key-hash"], help="The conversation's key hash, instead of --key."),
+        ]
+    if operation_id == "agent_conversations.purge_workflow":
+        params.append(click.Option(["--confirm-workflow"], required=True, help="The workflow's name again."))
+    elif operation.request is not None:
         params.append(
             click.Option(["--request", "request_path"], type=click.Path(exists=True, path_type=Path), required=True)
         )
@@ -439,6 +485,32 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
         callback=execute,
         help=operation.id + ": " + operation.capability,
     )
+
+
+# The longest key, 256 characters of up to 4 bytes each, plus a line ending.
+_STDIN_KEY_BYTES = 256 * 4 + 2
+
+
+def _stdin_key() -> str:
+    """A conversation key read as one line from standard input; a terminal is fine, a key is not a secret.
+
+    At a terminal the line ends with Enter. Piped input must hold that one line only: anything after it is refused.
+    """
+    import sys
+
+    raw = sys.stdin.buffer.readline(_STDIN_KEY_BYTES + 1)
+    if len(raw) > _STDIN_KEY_BYTES:
+        raise ValueError("The key read from standard input is too long")
+    if not sys.stdin.isatty() and sys.stdin.buffer.read(1):
+        raise ValueError("Standard input must hold the key as one line")
+    text = raw.decode("utf-8")
+    for ending in ("\r\n", "\n"):
+        if text.endswith(ending):
+            text = text[: -len(ending)]
+            break
+    if not text or "\n" in text or "\r" in text:
+        raise ValueError("Standard input must hold the key as one non-empty line")
+    return text
 
 
 def _agent_log_key(ctx: click.Context, parameter: click.Parameter, value: str | None) -> str | None:

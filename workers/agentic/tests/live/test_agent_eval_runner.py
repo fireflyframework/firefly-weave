@@ -80,14 +80,16 @@ def builder(model):
 
 def test_the_cases_cover_every_category_with_unique_ids():
     cases = DOCUMENT["cases"]
-    assert len({case["id"] for case in cases}) == len(cases) == 25
+    assert len({case["id"] for case in cases}) == len(cases) == 29
     counts = Counter(case["category"] for case in cases)
-    assert counts == {"tool_choice": 5, "arguments": 4, "grounded_final": 5, "loop_control": 5, "abuse": 6}
+    assert counts == {"tool_choice": 5, "arguments": 4, "grounded_final": 5, "loop_control": 8, "abuse": 7}
     assert {case["id"] for case in loop_cases(DOCUMENT)} == {
         "choice-two-orders",
+        "loop-conversation-recall",
+        "loop-conversation-window",
         *(case["id"] for case in cases if case["category"] == "abuse"),
     }
-    assert len(turn_cases(DOCUMENT)) == 18
+    assert len(turn_cases(DOCUMENT)) == 19
 
 
 @pytest.mark.parametrize("case", turn_cases(DOCUMENT), ids=lambda case: case["id"])
@@ -113,7 +115,7 @@ async def test_the_runner_scores_a_perfect_scripted_model_on_every_turn_case():
         for case in turn_cases(DOCUMENT)
     ]
     assert [(result.id, result.reasons) for result in results if not result.passed] == []
-    assert len(results) == 18 and [result.turn_requests for result in results].count([2]) == 3
+    assert len(results) == 19 and [result.turn_requests for result in results].count([2]) == 3
     structured = next(result for result in results if result.id == "grounded-structured-result")
     assert structured.requests == 2 and structured.input_tokens == 24000
 

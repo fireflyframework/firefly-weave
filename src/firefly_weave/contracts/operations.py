@@ -230,6 +230,25 @@ class CallReceipt(ContractModel):
     code: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
+class MemoryLoadFact(ContractModel):
+    """A conversation load a transition asked for: the load row, the agent's instance key and the conversation's
+    key hash."""
+
+    load_id: UUID
+    node_id: str
+    key_hash: str = Field(pattern="^[0-9a-f]{64}$")
+
+
+class MemoryReceipt(ContractModel):
+    """The load row an accepted ``memory_loaded`` event came from, and a digest of the messages it delivered."""
+
+    load: MemoryLoadFact
+    version: int = Field(ge=0)
+    expired: bool
+    test: bool
+    messages_digest: Digest
+
+
 class HumanTaskFact(ContractModel):
     task_id: UUID
     node_id: str
@@ -246,6 +265,8 @@ class RecordedEvidence(ContractModel):
     issued_human_tasks: list[HumanTaskFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
     issued_calls: list[CallFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
     call_receipt: CallReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
+    issued_memory_loads: list[MemoryLoadFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
+    memory_receipt: MemoryReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
     human_receipt: HumanDecisionReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
     version: Literal["weave/recorded-v1"] = "weave/recorded-v1"
     provenance: Literal["accepted_transaction", "synthetic_kernel"] = "accepted_transaction"

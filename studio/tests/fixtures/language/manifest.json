@@ -11,6 +11,7 @@
     ],
     "features": [
       "ai.agent",
+      "ai.memory",
       "flow.callWorkflow",
       "flow.eventTrigger",
       "flow.forEach",

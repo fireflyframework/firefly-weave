@@ -67,6 +67,19 @@ def test_every_engine_event_type_has_words():
         ),
         ("cancelled", None, None, ("info", "RUN.CANCELED", "Run canceled", None, "")),
         ("wait_elapsed", "approval", None, ("info", "WAIT.ELAPSED", "approval reached its deadline", "approval", "")),
+        ("memory_loaded", "support", None, ("info", None, "support loaded its conversation", "support", "")),
+        (
+            "memory_loaded",
+            "support",
+            "AGENT.MEMORY_UNREADABLE",
+            (
+                "info",
+                "AGENT.MEMORY_UNREADABLE",
+                "support couldn't read its conversation and started without it: AGENT.MEMORY_UNREADABLE",
+                "support",
+                "",
+            ),
+        ),
     ],
 )
 def test_an_event_is_worded_by_its_template(event_type, key, code, expected):

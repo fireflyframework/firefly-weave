@@ -405,7 +405,10 @@ type MemoryTtlSeconds = Annotated[int, Field(ge=3600, le=31536000)]
 
 class AgentMemory(ContractModel):
     """What an AI agent remembers: its own transcript (step), the run's exchanges under a name (run), or a
-    conversation kept across runs under an expression's value (conversation)."""
+    conversation kept across runs under an expression's value (conversation).
+
+    A conversation is kept ``ttlSeconds`` after its last exchange; the compiled workflow writes 2,592,000 (30 days)
+    when the step sets none, and this definition keeps what the author wrote."""
 
     scope: Literal["step", "run", "conversation"] = "step"
     key: OmissionOnly[ResourceName | Expression] = Field(

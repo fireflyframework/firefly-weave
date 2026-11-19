@@ -108,6 +108,7 @@ platform; the others need the `client` extra and either a
 | Publish and activate definitions | `definitions` (with `drafts` and `activations`), `remote compile`, `validate`, `catalog` | Grants in the project; [CLI tutorial](../guides/cli-tutorial.md) |
 | Create and test integration connections | `connections` | `connection.manage`; [no-code REST integration](../connectors/http-without-code.md) |
 | Start, inspect, and manage runs | `runs` (with `incidents` and `debug`), `run replay` | Grants in the environment; [manage runs](../guides/execution-management.md) |
+| List, read, or delete what AI agents remember across runs | `agent-conversations list`, `read`, `delete`, `purge-workflow` | `run.read` to list and read, `run.purge` to delete; `--key` puts the key in shell history and the process list, so prefer `--key-stdin` or `--key-hash` (from the SDK's `conversation_hash`); [conversation memory](ai-agents.md#conversation-memory) |
 | Claim or complete human tasks | `human-tasks`, `human-assignments`, `human-groups` | [Human tasks](../guides/human-tasks.md) |
 | Transfer and inspect workflow files | `files upload`, `download`, `list`, `read`, `delete` | `file_manager` to upload/manage; `file_reader` to read; [file tutorial](../guides/files.md) |
 | Read or reply to email conversations | `email` | An email connection; [email workflow](../guides/email.md) |
@@ -636,6 +637,15 @@ weave connections test "$CONNECTION_ID" --output json
 # Read run history and replay it on the platform.
 weave runs history "$RUN_ID" --limit 50 --output json
 weave runs replay "$RUN_ID" --output json
+# Read an AI agent's conversation by its key: the key is hashed with the workflow here and never sent.
+weave agent-conversations read --workflow support-chat --key "$CUSTOMER_ID" --output json
+# Read the key from standard input instead, to keep it out of shell history and the process list.
+printf '%s\n' "$CUSTOMER_ID" | weave agent-conversations read --workflow support-chat --key-stdin --output json
+# Delete it; the answer lists up to 100 runs that loaded it. --key-hash names it by its hash instead.
+weave agent-conversations delete --workflow support-chat --key "$CUSTOMER_ID" --output json
+# Delete up to 1,000 of a workflow's conversations; repeat with a new key while "more" is true.
+weave agent-conversations purge-workflow --workflow support-chat --confirm-workflow support-chat \
+  --idempotency-key erase-1 --output json
 # List the calls a run made, with each child run's ID and status.
 weave runs calls "$RUN_ID" --output json
 # List a run's transactions: state, steps, cause and resolution, never business values.

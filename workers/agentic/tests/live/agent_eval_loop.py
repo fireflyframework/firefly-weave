@@ -70,7 +70,14 @@ from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.runtime.agent_tools import tool_schema
 from firefly_weave.runtime.agents import parse_agent_key
 from firefly_weave.runtime.kernel import transition
-from firefly_weave.runtime.models import HumanTaskIntent, RunState, RuntimeEvent, TaskIntent, Transition
+from firefly_weave.runtime.models import (
+    HumanTaskIntent,
+    MemoryIntent,
+    RunState,
+    RuntimeEvent,
+    TaskIntent,
+    Transition,
+)
 from firefly_weave.sdk.http_actions import build_http_action
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -247,13 +254,25 @@ def _workflow(document: dict[str, Any], case: dict[str, Any], model: str) -> dic
                     "prompt": {"ref": "/input/message"},
                     "tools": tools,
                     "review": {"assignment": "support-leads"},
-                    "memory": {"contextTokens": case.get("context_tokens", 8192)},
+                    "memory": _memory(case),
                     "limits": {"maxTotalTokens": STEP_BUDGET},
                 }
             ],
             "output": {"ref": f"/steps/{STEP}/output"},
         },
     }
+
+
+# The conversation key of a case that remembers one: every run of the case is the same customer's.
+CONVERSATION_KEY = "C-4"
+
+
+def _memory(case: dict[str, Any]) -> dict[str, Any]:
+    """The step's memory: a conversation under one customer's key for a case that remembers one."""
+    memory: dict[str, Any] = {"contextTokens": case.get("context_tokens", 8192)}
+    if "conversation" in case:
+        memory |= {"scope": "conversation", "key": {"literal": CONVERSATION_KEY}, "window": case.get("window", 24)}
+    return memory
 
 
 def _artifact(document: dict[str, Any], case: dict[str, Any], model: str) -> CompiledArtifact:
@@ -391,7 +410,11 @@ class _Driver:
         self.trace = LoopTrace()
 
     async def drive(self) -> LoopTrace:
-        pending = _asked(self.run.send("started"))
+        started = self.run.send("started")
+        pending = _asked(started)
+        for load in [c for c in started.commands if isinstance(c, MemoryIntent) and c.op == "load"]:
+            # The platform delivers the stored conversation; here, the case's.
+            pending.extend(_asked(self.load(load)))
         for _ in range(MAX_EVENTS):
             if not pending:
                 break
@@ -413,6 +436,17 @@ class _Driver:
             raise ValueError(f"The case {self.case['id']} didn't end within {MAX_EVENTS} events")
         self.finish()
         return self.trace
+
+    def load(self, intent: MemoryIntent) -> Transition:
+        """The agent's conversation, as the platform would deliver it: the case's messages, stored once before."""
+        return self.run.send(
+            "memory_loaded",
+            node_id=intent.node_id,
+            key_hash=intent.key_hash,
+            version=1,
+            expired=False,
+            messages=self.case["conversation"],
+        )
 
     def review(self, task: HumanTaskIntent) -> Transition:
         """A review is rejected, so a changing call never runs and the model reads the rejection, unless the case

@@ -217,6 +217,7 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
+    monkeypatch.setattr(loop, "forget_conversations", swept)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
     assert pages == [(16, True)]
@@ -257,6 +258,7 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
+    monkeypatch.setattr(loop, "forget_conversations", swept)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
 
@@ -282,6 +284,7 @@ async def test_a_quantum_that_outlives_its_wall_clock_guard_is_cancelled(monkeyp
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
+    monkeypatch.setattr(loop, "forget_conversations", swept)
     async with asyncio.timeout(2):
         assert await loop.cycle() is False
 
@@ -309,6 +312,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
+    monkeypatch.setattr(loop, "forget_conversations", swept)
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     async with saturated_requests():
         assert await loop.cycle() is True
@@ -359,3 +363,83 @@ def test_the_revalidation_scan_matches_an_index_built_for_the_current_policy():
 
 async def no_statistics(scope, deadline):
     return None
+
+
+async def test_each_environment_visit_forgets_expired_conversations_after_the_logs(monkeypatch):
+    loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
+    steps: list[str] = []
+
+    def step(name: str):
+        async def run(scope, deadline):
+            steps.append(name)
+            return True
+
+        return run
+
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
+    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "forget_conversations"):
+        monkeypatch.setattr(loop, name, step(name))
+
+    await loop._environment(authority())
+
+    assert steps == ["revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "forget_conversations"]
+    assert operations.UPKEEP_STEPS == 4
+
+
+async def test_a_failed_conversation_sweep_marks_the_quantum_incomplete(monkeypatch):
+    from firefly_weave.operations import agent_conversations
+
+    loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
+    swept_at = []
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation, admission=True):
+        assert mutation and admission
+        yield SimpleNamespace(scope=scope.scope)
+
+    async def failing(tx, now, *, batch=500):
+        swept_at.append(now)
+        raise RuntimeError("sweep")
+
+    monkeypatch.setattr(loop, "_unit", unit)
+    monkeypatch.setattr(agent_conversations, "sweep", failing)
+    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs"):
+        monkeypatch.setattr(loop, name, swept)
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
+
+    assert await loop.forget_conversations(authority(), loop.monotonic() + 1) is False
+    with pytest.raises(operations.QuantumIncomplete):
+        await loop._environment(authority())
+    assert len(swept_at) == 2
+
+
+async def test_a_conversation_sweep_that_completes_reports_it(monkeypatch):
+    from firefly_weave.operations import agent_conversations
+
+    loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
+    calls = []
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation, admission=True):
+        yield SimpleNamespace(scope=scope.scope)
+
+    async def sweep(tx, now, *, batch=500):
+        calls.append((tx.scope, now))
+        return 3
+
+    monkeypatch.setattr(loop, "_unit", unit)
+    monkeypatch.setattr(agent_conversations, "sweep", sweep)
+    scope = authority()
+
+    assert await loop.forget_conversations(scope, loop.monotonic() + 1) is True
+    assert [item[0] for item in calls] == [scope.scope]
+
+
+async def test_the_conversation_sweep_refuses_an_authority_the_catalog_did_not_mint():
+    from firefly_weave.access.authorization import AccessDenied
+
+    loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
+    forged = SimpleNamespace(scope=Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()))
+
+    with pytest.raises(AccessDenied):
+        await loop.forget_conversations(forged, 1.0)  # type: ignore[arg-type]
