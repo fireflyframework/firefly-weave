@@ -83,6 +83,7 @@ Role and category are the registry's `NodeRole` and `PanelCategory` values.
 | `signal` | `signal` | `wait` | No | `signal` |
 | `humanTask` | `human` | `human` | No | `human` |
 | `callWorkflow` (Call a workflow) | `sub-workflow` | `flow` | When it waits | — |
+| `forEach` (Loop over items) | `loop` | `flow` | No (the steps inside are pinned per item) | — |
 
 A nested step list lives at the path of a branch plus `steps`:
 `["cases", 0, "steps"]` and `["default", "steps"]` for a decision,
@@ -91,6 +92,28 @@ the fixed branches of a kind, such as `default` for a decision and `body` for a
 loop (`["body", "steps"]`); decision cases and parallel branches are found by
 position and by name. Output handles are `case:<index>` and `default` for a
 decision and `branch:<name>` for a parallel step; `fail` has none.
+
+A `forEach` step's descriptor is gated by `flow.forEach`. Its expression fields
+are `["items"]` (expected schema `{type: "array"}`) and `["body", "output"]`;
+its one container is `["body", "steps"]` with the `frame` layout. A new loop
+starts as `{concurrency: 1, maxItems: 1000, collect: "all", body: {steps: [],
+output: {ref: "/item"}}}` with no `items`. Its Parameters form shows **Items**
+and offers `concurrency`, `maxItems`, `collect` and `body.output` under **Add
+option**, each `whenRemoved: "default"`; `body.output` defaults to a mapping, so
+its `ParamSpec` carries `defaultExpression: {ref: "/item"}` instead of
+`default`, and `isDefault` and Remove read and write that mapping.
+
+Inside a loop's body, `NdvContext.instanceKey` is the step's instance for the
+items picked in the loops around it (`send[2]`, or `send[2][0]` inside two
+loops); it is null outside loops and in run mode. The picks live in the step
+details controller's `Iterations`, one per open draft: an index per loop, 0
+until another is picked, kept while the Items of the loop and of the loops
+around it are unchanged and across renames. `sample.context()` adds `item`,
+`index` and `loops` for the picked items, from each loop's Items evaluated
+against the current data. A pin inside a body is written under the picked
+instance key (`pins["send[2]"]`), wins over the step's pin for that item only,
+and is judged against the step's fingerprints; the step's own pin
+(`pins["send"]`) stands for every item without one.
 
 A `callWorkflow` step's output is the called workflow's `outputSchema` when the
 call waits (the result status around it when **If it fails** continues), and
