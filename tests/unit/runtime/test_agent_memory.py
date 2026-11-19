@@ -17,6 +17,7 @@
 """Conversation memory in the AI agent loop: the agent waits for its conversation, loads it as data, and remembers
 each completed exchange, scrubbed and redacted."""
 
+import copy
 import hashlib
 import json
 from datetime import timedelta
@@ -33,6 +34,7 @@ from agent_fixtures import (
     Run,
     agent,
     answering,
+    catalog,
     compiled,
     conversation_memory_enabled,  # noqa: F401 - a fixture
     final,
@@ -42,6 +44,7 @@ from agent_fixtures import (
     workflow,
 )
 
+from firefly_weave.compiler.api import compile_source
 from firefly_weave.contracts.agent_conversations import conversation_key_hash
 from firefly_weave.contracts.agent_turns import turn_fits, wire_json
 from firefly_weave.contracts.operations import MemoryLoadFact, MemoryReceipt, RecordedEvidence
@@ -257,7 +260,7 @@ RUN_INPUT = {"message": "Where is order A-17?", "region": "eu", "orders": ["A-17
 
 
 def remembering(memory=BY_CUSTOMER, **changes):
-    document = answering(workflow(agent(tools=[LOOKUP], memory=memory, **changes)))
+    document = copy.deepcopy(answering(workflow(agent(tools=[LOOKUP], memory=memory, **changes))))
     document["spec"]["inputSchema"]["properties"]["customerId"] = {"type": "string"}
     if "onError" in changes:
         document["spec"]["output"] = {"ref": "/steps/support/error/code"}
@@ -895,3 +898,12 @@ async def test_a_run_started_as_a_test_counts_as_a_test_run_for_memory():
     assert await is_test_for_memory(repository, RUN) is True
     [(sql, values)] = repository.statements
     assert "a.test OR coalesce(f.test,false)" in sql and "LEFT JOIN run_facts f" in sql and values["id"] == RUN
+
+
+def test_building_a_conversation_workflow_leaves_the_shared_input_schema_alone():
+    # Each workflow gets its own input schema: a test that adds a field to one never changes another's digest.
+    remembering()
+
+    assert "customerId" not in workflow()["spec"]["inputSchema"]["properties"]
+    plain_digest = compile_source(workflow(), format="object", catalog=catalog()).artifact.digest
+    assert plain_digest == "31600b16229771cc4a04a34f2171142cd887fd3afbdc5de725a952a14bf2760b"

@@ -198,13 +198,14 @@ def workflow(*steps, profile=None):
         "kind": "Workflow",
         "metadata": {"name": "support-desk", "version": "1.0.0"},
         "spec": {
-            "inputSchema": INPUT,
+            # Each document gets its own copy: a test that changes one never changes another's.
+            "inputSchema": copy.deepcopy(INPUT),
             "outputSchema": {},
             "connections": {
                 "ai": {"connector": "weave-agentic-provider@1.0.0"},
                 "orders": {"connector": "orders@1.0.0"},
             },
-            "llmProfiles": {"support": profile or PROFILE},
+            "llmProfiles": {"support": copy.deepcopy(profile or PROFILE)},
             "steps": list(steps) or [agent()],
             "output": {"literal": None},
         },
