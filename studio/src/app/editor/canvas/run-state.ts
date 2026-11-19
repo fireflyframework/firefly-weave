@@ -32,8 +32,31 @@ export interface CanvasRun {
  * A run that happened, drawn on the Runs tab over the open draft: the steps
  * that differ from the version it used, and why steps failed.
  */
+/** One item of a loop in a recorded run, and what it did. */
+export interface RecordedItem {
+  index: number;
+  status: "finished" | "failed" | "running" | "not-run";
+  /** A failed item's error code. */
+  code: string | null;
+}
+/** One run of a loop in a recorded run: once, or once per item of the loops around it. */
+export interface RecordedLoop {
+  /** The loop step. */
+  id: string;
+  /** The item of each loop around it, outermost first; [] at the top level. */
+  within: readonly number[];
+  /** How many items it had: the run's count, else the items the run reached. */
+  count: number;
+  /** The count is the run's own. */
+  known: boolean;
+  items: readonly RecordedItem[];
+}
 export interface RecordedRun extends CanvasRun {
   mode: "real";
+  /** Each run of a loop, for the item chip. */
+  loops?: readonly RecordedLoop[];
+  /** Loop step ID to the item its steps show (zero-based); absent: every item at once. */
+  picks?: Readonly<Record<string, number>>;
   /** Steps changed since the run's version. */
   changed: readonly string[];
   /** Steps the run's version didn't have. */
