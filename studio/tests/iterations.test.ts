@@ -127,6 +127,39 @@ describe("the picked item", () => {
     expect(made.instanceKey("lines")).toBe("lines[2]");
   });
 
+  it("never names an item past the end of a list the last Execute counted", () => {
+    const { made } = iterations();
+    made.recordProgress([
+      progress("orders", "orders", 3),
+      progress("lines", "lines[0]", 5),
+      progress("lines", "lines[1]", 2),
+    ]);
+    made.pick("lines", 4);
+    expect(made.instanceKey("send")).toBe("send[0][4]");
+    // The second order has two lines: its last one, not a fifth.
+    made.pick("orders", 1);
+    expect(made.instanceKey("send")).toBe("send[1][1]");
+    expect(made.picks("send")).toEqual([
+      { loopId: "orders", index: 1 },
+      { loopId: "lines", index: 1 },
+    ]);
+    // Back on the first order, its fifth line is picked again.
+    made.pick("orders", 0);
+    expect(made.instanceKey("send")).toBe("send[0][4]");
+  });
+
+  it("moves to the last item when a new Execute shortens the list", () => {
+    const { made } = iterations();
+    made.recordProgress([progress("orders", "orders", 5)]);
+    made.pick("orders", 4);
+    expect(made.instanceKey("check")).toBe("check[4]");
+    made.recordProgress([progress("orders", "orders", 2)]);
+    expect(made.instanceKey("check")).toBe("check[1]");
+    expect(made.counts("lines")).toEqual({ count: 0, known: false });
+    made.recordProgress([progress("orders", "orders", 0)]);
+    expect(made.instanceKey("check")).toBe("check[0]");
+  });
+
   it("ignores a pick for a loop that isn't there or for something that isn't an item", async () => {
     const { made, asked } = iterations();
     const counted = made.evaluate("orders");

@@ -82,6 +82,11 @@ export function itemPicks(
   );
 }
 
+/** A loop's own instance key under the picks around it (`lines[2]`). */
+function loopKey(loopId: string, around: readonly LoopPick[]): string {
+  return loopId + around.map(({ index }) => `[${index}]`).join("");
+}
+
 export class Iterations {
   private readonly changed = signal(0);
   /** Changes when a pick or a count changes. */
@@ -98,16 +103,29 @@ export class Iterations {
 
   constructor(private readonly host: IterationsHost) {}
 
-  /** The picks of the loops around a step, outermost first; empty outside loops. */
+  /**
+   * The picks of the loops around a step, outermost first; empty outside
+   * loops. A pick past the end of a list whose count is known reads as its
+   * last item, so another outer item or a shorter Execute never names an
+   * item that isn't there; the pick itself is kept for when it fits again.
+   */
   picks(stepId: string): LoopPick[] {
     this.version();
     this.sync();
-    return enclosingLoops(this.host.definition(), stepId)
-      .reverse()
-      .map((loopId) => ({
+    this.readProgress();
+    const picks: LoopPick[] = [];
+    for (const loopId of enclosingLoops(
+      this.host.definition(),
+      stepId,
+    ).reverse()) {
+      const chosen = this.chosen.get(loopId)?.value ?? 0;
+      const { count, known } = this.countUnder(loopId, picks);
+      picks.push({
         loopId,
-        index: this.chosen.get(loopId)?.value ?? 0,
-      }));
+        index: known ? Math.min(chosen, Math.max(count - 1, 0)) : chosen,
+      });
+    }
+    return picks;
   }
 
   /** Picks an item of a loop of this draft; anything else is ignored. */
@@ -165,15 +183,7 @@ export class Iterations {
 
   /** How many items the loop has for the picks around it. */
   counts(loopId: string): LoopCount {
-    this.version();
-    this.sync();
-    this.readProgress();
-    const items = this.itemsAround(loopId);
-    if (items === null) return UNKNOWN;
-    const key = this.loopKey(loopId);
-    for (const kept of [this.executed.get(key), this.evaluated.get(key)])
-      if (kept?.items === items) return { count: kept.value, known: true };
-    return UNKNOWN;
+    return this.countUnder(loopId, this.picks(loopId));
   }
 
   /**
@@ -186,7 +196,7 @@ export class Iterations {
     if (items === null) return UNKNOWN;
     const revision = this.host.revision();
     const generation = this.generation;
-    const key = this.loopKey(loopId);
+    const key = loopKey(loopId, this.picks(loopId));
     let value: unknown = null;
     try {
       value = await this.host.items(loopId, this.picks(loopId));
@@ -229,14 +239,14 @@ export class Iterations {
     this.executed = this.executedFrom(loops ?? []);
   }
 
-  /** The loop's own instance key under the picks around it (`lines[2]`). */
-  private loopKey(loopId: string): string {
-    return (
-      loopId +
-      this.picks(loopId)
-        .map(({ index }) => `[${index}]`)
-        .join("")
-    );
+  /** How many items the loop has under these picks of the loops around it. */
+  private countUnder(loopId: string, around: readonly LoopPick[]): LoopCount {
+    const items = this.itemsAround(loopId);
+    if (items === null) return UNKNOWN;
+    const key = loopKey(loopId, around);
+    for (const kept of [this.executed.get(key), this.evaluated.get(key)])
+      if (kept?.items === items) return { count: kept.value, known: true };
+    return UNKNOWN;
   }
 
   /** The Items of the loop and of the loops around it, outermost first; null when it isn't a loop here. */
