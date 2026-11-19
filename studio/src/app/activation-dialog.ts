@@ -31,11 +31,29 @@ import {
   untracked,
   viewChild,
 } from "@angular/core";
-import { ApiError, StudioApi } from "./api";
+import { ApiError, StudioApi, type Diagnostic } from "./api";
 import { Modal } from "./dialog";
 import { describeError } from "./errors";
-import { preferredConnection } from "./integrations/connection-choice";
 import type { ActivationPinsPicker } from "./integrations/activation-requirements";
+import type { Workflow } from "./model";
+import {
+  connectionRows,
+  type ConnectionRow,
+} from "./editor/activation/activation-rows";
+import type { ActivationSteps } from "./editor/activation/activation-steps";
+import {
+  platformConnections,
+  type BindableItem,
+} from "./editor/connections/connections-api";
+import type { DevBinding } from "./editor/connections/dev-bindings";
+import {
+  connectionsPort,
+  type PortHost,
+} from "./editor/connections/connections-port";
+import type {
+  CanvasSidecar,
+  TriggerIntent,
+} from "./editor/state/canvas-sidecar";
 
 export interface ActivationBindings {
   connection_revision_ids: Record<string, string>;
@@ -43,6 +61,8 @@ export interface ActivationBindings {
   connector_release_ids: Record<string, string>;
   worker_release_ids: Record<string, string>;
   assignment_binding_ids: Record<string, string>;
+  /** One activation of each workflow version this workflow calls, by `name@version`. */
+  workflow_activation_ids?: Record<string, string>;
 }
 export interface ActivationSlot {
   name: string;
@@ -50,8 +70,6 @@ export interface ActivationSlot {
   required: boolean;
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Environments rarely hold many connection revisions; stop paging after this many.
-const maximumPages = 4;
 
 /**
  * Collects the environment bindings an activation needs: one connection
@@ -63,33 +81,75 @@ const maximumPages = 4;
  * runs and shows a failure inside, so the person can correct the bindings;
  * the shell closes it on success.
  */
+/** What a set of slots needs, to tell another set from the same one passed again. */
+const slotsKey = (slots: readonly ActivationSlot[]) =>
+  slots
+    .map((slot) => `${slot.name}\u0000${slot.connector}\u0000${slot.required}`)
+    .join("\u0001");
+
+/** An API that reads the version's export once; every other request goes through as it is. */
+function onceEach(api: StudioApi): StudioApi {
+  const reads = new Map<string, Promise<unknown>>();
+  return new Proxy(api, {
+    get(target, key) {
+      if (key === "request")
+        return (path: string, ...rest: unknown[]) => {
+          if (rest.length || !path.endsWith("/export"))
+            return (target.request as (...args: unknown[]) => unknown).call(
+              target,
+              path,
+              ...rest,
+            );
+          let read = reads.get(path);
+          if (!read) {
+            read = target.request<unknown>(path);
+            reads.set(path, read);
+            read.catch(() => reads.delete(path));
+          }
+          return read;
+        };
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 @Component({
   selector: "weave-activation-dialog",
   standalone: true,
   imports: [Modal],
   template: `<weave-modal
-    [heading]="'Activate ' + workflowName()"
+    [heading]="(activated() ? 'Activated ' : 'Activate ') + workflowName()"
     [wide]="true"
     describedBy="activation-summary"
     (dismiss)="dismiss()"
   >
     <form class="dialog-form activation-form" (submit)="submit($event)">
-      <p id="activation-summary" class="dialog-message">
-        Activate <strong>{{ workflowName() }}</strong> in
-        <strong>{{ environmentLabel() }}</strong
-        >. New runs use this version; runs already in progress keep theirs.
-      </p>
-      @if (automaticCount) {
+      @if (activated()) {
+        <!-- Done: the toast's words, while the rows below say how each trigger went. -->
+        <p id="activation-summary" class="dialog-message">
+          Activated in {{ environmentLabel() }}.{{
+            attentionText() ? " " + attentionText() : ""
+          }}
+        </p>
+      } @else {
+        <p id="activation-summary" class="dialog-message">
+          Activate <strong>{{ workflowName() }}</strong> in
+          <strong>{{ environmentLabel() }}</strong
+          >. New runs use this version; runs already in progress keep theirs.
+        </p>
+      }
+      @if (automaticCount && !stopped() && !activated()) {
         <p class="automatic-choices">
-          {{ automaticCount }}
-          {{ automaticCount === 1 ? "item" : "items" }} picked automatically ·
+          {{ automaticCount }} chosen for you ·
           <button type="button" class="text-link" (click)="toggleReview()">
             {{ reviewAutomatic() ? "Hide review" : "Review" }}
           </button>
         </p>
       }
       @if (
-        visibleSlots().length || (activeSlots().length && state() !== "ready")
+        !stopped() &&
+        (visibleSlots().length || (activeSlots().length && state() !== "ready"))
       ) {
         <h3>Connections</h3>
         @switch (state()) {
@@ -101,9 +161,8 @@ const maximumPages = 4;
           }
           @case ("forbidden") {
             <p class="notice">
-              Your account cannot list connections in this environment. Ask an
-              administrator for connection access, or enter each connection
-              revision ID they give you.
+              You can't bind connections in {{ environmentLabel() }}. Ask an
+              administrator for the connection binder role.
             </p>
           }
           @case ("error") {
@@ -117,14 +176,7 @@ const maximumPages = 4;
               <button type="button" (click)="load()">Try again</button>
             </div>
           }
-          @case ("ready") {
-            @if (!connections().length) {
-              <p class="notice">
-                This environment has no connections yet. Create one with your
-                platform administrator, then try again.
-              </p>
-            }
-          }
+          @case ("ready") {}
         }
         <div class="binding-list">
           @for (slot of visibleSlots(); track slot.name) {
@@ -154,20 +206,37 @@ const maximumPages = 4;
                       slot.required ? "Choose a connection" : "No connection"
                     }}
                   </option>
-                  @for (connection of compatible(slot); track connection.id) {
+                  @for (
+                    connection of compatible(slot);
+                    track connection.revisionId
+                  ) {
                     <option
-                      [value]="connection.id"
-                      [selected]="choices[slot.name] === connection.id"
+                      [value]="connection.revisionId"
+                      [selected]="choices[slot.name] === connection.revisionId"
                     >
-                      {{ connection.name }} · revision {{ connection.revision }}
+                      {{ connection.name }}
                     </option>
                   }
                 </select>
-                @if (!compatible(slot).length) {
-                  <p class="hint">
-                    No connection here uses
-                    {{ connectorText(slot.connector) }}.
-                  </p>
+                @if (rowOf(slot.name); as row) {
+                  @if (row.message) {
+                    @let way = connectionsLink(row.message);
+                    <p class="hint">
+                      {{ way.before }}
+                      @if (way.link) {
+                        <button
+                          type="button"
+                          class="text-link"
+                          [disabled]="running()"
+                          (click)="openConnections.emit()"
+                        >
+                          {{ way.link }}
+                        </button>
+                      }
+                    </p>
+                  } @else if (row.tested && choices[slot.name] === row.chosen) {
+                    <p class="hint">{{ row.tested }}</p>
+                  }
                 }
               } @else if (state() !== "loading") {
                 <input
@@ -186,7 +255,8 @@ const maximumPages = 4;
           }
         </div>
       }
-      <ng-container #pins />
+      <div [hidden]="!!stopped()"><ng-container #pins /></div>
+      <ng-container #stepsSlot />
       @if (pinsLoading()) {
         <p class="dialog-status" role="status">
           <span class="loading-spinner small"></span>Finding the releases and
@@ -213,33 +283,62 @@ const maximumPages = 4;
           <span class="loading-spinner small"></span>Activating…
         </p>
       }
+      @if (settingUp()) {
+        <p class="dialog-status" role="status">
+          <span class="loading-spinner small"></span>Setting up the triggers…
+        </p>
+      }
+      @if (!activated() && missingConnection(); as missing) {
+        <p class="hint activation-missing" id="activation-missing">
+          {{ missing }}
+        </p>
+      }
       <div class="dialog-footer">
-        <button
-          type="button"
-          class="tertiary"
-          [disabled]="running()"
-          (click)="dismiss()"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          class="primary"
-          [disabled]="
-            busy() ||
-            state() === 'loading' ||
-            pinsLoading() ||
-            !!picker()?.loading()
-          "
-        >
-          Activate version
-        </button>
+        @if (activated()) {
+          <!-- The activation is done: the triggers' rows say what happened. -->
+          <button
+            type="button"
+            class="primary"
+            [disabled]="settingUp()"
+            (click)="cancel.emit()"
+          >
+            Done
+          </button>
+        } @else {
+          <button
+            type="button"
+            class="tertiary"
+            [disabled]="running()"
+            (click)="dismiss()"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="primary"
+            [disabled]="
+              busy() ||
+              state() === 'loading' ||
+              pinsLoading() ||
+              !!picker()?.loading() ||
+              !!steps()?.blocked() ||
+              !!missingConnection()
+            "
+            [attr.aria-describedby]="
+              missingConnection() ? 'activation-missing' : null
+            "
+          >
+            Activate version
+          </button>
+        }
       </div>
     </form>
   </weave-modal>`,
 })
 export class ActivationDialog implements OnInit {
   api = input.required<StudioApi>();
+  /** The dialog's API: the release picker and the checks share one read of the version's export. */
+  readonly shared = computed(() => onceEach(this.api()));
   workflowName = input("");
   environmentLabel = input("");
   /**
@@ -255,19 +354,73 @@ export class ActivationDialog implements OnInit {
   running = input(false);
   /** Why the last activation failed, in plain language with a support code. */
   failure = input<{ message: string; code: string } | null>(null);
+  /** The editor's workflow and canvas: its called workflows and trigger choices. */
+  definition = input<Workflow | null>(null);
+  canvas = input<CanvasSidecar | null>(null);
+  environmentId = input("");
+  /** The editor's last check, for a called workflow that refuses this caller. */
+  diagnostics = input<readonly Diagnostic[]>([]);
+  /** The editor, whose connections port knows this computer's dev bindings. */
+  connectionsHost = input<PortHost | null>(null);
   confirm = output<ActivationBindings>();
+  /** The activation's ID once it succeeded: the dialog then sets its triggers up. */
+  activated = input("");
+  /**
+   * The trigger choices with their created or moved resources kept, and what
+   * needs attention; null intents when there was nothing to set up. Emitted
+   * once the triggers are set up, and again after each Retry.
+   */
+  triggers = output<{
+    intents: TriggerIntent[] | null;
+    attention: string | null;
+    first: boolean;
+  }>();
+  readonly settingUp = signal(false);
+  /** After the activation: "1 trigger needs attention.", or "" when every trigger went through. */
+  readonly attentionText = signal("");
+  private setUpFor = "";
   cancel = output<void>();
+  /** "Create one in Connections.": the dialog closes and Connections opens. */
+  openConnections = output<void>();
+  /** "Open schedule": the dialog closes and that trigger's step details open. */
+  openTrigger = output<string>();
+  /** A message, and the words of it that open Connections, when it ends with them. */
+  connectionsLink(message: string): { before: string; link: string | null } {
+    const link = "Create one in Connections.";
+    return message.endsWith(link)
+      ? { before: message.slice(0, -link.length), link }
+      : { before: message, link: null };
+  }
+  /** Why Activate waits: a required slot with no connection chosen yet; null otherwise. */
+  missingConnection(): string | null {
+    if (this.state() !== "ready" || this.stopped()) return null;
+    const slot = this.activeSlots().find(
+      (item) => item.required && !(this.choices[item.name] ?? "").trim(),
+    );
+    return slot ? `Choose a connection for ${slot.name} first.` : null;
+  }
   state = signal<"loading" | "ready" | "forbidden" | "error">("loading");
   error = signal<{ message: string; code: string } | null>(null);
-  connections = signal<Record<string, unknown>[]>([]);
+  connections = signal<BindableItem[]>([]);
+  /** One row per slot: its candidates, the one chosen for the person and why. */
+  rows = signal<ConnectionRow[]>([]);
+  /** The checks and the called workflows and triggers steps, loaded with the dialog. */
+  steps = signal<ActivationSteps | null>(null);
+  stopped = computed(() => this.steps()?.stop() ?? null);
+  private stepsHost = viewChild.required("stepsSlot", {
+    read: ViewContainerRef,
+  });
   choices: Record<string, string> = {};
   reviewAutomatic = signal(false);
+  rowOf(slot: string): ConnectionRow | null {
+    return this.rows().find((row) => row.slot === slot) ?? null;
+  }
   private automaticSlot(slot: ActivationSlot) {
-    const candidates = this.compatible(slot);
+    const row = this.rowOf(slot.name);
     return (
       this.state() === "ready" &&
-      candidates.length === 1 &&
-      this.choices[slot.name] === candidates[0]?.["id"]
+      !!row?.chosenBy &&
+      this.choices[slot.name] === row.chosen
     );
   }
   visibleSlots() {
@@ -301,6 +454,21 @@ export class ActivationDialog implements OnInit {
   private host = inject<ElementRef<HTMLElement>>(ElementRef);
   private injector = inject(Injector);
   constructor() {
+    // Once the activation succeeds, its triggers are set up (or there is nothing to do).
+    effect(() => {
+      const id = this.activated();
+      untracked(() => {
+        if (!id || id === this.setUpFor) return;
+        this.setUpFor = id;
+        void this.setUp(id);
+      });
+    });
+    // While the activation runs, the steps' ways out (Open schedule) are off too.
+    effect(() => {
+      const steps = this.steps();
+      const running = this.running();
+      untracked(() => steps?.busy.set(running));
+    });
     // A failure takes focus, so it is announced and Tab stays in the dialog.
     effect(() => {
       if (!this.failure()) return;
@@ -318,16 +486,79 @@ export class ActivationDialog implements OnInit {
       const slots = this.activeSlots();
       untracked(() => {
         if (!slots.length || this.state() === "loading") return;
-        if (!this.connectionsLoaded && this.state() === "ready")
+        // Other slots (the published version's) need their own connections and
+        // rows; the same slots, passed again, keep what was loaded.
+        if (this.state() === "ready" && slotsKey(slots) !== this.loadedSlots)
           void this.load();
-        else this.preselect();
+        else if (!this.connectionsLoaded && this.state() === "ready")
+          void this.load();
       });
     });
   }
   ngOnInit() {
     if (this.activeSlots().length) void this.load();
     else this.state.set("ready");
-    afterNextRender(() => void this.loadPicker(), { injector: this.injector });
+    afterNextRender(
+      () => {
+        void this.loadPicker();
+        void this.loadSteps();
+      },
+      { injector: this.injector },
+    );
+  }
+  private async setUp(activationId: string) {
+    const steps = this.steps();
+    if (!steps?.needsSync()) {
+      this.triggers.emit({ intents: null, attention: null, first: true });
+      return;
+    }
+    this.settingUp.set(true);
+    try {
+      await steps.sync(activationId);
+    } finally {
+      this.settingUp.set(false);
+    }
+    this.attentionText.set(steps.attention() ?? "");
+    this.triggers.emit({
+      intents: steps.storedIntents(),
+      attention: steps.attention(),
+      first: true,
+    });
+    steps.retried = () => {
+      this.attentionText.set(steps.attention() ?? "");
+      this.triggers.emit({
+        intents: steps.storedIntents(),
+        attention: steps.attention(),
+        first: false,
+      });
+    };
+  }
+  /** Loads the checks and the called workflows and triggers steps from their own chunk. */
+  async loadSteps() {
+    const definition = this.definition();
+    const canvas = this.canvas();
+    if (!definition || !canvas) return;
+    try {
+      const { ActivationSteps } = await import(
+        "./editor/activation/activation-steps"
+      );
+      const ref = this.stepsHost().createComponent(ActivationSteps);
+      ref.setInput("api", this.shared());
+      ref.setInput("definition", definition);
+      ref.setInput("canvas", canvas);
+      ref.setInput("versionId", this.versionId());
+      ref.setInput(
+        "environment",
+        this.environmentId()
+          ? { id: this.environmentId(), name: this.environmentLabel() }
+          : null,
+      );
+      ref.setInput("diagnostics", this.diagnostics());
+      ref.instance.openTrigger = (id) => this.openTrigger.emit(id);
+      this.steps.set(ref.instance);
+    } catch {
+      // Without them the platform still refuses what it can't activate.
+    }
   }
   /** Loads the pickers from their own chunk; without them, no pins are sent. */
   async loadPicker() {
@@ -336,7 +567,7 @@ export class ActivationDialog implements OnInit {
         "./integrations/activation-requirements"
       );
       const ref = this.pinsHost().createComponent(ActivationPinsPicker);
-      ref.setInput("api", this.api());
+      ref.setInput("api", this.shared());
       ref.setInput("versionId", this.versionId());
       ref.setInput("slots", this.slots());
       ref.setInput("workerTaskTypes", this.workerTaskTypes());
@@ -360,46 +591,72 @@ export class ActivationDialog implements OnInit {
   dismiss() {
     if (!this.running()) this.cancel.emit();
   }
+  /** The slots the connection rows were built for. */
+  private loadedSlots = "";
   async load() {
+    this.loadedSlots = slotsKey(this.activeSlots());
     this.state.set("loading");
     this.error.set(null);
     try {
-      const items: Record<string, unknown>[] = [];
-      let cursor: string | undefined;
-      for (let page = 0; page < maximumPages; page++) {
-        const result = await this.api().page("connections", true, cursor);
-        items.push(...result.items.filter((item) => !item["unavailable"]));
-        if (!result.next_cursor) break;
-        cursor = result.next_cursor;
-      }
-      this.connections.set(items);
+      const client = platformConnections(this.api());
+      const connectors = [
+        ...new Set(this.activeSlots().map((slot) => slot.connector)),
+      ];
+      const lists = await Promise.all(
+        connectors.map((connector) => client.bindable(connector)),
+      );
+      this.connections.set(lists.flat());
       this.connectionsLoaded = true;
-      this.preselect();
+      this.fill(this.connections());
       this.state.set("ready");
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403)
+      if (e instanceof ApiError && e.status === 403) {
+        this.fill("forbidden");
         this.state.set("forbidden");
-      else {
+      } else {
         this.error.set(describeError(e));
         this.state.set("error");
       }
     }
   }
+  /** The rows for the slots, and the choice Studio makes for each it can. */
+  private fill(bindable: BindableItem[] | "forbidden") {
+    const host = this.connectionsHost();
+    const port = host ? connectionsPort(host) : null;
+    const workflow = this.definition()?.metadata.name ?? "";
+    const devBinding = (slot: string): DevBinding | null =>
+      port?.binding(workflow, slot) ?? null;
+    const slots = this.activeSlots();
+    this.rows.set(
+      connectionRows({
+        environment: this.environmentLabel() || "this environment",
+        slots: slots.map((slot) => ({
+          name: slot.name,
+          connector: slot.connector,
+          required: slot.required,
+        })),
+        aiSteps: [],
+        agentToolSlots: [],
+        bindable,
+        devBindings: slots.flatMap((slot) => {
+          const binding = devBinding(slot.name);
+          return binding ? [{ slot: slot.name, binding }] : [];
+        }),
+      }),
+    );
+    this.preselect();
+  }
   /**
-   * Preselects each required slot's connection: the latest revision named
-   * like the slot, otherwise the only compatible one.
+   * Chooses each slot's connection the person hasn't chosen: this computer's
+   * dev binding while it can still be bound, otherwise the only candidate.
    */
   private preselect() {
-    for (const slot of this.activeSlots()) {
-      if (!slot.required || this.choices[slot.name]) continue;
-      const choice = preferredConnection(slot.name, this.compatible(slot));
-      if (choice) this.choices[slot.name] = choice;
-    }
+    for (const row of this.rows())
+      if (row.chosen && !this.choices[row.slot])
+        this.choices[row.slot] = row.chosen;
   }
-  compatible(slot: ActivationSlot) {
-    return this.connections().filter(
-      (connection) => connection["connector"] === slot.connector,
-    );
+  compatible(slot: ActivationSlot): BindableItem[] {
+    return this.rowOf(slot.name)?.candidates ?? [];
   }
   choose(slot: string, event: Event) {
     this.choices[slot] = this.text(event).trim();
@@ -432,6 +689,12 @@ export class ActivationDialog implements OnInit {
     // The buttons are disabled while the activation runs; keep focus in the
     // dialog so Escape and Tab still reach it.
     this.host.nativeElement.querySelector<HTMLElement>(".modal-panel")?.focus();
-    this.confirm.emit({ connection_revision_ids: connections, ...pins });
+    const steps = this.steps();
+    const calls = steps?.pins() ?? {};
+    this.confirm.emit({
+      connection_revision_ids: connections,
+      ...pins,
+      ...(Object.keys(calls).length ? { workflow_activation_ids: calls } : {}),
+    });
   }
 }

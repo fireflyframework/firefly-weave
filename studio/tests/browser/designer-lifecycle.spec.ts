@@ -206,7 +206,9 @@ for (const viewport of [
       await expect(publish.locator("small")).toHaveText(
         "Your account can't publish workflows in this workspace.",
       );
-      await publish.click();
+      // Marked disabled like its toolbar button, and still says why when pressed.
+      await expect(publish).toHaveAttribute("aria-disabled", "true");
+      await publish.click({ force: true });
       await expect(page.locator(".command-note")).toHaveText(
         "Your account can't publish workflows in this workspace.",
       );

@@ -229,6 +229,13 @@ export class ExecutionService {
     this.running.set(null);
   }
 
+  /** The workflow's input as Execute workflow uses it: its test data, or a sample of its input fields. */
+  workflowInput(): Json {
+    const input = this.host.testData().input?.value;
+    return input === undefined
+      ? (sampleFromSchema(this.host.inputSchema()) as Json)
+      : (input as Json);
+  }
   async execute(
     target: ExecuteTarget,
     options: ExecuteOptions = {},

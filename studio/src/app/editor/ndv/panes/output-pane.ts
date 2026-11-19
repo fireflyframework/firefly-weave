@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // offers Execute step and, for a step whose output can be pinned (Pin
 // output, P, in the header), Set test output and Generate sample. Steps with
 // no output say why.
+import { isTriggerTarget } from "../../triggers/trigger-target";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -450,10 +451,10 @@ import { describeError } from "../../../errors";
             @if (answerable()) {
               <weave-script-editor [session]="session()" />
             }
-            @if (session().target === "$trigger" && event() === undefined) {
+            @if (isTrigger() && event() === undefined) {
               <p class="pane-empty-text">No test event yet</p>
             }
-            @if (session().target !== "$trigger" && event() === undefined) {
+            @if (!isTrigger() && event() === undefined) {
               @if (session().controller.running(); as runs) {
                 <div class="pane-empty" role="status">
                   <span class="loading-spinner small" aria-hidden="true"></span>
@@ -519,11 +520,7 @@ import { describeError } from "../../../errors";
                 ><weave-icon name="execute" [size]="20"
               /></span>
               <h4>
-                {{
-                  session().target === "$trigger"
-                    ? "No test event yet"
-                    : "No output yet"
-                }}
+                {{ isTrigger() ? "No test event yet" : "No output yet" }}
               </h4>
               <p>
                 Schema shows the fields later steps can read. Executing this
@@ -705,11 +702,15 @@ export class OutputPane {
     const step = this.session().controller.step(this.session().target);
     return step ? noOutputSentence(step) : null;
   }
+  /** The input form or a trigger choice: its output is the test event. */
+  isTrigger(): boolean {
+    return isTriggerTarget(this.session().target);
+  }
   /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
     const { controller, target } = this.session();
-    return target === "$trigger"
+    return isTriggerTarget(target)
       ? controller.testEvent()
       : controller.stepData(target)?.value;
   }
@@ -1007,7 +1008,7 @@ export class OutputPane {
   rows() {
     const session = this.session();
     const target = session.target;
-    if (target === "$trigger")
+    if (isTriggerTarget(target))
       return schemaRows(session.host.model.definition.spec["inputSchema"]);
     if (target === "$end")
       return schemaRows(session.host.model.definition.spec["outputSchema"]);

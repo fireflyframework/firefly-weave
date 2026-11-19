@@ -54,6 +54,8 @@ export interface TileView {
   badge: TileBadge | null;
   borders: TileBorders;
   pulse: boolean;
+  /** A webhook listening for its test event: its border pulses until it stops. */
+  listening?: boolean;
   selected: boolean;
   tabIndex: 0 | -1;
 }
@@ -81,6 +83,7 @@ export interface TileView {
         [class.selected]="v.borders.selected"
         [class.live]="v.borders.live"
         [class.pulse]="v.pulse"
+        [class.listening]="!!v.listening"
         [class.error]="v.borders.error"
       ></span>
       @if (v.kind !== "end") {

@@ -48,7 +48,7 @@ test("one compatible choice is collapsed and activation fits at 1280x720", async
   await page.setViewportSize({ width: 1280, height: 720 });
   const captured = await platform(page);
   const dialog = await openActivation(page, captured.contracts, false);
-  await expect(dialog).toContainText("4 items picked automatically");
+  await expect(dialog).toContainText("4 chosen for you");
   await expect(dialog.getByRole("combobox")).toHaveCount(0);
   expect(
     await dialog.evaluate(
