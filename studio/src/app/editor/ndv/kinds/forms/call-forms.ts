@@ -205,6 +205,9 @@ function workflowHint(step: Step, ctx: KindContext): Pick<ParamSpec, "hint"> {
     const note = ctx.callNote?.(uses || undefined);
     return note ? { hint: note } : {};
   }
+  // Why the project's versions are missing stays under the field, chosen or not.
+  const reason = ctx.callNote?.();
+  if (reason) return { hint: reason };
   const caller = ctx.workflow.metadata.name;
   if (!caller || !allowsCaller(contract["callable"], caller)) return {};
   const where =
@@ -248,15 +251,18 @@ function workflowActions(step: Step, ctx: KindContext): FieldAction[] {
 export function callForm(step: Step, ctx: KindContext): FormSpec {
   const { uses, name } = calleeOf(step);
   const detached = step["mode"] === "detach";
+  // Why the project's versions are missing (not connected, no catalog read, a failed read), if they are.
+  const reason = ctx.callNote?.() ?? null;
   const workflow: ParamSpec = {
     id: "workflow",
     path: ["uses"],
     type: "resource",
     label: "Workflow",
     required: true,
-    requiredText: "Choose a workflow to call.",
+    requiredText: reason ?? "Choose a workflow to call.",
     placeholder: "notify-customer@1.0.0",
     choices: workflowChoices,
+    ...(reason ? { listNote: reason } : {}),
     actions: workflowActions(step, ctx),
     actionsBeside: true,
     ...workflowHint(step, ctx),

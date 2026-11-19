@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { connected, sourceText } from "./support";
+import { allCapabilities, connected, offline, sourceText } from "./support";
 import {
   addCommonStep,
   openStepFixture,
@@ -316,4 +316,68 @@ test.describe("calling a workflow from a step", () => {
     await expect(item).toHaveAttribute("aria-disabled", "true");
     await expect(item).toContainText("This step's output can't be pinned.");
   });
+});
+
+test.describe("when the project's workflows can't be listed", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  /** order-intake with lookup-customer kept on this computer, offline or connected without catalog read. */
+  async function openWithout(page: Page, how: "offline" | "no catalog read") {
+    const details = await openStepFixture(
+      page,
+      yamlFile("order-intake.yaml", workflow),
+      async (p) => {
+        await p.addInitScript((kept) => {
+          if (localStorage.getItem("local:weave.localDrafts.v1")) return;
+          localStorage.setItem(
+            "local:weave.localDrafts.v1",
+            JSON.stringify([kept.entry]),
+          );
+          localStorage.setItem(
+            `local:weave.localDraft.${kept.entry.id}`,
+            JSON.stringify(kept.document),
+          );
+        }, draft);
+        const result =
+          how === "offline"
+            ? await offline(p)
+            : await connected(p, {
+                capabilities: allCapabilities.filter(
+                  (capability) => capability !== "catalog.read",
+                ),
+              });
+        await withLanguageFeatures(p, ["text.concat", "flow.callWorkflow"]);
+        return result;
+      },
+    );
+    return { details, dialog: await addCall(page, details) };
+  }
+
+  for (const [how, reason] of [
+    ["offline", "Connect to a platform to call published workflows."],
+    [
+      "no catalog read",
+      "You can't read this project's published workflows here.",
+    ],
+  ] as const)
+    test(`${how}: the list starts with why, and the field keeps saying it`, async ({
+      page,
+    }) => {
+      const { details } = await openWithout(page, how);
+      const field = details.field("workflow");
+      const line = field.locator(".param-line");
+      await expect(line).toHaveText(reason);
+      await field.getByRole("combobox").click();
+      const list = page.getByRole("listbox", { name: "Workflow options" });
+      // First, where "In this project" would be, and never a choice.
+      const first = list.locator(":scope > *").first();
+      await expect(first).toHaveText(reason);
+      await expect(first).not.toHaveAttribute("role", "option");
+      await expect(list.getByRole("option")).toHaveCount(1);
+      await list.getByRole("option", { name: /^lookup-customer/ }).click();
+      await expect(field.getByRole("combobox")).toHaveValue(
+        /lookup-customer 0\.1\.0/,
+      );
+      await expect(line).toHaveText(reason);
+    });
 });

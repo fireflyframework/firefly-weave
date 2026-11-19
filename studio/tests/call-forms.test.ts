@@ -422,24 +422,46 @@ describe("the Workflow field's hint", () => {
       ).toBeUndefined();
   });
 
-  it("says why the project's versions are missing, or that the chosen one can't be found", () => {
+  it("says why the project's versions are missing, chosen or not, or that the chosen one can't be found", () => {
     notes = (uses) =>
       uses
         ? `Studio can't find ${uses.replace("@", " ")} in this project.`
         : "Connect to a platform to call published workflows.";
     try {
-      expect(shown(call()).field("Workflow")?.hint).toBe(
+      const empty = shown(call()).field("Workflow");
+      // An empty field says why, not only that a workflow is needed.
+      expect([empty?.hint, empty?.requiredText]).toEqual([
         "Connect to a platform to call published workflows.",
-      );
+        "Connect to a platform to call published workflows.",
+      ]);
       expect(
         shown(call({ uses: "unknown@1.0.0" })).field("Workflow")?.hint,
       ).toBe("Studio can't find unknown 1.0.0 in this project.");
       expect(shown(call({ uses: NOTIFY })).field("Workflow")?.hint).toBe(
-        "In this project · callable by order-intake",
+        "Connect to a platform to call published workflows.",
       );
     } finally {
       notes = () => null;
     }
+    expect(shown(call()).field("Workflow")?.requiredText).toBe(
+      "Choose a workflow to call.",
+    );
+  });
+});
+
+describe("the Workflow list", () => {
+  it("starts with why the project's versions are missing, when they are", () => {
+    notes = (uses) =>
+      uses ? null : "You can't read this project's published workflows here.";
+    try {
+      for (const step of [call(), call({ uses: NOTIFY })])
+        expect(shown(step).field("Workflow")?.listNote).toBe(
+          "You can't read this project's published workflows here.",
+        );
+    } finally {
+      notes = () => null;
+    }
+    expect(shown(call()).field("Workflow")?.listNote).toBeUndefined();
   });
 });
 

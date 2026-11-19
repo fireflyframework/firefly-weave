@@ -169,6 +169,10 @@ let sequence = 0;
         [attr.aria-label]="label() + ' options'"
       >
         @if (open()) {
+          <!-- Why some choices are missing: first, never a choice; the field's line says it too. -->
+          @if (note()) {
+            <p class="choice-list-note" role="presentation">{{ note() }}</p>
+          }
           @for (option of filtered(); track option.value; let index = $index) {
             @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
               <div class="choice-rule" role="presentation"></div>
@@ -455,6 +459,12 @@ let sequence = 0;
         margin: 0;
         color: var(--muted);
       }
+      .choice-list-note {
+        margin: 0;
+        padding: 10px 10px 4px;
+        font-size: 13px;
+        color: var(--muted);
+      }
     `,
   ],
 })
@@ -463,6 +473,8 @@ export class Select {
   protected readonly optionText = optionText;
   label = input.required<string>();
   options = input<readonly SelectOption[]>([]);
+  /** A line at the top of the open list, not a choice. */
+  note = input<string | null>(null);
   value = input("");
   placeholder = input("Choose an option");
   disabled = input(false);

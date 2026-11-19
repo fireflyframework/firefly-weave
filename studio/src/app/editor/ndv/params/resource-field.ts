@@ -89,6 +89,7 @@ export class ResourceViewerLayer implements AfterViewInit {
             [hideLabel]="true"
             [controlId]="controlId()"
             [options]="options()"
+            [note]="spec().listNote ?? null"
             [value]="value()"
             [disabled]="!!readOnly()"
             [describedBy]="description()"
