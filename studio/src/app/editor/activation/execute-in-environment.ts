@@ -245,7 +245,7 @@ export async function executeWorkflowIn(
   dialogs: DialogService,
 ): Promise<void> {
   const port = connectionsPort(host);
-  if (!port) return;
+  if (!port || port.runningWorkflowTest()) return;
   const environment = port.environment.name;
   const service = port.testActivations(host, ({ steps }) =>
     dialogs.confirm(sideEffectQuestion(steps, environment)),
@@ -257,20 +257,24 @@ export async function executeWorkflowIn(
   const draftId = host.draftId ?? "";
   const opened = host.model.opened;
   try {
-    // Each workflow the draft calls runs on its activation here, as an activation pins it.
-    const called = await readCalleePins(host, environment);
-    if (host.model.opened !== opened || (host.draftId ?? "") !== draftId)
-      return;
-    if ("refusal" in called) {
-      host.notify(called.refusal, undefined, "danger");
-      return;
-    }
-    const pinned: DraftTestBindings = Object.keys(called.pins).length
-      ? { ...bindings, workflow_activation_ids: called.pins }
-      : bindings;
+    // Starting from the first read: Execute can't start a second run meanwhile.
     const outcome = await port.trackWorkflowTest(
-      service.execute(host.execution?.workflowInput() ?? {}, pinned),
+      (async () => {
+        // Each workflow the draft calls runs on its activation here, as an activation pins it.
+        const called = await readCalleePins(host, environment);
+        if (host.model.opened !== opened || (host.draftId ?? "") !== draftId)
+          return null;
+        if ("refusal" in called) {
+          host.notify(called.refusal, undefined, "danger");
+          return null;
+        }
+        const pinned: DraftTestBindings = Object.keys(called.pins).length
+          ? { ...bindings, workflow_activation_ids: called.pins }
+          : bindings;
+        return service.execute(host.execution?.workflowInput() ?? {}, pinned);
+      })(),
     );
+    if (!outcome) return;
     if (outcome.ok) {
       port.ownRuns.add(outcome.value.run.id);
       handOverLinkedRun(draftId, outcome.value.run.id);
