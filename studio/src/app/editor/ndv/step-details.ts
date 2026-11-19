@@ -146,6 +146,7 @@ import type {
   ExecuteNotice,
   StepDetailsController,
 } from "./step-details-controller";
+import { kinds } from "../../model";
 import type { StepDetailsHost } from "./step-details-host";
 import {
   StepDetailsService,
@@ -822,6 +823,15 @@ export class StepDetails {
     if (choice) return TRIGGER_DESCRIPTIONS[choice.kind];
     if (this.target() === "$end") return "End · what the workflow returns";
     const step = this.controller().step(this.target());
+    // A kind that comes with its own descriptor (Call a workflow) names itself and its tile's summary.
+    const own =
+      step && !(kinds as readonly string[]).includes(step.kind)
+        ? this.controller().descriptor(this.target())
+        : null;
+    if (step && own)
+      return [own.label, own.summary(step, this.controller().kindContext())]
+        .filter(Boolean)
+        .join(" · ");
     return step
       ? headerSubtitle(
           step,

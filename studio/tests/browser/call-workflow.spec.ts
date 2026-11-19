@@ -130,6 +130,9 @@ test.describe("calling a workflow from a step", () => {
     await expect(tile(page, "call-workflow-1")).toContainText(
       "notify-customer 1.0.0",
     );
+    await expect(details.dialog.locator(".sd-subtitle")).toHaveText(
+      "Call a workflow · notify-customer 1.0.0",
+    );
     await expect(details.field("workflow")).toContainText(
       "In this project · callable by order-intake",
     );
