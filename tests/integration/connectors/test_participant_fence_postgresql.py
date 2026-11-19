@@ -75,6 +75,16 @@ async def rows(db, run: str) -> dict[str, tuple[str, str, object]]:
     }
 
 
+async def blocked(holder, waiting, task: asyncio.Task) -> None:
+    """Wait, at most 10 seconds, until ``waiting``'s request waits for the transaction ``holder`` keeps open."""
+    async with asyncio.timeout(10):
+        while not await holder.fetchval(
+            "SELECT $2::int = ANY(pg_blocking_pids($1::int))", waiting.get_server_pid(), holder.get_server_pid()
+        ):
+            assert not task.done()
+            await asyncio.sleep(0.01)
+
+
 async def test_a_first_try_is_recorded_as_tried(fenced):
     db, fence = fenced
     run = str(uuid4())
@@ -231,11 +241,7 @@ async def test_a_cancel_waits_for_a_try_still_committing(fenced, external_databa
         await open_try.start()
         entry = await fence.begin(holder, key(run, "try"), transaction(run, "try"))
         cancel = asyncio.create_task(deliver(db, fence, run, "cancel", {"released": True}))
-        waiting, holder_pid = db.get_server_pid(), holder.get_server_pid()
-        async with asyncio.timeout(10):
-            while not await holder.fetchval("SELECT $2::int = ANY(pg_blocking_pids($1::int))", waiting, holder_pid):
-                assert not cancel.done()
-                await asyncio.sleep(0.01)
+        await blocked(holder, db, cancel)
         await fence.finish(holder, entry, {"holdId": "h1"})
         await open_try.commit()
         cancelled, _ = await asyncio.wait_for(cancel, 10)
@@ -243,3 +249,47 @@ async def test_a_cancel_waits_for_a_try_still_committing(fenced, external_databa
         await holder.close()
     assert cancelled.applied is True
     assert (await rows(db, run))[f"{run}:hold"] == ("try", "cancelled", {"holdId": "h1"})
+
+
+@pytest.mark.parametrize("first_commits", [True, False], ids=["first-commits", "first-rolls-back"])
+async def test_the_same_try_sent_twice_at_once_applies_once(fenced, external_database, first_commits):
+    db, fence = fenced
+    run = str(uuid4())
+    holder = await asyncpg.connect(**external_database["kwargs"])
+    try:
+        first = holder.transaction()
+        await first.start()
+        entry = await fence.begin(holder, key(run, "try"), transaction(run, "try"))
+        second = asyncio.create_task(deliver(db, fence, run, "try", {"holdId": "h2"}))
+        await blocked(holder, db, second)
+        if first_commits:
+            await fence.finish(holder, entry, {"holdId": "h1"})
+            await first.commit()
+        else:
+            await first.rollback()
+        repeated, answer = await asyncio.wait_for(second, 10)
+    finally:
+        await holder.close()
+    expected = {"holdId": "h1"} if first_commits else {"holdId": "h2"}
+    assert (repeated.replay, answer) == (first_commits, expected)
+    assert await rows(db, run) == {f"{run}:hold": ("try", "tried", expected)}
+
+
+async def test_a_cancel_waiting_for_a_try_that_rolls_back_leaves_a_tombstone(fenced, external_database):
+    db, fence = fenced
+    run = str(uuid4())
+    holder = await asyncpg.connect(**external_database["kwargs"])
+    try:
+        open_try = holder.transaction()
+        await open_try.start()
+        await fence.begin(holder, key(run, "try"), transaction(run, "try"))
+        cancel = asyncio.create_task(deliver(db, fence, run, "cancel", {"released": False}))
+        await blocked(holder, db, cancel)
+        await open_try.rollback()
+        cancelled, _ = await asyncio.wait_for(cancel, 10)
+    finally:
+        await holder.close()
+    assert cancelled.applied is False
+    assert (await rows(db, run))[f"{run}:hold"] == ("try", "tombstone", None)
+    with pytest.raises(ConnectorFailure, match="TXN_ALREADY_UNDONE"):
+        await deliver(db, fence, run, "try", {"holdId": "late"})
