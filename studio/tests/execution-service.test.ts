@@ -61,7 +61,7 @@ interface Pending {
   refuse: (error: unknown) => void;
 }
 
-function fixture() {
+function fixture(workflow: Workflow = WORKFLOW) {
   const values = new Map<string, string>();
   const backend: StoreBackend = {
     keys: async (prefix) =>
@@ -79,6 +79,9 @@ function fixture() {
       ["send", print(2)],
     ]),
     testData: EMPTY,
+    callees: undefined as
+      | ReturnType<NonNullable<ExecutionHost["callees"]>>
+      | undefined,
   };
   const host: ExecutionHost = {
     api: {
@@ -106,7 +109,7 @@ function fixture() {
       revision: state.draft.revision,
       source: "{}",
       format: "json",
-      workflow: WORKFLOW,
+      workflow,
     }),
     place: () => (state.prefix === null ? null : { prefix: state.prefix }),
     connected: () => false,
@@ -114,6 +117,7 @@ function fixture() {
     testData: () => state.testData,
     prints: () => state.prints,
     inputSchema: () => INPUT_SCHEMA,
+    callees: () => state.callees ?? { sources: {}, references: [] },
   };
   return { service: new ExecutionService(host), sent, values, state };
 }
@@ -279,6 +283,69 @@ describe("the execution service", () => {
     ).toEqual({ kind: "busy" });
     expect(sent.length - before).toBe(2);
     expect(service.running()).toBeNull();
+  });
+
+  it("sends the workflows it calls, and refuses a test that would run more than the host takes", async () => {
+    const { service, sent, state } = fixture();
+    await service.open("d-1");
+    state.callees = {
+      sources: { "lookup@0.1.0": { source: "kind: Workflow", format: "yaml" } },
+      references: ["lookup@0.1.0"],
+    };
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    expect((sent[0].body as { workflows: unknown }).workflows).toEqual({
+      "lookup@0.1.0": { source: "kind: Workflow", format: "yaml", mocks: {} },
+    });
+    sent[0].answer(RESPONSE);
+    await running;
+    state.callees = {
+      sources: {},
+      references: Array.from({ length: 51 }, (_, n) => `w${n}@1.0.0`),
+    };
+    expect(await service.execute({ mode: "workflow" })).toEqual({
+      kind: "failed",
+      message:
+        "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("words the host's block on a call as the call's", async () => {
+    const { service, sent } = fixture({
+      ...WORKFLOW,
+      spec: {
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            with: { literal: {} },
+          },
+        ],
+      },
+    } as unknown as Workflow);
+    await service.open("d-1");
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    sent[0].answer({
+      ...RESPONSE,
+      status: "blocked",
+      blocked: {
+        reason: "missing_mock",
+        nodeId: "notify",
+        instanceKey: "",
+        message: "Step notify needs test data.",
+      },
+    });
+    const outcome = await running;
+    expect(outcome.kind === "done" && outcome.response.blocked).toEqual({
+      reason: "callee",
+      nodeId: "notify",
+      instanceKey: "",
+      message: "Call notify-customer needs test data or the workflow itself.",
+    });
   });
 
   it("sends a sample of the input fields when there is no test input", async () => {
