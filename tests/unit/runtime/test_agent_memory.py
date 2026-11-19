@@ -634,3 +634,24 @@ async def test_a_transition_without_conversation_memory_writes_nothing():
     await record_memory(repository, RUN, *memory_transition())
 
     assert repository.statements == []
+
+
+def test_a_test_runs_agent_remembers_that_it_is_a_test():
+    ir, node = setup()
+    waiting = activate(ir, node, "support", values(), [], 0, NOW).state
+
+    running = memory_loaded(ir, node, "support", waiting, [], 0, test=True).state
+    done = turn_completed(ir, node, "support", running, final("Order A-17 has shipped."), 0)
+
+    assert running.test is True and done.complete is not None and done.memory_append is None
+
+
+def test_a_test_run_asks_for_no_append():
+    run = kernel_run()
+    run.send("started")
+    loaded(run, version=0, test=True)
+    assert '"test":true' in run.state.agents["support"].model_dump_json()
+
+    result = run.answer("support#1", final("Order A-17 has shipped."))
+
+    assert memory_intents(result) == [] and run.state.status == "succeeded"

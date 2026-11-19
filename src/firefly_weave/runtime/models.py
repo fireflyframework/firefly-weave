@@ -242,6 +242,8 @@ class AgentState(ContractModel):
     failure: AgentFailure | None = Field(default=None, exclude_if=lambda v: v is None)
     # The hash of the conversation this activation loads and appends to; never the key's value.
     conversation: ConversationKeyHash | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The run is a test run: its conversation loaded empty, and its exchange is never remembered.
+    test: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class RunState(ContractModel):

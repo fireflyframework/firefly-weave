@@ -2074,7 +2074,8 @@ def _advance_owned(
             entries = loaded_entries(state, completion.data)
         except ValueError:
             raise KernelError("WV-RUNTIME-EVENT") from None
-        agent_effects(node, key, memory_loaded(ir, node, key, state, entries, current_state.agent_tokens))
+        test = completion.data.get("test", False) is True
+        agent_effects(node, key, memory_loaded(ir, node, key, state, entries, current_state.agent_tokens, test=test))
 
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state

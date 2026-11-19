@@ -195,17 +195,23 @@ def activate(
 
 
 def memory_loaded(
-    ir: WorkflowIR, node: AgentNode, key: str, state: AgentState, entries: list[JsonObject], run_tokens: int
+    ir: WorkflowIR,
+    node: AgentNode,
+    key: str,
+    state: AgentState,
+    entries: list[JsonObject],
+    run_tokens: int,
+    *,
+    test: bool = False,
 ) -> AgentEffects:
     """The agent's conversation arrived: keep its newest ``window`` messages as whole exchanges, put them first as one
-    data message, and send turn 1."""
+    data message, and send turn 1. A test run's agent remembers it is one, so its exchange is never appended."""
     if state.phase != "memory":
         raise ValueError("The agent isn't waiting for its memory")
     kept = append_memory([], entries, node.memory.window)
     messages = [_memory_message(kept), *state.messages] if kept else list(state.messages)
-    return _next_turn(
-        ir, node, state.model_copy(update={"messages": messages, "phase": "turn"}), run_tokens, forced=False
-    )
+    loaded = state.model_copy(update={"messages": messages, "phase": "turn", "test": test})
+    return _next_turn(ir, node, loaded, run_tokens, forced=False)
 
 
 def loaded_entries(state: AgentState, data: JsonObject) -> list[JsonObject]:
@@ -466,7 +472,7 @@ def _complete(ir: WorkflowIR, node: AgentNode, state: AgentState, output: TurnOu
     if output.text:
         result["text"] = output.text
     remembered = None
-    if node.memory.scope in ("run", "conversation"):
+    if node.memory.scope == "run" or (node.memory.scope == "conversation" and not state.test):
         prompt = next(message["content"] for message in state.messages if message.get("role") == "user")
         if node.memory.scope == "conversation":
             # A conversation outlives the run, so a credential pasted into a prompt must not be kept with it.
