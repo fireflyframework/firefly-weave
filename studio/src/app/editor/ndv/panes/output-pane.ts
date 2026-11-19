@@ -68,6 +68,32 @@ import {
 } from "../../../operate/run-contracts";
 import { durationText, shortId } from "../../../format";
 
+/** The most pages of a run's child runs read for one card: 20 pages of 100. */
+const CHILD_PAGES = 20;
+/** A child run's summary, from the pages of its parent's child runs (a call in a loop makes many). */
+async function childSummary(
+  api: ReturnType<typeof asRunViewsApi>,
+  parent: string,
+  child: string,
+): Promise<RunSummary | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < CHILD_PAGES; page++) {
+    const answer = await listRunSummaries(api, {
+      caller_run_id: parent,
+      include_test: true,
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    const found = answer.items.find(
+      (item): item is RunSummary =>
+        item.id === child && !("unavailable" in item),
+    );
+    if (found) return found;
+    if (!answer.next_cursor) return null;
+    cursor = answer.next_cursor;
+  }
+  return null;
+}
 /** "notify-customer 1.0.0 · failed at send: SMTP_REJECTED · took 2 s". */
 function childLine(run: RunSummary): string {
   const failed = run.failed_step;
@@ -922,16 +948,8 @@ export class OutputPane {
     if (!summary && !this.askedChildren.has(key)) {
       this.askedChildren.add(key);
       // The parent's child runs hold this one's summary: its version, status and time.
-      void listRunSummaries(asRunViewsApi(host.api), {
-        caller_run_id: parent,
-        include_test: true,
-        limit: 100,
-      })
-        .then((page) => {
-          const found = page.items.find(
-            (item): item is RunSummary =>
-              item.id === child && !("unavailable" in item),
-          );
+      void childSummary(asRunViewsApi(host.api), parent, child)
+        .then((found) => {
           if (found)
             this.childSummaries.update((kept) => new Map(kept).set(key, found));
         })
@@ -939,8 +957,12 @@ export class OutputPane {
     }
     return {
       title: `${detached ? "Started" : "Ran as"} run ${shortId(child)} of ${name}`,
+      // A call that didn't wait says so, then how the run it started went, once read.
       line: detached
-        ? `${host.model.definition.metadata.name} didn't wait for it`
+        ? [
+            `${host.model.definition.metadata.name} didn't wait for it`,
+            ...(summary ? [childLine(summary)] : []),
+          ].join(" · ")
         : summary
           ? childLine(summary)
           : "",
@@ -993,7 +1015,9 @@ export class OutputPane {
   }
   /** A call that finished in the run while the run it called failed. */
   calledRunFailed(recorded: { child: string | null; pill: string }): boolean {
-    if (!recorded.child || !this.callStep()) return false;
+    // A call that doesn't wait finished on its own, whatever its run did.
+    if (!recorded.child || !this.callStep() || this.detachedCall())
+      return false;
     const key = `${this.session().host.stepDataScope ?? ""}|${recorded.child}`;
     return (
       recorded.pill === "Finished in this run" &&

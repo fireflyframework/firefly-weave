@@ -249,6 +249,20 @@ async function openCallRun(
         const url = new URL(route.request().url());
         if (url.searchParams.get("caller_run_id") !== RUN_IDS.call)
           return route.fallback();
+        // A call that ran past 100 times: its child is on the second page.
+        if (!url.searchParams.get("cursor"))
+          return route.fulfill({
+            json: {
+              items: [
+                {
+                  id: "0d1e2f3a-4b5c-4d6e-8f70-819203a4b5c6",
+                  unavailable: true,
+                  omissions: [],
+                },
+              ],
+              next_cursor: "page-2",
+            },
+          });
         return route.fulfill({
           json: {
             items: [
@@ -375,8 +389,12 @@ test.describe("a call step on the Runs tab", () => {
     await expect(card.locator(".pane-child-title")).toHaveText(
       "Started run 9b1c4e2a of notify-customer",
     );
+    // It didn't wait, so the call finished whatever the run it started did; that run's status follows once read.
     await expect(card.locator(".pane-child-line")).toHaveText(
-      "invoice-approval didn't wait for it",
+      "invoice-approval didn't wait for it · notify-customer 1.0.0 · failed at send: SMTP_REJECTED · took 2 s",
+    );
+    await expect(output.locator(".pane-sub .pill").first()).toHaveText(
+      "Finished in this run",
     );
     // A call that didn't wait has no result: no schema line, no field count.
     await expect(output.locator("weave-data-tree")).toHaveCount(0);
