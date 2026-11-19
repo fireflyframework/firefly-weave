@@ -757,17 +757,3 @@ async def operations_case(worker_setup, access_db, provisioned):
         start=start,
         rows=rows,
     )
-
-
-@pytest.fixture
-def conversation_memory_enabled(monkeypatch):
-    """Compile and advertise ai.memory, as a platform that runs conversation memory does."""
-    from firefly_weave.compiler import language_support
-    from firefly_weave.contracts import language_features
-
-    monkeypatch.setattr(language_support, "COMPILED_FEATURES", language_support.COMPILED_FEATURES | {"ai.memory"})
-    monkeypatch.setattr(
-        language_features,
-        "ADVERTISED_FEATURES",
-        tuple(sorted({*language_features.ADVERTISED_FEATURES, "ai.memory"})),
-    )

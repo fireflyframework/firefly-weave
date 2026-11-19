@@ -38,7 +38,6 @@ from agent_fixtures import (  # noqa: E402
     agent,
     answering,
     artifact,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     final,
     plain,
     tool_calls,
@@ -478,7 +477,6 @@ def conversation_script(flow, **changes):
     return [("started", {"admission_policy": "classified-v1"}), loaded(flow, **changes), turn("support#1", final())]
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_run_of_a_conversation_agent_replays_consistent_without_the_table():
     flow = conversation_flow()
     events = recorded(flow, conversation_script(flow))
@@ -490,7 +488,6 @@ def test_a_run_of_a_conversation_agent_replays_consistent_without_the_table():
     assert events[1].evidence is not None and events[1].evidence["memory_receipt"]["version"] == 3
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 @pytest.mark.parametrize(
     "tamper",
     [
@@ -514,7 +511,6 @@ def test_a_tampered_memory_receipt_reports_its_code(tamper):
     assert codes(report) == ("inconsistent", ["WV-REPLAY-MEMORY"]) and report.last_verified_sequence == 1
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_memory_loaded_without_a_receipt_is_incomplete():
     flow = conversation_flow()
     events = list(recorded(flow, conversation_script(flow)))
@@ -527,7 +523,6 @@ def test_a_memory_loaded_without_a_receipt_is_incomplete():
     assert codes(report) == ("incomplete", ["WV-REPLAY-MEMORY-PROVENANCE"]) and report.last_verified_sequence == 1
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_load_the_evidence_never_issued_is_incomplete():
     flow = conversation_flow()
     events = list(recorded(flow, conversation_script(flow)))
@@ -540,7 +535,6 @@ def test_a_load_the_evidence_never_issued_is_incomplete():
     assert codes(report) == ("incomplete", ["WV-REPLAY-MEMORY-PROVENANCE"]) and report.last_verified_sequence == 0
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_history_keeps_the_loaded_messages():
     flow = conversation_flow()
     events = recorded(flow, conversation_script(flow))
@@ -551,7 +545,6 @@ def test_history_keeps_the_loaded_messages():
     assert "omissions" not in shown.data
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_history_drops_a_field_a_memory_loaded_event_never_carries():
     flow = conversation_flow()
     _, data = loaded(flow)

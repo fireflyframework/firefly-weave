@@ -32,7 +32,6 @@ from test_agent_workflows import (  # noqa: E402
     PROFILE,
     agent,
     catalog,
-    conversation_memory_enabled,
     workflow,
 )
 
@@ -55,7 +54,6 @@ __all__ = [
     "answering",
     "artifact",
     "compiled",
-    "conversation_memory_enabled",
     "final",
     "node_of_ir",
     "tasks",

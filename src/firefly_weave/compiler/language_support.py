@@ -43,6 +43,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
     {
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",

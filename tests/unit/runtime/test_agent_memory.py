@@ -36,7 +36,6 @@ from agent_fixtures import (
     answering,
     catalog,
     compiled,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     final,
     node_of_ir,
     tasks,
@@ -65,8 +64,6 @@ from firefly_weave.runtime.conversations import (
 )
 from firefly_weave.runtime.kernel import KernelError
 from firefly_weave.runtime.models import Deadline, MemoryIntent, RunState, RuntimeEvent, StepChange, Transition
-
-pytestmark = pytest.mark.usefixtures("conversation_memory_enabled")
 
 HASH = hashlib.sha256(b"support-desk\x00C-4").hexdigest()
 PROMPT = "Where is order A-17? My token is Bearer abc.def.ghi"

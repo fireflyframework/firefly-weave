@@ -32,7 +32,6 @@ from agent_fixtures import (
     Run,
     agent,
     answering,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     tasks,
     tool_calls,
     workflow,
@@ -302,7 +301,6 @@ def action_context(run: Run, task: TaskIntent) -> ActionContext:
     return ActionContext("fetch", datetime.now(UTC) + timedelta(seconds=10), credentials, invocation, authorize)
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_remembered_instruction_cant_cancel_an_order():
     # Guards the review gate again, for text that waited in a conversation: an earlier run's prompt reaches this run's
     # model only as remembered data, and the changing tool it asks for still waits for a person.

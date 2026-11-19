@@ -26,7 +26,6 @@ from test_agent_workflows import (
     LOOKUP,
     agent,
     catalog,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     workflow,
 )
 
@@ -248,7 +247,6 @@ def test_an_ir_without_an_agent_guard_is_refused(purpose, message):
         WorkflowIR.model_validate(ir)
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_platform_without_ai_memory_refuses_a_conversation_artifact():
     result = compile_source(workflow(agent(memory=CONVERSATION)), format="object", catalog=catalog())
     assert result.artifact is not None
@@ -286,7 +284,6 @@ def test_the_ir_keeps_a_conversation_with_its_key_and_lifetime():
     assert AgentMemoryIR.model_validate(memory).model_dump(by_alias=True, mode="json") == memory
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_conversation_without_ttl_seconds_lowers_to_thirty_days():
     memory = {key: value for key, value in CONVERSATION.items() if key != "ttlSeconds"}
     document = workflow(agent(memory=memory))
@@ -296,7 +293,6 @@ def test_a_conversation_without_ttl_seconds_lowers_to_thirty_days():
     assert "ttlSeconds" not in document["spec"]["steps"][0]["memory"]
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_conversations_own_ttl_seconds_is_kept():
     assert agent_node(artifact(workflow(agent(memory=CONVERSATION)))).memory.ttl_seconds == 3600
 

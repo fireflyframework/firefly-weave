@@ -41,6 +41,7 @@ LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(La
 # Features whose runtime support has shipped. Capabilities.language_features and the manifest serve these.
 ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "ai.agent",
+    "ai.memory",
     "flow.callWorkflow",
     "flow.eventTrigger",
     "flow.forEach",

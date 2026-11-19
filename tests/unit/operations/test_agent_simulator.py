@@ -34,7 +34,6 @@ from agent_fixtures import (  # noqa: E402
     agent,
     answering,
     artifact,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     plain,
     workflow,
 )
@@ -711,7 +710,6 @@ def memory_of(simulator, key="support#1"):
     return first["content"]["memory"] if first["role"] == "context" and "memory" in first["content"] else []
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_the_simulator_answers_a_load_from_its_seed_only():
     flow = remembering()
     entries = {"support": turns({"final": "A-17."}, memory=SEED)}
@@ -724,7 +722,6 @@ def test_the_simulator_answers_a_load_from_its_seed_only():
     assert loaded.data["version"] == 0 and loaded.data["expired"] is False and loaded.data["messages"] == SEED
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_seed_alone_seeds_the_conversation_while_a_pin_answers_the_turn():
     flow = remembering()
     entries = {"support": {"turns": [], "memory": SEED}}
@@ -743,7 +740,6 @@ def test_a_seed_alone_seeds_the_conversation_while_a_pin_answers_the_turn():
     assert view.status == "succeeded" and memory_of(simulator) == SEED
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_an_instance_keys_seed_wins_over_the_steps():
     flow = artifact(plain(looped(agent(memory={**BY_REGION, "key": {"ref": "/item"}}))))
     own = [{"role": "user", "content": "About A-18?"}, {"role": "assistant", "content": "Delivered."}]
@@ -758,7 +754,6 @@ def test_an_instance_keys_seed_wins_over_the_steps():
     assert memory_of(simulator, "support[0]#1") == SEED and memory_of(simulator, "support[1]#1") == own
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_without_a_seed_the_conversation_starts_empty():
     flow = remembering()
     simulator = simulate(with_ai_turns(flow, {}, {"support": turns({"final": "A-17."})}), flow)
@@ -768,7 +763,6 @@ def test_without_a_seed_the_conversation_starts_empty():
     assert view.status == "succeeded" and memory_of(simulator) == []
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_an_append_changes_nothing_in_the_session():
     first = agent(memory=BY_REGION)
     second = agent(id="followup", memory=BY_REGION, prompt={"literal": "And before?"})
@@ -784,7 +778,6 @@ def test_an_append_changes_nothing_in_the_session():
     assert view.status == "succeeded" and memory_of(simulator, "followup#1") == []
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 @pytest.mark.parametrize(
     "seed",
     [

@@ -25,8 +25,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
@@ -40,7 +38,6 @@ from agent_fixtures import (  # noqa: E402
     agent,
     answering,
     artifact,
-    conversation_memory_enabled,  # noqa: F401 - a fixture
     plain,
     workflow,
 )
@@ -666,7 +663,6 @@ def conversation_run(**loaded) -> Recorded:
     return run
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_an_agent_with_conversation_memory_shows_its_key_hash_version_and_loaded_count():
     run = conversation_run()
     use = AgentConversationUse(key_hash=CONVERSATION_HASH, version=1, expired=False)
@@ -680,7 +676,6 @@ def test_an_agent_with_conversation_memory_shows_its_key_hash_version_and_loaded
     }
 
 
-@pytest.mark.usefixtures("conversation_memory_enabled")
 def test_a_test_runs_agent_shows_test_and_loaded_0():
     run = conversation_run(version=0, test=True, messages=[])
     use = AgentConversationUse(key_hash=CONVERSATION_HASH, version=0, expired=False, test=True)

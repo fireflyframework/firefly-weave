@@ -59,7 +59,7 @@ from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.workers.leases import TaskService
 from firefly_weave.workers.service import WorkerService
 
-pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("conversation_memory_enabled")]
+pytestmark = pytest.mark.integration
 
 WORKFLOW = "support-chat"
 
