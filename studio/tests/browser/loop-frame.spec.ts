@@ -171,6 +171,36 @@ test.describe("Loop frames at 1440x900", () => {
     ).toBe(await tokenColor(page, "--surface"));
   });
 
+  test("the header keeps its whole sentence where it fits, and drops For each item in first where it doesn't", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await canvas.closeInspector();
+    await page.getByRole("button", { name: "Fit view", exact: true }).click();
+    const head = header(canvas, "orders");
+    const parts = () =>
+      head.evaluate((element) => {
+        const part = (name: string) =>
+          element.querySelector<HTMLElement>(`.frame-${name}`)!;
+        const cut = (name: string) =>
+          part(name).scrollWidth > part(name).clientWidth;
+        return {
+          lead: part("lead").getBoundingClientRect().width > 1,
+          items: cut("items"),
+          suffix: cut("suffix"),
+        };
+      });
+    // At Fit view a two-step loop has room for all of it.
+    await expect
+      .poll(parts)
+      .toEqual({ lead: true, items: false, suffix: false });
+    // Zoomed out, the words go before the list.
+    const out = page.getByRole("button", { name: "Zoom out", exact: true });
+    await out.click();
+    await out.click();
+    await expect.poll(parts).toMatchObject({ lead: false, items: false });
+  });
+
   test("edges cross the frame's sides with arrowheads only at steps", async ({
     page,
   }) => {
@@ -183,6 +213,18 @@ test.describe("Loop frames at 1440x900", () => {
     // Out of the frame from its last step, then on to the next step.
     expect(await arrow("send>$exit:orders")).toBeNull();
     expect(await arrow("orders>summarize")).toContain("canvas-arrow-");
+    // The loop's output dot sits outside the frame, clear of the body's last +.
+    const side = (await box(frame(canvas, "orders"))).right;
+    expect((await box(canvas.handle("orders>out"))).left).toBeGreaterThan(side);
+    expect(
+      (
+        await box(
+          canvas.insertTarget(
+            "Add a step at the end of For each item of orders",
+          ),
+        )
+      ).right,
+    ).toBeLessThan(side);
   });
 
   test("a click on the header selects the loop and a double-click opens its step details", async ({

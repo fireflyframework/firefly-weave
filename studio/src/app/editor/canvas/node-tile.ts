@@ -22,8 +22,14 @@ SPDX-License-Identifier: Apache-2.0
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  ElementRef,
+  afterRenderEffect,
   computed,
+  inject,
   input,
+  signal,
+  viewChild,
 } from "@angular/core";
 import { Icon } from "../../icon";
 import {
@@ -95,6 +101,7 @@ export interface TileView {
       data-action="tile"
       [class.frame-header]="!!v.frame"
       [class.frame-pending]="!!v.frame?.pending"
+      [class.frame-tight]="tight()"
       [attr.data-shape]="v.shape"
       [attr.aria-label]="v.name"
       [attr.title]="v.frame ? null : v.tooltip"
@@ -114,7 +121,7 @@ export interface TileView {
         [class.error]="v.borders.error"
       ></span>
       @if (v.frame; as frame) {
-        <span class="frame-title">
+        <span class="frame-title" #frameTitle>
           <weave-icon class="frame-icon" name="forEach" />
           <span class="frame-name">{{ v.title }}</span>
           <span class="frame-lead">For each item in</span>
@@ -228,4 +235,58 @@ export class NodeTile {
   }
   /** A loop's header band keeps 24 px on screen as the canvas zooms out. */
   readonly frameBand = computed(() => frameHeaderHeight(this.zoom()));
+  /**
+   * A loop's whole header doesn't fit its band: "For each item in" leaves
+   * sight first (criteria 3.2), then the suffix and the list shorten.
+   */
+  readonly tight = signal(false);
+  private readonly frameTitle =
+    viewChild<ElementRef<HTMLElement>>("frameTitle");
+
+  constructor() {
+    // Measured again after the text or the zoom changes, and when a size
+    // changes without them (the header's font arriving).
+    afterRenderEffect({
+      read: () => {
+        this.view();
+        this.zoom();
+        const title = this.frameTitle()?.nativeElement;
+        this.tight.set(!!title && headerOverflows(title));
+      },
+    });
+    let observer: ResizeObserver | null = null;
+    afterRenderEffect(() => {
+      const title = this.frameTitle()?.nativeElement;
+      observer?.disconnect();
+      observer = null;
+      if (!title || typeof ResizeObserver === "undefined") return;
+      observer = new ResizeObserver(() =>
+        this.tight.set(headerOverflows(title)),
+      );
+      observer.observe(title);
+      for (const part of Array.from(title.children)) observer.observe(part);
+    });
+    inject(DestroyRef).onDestroy(() => observer?.disconnect());
+  }
+}
+
+/**
+ * Whether a header's parts at their natural widths (an ellipsis or a hidden
+ * "For each item in" never counts) are wider than the room they have. Both
+ * are in the header's own units, so the canvas's zoom doesn't matter, and
+ * the margins stay the same while a part is hidden: the answer never flips
+ * because of itself.
+ */
+function headerOverflows(title: HTMLElement): boolean {
+  const natural = Array.from(title.children).reduce((sum, part) => {
+    const style = getComputedStyle(part);
+    const width =
+      part instanceof HTMLElement && style.overflow === "hidden"
+        ? part.scrollWidth
+        : (part as HTMLElement).offsetWidth;
+    return (
+      sum + width + parseFloat(style.marginLeft) + parseFloat(style.marginRight)
+    );
+  }, 0);
+  return natural > title.clientWidth + 0.5;
 }

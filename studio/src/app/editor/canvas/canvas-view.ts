@@ -927,6 +927,13 @@ export class CanvasView implements OnInit, DoCheck {
       this.places(),
     );
   }
+  private readonly loopsMemo = memo(
+    (layout: LtrLayout) => new Set(layout.frames.map((frame) => frame.id)),
+  );
+  /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
+  handleOffset(tile: string): number {
+    return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;
+  }
   private readonly chipsMemo = memo((layout: LtrLayout): SubNodeView[] => {
     if (!layout.subNodes.length) return [];
     const ctx = this.host().kindContext();

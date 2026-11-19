@@ -285,7 +285,6 @@ weave-canvas-view,
   padding: 0 calc(10px * var(--frame-text-scale, 1)) 0
     calc(8px * var(--frame-text-scale, 1));
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  container-type: inline-size;
   font: 500 calc(12px * var(--frame-text-scale, 1)) / 1.3333 var(--font-sans);
   color: var(--muted);
 }
@@ -353,19 +352,16 @@ weave-canvas-view,
   flex: none;
   min-width: 0;
 }
-/* Below 360 px of header on screen (32.5 em of its text, which draws at
-   12 px times 12/13 below 92% zoom), "For each item in" leaves sight; it
-   stays in the header's accessible name. */
-@container (inline-size < 32.5em) {
-  .canvas-v2 .frame-header:not(.frame-pending) .frame-lead {
-    position: absolute;
-    inline-size: 1px;
-    block-size: 1px;
-    margin: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
+/* When the whole header doesn't fit (node-tile measures it and marks the
+   header tight), "For each item in" leaves sight first; it stays in the
+   header's accessible name. Its margin stays, so the measure doesn't change. */
+.canvas-v2 .frame-header.frame-tight:not(.frame-pending) .frame-lead {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 /* What the loop's data holds and its note, under the frame's bottom left. */
 .canvas-v2 .tile-label.frame-label {
@@ -375,8 +371,10 @@ weave-canvas-view,
 .canvas-v2 .tile-label.frame-label span {
   justify-self: start;
 }
-/* The header's whole sentence under its band, at screen size. With the
-   pointer it waits a moment, so crossing a header doesn't flash it. */
+/* The header's whole sentence under its band, at screen size. It waits a
+   moment, so crossing a header with the pointer or walking past it with the
+   arrow keys doesn't flash it over the body's first steps; it goes as focus
+   moves into the body. */
 .canvas-v2 .frame-tip {
   position: absolute;
   z-index: 7;
@@ -394,8 +392,11 @@ weave-canvas-view,
   transform: scale(var(--tip-scale, 1));
   transform-origin: top left;
 }
+.canvas-v2 .frame-tip {
+  animation: frame-tip-in var(--dur-fast) var(--ease) 500ms both;
+}
 .canvas-v2 .frame-tip.pointer {
-  animation: frame-tip-in var(--dur-fast) var(--ease) 300ms both;
+  animation-delay: 300ms;
 }
 @keyframes frame-tip-in {
   from {
@@ -403,7 +404,7 @@ weave-canvas-view,
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .canvas-v2 .frame-tip.pointer {
+  .canvas-v2 .frame-tip {
     animation-duration: 0s;
   }
 }

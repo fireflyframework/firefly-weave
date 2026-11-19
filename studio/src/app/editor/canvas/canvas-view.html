@@ -246,7 +246,7 @@ SPDX-License-Identifier: Apache-2.0
               class="handle f-drag-blocker"
               [class.connecting]="band?.key === output.key"
               [attr.data-handle]="output.key"
-              [style.left.px]="output.x - 6"
+              [style.left.px]="output.x - 6 + handleOffset(output.tile)"
               [style.top.px]="output.y - 6"
               aria-hidden="true"
             ></span>
