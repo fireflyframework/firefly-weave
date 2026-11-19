@@ -168,6 +168,18 @@ test.describe("opening the workflow a step calls", () => {
     expect(exports).toEqual([]);
   });
 
+  test("the call tile's More commands open the workflow too", async ({
+    page,
+  }) => {
+    const { details } = await open(page, "lookup-customer@0.1.0");
+    await details.close();
+    await page
+      .locator('.tile-node[data-tile="notify"] .tile-body')
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Open workflow" }).click();
+    await expect(identity(page)).toContainText("lookup-customer");
+  });
+
   test("a published version opens under its own identity, and says changes start a new draft", async ({
     page,
   }) => {
@@ -325,6 +337,15 @@ test.describe("a call step on the Runs tab", () => {
     await expect(
       output.getByRole("button", { name: "Open in Operate" }),
     ).toHaveCount(0);
+    // Read only here, Open workflow still opens the called workflow, and
+    // the field's commands sit under it with their reasons.
+    const field = page.locator('[data-param="workflow"]');
+    const openCallee = field.getByRole("button", { name: "Open workflow" });
+    await expect(openCallee).not.toHaveAttribute("aria-disabled", "true");
+    const value = (await field.locator("input.param-input").boundingBox())!;
+    expect((await openCallee.boundingBox())!.y).toBeGreaterThan(
+      value.y + value.height,
+    );
     await card.getByRole("button", { name: "Open run" }).click();
     // notify-customer has no draft here: Studio offers one from the version the run used.
     await expect(

@@ -216,6 +216,7 @@ function workflowActions(step: Step, ctx: KindContext): FieldAction[] {
     label: "Open workflow",
     icon: "external",
     run: (ndv) => ndv.openWorkflow?.(uses),
+    whileReadOnly: true,
   };
   if (contractOf(step, ctx)) return [open];
   return [

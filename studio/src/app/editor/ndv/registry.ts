@@ -156,6 +156,8 @@ export interface FieldAction {
   run(ctx: NdvContext): void;
   /** Why the button can't be used now; null when it can. */
   disabled?(step: Step, ctx: NdvContext): string | null;
+  /** It opens something and changes nothing, so it stays usable while the field is read only (the Runs tab). */
+  whileReadOnly?: boolean;
 }
 /** One field of a form, drawn by the shared renderer. */
 export interface ParamSpec {

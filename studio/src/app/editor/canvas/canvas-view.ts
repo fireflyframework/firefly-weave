@@ -1304,6 +1304,17 @@ export class CanvasView implements OnInit, DoCheck {
     const id = tile.id;
     return [
       { label: "Open", run: () => void h.openStep(id, "details") },
+      // A call step also opens the workflow it calls.
+      ...(tile.kind === "callWorkflow" &&
+      typeof tile.step?.["uses"] === "string" &&
+      tile.step["uses"]
+        ? [
+            {
+              label: "Open workflow",
+              run: () => h.openWorkflow?.(String(tile.step?.["uses"])),
+            },
+          ]
+        : []),
       {
         label: "Rename",
         disabled: locked,

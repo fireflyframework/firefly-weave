@@ -891,7 +891,7 @@ export class ParamField {
   // --------------------------------------------------------- actions
   /** Why a field's command can't be used now: the field's own reason first. */
   actionReason(action: FieldAction, reason: string | null): string | null {
-    if (reason) return reason;
+    if (reason && !action.whileReadOnly) return reason;
     const session = this.session();
     const step = session.controller.step(session.target);
     if (!step || !action.disabled) return null;
