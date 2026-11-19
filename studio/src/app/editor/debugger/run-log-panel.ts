@@ -40,7 +40,7 @@ import type { DebugCommandBody } from "../../designer/simulation/simulation-plan
 import type { Json } from "../ndv/registry";
 import { allSteps, childLists } from "../ndv/step-walk";
 import { loopProgress } from "../canvas/run-state";
-import { countsOf, stepsOf } from "../canvas/trace-playback";
+import { countsOf, pausedOf, stepsOf } from "../canvas/trace-playback";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
 import type { CalledRuns } from "../state/execute-request";
 import type {
@@ -162,6 +162,7 @@ export function loopLog(
     countsOf(response),
     loopsAround,
     true,
+    pausedOf(response),
   ).map((run) => {
     const depth = run.within.length;
     const items = new Map<number, { steps: string[]; last: TraceStatus }>();
@@ -193,7 +194,11 @@ export function loopLog(
           text: `Failed at ${failure.step}`,
           step: failure.step,
         };
-      const running = item.last === "running" || item.last === "waiting";
+      // The run ended inside a paused loop's items after the ones it finished.
+      const running =
+        item.last === "running" ||
+        item.last === "waiting" ||
+        (run.status === "paused" && index >= run.finished);
       return {
         label: itemLabel(run.within, index),
         status: running ? "running" : "completed",

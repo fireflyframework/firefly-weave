@@ -218,12 +218,15 @@ function frameView(
 function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
   return {
     text: loopRunText(loop),
+    // A loop the run ended inside reads quietly: it isn't done.
     tone:
       loop.status === "running"
         ? "live"
         : loop.status === "failed"
           ? "failed"
-          : "done",
+          : loop.status === "paused"
+            ? "stopped"
+            : "done",
     progress: loop.count ? Math.min(1, loop.finished / loop.count) : null,
   };
 }
@@ -232,6 +235,7 @@ const LOOP_TILE_RUN: Readonly<Record<LoopRun["status"], TileRun>> = {
   running: "live",
   failed: "failed",
   done: "done",
+  paused: null,
 };
 
 const modified = (event: KeyboardEvent) =>
@@ -1090,6 +1094,7 @@ export class CanvasView implements OnInit, DoCheck {
             run.counts ?? {},
             this.loopsAroundOf(layout),
             !!run.ended,
+            run.paused,
           )
         : null,
   );

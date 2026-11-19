@@ -136,7 +136,7 @@ export function loopResultText(count: number, results: number | null): string {
 export function loopRunText(run: {
   finished: number;
   count: number | null;
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "paused";
   failedAt: number | null;
   overLimit?: true;
 }): string {

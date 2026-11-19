@@ -60,6 +60,14 @@ export const countsOf = (response: ExecuteResponse): Record<string, number> =>
     ]),
   );
 
+/** The loops the answer ended inside, with the items each finished (`orders`, `lines[2]`). */
+export const pausedOf = (response: ExecuteResponse): Record<string, number> =>
+  Object.fromEntries(
+    (response.loops ?? [])
+      .filter((loop) => loop.status === "running")
+      .map((loop) => [loop.instanceKey || loop.nodeId, loop.completed]),
+  );
+
 /** The run as it stands after the whole trace. */
 export function finalRun(response: ExecuteResponse): CanvasRun {
   const top = response.trace.filter((entry) => !entry.frame);
@@ -86,6 +94,7 @@ export function finalRun(response: ExecuteResponse): CanvasRun {
     at: trace.length,
     counts: countsOf(response),
     ended: true,
+    paused: pausedOf(response),
   };
 }
 
@@ -157,6 +166,7 @@ export function finalAnnouncement(
     countsOf(response),
     loopsAround ?? loopsInTrace(trace),
     true,
+    pausedOf(response),
   ).find((loop) => loop.status === "failed");
   if (failed)
     return failed.failedAt !== null

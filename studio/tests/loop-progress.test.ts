@@ -50,6 +50,22 @@ const OK: TraceStep[] = [
   step("send", "send[2]"),
   step("summarize"),
 ];
+/** Execute previous steps for send in item 2, as the simulator answers: the loop is still running. */
+const BEFORE_SEND_2: TraceStep[] = [
+  step("orders", "", "running", "forEach"),
+  step("check", "check[0]"),
+  step("send", "send[0]"),
+  step("check", "check[1]"),
+];
+const STILL_RUNNING = {
+  nodeId: "orders",
+  instanceKey: "",
+  count: 3,
+  completed: 1,
+  running: 1,
+  nextIndex: 2,
+  status: "running",
+} as const;
 /** The steps inside each loop: check and send in orders; reserve in lines, in orders. */
 const around = (id: string): readonly string[] =>
   ({
@@ -91,6 +107,36 @@ describe("a loop's progress during a playback", () => {
     ]);
     // Before the loop starts, it has no progress.
     expect(loopProgress(OK, 0, { orders: 3 }, around, false)).toEqual([]);
+  });
+
+  it("stays unfinished when the run ended inside it", () => {
+    // Execute previous steps for send in item 2: the answer ends at check[1]
+    // and says the loop is still running, one item finished.
+    expect(
+      loopProgress(
+        BEFORE_SEND_2,
+        BEFORE_SEND_2.length,
+        { orders: 3 },
+        around,
+        true,
+        {
+          orders: 1,
+        },
+      ),
+    ).toEqual([
+      {
+        id: "orders",
+        within: [],
+        finished: 1,
+        count: 3,
+        status: "paused",
+        failedAt: null,
+        results: null,
+      },
+    ]);
+    expect(
+      loopRunText({ finished: 1, count: 3, status: "paused", failedAt: null }),
+    ).toBe("1 of 3");
   });
 
   it("names the first item that failed when several did", () => {
@@ -263,6 +309,41 @@ describe("the playback's frames", () => {
     expect(frames.at(-1)?.ended).toBe(true);
   });
 
+  it("end inside a loop the answer still runs: Execute previous steps, or a run blocked at an item", () => {
+    const before = {
+      ...response(BEFORE_SEND_2, "completed"),
+      loops: [STILL_RUNNING],
+    };
+    const blocked = {
+      ...before,
+      status: "blocked",
+      blocked: {
+        reason: "missing_mock",
+        nodeId: "send",
+        instanceKey: "send[1]",
+        message: "Step send needs test data.",
+      },
+    } as ExecuteResponse;
+    for (const answer of [before, blocked]) {
+      const last = playbackFrames(answer, false).at(-1)!;
+      expect(last.paused).toEqual({ orders: 1 });
+      expect(
+        loopProgress(
+          last.trace!,
+          last.at!,
+          last.counts!,
+          around,
+          true,
+          last.paused,
+        )[0],
+      ).toMatchObject({ status: "paused", finished: 1, results: null });
+    }
+    // A loop the answer finished is no part of it.
+    expect(
+      playbackFrames(response(OK, "completed"), true).at(-1)?.paused,
+    ).toEqual({});
+  });
+
   it("names the item a loop failed at when the run ends", () => {
     const failed = [...OK.slice(0, 5), step("send", "send[1]", "failed")];
     expect(finalAnnouncement(response(failed, "failed"), around)).toBe(
@@ -366,6 +447,38 @@ describe("the run log of a loop", () => {
       },
     ]);
     expect(runStatus(failed, null)).toBe("Failed at reject, item 3");
+  });
+
+  it("says a loop the run ended inside isn't finished, and where its last item got to", () => {
+    const before = {
+      status: "completed",
+      compile: { ok: true, sliced: true, diagnostics: [], stubs: [] },
+      trace: traced(BEFORE_SEND_2),
+      loops: [STILL_RUNNING],
+    } as ExecuteResponse;
+    expect(loopLog(before, around)).toEqual([
+      {
+        id: "orders",
+        within: [],
+        summary: "1 of 3 items finished",
+        progress: 1 / 3,
+        items: [
+          {
+            label: "Item 1",
+            status: "completed",
+            text: "check, send",
+            step: "send",
+          },
+          {
+            label: "Item 2",
+            status: "running",
+            text: "at check",
+            step: "check",
+          },
+        ],
+        notRun: "Item 3 didn't run.",
+      },
+    ]);
   });
 
   it("says every item finished, and names nested items by the items around them", () => {

@@ -136,6 +136,18 @@ test.describe("one item of a loop at 1440x900", () => {
     expect(executions(calls).at(-1)?.body).toMatchObject({
       target: { mode: "before", stepId: "send", instanceKey: "send[1]" },
     });
+    // The run ended inside the loop: one item of three finished, not done,
+    // and the frame doesn't say how many items it had.
+    await details.close();
+    const tile = page.locator('.canvas-v2 .tile-node[data-tile="orders"]');
+    await expect(tile.locator(".frame-run")).toHaveText("· 1 of 3");
+    await expect(tile.locator(".frame-run")).toHaveAttribute(
+      "data-tone",
+      "stopped",
+    );
+    await expect(tile).not.toContainText("3 items");
+    const log = page.getByRole("region", { name: "Run log" });
+    await expect(log).toContainText("1 of 3 items finished");
   });
 
   test("an item's pin says so, and Pin for every item shares it", async ({

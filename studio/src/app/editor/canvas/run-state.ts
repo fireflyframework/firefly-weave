@@ -35,6 +35,12 @@ export interface CanvasRun {
   counts?: Readonly<Record<string, number>>;
   /** The playback ended: the whole trace has played. */
   ended?: boolean;
+  /**
+   * The loops the answer ended inside, by instance key, with how many items
+   * they finished: Execute previous steps stopped in one of their items, or
+   * the run is blocked there. Read once the playback ended.
+   */
+  paused?: Readonly<Record<string, number>>;
 }
 /** One step of a simulated run's trace, as the playback reads it. */
 export interface TraceStep {
@@ -58,7 +64,8 @@ export interface LoopRun {
   finished: number;
   /** How many items it has; null when the simulation doesn't say. */
   count: number | null;
-  status: "running" | "done" | "failed";
+  /** "paused": the run ended inside it, before its items finished. */
+  status: "running" | "done" | "failed" | "paused";
   /** The failed item, one-based; null while none failed. */
   failedAt: number | null;
   /** Once done, how many results it returned (Skip empty results leaves some out); null otherwise. */
@@ -80,7 +87,9 @@ const iterationOf = (key: string): number[] =>
  * have played (all of them once it `ended`). An item is finished once its
  * last entry in the whole trace has played and completed, and failed once a
  * step failed in it; a loop is done when every item it has finished.
- * `loopsAround` names the loops around a step, outermost first.
+ * `loopsAround` names the loops around a step, outermost first. A loop in
+ * `paused` is one the run ended inside: once ended, it is paused with the
+ * items the answer says it finished, never done.
  */
 export function loopProgress(
   trace: readonly TraceStep[],
@@ -88,6 +97,7 @@ export function loopProgress(
   counts: Readonly<Record<string, number>>,
   loopsAround: (stepId: string) => readonly string[],
   ended: boolean,
+  paused: Readonly<Record<string, number>> = {},
 ): LoopRun[] {
   const played = ended ? trace.length : Math.min(at, trace.length);
   // Each loop's runs, in the order they started; each item's last entry,
@@ -144,16 +154,19 @@ export function loopProgress(
     const count = counts[key] ?? null;
     // The run stopped at the loop itself, before any of its items ran.
     const failedItself = stopped.has(key) && !last.get(key)?.size;
+    const stoppedInside = ended && paused[key] !== undefined;
     const status =
       failedAt !== null || failedItself
         ? "failed"
-        : ended || (count !== null && finished >= count)
-          ? "done"
-          : "running";
+        : stoppedInside
+          ? "paused"
+          : ended || (count !== null && finished >= count)
+            ? "done"
+            : "running";
     return {
       id: run.id,
       within: run.within,
-      finished,
+      finished: status === "paused" ? paused[key] : finished,
       count,
       status,
       failedAt,
