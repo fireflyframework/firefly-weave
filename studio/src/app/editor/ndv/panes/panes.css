@@ -974,6 +974,12 @@ weave-input-pane.is-compact .pane-source-field::before {
   align-items: center;
   gap: var(--space-1);
 }
+/* Open run is a 44 px target on touch and on a phone. */
+@media (max-width: 767px), (pointer: coarse) {
+  .pane-child-run > button {
+    min-height: 44px;
+  }
+}
 .pane-received-note {
   margin: 0 0 var(--space-2);
   font: var(--type-small);

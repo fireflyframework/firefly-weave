@@ -308,6 +308,10 @@ button.cb-retry {
     min-width: 44px;
     min-height: 44px;
   }
+  /* The 44 px remove target overlaps the chip's border, so the chip is 44 too. */
+  button.cb-chip-remove {
+    margin-block: -1px;
+  }
   .cb-boxes {
     grid-template-columns: minmax(0, 1fr);
   }
