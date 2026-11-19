@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // replaced on the next Execute; with test calls off the entry says why.
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { PRODUCTION, crmWorkflow, openConnected } from "./connections-po";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
+import { yamlFile } from "./step-details-po";
 import { RUN_IDS, VERSIONS, routeRuns, runFixture } from "./runs-po";
 import { routeStepTests } from "./step-tests-po";
 import { showView } from "./support";
@@ -139,6 +140,99 @@ test("Execute workflow in Production runs the saved draft as a test run and open
   await expect(
     page.locator(`.runs-list [data-run="${RUN_IDS.test}"]`),
   ).toContainText("Test");
+});
+
+test("a draft that calls a workflow runs on that workflow's activation, or says it isn't active", async ({
+  page,
+}) => {
+  const calling = yamlFile(
+    "order-intake.yaml",
+    stringify({
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "order-intake", version: "1.0.0" },
+      spec: {
+        inputSchema: {
+          type: "object",
+          properties: { customerId: { type: "string" } },
+        },
+        outputSchema: { type: "object" },
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            with: { literal: {} },
+          },
+        ],
+        output: { literal: {} },
+      },
+    }),
+  );
+  await openConnected(page, { bindable: { [PRODUCTION]: [] } }, calling);
+  await routeStepTests(page, { starts: [], views: [] });
+  await routeRuns(page, [testRun()]);
+  await testRunVersion(page);
+  let active = false;
+  await page.route(/\/projects\/[^/]+\/workflows\?/, (route) =>
+    route.fulfill({
+      json: {
+        items: [{ id: "v-notify", name: "notify-customer", version: "1.0.0" }],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route(/\/environments\/[^/]+\/activations\?/, (route) =>
+    route.fulfill({
+      json: {
+        items: active
+          ? [
+              {
+                id: "act-notify",
+                name: "notify-customer",
+                revision: 3,
+                retired: false,
+                request: { version_id: "v-notify" },
+              },
+            ]
+          : [],
+        next_cursor: null,
+      },
+    }),
+  );
+  const activations = await routeActivations(page, [
+    created("ta-1", 15 * 60_000),
+  ]);
+  const run = async () => {
+    await moreWays(page).click();
+    await page
+      .getByRole("menuitem", { name: /^Execute workflow in Production/ })
+      .click();
+  };
+  await run();
+  await expect(
+    page
+      .getByRole("status")
+      .or(page.getByRole("alert"))
+      .filter({
+        hasText:
+          "This workflow calls notify-customer 1.0.0, which isn't active in Production. Activate it first.",
+      })
+      .first(),
+  ).toBeVisible();
+  expect(activations.creates).toHaveLength(0);
+  active = true;
+  await run();
+  await expect
+    .poll(() => activations.creates.length, { timeout: 10_000 })
+    .toBe(1);
+  const body = activations.creates[0].postDataJSON() as {
+    bindings?: Record<string, unknown>;
+  };
+  expect(body.bindings?.["workflow_activation_ids"]).toEqual({
+    "notify-customer@1.0.0": "act-notify",
+  });
 });
 
 test("steps that change data are named before they run, and Cancel runs nothing", async ({
