@@ -376,13 +376,18 @@ describe("the Input field", () => {
     }
   });
 
-  it("takes the input as named values when the called workflow's input lists no fields", () => {
-    const { field } = shown(call({ uses: "archive-order@0.2.0" }));
-    expect(field("Input")).toMatchObject({
+  it("takes the input as named values when the called workflow's input lists no fields, and an empty one is fine", () => {
+    const { field, subject } = shown(call({ uses: "archive-order@0.2.0" }));
+    const input = field("Input")!;
+    expect(input).toMatchObject({
       path: ["with"],
       type: "keyValue",
       mapping: "both",
     });
+    // An object with no listed fields takes {}: nothing is missing.
+    expect(
+      fieldRules(input, readParam(subject, input), readEntries(subject, input)),
+    ).toEqual([]);
   });
 
   it("keeps an input mapped as a whole and offers its rows behind Fixed", () => {

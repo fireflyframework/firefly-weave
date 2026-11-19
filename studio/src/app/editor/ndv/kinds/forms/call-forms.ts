@@ -148,9 +148,16 @@ function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
   const { schema: input, resolve } = called;
   const info = describeField("input", input, { ...resolve, required: true });
   if (!isShownField(info)) return { fields: [] };
+  // An input that lists no fields takes any named values, none included.
   if (!fieldsOf(input, resolve).length)
     return {
-      fields: [{ ...paramFromField(info, ["with"], "", 0), label: "Input" }],
+      fields: [
+        {
+          ...paramFromField(info, ["with"], "", 0),
+          label: "Input",
+          required: false,
+        },
+      ],
     };
   const rows = paramsFromSchema(input, ["with"], {
     idPrefix: "input.",
