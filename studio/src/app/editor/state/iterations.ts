@@ -53,6 +53,8 @@ export interface IterationsHost {
   revision(): number;
   /** The loop's Items evaluated against the current data, with these picks around it; null when Studio can't. */
   items(loopId: string, picks: readonly LoopPick[]): Promise<unknown>;
+  /** The loops the last Execute counted; a new list for each Execute. */
+  progress?(): readonly LoopProgress[] | null;
 }
 
 const UNKNOWN: LoopCount = { count: 0, known: false };
@@ -76,6 +78,8 @@ export class Iterations {
   /** Changes with every pick, so a count asked before it is dropped. */
   private generation = 0;
   private synced: number | null = null;
+  /** The last Execute's loops as last read; undefined before the first read. */
+  private seenProgress: readonly LoopProgress[] | null | undefined = undefined;
 
   constructor(private readonly host: IterationsHost) {}
 
@@ -140,14 +144,7 @@ export class Iterations {
 
   /** What the last Execute of this draft counted, for each loop it ran. */
   recordProgress(loops: readonly LoopProgress[]): void {
-    const executed = new Map<string, Kept>();
-    for (const loop of loops) {
-      const key = loop.instanceKey || loop.nodeId;
-      if (!isInstanceKey(key) || instanceStep(key) !== loop.nodeId) continue;
-      const items = this.itemsAround(loop.nodeId);
-      if (items !== null) executed.set(key, { value: loop.count, items });
-    }
-    this.executed = executed;
+    this.executed = this.executedFrom(loops);
     this.changed.update((n) => n + 1);
   }
 
@@ -155,6 +152,7 @@ export class Iterations {
   counts(loopId: string): LoopCount {
     this.version();
     this.sync();
+    this.readProgress();
     const items = this.itemsAround(loopId);
     if (items === null) return UNKNOWN;
     const key = this.loopKey(loopId);
@@ -190,6 +188,30 @@ export class Iterations {
     }
     this.changed.update((n) => n + 1);
     return this.counts(loopId);
+  }
+
+  /** Counts by loop, kept with the Items they were counted for. */
+  private executedFrom(loops: readonly LoopProgress[]): Map<string, Kept> {
+    const executed = new Map<string, Kept>();
+    for (const loop of loops) {
+      const key = loop.instanceKey || loop.nodeId;
+      if (!isInstanceKey(key) || instanceStep(key) !== loop.nodeId) continue;
+      const items = this.itemsAround(loop.nodeId);
+      if (items !== null) executed.set(key, { value: loop.count, items });
+    }
+    return executed;
+  }
+
+  /**
+   * A new Execute read from the editor replaces the counts. It writes no
+   * signal, so counts() stays readable from a computed or a template.
+   */
+  private readProgress(): void {
+    if (!this.host.progress) return;
+    const loops = this.host.progress();
+    if (loops === this.seenProgress) return;
+    this.seenProgress = loops;
+    this.executed = this.executedFrom(loops ?? []);
   }
 
   /** The loop's own instance key under the picks around it (`lines[2]`). */

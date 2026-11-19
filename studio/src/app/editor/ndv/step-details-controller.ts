@@ -140,6 +140,7 @@ import {
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
+import { Iterations } from "../state/iterations";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ActionDraftEntry } from "../state/action-drafts";
@@ -781,6 +782,33 @@ export class StepDetailsController {
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
     () => this.host.refreshView(),
   );
+  private picked: { draft: unknown; iterations: Iterations } | null = null;
+  /** The item picked in each loop of the open draft, for the steps inside its body. */
+  get iterations(): Iterations {
+    const { model } = this.host;
+    const draft = model.opened;
+    if (this.picked?.draft !== draft)
+      this.picked = {
+        draft,
+        iterations: new Iterations({
+          definition: () => model.definition,
+          revision: () => model.revision,
+          items: async (loopId) => {
+            const items = this.step(loopId)?.["items"];
+            if (!items || typeof items !== "object") return null;
+            const ctx = this.ndvContext(loopId);
+            const result = this.previews.preview(
+              items as Expression,
+              ["items"],
+              ctx,
+            );
+            return result?.ok ? result.value : null;
+          },
+          progress: () => this.host.execution?.last()?.loops ?? null,
+        }),
+      };
+    return this.picked.iterations;
+  }
   private addedBy = new Map<string, Set<string>>();
   private touchedBy = new Map<string, Set<string>>();
   private burst: { key: string; revision: number; at: number } | null = null;
@@ -1423,6 +1451,8 @@ export class StepDetailsController {
     this.pendingStore().rename(from, to);
     // Test data follows the rename: the step's pins and frames.
     this.testData.rename(from, to);
+    // A renamed loop keeps its picked item and its count.
+    this.iterations.rename(from, to);
   }
   /**
    * Forgets the entries of steps that are gone, so a step made again with
@@ -1832,7 +1862,10 @@ export class StepDetailsController {
       step,
       workflow: host.model.definition,
       readOnly: !!this.readOnlyReason(),
-      instanceKey: null,
+      // Run mode shows the run's own iteration; picks are the draft's.
+      instanceKey: this.viewingRuns()
+        ? null
+        : this.iterations.instanceKey(step.id),
       environment: this.environmentOf(),
       scope: (fieldPath) =>
         referenceScope(

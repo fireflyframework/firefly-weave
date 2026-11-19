@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // The item picked in each loop around a step, in one draft: which item's
 // data step details show, pin and execute (its instance key), and how many
 // items the loop has, from the last Execute or from the current data.
-import { computed } from "@angular/core";
+import { computed, signal } from "@angular/core";
 import { describe, expect, it } from "vitest";
 import type { LoopProgress } from "../src/app/editor/state/execution";
 import { isInstanceKey } from "../src/app/editor/state/instance-keys";
@@ -27,7 +27,17 @@ import {
   type IterationsHost,
   type LoopPick,
 } from "../src/app/editor/state/iterations";
-import { createStep, freshWorkflow, type Step } from "../src/app/model";
+import {
+  StepDetailsController,
+  type ControllerHost,
+} from "../src/app/editor/ndv/step-details-controller";
+import type { ExecuteResponse } from "../src/app/editor/state/execution";
+import {
+  StructuredCanvasAdapter,
+  createStep,
+  freshWorkflow,
+  type Step,
+} from "../src/app/model";
 
 const step = (id: string): Step => ({ id, kind: "transform" }) as Step;
 const loop = (id: string, items: string, body: Step[]): Step => ({
@@ -304,6 +314,36 @@ describe("how many items a loop has", () => {
     expect(made.counts("orders")).toEqual({ count: 20, known: true });
   });
 
+  it("reads what the last Execute counted from the editor, inside a computed", () => {
+    let workflow = draft();
+    let revision = 1;
+    const last = signal<LoopProgress[] | null>(null);
+    const made = new Iterations({
+      definition: () => workflow,
+      revision: () => revision,
+      items: async () => null,
+      progress: () => last(),
+    });
+    // A computed can't write signals: reading a new Execute must not either.
+    const count = computed(() => {
+      const { count, known } = made.counts("orders");
+      return known ? count : null;
+    });
+    expect(count()).toBeNull();
+    last.set([progress("orders", "orders", 20)]);
+    expect(count()).toBe(20);
+    last.set([progress("orders", "orders", 7)]);
+    expect(count()).toBe(7);
+    // Its Items changed after that Execute: the count no longer holds.
+    workflow = structuredClone(workflow);
+    workflow.spec.steps[0]["items"] = { ref: "/input/other" };
+    revision++;
+    expect(made.counts("orders")).toEqual({ count: 0, known: false });
+    // A new Execute counts again.
+    last.set([progress("orders", "orders", 3)]);
+    expect(count()).toBe(3);
+  });
+
   it("can be read from a computed, which follows picks and counts", async () => {
     const { made, asked } = iterations();
     const label = computed(() => {
@@ -318,5 +358,101 @@ describe("how many items a loop has", () => {
     await counted;
     await settle();
     expect(label()).toBe("check[1] 3");
+  });
+});
+
+describe("step details inside a loop", () => {
+  const SOURCE = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: notify, version: 1.0.0}
+spec:
+  inputSchema: {type: object, properties: {orders: {type: array}}}
+  outputSchema: {}
+  steps:
+    - id: orders
+      kind: forEach
+      items: {ref: /input/orders}
+      concurrency: 1
+      maxItems: 1000
+      collect: all
+      body:
+        steps:
+          - {id: send, kind: transform, value: {ref: /item}}
+        output: {ref: /item}
+    - {id: after, kind: transform, value: {literal: 1}}
+  output: {literal: null}
+`;
+  function opened(viewingRuns = false) {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(SOURCE, "yaml");
+    const last = signal<ExecuteResponse | null>(null);
+    const host = {
+      model,
+      perform: (edit: () => void) => edit(),
+      notify: () => undefined,
+      undo: () => model.undo(),
+      undoIfUnchanged: async () => "changed" as const,
+      catalogContracts: new Map(),
+      decisionContracts: new Map(),
+      actionVersions: [],
+      label: (kind: string) => kind,
+      editingLocked: false,
+      viewingRuns,
+      profile: null,
+      api: { request: async () => ({ features: ["flow.forEach"] }) },
+      diagnostics: null,
+      diagnosticsDefinition: null,
+      cacheDecisionContract: () => undefined,
+      can: () => true,
+      execution: { results: signal(null), last, running: () => null },
+    } as unknown as ControllerHost;
+    return { model, last, controller: new StepDetailsController(host) };
+  }
+
+  it("gives a step inside a loop the picked item's key, and none outside", () => {
+    const { controller } = opened();
+    expect(controller.ndvContext("send").instanceKey).toBe("send[0]");
+    controller.iterations.pick("orders", 2);
+    expect(controller.ndvContext("send").instanceKey).toBe("send[2]");
+    expect(controller.ndvContext("after").instanceKey).toBeNull();
+    expect(controller.ndvContext("orders").instanceKey).toBeNull();
+  });
+
+  it("counts a loop's items from the last Execute", () => {
+    const { controller, last } = opened();
+    expect(controller.iterations.counts("orders").known).toBe(false);
+    last.set({
+      loops: [progress("orders", "orders", 20)],
+    } as unknown as ExecuteResponse);
+    expect(controller.iterations.counts("orders")).toEqual({
+      count: 20,
+      known: true,
+    });
+  });
+
+  it("keeps the pick through a rename made in step details", () => {
+    const { controller, model } = opened();
+    controller.iterations.pick("orders", 3);
+    model.renameStep("orders", "each-order");
+    controller.renamePending("orders", "each-order");
+    expect(controller.ndvContext("send").instanceKey).toBe("send[3]");
+  });
+
+  it("forgets the picks when another workflow opens", () => {
+    const { controller, model } = opened();
+    controller.iterations.pick("orders", 3);
+    // The same loop in the next workflow opened starts at its first item.
+    model.setSource(SOURCE, "yaml");
+    model.clearHistory();
+    expect(controller.ndvContext("send").instanceKey).toBe("send[0]");
+  });
+
+  it("leaves run mode's iteration alone and never picks for the draft", () => {
+    const { controller } = opened(true);
+    controller.iteration.set({ send: "send[4]" });
+    expect(controller.ndvContext("send").instanceKey).toBeNull();
+    expect(controller.iterations.picks("send")).toEqual([
+      { loopId: "orders", index: 0 },
+    ]);
   });
 });
