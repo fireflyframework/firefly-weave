@@ -35,12 +35,14 @@ from firefly_weave.compiler.ir import (
     SignalNode,
     WorkflowIR,
 )
+from firefly_weave.contracts.agent_conversations import messages_digest
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
     CallFact,
     DeadlineFact,
     HumanTaskFact,
+    MemoryLoadFact,
     RecordedEvidence,
     ReplayDiagnostic,
     ReplayReport,
@@ -72,6 +74,7 @@ from firefly_weave.runtime.models import (
     CallIntent,
     Deadline,
     HumanTaskIntent,
+    MemoryIntent,
     RunState,
     RuntimeEvent,
     TaskIntent,
@@ -135,6 +138,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     # The latest call row issued for each call step instance, and every call row seen.
     calls: dict[str, CallFact] = {}
     call_ids: set[UUID] = set()
+    # The conversation load each agent waits for, and every load row seen: a load is delivered once.
+    loads: dict[str, MemoryLoadFact] = {}
+    load_ids: set[UUID] = set()
     nodes = {n.id: n for n in ir.graph.nodes}
     duration_nodes = duration_steps(ir)
     transactions = shapes(ir)
@@ -483,6 +489,23 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     # A review's decision or a person's answer to an agent fits the form the task offered.
                     require("output" in event.data, "WV-REPLAY-EVENT")
                     agent_output(ir, event, evidence, state)
+            elif event.type == "memory_loaded":
+                # Replay never reads a conversation: the event carries what was loaded, and its receipt names the
+                # load row it came from and a digest of the messages that row delivered.
+                require(node_id in state.active and node_id in state.agents, "WV-REPLAY-EVENT")
+                memory_receipt = evidence.memory_receipt
+                require(memory_receipt is not None, "WV-REPLAY-MEMORY-PROVENANCE", missing=True)
+                assert memory_receipt is not None
+                require(
+                    memory_receipt.load == loads.get(node_id)
+                    and memory_receipt.load.key_hash == event.data.get("key_hash")
+                    and memory_receipt.version == event.data.get("version")
+                    and memory_receipt.expired == event.data.get("expired")
+                    and memory_receipt.test == event.data.get("test", False)
+                    and memory_receipt.messages_digest == messages_digest(event.data.get("messages")),
+                    "WV-REPLAY-MEMORY",
+                )
+                loads.pop(node_id)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
                 _verify_wait(event, evidence, deadlines, nodes, duration_nodes, continuations)
                 if event.type == "signal_received":
@@ -521,6 +544,18 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 )
                 calls[call_node] = issued_call
                 call_ids.add(issued_call.call_id)
+            load_commands = [c for c in result.commands if isinstance(c, MemoryIntent) and c.op == "load"]
+            issued_loads = evidence.issued_memory_loads
+            require(len(issued_loads) <= len(load_commands), "WV-REPLAY-MEMORY")
+            require(len(issued_loads) == len(load_commands), "WV-REPLAY-MEMORY-PROVENANCE", missing=True)
+            for load_command, issued_load in zip(load_commands, issued_loads, strict=True):
+                require(
+                    (issued_load.node_id, issued_load.key_hash) == (load_command.node_id, load_command.key_hash)
+                    and issued_load.load_id not in load_ids,
+                    "WV-REPLAY-MEMORY",
+                )
+                loads[issued_load.node_id] = issued_load
+                load_ids.add(issued_load.load_id)
             task_commands = [c for c in result.commands if isinstance(c, TaskIntent)]
             deadline_commands = [c for c in result.commands if isinstance(c, Deadline)]
             require(
