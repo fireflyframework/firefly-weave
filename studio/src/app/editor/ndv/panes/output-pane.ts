@@ -60,8 +60,33 @@ import {
 import type { FormSession } from "../params/form-session";
 import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
-import { OMISSION_WORDS } from "../../../operate/run-contracts";
-import { shortId } from "../../../format";
+import {
+  asRunViewsApi,
+  listRunSummaries,
+  OMISSION_WORDS,
+  type RunSummary,
+} from "../../../operate/run-contracts";
+import { durationText, shortId } from "../../../format";
+
+/** "notify-customer 1.0.0 · failed at send: SMTP_REJECTED · took 2 s". */
+function childLine(run: RunSummary): string {
+  const failed = run.failed_step;
+  const how =
+    run.status === "failed"
+      ? failed
+        ? `failed at ${failed.node_id}${failed.error_code ? `: ${failed.error_code}` : ""}`
+        : "failed"
+      : run.status === "succeeded"
+        ? "completed"
+        : run.status.replace("_", " ");
+  return [
+    `${run.workflow.name} ${run.workflow.version}`,
+    how,
+    run.duration_ms === null ? "" : `took ${durationText(run.duration_ms)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 import { instanceStep } from "../../state/instance-keys";
 import { isRecordedRun } from "../../canvas/run-state";
 import { RunStepLogs } from "./run-step-logs";
@@ -362,6 +387,26 @@ import { describeError } from "../../../errors";
             </div>
           }
           @if (recorded) {
+            @if (recorded.child && callStep()) {
+              <!-- The run this call started, first: how it went, and Open run. -->
+              @let card = childCard(recorded.child, recorded.runId);
+              <div class="pane-child-run" role="group" aria-label="Called run">
+                <weave-icon name="callWorkflow" [size]="16" />
+                <div class="pane-child-text">
+                  <p class="pane-child-title">{{ card.title }}</p>
+                  @if (card.line) {
+                    <p class="pane-child-line">{{ card.line }}</p>
+                  }
+                </div>
+                <button
+                  type="button"
+                  class="sm"
+                  (click)="openChildRun(recorded.child)"
+                >
+                  <weave-icon name="external" [size]="16" />Open run
+                </button>
+              </div>
+            }
             @if (recorded.changed) {
               <div class="notice pane-run-notice" data-tone="info">
                 <weave-icon name="stale" [size]="16" />
@@ -369,11 +414,16 @@ import { describeError } from "../../../errors";
               </div>
             }
             @if (recorded.failed) {
+              @let callFailed = callFailure(recorded.runId);
               <div class="notice pane-run-notice" data-tone="danger">
                 <weave-icon name="critical" [size]="16" />
                 <div>
-                  <p>{{ recorded.failed }}</p>
-                  <p>A failed step returns no output.</p>
+                  <p>{{ callFailed?.title ?? recorded.failed }}</p>
+                  <p>
+                    {{
+                      callFailed?.detail ?? "A failed step returns no output."
+                    }}
+                  </p>
                 </div>
               </div>
             }
@@ -412,7 +462,7 @@ import { describeError } from "../../../errors";
                 </div>
               }
             }
-            @if (recorded.child; as child) {
+            @if (!callStep() && recorded.child; as child) {
               <p class="pane-called-run">
                 Called run {{ child.slice(0, 8) }}
                 <button type="button" class="sm" (click)="openRun(child)">
@@ -834,6 +884,87 @@ export class OutputPane {
   }
   openRun(id: string) {
     void this.session().host.viewRun?.({ id });
+  }
+  /** The runs this window read the summary of, by account and run ID; a run asked once isn't asked again. */
+  private readonly childSummaries = signal<ReadonlyMap<string, RunSummary>>(
+    new Map(),
+  );
+  private readonly askedChildren = new Set<string>();
+  /** A call step's child run on the Runs tab: what started it, and how it went once its summary arrives. */
+  childCard(child: string, parent: string) {
+    const { controller, target, host } = this.session();
+    const step = controller.step(target);
+    const uses = typeof step?.["uses"] === "string" ? step["uses"] : "";
+    const name = uses.slice(0, Math.max(0, uses.lastIndexOf("@"))) || uses;
+    const detached = step?.["mode"] === "detach";
+    const key = `${host.stepDataScope ?? ""}|${child}`;
+    const summary = this.childSummaries().get(key);
+    if (!summary && !this.askedChildren.has(key)) {
+      this.askedChildren.add(key);
+      // The parent's child runs hold this one's summary: its version, status and time.
+      void listRunSummaries(asRunViewsApi(host.api), {
+        caller_run_id: parent,
+        include_test: true,
+        limit: 100,
+      })
+        .then((page) => {
+          const found = page.items.find(
+            (item): item is RunSummary =>
+              item.id === child && !("unavailable" in item),
+          );
+          if (found)
+            this.childSummaries.update((kept) => new Map(kept).set(key, found));
+        })
+        .catch(() => undefined);
+    }
+    return {
+      title: `${detached ? "Started" : "Ran as"} run ${shortId(child)} of ${name}`,
+      line: detached
+        ? `${host.model.definition.metadata.name} didn't wait for it`
+        : summary
+          ? childLine(summary)
+          : "",
+    };
+  }
+  /** A call step that failed in the run: its call failed, and If it fails stopped the workflow. */
+  callFailure(runId: string) {
+    if (!this.callStep()) return null;
+    const { target, host } = this.session();
+    return {
+      title: `${target} failed in run ${shortId(runId)}: its call failed.`,
+      detail: `If it fails is Stop this workflow, so ${host.model.definition.metadata.name} stopped here. Open the run to see the step that failed.`,
+    };
+  }
+  /** Open run: the called workflow's Runs tab on that run, as Debug in editor opens a run. */
+  async openChildRun(id: string) {
+    const session = this.session();
+    const host = session.host;
+    if (!host.restoreWorkflow || !host.navigate || !host.selectTab)
+      return this.openRun(id);
+    const { openRunInEditor } = await import("../../runs-tab/open-run");
+    await openRunInEditor(
+      {
+        api: host.api,
+        profile: host.profile,
+        stepDataScope: host.stepDataScope ?? "",
+        get draftId() {
+          return host.draftId ?? "";
+        },
+        get draftRevision() {
+          return host.draftRevision;
+        },
+        get model() {
+          return host.model;
+        },
+        dialogs: { confirm: (options) => session.confirm(options) },
+        notify: (text, action, tone) => host.notify(text, action, tone),
+        restoreWorkflow: (draft) => host.restoreWorkflow!(draft),
+        navigate: (view) => host.navigate!(view),
+        selectTab: (tab) => host.selectTab!(tab),
+      },
+      id,
+      null,
+    );
   }
   /** A step that calls a workflow: it runs only when the whole workflow executes. */
   callStep(): boolean {

@@ -143,6 +143,9 @@ export interface StepDetailsHost {
   openWorkflow?(uses: string): void;
   /** Removes a trigger choice, asking first for Called by a workflow. */
   removeTrigger?(id: string): Promise<void>;
+  /** Opens a workflow by its draft's ID (Open run reaches a called workflow's draft this way). */
+  restoreWorkflow?(id: string): Promise<boolean>;
+  navigate?(view: "designer"): Promise<unknown>;
   /** The open workflow is kept on this computer (opened from this computer's drafts). */
   readonly keptLocally?: boolean;
   /** The connected environment's name ("local"), or null before it's known. */
