@@ -52,11 +52,7 @@ async def record_memory(repository: RuntimeRepository, run_id: UUID, event: Runt
     intents = [command for command in result.commands if isinstance(command, MemoryIntent)]
     loads = [intent for intent in intents if intent.op == "load"]
     appends = sorted((intent for intent in intents if intent.op == "append"), key=lambda i: (i.workflow, i.key_hash))
-    test = False
-    if intents:
-        from firefly_weave.runtime.service import is_test_run
-
-        test = await is_test_run(repository, run_id)
+    test = await is_test_for_memory(repository, run_id) if intents else False
     for intent in loads:
         await repository.execute(
             "INSERT INTO agent_memory_loads(tenant_id,project_id,environment_id,id,run_id,node_id,issued_sequence,"
@@ -82,6 +78,20 @@ async def record_memory(repository: RuntimeRepository, run_id: UUID, event: Runt
             run=run_id,
             at=event.timestamp,
         )
+
+
+async def is_test_for_memory(repository: RuntimeRepository, run_id: UUID) -> bool:
+    """Whether a run is a test run for conversation memory: its activation is a test activation, or it was started as
+    a test run, as the workflows a test run calls are. Such a run never reads or changes a real conversation."""
+    rows = await repository.rows(
+        "SELECT a.test OR coalesce(f.test,false) AS test FROM runs r JOIN activation_revisions a "
+        "ON a.tenant_id=r.tenant_id AND a.project_id=r.project_id AND a.environment_id=r.environment_id "
+        "AND a.id=r.activation_id LEFT JOIN run_facts f ON f.tenant_id=r.tenant_id AND f.project_id=r.project_id "
+        "AND f.environment_id=r.environment_id AND f.run_id=r.id "
+        f"WHERE r.{SCOPE.replace(' AND ', ' AND r.')} AND r.id=:id",
+        id=run_id,
+    )
+    return bool(rows and rows[0]["test"])
 
 
 async def _append(repository: RuntimeRepository, run_id: UUID, intent: MemoryIntent, at: datetime) -> None:

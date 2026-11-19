@@ -53,7 +53,13 @@ from firefly_weave.runtime.agents import (
     tool_failed,
     turn_completed,
 )
-from firefly_weave.runtime.conversations import deliver_memory, memory_evidence, record_memory
+from firefly_weave.runtime.conversations import (
+    _loaded,
+    deliver_memory,
+    is_test_for_memory,
+    memory_evidence,
+    record_memory,
+)
 from firefly_weave.runtime.kernel import KernelError
 from firefly_weave.runtime.models import Deadline, MemoryIntent, RunState, RuntimeEvent, StepChange, Transition
 
@@ -865,3 +871,27 @@ async def test_evidence_without_conversation_memory_reads_nothing_and_keeps_its_
     )
     dumped = json.loads(evidence.model_dump_json())
     assert "issued_memory_loads" not in dumped and "memory_receipt" not in dumped
+
+
+async def test_a_test_load_returns_empty_without_reading_whatever_the_table_holds():
+    repository = DeliveryRecorder({"FROM agent_conversations": [stored()]})
+
+    data = await _loaded(repository, pending(test=True)[0], NOW)
+
+    assert data == {
+        "node_id": "support",
+        "key_hash": CUSTOMER_HASH,
+        "version": 0,
+        "expired": False,
+        "test": True,
+        "messages": [],
+    }
+    assert repository.statements == []
+
+
+async def test_a_run_started_as_a_test_counts_as_a_test_run_for_memory():
+    repository = Recorder({"activation_revisions": [[{"test": True}]]})
+
+    assert await is_test_for_memory(repository, RUN) is True
+    [(sql, values)] = repository.statements
+    assert "a.test OR coalesce(f.test,false)" in sql and "LEFT JOIN run_facts f" in sql and values["id"] == RUN

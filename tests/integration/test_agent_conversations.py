@@ -37,6 +37,7 @@ from firefly_weave.contracts.agent_turns import TURN_CAPABILITY, TURN_TASK_TYPE,
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, AgenticConnectionAdapter
 from firefly_weave.contracts.catalog import ActivationRequest
 from firefly_weave.contracts.connectors import ConnectionRequest
+from firefly_weave.contracts.run_views import RunSummaryCaller
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
 from firefly_weave.definitions.models import CatalogError
@@ -579,3 +580,53 @@ async def test_a_test_run_neither_loads_nor_remembers(platform):
             RuntimeRepository(tx), run.id, event, Transition(state=RunState(status="waiting"), commands=[intent])
         )
     assert await conversation(platform, "C-4") == before
+
+
+async def test_a_workflow_called_from_a_test_run_neither_loads_nor_remembers(platform):
+    # A test run's called workflow runs on the callee's real activation, and is a test run only in its run facts:
+    # the call dispatcher starts it with the caller's test flag, as here.
+    caller, _ = await converse(platform, "C-4", "Hello", "Hi.")
+    before = await conversation(platform, "C-4")
+    facts = RunStartFacts(
+        origin="call",
+        test=True,
+        caller=RunSummaryCaller(run_id=caller.id, node_id="call", instance_key=""),
+    )
+
+    async def called(customer: str, message: str):
+        run = await platform.runtime.start(
+            platform.author,
+            platform.scope,
+            StartRunRequest(activation_id=platform.activation.id, input={"customerId": customer, "message": message}),
+            "call-" + uuid4().hex,
+            context=platform.context,
+            start_facts=facts,
+        )
+        await scan(platform)
+        return run, await answer(platform, final("Test answer."))
+
+    known, turn = await called("C-4", "Test question")
+    unknown, _ = await called("C-new", "Another test question")
+
+    assert [message["role"] for message in turn["messages"]] == ["user"]
+    for run in (known, unknown):
+        [load] = await owner_rows(platform, "SELECT test FROM agent_memory_loads WHERE run_id=:run", run=run.id)
+        [event] = await owner_rows(
+            platform, "SELECT data FROM run_events WHERE run_id=:run AND type='memory_loaded'", run=run.id
+        )
+        assert load["test"] is True and event["data"]["test"] is True and event["data"]["messages"] == []
+    assert await conversation(platform, "C-4") == before
+    assert await conversation(platform, "C-new") is None
+
+
+async def test_another_environments_session_sees_neither_table(platform):
+    await converse(platform, "C-4", "Hello", "Hi.")
+
+    async with UnitOfWork(platform.db[0]).open(platform.other) as tx:
+        counts = [
+            (await tx.session.execute(text(f"SELECT count(*) FROM {table}"))).scalar()
+            for table in ("agent_conversations", "agent_memory_loads")
+        ]
+
+    assert counts == [0, 0]
+    assert len(await owner_rows(platform, "SELECT 1 FROM agent_memory_loads")) == 1
