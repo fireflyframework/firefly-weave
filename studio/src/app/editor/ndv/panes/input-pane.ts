@@ -574,19 +574,20 @@ export class InputPane implements OnInit {
         this.value()
       );
     if (source.startsWith("step:"))
-      return controller.stepData(source.slice(5))?.value ?? this.value();
+      // Inside a loop, the earlier step's data for the item picked.
+      return controller.pickedStepData(source.slice(5))?.value ?? this.value();
     return this.value();
   }
   /** The earlier step chosen as the source, when it has no data yet (it hasn't run). */
   notRun(source: string): string | null {
     if (!source.startsWith("step:")) return null;
     const id = source.slice(5);
-    return this.session().controller.stepData(id) ? null : id;
+    return this.session().controller.pickedStepData(id) ? null : id;
   }
   /** The chosen source's last result is out of date. */
   staleSource(source: string): boolean {
     if (!source.startsWith("step:")) return false;
-    const data = this.session().controller.stepData(source.slice(5));
+    const data = this.session().controller.pickedStepData(source.slice(5));
     return data?.source === "simulated" && data.stale !== null;
   }
   executePrevious() {
@@ -619,7 +620,7 @@ export class InputPane implements OnInit {
         ? "Sample"
         : "Test input";
     const data = source.startsWith("step:")
-      ? this.session().controller.stepData(source.slice(5))
+      ? this.session().controller.pickedStepData(source.slice(5))
       : undefined;
     return data?.source === "simulated" ? "Simulated" : "Pinned";
   }

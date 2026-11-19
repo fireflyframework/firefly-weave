@@ -79,6 +79,8 @@ function opened(
   input: Json | undefined = { orders: ORDERS },
   source = SOURCE,
   results: Record<string, Json> = {},
+  /** Results from an earlier execution than the steps before them: out of date. */
+  stale: readonly string[] = [],
 ) {
   const model = new StructuredCanvasAdapter();
   model.setSource(source, "yaml");
@@ -106,7 +108,13 @@ function opened(
         at: "2026-11-19T10:00:00Z",
         status: "completed",
         steps: Object.fromEntries(
-          Object.entries(results).map(([key, output]) => [key, { output }]),
+          Object.entries(results).map(([key, output]) => [
+            key,
+            {
+              output,
+              ...(stale.includes(key) ? { execution: "earlier" } : {}),
+            },
+          ]),
         ),
       }),
       last: signal(null),
@@ -251,10 +259,12 @@ spec:
   output: {literal: null}
 `;
   it("previews with its output for the picked item", () => {
-    const { controller } = opened({ orders: ORDERS }, CHECKED, {
-      "check[0]": "from item 1",
-      "check[1]": "from item 2",
-    });
+    const { host, controller } = opened(
+      { orders: ORDERS },
+      CHECKED,
+      { "check[0]": "from item 1", "check[1]": "from item 2" },
+      ["check[1]"],
+    );
     controller.iterations.pick("orders", 1);
     expect(value(controller, "send", "/steps/check/output")).toEqual({
       ok: true,
@@ -268,6 +278,23 @@ spec:
       ok: true,
       value: "from item 1",
     });
+    // The Input pane shows check's output for the picked item too.
+    const session = new FormSession(host, controller, openRequest("send"), {
+      confirm: async () => true,
+      announce() {},
+    });
+    const injector = Injector.create({
+      providers: [{ provide: ElementRef, useValue: new ElementRef({}) }],
+    });
+    const pane = runInInjectionContext(injector, () => new InputPane());
+    pane.session = signal(session) as never;
+    controller.iterations.pick("orders", 1);
+    expect(pane.dataOf("step:check")).toBe("from item 2");
+    expect(pane.notRun("step:check")).toBeNull();
+    expect(pane.sourceTag("step:check")).toBe("Simulated");
+    // Item 2's result is out of date, and the pane says so.
+    expect(pane.staleSource("step:check")).toBe(true);
+    injector.destroy();
     // Data kept for the step itself holds for every item.
     const shared = opened({ orders: ORDERS }, CHECKED, {
       check: "for every item",
