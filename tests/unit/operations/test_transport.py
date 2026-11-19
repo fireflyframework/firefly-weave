@@ -410,14 +410,49 @@ async def test_an_operator_command_waits_for_a_work_slot_that_a_finishing_reques
         await asyncio.gather(*polls, return_exceptions=True)
 
 
-async def test_a_command_still_refused_after_its_wait_keeps_the_capacity_answer(monkeypatch):
-    """No slot frees in time: the request waited its bound, then answers 429 WV-OPERATION-CAPACITY, Retry-After 1."""
+class StoppedClock:
+    """The running event loop's clock, standing still until the test moves it, so a timeout fires only when told.
+
+    The loop runs a timer once its deadline is less than the clock's resolution away (15.6 ms on Windows), so a wait
+    measured on the real clock can read shorter than the wait asked for.
+    """
+
+    def __init__(self):
+        import asyncio
+        import time
+
+        self.loop = asyncio.get_running_loop()
+        self.resolution = time.get_clock_info("monotonic").resolution
+        self.started = self.now = self.loop.time()
+
+    def __enter__(self):
+        self.loop.time = lambda: self.now
+        return self
+
+    def __exit__(self, *failure):
+        del self.loop.time
+
+    def move_to(self, elapsed: float) -> None:
+        self.now = self.started + elapsed
+
+    async def turns_until(self, done, turns: int = 1000) -> bool:
+        """Let the event loop run until ``done()`` holds, at most ``turns`` times; whether it holds."""
+        import asyncio
+
+        for _ in range(turns):
+            if done():
+                return True
+            await asyncio.sleep(0)
+        return done()
+
+
+async def test_a_command_still_refused_after_its_wait_keeps_the_capacity_answer():
+    """No slot frees in time: the request waits its whole bound, then answers 429 WV-OPERATION-CAPACITY, Retry-After 1."""
     import asyncio
 
     import firefly_weave.operations.execution as execution
     from firefly_weave.operations.transport import BodyBoundary
 
-    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 0.05, raising=False)
     held = Held()
     app = BodyBoundary(held.downstream)
     polls = [held.start(app, "POST", f"/tasks/claim/{index}") for index in range(execution.WORK_SLOTS)]
@@ -425,14 +460,19 @@ async def test_a_command_still_refused_after_its_wait_keeps_the_capacity_answer(
         async with asyncio.timeout(5):
             for entered in held.entered.values():
                 await entered.wait()
-            loop = asyncio.get_running_loop()
-            started = loop.time()
-            answered = await request(app, "POST", "/workers/id/resume")
-            waited = loop.time() - started
+        with StoppedClock() as clock:
+            command = asyncio.create_task(request(app, "POST", "/workers/id/resume"))
+            assert await clock.turns_until(lambda: execution._waiting), "the command was refused without waiting"
+            # Just short of the bound, by more than the loop's early margin, the command still waits.
+            clock.move_to(execution.REQUEST_SLOT_WAIT_SECONDS - 2 * clock.resolution)
+            assert not await clock.turns_until(command.done, turns=50)
+            assert execution._waiting
+            clock.move_to(execution.REQUEST_SLOT_WAIT_SECONDS)
+            assert await clock.turns_until(command.done), "the command still waited after its bound"
+        answered = command.result()
         assert answered[0]["status"] == 429
         assert dict(answered[0]["headers"])[b"retry-after"] == b"1"
         assert json.loads(answered[-1]["body"])["code"] == "WV-OPERATION-CAPACITY"
-        assert waited >= execution.REQUEST_SLOT_WAIT_SECONDS
         # Requests that give up leave nothing behind, so refusals never build a queue while the slots stay held.
         assert not execution._waiting
     finally:
