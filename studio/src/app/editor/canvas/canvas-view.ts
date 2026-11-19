@@ -2481,14 +2481,20 @@ export class CanvasView implements OnInit, DoCheck {
     this.cdr.markForCheck();
     afterNextRender(
       () => {
-        // The canvas moves its own view. A focus that scrolled the flow
-        // would move it again, from where the tile was before this render.
+        // The canvas moves its own view first, and the step takes focus
+        // once it is drawn there. A focus that scrolled the flow would move
+        // the view again, from where the step was before.
         this.revealTile(id);
-        this.root()
-          .nativeElement.querySelector<HTMLElement>(
-            `[data-tile="${CSS.escape(id)}"] .tile-body`,
-          )
-          ?.focus({ preventScroll: true });
+        this.cdr.markForCheck();
+        afterNextRender(
+          () =>
+            this.root()
+              .nativeElement.querySelector<HTMLElement>(
+                `[data-tile="${CSS.escape(id)}"] .tile-body`,
+              )
+              ?.focus({ preventScroll: true }),
+          { injector: this.injector },
+        );
       },
       { injector: this.injector },
     );
