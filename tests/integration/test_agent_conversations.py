@@ -32,7 +32,11 @@ from firefly_weave.access.models import Grant
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import EnvironmentSecretProvider, ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
-from firefly_weave.contracts.agent_conversations import conversation_key_hash
+from firefly_weave.contracts.agent_conversations import (
+    AgentConversationQuery,
+    ConversationPurgeRequest,
+    conversation_key_hash,
+)
 from firefly_weave.contracts.agent_turns import TURN_CAPABILITY, TURN_TASK_TYPE, turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, AgenticConnectionAdapter
 from firefly_weave.contracts.catalog import ActivationRequest
@@ -43,6 +47,8 @@ from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations import agent_conversations
+from firefly_weave.operations.agent_conversations import AgentConversationService
+from firefly_weave.operations.agent_log import AgentLogRepository, AgentLogService
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.conversations import _loaded, record_memory
@@ -122,7 +128,16 @@ async def platform(services, access_db, provisioned, monkeypatch):
     scope = scopes[0]
     project = scope.model_copy(update={"environment_id": None})
     author_id = await access_db[2].create_principal(admin, "application")
-    for role in ("developer", "deployer", "operator", "viewer", "worker", "tenant_admin", "step_tester"):
+    for role in (
+        "developer",
+        "deployer",
+        "operator",
+        "viewer",
+        "worker",
+        "tenant_admin",
+        "step_tester",
+        "execution_manager",
+    ):
         await access_db[2].grant(admin, author_id, Grant(role=role, scope=project if role == "developer" else scope))
     author = await access_db[2].load_principal(author_id)
     context = AuditContext()
@@ -630,3 +645,156 @@ async def test_another_environments_session_sees_neither_table(platform):
 
     assert counts == [0, 0]
     assert len(await owner_rows(platform, "SELECT 1 FROM agent_memory_loads")) == 1
+
+
+# Listing, reading, deleting and purging conversations through the service, as the API calls it.
+async def conversations(platform) -> AgentConversationService:
+    return platform.graph.resolve(AgentConversationService)
+
+
+async def test_a_conversation_is_listed_newest_first_and_read_by_its_key_hash(platform):
+    await converse(platform, "C-4", "Hello", "Hi.")
+    await converse(platform, "C-9", "Where is A-18?", "Delivered.")
+    service = await conversations(platform)
+
+    page = await service.list(platform.author, platform.scope, AgentConversationQuery(), context=platform.context)
+    first = await service.list(
+        platform.author, platform.scope, AgentConversationQuery(limit=1), context=platform.context
+    )
+    rest = await service.list(
+        platform.author,
+        platform.scope,
+        AgentConversationQuery(limit=1, cursor=first.next_cursor),
+        context=platform.context,
+    )
+    read = await service.read(
+        platform.author, platform.scope, WORKFLOW, conversation_key_hash(WORKFLOW, "C-9"), context=platform.context
+    )
+
+    assert [item.key_hash for item in page.items] == [
+        conversation_key_hash(WORKFLOW, "C-9"),
+        conversation_key_hash(WORKFLOW, "C-4"),
+    ]
+    assert [item.key_hash for item in first.items + rest.items] == [item.key_hash for item in page.items]
+    assert rest.next_cursor is None and page.items[0].message_count == 2 and page.items[0].version == 1
+    assert [message.content for message in read.messages] == ["Where is A-18?", "Delivered."]
+
+
+async def test_an_expired_conversation_is_never_listed_or_read(platform):
+    await converse(platform, "C-4", "Hello", "Hi.")
+    async with platform.db[1].begin() as session:
+        await session.execute(
+            text("UPDATE agent_conversations SET updated_at=now()-interval '2 days',expires_at=now()-interval '1 day'")
+        )
+    service = await conversations(platform)
+
+    page = await service.list(platform.author, platform.scope, AgentConversationQuery(), context=platform.context)
+    with pytest.raises(CatalogError) as missing:
+        await service.read(
+            platform.author, platform.scope, WORKFLOW, conversation_key_hash(WORKFLOW, "C-4"), context=platform.context
+        )
+
+    assert page.items == []
+    assert (missing.value.status, missing.value.code) == (404, "WV-AGENT-CONVERSATION-NOT-FOUND")
+
+
+async def test_deleting_a_conversation_is_audited_and_names_the_runs_that_loaded_it(platform):
+    first, _ = await converse(platform, "C-4", "Hello", "Hi.")
+    second, _ = await converse(platform, "C-4", "Again", "Yes.")
+    service = await conversations(platform)
+    key_hash = conversation_key_hash(WORKFLOW, "C-4")
+
+    deletion = await service.delete(platform.author, platform.scope, WORKFLOW, key_hash, context=platform.context)
+    again = await service.delete(platform.author, platform.scope, WORKFLOW, key_hash, context=platform.context)
+
+    assert deletion.deleted is True and set(deletion.loaded_by) == {first.id, second.id}
+    assert deletion.more_loaded_by is False
+    assert again.deleted is False and await conversation(platform, "C-4") is None
+    audits = await owner_rows(
+        platform, "SELECT action,target FROM access_audit WHERE action LIKE 'agent_conversation.%' ORDER BY id"
+    )
+    assert audits == [{"action": "agent_conversation.delete", "target": f"{WORKFLOW}/{key_hash}"}] * 2
+    # A run after the delete starts the conversation over.
+    run, turn = await converse(platform, "C-4", "New", "Fresh.")
+    assert [message["role"] for message in turn["messages"]] == ["user"]
+    assert (await conversation(platform, "C-4"))["version"] == 1
+
+
+async def test_no_answer_and_no_audit_row_holds_a_raw_key(platform):
+    await converse(platform, "C-4777", "Hello", "Hi.")
+    service = await conversations(platform)
+    key_hash = conversation_key_hash(WORKFLOW, "C-4777")
+
+    answers = [
+        (await service.list(platform.author, platform.scope, AgentConversationQuery(), context=platform.context)),
+        (await service.read(platform.author, platform.scope, WORKFLOW, key_hash, context=platform.context)),
+        (await service.delete(platform.author, platform.scope, WORKFLOW, key_hash, context=platform.context)),
+    ]
+
+    for answer in answers:
+        assert "C-4777" not in answer.model_dump_json()
+    audits = await owner_rows(platform, "SELECT to_jsonb(a)::text AS row FROM access_audit a")
+    assert audits and all("C-4777" not in row["row"] for row in audits)
+
+
+async def test_a_workflows_conversations_are_purged_1000_at_a_time(platform):
+    await converse(platform, "C-4", "Hello", "Hi.")
+    async with UnitOfWork(platform.db[0]).open(platform.scope) as tx:
+        await tx.session.execute(
+            text(
+                "INSERT INTO agent_conversations(tenant_id,project_id,environment_id,workflow,key_hash,messages,"
+                "version,last_run_id,created_at,updated_at,expires_at) SELECT :tenant,:project,:environment,"
+                ":workflow,encode(sha256(convert_to('k'||n,'UTF8')),'hex'),'[]'::jsonb,1,:run,now(),now(),"
+                "now()+interval '1 day' FROM generate_series(1,1000) n"
+            ),
+            {
+                "tenant": platform.scope.tenant_id,
+                "project": platform.scope.project_id,
+                "environment": platform.scope.environment_id,
+                "workflow": WORKFLOW,
+                "run": uuid4(),
+            },
+        )
+    service = await conversations(platform)
+    request = ConversationPurgeRequest(confirm_workflow=WORKFLOW)
+
+    purged = [
+        await service.purge_workflow(platform.author, platform.scope, WORKFLOW, request, key, context=platform.context)
+        for key in ("purge-1", "purge-2")
+    ]
+    repeated = await service.purge_workflow(
+        platform.author, platform.scope, WORKFLOW, request, "purge-1", context=platform.context
+    )
+
+    assert [(item.deleted, item.more) for item in purged] == [(1000, True), (1, False)]
+    assert repeated == purged[0]
+    assert await owner_rows(platform, "SELECT 1 FROM agent_conversations") == []
+    audits = await owner_rows(
+        platform, "SELECT target FROM access_audit WHERE action='agent_conversation.purge_workflow'"
+    )
+    assert audits == [{"target": WORKFLOW}] * 2
+
+
+async def test_the_agent_log_shows_the_loaded_conversation_with_one_read_per_page(platform, monkeypatch):
+    await converse(platform, "C-4", "Hello", "Hi.")
+    run, _ = await converse(platform, "C-4", "Again", "Yes.")
+    reads = []
+    original = AgentLogRepository.conversations
+
+    async def counted(self, run_id, keys):
+        reads.append(list(keys))
+        return await original(self, run_id, keys)
+
+    monkeypatch.setattr(AgentLogRepository, "conversations", counted)
+
+    page = await platform.graph.resolve(AgentLogService).read(
+        platform.author, platform.scope, run.id, "support", limit=20, cursor=None, context=platform.context
+    )
+
+    [log] = page.items
+    assert log.memory.model_dump(mode="json") == {
+        "scope": "conversation",
+        "loaded": 2,
+        "conversation": {"key_hash": conversation_key_hash(WORKFLOW, "C-4"), "version": 1, "expired": False},
+    }
+    assert reads == [["support"]]

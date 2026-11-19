@@ -897,6 +897,37 @@ reason. The log is assembled from the run's step facts, step outputs and turn
 inputs on each read; nothing extra is stored. See
 [AI agent steps](ai-agents.md#agent-log) for the fields.
 
+**Agent conversations.** An AI agent with conversation memory keeps each
+conversation per environment and workflow under a key hash: the SHA-256, in
+lowercase hex, of the workflow's name, a zero byte and the key's value. The key
+itself is never stored or sent; the SDK and the CLI hash a key on your machine.
+See [AI agent steps](ai-agents.md#conversation-memory).
+
+- `agent_conversations.list` (`GET …/agent-conversations`) needs `run.read`. It
+  pages the environment's conversations, the most recently updated first, and
+  leaves out expired ones. `workflow` keeps one workflow's; `limit` is 1 to 100
+  (50 by default) and `cursor` continues a page.
+- `agent_conversations.read` (`GET …/agent-conversations/{workflow}/{key_hash}`)
+  needs `run.read` and answers the remembered messages, oldest first, with the
+  conversation's version and expiry. A conversation that was never stored or has
+  expired answers `404` with `WV-AGENT-CONVERSATION-NOT-FOUND`.
+- `agent_conversations.delete` (`DELETE …/agent-conversations/{workflow}/{key_hash}`)
+  needs `run.purge`. It answers `200` whether or not a conversation was stored
+  (`deleted` says which), so an erasure script can repeat it. `loaded_by` lists
+  up to 100 runs that loaded the conversation, and `more_loaded_by` says when
+  there are more: those runs keep the messages they loaded until they are purged.
+- `agent_conversations.purge_workflow` (`POST …/agent-conversations/{workflow}/purge`)
+  needs `run.purge` and an `Idempotency-Key`. Its body,
+  `{"confirm_workflow": "<workflow>"}`, must name the workflow in the path, or it
+  answers `422` with `WV-AGENT-CONVERSATION-CONFIRM`. Each call deletes up to
+  1,000 conversations; `more: true` says to call again with a new key.
+
+A `key_hash` that isn't 64 lowercase hex characters, or a `workflow` that isn't
+a resource name, answers `422` with `WV-AGENT-CONVERSATION-KEY` before anything
+is read. Every delete and purge is audited as `agent_conversation.delete` (target
+`<workflow>/<key_hash>`) or `agent_conversation.purge_workflow` (target
+`<workflow>`), with no key.
+
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read
 incident facts after checking both token and current permissions; they never
 load run payloads. `incidents.read` (`GET …/incidents/{identifier}`) reads one
@@ -1442,6 +1473,10 @@ switches a rule off needs neither.
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
 | `execution_logs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/execution-logs` | run.read |
 | `runs.agent_log` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/agents/{key}/log` | run.read |
+| `agent_conversations.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/agent-conversations` | run.read |
+| `agent_conversations.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/agent-conversations/{workflow}/{key_hash}` | run.read |
+| `agent_conversations.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/agent-conversations/{workflow}/{key_hash}` | run.purge |
+| `agent_conversations.purge_workflow` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/agent-conversations/{workflow}/purge` | run.purge |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
 | `incidents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}` | incident.read |

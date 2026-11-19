@@ -31,7 +31,7 @@ from uuid import UUID
 import rfc8785
 from pydantic import Field
 
-from firefly_weave.contracts.definitions import ContractModel, ResourceName
+from firefly_weave.contracts.definitions import NAME_PATTERN, ContractModel
 from firefly_weave.contracts.values import JsonData, JsonValue
 
 # The longest key an expression may evaluate to, in characters.
@@ -47,7 +47,10 @@ PURGE_BATCH: Final = 1_000
 LOADED_BY_LIMIT: Final = 100
 
 type ConversationKeyHash = Annotated[str, Field(pattern="^[0-9a-f]{64}$")]
-type ConversationWorkflow = Annotated[ResourceName, Field(max_length=200)]
+# A workflow's name as a conversation stores it; the name pattern is ASCII, so a plain string type documents it whole.
+type ConversationWorkflow = Annotated[str, Field(min_length=1, max_length=200, pattern=rf"^{NAME_PATTERN}$")]
+# A type alias, so the bounds reach the documented query parameter.
+type ConversationPageLimit = Annotated[int, Field(ge=1, le=100)]
 
 
 def conversation_key_hash(workflow: str, key: str) -> str:
@@ -90,7 +93,7 @@ class AgentConversationQuery(ContractModel):
     """`agent_conversations.list` query parameters: newest update first, expired conversations left out."""
 
     workflow: ConversationWorkflow | None = None
-    limit: int = Field(default=50, ge=1, le=100)
+    limit: ConversationPageLimit = 50
     cursor: Annotated[str, Field(min_length=1, max_length=2048, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
 
 

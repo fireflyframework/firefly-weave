@@ -83,6 +83,8 @@ def test_matrix_requests_fit_the_operation_contracts(row):
     assert (row.collection is not None) == ("{collection}" in operation.path), row.operation
     assert (row.kind is not None) == ("{kind}" in operation.path), row.operation
     assert (row.key is not None) == ("{key}" in operation.path), row.operation
+    assert (row.workflow is not None) == ("{workflow}" in operation.path), row.operation
+    assert (row.key_hash is not None) == ("{key_hash}" in operation.path), row.operation
     if row.key is not None:
         from firefly_weave.contracts.agent_log import agent_log_key
 
