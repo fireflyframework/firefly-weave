@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "scripts") not in sys.path:
@@ -246,6 +247,25 @@ def egress_release_rules(tool: str = "iptables") -> list[list[str]]:
 
 # How many lines of a failed command's error output its StageFailed message ends with, when the call shows them.
 FAILED_OUTPUT_LINES = 40
+# The proxy settings a failed pull or build can print, with the user and password their URL may hold.
+PROXY_VARIABLES = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+
+
+def _proxy_credentials() -> set[str]:
+    """The user:password part of each proxy URL in the environment, as written and percent-decoded. A URL without a
+    scheme (user:password@host:port), which curl and pip accept, counts too."""
+    found: set[str] = set()
+    for name in PROXY_VARIABLES:
+        value = os.environ.get(name, "")
+        userinfo = urlsplit(value if "://" in value else "//" + value).netloc.rpartition("@")[0]
+        if userinfo:
+            found |= {userinfo, unquote(userinfo)}
+    return found
+
+
+def _reason(error: Exception) -> str:
+    """Why a failed command's output could not be saved, without the error's own text, which may quote the output."""
+    return error.strerror if isinstance(error, OSError) and error.strerror else type(error).__name__
 
 
 @dataclass
@@ -299,22 +319,29 @@ class Recorder:
         return result
 
     def _failure(self, argv: Sequence[str], result: subprocess.CompletedProcess[str], show_error: bool) -> str:
-        """Why a command failed. A captured command's output, redacted of the run's secrets, is saved as
-        private/commands/<stage>/<n>-<program>.log, n being its place in the stage's commands. ``show_error`` ends the
-        message, which the job log prints, with the last lines of its error output: a call sets it only when nothing
-        the command reads can hold a secret the run cannot redact, such as the cluster's client secrets."""
+        """Why a command failed. A captured command's output, redacted of the run's secrets and of any proxy
+        credentials, is saved as private/commands/<stage>/<n>-<program>.log, n being its place in the stage's commands.
+        ``show_error`` ends the message, which the job log prints, with the last lines of its error output: a call sets
+        it only when nothing the command reads can hold a secret the run cannot redact, such as the cluster's client
+        secrets. This never raises: the stage's failure is reported whatever goes wrong here."""
         message = f"{' '.join(list(argv)[:3])} exited {result.returncode}"
         if self.private is None or result.stdout is None:
             return message
-        secrets = acceptance_evidence.run_secrets(self.private)
-        stdout, _ = acceptance_evidence.redact(result.stdout, secrets)
-        stderr, _ = acceptance_evidence.redact(result.stderr, secrets)
+        try:
+            secrets = sorted(
+                {*acceptance_evidence.run_secrets(self.private), *_proxy_credentials()}, key=len, reverse=True
+            )
+            stdout, _ = acceptance_evidence.redact(result.stdout, secrets)
+            stderr, _ = acceptance_evidence.redact(result.stderr, secrets)
+        except Exception as error:
+            # Output that could not be redacted is neither saved nor shown.
+            return f"{message}; its output could not be saved: {_reason(error)}"
         log = self.private / "commands" / self.stage / f"{len(self.commands)}-{Path(argv[0]).name}.log"
         try:
             log.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             log.write_text(f"--- stdout\n{stdout}--- stderr\n{stderr}", encoding="utf-8")
-        except OSError as error:
-            message += f"; its output could not be saved: {error.strerror}"
+        except Exception as error:
+            message += f"; its output could not be saved: {_reason(error)}"
         else:
             message += f"; its output is in {log.relative_to(self.private.parent)}"
         if show_error:

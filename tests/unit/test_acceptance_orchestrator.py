@@ -136,6 +136,52 @@ def test_a_command_that_shows_its_error_ends_the_message_with_its_last_lines_red
     ]
 
 
+@pytest.mark.parametrize(
+    ("variable", "proxy", "shown"),
+    [
+        *[
+            (
+                name,
+                "http://builder:s3%40lt@proxy.example:3128",
+                "via http://[redacted]@proxy.example:3128 as [redacted]",
+            )
+            for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+        ],
+        # A proxy written without a scheme, as curl and pip accept it.
+        ("https_proxy", "builder:s3%40lt@proxy.example:3128", "via [redacted]@proxy.example:3128 as [redacted]"),
+    ],
+)
+def test_a_proxys_credentials_in_a_failed_commands_output_show_only_as_redacted(
+    tmp_path, monkeypatch, variable, proxy, shown
+):
+    for name in acceptance.PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, proxy)
+    private, recorder, _ = failing_recorder(tmp_path)
+    # The command prints the proxy as configured, then its user:password percent-decoded.
+    env = {"ERROR": f"refused via {proxy} as builder:s3@lt"}
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", "import os, sys; sys.exit(os.environ['ERROR'])"], env=env, show_error=True)
+    (log,) = (private / "commands" / "prepare").glob("*.log")
+    for text in (str(failed.value), log.read_text(encoding="utf-8")):
+        assert f"refused {shown}" in text
+        assert "s3" not in text
+
+
+def test_a_failure_whose_output_cannot_be_redacted_names_only_the_command_and_saves_nothing(tmp_path, monkeypatch):
+    private, recorder, env = failing_recorder(tmp_path)
+
+    def unreadable(private):
+        raise ValueError("people/ada.json holds wv-canary-0123")
+
+    monkeypatch.setattr(acceptance.acceptance_evidence, "run_secrets", unreadable)
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", "import os, sys; sys.exit(os.environ['ERROR'])"], env=env, show_error=True)
+    # Output that could not be redacted is neither shown nor saved, and the error's own text stays out too.
+    assert str(failed.value).endswith(" exited 1; its output could not be saved: ValueError")
+    assert not (private / "commands").exists()
+
+
 def test_a_failed_stage_skips_run_but_still_collects_scans_and_cleans_up(tmp_path):
     plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, {"profile": "pr"})
     order = []
