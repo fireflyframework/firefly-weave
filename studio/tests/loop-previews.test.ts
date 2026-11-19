@@ -198,7 +198,16 @@ describe("data inside a loop's body", () => {
       error: {
         code: WAITING,
         message:
-          "Can't compute yet: the picked item isn't in the data. Execute previous steps.",
+          "Can't compute yet: item 1 isn't in the data. Execute previous steps.",
+      },
+    });
+    // The outer loop's item, named by its own number.
+    expect(value(controller, "send", "/loops/orders/item/id")).toEqual({
+      ok: false,
+      error: {
+        code: WAITING,
+        message:
+          "Can't compute yet: item 6 isn't in the data. Execute previous steps.",
       },
     });
   });
@@ -328,8 +337,8 @@ describe("the Input pane inside a loop's body", () => {
     expect(pane.dataOf("item")).toEqual({ sku: "z" });
     expect(pane.dataOf("loop:orders")).toEqual(ORDERS[1]);
     await controller.iterations.evaluate("orders");
-    expect(pane.sourceTag("loop:orders")).toBe("Item 2 of 2");
-    expect(pane.sourceTag("item")).toBe("Item 1");
+    expect(pane.sourceTag("loop:orders")).toBe("Simulated · item 2");
+    expect(pane.sourceTag("item")).toBe("Simulated · item 1");
     injector.destroy();
   });
 });

@@ -58,6 +58,8 @@ export interface PickerView {
   empty: boolean;
   /** The line under the row, or null. */
   note: string | null;
+  /** "warning": the note says Execute fails here. */
+  tone: "warning" | null;
 }
 
 const number = (value: number) => value.toLocaleString("en-US");
@@ -77,6 +79,7 @@ export function pickerView(loop: PickerLoop): PickerView {
         loop.index === 0
           ? "Execute previous steps to see the items."
           : "The number of items shows once the previous steps have run.",
+      tone: null,
     };
   }
   if (loop.count === 0)
@@ -87,19 +90,21 @@ export function pickerView(loop: PickerLoop): PickerView {
       last: true,
       empty: true,
       note: "The list is empty: the steps inside don't run.",
+      tone: null,
     };
-  const shown = Math.min(loop.count, loop.limit);
-  const item = `Item ${number(at)} of ${number(shown)}`;
+  const item = `Item ${number(at)} of ${number(loop.count)}`;
+  // More items than Up to: the platform fails the run at the loop.
+  const over = loop.count > loop.limit;
   return {
     item,
     name: `${item}. Choose an item`,
     first: loop.index === 0,
-    last: loop.index >= shown - 1,
+    last: loop.index >= loop.count - 1,
     empty: false,
-    note:
-      loop.count > loop.limit
-        ? `Up to ${number(loop.limit)} of ${number(loop.count)} items.`
-        : null,
+    note: over
+      ? `This list has ${number(loop.count)} items, more than Up to allows (${number(loop.limit)}). Executing the loop fails here: raise Up to or shorten the list.`
+      : null,
+    tone: over ? "warning" : null,
   };
 }
 
@@ -156,7 +161,7 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
   const typed = text.trim();
   if (!/^\d+$/.test(typed)) return null;
   const at = Number(typed);
-  const shown = loop.known ? Math.min(loop.count, loop.limit) : loop.limit;
+  const shown = loop.known ? loop.count : loop.limit;
   return at >= 1 && at <= shown ? at - 1 : null;
 }
 
@@ -238,12 +243,7 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
                   (keydown.enter)="goTo(loop, go.value, $event)"
                 />
                 @if (loop.known) {
-                  <span
-                    >of
-                    {{
-                      number(loop.count < loop.limit ? loop.count : loop.limit)
-                    }}</span
-                  >
+                  <span>of {{ number(loop.count) }}</span>
                 }
               </label>
               @if (invalid()) {
@@ -254,7 +254,12 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
         </div>
       </div>
       @if (view.note && !compact()) {
-        <p class="picker-note">{{ view.note }}</p>
+        <p class="picker-note" [attr.data-tone]="view.tone">
+          @if (view.tone === "warning") {
+            <weave-icon name="warning" [size]="16" />
+          }
+          {{ view.note }}
+        </p>
       }
     }
     <p class="picker-announce" role="status">{{ announced() }}</p>`,
@@ -348,6 +353,14 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
       padding: 0 16px 8px 40px;
       color: var(--muted);
       font-size: 12px;
+    }
+    .picker-note[data-tone="warning"] {
+      display: flex;
+      gap: 6px;
+      color: var(--warning-ink);
+    }
+    .picker-note weave-icon {
+      flex: none;
     }
     .picker-list {
       padding: 12px;
@@ -443,7 +456,7 @@ export class IterationPicker {
     if (index === null) {
       this.invalid.set(
         loop.known
-          ? `Type a number from 1 to ${number(Math.min(loop.count, loop.limit))}.`
+          ? `Type a number from 1 to ${number(loop.count)}.`
           : "Type an item number, from 1.",
       );
       return;

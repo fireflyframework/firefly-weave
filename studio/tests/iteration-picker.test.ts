@@ -57,6 +57,7 @@ describe("the iteration picker's row", () => {
       last: false,
       empty: false,
       note: null,
+      tone: null,
     });
     expect(pickerView(loop({ index: 0 }))).toMatchObject({
       first: true,
@@ -77,6 +78,7 @@ describe("the iteration picker's row", () => {
       last: false,
       empty: false,
       note: "Execute previous steps to see the items.",
+      tone: null,
     });
     expect(pickerView(loop({ known: false, count: 0 }))).toMatchObject({
       item: "Item 3",
@@ -93,17 +95,25 @@ describe("the iteration picker's row", () => {
       last: true,
       empty: true,
       note: "The list is empty: the steps inside don't run.",
+      tone: null,
     });
   });
 
-  it("stops at Up to, and says how many items the list had", () => {
+  it("warns when the list has more items than Up to: the run fails there", () => {
     expect(pickerView(loop({ count: 2345, limit: 1000 }))).toMatchObject({
-      item: "Item 3 of 1,000",
-      note: "Up to 1,000 of 2,345 items.",
+      item: "Item 3 of 2,345",
+      note: "This list has 2,345 items, more than Up to allows (1,000). Executing the loop fails here: raise Up to or shorten the list.",
+      tone: "warning",
     });
+    // Every item of the list can be looked at.
     expect(
       pickerView(loop({ index: 999, count: 2345, limit: 1000 })).last,
+    ).toBe(false);
+    expect(
+      pickerView(loop({ index: 2344, count: 2345, limit: 1000 })).last,
     ).toBe(true);
+    // Within Up to, the line under the row isn't a warning.
+    expect(pickerView(loop({ known: false, count: 0 })).tone).toBeNull();
   });
 });
 
@@ -156,8 +166,9 @@ describe("Go to item", () => {
     expect(goToItem("0", loop())).toBeNull();
     expect(goToItem("2.5", loop())).toBeNull();
     expect(goToItem("x", loop())).toBeNull();
-    // Past Up to, nothing runs.
-    expect(goToItem("1001", loop({ count: 2345, limit: 1000 }))).toBeNull();
+    // Past Up to too: the list holds it, though Execute fails there.
+    expect(goToItem("1001", loop({ count: 2345, limit: 1000 }))).toBe(1000);
+    expect(goToItem("2346", loop({ count: 2345, limit: 1000 }))).toBeNull();
     // Without a count, any item number goes.
     expect(goToItem("40", loop({ known: false, count: 0 }))).toBe(39);
   });

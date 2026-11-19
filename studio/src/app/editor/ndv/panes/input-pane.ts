@@ -41,12 +41,7 @@ import {
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
 import { enclosingLoops, stepPointerOf } from "../../formula/loops";
-import {
-  IterationPicker,
-  loopRows,
-  pickerView,
-  type PickerLoop,
-} from "./iteration-picker";
+import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
 import { DataTable } from "./data-table";
 import { tableCount } from "./table-view";
 import {
@@ -609,7 +604,9 @@ export class InputPane implements OnInit {
       const row = looped.loop
         ? rows.find((loop) => loop.loopId === looped.loop)
         : rows.at(-1);
-      return row ? pickerView(row).item : "";
+      return row
+        ? `Simulated · item ${(row.index + 1).toLocaleString("en-US")}`
+        : "";
     }
     const run = this.session().controller.run();
     if (source === "received") return "Recomputed from the run's data";
