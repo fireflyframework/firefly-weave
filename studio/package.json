@@ -29,8 +29,8 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@angular/build": "22.2.1",
-    "@angular/cli": "22.2.1",
+    "@angular/build": "22.2.5",
+    "@angular/cli": "22.2.5",
     "@angular/compiler-cli": "22.2.1",
     "@playwright/test": "1.55.1",
     "@types/node": "24.3.0",
@@ -38,6 +38,6 @@
     "lucide-static": "1.52.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }
