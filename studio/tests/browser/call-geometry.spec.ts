@@ -79,9 +79,9 @@ for (const size of SIZES)
         expect(open.y).toBeGreaterThanOrEqual(select.bottom);
         expect(Math.abs(open.right - control.right)).toBeLessThanOrEqual(1);
       } else {
-        // Beside the select, on its bottom edge.
+        // Beside the select, centred on it.
         expect(open.x).toBeGreaterThan(select.right);
-        expect(Math.abs(open.bottom - select.bottom)).toBeLessThanOrEqual(1);
+        expect(Math.abs(open.middle - select.middle)).toBeLessThanOrEqual(0.5);
       }
       // When it runs: two 36 px segments on one line, or two equal 44 px ones on touch.
       const segments = await boxes(details.field("mode").getByRole("radio"));

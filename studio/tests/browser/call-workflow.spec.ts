@@ -191,7 +191,7 @@ test.describe("calling a workflow from a step", () => {
     await expect(details.field("workflow")).toContainText(
       "In this project · callable by order-intake",
     );
-    // Open workflow sits beside the select.
+    // Open workflow sits beside the select, centred on it.
     const select = await details
       .field("workflow")
       .getByRole("combobox")
@@ -201,8 +201,8 @@ test.describe("calling a workflow from a step", () => {
       .getByRole("button", { name: "Open workflow" })
       .boundingBox();
     expect(openButton!.x).toBeGreaterThan(select!.x + select!.width);
-    expect(openButton!.y + openButton!.height).toBeCloseTo(
-      select!.y + select!.height,
+    expect(openButton!.y + openButton!.height / 2).toBeCloseTo(
+      select!.y + select!.height / 2,
       0,
     );
     // The project's lock is read once for the window.

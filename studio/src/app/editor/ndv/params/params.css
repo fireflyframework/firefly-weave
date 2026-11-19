@@ -2474,6 +2474,8 @@ weave-formula-field > button.formula-expand {
     order: 0;
     flex: none;
     margin-top: 0;
+    /* Centred on the control beside it, a target shorter than a field. */
+    margin-bottom: calc((var(--sd-control) - var(--sd-target)) / 2);
   }
 }
 .param-action-why {
