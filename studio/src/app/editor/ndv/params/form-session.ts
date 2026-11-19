@@ -69,6 +69,8 @@ import {
 import {
   childEntries,
   nearestRoot,
+  OUTSIDE_LOOP,
+  outsideLoop,
   planDrop,
   rowKey,
   dropFit,
@@ -630,7 +632,21 @@ export class FormSession {
           : live;
     if (!target) return null;
     const entry = this.scope(target).find((entry) => entry.ref === drag.ref);
-    if (!entry) return null;
+    if (!entry) {
+      // Inside a loop body: a loop's item or position, as the host lists it.
+      const item = this.hostEntries(target)?.find(
+        (hosted) =>
+          hosted.ref === drag.ref &&
+          (hosted.source === "item" || hosted.source === "index"),
+      );
+      return item
+        ? {
+            ref: item.ref,
+            breadcrumb: item.breadcrumb,
+            schema: dragSchema(item.schema as Schema),
+          }
+        : null;
+    }
     return {
       ref: entry.ref,
       breadcrumb: [
@@ -641,6 +657,8 @@ export class FormSession {
     };
   }
   dropFit(spec: ParamSpec, drag: DragRef) {
+    if (outsideLoop(drag.ref, this.formulaOptions(spec).loops))
+      return { fit: "refused" as const, text: OUTSIDE_LOOP };
     if (spec.type === "conditions") {
       const drop = this.conditionDrop(spec, drag);
       return "reason" in drop
@@ -682,6 +700,12 @@ export class FormSession {
     drag: DragRef,
     options: { caret: number | null; shift?: boolean },
   ): boolean {
+    // A loop's item dropped on a step that loop isn't around: refused, and said.
+    if (outsideLoop(drag.ref, this.formulaOptions(spec).loops)) {
+      this.host.notify(OUTSIDE_LOOP);
+      this.announce(OUTSIDE_LOOP);
+      return false;
+    }
     if (spec.type === "conditions") {
       const drop = this.conditionDrop(spec, drag);
       if ("reason" in drop) {
