@@ -580,8 +580,8 @@ describe("an AI task's step test body", () => {
 
 const RUN = "55555555-5555-4555-8555-555555555555";
 const ENVIRONMENT = "66666666-6666-4666-8666-666666666666";
-/** Step details over one AI task, with test data in memory that the host accepts. */
-function details(results: LastResults | null = null) {
+/** Step details over one AI task, with test data in memory that the host accepts (or refuses as secret). */
+function details(results: LastResults | null = null, secret = false) {
   const model = new StructuredCanvasAdapter();
   const { workflow } = prompted();
   model.replace(workflow);
@@ -602,7 +602,13 @@ function details(results: LastResults | null = null) {
         (key) => `/aiTurns/${key}`,
       );
       checked.push(paths);
-      return { entries: paths.map((path) => ({ path, ok: true })) } as T;
+      return {
+        entries: paths.map((path) =>
+          secret
+            ? { path, ok: false, code: "WV-SCHEMA-SECRET_VALUE" }
+            : { path, ok: true },
+        ),
+      } as T;
     },
   };
   const testData = new TestDataService({
@@ -678,30 +684,7 @@ describe("an AI task's test data in step details", () => {
     });
   });
   it("keeps a real answer as test data with its run, never as a pin", async () => {
-    const results: LastResults = {
-      schemaVersion: 1,
-      at: "2026-11-19T10:00:00Z",
-      status: "completed",
-      steps: {
-        summarize: {
-          status: "completed",
-          execution: "fnv1a64:0000000000000000",
-          output: {
-            result: "Two sentences.",
-            usage: { requests: 1, inputTokens: 812, outputTokens: 64 },
-            provider: "openai-chat",
-            model: "qwen3:4b",
-          },
-          real: {
-            runId: RUN,
-            environmentId: ENVIRONMENT,
-            environmentName: "development",
-            status: "succeeded",
-          },
-        },
-      },
-    };
-    const { controller, testData, notices } = details(results);
+    const { controller, testData, notices } = details(realAnswer());
     expect(await controller.pinReal("summarize")).toBeNull();
     expect(testData.data().aiTurns?.["summarize"]).toEqual({
       turns: [{ final: "Two sentences." }],
@@ -714,4 +697,42 @@ describe("an AI task's test data in step details", () => {
       "Kept this answer as test data for summarize. Execute step replays it.",
     );
   });
+  it("keeps no answer the host finds secret, and says why without the value", async () => {
+    const secret =
+      "This value is marked secret in the schema. Test data can't keep secrets; leave the field out.";
+    const real = details(realAnswer(), true);
+    expect(await real.controller.pinReal("summarize")).toBe(secret);
+    expect(real.testData.data().aiTurns).toBeUndefined();
+    expect(real.notices.join(" ")).not.toContain("Two sentences.");
+    const sample = details(null, true);
+    expect(await sample.controller.generateOutput("summarize")).toBe(secret);
+    expect(sample.testData.data().aiTurns).toBeUndefined();
+  });
 });
+
+/** The AI task's last result: a real answer from a step test in development. */
+function realAnswer(): LastResults {
+  return {
+    schemaVersion: 1,
+    at: "2026-11-19T10:00:00Z",
+    status: "completed",
+    steps: {
+      summarize: {
+        status: "completed",
+        execution: "fnv1a64:0000000000000000",
+        output: {
+          result: "Two sentences.",
+          usage: { requests: 1, inputTokens: 812, outputTokens: 64 },
+          provider: "openai-chat",
+          model: "qwen3:4b",
+        },
+        real: {
+          runId: RUN,
+          environmentId: ENVIRONMENT,
+          environmentName: "development",
+          status: "succeeded",
+        },
+      },
+    },
+  };
+}
