@@ -17,7 +17,6 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What step details need from the editor that hosts them. The shell (App)
 // already has every member; nothing here is new state of its own.
-import type { CallSources } from "../calls/call-sources";
 import type { LocalDrafts } from "../../local-drafts";
 import type { CanvasRun } from "../canvas/run-state";
 import type { RunDataPort, RunViewPort } from "../runs-tab/run-port";
@@ -140,8 +139,10 @@ export interface StepDetailsHost {
   readonly dirty?: boolean;
   /** The drafts kept on this computer, which a call step may call. */
   readonly localDrafts?: LocalDrafts;
-  /** The workflows a call step may call, once step details made them (the canvas reads their contracts). */
-  callSources?: CallSources | null;
+  /** Opens a workflow a call step calls, or one that calls this one (`name@version`). */
+  openWorkflow?(uses: string): void;
+  /** Removes a trigger choice, asking first for Called by a workflow. */
+  removeTrigger?(id: string): Promise<void>;
   /** The open workflow is kept on this computer (opened from this computer's drafts). */
   readonly keptLocally?: boolean;
   /** The connected environment's name ("local"), or null before it's known. */

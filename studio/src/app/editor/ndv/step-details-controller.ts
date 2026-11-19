@@ -24,7 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
-import { canonicalJson, getAt } from "../../forms/core/json";
+import { canonicalJson, getAt, isJsonObject } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
 import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
@@ -179,7 +179,8 @@ export type ControllerHost = Pick<
   | "profile"
   | "stepDataScope"
   | "localDrafts"
-  | "callSources"
+  | "openWorkflow"
+  | "removeTrigger"
   | "api"
   | "diagnostics"
   | "diagnosticsDefinition"
@@ -1457,8 +1458,35 @@ export class StepDetailsController {
   }
 
   commit(target: string, changes: FormChange[], field: string): CommitOutcome {
-    if (!changes.length) return { ok: false, removed: [] };
+    if (!changes.length || this.turnsOffCallable(target, changes))
+      return { ok: false, removed: [] };
     return this.commitChanges(target, () => changes, field);
+  }
+  /**
+   * Turning the settings' Callable off removes Called by a workflow, which
+   * writes the same `spec.callable`, after the same question.
+   */
+  private turnsOffCallable(target: string, changes: FormChange[]): boolean {
+    const model = this.host.model;
+    if (
+      target !== "$workflow" ||
+      !isJsonObject(model.definition.spec["callable"])
+    )
+      return false;
+    const off = changes.some(
+      (change) =>
+        change.scope === "workflow" &&
+        change.path.length === 2 &&
+        change.path[0] === "spec" &&
+        change.path[1] === "callable" &&
+        !isJsonObject(change.value),
+    );
+    const called = triggerIntents(model.canvas).find(
+      (intent) => intent.kind === "called",
+    );
+    if (!off || !called || !this.host.removeTrigger) return false;
+    void this.host.removeTrigger(called.id);
+    return true;
   }
 
   private commitChanges(
@@ -1777,11 +1805,9 @@ export class StepDetailsController {
       },
     };
   }
-  /** The workflows a call step may call, for this window; the canvas reads them through the host too. */
+  /** The workflows a call step may call, and the callers of this one, for this window. */
   callSources(): CallSources {
-    const sources = callSources(this.host);
-    this.host.callSources ??= sources;
-    return sources;
+    return callSources(this.host);
   }
 
   /**

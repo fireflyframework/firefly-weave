@@ -1,0 +1,322 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// The Called by a workflow trigger: who may call this workflow
+// (spec.callable), what callers send and read, the published workflows that
+// call it (from the project's catalog lock, mocked here), and the question
+// before it goes, from the canvas or from the workflow settings.
+import { expect, test, type Page } from "@playwright/test";
+import { parse, stringify } from "yaml";
+import { connected, sourceText } from "./support";
+import {
+  addCommonStep,
+  openStepFixture,
+  settingsGear,
+  StepDetailsPage,
+  withLanguageFeatures,
+  yamlFile,
+} from "./step-details-po";
+
+/** notify-customer 1.0.0; `callable` null leaves it out. */
+const workflow = (callable: unknown) =>
+  stringify({
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "notify-customer", version: "1.0.0" },
+    spec: {
+      inputSchema: {
+        type: "object",
+        required: ["customerId"],
+        properties: {
+          customerId: { type: "string" },
+          message: { type: "string" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "string" },
+          accepted: { type: "boolean" },
+        },
+      },
+      ...(callable === null ? {} : { callable }),
+      steps: [{ id: "send", kind: "transform", value: { ref: "/input" } }],
+      output: { ref: "/steps/send/output" },
+    },
+  });
+const ALLOWED = ["order-intake", "billing-close", "support-desk"];
+const call = (id: string, mode = "wait") => ({
+  id,
+  kind: "callWorkflow",
+  uses: "notify-customer@1.0.0",
+  mode,
+  with: { literal: {} },
+});
+const published = (name: string, version: string, steps: unknown[]) => ({
+  document: {
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name, version },
+    spec: {
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      steps,
+      output: { literal: {} },
+    },
+  },
+  digest: "0".repeat(64),
+});
+const LOCK = {
+  definitions: [
+    published("order-intake", "1.2.0", [call("notify")]),
+    published("billing-close", "2.0.0", [call("notify-owner", "detach")]),
+    published("support-desk", "1.1.0", [
+      {
+        id: "assistant",
+        kind: "agent",
+        tools: [{ name: "notify", workflow: "notify-customer@1.0.0" }],
+      },
+    ]),
+    published("returns-desk", "1.0.0", [call("tell-customer")]),
+  ],
+  tasks: [],
+  adapters: [],
+  schemas: {},
+};
+
+/** notify-customer, connected to a project whose published workflows call it; `callable` null for none. */
+async function open(
+  page: Page,
+  callable: unknown = { allowedCallers: ALLOWED },
+) {
+  return openStepFixture(
+    page,
+    yamlFile("notify-customer.yaml", workflow(callable)),
+    async (p) => {
+      const result = await connected(p);
+      await withLanguageFeatures(p, ["flow.callWorkflow"]);
+      await p.route(/\/projects\/[^/]+\/catalog$/, (route) =>
+        route.fulfill({ json: LOCK }),
+      );
+      return result;
+    },
+  );
+}
+const calledTile = (page: Page) =>
+  page.locator('.tile-node[data-tile^="$trigger"]').filter({
+    hasText: "Called by a workflow",
+  });
+/** Opens the trigger's step details on Parameters. */
+async function openTrigger(page: Page, details: StepDetailsPage) {
+  await calledTile(page).locator(".tile-body").dblclick();
+  await expect(details.dialog).toBeVisible();
+  return details.dialog;
+}
+const callable = async (page: Page) =>
+  (parse(await sourceText(page)) as { spec: { callable?: unknown } }).spec
+    .callable;
+
+test.describe("the Called by a workflow trigger", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Add step adds it now that Studio edits callable workflows", async ({
+    page,
+  }) => {
+    const details = await open(page, null);
+    await addCommonStep(page, "Called by a workflow", "Add a step after send");
+    await expect(calledTile(page)).toBeAttached();
+    // The new trigger opens in step details, on who may call it.
+    await expect(
+      details.dialog.getByRole("radio", {
+        name: "Any workflow in this project",
+      }),
+    ).toBeChecked();
+    await details.close();
+    expect(await callable(page)).toEqual({});
+  });
+
+  test("shows who may call it, what callers send and read, and the published callers, the one not allowed last", async ({
+    page,
+  }) => {
+    const details = await open(page);
+    const dialog = await openTrigger(page, details);
+    await expect(
+      dialog.getByRole("radio", { name: "Only these workflows" }),
+    ).toBeChecked();
+    await expect(
+      dialog
+        .getByRole("list", { name: "Workflows that can call this one" })
+        .locator(".cb-chip"),
+    ).toHaveText(ALLOWED);
+    const input = dialog.getByRole("group", { name: "Input", exact: true });
+    await expect(input).toContainText("2 fields");
+    await expect(input.locator("li").first()).toContainText(
+      /customerId\s*Text\s*Required/,
+    );
+    await expect(
+      dialog.getByRole("group", { name: "Result", exact: true }),
+    ).toContainText("accepted");
+    const callers = dialog.locator(".cb-caller");
+    await expect(dialog.locator(".cb-section").last()).toContainText(
+      "4 published workflows",
+    );
+    await expect(callers.locator(".cb-caller-name")).toHaveText([
+      "billing-close 2.0.0",
+      "order-intake 1.2.0",
+      "support-desk 1.1.0",
+      "returns-desk 1.0.0",
+    ]);
+    await expect(callers.locator(".cb-wide")).toHaveText([
+      "Step notify-owner · doesn't wait",
+      "Step notify · waits for the result",
+      "AI agent assistant · workflow tool",
+      "Step tell-customer calls this workflow, but returns-desk isn't one of the workflows allowed. Its next activation will fail.",
+    ]);
+    // Allow it adds the caller in one step, and focus moves to its chip.
+    await callers.last().getByRole("button", { name: "Allow it" }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Remove returns-desk" }),
+    ).toBeFocused();
+    await expect(dialog.locator(".cb-caller.is-refused")).toHaveCount(0);
+    await details.close();
+    expect(await callable(page)).toEqual({
+      allowedCallers: [...ALLOWED, "returns-desk"],
+    });
+  });
+
+  test("Who can call it writes spec.callable: any workflow, or names added one by one", async ({
+    page,
+  }) => {
+    const details = await open(page, {});
+    const dialog = await openTrigger(page, details);
+    // The tile's subtitle says what spec.callable allows while step details stay open.
+    const subtitle = calledTile(page);
+    const any = dialog.getByRole("radio", {
+      name: "Any workflow in this project",
+    });
+    await expect(any).toBeChecked();
+    await dialog.getByRole("radio", { name: "Only these workflows" }).check();
+    const field = dialog.getByRole("combobox", { name: "Add a workflow" });
+    await expect(field).toBeFocused();
+    // Nothing is written until the first name: an empty list would be refused.
+    await expect(subtitle).toContainText("Any workflow");
+    await field.fill("-intake");
+    await field.press("Enter");
+    await expect(dialog.getByRole("alert")).toHaveText(
+      "Use letters, numbers, dots, underscores or hyphens, starting with a letter or number.",
+    );
+    await field.fill("order-intake");
+    await field.press("Enter");
+    await expect(subtitle).toContainText("Only 1 workflow");
+    await field.fill("order-intake");
+    await field.press("Enter");
+    await expect(dialog.getByRole("alert")).toHaveText(
+      "order-intake can already call this workflow.",
+    );
+    await field.fill("");
+    await field.press("Backspace");
+    const remove = dialog.getByRole("button", { name: "Remove order-intake" });
+    await expect(remove).toBeFocused();
+    // The last name stays: without it any workflow could call this one.
+    await remove.click();
+    await expect(dialog.getByRole("alert")).toHaveText(
+      "Keep at least one workflow here, or choose Any workflow in this project.",
+    );
+    await details.close();
+    expect(await callable(page)).toEqual({ allowedCallers: ["order-intake"] });
+    await openTrigger(page, details);
+    await any.check();
+    await expect(subtitle).toContainText("Any workflow");
+    await details.close();
+    expect(await callable(page)).toEqual({});
+  });
+
+  test("removing it names the callers and their steps, starting on Cancel", async ({
+    page,
+  }) => {
+    await open(page);
+    await calledTile(page).locator(".tile-body").focus();
+    await page.keyboard.press("Delete");
+    const question = page.getByRole("dialog", {
+      name: "Remove Called by a workflow?",
+    });
+    await expect(question).toContainText(
+      "billing-close, order-intake, support-desk and returns-desk call this workflow. Their next activations will fail until they stop calling it.",
+    );
+    await expect(question).toContainText(
+      "support-desk 1.1.0 · AI agent assistant",
+    );
+    await expect(question).toContainText(
+      "Callable by other workflows in the workflow settings turns off too.",
+    );
+    await expect(
+      question.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(question).toHaveCount(0);
+    expect(await callable(page)).toEqual({ allowedCallers: ALLOWED });
+    await calledTile(page).locator(".tile-body").focus();
+    await page.keyboard.press("Delete");
+    await question.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(calledTile(page)).toHaveCount(0);
+    expect(await callable(page)).toBeUndefined();
+  });
+
+  test("turning Callable off in the workflow settings asks the same, and removes the trigger with it", async ({
+    page,
+  }) => {
+    await open(page);
+    await settingsGear(page).click();
+    const settings = page.getByRole("dialog", { name: "Workflow settings" });
+    const callableSwitch = settings.getByRole("switch", {
+      name: /^Callable by other workflows/,
+    });
+    await callableSwitch.click();
+    const question = page.getByRole("dialog", {
+      name: "Remove Called by a workflow?",
+    });
+    await expect(question).toContainText("billing-close, order-intake");
+    await question.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(callableSwitch).toHaveAttribute("aria-checked", "true");
+    await expect(calledTile(page)).toHaveCount(1);
+    await callableSwitch.click();
+    await question.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(calledTile(page)).toHaveCount(0);
+    await settings.getByRole("button", { name: "Close", exact: true }).click();
+    expect(await callable(page)).toBeUndefined();
+  });
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 360, height: 780 } });
+
+  test("callers' lines are shorter", async ({ page }) => {
+    const details = await open(page);
+    await calledTile(page).locator(".tile-body").dblclick();
+    await expect(details.dialog).toBeVisible();
+    const tab = details.dialog.getByRole("tab", { name: "Parameters" });
+    if (await tab.count()) await tab.first().click();
+    const callers = details.dialog.locator(".cb-caller");
+    await expect(callers.locator(".cb-narrow").first()).toHaveText(
+      "Step notify-owner · doesn't wait",
+    );
+    await expect(callers.locator(".cb-narrow").last()).toHaveText(
+      "Calls this workflow but isn't allowed. Its next activation will fail.",
+    );
+    await expect(callers.locator(".cb-wide").first()).toBeHidden();
+  });
+});

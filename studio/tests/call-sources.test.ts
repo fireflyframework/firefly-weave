@@ -20,10 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 // per account and workspace.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 import type { StudioApi } from "../src/app/api";
 import {
+  calledRemovalQuestion,
+  CALLERS_WAIT_MS,
   CallSources,
   workflowRows,
   type CallSourcesHost,
@@ -268,3 +270,78 @@ describe("the catalog port's rows", () => {
     });
   });
 });
+
+describe("the question before Called by a workflow goes", () => {
+  const callee = {
+    metadata: { name: "notify-customer" },
+    spec: { callable: { allowedCallers: ["order-intake"] } },
+  };
+  const host = (answer: () => Promise<unknown>): CallSourcesHost => ({
+    profile: {
+      name: "acme",
+      baseUrl: "https://weave.example",
+      tenantId: "t",
+      projectId: "p",
+      environmentId: "e",
+    },
+    stepDataScope: "account-1",
+    api: {
+      project: "/studio/api/api/v1/tenants/t/projects/p",
+      request: answer,
+    } as unknown as StudioApi,
+    can: () => true,
+  });
+
+  it("names the published callers it reads", async () => {
+    const lock = {
+      definitions: [
+        {
+          document: workflowCalling("order-intake", "1.2.0"),
+          digest: "0".repeat(64),
+        },
+      ],
+    };
+    const question = await calledRemovalQuestion(
+      host(async () => lock),
+      callee,
+    );
+    expect(question.message.split(/\n\s*\n/).slice(0, 2)).toEqual([
+      "order-intake calls this workflow. Its next activation will fail until it stops calling it.",
+      "order-intake 1.2.0 · step notify",
+    ]);
+  });
+
+  it("asks in general when the callers can't be read in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const asked = calledRemovalQuestion(
+        host(() => new Promise(() => {})),
+        callee,
+      );
+      await vi.advanceTimersByTimeAsync(CALLERS_WAIT_MS);
+      expect((await asked).message.split(/\n\s*\n/)[0]).toBe(
+        "Workflows that call this one fail at their next activation until they stop calling it.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+function workflowCalling(name: string, version: string) {
+  return {
+    ...workflow(name, version),
+    spec: {
+      ...workflow(name, version).spec,
+      steps: [
+        {
+          id: "notify",
+          kind: "callWorkflow",
+          uses: "notify-customer@1.0.0",
+          mode: "wait",
+          with: { literal: {} },
+        },
+      ],
+    },
+  };
+}

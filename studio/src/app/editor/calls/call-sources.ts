@@ -29,8 +29,9 @@ import {
   type CallableList,
   type LocalCallee,
 } from "./callable-catalog";
+import { calledBy, removalQuestion } from "./called-by";
 import { findCallee } from "./callee-interface";
-import { CatalogLockReader } from "./catalog-lock";
+import { CatalogLockReader, type CatalogLockState } from "./catalog-lock";
 
 /** What the sources read from the editor's shell. */
 export interface CallSourcesHost {
@@ -172,4 +173,35 @@ export function callSources(host: CallSourcesHost): CallSources {
   let sources = made.get(host);
   if (!sources) made.set(host, (sources = new CallSources(host)));
   return sources;
+}
+
+/** How long the removal question waits for the project's callers before asking without them. */
+export const CALLERS_WAIT_MS = 3_000;
+
+/**
+ * The question before Called by a workflow goes: it names the published
+ * workflows that call this one when Studio can read them in time.
+ */
+export async function calledRemovalQuestion(
+  host: CallSourcesHost,
+  workflow: { metadata: { name: string }; spec: Record<string, unknown> },
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const state = await Promise.race<CatalogLockState | null>([
+    callSources(host).lock.read(),
+    new Promise(
+      (done) => (timer = setTimeout(() => done(null), CALLERS_WAIT_MS)),
+    ),
+  ]).finally(() => clearTimeout(timer));
+  const name = workflow.metadata.name;
+  return removalQuestion(
+    name,
+    state?.kind === "ready"
+      ? calledBy({
+          workflow: name,
+          callable: workflow.spec["callable"],
+          lock: state.lock,
+        })
+      : null,
+  );
 }

@@ -4317,13 +4317,11 @@ export class App implements CanvasHost {
     if (!intent || this.editingLocked || this.model.readonly) return;
     if (
       intent.kind === "called" &&
-      !(await this.dialogs.confirm({
-        title: "Stop other workflows from calling this one?",
-        message:
-          "Workflows that call this one fail at their next activation until they stop calling it.",
-        confirmLabel: "Remove trigger",
-        danger: true,
-      }))
+      !(await this.dialogs.confirm(
+        await (
+          await import("./editor/calls/call-sources")
+        ).calledRemovalQuestion(this, this.model.definition),
+      ))
     )
       return;
     let change: ReturnType<typeof removeTrigger>;
