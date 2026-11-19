@@ -508,6 +508,21 @@ SPDX-License-Identifier: Apache-2.0
   button[role="radio"]:focus-visible::after {
   outline: 2px solid var(--focus);
 }
+/* On a phone or with touch, a field's segmented choices take its width in
+   equal parts; a long label wraps inside its segment. A resource field's
+   From list / By name switch keeps its own width. */
+@media (max-width: 767px), (pointer: coarse) {
+  .param-segments:not(.param-resource-modes) {
+    display: flex;
+  }
+  :is(.step-details, .sd-form-scope)
+    .param-segments:not(.param-resource-modes)
+    button[role="radio"] {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+  }
+}
 /* The line under a control: a message, a preview or a hint. It wraps. */
 .param-line {
   display: flex;
@@ -2436,6 +2451,32 @@ weave-formula-field > button.formula-expand {
 :is(.step-details, .sd-form-scope) button.param-action[aria-disabled="true"] {
   color: var(--muted);
   cursor: not-allowed;
+}
+/* Beside the control from 768 px up; on a phone, the control's wrapper steps
+   aside so the row follows the field's hint (Open workflow). */
+.param.has-actions-beside > .param-control {
+  display: contents;
+}
+.param.has-actions-beside .param-actions {
+  order: 1;
+}
+@media (min-width: 768px) {
+  .param.has-actions-beside > .param-control {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+  }
+  .param.has-actions-beside > .param-control > weave-resource-field {
+    flex: 1;
+    min-width: 0;
+  }
+  .param.has-actions-beside .param-actions {
+    order: 0;
+    flex: none;
+    margin-top: 0;
+    /* Centred on the control beside it, a target shorter than a field. */
+    margin-bottom: calc((var(--sd-control) - var(--sd-target)) / 2);
+  }
 }
 .param-action-why {
   flex-basis: 100%;

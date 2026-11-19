@@ -27,8 +27,10 @@ import {
   readyKinds,
   type LanguageManifest,
 } from "../src/app/editor/language-manifest";
+import { allParams } from "../src/app/editor/ndv/form-contract";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
-import { ndvRegistry } from "../src/app/editor/ndv/registry";
+import { workflowSettingsForm } from "../src/app/editor/ndv/kinds/forms/workflow-forms";
+import { ndvRegistry, type KindContext } from "../src/app/editor/ndv/registry";
 import { loadLanguageManifest } from "./support/language-manifest";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -92,12 +94,55 @@ describe.skipIf(!available)(
         manifest.workflow_fields.map((entry) => entry.name).sort(),
       ).toEqual([...schema.workflow].sort());
     });
-    it("covers every ready step kind and its configuration fields", () => {
-      expect([...kinds].sort()).toEqual(
+    it("covers every ready step kind and its configuration fields", async () => {
+      // Kinds the palette doesn't list come with their own descriptor (Call a workflow).
+      await loadKindRegistrations();
+      const own = ndvRegistry
+        .kinds()
+        .filter((d) => !(kinds as readonly string[]).includes(d.kind));
+      expect([...kinds, ...own.map((d) => d.kind)].sort()).toEqual(
         ready(manifest.step_kinds)
           .map((entry) => entry.kind)
           .sort(),
       );
+      // A call shows its input once its workflow is chosen.
+      const configured: Record<string, object> = {
+        callWorkflow: { uses: "notify-customer@1.0.0" },
+      };
+      for (const descriptor of own) {
+        const step = {
+          ...descriptor.create("step"),
+          ...configured[descriptor.kind],
+        };
+        const workflow = freshWorkflow();
+        workflow.spec.steps.push(step);
+        const ctx: KindContext = {
+          workflow,
+          features: [],
+          actionContract: () => null,
+          tableContract: () => null,
+          workflowContract: () => null,
+        };
+        const fields = new Set(
+          [
+            ...allParams(descriptor.form?.(step, ctx), step, ctx),
+            ...allParams(descriptor.settings?.(step, ctx), step, ctx),
+          ].map(({ spec }) => String(spec.path[0])),
+        );
+        fields.add("id");
+        fields.add("kind");
+        const pending = new Set(
+          pendingStepFields(
+            manifest as unknown as LanguageManifest,
+            descriptor.kind,
+          ),
+        );
+        expect([...fields].sort(), descriptor.kind).toEqual(
+          (schema.steps[descriptor.kind] as string[])
+            .filter((name) => !pending.has(name))
+            .sort(),
+        );
+      }
       for (const kind of kinds) {
         const fields = new Set(
           propertyFields(createStep(kind, "step")).map((f) => f.path[0]),
@@ -150,8 +195,25 @@ describe.skipIf(!available)(
       const spec = fields
         .filter((f) => f.path[0] === "spec")
         .map((f) => f.path[1]);
+      // The workflow settings in step details add what the property grid lacks (callable).
+      const settings = [
+        ...workflowSettingsForm().fields,
+        ...(workflowSettingsForm().options ?? []),
+      ]
+        .filter((f) => f.scope === "workflow" && f.path[0] === "spec")
+        .map((f) => String(f.path[1]));
       // Canvas owns steps, ConnectionSlotList the slots, and LlmInspector profiles.
-      expect([...spec, "steps", "connections", "llmProfiles"].sort()).toEqual(
+      expect(
+        [
+          ...new Set([
+            ...spec,
+            ...settings,
+            "steps",
+            "connections",
+            "llmProfiles",
+          ]),
+        ].sort(),
+      ).toEqual(
         ready(manifest.workflow_fields)
           .map((entry) => entry.name)
           .sort(),

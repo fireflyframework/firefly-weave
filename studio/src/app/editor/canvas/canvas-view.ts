@@ -876,25 +876,36 @@ export class CanvasView implements OnInit, DoCheck {
         : recorded
           ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
           : null;
+    // The Runs tab draws the run only: nothing from the editor's executions.
+    // A loop's frame says nothing under it while its playback runs.
+    const runLine = fact
+      ? fact.text
+      : this.viewingRuns() || (state.frame && state.loop && !state.ended)
+        ? ""
+        : (h.summaryOf?.(tile.id) ?? "");
+    // A call that doesn't wait says so on its own line while no run line shows.
+    const detached =
+      !runLine &&
+      tile.kind === "callWorkflow" &&
+      tile.step["mode"] === "detach";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      // The Runs tab draws the run only: nothing from the editor's executions.
-      // A loop's frame says nothing under it while its playback runs.
-      output: fact
-        ? fact.text
-        : this.viewingRuns() || (state.frame && state.loop && !state.ended)
-          ? ""
-          : (h.summaryOf?.(tile.id) ?? ""),
-      outputTone: fact?.tone ?? null,
+      output: detached ? "Doesn't wait" : runLine,
+      outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
         id: tile.id,
         kindLabel,
         // A loop's summary under its frame is in its name, whole.
-        summary: state.frame && fact ? `${summary}, ${fact.text}` : summary,
+        summary:
+          state.frame && fact
+            ? `${summary}, ${fact.text}`
+            : detached
+              ? `${summary}, doesn't wait`
+              : summary,
         status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
@@ -1640,6 +1651,17 @@ export class CanvasView implements OnInit, DoCheck {
     const id = tile.id;
     return [
       { label: "Open", run: () => void h.openStep(id, "details") },
+      // A call step also opens the workflow it calls.
+      ...(tile.kind === "callWorkflow" &&
+      typeof tile.step?.["uses"] === "string" &&
+      tile.step["uses"]
+        ? [
+            {
+              label: "Open workflow",
+              run: () => h.openWorkflow?.(String(tile.step?.["uses"])),
+            },
+          ]
+        : []),
       {
         label: "Rename",
         disabled: locked,

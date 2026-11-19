@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 
 from agent_fixtures import (  # noqa: E402
     CANCEL,
+    CONVERSATION,
     INPUT,
     LOOKUP,
     NOW,
@@ -46,12 +47,15 @@ from test_agent_workflows import catalog, order_action, orders_connector  # noqa
 
 from firefly_weave.compiler.canonical import canonical_digest  # noqa: E402
 from firefly_weave.contracts.access import Scope  # noqa: E402
+from firefly_weave.contracts.agent_conversations import messages_digest  # noqa: E402
 from firefly_weave.contracts.operations import (  # noqa: E402
     CallFact,
     CallReceipt,
     DeadlineFact,
     HumanDecisionReceipt,
     HumanTaskFact,
+    MemoryLoadFact,
+    MemoryReceipt,
     RecordedEvidence,
     SourceReference,
     TaskFact,
@@ -68,6 +72,7 @@ from firefly_weave.runtime.models import (  # noqa: E402
     CallIntent,
     Deadline,
     HumanTaskIntent,
+    MemoryIntent,
     RunState,
     RuntimeEvent,
     TaskIntent,
@@ -98,14 +103,20 @@ def recorded(flow, script):
     tasks: dict[str, TaskFact] = {}
     humans: dict[str, tuple[HumanTaskFact, HumanTaskIntent]] = {}
     calls: dict[str, CallFact] = {}
+    loads: dict[str, MemoryLoadFact] = {}
     events = []
     for index, (kind, data) in enumerate(script, 1):
         if callable(data):
             data = data(humans)
         event = RuntimeEvent(id=uuid4(), type=kind, timestamp=NOW, sequence=index, data=data)
         change = transition(state, event, flow)
-        issued, issued_humans, issued_calls, issued_deadlines = [], [], [], []
+        issued, issued_humans, issued_calls, issued_deadlines, issued_loads = [], [], [], [], []
         for command in change.commands:
+            if isinstance(command, MemoryIntent) and command.op == "load":
+                loads[command.node_id] = MemoryLoadFact(
+                    load_id=uuid4(), node_id=command.node_id, key_hash=command.key_hash
+                )
+                issued_loads.append(loads[command.node_id])
             if isinstance(command, TaskIntent):
                 turn = parse_agent_key(command.node_id)
                 tasks[command.node_id] = TaskFact(
@@ -150,6 +161,16 @@ def recorded(flow, script):
             human_receipt = HumanDecisionReceipt(task=humans[node][0], actor_id=UUID(data["actor_id"]), accepted_at=NOW)
         if kind == "call_completed":
             call_receipt = CallReceipt(call=calls[node], child_run_id=UUID(CHILD), status=data["status"])
+        memory_receipt = None
+        if kind == "memory_loaded":
+            # The load row the platform delivered: its version, expiry and test flag, and the messages it gave.
+            memory_receipt = MemoryReceipt(
+                load=loads[node],
+                version=data["version"],
+                expired=data["expired"],
+                test=data.get("test", False),
+                messages_digest=messages_digest(data["messages"]),
+            )
         evidence = RecordedEvidence(
             provenance="synthetic_kernel",
             run_id=run_id,
@@ -166,6 +187,8 @@ def recorded(flow, script):
             task_receipt=task_receipt,
             human_receipt=human_receipt,
             call_receipt=call_receipt,
+            issued_memory_loads=issued_loads,
+            memory_receipt=memory_receipt,
         )
         events.append(event.model_copy(update={"evidence": evidence.model_dump(mode="json")}))
         state = change.state
@@ -427,3 +450,104 @@ def test_step_facts_list_turn_and_tool_instances_by_key():
         "support#1.2",
         "support#2",
     }
+
+
+# Conversation memory: replay reads only the recorded memory_loaded event and its receipt, never the conversation.
+REMEMBERED = [
+    {"role": "user", "content": "What is the status of order A-17?"},
+    {"role": "assistant", "content": "A-17 has shipped."},
+]
+
+
+def conversation_flow():
+    memory = {**CONVERSATION, "key": {"ref": "/input/region"}}
+    return artifact(plain(answering(workflow(agent(tools=[LOOKUP], memory=memory)))))
+
+
+def loaded(flow, **changes):
+    """The memory_loaded event the platform delivered for the run's agent, with its data as recorded."""
+    started = RuntimeEvent(id=uuid4(), type="started", timestamp=NOW, sequence=1, data={})
+    first = transition(RunState(input=INPUT), started, flow)
+    [load] = [command for command in first.commands if isinstance(command, MemoryIntent)]
+    data = {"node_id": "support", "key_hash": load.key_hash, "version": 3, "expired": False, "messages": REMEMBERED}
+    return ("memory_loaded", data | changes)
+
+
+def conversation_script(flow, **changes):
+    return [("started", {"admission_policy": "classified-v1"}), loaded(flow, **changes), turn("support#1", final())]
+
+
+def test_a_run_of_a_conversation_agent_replays_consistent_without_the_table():
+    flow = conversation_flow()
+    events = recorded(flow, conversation_script(flow))
+
+    report = replay(flow, events)
+
+    assert report.status == "consistent", report
+    assert report.final_state is not None and report.final_state.output == "Order A-17 has shipped."
+    assert events[1].evidence is not None and events[1].evidence["memory_receipt"]["version"] == 3
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda receipt: receipt | {"messages_digest": messages_digest([])},
+        lambda receipt: receipt | {"version": 4},
+        lambda receipt: receipt | {"expired": True},
+        lambda receipt: receipt | {"test": True},
+        lambda receipt: receipt | {"load": receipt["load"] | {"load_id": str(uuid4())}},
+    ],
+    ids=["messages", "version", "expired", "test", "another-load"],
+)
+def test_a_tampered_memory_receipt_reports_its_code(tamper):
+    flow = conversation_flow()
+    events = list(recorded(flow, conversation_script(flow)))
+    evidence = dict(events[1].evidence or {})
+    evidence["memory_receipt"] = tamper(evidence["memory_receipt"])
+    events[1] = events[1].model_copy(update={"evidence": evidence})
+
+    report = replay(flow, tuple(events))
+
+    assert codes(report) == ("inconsistent", ["WV-REPLAY-MEMORY"]) and report.last_verified_sequence == 1
+
+
+def test_a_memory_loaded_without_a_receipt_is_incomplete():
+    flow = conversation_flow()
+    events = list(recorded(flow, conversation_script(flow)))
+    evidence = dict(events[1].evidence or {})
+    del evidence["memory_receipt"]
+    events[1] = events[1].model_copy(update={"evidence": evidence})
+
+    report = replay(flow, tuple(events))
+
+    assert codes(report) == ("incomplete", ["WV-REPLAY-MEMORY-PROVENANCE"]) and report.last_verified_sequence == 1
+
+
+def test_a_load_the_evidence_never_issued_is_incomplete():
+    flow = conversation_flow()
+    events = list(recorded(flow, conversation_script(flow)))
+    evidence = dict(events[0].evidence or {})
+    del evidence["issued_memory_loads"]
+    events[0] = events[0].model_copy(update={"evidence": evidence})
+
+    report = replay(flow, tuple(events))
+
+    assert codes(report) == ("incomplete", ["WV-REPLAY-MEMORY-PROVENANCE"]) and report.last_verified_sequence == 0
+
+
+def test_history_keeps_the_loaded_messages():
+    flow = conversation_flow()
+    events = recorded(flow, conversation_script(flow))
+
+    shown = safe_event(events[1], flow)
+
+    assert shown.data == events[1].data and shown.data["messages"] == REMEMBERED
+    assert "omissions" not in shown.data
+
+
+def test_history_drops_a_field_a_memory_loaded_event_never_carries():
+    flow = conversation_flow()
+    _, data = loaded(flow)
+    event = RuntimeEvent(id=uuid4(), type="memory_loaded", timestamp=NOW, sequence=2, data=data | {"key": "eu"})
+
+    assert "key" not in safe_event(event, flow).data

@@ -30,6 +30,7 @@ from firefly_weave.contracts.language_features import (
     ERROR_FIELDS,
     ERROR_KINDS,
     KIND_FEATURES,
+    MEMORY_SCOPE_FEATURES,
     OPERATOR_FEATURES,
     STEP_FIELD_FEATURES,
     UNDO_FIELDS,
@@ -42,6 +43,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
     {
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
@@ -108,6 +110,7 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
                         expressions.append((step[name], f"{location}/{name}"))
                 if kind == "agent":
                     expressions.extend(_agent_expressions(step, location))
+                    found.extend(_memory_scope(step, location))
                 fields = (UNDO_FIELDS if kind in UNDO_KINDS else ()) + (ERROR_FIELDS if kind in ERROR_KINDS else ())
                 for name in fields:
                     field_feature = STEP_FIELD_FEATURES[name]
@@ -145,6 +148,16 @@ def _agent_expressions(step: JsonObject, path: str) -> list[tuple[JsonValue, str
     if isinstance(memory, dict) and isinstance(memory.get("key"), dict):
         found.append((memory["key"], f"{path}/memory/key"))
     return found
+
+
+def _memory_scope(step: JsonObject, path: str) -> list[UnsupportedUse]:
+    """An AI agent's memory scope, when that scope needs a feature this compiler does not compile."""
+    memory = step.get("memory")
+    scope = memory.get("scope") if isinstance(memory, dict) else None
+    feature = MEMORY_SCOPE_FEATURES.get(scope) if isinstance(scope, str) else None
+    if feature is None or feature in COMPILED_FEATURES:
+        return []
+    return [UnsupportedUse(path + "/memory/scope", f"The {scope} memory scope", feature)]
 
 
 def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:

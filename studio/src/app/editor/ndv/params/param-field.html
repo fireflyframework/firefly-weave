@@ -28,6 +28,11 @@ SPDX-License-Identifier: Apache-2.0
   [class.is-option]="entry.option"
   [class.has-error]="line.kind === 'error' || !!local"
   [class.is-readonly]="!!reason"
+  [class.has-actions-beside]="
+    !!spec.actionsBeside &&
+    !!spec.actions?.length &&
+    (!reason || spec.actions.length === 1)
+  "
   (focusout)="left($event)"
 >
   <div class="param-label-row">
@@ -51,7 +56,8 @@ SPDX-License-Identifier: Apache-2.0
     @if (spec.labelHidden && spec.hint) {
       <p class="param-intro">{{ spec.hint }}</p>
     }
-    @if (spec.required && !quiet) {
+    <!-- A read-only field (a run, a locked setting) asks for nothing: no star. -->
+    @if (spec.required && !quiet && !readOnly()) {
       <span class="param-required" aria-hidden="true">*</span>
     }
     @if (spec.description) {
@@ -359,6 +365,7 @@ SPDX-License-Identifier: Apache-2.0
                   type="button"
                   role="radio"
                   [id]="$first ? ids.control : null"
+                  [attr.aria-label]="option.label"
                   [attr.aria-checked]="selectedIndex() === option.value"
                   [disabled]="!!reason || option.disabled"
                   [attr.title]="option.description ?? null"

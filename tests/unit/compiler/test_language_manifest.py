@@ -134,6 +134,7 @@ def test_limits_follow_their_sources():
 def test_features_are_what_the_target_runs():
     assert ADVERTISED_FEATURES == (
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
@@ -144,6 +145,7 @@ def test_features_are_what_the_target_runs():
     )
     assert language_manifest().features == [
         "ai.agent",
+        "ai.memory",
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
@@ -245,14 +247,10 @@ def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
     assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
         "agent",
-        "callWorkflow",
         "transaction",
     }
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
-    assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {
-        "callable",
-        "eventTrigger",
-    }
+    assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {"eventTrigger"}
     assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo", "onError"}
 
 

@@ -751,6 +751,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         Blocked,
         CompileSummary,
         ExecuteResponse,
+        FrameView,
         LoopProgress,
         SelectedScope,
         TraceEntry,
@@ -808,17 +809,24 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
     trace: list[TraceEntry] = []
     seen: set[tuple[str | None, str]] = set()
+    # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing.
+    frames = {frame.key: frame for frame in view.frames if frame.status != "not_simulated"}
     # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
     timed_out = view.status in {"timed_out", "cancelled"}
     failed = (view.status == "failed" or timed_out) and not view.diagnostics
     for boundary in data.boundaries:
-        if boundary.kind != "node" or boundary.node_id is None or boundary.frame is not None:
+        if boundary.kind != "node" or boundary.node_id is None:
             continue
-        key = boundary.node_id
-        if node_of(key) not in steps or (None, key) in seen:
+        frame, key = boundary.frame, boundary.node_id
+        # A step inside a called workflow comes with the frame it ran in; its key is its own workflow's. The nodes a
+        # compiled workflow adds (@start, @end, @join…) are no one's steps.
+        step_of_a_run = node_of(key) in steps if frame is None else frame in frames and not key.startswith("@")
+        if not step_of_a_run or (frame, key) in seen:
             continue
-        seen.add((None, key))
-        reached = "completed" if key in data.outputs else "waiting" if key in view.active_nodes else "running"
+        seen.add((frame, key))
+        path = key if frame is None else f"{frame}/{key}"
+        active = view.active_nodes if frame is None else frames[frame].active_nodes
+        reached = "completed" if path in data.outputs else "waiting" if key in active else "running"
         entry: dict[str, Any] = {
             "index": len(trace),
             "nodeId": node_of(key),
@@ -826,18 +834,27 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             "kind": cast(str, boundary.node_kind),
             "status": reached,
         }
-        if key in data.inputs:
-            entry["input"] = data.inputs[key]
-        if key in data.outputs:
-            entry["output"] = data.outputs[key]
+        if frame is not None:
+            entry["frame"] = frame
+        if path in data.inputs:
+            entry["input"] = data.inputs[path]
+        if path in data.outputs:
+            entry["output"] = data.outputs[path]
         trace.append(TraceEntry.model_validate(entry))
     if unsimulated_at is not None:
         failed = True
-    if failed and trace and trace[-1].status != "completed":
-        trace[-1] = trace[-1].model_copy(update={"status": "failed"})
+    # Where each run stopped: the simulated workflow's last step, and the last step of each called run that failed.
+    ended: set[str | None] = {key for key, frame in frames.items() if _frame_status(frame.status) == "failed"}
+    if failed:
+        ended.add(None)
+    for frame in ended:
+        last_of_run = next((i for i in reversed(range(len(trace))) if trace[i].frame == frame), None)
+        if last_of_run is not None and trace[last_of_run].status != "completed":
+            trace[last_of_run] = trace[last_of_run].model_copy(update={"status": "failed"})
+    own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
-        at = trace[-1] if trace and trace[-1].status == "failed" else None
+        at = own[-1] if own and own[-1].status == "failed" else None
         node = next((n for n in simulator.ir.graph.nodes if at is not None and n.id == at.nodeId), None)
         if view.status == "cancelled":
             words = "The simulated run was cancelled."
@@ -872,9 +889,15 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         if last is not None and last not in data.outputs:
             from firefly_weave.runtime.agents import parse_agent_key
 
+            # Inside a called workflow the key is the frame's, then the step's own: "notify/enrich".
+            inside, _, last = last.rpartition("/")
             step = node_of(last)
             called = parse_agent_key(last)
-            if "node:" + last in misfits and called is not None and called.call is not None:
+            if inside:
+                # Its test data goes under the called workflow's mocks, which apply wherever that workflow runs.
+                workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
+                message = f"Step {step} {f'in {workflow} ' if workflow else ''}needs test data."
+            elif "node:" + last in misfits and called is not None and called.call is not None:
                 # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
                 message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
             elif {"node:" + last, "node:" + step} & misfits:
@@ -886,10 +909,11 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 nodeId=step,
                 instanceKey="" if last == step else last,
                 message=message,
+                **({"frame": inside} if inside else {}),
             )
     if blocked is None and target.mode != "workflow" and view.status not in {"paused"} and not view.diagnostics:
         step = cast(str, target.stepId)
-        if not any(entry.nodeId == step for entry in trace):
+        if not any(entry.nodeId == step and entry.frame is None for entry in trace):
             for switch in reversed(_enclosing(whole, step)):
                 taken = next(
                     (
@@ -942,6 +966,18 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             else None
         ),
         blocked=blocked,
+        **(
+            {
+                "frames": [
+                    FrameView(
+                        key=key, workflow=frame.workflow, callNode=frame.call_node, status=_frame_status(frame.status)
+                    )
+                    for key, frame in frames.items()
+                ]
+            }
+            if frames
+            else {}
+        ),
         # Only what Studio reads: the paths decisions took. The run's values are in the trace already.
         variables={"branches": view.variables["branches"]} if "branches" in view.variables else {},
         diagnostics=[
@@ -949,6 +985,15 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             *extra,
         ],
     )
+
+
+def _frame_status(status: str) -> Literal["running", "waiting", "completed", "failed"]:
+    """A called run's status in the run log's words: one that was cancelled or timed out failed where it stopped."""
+    if status == "succeeded":
+        return "completed"
+    if status in {"failed", "cancelled", "timed_out"}:
+        return "failed"
+    return "waiting" if status in {"waiting", "suspended"} else "running"
 
 
 def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:

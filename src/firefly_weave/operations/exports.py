@@ -147,6 +147,9 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         "wait_elapsed": {"node_id", "deadline", "wait_id", "started"},
         "signal_received": {"node_id", "output", "accepted_at", "deadline"},
         "call_completed": {"node_id", "generation", "child_run_id", "status", "output", "effect"},
+        # A loaded conversation keeps its messages: they were scrubbed and redacted when they were remembered, and
+        # replay reads them from here, never from the conversation.
+        "memory_loaded": {"node_id", "key_hash", "version", "expired", "test", "code", "messages"},
         # A step's final failure: codes, outcomes and counts only.
         "step_failed": {
             "node_id",

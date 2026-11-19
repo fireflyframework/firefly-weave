@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A loop's progress while Execute workflow plays back on the canvas: how
 // many items finished at each step of the playback, then how it ended.
+import "@angular/compiler";
 import { describe, expect, it } from "vitest";
 import {
   loopProgress,

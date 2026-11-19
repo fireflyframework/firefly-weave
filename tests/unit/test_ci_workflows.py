@@ -16,6 +16,7 @@
 
 """CI pins its Linux image and its actions, and runs a cross-platform tier on macOS and Windows (acceptance spec §4)."""
 
+import math
 import os
 import re
 import shutil
@@ -283,6 +284,25 @@ def test_canvas_measurements_run_on_their_own_runner_without_competing_workers_o
     for name, job in checks.items():
         if name != "studio-performance":
             assert not any("--grep @performance" in command for command in runs(job)), name
+
+
+# `playwright install --with-deps` also fetches about 32 MB of fonts and graphics packages from the runner's Ubuntu
+# mirror. In the Checks runs of 16 to 19 November 2026, about one studio job in five got them at 60 to 75 kB/s, and the
+# slowest install took 611 s; the browser downloads themselves took under 10 s.
+SLOWEST_PLAYWRIGHT_INSTALL_SECONDS = 611
+
+
+def test_every_job_that_installs_playwrights_os_packages_outlasts_a_slow_mirror():
+    # A timeout is about 1.5 times the slowest run, rounded up to 5 minutes; the install alone sets this floor.
+    floor = 5 * math.ceil(1.5 * SLOWEST_PLAYWRIGHT_INSTALL_SECONDS / 60 / 5)
+    installing = {
+        (path.name, name): job["timeout-minutes"]
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for name, job in jobs(path.name).items()
+        if any("playwright install --with-deps" in step.get("run", "") for step in job.get("steps", []))
+    }
+    assert ("ci.yml", "studio-performance") in installing
+    assert {job: minutes for job, minutes in installing.items() if minutes < floor} == {}
 
 
 def test_the_studio_check_fails_unless_every_studio_job_passed():

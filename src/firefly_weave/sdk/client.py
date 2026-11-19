@@ -29,6 +29,16 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from firefly_weave.compiler.api import CompileResult
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_conversations import (
+    AgentConversation,
+    AgentConversationDeletion,
+    AgentConversationSummary,
+    ConversationKeyHash,
+    ConversationPurge,
+    ConversationPurgeRequest,
+    ConversationWorkflow,
+    conversation_key_hash,
+)
 from firefly_weave.contracts.agent_log import AgentLogPage, agent_log_key
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
@@ -155,6 +165,18 @@ if TYPE_CHECKING:
     from firefly_weave.private_origins import Purpose
 
 Collection = Literal["workflows", "actions", "connectors", "decision-tables"]
+_CONVERSATION_WORKFLOW: TypeAdapter[str] = TypeAdapter(ConversationWorkflow)
+_CONVERSATION_KEY_HASH: TypeAdapter[str] = TypeAdapter(ConversationKeyHash)
+
+
+def conversation_hash(workflow: str, key: str | None, key_hash: str | None) -> str:
+    """The key hash a conversation is named by: ``key`` hashed with ``workflow`` on this machine, or ``key_hash`` as
+    given. Exactly one is required; a key is never sent."""
+    if (key is None) == (key_hash is None):
+        raise ValueError("Name a conversation by exactly one of key and key_hash")
+    if key is not None:
+        return conversation_key_hash(_CONVERSATION_WORKFLOW.validate_python(workflow), key)
+    return _CONVERSATION_KEY_HASH.validate_python(key_hash)
 
 
 def _approved_plaintext(base_url: str, transport: object, purpose: Purpose | None) -> bool:
@@ -258,6 +280,8 @@ class WeaveClient:
         adapter: str | None = None,
         kind: str | None = None,
         key: str | None = None,
+        workflow: str | None = None,
+        key_hash: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
         import httpx
@@ -277,6 +301,9 @@ class WeaveClient:
             "kind": kind,
             # An agent step or one of its activations, refused here unless it is one; loop indexes are encoded.
             "key": quote(agent_log_key(key), safe="") if key is not None else None,
+            # An agent conversation's workflow and key hash, refused here unless they are one.
+            "workflow": _CONVERSATION_WORKFLOW.validate_python(workflow) if workflow is not None else None,
+            "key_hash": _CONVERSATION_KEY_HASH.validate_python(key_hash) if key_hash is not None else None,
         }
         if collection is not None and collection not in {
             "drafts",
@@ -461,6 +488,54 @@ class WeaveClient:
         iteration order, or one activation's instance key such as ``support[2]``."""
         query: dict[str, str | int] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
         return cast(AgentLogPage, await self.invoke("runs.agent_log", identifier=run, key=key, query=query))
+
+    async def list_agent_conversations(
+        self, *, workflow: str | None = None, limit: int = 50, cursor: str | None = None
+    ) -> Page[AgentConversationSummary]:
+        """The environment's live agent conversations, the most recently updated first; ``workflow`` keeps one
+        workflow's."""
+        query: dict[str, str | int] = {
+            **({"workflow": workflow} if workflow is not None else {}),
+            "limit": limit,
+            **({"cursor": cursor} if cursor is not None else {}),
+        }
+        return cast(Page[AgentConversationSummary], await self.invoke("agent_conversations.list", query=query))
+
+    async def read_agent_conversation(
+        self, workflow: str, *, key: str | None = None, key_hash: str | None = None
+    ) -> AgentConversation:
+        """One conversation with its remembered messages, named by its ``key`` (hashed here, never sent) or
+        ``key_hash``."""
+        return cast(
+            AgentConversation,
+            await self.invoke(
+                "agent_conversations.read", workflow=workflow, key_hash=conversation_hash(workflow, key, key_hash)
+            ),
+        )
+
+    async def delete_agent_conversation(
+        self, workflow: str, *, key: str | None = None, key_hash: str | None = None
+    ) -> AgentConversationDeletion:
+        """Delete one conversation, named by its ``key`` (hashed here, never sent) or ``key_hash``; the answer names
+        the runs that loaded it."""
+        return cast(
+            AgentConversationDeletion,
+            await self.invoke(
+                "agent_conversations.delete", workflow=workflow, key_hash=conversation_hash(workflow, key, key_hash)
+            ),
+        )
+
+    async def purge_workflow_conversations(self, workflow: str, idempotency_key: str) -> ConversationPurge:
+        """Delete up to 1,000 of a workflow's conversations; call again with a new key while ``more`` is true."""
+        return cast(
+            ConversationPurge,
+            await self.invoke(
+                "agent_conversations.purge_workflow",
+                workflow=workflow,
+                body=ConversationPurgeRequest(confirm_workflow=workflow),
+                idempotency_key=idempotency_key,
+            ),
+        )
 
     async def read_studio_document(self, draft: UUID, kind: StudioDocumentKind) -> StudioDocument:
         """A draft's canvas or test data, as the platform keeps it."""

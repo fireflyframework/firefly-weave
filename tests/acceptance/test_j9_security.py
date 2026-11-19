@@ -76,6 +76,8 @@ async def probe(client: Any, row: Any, materialize: Any) -> tuple[int, str]:
             collection=row.collection,
             kind=row.kind,
             key=row.key,
+            workflow=row.workflow,
+            key_hash=row.key_hash,
             body=body,
             query=query,
             # An operation that needs a precondition names revision 1 of the random target.

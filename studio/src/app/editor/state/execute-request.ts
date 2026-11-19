@@ -17,10 +17,21 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What Execute step, Execute previous steps and Execute workflow send to the
 // Studio host: the steps a target needs (the host's own slice, mirrored), and
-// the request built from test data and the last results. DOM-free.
+// the request built from test data and the last results, with the workflows
+// it calls (a draft on this computer goes with its source, so it runs here
+// too). DOM-free.
 import type { Step, Workflow } from "../../model";
+import { calledReferenceSites } from "../activation/callee-pins";
 import type { Json } from "../ndv/registry";
-import type { ExecuteRequest, ExecuteTarget, MockKey } from "./execution";
+import type {
+  Blocked,
+  ExecuteRequest,
+  ExecuteResponse,
+  ExecuteTarget,
+  FrameView,
+  MockKey,
+  TraceEntry,
+} from "./execution";
 import { instanceStep } from "./instance-keys";
 import type { LastResults } from "./last-results";
 import type { StudioTestData } from "./test-data";
@@ -89,10 +100,34 @@ function everyId(step: Step): string[] {
 
 /** Kinds whose output a mock stands for in a simulation (the rest compute theirs). */
 export const MOCKED_KINDS: ReadonlySet<string> = new Set(["action", "llm"]);
+const isCall = (step: Step | undefined) =>
+  (step?.kind as string) === "callWorkflow" && step?.["mode"] !== "detach";
+/** A pin stands in for these steps; a waiting call's too. */
 const mocked = (step: Step | undefined): boolean =>
-  !!step &&
-  (MOCKED_KINDS.has(step.kind) ||
-    ((step.kind as string) === "callWorkflow" && step["mode"] !== "detach"));
+  !!step && (MOCKED_KINDS.has(step.kind) || isCall(step));
+/** A last result stands in for these: not a call, whose called workflow runs here again. */
+const replayed = (step: Step | undefined): boolean =>
+  !!step && MOCKED_KINDS.has(step.kind);
+
+/** The most called workflows the host runs in one test. */
+export const CALLEE_LIMIT = 50;
+/** A draft on this computer that the workflow calls, as the host compiles it. */
+export interface LocalSource {
+  source: string;
+  format: "yaml" | "json";
+}
+/** The workflows an execution reaches: every called reference, and the drafts here among them. */
+export interface CalledWorkflows {
+  sources: Readonly<Record<string, LocalSource>>;
+  references: readonly string[];
+}
+/** Why the request can't go: it would run more called workflows than the host takes; null when it fits. */
+export function tooManyCallees(request: ExecuteRequest): string | null {
+  const count = Object.keys(request.workflows ?? {}).length;
+  return count > CALLEE_LIMIT
+    ? `This test would run ${count} called workflows. Studio can run at most ${CALLEE_LIMIT} in one test.`
+    : null;
+}
 
 export interface ExecuteParts {
   source: string;
@@ -105,6 +140,8 @@ export interface ExecuteParts {
   results: LastResults | null;
   /** The workflow input to use when test data has none (a sample of its fields). */
   sampleInput: Json;
+  /** The workflows it reaches and the drafts here among them; without it, the ones it calls directly. */
+  callees?: CalledWorkflows;
   target: ExecuteTarget;
   now: Date;
 }
@@ -140,21 +177,33 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
     if (
       result.output === undefined ||
       !sent(key) ||
-      !mocked(steps.get(step)) ||
+      !replayed(steps.get(step)) ||
       Object.hasOwn(pins, key) ||
       Object.hasOwn(pins, step)
     )
       continue;
     mocks[`node:${key}`] = result.output;
   }
-  const callees: Record<string, { mocks: Record<MockKey, Json> }> = {};
-  for (const [reference, callee] of Object.entries(testData.workflows ?? {}))
-    callees[reference] = {
+  // Every workflow it reaches goes, so the host runs it from its source here
+  // or its copy in the project; test data adds the outputs inside it.
+  const reached = parts.callees ?? {
+    sources: {},
+    references: calledReferenceSites(workflow).map((site) => site.reference),
+  };
+  const callees: Record<
+    string,
+    Partial<LocalSource> & { mocks: Record<MockKey, Json> }
+  > = {};
+  for (const reference of [
+    ...reached.references,
+    ...Object.keys(testData.workflows ?? {}),
+  ])
+    callees[reference] ??= {
+      ...reached.sources[reference],
       mocks: Object.fromEntries(
-        Object.entries(callee.mocks ?? {}).map(([key, mock]) => [
-          `node:${key}`,
-          mock.output,
-        ]),
+        Object.entries(testData.workflows?.[reference]?.mocks ?? {}).map(
+          ([key, mock]) => [`node:${key}`, mock.output],
+        ),
       ) as Record<MockKey, Json>,
     };
   const input = testData.input?.value;
@@ -176,4 +225,73 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
     target: parts.target,
     now: parts.now.toISOString(),
   };
+}
+
+/**
+ * The host's block on a call that waits, in the words of a call: it needs
+ * test data (a pin on the call) or the workflow it calls. Other blocks stay.
+ */
+export function calleeBlock(workflow: Workflow, blocked: Blocked): Blocked {
+  if (blocked.reason !== "missing_mock" || blocked.instanceKey) return blocked;
+  let found: Step | undefined;
+  const visit = (list: Step[]) => {
+    for (const step of list) {
+      if (step.id === blocked.nodeId) found = step;
+      branchesOf(step).forEach(visit);
+    }
+  };
+  visit(workflow.spec.steps ?? []);
+  const uses = found && isCall(found) ? String(found["uses"] ?? "") : "";
+  if (!uses) return blocked;
+  const at = uses.lastIndexOf("@");
+  return {
+    ...blocked,
+    reason: "callee",
+    message: `Call ${at > 0 ? uses.slice(0, at) : uses} needs test data or the workflow itself.`,
+  };
+}
+
+/** What an execution ran inside the workflows it called: for the run log, never read as this workflow's steps. */
+export interface CalledRuns {
+  /** Each called workflow's run, in the order the calls started. */
+  frames: FrameView[];
+  /** The steps that ran inside them, each with its frame, in the order they ran. */
+  trace: TraceEntry[];
+  /** Where the run stopped inside one, as the host says it: that workflow's step, and its frame. */
+  blocked: Blocked | null;
+}
+
+/**
+ * The host's answer as the editor reads it: only this workflow's steps in
+ * the trace, and a stop inside a called workflow named on this workflow's
+ * call that runs it, so a called workflow's step never passes for one of
+ * this workflow's with the same ID. What ran inside called workflows goes
+ * apart, for the run log (null when nothing was called).
+ */
+export function splitCalls(
+  workflow: Workflow,
+  answer: ExecuteResponse,
+): { response: ExecuteResponse; called: CalledRuns | null } {
+  const { frames = [], ...rest } = answer;
+  const inside = answer.trace.filter((entry) => entry.frame);
+  const stop = answer.blocked;
+  const response: ExecuteResponse = {
+    ...rest,
+    trace: answer.trace.filter((entry) => !entry.frame),
+  };
+  if (stop?.frame) {
+    // The call of this workflow the stop is under: the frame's first key.
+    const call = stop.frame.split("/")[0];
+    const step = instanceStep(call);
+    response.blocked = {
+      ...stop,
+      nodeId: step,
+      instanceKey: call === step ? "" : call,
+    };
+  } else if (stop) response.blocked = calleeBlock(workflow, stop);
+  const called =
+    frames.length || inside.length
+      ? { frames, trace: inside, blocked: stop?.frame ? stop : null }
+      : null;
+  return { response, called };
 }

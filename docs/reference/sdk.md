@@ -515,6 +515,26 @@ takes the empty `RetirementRequest` body. A refusal raises `WeaveError` with its
 when setup finds no admitted Agentic worker release; see
 [AI discovery, readiness and setup](api.md#ai-discovery-readiness-and-setup).
 
+## AI agent conversations through the SDK
+
+An AI agent with [conversation memory](ai-agents.md#conversation-memory) keeps
+each conversation under a key hash. Name a conversation by its `key`, which the
+client hashes with the workflow's name before anything is sent, or by its
+`key_hash`; pass exactly one. Inside an active client context:
+
+```python
+page = await client.list_agent_conversations(workflow="support-chat", limit=20)
+conversation = await client.read_agent_conversation("support-chat", key="C-4")
+deletion = await client.delete_agent_conversation("support-chat", key_hash=conversation.key_hash)
+purged = await client.purge_workflow_conversations("support-chat", idempotency_key="erase-2026-11-18")
+```
+
+Reading needs `run.read`; deleting and purging need `run.purge`. An empty key, a
+key longer than 256 characters, a malformed key hash or a workflow that isn't a
+name raises `ValueError` before any request. `deletion.loaded_by` lists up to 100
+runs that loaded the conversation. A purge deletes up to 1,000 conversations;
+call it again with a new idempotency key while `purged.more` is true.
+
 ## Device login, PKCE and stores
 
 Use this section when your own application signs people in, instead of

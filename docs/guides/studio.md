@@ -59,6 +59,7 @@ happens on the platform and keeps running after you close Studio.
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
 | Configure steps in the new editor's step details | Studio's local host | [Configure a step in step details](#configure-a-step-in-step-details) |
 | Edit decision tables in a grid and try inputs offline | Studio's local host | [Decision tables in the grid](#decision-tables-in-the-grid) |
+| Call one workflow from another, and test both together | Studio's local host; a platform to call published workflows | [Call a workflow](#call-a-workflow) and [let other workflows call this one](#let-other-workflows-call-this-one) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
 | Call a REST API from a workflow without writing a connector | Connected Studio; an operator has prepared the built-in HTTP connector | [Call a REST API from a step](#call-a-rest-api-from-a-step) |
@@ -1460,6 +1461,103 @@ and a later Execute step replaces it. **Pin output** keeps it as test data
 from that run. The platform then treats the workflow's test data as holding
 run data, so reading it back needs permission to read runs in that
 environment.
+
+### Call a workflow
+
+A **Call a workflow** step runs another workflow and, if you choose, waits for
+its result. Use it to split a long workflow into parts that you can test and
+publish on their own, and to reuse one workflow from others.
+
+1. Select a **+** and choose **Call a workflow** under **Flow**. Its tile reads
+   "Setup needed: choose a workflow to call" until you choose one.
+1. In **Workflow**, choose the version to call. The list groups the project's
+   published workflows under **In this project** and the drafts kept on this
+   computer under **On this computer**; each workflow's versions sit under its
+   name, newest first. A version that doesn't let this workflow call it stays
+   in the list with the compiler's reason, and you can't choose it. When Studio can't tell,
+   it says so, for example "Studio can't tell whether customer-profile 2.0.0
+   allows this workflow.", and you can still choose it. Not connected, the list
+   shows only the drafts on this computer and says "Connect to a platform to
+   call published workflows."; without permission to read the project's
+   catalog, it says "You can't read this project's published workflows here."
+1. Map **Input**. Its rows come from the called workflow's input fields under
+   "From notify-customer's input" and mark the required ones. When Studio
+   can't read that input, **Input** takes free-form JSON and says "Studio can't
+   read notify-customer's input."
+1. Choose **When it runs**: **Wait for its result** reads the called
+   workflow's result when it finishes; **Start it and continue** lets it run on
+   its own and reads no result; its tile then reads "Doesn't wait" on a line of
+   its own.
+1. For a call that waits, choose **If it fails**: **Stop this workflow** or
+   **Continue with the result status**. Without a choice, a failed call stops
+   this workflow.
+
+**Add option** also offers **Business key**, your own reference for the run the
+call starts, such as an order number. **Open workflow** beside **Workflow**
+opens the version you chose: its draft on this computer when there is one,
+otherwise the published version. When the version can't be found, **Choose
+another** opens the list again. The platform checks every call again when it
+validates, publishes and activates the workflow, whatever the list showed.
+
+**Execute it.** A call runs only when the whole workflow executes, so its step
+details offer **Execute workflow** and no **Execute step**. Execute workflow
+runs a called workflow kept on this computer as part of the test, and a
+published one from the project's copy; one test runs at most 50 called
+workflows. The run log lists each called workflow under the call that ran it,
+and the workflows it called under their own steps: one that finished starts
+closed, one that failed or still waits opens on its steps. Enter and Space open
+and close a called workflow's row, → opens it, ← closes it, and Escape inside
+its steps closes it and returns to its row. The run log's note names the
+workflows that ran, such as "notify-customer and customer-profile ran on this
+computer."
+
+**Give it test data.** A pin on the call step stands for the whole called
+workflow and wins over it. When a step inside a called workflow needs test
+data, the run log says "send in notify-customer needs test data" and opens on
+that step: **Set test output** keeps its output with
+notify-customer's test data, so it answers that step wherever notify-customer
+runs, and executes again. When neither the called workflow nor a pin is
+available, the call's Output says "Call notify-customer needs test data or the
+workflow itself." with **Open workflow**, and **Set test output** when Studio
+knows what notify-customer returns.
+
+**In an environment.** **Execute workflow in** *environment* and **Activate**
+pin the current activation of each workflow the draft calls in that
+environment; the activation dialog lists each under **Called workflows**, such
+as "notify-customer 1.0.0 · activation 3" for its third activation. A called workflow that isn't active
+there stops it: "This workflow calls notify-customer 1.0.0, which isn't active
+in Production. Activate it first."
+
+**On the Runs tab**, a call step's Output starts with the run it started, such
+as "Ran as run 9b1c4e2a of notify-customer" followed by that run's version,
+status and duration once Studio reads them, and **Open run**, which opens that
+run in notify-customer's Runs tab. A call that doesn't wait reads "Started run
+9b1c4e2a of notify-customer" instead, and says that this workflow didn't wait
+for it.
+
+### Let other workflows call this one
+
+A workflow can be called only when it says so. Add the **Called by a workflow**
+trigger: in **+**, choose it under **Triggers**. Its step details have three
+sections:
+
+- **Who can call it.** **Any workflow in this project**, or **Only these
+  workflows**, followed by their names: select **Add a workflow** and type a
+  name. Up to 100 workflows can be named, and every version of a named workflow
+  counts. The tile then names who may call it, such as "Only 2 workflows" or
+  "Any workflow" for each one.
+- **Interface.** What callers send and read: the input and the result, each
+  with **Edit**, which opens the schema designer.
+- **Called by.** When you are connected, the published workflows that call this
+  one, each with its version and the step that calls it, and whether it waits
+  for the result. A workflow that calls this one but isn't allowed comes last,
+  with **Allow it**, which adds its name to **Only these workflows**. Before
+  anything is published that calls it, the list says "No published workflow
+  calls this one yet."
+
+**Callable by other workflows** in the workflow settings is the same setting.
+Before you remove the trigger or turn that setting off, Studio asks, and names
+the published workflows that call this one, whose next activation would fail.
 
 ### Read a workflow's runs and debug them
 

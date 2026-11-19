@@ -849,3 +849,11 @@ reason = "Strict JSON UTC calendars the platform accepts or refuses, with the ne
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/callable-corpus.json"
+kind = "commentless"
+reason = "Strict JSON catalog locks, drafts and call steps, with who may call each workflow version as the platform's allows_caller and check_call_target decide it and each call's output as call_output_schema infers it; shared by the Python and Studio suites."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

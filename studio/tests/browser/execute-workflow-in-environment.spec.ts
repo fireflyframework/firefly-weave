@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // replaced on the next Execute; with test calls off the entry says why.
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { PRODUCTION, crmWorkflow, openConnected } from "./connections-po";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
+import { yamlFile } from "./step-details-po";
 import { RUN_IDS, VERSIONS, routeRuns, runFixture } from "./runs-po";
 import { routeStepTests } from "./step-tests-po";
 import { showView } from "./support";
@@ -139,6 +140,147 @@ test("Execute workflow in Production runs the saved draft as a test run and open
   await expect(
     page.locator(`.runs-list [data-run="${RUN_IDS.test}"]`),
   ).toContainText("Test");
+});
+
+/** order-intake, which calls notify-customer 1.0.0 and waits for it. */
+const callingWorkflow = () =>
+  yamlFile(
+    "order-intake.yaml",
+    stringify({
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "order-intake", version: "1.0.0" },
+      spec: {
+        inputSchema: {
+          type: "object",
+          properties: { customerId: { type: "string" } },
+        },
+        outputSchema: { type: "object" },
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            with: { literal: {} },
+          },
+        ],
+        output: { literal: {} },
+      },
+    }),
+  );
+/** notify-customer 1.0.0, published; `answer` holds the listing until it resolves. */
+async function routeCalleeVersion(page: Page, answer?: Promise<void>) {
+  await page.route(/\/projects\/[^/]+\/workflows\?/, async (route) => {
+    await answer;
+    return route.fulfill({
+      json: {
+        items: [{ id: "v-notify", name: "notify-customer", version: "1.0.0" }],
+        next_cursor: null,
+      },
+    });
+  });
+}
+/** The environment's activations: notify-customer's while `active()` says so. */
+async function routeCalleeActivation(page: Page, active: () => boolean) {
+  await page.route(/\/environments\/[^/]+\/activations\?/, (route) =>
+    route.fulfill({
+      json: {
+        items: active()
+          ? [
+              {
+                id: "act-notify",
+                name: "notify-customer",
+                revision: 3,
+                retired: false,
+                request: { version_id: "v-notify" },
+              },
+            ]
+          : [],
+        next_cursor: null,
+      },
+    }),
+  );
+}
+const executeIn = (page: Page) =>
+  page.getByRole("menuitem", { name: /^Execute workflow in Production/ });
+
+test("a draft that calls a workflow runs on that workflow's activation, or says it isn't active", async ({
+  page,
+}) => {
+  await openConnected(
+    page,
+    { bindable: { [PRODUCTION]: [] } },
+    callingWorkflow(),
+  );
+  await routeStepTests(page, { starts: [], views: [] });
+  await routeRuns(page, [testRun()]);
+  await testRunVersion(page);
+  let active = false;
+  await routeCalleeVersion(page);
+  await routeCalleeActivation(page, () => active);
+  const activations = await routeActivations(page, [
+    created("ta-1", 15 * 60_000),
+  ]);
+  const run = async () => {
+    await moreWays(page).click();
+    await executeIn(page).click();
+  };
+  await run();
+  await expect(
+    page
+      .getByRole("status")
+      .or(page.getByRole("alert"))
+      .filter({
+        hasText:
+          "This workflow calls notify-customer 1.0.0, which isn't active in Production. Activate it first.",
+      })
+      .first(),
+  ).toBeVisible();
+  expect(activations.creates).toHaveLength(0);
+  active = true;
+  await run();
+  await expect
+    .poll(() => activations.creates.length, { timeout: 10_000 })
+    .toBe(1);
+  const body = activations.creates[0].postDataJSON() as {
+    bindings?: Record<string, unknown>;
+  };
+  expect(body.bindings?.["workflow_activation_ids"]).toEqual({
+    "notify-customer@1.0.0": "act-notify",
+  });
+});
+
+test("while it reads the called workflows' activations, Execute can't start a second test run", async ({
+  page,
+}) => {
+  await openConnected(
+    page,
+    { bindable: { [PRODUCTION]: [] } },
+    callingWorkflow(),
+  );
+  await routeStepTests(page, { starts: [], views: [] });
+  await routeRuns(page, [testRun()]);
+  await testRunVersion(page);
+  let release!: () => void;
+  await routeCalleeVersion(page, new Promise((done) => (release = done)));
+  await routeCalleeActivation(page, () => true);
+  const activations = await routeActivations(page, [
+    created("ta-1", 15 * 60_000),
+  ]);
+  await moreWays(page).click();
+  await executeIn(page).click();
+  await moreWays(page).click();
+  await expect(executeIn(page)).toHaveAttribute("aria-disabled", "true");
+  await expect(executeIn(page)).toContainText(
+    "Studio is starting the test run in Production.",
+  );
+  await page.keyboard.press("Escape");
+  release();
+  await expect
+    .poll(() => activations.creates.length, { timeout: 10_000 })
+    .toBe(1);
+  expect(activations.runs.length).toBeLessThanOrEqual(1);
 });
 
 test("steps that change data are named before they run, and Cancel runs nothing", async ({

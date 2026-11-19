@@ -85,9 +85,10 @@ export function triggerTile(
     return {
       icon,
       title,
+      // Who may call it, the one thing about this trigger worth seeing on the canvas.
       subtitle: callers
-        ? `${callers} allowed ${callers === 1 ? "caller" : "callers"}`
-        : "Any workflow here",
+        ? `Only ${callers} ${callers === 1 ? "workflow" : "workflows"}`
+        : "Any workflow",
     };
   }
   // Set up at activation until an activation took the settings it has now.

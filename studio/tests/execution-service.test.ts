@@ -28,6 +28,7 @@ import {
 import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
 import { sampleFromSchema } from "../src/app/editor/ndv/panes/sample";
 import type { StudioTestData } from "../src/app/editor/state/test-data";
+import { finalRun } from "../src/app/editor/canvas/trace-playback";
 import type { Workflow } from "../src/app/model";
 import { RESPONSE, print } from "./execution-fixtures";
 
@@ -61,7 +62,7 @@ interface Pending {
   refuse: (error: unknown) => void;
 }
 
-function fixture() {
+function fixture(workflow: Workflow = WORKFLOW) {
   const values = new Map<string, string>();
   const backend: StoreBackend = {
     keys: async (prefix) =>
@@ -79,6 +80,9 @@ function fixture() {
       ["send", print(2)],
     ]),
     testData: EMPTY,
+    callees: undefined as
+      | ReturnType<NonNullable<ExecutionHost["callees"]>>
+      | undefined,
   };
   const host: ExecutionHost = {
     api: {
@@ -106,7 +110,7 @@ function fixture() {
       revision: state.draft.revision,
       source: "{}",
       format: "json",
-      workflow: WORKFLOW,
+      workflow,
     }),
     place: () => (state.prefix === null ? null : { prefix: state.prefix }),
     connected: () => false,
@@ -114,6 +118,7 @@ function fixture() {
     testData: () => state.testData,
     prints: () => state.prints,
     inputSchema: () => INPUT_SCHEMA,
+    callees: () => state.callees ?? { sources: {}, references: [] },
   };
   return { service: new ExecutionService(host), sent, values, state };
 }
@@ -279,6 +284,139 @@ describe("the execution service", () => {
     ).toEqual({ kind: "busy" });
     expect(sent.length - before).toBe(2);
     expect(service.running()).toBeNull();
+  });
+
+  it("sends the workflows it calls, and refuses a test that would run more than the host takes", async () => {
+    const { service, sent, state } = fixture();
+    await service.open("d-1");
+    state.callees = {
+      sources: { "lookup@0.1.0": { source: "kind: Workflow", format: "yaml" } },
+      references: ["lookup@0.1.0"],
+    };
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    expect((sent[0].body as { workflows: unknown }).workflows).toEqual({
+      "lookup@0.1.0": { source: "kind: Workflow", format: "yaml", mocks: {} },
+    });
+    sent[0].answer(RESPONSE);
+    await running;
+    state.callees = {
+      sources: {},
+      references: Array.from({ length: 51 }, (_, n) => `w${n}@1.0.0`),
+    };
+    expect(await service.execute({ mode: "workflow" })).toEqual({
+      kind: "failed",
+      message:
+        "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("words the host's block on a call as the call's", async () => {
+    const { service, sent } = fixture({
+      ...WORKFLOW,
+      spec: {
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            with: { literal: {} },
+          },
+        ],
+      },
+    } as unknown as Workflow);
+    await service.open("d-1");
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    sent[0].answer({
+      ...RESPONSE,
+      status: "blocked",
+      blocked: {
+        reason: "missing_mock",
+        nodeId: "notify",
+        instanceKey: "",
+        message: "Step notify needs test data.",
+      },
+    });
+    const outcome = await running;
+    expect(outcome.kind === "done" && outcome.response.blocked).toEqual({
+      reason: "callee",
+      nodeId: "notify",
+      instanceKey: "",
+      message: "Call notify-customer needs test data or the workflow itself.",
+    });
+  });
+
+  it("never reads a called workflow's step as this workflow's step with the same ID", async () => {
+    // order-intake and the notify-customer it calls both have a step "send":
+    // the called one failed, order-intake continued and ran its own.
+    const { service, sent } = fixture({
+      ...WORKFLOW,
+      spec: {
+        steps: [
+          {
+            id: "notify",
+            kind: "callWorkflow",
+            uses: "notify-customer@1.0.0",
+            mode: "wait",
+            onFailure: "continue",
+            with: { literal: {} },
+          },
+          { id: "send", kind: "action", uses: "mail.send@1.0.0", with: {} },
+        ],
+      },
+    } as unknown as Workflow);
+    await service.open("d-1");
+    const running = service.execute({ mode: "workflow" });
+    await settle();
+    const step = (nodeId: string, status: string, output: unknown) => ({
+      index: 0,
+      nodeId,
+      instanceKey: "",
+      kind: "action",
+      status,
+      output,
+    });
+    sent[0].answer({
+      ...RESPONSE,
+      trace: [
+        step("notify", "completed", { status: "failed" }),
+        { ...step("send", "failed", undefined), frame: "notify" },
+        step("send", "completed", { by: "order-intake" }),
+      ],
+      frames: [
+        {
+          key: "notify",
+          workflow: "notify-customer@1.0.0",
+          callNode: "notify",
+          status: "failed",
+        },
+      ],
+    });
+    const outcome = await running;
+    const response = outcome.kind === "done" ? outcome.response : null;
+    // What every reader gets: the step the Runs tab stops at, the canvas, the last results.
+    expect(response?.trace.some((item) => item.status === "failed")).toBe(
+      false,
+    );
+    expect(finalRun(service.last()!).current).toEqual([]);
+    expect(finalRun(service.last()!).done).toEqual(["notify", "send"]);
+    expect(service.results()?.steps["send"]).toMatchObject({
+      status: "completed",
+      output: { by: "order-intake" },
+    });
+    // The run log alone gets what ran inside notify-customer.
+    expect(
+      service.called()?.trace.map((item) => [item.nodeId, item.status]),
+    ).toEqual([["send", "failed"]]);
+    expect(service.called()?.frames.map((frame) => frame.status)).toEqual([
+      "failed",
+    ]);
+    // Opening another draft forgets them with the answer.
+    await service.open("d-2");
+    expect(service.called()).toBeNull();
   });
 
   it("sends a sample of the input fields when there is no test input", async () => {

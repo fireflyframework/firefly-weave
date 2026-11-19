@@ -891,7 +891,7 @@ export class ParamField {
   // --------------------------------------------------------- actions
   /** Why a field's command can't be used now: the field's own reason first. */
   actionReason(action: FieldAction, reason: string | null): string | null {
-    if (reason) return reason;
+    if (reason && !action.whileReadOnly) return reason;
     const session = this.session();
     const step = session.controller.step(session.target);
     if (!step || !action.disabled) return null;
@@ -989,7 +989,8 @@ export class ParamField {
     const spec = this.spec();
     return this.loadChoices().map((choice, index) => ({
       value: String(index),
-      label: `${choice.label}${spec.default !== undefined && JSON.stringify(choice.value) === JSON.stringify(spec.default) ? " (default)" : ""}`,
+      // Segments show which is chosen; a list marks the language's default.
+      label: `${choice.label}${spec.display !== "segments" && spec.default !== undefined && JSON.stringify(choice.value) === JSON.stringify(spec.default) ? " (default)" : ""}`,
       description: choice.disabled ?? choice.description,
       group: choice.group,
       disabled: !!choice.disabled,
@@ -1012,7 +1013,8 @@ export class ParamField {
     return (
       choices.length >= 2 &&
       choices.length <= 3 &&
-      choices.every((c) => c.label.length <= 12)
+      (this.spec().display === "segments" ||
+        choices.every((c) => c.label.length <= 12))
     );
   }
   dateValue(): string {

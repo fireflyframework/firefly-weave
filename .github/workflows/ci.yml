@@ -215,7 +215,9 @@ jobs:
   studio-performance:
     name: studio performance
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The Playwright install fetches its OS packages from the runner's Ubuntu mirror: up to 611 s in a studio job, while
+    # the other steps take up to 143 s. At 10 minutes, two runs whose steps had all passed were cancelled.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

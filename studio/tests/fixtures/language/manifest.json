@@ -11,6 +11,7 @@
     ],
     "features": [
       "ai.agent",
+      "ai.memory",
       "flow.callWorkflow",
       "flow.eventTrigger",
       "flow.forEach",
@@ -510,7 +511,7 @@
       {
         "name": "callable",
         "feature": "flow.callWorkflow",
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "name": "eventTrigger",
@@ -617,7 +618,7 @@
         "label": "Call a workflow",
         "blocks": [],
         "scope_roots": [],
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "kind": "transaction",

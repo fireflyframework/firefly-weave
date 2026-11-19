@@ -101,6 +101,7 @@ async def test_capabilities_list_the_language_features_and_ir_versions_this_plat
         == manifest.features
         == [
             "ai.agent",
+            "ai.memory",
             "flow.callWorkflow",
             "flow.eventTrigger",
             "flow.forEach",

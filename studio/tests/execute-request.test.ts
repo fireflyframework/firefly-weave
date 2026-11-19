@@ -18,10 +18,15 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { Workflow } from "../src/app/model";
 import {
+  CALLEE_LIMIT,
+  calleeBlock,
   executeRequest,
   sliceStepIds,
+  splitCalls,
+  tooManyCallees,
   type ExecuteParts,
 } from "../src/app/editor/state/execute-request";
+import type { ExecuteResponse } from "../src/app/editor/state/execution";
 import type { StudioTestData } from "../src/app/editor/state/test-data";
 
 const t = (id: string) => ({ id, kind: "transform", value: { literal: id } });
@@ -260,5 +265,211 @@ describe("an execution request for one step", () => {
       "node:check",
       "node:summarize",
     ]);
+  });
+});
+
+/** order-intake: a call to a draft on this computer that waits, and one to a published workflow. */
+const CALLING = {
+  apiVersion: "weave/v1alpha1",
+  kind: "Workflow",
+  metadata: { name: "order-intake", version: "1.2.0" },
+  spec: {
+    steps: [
+      {
+        id: "lookup",
+        kind: "callWorkflow",
+        uses: "lookup-customer@0.1.0",
+        mode: "wait",
+        with: { literal: {} },
+      },
+      {
+        id: "notify",
+        kind: "callWorkflow",
+        uses: "notify-customer@1.0.0",
+        mode: "wait",
+        with: { literal: {} },
+      },
+    ],
+  },
+} as unknown as Workflow;
+const LOOKUP_SOURCE = "apiVersion: weave/v1alpha1\nkind: Workflow\n";
+
+describe("an execution request with called workflows", () => {
+  it("sends a draft on this computer with its source, and every other callee it reaches with its mocks", () => {
+    const request = executeRequest(
+      parts({
+        workflow: CALLING,
+        callees: {
+          sources: {
+            "lookup-customer@0.1.0": { source: LOOKUP_SOURCE, format: "yaml" },
+          },
+          references: [
+            "lookup-customer@0.1.0",
+            "notify-customer@1.0.0",
+            "audit-trail@2.0.0",
+          ],
+        },
+        testData: {
+          ...parts().testData,
+          workflows: {
+            "notify-customer@1.0.0": {
+              mocks: { send: { output: { id: "m-1" }, source: "manual" } },
+            },
+          },
+        },
+      }),
+    );
+    expect(request.workflows).toEqual({
+      "lookup-customer@0.1.0": {
+        source: LOOKUP_SOURCE,
+        format: "yaml",
+        mocks: {},
+      },
+      "notify-customer@1.0.0": { mocks: { "node:send": { id: "m-1" } } },
+      "audit-trail@2.0.0": { mocks: {} },
+    });
+  });
+
+  it("lists the workflows it calls directly when it knows of no drafts", () => {
+    expect(
+      Object.keys(executeRequest(parts({ workflow: CALLING })).workflows ?? {}),
+    ).toEqual(["lookup-customer@0.1.0", "notify-customer@1.0.0"]);
+  });
+
+  it("sends a pin on a call step, but not its last result, so the called workflow runs again", () => {
+    const request = executeRequest(
+      parts({
+        workflow: CALLING,
+        testData: {
+          ...parts().testData,
+          pins: { notify: { ...PIN, output: { sent: true } } },
+        },
+        results: {
+          schemaVersion: 1,
+          at: "2026-10-26T09:00:00Z",
+          status: "completed",
+          steps: {
+            lookup: {
+              status: "completed",
+              execution: "fnv1a64:0000000000000009",
+              output: { name: "Ada" },
+            },
+          },
+        },
+      }),
+    );
+    expect(request.mocks).toEqual({ "node:notify": { sent: true } });
+  });
+
+  it("says when a test would run more called workflows than the host takes", () => {
+    const references = Array.from(
+      { length: CALLEE_LIMIT + 1 },
+      (_, n) => `w${n}@1.0.0`,
+    );
+    const over = executeRequest(
+      parts({ workflow: CALLING, callees: { sources: {}, references } }),
+    );
+    expect(tooManyCallees(over)).toBe(
+      "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    );
+    const fits = executeRequest(
+      parts({
+        workflow: CALLING,
+        callees: { sources: {}, references: references.slice(1) },
+      }),
+    );
+    expect(tooManyCallees(fits)).toBeNull();
+  });
+
+  it("words the host's block on a call that waits as the call's, and leaves others", () => {
+    const block = (nodeId: string, instanceKey = "") => ({
+      reason: "missing_mock" as const,
+      nodeId,
+      instanceKey,
+      message: `Step ${nodeId} needs test data.`,
+    });
+    expect(calleeBlock(CALLING, block("notify"))).toEqual({
+      reason: "callee",
+      nodeId: "notify",
+      instanceKey: "",
+      message: "Call notify-customer needs test data or the workflow itself.",
+    });
+    // Not a call, a call that doesn't wait, or one item of a loop: the host's words stay.
+    expect(calleeBlock(WORKFLOW, block("check"))).toEqual(block("check"));
+    expect(calleeBlock(WORKFLOW, block("notify"))).toEqual(block("notify"));
+    expect(calleeBlock(CALLING, block("notify", "notify[1]"))).toEqual(
+      block("notify", "notify[1]"),
+    );
+  });
+});
+
+describe("the host's answer about called workflows", () => {
+  const entry = (nodeId: string, frame?: string) => ({
+    index: 0,
+    nodeId,
+    instanceKey: "",
+    kind: "transform",
+    status: "completed" as const,
+    ...(frame ? { frame } : {}),
+  });
+  const answer = (blocked?: ExecuteResponse["blocked"]): ExecuteResponse => ({
+    status: blocked ? "blocked" : "completed",
+    compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+    trace: [entry("notify"), entry("render", "notify"), entry("send")],
+    frames: [
+      {
+        key: "notify",
+        workflow: "notify-customer@1.0.0",
+        callNode: "notify",
+        status: blocked ? "waiting" : "completed",
+      },
+    ],
+    ...(blocked ? { blocked } : {}),
+  });
+
+  it("keeps only this workflow's steps in the answer and hands what ran inside called workflows apart", () => {
+    const { response, called } = splitCalls(CALLING, answer());
+    expect(response.trace.map((item) => item.nodeId)).toEqual([
+      "notify",
+      "send",
+    ]);
+    expect(response.frames).toBeUndefined();
+    expect(called?.trace.map((item) => [item.nodeId, item.frame])).toEqual([
+      ["render", "notify"],
+    ]);
+    expect(called?.frames.map((frame) => frame.key)).toEqual(["notify"]);
+    // Nothing called: nothing apart.
+    const plain = { ...answer(), trace: [entry("send")], frames: [] };
+    expect(splitCalls(CALLING, plain).called).toBeNull();
+  });
+
+  it("names a stop inside a called workflow on this workflow's call that runs it", () => {
+    const inside = {
+      reason: "missing_mock" as const,
+      nodeId: "enrich",
+      instanceKey: "" as const,
+      frame: "notify",
+      message: "Step enrich in notify-customer needs test data.",
+    };
+    const { response, called } = splitCalls(CALLING, answer(inside));
+    expect(response.blocked).toEqual({ ...inside, nodeId: "notify" });
+    expect(called?.blocked).toEqual(inside);
+    // One item's call in a loop, two calls deep: the item's call is where it stopped.
+    const deep = { ...inside, frame: "notify[2]/enrich", nodeId: "lookup" };
+    expect(splitCalls(CALLING, answer(deep)).response.blocked).toEqual({
+      ...deep,
+      nodeId: "notify",
+      instanceKey: "notify[2]",
+    });
+    // A stop in this workflow keeps the call's own words.
+    const own = {
+      reason: "missing_mock" as const,
+      nodeId: "notify",
+      instanceKey: "" as const,
+      message: "Step notify needs test data.",
+    };
+    expect(splitCalls(CALLING, answer(own)).response.blocked?.reason).toBe(
+      "callee",
+    );
   });
 });

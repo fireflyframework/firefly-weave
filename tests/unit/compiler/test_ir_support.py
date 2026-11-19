@@ -90,7 +90,12 @@ def test_malformed_feature_lists_stay_contract_errors(change):
     assert not isinstance(rejected.value, UnsupportedIR)
 
 
-def test_the_default_is_what_the_platform_advertises():
+def test_the_default_is_what_the_platform_advertises(monkeypatch):
+    from firefly_weave.contracts import language_features
+
+    # Every language feature is advertised today; a platform without ai.memory stands for one that isn't.
+    without = tuple(feature for feature in language_features.ADVERTISED_FEATURES if feature != "ai.memory")
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", without)
     assert import_artifact(envelope(CONCAT)).executable["features"] == ["text.concat"]
     with pytest.raises(UnsupportedIR) as refused:
         import_artifact(forged(lambda e: e.update(features=["ai.memory"])))

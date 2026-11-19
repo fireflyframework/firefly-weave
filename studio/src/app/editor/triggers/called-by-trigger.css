@@ -1,0 +1,337 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Three sections, ruled apart: Who can call it, Interface, Called by. Rows
+   are 38-44 px from 768 px up and 44-56 px on a phone. */
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.cb-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.cb-section + .cb-section {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+.cb-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.cb-heading {
+  margin: 0;
+  font: var(--type-title-sm);
+  font-size: 15px;
+}
+.cb-caption {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.cb-refresh {
+  margin-left: auto;
+  align-self: center;
+}
+
+/* Who can call it: two radio cards, the chosen one in the accent. */
+.cb-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cb-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.cb-card.is-chosen {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+/* The radio at the card's start, the words beside it (inputs are full width elsewhere). */
+.cb-card input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  min-height: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.cb-card-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.cb-card small {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.cb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-6);
+  list-style: none;
+}
+.cb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 0 2px 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font: var(--type-small);
+  font-weight: 600;
+}
+button.cb-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+}
+button.cb-chip-remove:hover {
+  color: var(--text);
+}
+button.cb-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font: var(--type-small);
+  font-weight: 600;
+}
+.cb-add-input {
+  min-height: 28px;
+  width: 16em;
+  max-width: 100%;
+}
+.cb-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-6);
+  font: var(--type-small);
+  color: var(--danger-ink);
+}
+
+/* Interface: the input and the result, side by side from 768 px up. */
+.cb-boxes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.cb-box {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.cb-box-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.cb-box-title {
+  font: var(--type-label);
+}
+.cb-edit {
+  margin-left: auto;
+  min-height: 28px;
+}
+.cb-fields {
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+}
+.cb-fields li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  min-width: 0;
+}
+.cb-field-name {
+  font: var(--type-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-required {
+  margin-left: auto;
+}
+.cb-box-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* Called by: one row per published caller; one that isn't allowed last, in the warning tone. */
+.cb-callers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.cb-caller {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+}
+.cb-caller + .cb-caller {
+  border-top: 1px solid var(--line);
+}
+.cb-caller > weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.cb-caller.is-refused {
+  background: var(--warning-bg);
+}
+.cb-caller.is-refused > weave-icon {
+  color: var(--warning-ink);
+}
+.cb-caller-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.cb-caller-name {
+  font: var(--type-small);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.cb-caller-line {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.cb-caller.is-refused .cb-caller-line {
+  color: var(--text);
+}
+.cb-caller button {
+  flex: none;
+}
+.cb-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.cb-narrow {
+  display: none;
+}
+.cb-none {
+  padding: var(--space-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.cb-none p {
+  margin: 0;
+}
+.cb-none-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.cb-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+button.cb-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+/* A phone: one column, taller rows, the short caller lines, Open as an icon. */
+@media (max-width: 767px) {
+  .cb-card {
+    min-height: 44px;
+  }
+  button.cb-chip-remove,
+  button.cb-add {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* The 44 px remove target overlaps the chip's border, so the chip is 44 too. */
+  button.cb-chip-remove {
+    margin-block: -1px;
+  }
+  .cb-boxes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cb-caller {
+    min-height: 56px;
+  }
+  .cb-wide {
+    display: none;
+  }
+  .cb-narrow {
+    display: inline;
+  }
+  .cb-open-text {
+    display: none;
+  }
+  button.cb-open {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+}

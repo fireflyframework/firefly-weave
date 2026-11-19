@@ -53,7 +53,7 @@ import type { StaleReason } from "../registry";
       @if (stale()) {
         @if (canExecute()) {
           <button type="button" class="text-link" (click)="execute.emit()">
-            Execute step
+            {{ executeLabel() }}
           </button>
         }
         <button type="button" class="text-link" (click)="keep.emit()">
@@ -90,6 +90,8 @@ export class PinnedBanner {
   localOnly = input(false);
   /** Execute step is offered beside Keep pinned when the pin may be out of date. */
   canExecute = input(false);
+  /** "Execute step", or "Execute workflow" for a step that runs only with the whole workflow. */
+  executeLabel = input("Execute step");
   readonly execute = output<void>();
   readonly unpin = output<void>();
   readonly keep = output<void>();

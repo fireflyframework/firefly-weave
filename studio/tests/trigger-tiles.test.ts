@@ -60,10 +60,12 @@ describe("trigger tiles", () => {
     expect(triggerTile("provider", workflow).title).toBe("App event");
     expect(triggerTile("called", workflow)).toMatchObject({
       title: "Called by a workflow",
-      subtitle: "Any workflow here",
+      subtitle: "Any workflow",
     });
     workflow.spec["callable"] = { allowedCallers: ["order-intake", "billing"] };
-    expect(triggerTile("called", workflow).subtitle).toBe("2 allowed callers");
+    expect(triggerTile("called", workflow).subtitle).toBe("Only 2 workflows");
+    workflow.spec["callable"] = { allowedCallers: ["order-intake"] };
+    expect(triggerTile("called", workflow).subtitle).toBe("Only 1 workflow");
   });
 
   it("says a trigger is set up at activation until it is activated with the settings it has now", () => {

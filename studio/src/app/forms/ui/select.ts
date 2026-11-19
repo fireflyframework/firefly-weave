@@ -43,6 +43,30 @@ export interface SelectOption {
   action?: boolean;
   /** A short caution after the description ("Not encrypted"), in the warning ink. */
   note?: string;
+  /** A heading inside the group (a workflow's name over its versions); the row then shows what follows it. */
+  heading?: string;
+  /** A short fact at the end of the row's first line ("Draft"), in the muted ink. */
+  aside?: string;
+}
+
+/** The heading that starts at this option: a new one, or the same one in a new group; else null. */
+export function headingAt(
+  options: readonly SelectOption[],
+  index: number,
+): string | null {
+  const option = options[index];
+  if (!option?.heading) return null;
+  const before = options[index - 1];
+  return before?.heading === option.heading && before.group === option.group
+    ? null
+    : option.heading;
+}
+/** An option's text in the list: under its heading, what follows the heading in its label. */
+export function optionText(option: SelectOption): string {
+  const prefix = option.heading ? `${option.heading} ` : "";
+  return prefix && option.label.startsWith(prefix)
+    ? option.label.slice(prefix.length)
+    : option.label;
 }
 
 export function selectOptions(
@@ -145,6 +169,10 @@ let sequence = 0;
         [attr.aria-label]="label() + ' options'"
       >
         @if (open()) {
+          <!-- Why some choices are missing: first, never a choice; the field's line says it too. -->
+          @if (note()) {
+            <p class="choice-list-note" role="presentation">{{ note() }}</p>
+          }
           @for (option of filtered(); track option.value; let index = $index) {
             @if (option.action && index > 0 && !filtered()[index - 1]?.action) {
               <div class="choice-rule" role="presentation"></div>
@@ -156,14 +184,21 @@ let sequence = 0;
                 {{ option.group }}
               </div>
             }
+            @if (headingAt(filtered(), index); as heading) {
+              <div class="choice-heading" role="presentation">
+                {{ heading }}
+              </div>
+            }
             <div
               role="option"
               class="choice-option"
               [class.choice-action]="option.action"
+              [class.choice-version]="!!option.heading"
               [id]="id + '-option-' + index"
               [attr.data-value]="option.value"
               [attr.aria-selected]="value() === option.value"
               [attr.aria-disabled]="option.disabled || null"
+              [attr.aria-label]="option.heading ? option.label : null"
               [class.active]="active() === index"
               (mousemove)="hover(index)"
               (click)="$event.preventDefault(); pick(index)"
@@ -175,7 +210,12 @@ let sequence = 0;
                   }}</span
                 >
               } @else {
-                <span>{{ option.label }}</span>
+                <span class="choice-line"
+                  ><span>{{ optionText(option) }}</span>
+                  @if (option.aside) {
+                    <small class="choice-aside">{{ option.aside }}</small>
+                  }
+                </span>
               }
               @if (option.description) {
                 <small
@@ -184,6 +224,10 @@ let sequence = 0;
                     · <span class="choice-note">{{ option.note }}</span>
                   }
                 </small>
+              } @else if (option.note) {
+                <small
+                  ><span class="choice-note">{{ option.note }}</span></small
+                >
               }
               @if (value() === option.value) {
                 <weave-icon name="check" />
@@ -387,18 +431,50 @@ let sequence = 0;
         padding: 10px 10px 4px;
         color: var(--muted);
       }
+      .choice-heading {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 10px 2px;
+        color: var(--text);
+      }
+      /* A version under its workflow's name: it and its sentence line up, indented. */
+      .choice-version {
+        padding-left: 22px;
+      }
+      .choice-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+      .choice-aside {
+        flex: none;
+      }
+      .choice-version[aria-disabled="true"]:not(.active) {
+        color: var(--disabled-ink);
+      }
       .choice-empty {
         font-size: 13px;
         padding: 8px;
         margin: 0;
         color: var(--muted);
       }
+      .choice-list-note {
+        margin: 0;
+        padding: 10px 10px 4px;
+        font-size: 13px;
+        color: var(--muted);
+      }
     `,
   ],
 })
 export class Select {
+  protected readonly headingAt = headingAt;
+  protected readonly optionText = optionText;
   label = input.required<string>();
   options = input<readonly SelectOption[]>([]);
+  /** A line at the top of the open list, not a choice. */
+  note = input<string | null>(null);
   value = input("");
   placeholder = input("Choose an option");
   disabled = input(false);

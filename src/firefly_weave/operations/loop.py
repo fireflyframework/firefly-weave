@@ -59,7 +59,7 @@ STATISTICS_SECONDS = 0.4
 # Change request upkeep has its own budget after revalidation, so a revalidation backlog never starves it; so do the
 # step test sweep and log pruning after it.
 UPKEEP_SECONDS = 0.25
-UPKEEP_STEPS = 3
+UPKEEP_STEPS = 4
 # The wall-clock guard waits this much longer, so the database's own timeout normally ends a slow statement.
 CANCEL_GRACE_SECONDS = 0.25
 # A cycle runs one pure classification at a time; the spare slot absorbs one that outlived its cancelled quantum.
@@ -175,7 +175,7 @@ class OperationsLoop:
 
     async def _environment(self, authority: _SchedulerScope) -> datetime | None:
         """Statistics first on their own slice, then revalidation with what is left, then each upkeep step on its own
-        budget: change requests, step test activations and run log entries."""
+        budget: change requests, step test activations, run log entries and expired agent conversations."""
         started = self.monotonic()
         async with asyncio.timeout(ENVIRONMENT_SECONDS + UPKEEP_STEPS * UPKEEP_SECONDS + CANCEL_GRACE_SECONDS):
             rolled = await self.roll_statistics(authority, started + STATISTICS_SECONDS)
@@ -183,7 +183,8 @@ class OperationsLoop:
             maintained = await self.maintain_changes(authority, self.monotonic() + UPKEEP_SECONDS)
             swept = await self.sweep_step_tests(authority, self.monotonic() + UPKEEP_SECONDS)
             pruned = await self.maintain_logs(authority, self.monotonic() + UPKEEP_SECONDS)
-            if rolled is False or not (revalidated and maintained and swept and pruned):
+            forgot = await self.forget_conversations(authority, self.monotonic() + UPKEEP_SECONDS)
+            if rolled is False or not (revalidated and maintained and swept and pruned and forgot):
                 raise QuantumIncomplete()
             return rolled
 
@@ -350,6 +351,25 @@ class OperationsLoop:
             return False
         except Exception as error:
             logging.getLogger(__name__).error("Operations step test sweep failed (%s)", failure_cause(error))
+            return False
+        return True
+
+    async def forget_conversations(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
+        """Delete one batch of expired agent conversations; True when the unit completed.
+
+        The unit takes admission like any write: a delete refunds the conversation's usage.
+        """
+        if not isinstance(authority, _SchedulerScope):
+            raise AccessDenied()
+        from firefly_weave.operations import agent_conversations
+
+        try:
+            async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
+                await agent_conversations.sweep(tx, self.clock())
+        except QuantumIncomplete:
+            return False
+        except Exception as error:
+            logging.getLogger(__name__).error("Operations conversation sweep failed (%s)", failure_cause(error))
             return False
         return True
 

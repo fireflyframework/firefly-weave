@@ -609,6 +609,22 @@ weave-input-pane.is-compact .pane-source-field::before {
   border-radius: var(--radius-sm);
   background: var(--sunken);
 }
+/* A call that can't run without test data or its workflow: a warning. */
+.pane-notice[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+}
+.pane-notice[data-tone="warning"] .pane-notice-text {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.pane-notice[data-tone="warning"] .pane-notice-text weave-icon {
+  /* On the first line's center. */
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning-ink);
+}
 .pane-notice-text {
   margin: 0;
   font: var(--type-small);
@@ -936,6 +952,49 @@ weave-input-pane.is-compact .pane-source-field::before {
   gap: var(--space-2);
   margin: var(--space-3) 0 0;
   font: var(--type-small);
+}
+/* A call step's child run on the Runs tab, above its output. */
+.pane-child-run {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+}
+.pane-child-run > weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.pane-child-text {
+  flex: 1;
+  min-width: 0;
+}
+.pane-child-text p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.pane-child-title {
+  font: var(--type-label);
+}
+.pane-child-line {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.pane-child-run > button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* Open run is a 44 px target on touch and on a phone. */
+@media (max-width: 767px), (pointer: coarse) {
+  .pane-child-run > button {
+    min-height: 44px;
+  }
 }
 .pane-received-note {
   margin: 0 0 var(--space-2);

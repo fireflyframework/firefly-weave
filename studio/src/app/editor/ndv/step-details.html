@@ -184,6 +184,9 @@ SPDX-License-Identifier: Apache-2.0
     >
       @if (tablePanes()) {
         <ng-container #tableInputHost />
+      } @else if (triggerChoice()?.kind === "called") {
+        <!-- What a caller sends: the workflow's input, as the input form's. -->
+        <weave-test-event-pane [session]="session()" />
       } @else if (triggerChoice(); as choice) {
         <weave-trigger-event-pane
           [session]="session()"
@@ -315,7 +318,7 @@ SPDX-License-Identifier: Apache-2.0
                 <button
                   type="button"
                   [class.primary]="executePrimary()"
-                  [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
+                  [title]="executeTitle()"
                   (click)="execute('step')"
                 >
                   <weave-icon name="execute" [size]="16" />{{ executeLabel() }}

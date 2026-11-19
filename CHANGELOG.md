@@ -55,6 +55,16 @@ SPDX-License-Identifier: Apache-2.0
   (`trigger.manage`), and `DELETE` to retire it. Only its creator can use it,
   it expires within an hour, no list finds it, and turning test calls off
   stops it at once.
+- Systems that take part in transactions can now prove they are safe to undo.
+  `weave transactions conformance WORKFLOW --step ID` sends a step's own
+  requests, as Weave builds them, in every order Weave can deliver them (a
+  repeat, a cancel of a step that never ran, a step that arrives after its
+  cancel) to an SDK worker or a PostgreSQL step, and reports each check without
+  business values. SDK workers get `firefly_weave.sdk.participants.Fence`, which
+  records each request in the worker's own PostgreSQL transaction. The built-in
+  PostgreSQL connector now records a cancel or undo of an `idempotent-command`
+  step, so a request for that step that arrives later fails `SQL_ALREADY_UNDONE`
+  and changes nothing; the operation table keeps its shape.
 
 ### Operations
 
@@ -68,6 +78,34 @@ SPDX-License-Identifier: Apache-2.0
 - Log entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default, 1 to
   30), go with their run when it is purged, and count toward no usage;
   `operations_retention.read` lists their period.
+
+### AI and connections
+
+- AI agents can remember a conversation across runs. With
+  `memory: {scope: conversation, key: <expression>}`, each run loads what earlier
+  runs with the same key remembered (the newest `window` messages, as one data
+  message before the prompt) and appends its prompt and final answer when the
+  agent completes. Prompts are scrubbed of secret patterns and answers redacted
+  by the step's output schema before they are kept. The key must read as text of
+  1 to 256 characters and never a secret; the platform stores only the SHA-256 of
+  the workflow's name and the key. A conversation is kept `ttlSeconds` (30 days
+  by default, 1 hour to 365 days) after its last exchange, and the operations
+  loop deletes expired ones. Test runs, and the workflows they call, neither load
+  nor remember. The platform now advertises the `ai.memory` language feature.
+- `agent_conversations.list` and `.read` (`run.read`) and
+  `agent_conversations.delete` and `.purge_workflow` (`run.purge`, audited) list,
+  read and delete conversations by workflow and key hash; the SDK
+  (`list_agent_conversations`, `read_agent_conversation`,
+  `delete_agent_conversation`, `purge_workflow_conversations`) and
+  `weave agent-conversations` hash a key on the client. A delete names up to 100
+  runs that loaded the conversation.
+- Runs record a `memory_loaded` event with the loaded messages; history, export
+  and replay read it, and replay checks it against its receipt
+  (`WV-REPLAY-MEMORY`, `WV-REPLAY-MEMORY-PROVENANCE`). The run log says a step
+  loaded its conversation, and the agent log's memory row names the
+  conversation's key hash, version and expiry.
+- The simulator answers a conversation load from the `memory` seed of the
+  agent's saved turns, and never reads a stored conversation.
 
 ### Studio, desktop app, and CLI
 
@@ -119,6 +157,17 @@ SPDX-License-Identifier: Apache-2.0
   changes, the editor closes, or you switch account or environment.
 - Publish… in the More menu is disabled with its reason when your account
   can't publish.
+- Studio has a **Call a workflow** step: choose a callable version from the
+  project's published workflows or a draft on this computer, map its input,
+  choose whether to wait for the result and what happens if it fails, and open
+  the called workflow. The **Called by a workflow** trigger says who can call a
+  workflow, its interface, and which published workflows call it, with Allow it.
+- Execute workflow runs the called workflows kept on this computer; the run log
+  shows their steps under each call, and test output can be set for a step
+  inside one. A step inside a called workflow that needs test data now stops
+  there instead of failing the test with a server error.
+- On the Runs tab, a call step's Output names the run it started, says how it
+  went, and opens it.
 
 ### Development and testing
 
@@ -146,6 +195,10 @@ SPDX-License-Identifier: Apache-2.0
   its old one is revoked, and lets the test activation purge remove listen
   routes. Webhook, Kafka trigger and app event source answers add `revision`,
   which earlier CLIs and SDKs refuse: upgrade them with the server.
+- `0045_ai_agent_conversations` adds `agent_conversations` and
+  `agent_memory_loads`, scoped by row-level security and charged to usage.
+  Purging a run deletes its loads and keeps the conversation; deleting an
+  environment deletes both.
 
 ## 0.1.0a19
 
