@@ -447,7 +447,7 @@ class StoppedClock:
 
 
 async def test_a_command_still_refused_after_its_wait_keeps_the_capacity_answer():
-    """No slot frees in time: the request waits its whole bound, then answers 429 WV-OPERATION-CAPACITY, Retry-After 1."""
+    """No slot frees in time: the request waits its bound out, then answers 429 WV-OPERATION-CAPACITY, Retry-After 1."""
     import asyncio
 
     import firefly_weave.operations.execution as execution
