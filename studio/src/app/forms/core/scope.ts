@@ -593,20 +593,33 @@ const defined = (value: string | undefined): value is string =>
  */
 function loopOutput(each: Schema, maxItems: unknown, collect: unknown): Schema {
   const most = typeof maxItems === "number" ? maxItems : 1000;
-  let items: Schema | null = each;
-  if (collect === "nonNull") {
-    const type = each["type"];
-    if (type === "null") items = null;
-    else if (Array.isArray(type) && type.includes("null")) {
-      const rest = type.filter((name) => name !== "null");
-      items = rest.length
-        ? { ...each, type: rest.length === 1 ? rest[0] : rest }
-        : null;
-    }
-  }
+  const items = collect === "nonNull" ? withoutNull(each) : each;
   return items
     ? { type: "array", items, maxItems: most }
     : { type: "array", maxItems: 0 };
+}
+
+/**
+ * A schema without null, as the compiler's `_nonnull` narrows it: its const,
+ * else its enum, else its type; null when only null is left, and any value
+ * (`{}`) when its types aren't listed directly.
+ */
+function withoutNull(schema: Schema): Schema | null {
+  if ("const" in schema) return schema["const"] === null ? null : schema;
+  if ("enum" in schema) {
+    const values = Array.isArray(schema["enum"])
+      ? schema["enum"].filter((value) => value !== null)
+      : [];
+    return values.length ? { ...schema, enum: values } : null;
+  }
+  const type = schema["type"];
+  if (type === "null") return null;
+  if (Array.isArray(type)) {
+    const kinds = type.filter((name) => name !== "null");
+    if (!kinds.length) return null;
+    return { ...schema, type: kinds.length === 1 ? kinds[0] : kinds };
+  }
+  return typeof type === "string" ? schema : {};
 }
 
 function schemaAt(schema: Schema, path: string[]): Schema {

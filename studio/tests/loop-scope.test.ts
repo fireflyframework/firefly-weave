@@ -147,4 +147,46 @@ describe("the scope inside a loop", () => {
       }),
     ).toEqual({ type: "array", items: { type: "string" }, maxItems: 9 });
   });
+
+  it("narrows a result as the compiler does: its const, then its enum, then its type", () => {
+    const skipped = (schema: Record<string, unknown>) =>
+      stepOutputSchema(
+        workflow([
+          loop(
+            "orders",
+            [
+              {
+                id: "look",
+                kind: "action",
+                uses: "lookup@1.0.0",
+                with: lit({}),
+              },
+            ],
+            ref("/steps/look/output"),
+            { collect: "nonNull", maxItems: 9 },
+          ),
+        ]),
+        "orders",
+        { actionOutput: () => schema },
+      );
+    expect(skipped({ const: null })).toEqual({ type: "array", maxItems: 0 });
+    expect(skipped({ const: "sent", type: ["string", "null"] })).toEqual({
+      type: "array",
+      items: { const: "sent", type: ["string", "null"] },
+      maxItems: 9,
+    });
+    // The enum loses its null; the type stays as it is.
+    expect(skipped({ type: ["string", "null"], enum: ["a", null] })).toEqual({
+      type: "array",
+      items: { type: ["string", "null"], enum: ["a"] },
+      maxItems: 9,
+    });
+    expect(skipped({ enum: [null] })).toEqual({ type: "array", maxItems: 0 });
+    // Types it can't read directly leave any value.
+    expect(skipped({ anyOf: [{ type: "string" }, { type: "null" }] })).toEqual({
+      type: "array",
+      items: {},
+      maxItems: 9,
+    });
+  });
 });
