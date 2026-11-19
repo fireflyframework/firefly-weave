@@ -271,14 +271,6 @@ const compareIndexes = (a: readonly number[], b: readonly number[]) => {
   return 0;
 };
 
-/** A loop's items for its menu: the failed ones first, then the others, each by number. */
-export function failedFirst(loop: RecordedLoop): RecordedItem[] {
-  return [
-    ...loop.items.filter((item) => item.status === "failed"),
-    ...loop.items.filter((item) => item.status !== "failed"),
-  ];
-}
-
 /** The item a recorded loop opens on: its first failed one, else the first a cancelled or timed-out run cut off, else its first. */
 export function defaultPick(loop: RecordedLoop): number {
   const first = (statuses: readonly RecordedItem["status"][]) =>

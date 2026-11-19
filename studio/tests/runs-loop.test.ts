@@ -19,11 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // the run's state and its step facts; the steps inside it in the item
 // picked; one item's input recomputed from what the run recorded.
 import { describe, expect, it } from "vitest";
+import { itemGroups } from "../src/app/editor/canvas/item-chip";
 import { loopResultText } from "../src/app/editor/canvas/loop-frame";
 import { RunData } from "../src/app/editor/runs-tab/run-data";
 import {
   defaultPick,
-  failedFirst,
   overlayOf,
   picksFor,
   recordedLoops,
@@ -209,7 +209,7 @@ describe("a recorded run's loops", () => {
     ).toBeNull();
   });
 
-  it("lists each item of a loop with what it did, the failed ones first", () => {
+  it("lists each item of a loop with what it did, by number", () => {
     const [orders] = recordedLoops(workflow(), record(), FACTS);
     expect(orders).toMatchObject({ id: "orders", within: [], count: 5 });
     expect(orders.items).toEqual([
@@ -219,9 +219,6 @@ describe("a recorded run's loops", () => {
       { index: 2, status: "finished", code: null },
       { index: 3, status: "failed", code: "SMTP_REJECTED" },
       { index: 4, status: "not-run", code: null },
-    ]);
-    expect(failedFirst(orders).map((item) => item.index)).toEqual([
-      1, 3, 0, 2, 4,
     ]);
     expect(defaultPick(orders)).toBe(1);
     // Without step facts, the run's incidents still say which item failed.
@@ -261,7 +258,7 @@ describe("a recorded run's loops", () => {
       "timed-out",
       "timed-out",
     ]);
-    // A failure inside an item still reads failed, and only failures go first.
+    // A failure inside an item still reads failed, and only failures are in the Failed group.
     const [mixed] = recordedLoops(workflow(), cancelled, [
       fact("check[0]", "failed"),
       fact("send[0]", "cancelled"),
@@ -272,9 +269,9 @@ describe("a recorded run's loops", () => {
       "failed",
       "stopped",
     ]);
-    expect(failedFirst(mixed).map((item) => item.index)).toEqual([
-      0, 1, 2, 3, 4,
-    ]);
+    expect(
+      itemGroups(mixed).map((group) => group.items.map((item) => item.index)),
+    ).toEqual([[0], [0, 1, 2, 3, 4]]);
     // The chip opens on a failure first, else on the first item the run cut off.
     expect(defaultPick(mixed)).toBe(0);
     const [stopped] = recordedLoops(workflow(), cancelled, [
