@@ -24,15 +24,27 @@ never written. The key's value never reaches this module; only its hash does.
 
 import json
 from datetime import datetime, timedelta
-from uuid import UUID, uuid4
+from typing import TYPE_CHECKING, Any, cast
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from firefly_weave.contracts.values import JsonObject
+from pydantic import TypeAdapter, ValidationError
+
+from firefly_weave.compiler.canonical import canonical_digest
+from firefly_weave.contracts.agent_conversations import CONVERSATION_MESSAGES, ConversationMessage, messages_digest
+from firefly_weave.contracts.operations import MemoryLoadFact, MemoryReceipt
+from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.runtime.agents import UNREADABLE_CONVERSATION as UNREADABLE
 from firefly_weave.runtime.agents import append_memory
 from firefly_weave.runtime.models import MemoryIntent, RuntimeEvent, Transition
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
+if TYPE_CHECKING:
+    from firefly_weave.compiler.api import CompiledArtifact
+    from firefly_weave.contracts.runtime import RunView
+
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 CONVERSATION = f"{SCOPE} AND workflow=:workflow AND key_hash=:key_hash"
+_MESSAGES: TypeAdapter[list[ConversationMessage]] = TypeAdapter(list[ConversationMessage])
 
 
 async def record_memory(repository: RuntimeRepository, run_id: UUID, event: RuntimeEvent, result: Transition) -> None:
@@ -107,6 +119,126 @@ async def _append(repository: RuntimeRepository, run_id: UUID, intent: MemoryInt
         at=at,
         expires=expires,
     )
+
+
+async def deliver_memory(
+    repository: RuntimeRepository, view: "RunView", artifact: "CompiledArtifact"
+) -> tuple["RunView", int]:
+    """Deliver the pending conversation loads of a run whose lock this transaction holds.
+
+    Each load becomes one accepted ``memory_loaded`` event with a stable identity, in the order the loads were asked
+    for. A load whose agent no longer waits for it (the run ended, the agent closed, or it asks for another
+    conversation) is marked dropped and never reaches the kernel. A test run's load delivers an empty conversation
+    without reading the table. A stored conversation that fails validation loads empty under ``UNREADABLE`` instead
+    of failing the scan, which would stall every run of the tenant.
+    """
+    from firefly_weave.runtime.kernel import transition_async as transition
+
+    rows = await repository.rows(
+        f"SELECT * FROM agent_memory_loads WHERE {SCOPE} AND run_id=:run AND delivered_at IS NULL "
+        "ORDER BY issued_sequence,node_id FOR UPDATE",
+        run=view.id,
+    )
+    delivered = 0
+    for row in rows:
+        now = await repository.now()
+        agent = view.state.agents.get(row["node_id"])
+        if (
+            view.state.status in TERMINAL
+            or agent is None
+            or agent.phase != "memory"
+            or agent.conversation != row["key_hash"]
+        ):
+            await repository.execute(
+                f"UPDATE agent_memory_loads SET dropped=true,delivered_at=:at WHERE {SCOPE} AND id=:id",
+                id=row["id"],
+                at=now,
+            )
+            continue
+        data = await _loaded(repository, row, now)
+        event = RuntimeEvent(
+            id=uuid5(NAMESPACE_URL, f"firefly-weave/memory/{row['id']}"),
+            type="memory_loaded",
+            data=data,
+            timestamp=now,
+            sequence=view.state.accepted_sequence + 1,
+        )
+        transitioned = await transition(view.state, event, artifact)
+        view = view.model_copy(update={"state": transitioned.state})
+        await repository.execute(
+            f"UPDATE agent_memory_loads SET delivered_at=:at,version=:version,expired=:expired,test=:test "
+            f"WHERE {SCOPE} AND id=:id",
+            id=row["id"],
+            at=now,
+            version=data["version"],
+            expired=data["expired"],
+            test=bool(row["test"]),
+        )
+        await repository.persist(view, event, transitioned, canonical_digest({"memory": str(row["id"])}))
+        delivered += 1
+    return view, delivered
+
+
+async def _loaded(repository: RuntimeRepository, row: dict[str, Any], now: datetime) -> JsonObject:
+    """The ``memory_loaded`` event's data for one pending load: the conversation as stored now, or empty."""
+    data: JsonObject = {"node_id": row["node_id"], "key_hash": row["key_hash"], "version": 0, "expired": False}
+    if row["test"]:
+        return {**data, "test": True, "messages": []}
+    stored = await repository.rows(
+        f"SELECT messages,version,expires_at FROM agent_conversations WHERE {CONVERSATION}",
+        workflow=row["workflow"],
+        key_hash=row["key_hash"],
+    )
+    if not stored:
+        return {**data, "messages": []}
+    conversation = stored[0]
+    data["version"] = conversation["version"]
+    if conversation["expires_at"] <= now:
+        return {**data, "expired": True, "messages": []}
+    try:
+        messages = _MESSAGES.validate_python(conversation["messages"])
+    except ValidationError:
+        return {**data, "code": UNREADABLE, "messages": []}
+    if len(messages) > CONVERSATION_MESSAGES:
+        return {**data, "code": UNREADABLE, "messages": []}
+    return {**data, "messages": [cast(JsonValue, message.model_dump(mode="json")) for message in messages]}
+
+
+async def memory_evidence(
+    repository: RuntimeRepository, run_id: UUID, event: RuntimeEvent, result: Transition
+) -> tuple[list[MemoryLoadFact], MemoryReceipt | None]:
+    """The loads a transition issued, and the receipt of the load an accepted ``memory_loaded`` event delivered."""
+    issued: list[MemoryLoadFact] = []
+    for command in result.commands:
+        if isinstance(command, MemoryIntent) and command.op == "load":
+            [row] = await repository.rows(
+                f"SELECT id FROM agent_memory_loads WHERE {SCOPE} AND run_id=:run AND node_id=:node "
+                "AND issued_sequence=:sequence",
+                run=run_id,
+                node=command.node_id,
+                sequence=event.sequence,
+            )
+            issued.append(MemoryLoadFact(load_id=row["id"], node_id=command.node_id, key_hash=command.key_hash))
+    receipt = None
+    if event.type == "memory_loaded":
+        # Delivery marks the load before it persists the event, under the run's lock: the newest delivered load of
+        # the agent is the one this event came from.
+        rows = await repository.rows(
+            f"SELECT id,node_id,key_hash,version,expired,test FROM agent_memory_loads WHERE {SCOPE} AND run_id=:run "
+            "AND node_id=:node AND delivered_at IS NOT NULL AND NOT dropped ORDER BY issued_sequence DESC LIMIT 1",
+            run=run_id,
+            node=event.data.get("node_id"),
+        )
+        if rows:
+            row = rows[0]
+            receipt = MemoryReceipt(
+                load=MemoryLoadFact(load_id=row["id"], node_id=row["node_id"], key_hash=row["key_hash"]),
+                version=row["version"],
+                expired=row["expired"],
+                test=row["test"],
+                messages_digest=messages_digest(event.data.get("messages")),
+            )
+    return issued, receipt
 
 
 def _json(value: list[JsonObject]) -> str:

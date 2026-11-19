@@ -229,16 +229,21 @@ def loaded_entries(state: AgentState, data: JsonObject) -> list[JsonObject]:
         raise ValueError("A load names the conversation's version")
     if not isinstance(expired, bool) or not isinstance(test, bool):
         raise ValueError("A load says whether the conversation expired and whether the run is a test")
-    messages = data.get("messages")
-    if not isinstance(messages, list) or len(messages) > CONVERSATION_MESSAGES or ((expired or test) and messages):
-        raise ValueError("A load carries at most 200 messages, none when expired or for a test run")
+    messages, code = data.get("messages"), data.get("code")
+    if code is not None and code != UNREADABLE_CONVERSATION:
+        raise ValueError("A load's only code says its stored conversation was unreadable")
+    empty = expired or test or code is not None
+    if not isinstance(messages, list) or len(messages) > CONVERSATION_MESSAGES or (empty and messages):
+        raise ValueError("A load carries at most 200 messages, none when expired, unreadable or for a test run")
     try:
         return [ConversationMessage.model_validate(entry).model_dump(mode="json") for entry in messages]
     except ValidationError:
         raise ValueError("A remembered message is a user or assistant entry") from None
 
 
-_LOADED_FIELDS: Final = frozenset({"node_id", "key_hash", "version", "expired", "test", "messages"})
+_LOADED_FIELDS: Final = frozenset({"node_id", "key_hash", "version", "expired", "test", "code", "messages"})
+# The code a load carries when its stored conversation failed validation: it loads empty.
+UNREADABLE_CONVERSATION: Final = "AGENT.MEMORY_UNREADABLE"
 
 
 def _memory_message(entries: list[JsonObject]) -> JsonObject:

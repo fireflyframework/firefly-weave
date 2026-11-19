@@ -20,9 +20,10 @@ each completed exchange, scrubbed and redacted."""
 import hashlib
 import json
 from datetime import timedelta
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
+import rfc8785
 from agent_fixtures import (
     CONVERSATION,
     LOOKUP,
@@ -43,6 +44,7 @@ from agent_fixtures import (
 
 from firefly_weave.contracts.agent_conversations import conversation_key_hash
 from firefly_weave.contracts.agent_turns import turn_fits, wire_json
+from firefly_weave.contracts.operations import MemoryLoadFact, MemoryReceipt, RecordedEvidence
 from firefly_weave.runtime import kernel
 from firefly_weave.runtime.agents import (
     ActivationValues,
@@ -51,7 +53,7 @@ from firefly_weave.runtime.agents import (
     tool_failed,
     turn_completed,
 )
-from firefly_weave.runtime.conversations import record_memory
+from firefly_weave.runtime.conversations import deliver_memory, memory_evidence, record_memory
 from firefly_weave.runtime.kernel import KernelError
 from firefly_weave.runtime.models import Deadline, MemoryIntent, RunState, RuntimeEvent, StepChange, Transition
 
@@ -313,6 +315,8 @@ def test_a_memory_loaded_event_starts_turn_1_with_the_conversation():
         {"version": True},
         {"expired": "no"},
         {"extra": 1},
+        {"code": "AGENT.OTHER"},
+        {"code": "AGENT.MEMORY_UNREADABLE", "messages": exchanges(1)},
     ],
     ids=[
         "another-key",
@@ -325,6 +329,8 @@ def test_a_memory_loaded_event_starts_turn_1_with_the_conversation():
         "boolean-version",
         "expired-not-boolean",
         "unknown-field",
+        "another-code",
+        "unreadable-with-messages",
     ],
 )
 def test_a_malformed_memory_loaded_event_is_refused(data):
@@ -655,3 +661,207 @@ def test_a_test_run_asks_for_no_append():
     result = run.answer("support#1", final("Order A-17 has shipped."))
 
     assert memory_intents(result) == [] and run.state.status == "succeeded"
+
+
+# Delivery under the run's lock: the scan reads the pending loads and the conversation, and accepts one event each.
+class DeliveryRecorder(Recorder):
+    def __init__(self, answers=None) -> None:
+        super().__init__(answers)
+        self.persisted: list[tuple] = []
+
+    async def now(self):
+        return NOW + timedelta(seconds=1)
+
+    async def persist(self, view, event, result, request_hash) -> None:
+        self.persisted.append((view, event, result, request_hash))
+
+
+class View:
+    """The run as delivery reads it: its ID and its state."""
+
+    def __init__(self, identifier, state) -> None:
+        self.id, self.state = identifier, state
+
+    def model_copy(self, *, update):
+        return View(self.id, update.get("state", self.state))
+
+
+LOAD_ID = uuid4()
+
+
+def waiting_run() -> tuple[Run, View]:
+    run = kernel_run()
+    run.send("started")
+    return run, View(RUN, run.state)
+
+
+def pending(**changes) -> list[dict]:
+    row = {
+        "id": LOAD_ID,
+        "node_id": "support",
+        "issued_sequence": 1,
+        "workflow": "support-desk",
+        "key_hash": CUSTOMER_HASH,
+        "test": False,
+    }
+    return [row | changes]
+
+
+def stored(messages=None, version=2, expires_at=None) -> list[dict]:
+    return [
+        {
+            "messages": list(APPEND) if messages is None else messages,
+            "version": version,
+            "expires_at": expires_at or NOW + timedelta(days=1),
+        }
+    ]
+
+
+async def test_a_pending_load_is_delivered_once_with_a_stable_identity():
+    run, view = waiting_run()
+    repository = DeliveryRecorder({"FROM agent_memory_loads": [pending(), []], "FROM agent_conversations": [stored()]})
+
+    after, delivered = await deliver_memory(repository, view, run.flow)
+    again, more = await deliver_memory(repository, after, run.flow)
+
+    assert (delivered, more) == (1, 0) and len(repository.persisted) == 1
+    _, event, result, request_hash = repository.persisted[0]
+    assert event.id == uuid5(NAMESPACE_URL, f"firefly-weave/memory/{LOAD_ID}") and event.type == "memory_loaded"
+    assert event.data == {
+        "node_id": "support",
+        "key_hash": CUSTOMER_HASH,
+        "version": 2,
+        "expired": False,
+        "messages": list(APPEND),
+    }
+    assert "support#1" in tasks(result) and after.state.agents["support"].phase == "turn"
+    [(sql, values)] = [item for item in repository.writes("agent_memory_loads") if item[0].startswith("UPDATE")]
+    assert "delivered_at=:at" in sql and values["version"] == 2 and values["expired"] is False
+
+
+async def test_a_conversation_never_stored_loads_empty_at_version_0():
+    run, view = waiting_run()
+    repository = DeliveryRecorder({"FROM agent_memory_loads": [pending()]})
+
+    await deliver_memory(repository, view, run.flow)
+
+    [(_, event, _, _)] = repository.persisted
+    assert event.data["version"] == 0 and event.data["messages"] == [] and event.data["expired"] is False
+
+
+@pytest.mark.parametrize("change", ["ended", "another-key", "closed"])
+async def test_a_load_whose_agent_is_gone_is_dropped_not_delivered(change):
+    run, view = waiting_run()
+    rows = pending(key_hash="0" * 64) if change == "another-key" else pending()
+    if change == "ended":
+        view = View(RUN, view.state.model_copy(update={"status": "cancelled"}))
+    elif change == "closed":
+        view = View(RUN, view.state.model_copy(update={"agents": {}}))
+    repository = DeliveryRecorder({"FROM agent_memory_loads": [rows], "FROM agent_conversations": [stored()]})
+
+    _, delivered = await deliver_memory(repository, view, run.flow)
+
+    assert delivered == 0 and repository.persisted == []
+    [(sql, values)] = [item for item in repository.writes("agent_memory_loads") if item[0].startswith("UPDATE")]
+    assert "dropped=true" in sql and values["id"] == LOAD_ID
+    assert not any("FROM agent_conversations" in sql for sql, _ in repository.statements)
+
+
+async def test_an_expired_conversation_loads_empty_and_says_so():
+    run, view = waiting_run()
+    repository = DeliveryRecorder(
+        {"FROM agent_memory_loads": [pending()], "FROM agent_conversations": [stored(expires_at=NOW)]}
+    )
+
+    await deliver_memory(repository, view, run.flow)
+
+    [(_, event, _, _)] = repository.persisted
+    assert event.data["expired"] is True and event.data["messages"] == [] and event.data["version"] == 2
+
+
+async def test_a_test_runs_load_delivers_empty_without_reading_the_table():
+    run, view = waiting_run()
+    repository = DeliveryRecorder(
+        {"FROM agent_memory_loads": [pending(test=True)], "FROM agent_conversations": [stored()]}
+    )
+
+    await deliver_memory(repository, view, run.flow)
+
+    [(_, event, _, _)] = repository.persisted
+    assert event.data == {
+        "node_id": "support",
+        "key_hash": CUSTOMER_HASH,
+        "version": 0,
+        "expired": False,
+        "test": True,
+        "messages": [],
+    }
+    assert not any("FROM agent_conversations" in sql for sql, _ in repository.statements)
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [[{"role": "tool", "content": "x"}], {"role": "user"}, [{"role": "user", "content": "x"}] * 201],
+    ids=["tool-role", "not-a-list", "too-many"],
+)
+async def test_an_unreadable_conversation_loads_empty_with_its_code(messages):
+    run, view = waiting_run()
+    repository = DeliveryRecorder(
+        {"FROM agent_memory_loads": [pending()], "FROM agent_conversations": [stored(messages=messages)]}
+    )
+
+    await deliver_memory(repository, view, run.flow)
+
+    [(_, event, result, _)] = repository.persisted
+    assert event.data["messages"] == [] and event.data["code"] == "AGENT.MEMORY_UNREADABLE"
+    assert "support#1" in tasks(result)
+
+
+async def test_the_issuing_events_evidence_names_the_load():
+    repository = Recorder({"FROM agent_memory_loads": [[{"id": LOAD_ID}]]})
+    event, result = memory_transition(load_intent())
+
+    issued, receipt = await memory_evidence(repository, RUN, event, result)
+
+    assert issued == [MemoryLoadFact(load_id=LOAD_ID, node_id="support", key_hash=CUSTOMER_HASH)] and receipt is None
+
+
+async def test_the_delivering_events_evidence_holds_its_receipt():
+    row = {
+        "id": LOAD_ID,
+        "node_id": "support",
+        "key_hash": CUSTOMER_HASH,
+        "version": 2,
+        "expired": False,
+        "test": False,
+    }
+    repository = Recorder({"FROM agent_memory_loads": [[row]]})
+    data = {"node_id": "support", "key_hash": CUSTOMER_HASH, "version": 2, "expired": False, "messages": list(APPEND)}
+    event = RuntimeEvent(id=uuid4(), type="memory_loaded", timestamp=NOW, sequence=2, data=data)
+
+    issued, receipt = await memory_evidence(repository, RUN, event, Transition(state=RunState()))
+
+    assert issued == []
+    assert receipt == MemoryReceipt(
+        load=MemoryLoadFact(load_id=LOAD_ID, node_id="support", key_hash=CUSTOMER_HASH),
+        version=2,
+        expired=False,
+        test=False,
+        messages_digest=hashlib.sha256(rfc8785.dumps({"messages": list(APPEND)})).hexdigest(),
+    )
+
+
+async def test_evidence_without_conversation_memory_reads_nothing_and_keeps_its_bytes():
+    repository = Recorder()
+
+    issued, receipt = await memory_evidence(repository, RUN, *memory_transition())
+
+    assert (issued, receipt, repository.statements) == ([], None, [])
+    evidence = RecordedEvidence.model_construct(
+        run_id=RUN,
+        scope={"tenant_id": RUN, "project_id": RUN, "environment_id": RUN},
+        artifact_digest="sha256:" + "0" * 64,
+        lock_digest="sha256:" + "1" * 64,
+    )
+    dumped = json.loads(evidence.model_dump_json())
+    assert "issued_memory_loads" not in dumped and "memory_receipt" not in dumped

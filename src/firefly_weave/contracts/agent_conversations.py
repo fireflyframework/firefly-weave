@@ -28,10 +28,11 @@ from datetime import datetime
 from typing import Annotated, Final, Literal
 from uuid import UUID
 
+import rfc8785
 from pydantic import Field
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName
-from firefly_weave.contracts.values import JsonData
+from firefly_weave.contracts.values import JsonData, JsonValue
 
 # The longest key an expression may evaluate to, in characters.
 CONVERSATION_KEY_LENGTH: Final = 256
@@ -55,6 +56,12 @@ def conversation_key_hash(workflow: str, key: str) -> str:
     if not 1 <= len(key) <= CONVERSATION_KEY_LENGTH:
         raise ValueError(f"A conversation key is 1 to {CONVERSATION_KEY_LENGTH} characters")
     return hashlib.sha256(workflow.encode() + b"\x00" + key.encode()).hexdigest()
+
+
+def messages_digest(messages: JsonValue) -> str:
+    """The digest a load's receipt keeps of the messages it delivered: SHA-256 of ``{"messages": ...}`` in RFC 8785
+    form, so replay can check the recorded event against its receipt."""
+    return hashlib.sha256(rfc8785.dumps({"messages": messages})).hexdigest()
 
 
 class ConversationMessage(ContractModel):
