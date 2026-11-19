@@ -23,6 +23,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import {
   StepDetailsController,
+  pinSubject,
   type ControllerHost,
 } from "../src/app/editor/ndv/step-details-controller";
 import { TestDataService } from "../src/app/editor/state/test-data-service";
@@ -256,6 +257,52 @@ describe("pins inside a loop's body", () => {
     expect(await controller.pin("send[2]", huge, "manual")).not.toBeNull();
     expect(controller.stepData("send[2]")?.value).toEqual({ to: "item 3" });
     expect(Object.keys(testData.data().pins ?? {})).toEqual(["send[2]"]);
+  });
+
+  it("pins an item's pin for every item in one change, with one toast whose Undo puts both pins back", async () => {
+    const { controller, host, testData } = setup();
+    const toasts: { text: string; run?: () => void }[] = [];
+    host.notify = (text, action) =>
+      void toasts.push({ text, run: action?.run });
+    await controller.pin("send", { to: "everyone" }, "manual");
+    // A pin kept from a real run: its source and run go with it.
+    await controller.pin("send[2]", { to: "item 3" }, "test-call", {
+      runId: "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b",
+    });
+    const before = structuredClone(testData.data().pins!);
+    toasts.length = 0;
+    expect(await controller.pinForEveryItem("send[2]")).toBeNull();
+    const pins = testData.data().pins!;
+    expect(Object.keys(pins)).toEqual(["send"]);
+    expect(pins["send"]).toMatchObject({
+      output: { to: "item 3" },
+      source: "test-call",
+      runId: "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b",
+    });
+    expect(toasts.map(({ text }) => text)).toEqual([
+      "Pinned send for every item. Item 3's own pin was removed.",
+    ]);
+    toasts[0].run!();
+    expect(testData.data().pins).toEqual(before);
+  });
+
+  it("names an item from 1 in its pin toasts, never by its instance key", async () => {
+    const { controller, host } = setup();
+    const toasts: string[] = [];
+    host.notify = (text) => void toasts.push(text);
+    await controller.pin("send[2]", { to: "a" }, "manual");
+    await controller.pin("send[2]", { to: "b" }, "manual");
+    controller.keepPinned("send[2]");
+    await new Promise((done) => setTimeout(done, 0));
+    await controller.unpin("send[2]");
+    expect(toasts).toEqual([
+      "Replaced the pinned output of send for item 3.",
+      "Kept the pinned output of send for item 3.",
+      "Unpinned send for item 3.",
+    ]);
+    // Inside a loop in a loop: the outer item first.
+    expect(pinSubject("reserve[2][0]")).toBe("reserve for item 3 › 1");
+    expect(pinSubject("send")).toBe("send");
   });
 
   it("moves an item's pin with the step's rename", async () => {

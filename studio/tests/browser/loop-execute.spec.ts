@@ -171,6 +171,25 @@ test.describe("one item of a loop at 1440x900", () => {
     await expect(banner).toContainText(
       "Pinned for every item. Production runs ignore pins.",
     );
+    // One toast for the one change, naming the item as people count it.
+    const toasts = page.locator(".toast");
+    await expect(toasts).toHaveCount(1);
+    await expect(toasts).toContainText(
+      "Pinned lookup for every item. Item 2's own pin was removed.",
+    );
+    // Its Undo puts item 2's own pin back, and no pin for every item.
+    await toasts.getByRole("button", { name: "Undo" }).click();
+    await expect(banner).toContainText("Pinned for item 2.");
+    await pane(details, "input")
+      .getByRole("group", { name: "Items of orders" })
+      .getByRole("button", { name: "Previous item" })
+      .click();
+    await expect(banner).toBeHidden();
+    await pane(details, "input")
+      .getByRole("group", { name: "Items of orders" })
+      .getByRole("button", { name: "Next item" })
+      .click();
+    await banner.getByRole("button", { name: "Pin for every item" }).click();
     // Item 1 has no pin of its own: it uses the one for every item.
     await pane(details, "input")
       .getByRole("group", { name: "Items of orders" })

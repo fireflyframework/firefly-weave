@@ -166,6 +166,25 @@ import {
   type CallSources,
 } from "../calls/call-sources";
 
+/**
+ * A pin's step as toasts name it: the step, and inside a loop's body the
+ * item as people count it ("send for item 3", "reserve for item 3 › 1"),
+ * never the instance key.
+ */
+export function pinSubject(key: string): string {
+  const item = pinItem(key);
+  return item ? `${instanceStep(key)} for item ${item}` : instanceStep(key);
+}
+/** The item of a pin inside a loop's body, one-based ("3", "3 › 1"); null for a step's pin. */
+function pinItem(key: string): string | null {
+  const items = [...key.slice(instanceStep(key).length).matchAll(/\[(\d+)\]/g)];
+  return items.length
+    ? items
+        .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+        .join(" › ")
+    : null;
+}
+
 export type ControllerHost = Pick<
   StepDetailsHost,
   | "model"
@@ -753,9 +772,40 @@ export class StepDetailsController {
     if (!outcome.ok) return outcome.message;
     if (replacing)
       this.offerUndo(
-        `Replaced the pinned output of ${target}.`,
+        `Replaced the pinned output of ${pinSubject(target)}.`,
         outcome.previous,
       );
+    return null;
+  }
+  /**
+   * An item's pin, for every item: one change pins it on the step as it is
+   * (its output, source and run) and removes the item's own, so one toast's
+   * Undo puts both pins back. Null when done, else why not.
+   */
+  async pinForEveryItem(item: string): Promise<string | null> {
+    const stepId = instanceStep(item);
+    if (stepId === item) return null;
+    const locked = this.readOnlyReason(stepId);
+    if (locked) return locked;
+    if (this.stale()) return "This workflow's test data is still opening.";
+    const service = this.testData;
+    const entry = service.data().pins?.[item];
+    if (!entry || !this.pinnable(stepId))
+      return "This step's output can't be pinned.";
+    const at = new Date().toISOString();
+    const outcome = await service.change(
+      withoutPin(
+        withPin(service.data(), stepId, { ...entry, pinnedAt: at }, at),
+        item,
+        at,
+      ),
+      [this.pinPointer(stepId)],
+    );
+    if (!outcome.ok) return outcome.message;
+    this.offerUndo(
+      `Pinned ${stepId} for every item. Item ${pinItem(item)}'s own pin was removed.`,
+      outcome.previous,
+    );
     return null;
   }
   /** Unpins the step's output, with an Undo toast. */
@@ -769,7 +819,8 @@ export class StepDetailsController {
     return service
       .change(withoutPin(previous, target, at), [])
       .then((outcome) => {
-        if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+        if (outcome.ok)
+          this.offerUndo(`Unpinned ${pinSubject(target)}.`, outcome.previous);
         return outcome.ok;
       });
   }
@@ -790,7 +841,13 @@ export class StepDetailsController {
     void service
       .change(withPin(service.data(), target, keepPin(entry, now), at), [])
       .then((outcome) => {
-        if (outcome.ok) this.host.notify(`Kept pinned output for ${target}.`);
+        if (!outcome.ok) return;
+        // Inside a loop, the item as people count it.
+        this.host.notify(
+          stepId === target
+            ? `Kept pinned output for ${target}.`
+            : `Kept the pinned output of ${pinSubject(target)}.`,
+        );
       });
   }
   /** Pins a sample made from the step's output fields. */

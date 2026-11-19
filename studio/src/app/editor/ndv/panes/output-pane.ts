@@ -1205,11 +1205,9 @@ export class OutputPane {
     const { controller, target } = this.session();
     const pin = this.pinned();
     if (!pin || pin.key === target) return;
-    const value = controller.pinnedOutput(pin.key) ?? pin.entry.output;
-    const refused = await controller.pin(target, value as Json, "manual");
+    const refused = await controller.pinForEveryItem(pin.key);
     this.problem.set(refused ?? "");
     if (refused) return;
-    await controller.unpin(pin.key);
     this.focusPin();
   }
   keepPinned() {
