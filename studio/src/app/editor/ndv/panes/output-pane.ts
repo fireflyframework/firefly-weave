@@ -374,7 +374,20 @@ import { describeError } from "../../../errors";
                   </button>
                 </div>
               }
-              @if (said.reason === "missing_mock" && canPin && !pin) {
+              @if (said.reason === "callee" && canPin && !pin) {
+                <!-- A call without its workflow: test data for the call when
+                     Studio can check it (it knows the call's output), or the workflow. -->
+                <div class="pane-empty-actions">
+                  @if (calleeKnown()) {
+                    <button type="button" class="sm" (click)="setOutput()">
+                      Set test output
+                    </button>
+                  }
+                  <button type="button" class="sm" (click)="openCallee()">
+                    <weave-icon name="external" [size]="16" />Open workflow
+                  </button>
+                </div>
+              } @else if (said.reason === "missing_mock" && canPin && !pin) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="setOutput()">
                     Set test output
@@ -965,6 +978,21 @@ export class OutputPane {
       id,
       null,
     );
+  }
+  /** Studio knows what the called workflow returns, so test output for the call can be checked. */
+  calleeKnown(): boolean {
+    const { controller, target } = this.session();
+    const uses = controller.step(target)?.["uses"];
+    return (
+      typeof uses === "string" &&
+      controller.kindContext().workflowContract(uses) !== null
+    );
+  }
+  /** Open workflow, from a call that needs the workflow it calls. */
+  openCallee() {
+    const { controller, target, host } = this.session();
+    const uses = controller.step(target)?.["uses"];
+    if (typeof uses === "string" && uses) host.openWorkflow?.(uses);
   }
   /** A step that calls a workflow: it runs only when the whole workflow executes. */
   callStep(): boolean {

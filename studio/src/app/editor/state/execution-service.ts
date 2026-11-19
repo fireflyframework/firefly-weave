@@ -33,7 +33,12 @@ import type { Workflow } from "../../model";
 import { sampleFromSchema } from "../ndv/panes/sample";
 import type { Json } from "../ndv/registry";
 import type { StoreBackend } from "./browser-store";
-import { executeRequest } from "./execute-request";
+import {
+  calleeBlock,
+  executeRequest,
+  tooManyCallees,
+  type CalledWorkflows,
+} from "./execute-request";
 import type {
   ExecuteRequest,
   ExecuteResponse,
@@ -80,6 +85,8 @@ export interface ExecutionHost {
   prints(): ReadonlyMap<string, StepFingerprints> | null;
   /** The workflow's input fields, sampled when test data has no input. */
   inputSchema(): Json;
+  /** The workflows it reaches, the drafts on this computer among them with their source. */
+  callees?(): CalledWorkflows;
 }
 
 export type ExecuteOutcome =
@@ -279,10 +286,13 @@ export class ExecutionService {
       testData,
       results: previous,
       sampleInput: sampleFromSchema(this.host.inputSchema()),
+      callees: this.host.callees?.(),
       target,
       now: this.host.now(),
     });
     if (options.catalog) body.catalog = options.catalog;
+    const over = tooManyCallees(body);
+    if (over) return { kind: "failed", message: over };
     this.running.set(target);
     let answer: ExecuteResponse | ExecuteOutcome;
     try {
@@ -303,6 +313,11 @@ export class ExecutionService {
       return answer.kind === "busy" && this.stopped
         ? { kind: "busy", stopping: true }
         : answer;
+    if (answer.blocked)
+      answer = {
+        ...answer,
+        blocked: calleeBlock(draft.workflow, answer.blocked),
+      };
     this.stopped = false;
     let results = withExecution(
       previous,
@@ -343,6 +358,7 @@ export class ExecutionService {
         testData: this.host.testData(),
         results: this.results(),
         sampleInput: sampleFromSchema(this.host.inputSchema()),
+        callees: this.host.callees?.(),
         target: { mode: "workflow" },
         now: this.host.now(),
       });

@@ -7454,6 +7454,8 @@ export class App implements CanvasHost {
           // The contracts of the actions this workflow uses, and the drafts
           // and copies kept on this computer for its steps.
           definitions: () => tools.studioDefinitions(this),
+          // The workflows it calls, with the drafts here among them.
+          callees: () => tools.studioCallees(this),
           testData: () =>
             this.testData?.data() ?? {
               schemaVersion: 1,
