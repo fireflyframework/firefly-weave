@@ -244,7 +244,7 @@ _WORKFLOW_FIELD_MARKS: Final[tuple[tuple[str, StudioMark], ...]] = (
     ("llmProfiles", "ready"),
     ("steps", "ready"),
     ("output", "ready"),
-    ("callable", "pending"),
+    ("callable", "ready"),
     ("eventTrigger", "pending"),
 )
 WORKFLOW_FIELDS: Final[tuple[ManifestWorkflowField, ...]] = tuple(
@@ -297,7 +297,7 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
         scope_roots=["/item", "/index", "/loops"],
         studio="pending",
     ),
-    _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow", studio="pending"),
+    _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow"),
     _kind(
         "transaction", "TransactionStep", "flow", "Transaction", blocks=[("body", "", "Transaction")], studio="pending"
     ),

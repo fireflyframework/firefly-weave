@@ -510,7 +510,7 @@
       {
         "name": "callable",
         "feature": "flow.callWorkflow",
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "name": "eventTrigger",
@@ -617,7 +617,7 @@
         "label": "Call a workflow",
         "blocks": [],
         "scope_roots": [],
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "kind": "transaction",
