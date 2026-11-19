@@ -2336,11 +2336,11 @@ export class App implements CanvasHost {
    */
   private readonly openedFromFiles = new Set<string>();
   /**
-   * A published version opens under an identity of its own, set before its
-   * workflow replaces the one open: the draft open until now keeps its last
-   * change and its canvas, and is never saved over.
+   * A published version opens under an identity of its own, set before
+   * `load` replaces the workflow open: the draft open until now keeps its
+   * last change and its canvas, and is never saved over.
    */
-  private openPublished(record: Record<string, unknown>) {
+  openPublished(record: Record<string, unknown>, load: () => void) {
     void this.flushDraftCanvas();
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
@@ -2348,6 +2348,22 @@ export class App implements CanvasHost {
     this.published = record;
     this.draftCanvasPending = null;
     this.draftCanvasKept = "memory";
+    load();
+    this.resetValidation();
+    this.changed();
+    this.dirty = false;
+    this.openTestData();
+    this.view = "designer";
+    this.activation = null;
+    this.saveState = "Published";
+    this.openTab();
+    void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
+  }
+  /** Opens a workflow a call step calls, or one that calls this one: its draft here, else its published version. */
+  openWorkflow(uses: string) {
+    void import("./editor/calls/open-workflow").then((open) =>
+      open.openCalledWorkflow(this, uses),
+    );
   }
   /** Opens a platform draft in the designer. */
   private openPlatformDraft(
@@ -4317,13 +4333,11 @@ export class App implements CanvasHost {
     if (!intent || this.editingLocked || this.model.readonly) return;
     if (
       intent.kind === "called" &&
-      !(await this.dialogs.confirm({
-        title: "Stop other workflows from calling this one?",
-        message:
-          "Workflows that call this one fail at their next activation until they stop calling it.",
-        confirmLabel: "Remove trigger",
-        danger: true,
-      }))
+      !(await this.dialogs.confirm(
+        await (
+          await import("./editor/calls/call-sources")
+        ).calledRemovalQuestion(this, this.model.definition),
+      ))
     )
       return;
     let change: ReturnType<typeof removeTrigger>;
@@ -6981,36 +6995,18 @@ export class App implements CanvasHost {
         const d = detail["definition"] ?? detail["document"];
         if (d && typeof d === "object" && this.libraryCollection === "drafts")
           this.openPlatformDraft(detail, d as Workflow);
-        else if (d && typeof d === "object") {
-          this.openPublished(record);
-          this.model.replace(d as Workflow);
-          this.resetValidation();
-          this.changed();
-          this.dirty = false;
-          this.openTestData();
-          this.view = "designer";
-          this.activation = null;
-          this.saveState = "Published";
-          this.openTab();
-          void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
-        } else if (typeof detail["source"] === "string") {
-          this.openPublished(record);
-          this.model.setSource(
-            detail["source"],
-            detail["format"] === "json" ? "json" : "yaml",
-          );
-          this.model.clearHistory();
-          this.model.selected = "";
-          this.resetValidation();
-          this.changed();
-          this.dirty = false;
-          this.openTestData();
-          this.view = "designer";
-          this.activation = null;
-          this.saveState = "Published";
-          this.openTab();
-          void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
-        } else
+        else if (d && typeof d === "object")
+          this.openPublished(record, () => this.model.replace(d as Workflow));
+        else if (typeof detail["source"] === "string")
+          this.openPublished(record, () => {
+            this.model.setSource(
+              detail["source"] as string,
+              detail["format"] === "json" ? "json" : "yaml",
+            );
+            this.model.clearHistory();
+            this.model.selected = "";
+          });
+        else
           throw Error(
             "This export cannot be opened. Its source remains available through the API.",
           );
@@ -7458,6 +7454,8 @@ export class App implements CanvasHost {
           // The contracts of the actions this workflow uses, and the drafts
           // and copies kept on this computer for its steps.
           definitions: () => tools.studioDefinitions(this),
+          // The workflows it calls, with the drafts here among them.
+          callees: () => tools.studioCallees(this),
           testData: () =>
             this.testData?.data() ?? {
               schemaVersion: 1,
@@ -7530,6 +7528,7 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
     this.lastTarget = target;
+    this.executeRefusal.set(null);
     let outcome = await service.execute(target, options);
     if (outcome.kind === "busy") return outcome;
     const draftId = this.draftId;
@@ -7549,19 +7548,25 @@ export class App implements CanvasHost {
     if (outcome.kind === "done") {
       this.runLogOpen.set(true);
       this.playRun(outcome.response);
-    } else if (outcome.kind !== "stale")
-      this.runAnnouncement.set({
-        text:
-          outcome.kind === "refused" || outcome.kind === "failed"
-            ? outcome.message
-            : outcome.kind === "conflict"
-              ? "A definition on this computer differs from the project's catalog, so the test run didn't start."
-              : "The test run didn't start.",
-        urgent: true,
-      });
+    } else if (outcome.kind !== "stale") {
+      const text =
+        outcome.kind === "refused" || outcome.kind === "failed"
+          ? outcome.message
+          : outcome.kind === "conflict"
+            ? "A definition on this computer differs from the project's catalog, so the test run didn't start."
+            : "The test run didn't start.";
+      this.runAnnouncement.set({ text, urgent: true });
+      // Execute workflow reports in the run log, as a run that stops does.
+      if (target.mode === "workflow") {
+        this.executeRefusal.set(text);
+        this.runLogOpen.set(true);
+      }
+    }
     this.cdr.markForCheck();
     return outcome;
   }
+  /** Why the last Execute workflow didn't start, for the run log; null once one starts. */
+  readonly executeRefusal = signal<string | null>(null);
   /**
    * Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter
    * on the canvas. With breakpoints it runs as a session the run log steps
@@ -7657,34 +7662,25 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
   }
   /**
-   * The run log's answer to "Send signal …" or "Decide for …": kept as the
-   * step's test answer (checked like all test data), then the last execution
-   * runs again, so the next one doesn't ask.
+   * Keeps what the run log changed in test data (a test answer, test output
+   * inside a called workflow), checked like all test data at `pointer`;
+   * then, when asked, the last execution runs again with it.
    */
-  async answerScript(
-    section: "signals" | "humans",
-    stepId: string,
-    entry: SignalEntry | HumanEntry,
+  async keepForRunLog(
+    change: (data: StudioTestData, now: string) => StudioTestData,
+    pointer: string,
+    executeAgain: boolean,
   ): Promise<boolean> {
     const service = await this.requireTestData();
-    const tools = await this.loadTools();
-    const escape = (key: string) =>
-      key.replace(/~/g, "~0").replace(/\//g, "~1");
     const outcome = await service.change(
-      tools.testDataOps.withScript(
-        service.data(),
-        section,
-        stepId,
-        { ...entry, source: "manual" } as SignalEntry | HumanEntry,
-        new Date().toISOString(),
-      ),
-      [`/${section}/${escape(stepId)}`],
+      change(service.data(), new Date().toISOString()),
+      [pointer],
     );
     if (!outcome.ok) {
       this.notify(outcome.message, undefined, "danger");
       return false;
     }
-    if (this.lastTarget) await this.executeIn(this.lastTarget);
+    if (executeAgain && this.lastTarget) await this.executeIn(this.lastTarget);
     return true;
   }
   /** An entry's step details, on its Input or Output when asked. */
@@ -7822,6 +7818,7 @@ export class App implements CanvasHost {
     this.execution?.forget();
     this.runSession.set(null);
     this.playback.set(null);
+    this.executeRefusal.set(null);
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;

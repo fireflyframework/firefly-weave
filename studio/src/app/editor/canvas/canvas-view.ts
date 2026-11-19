@@ -720,23 +720,29 @@ export class CanvasView implements OnInit, DoCheck {
     const fact = recorded
       ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
       : null;
+    // The Runs tab draws the run only: nothing from the editor's executions.
+    const runLine = fact
+      ? fact.text
+      : this.viewingRuns()
+        ? ""
+        : (h.summaryOf?.(tile.id) ?? "");
+    // A call that doesn't wait says so on its own line while no run line shows.
+    const detached =
+      !runLine &&
+      tile.kind === "callWorkflow" &&
+      tile.step["mode"] === "detach";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      // The Runs tab draws the run only: nothing from the editor's executions.
-      output: fact
-        ? fact.text
-        : this.viewingRuns()
-          ? ""
-          : (h.summaryOf?.(tile.id) ?? ""),
-      outputTone: fact?.tone ?? null,
+      output: detached ? "Doesn't wait" : runLine,
+      outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
         id: tile.id,
         kindLabel,
-        summary,
+        summary: detached ? `${summary}, doesn't wait` : summary,
         status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
@@ -1298,6 +1304,17 @@ export class CanvasView implements OnInit, DoCheck {
     const id = tile.id;
     return [
       { label: "Open", run: () => void h.openStep(id, "details") },
+      // A call step also opens the workflow it calls.
+      ...(tile.kind === "callWorkflow" &&
+      typeof tile.step?.["uses"] === "string" &&
+      tile.step["uses"]
+        ? [
+            {
+              label: "Open workflow",
+              run: () => h.openWorkflow?.(String(tile.step?.["uses"])),
+            },
+          ]
+        : []),
       {
         label: "Rename",
         disabled: locked,

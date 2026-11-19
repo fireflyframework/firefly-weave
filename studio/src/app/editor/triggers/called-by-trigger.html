@@ -1,0 +1,264 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let reason = readOnly();
+@let names = this.names();
+<section class="cb-section" [attr.aria-labelledby]="id + '-who'">
+  <h3 class="cb-heading" [id]="id + '-who'">Who can call it</h3>
+  <div class="cb-cards" role="radiogroup" [attr.aria-labelledby]="id + '-who'">
+    <label class="cb-card" [class.is-chosen]="!only()">
+      <input
+        type="radio"
+        value="any"
+        [name]="id + '-who'"
+        [checked]="!only()"
+        [disabled]="!!reason"
+        [attr.aria-labelledby]="id + '-any'"
+        (change)="chooseAny()"
+      />
+      <span class="cb-card-text" [id]="id + '-any'"
+        >Any workflow in this project</span
+      >
+    </label>
+    <label class="cb-card" [class.is-chosen]="only()">
+      <input
+        type="radio"
+        value="only"
+        [name]="id + '-who'"
+        [checked]="only()"
+        [disabled]="!!reason"
+        [attr.aria-labelledby]="id + '-only'"
+        [attr.aria-describedby]="id + '-only-hint'"
+        (change)="chooseOnly()"
+      />
+      <span class="cb-card-text"
+        ><span [id]="id + '-only'">Only these workflows</span>
+        <small [id]="id + '-only-hint'"
+          >Up to 100 workflows, by name. Every version of a workflow
+          counts.</small
+        ></span
+      >
+    </label>
+  </div>
+  @if (only()) {
+    <ul class="cb-chips" aria-label="Workflows that can call this one">
+      @for (name of names; track name) {
+        <li class="cb-chip" [attr.data-caller]="name">
+          <span>{{ name }}</span>
+          <button
+            type="button"
+            class="cb-chip-remove"
+            [attr.aria-label]="'Remove ' + name"
+            [disabled]="!!reason"
+            (click)="remove(name)"
+          >
+            <weave-icon name="close" [size]="16" />
+          </button>
+        </li>
+      }
+      <li class="cb-add-item">
+        @if (adding()) {
+          <input
+            #field
+            class="cb-add-input"
+            type="text"
+            aria-label="Add a workflow"
+            placeholder="Workflow name"
+            autocomplete="off"
+            spellcheck="false"
+            [attr.list]="id + '-known'"
+            [attr.aria-invalid]="problem() ? 'true' : null"
+            [attr.aria-describedby]="problem() ? id + '-problem' : null"
+            [disabled]="!!reason"
+            (keydown)="addKey($event, field)"
+            (input)="problem.set('')"
+          />
+          <datalist [id]="id + '-known'">
+            @for (known of known(); track known) {
+              <option [value]="known"></option>
+            }
+          </datalist>
+        } @else {
+          <button
+            type="button"
+            class="cb-add"
+            [disabled]="!!reason"
+            (click)="startAdding()"
+          >
+            <weave-icon name="plus" [size]="16" />Add a workflow
+          </button>
+        }
+      </li>
+    </ul>
+  }
+  @if (problem()) {
+    <p class="cb-problem" role="alert" [id]="id + '-problem'">
+      <weave-icon name="warning" [size]="16" />{{ problem() }}
+    </p>
+  }
+</section>
+
+<section class="cb-section" [attr.aria-labelledby]="id + '-interface'">
+  <div class="cb-head">
+    <h3 class="cb-heading" [id]="id + '-interface'">Interface</h3>
+    <span class="cb-caption">What callers send and read</span>
+  </div>
+  <div class="cb-boxes">
+    @for (box of boxes(); track box.side) {
+      <div class="cb-box" role="group" [attr.aria-label]="box.label">
+        <div class="cb-box-head">
+          <span class="cb-box-title">{{ box.label }}</span>
+          <span class="cb-caption">{{ box.count }}</span>
+          <button
+            type="button"
+            class="text-link cb-edit"
+            [attr.aria-label]="'Edit the ' + box.label.toLowerCase()"
+            [attr.aria-expanded]="editing() === box.side"
+            (click)="toggleEdit(box.side)"
+          >
+            {{ editing() === box.side ? "Done" : "Edit" }}
+          </button>
+        </div>
+        @if (box.fields.length) {
+          <ul class="cb-fields">
+            @for (field of box.fields; track field.key) {
+              <li>
+                <weave-icon [name]="field.icon" [size]="16" />
+                <span class="cb-field-name">{{ field.key }}</span>
+                <span class="cb-caption">{{ field.type }}</span>
+                @if (field.required) {
+                  <span class="cb-caption cb-required">Required</span>
+                }
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="cb-box-empty">No fields</p>
+        }
+      </div>
+    }
+  </div>
+  @if (editing(); as side) {
+    <weave-schema-designer
+      [heading]="side === 'input' ? 'Input' : 'Result'"
+      [schema]="schemaOf(side)"
+      [purpose]="side === 'input' ? 'input' : 'output'"
+      [readonly]="!!reason"
+      [preview]="false"
+      [compact]="true"
+      [json]="false"
+      (schemaChange)="writeSchema(side, $event)"
+    />
+  }
+</section>
+
+<section class="cb-section" [attr.aria-labelledby]="id + '-callers'">
+  @let view = callers();
+  <div class="cb-head">
+    <h3 class="cb-heading" [id]="id + '-callers'">Called by</h3>
+    @if (view.kind === "callers") {
+      <span class="cb-caption">{{ caption(view.callers.length) }}</span>
+    }
+    <button
+      type="button"
+      class="icon-button cb-refresh"
+      aria-label="Read the callers again"
+      title="Read the callers again"
+      (click)="refresh()"
+    >
+      <weave-icon name="refresh" [size]="16" />
+    </button>
+  </div>
+  @if (view.kind === "callers") {
+    <ul class="cb-callers">
+      @for (caller of view.callers; track caller.name) {
+        <li class="cb-caller" [class.is-refused]="!caller.allowed">
+          <weave-icon
+            [name]="
+              !caller.allowed
+                ? 'warning'
+                : caller.mode === 'tool'
+                  ? 'agent'
+                  : 'callWorkflow'
+            "
+            [size]="16"
+          />
+          <span class="cb-caller-text">
+            <span class="cb-caller-name"
+              >{{ caller.name }} {{ caller.version }}</span
+            >
+            <span class="cb-caller-line cb-wide">{{
+              line(caller, false)
+            }}</span>
+            <span class="cb-caller-line cb-narrow">{{
+              line(caller, true)
+            }}</span>
+            @if (!caller.allowed && allowProblem(caller); as full) {
+              <span class="cb-caller-line" [id]="id + '-full-' + caller.name">{{
+                full
+              }}</span>
+            }
+          </span>
+          @if (!caller.allowed) {
+            <button
+              type="button"
+              class="sm"
+              [disabled]="!!reason || !!allowProblem(caller)"
+              [attr.aria-describedby]="
+                allowProblem(caller) ? id + '-full-' + caller.name : null
+              "
+              (click)="allow(caller)"
+            >
+              Allow it
+            </button>
+          } @else if (canOpen()) {
+            <button
+              type="button"
+              class="sm cb-open"
+              [attr.aria-label]="'Open ' + caller.name"
+              (click)="open(caller)"
+            >
+              <weave-icon name="external" [size]="16" /><span
+                class="cb-open-text"
+                >Open</span
+              >
+            </button>
+          }
+        </li>
+      }
+    </ul>
+  } @else {
+    @if (view.loading) {
+      <p class="cb-none cb-loading" role="status">
+        <span class="loading-spinner small" aria-hidden="true"></span
+        >{{ view.title }}
+      </p>
+    } @else {
+      <div class="cb-none">
+        <p class="cb-none-title">{{ view.title }}</p>
+        @if (view.detail) {
+          <p>{{ view.detail }}</p>
+        }
+        @if (view.retry) {
+          <button type="button" class="sm cb-retry" (click)="refresh()">
+            <weave-icon name="refresh" [size]="16" />Try again
+          </button>
+        }
+      </div>
+    }
+  }
+</section>

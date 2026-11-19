@@ -32,7 +32,7 @@ import { test, expect, Locator, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import {
   allCapabilities,
   closeSheet,
@@ -59,6 +59,13 @@ import {
   globexPlatform,
 } from "./platform-host";
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
+import {
+  openCallRun,
+  openCallRunLog,
+  openCalledBy,
+  openCallStep,
+  workflowOptions,
+} from "./calls-po";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
 import {
   addCommonStep,
@@ -5667,6 +5674,111 @@ spec:
     await expect(logs.locator(".entry:not(.head)")).toHaveCount(5);
     await logs.scrollIntoViewIfNeeded();
     await shot("194-run-logs", { end: ".record-detail, .page-content" });
+  },
+  async "call-step"({ page, shot }) {
+    const details = await openCallStep(page);
+    await shot("224-call-step", { tabs: 0 });
+    await workflowOptions(page, details);
+    await shot("225-call-picker", { tabs: 0 });
+  },
+  async "called-by"({ page, shot }) {
+    await openCalledBy(page);
+    await shot("226-called-by", { tabs: 0 });
+  },
+  async "call-run-log"({ page, shot }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    await openCallRunLog(page, true);
+    await shot("227-call-run-log");
+  },
+  async "call-run"({ page, shot }) {
+    // The call continues with the result status when it fails: its run finished, the run it started failed.
+    await openCallRun(page);
+    await shot("228-call-child-run", { tabs: 0 });
+  },
+  async "call-limit"({ page, shot }) {
+    // Each call reaches its own workflow: one more than a test runs.
+    const steps = Array.from({ length: 51 }, (_, at) => ({
+      id: `call-${at + 1}`,
+      kind: "callWorkflow",
+      uses: `workflow-${at + 1}@1.0.0`,
+      mode: "wait",
+      with: { literal: {} },
+    }));
+    const details = await openStepFixture(
+      page,
+      yamlFile(
+        "many-calls.yaml",
+        stringify({
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "many-calls", version: "1.0.0" },
+          spec: {
+            inputSchema: { type: "object" },
+            outputSchema: { type: "object" },
+            steps,
+            output: { literal: {} },
+          },
+        }),
+      ),
+      async (p) => {
+        // The first one it calls is kept on this computer, with the input it takes.
+        await p.addInitScript(
+          (source) => {
+            if (localStorage.getItem("local:weave.localDrafts.v1")) return;
+            const savedAt = "2026-11-18T10:00:00Z";
+            localStorage.setItem(
+              "local:weave.localDrafts.v1",
+              JSON.stringify([
+                { id: "d-w1", name: "workflow-1", version: "1.0.0", savedAt },
+              ]),
+            );
+            localStorage.setItem(
+              "local:weave.localDraft.d-w1",
+              JSON.stringify({ source, format: "yaml", layout: null, savedAt }),
+            );
+          },
+          stringify({
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "workflow-1", version: "1.0.0" },
+            spec: {
+              inputSchema: {
+                type: "object",
+                properties: { customerId: { type: "string" } },
+              },
+              outputSchema: { type: "object" },
+              callable: {},
+              steps: [],
+              output: { literal: {} },
+            },
+          }),
+        );
+        await offline(p);
+        await withLanguageFeatures(p, ["flow.callWorkflow"]);
+      },
+    );
+    await details.openWithKeyboard("call-1");
+    await expect(details.field("input")).toContainText(
+      "From workflow-1's input",
+    );
+    await details.dialog
+      .locator(".sd-actions")
+      .getByRole("button", { name: "Execute workflow", exact: true })
+      .click();
+    await expect(details.dialog).toContainText(
+      "This test would run 51 called workflows. Studio can run at most 50 in one test.",
+    );
+    await shot("229-call-limit", { tabs: 0 });
+    // From the editor bar, the run log says it.
+    await details.close();
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Run log" }).locator(".run-log-refusal"),
+    ).toContainText("This test would run 51 called workflows.");
+    await shot("230-call-limit-run-log");
   },
 };
 

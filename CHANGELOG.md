@@ -157,6 +157,17 @@ SPDX-License-Identifier: Apache-2.0
   changes, the editor closes, or you switch account or environment.
 - Publish… in the More menu is disabled with its reason when your account
   can't publish.
+- Studio has a **Call a workflow** step: choose a callable version from the
+  project's published workflows or a draft on this computer, map its input,
+  choose whether to wait for the result and what happens if it fails, and open
+  the called workflow. The **Called by a workflow** trigger says who can call a
+  workflow, its interface, and which published workflows call it, with Allow it.
+- Execute workflow runs the called workflows kept on this computer; the run log
+  shows their steps under each call, and test output can be set for a step
+  inside one. A step inside a called workflow that needs test data now stops
+  there instead of failing the test with a server error.
+- On the Runs tab, a call step's Output names the run it started, says how it
+  went, and opens it.
 
 ### Development and testing
 

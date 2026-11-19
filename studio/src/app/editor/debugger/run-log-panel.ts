@@ -21,10 +21,15 @@ SPDX-License-Identifier: Apache-2.0
 // person the test data doesn't answer, the log asks, keeps the answer as a
 // test answer and executes again. With breakpoints (F9) it steps through a
 // session on the Studio host: Next, Continue, Stop.
+import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  afterNextRender,
+  ElementRef,
+  inject,
+  Injector,
   input,
   signal,
   type Signal,
@@ -35,13 +40,21 @@ import type { DebugCommandBody } from "../../designer/simulation/simulation-plan
 import type { Json } from "../ndv/registry";
 import { allSteps } from "../ndv/step-walk";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
+import type { CalledRuns } from "../state/execute-request";
 import type {
   ExecuteResponse,
   ExecuteTarget,
   TraceStatus,
 } from "../state/execution";
+import { instanceStep } from "../state/instance-keys";
 import type { ExecutionService, HostSession } from "../state/execution-service";
-import type { HumanEntry, SignalEntry } from "../state/test-data";
+import type {
+  FrameKey,
+  HumanEntry,
+  SignalEntry,
+  StudioTestData,
+} from "../state/test-data";
+import { withCalleeMock, withScript } from "../state/test-data-ops";
 
 /** What the run log needs from the editor (the shell has every member). */
 export interface RunLogHost {
@@ -49,6 +62,8 @@ export interface RunLogHost {
   readonly execution: ExecutionService | null;
   readonly runLogOpen: Signal<boolean>;
   readonly runSession: Signal<HostSession | null>;
+  /** Why the last Execute workflow didn't start, such as too many called workflows; null once one starts. */
+  readonly executeRefusal?: Signal<string | null>;
   readonly breakpoints: Signal<ReadonlySet<string>>;
   lastTarget: ExecuteTarget | null;
   toggleRunLog(): void;
@@ -57,12 +72,21 @@ export interface RunLogHost {
   openEntry(id: string, pane?: "input" | "output"): void;
   sessionCommand(command: DebugCommandBody): Promise<void>;
   stopSession(): Promise<void>;
-  answerScript(
-    section: "signals" | "humans",
-    stepId: string,
-    entry: SignalEntry | HumanEntry,
+  /** The open workflow's test data, once it is read. */
+  readonly testData: { data(): StudioTestData } | null;
+  /**
+   * Keeps a change of test data (checked like all test data at `pointer`);
+   * then, when asked, the last execution runs again with it.
+   */
+  keepForRunLog(
+    change: (data: StudioTestData, now: string) => StudioTestData,
+    pointer: string,
+    executeAgain: boolean,
   ): Promise<boolean>;
 }
+/** A key as one segment of a JSON pointer. */
+const segment = (key: string) =>
+  "/" + key.replace(/~/g, "~0").replace(/\//g, "~1");
 
 export interface RunLogEntry {
   id: string;
@@ -70,6 +94,8 @@ export interface RunLogEntry {
   summary: string | null;
   stale: boolean;
   breakpoint: boolean;
+  /** The workflows this step called, with what ran inside them. */
+  frames?: FrameLog[];
 }
 
 const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
@@ -80,10 +106,162 @@ const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
   current: "play",
 };
 
+// Called workflows: the steps that ran inside one show under the call that
+// ran it, and a call inside it under its own step.
+
+/** A step that ran inside a called workflow, as the run log lists it. */
+export interface FrameStep {
+  id: string;
+  kind: string;
+  status: TraceStatus;
+  /** "2 fields": what its output holds; null without one. */
+  summary: string | null;
+  output?: Json;
+  /** The run stopped here: the step needs test output. */
+  needsData: boolean;
+  /** The workflows this step called, with what ran inside them. */
+  frames: FrameLog[];
+}
+/** One run of a called workflow during an execution. */
+export interface FrameLog {
+  key: FrameKey;
+  /** `notify-customer@1.0.0`: where test output for its steps goes. */
+  workflow: string;
+  name: string;
+  version: string;
+  /** "Item 3" when one item of a loop made the call. */
+  item: string | null;
+  status: TraceStatus;
+  steps: FrameStep[];
+}
+const counted = (count: number, word: string) =>
+  `${count.toLocaleString("en-US")} ${word}${count === 1 ? "" : "s"}`;
+/** What a called workflow's step returned, in a few words. */
+function framedSummary(output: Json | undefined): string | null {
+  if (Array.isArray(output)) return counted(output.length, "item");
+  if (output && typeof output === "object")
+    return counted(Object.keys(output).length, "field");
+  return null;
+}
+/** "Item 3", or "Item 2 › 1" inside the second item of the loop around it; null outside loops. */
+function callItem(callNode: string): string | null {
+  const at = [...callNode.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]) + 1);
+  return at.length ? `Item ${at.join(" › ")}` : null;
+}
+
+/**
+ * The workflows each step of this workflow called during an execution, by
+ * step ID: each with the steps that ran inside it, in the order they ran,
+ * and the workflows those steps called under them. Each status is its
+ * run's, as the host gives it.
+ */
+export function frameLog(
+  called: CalledRuns | null,
+): ReadonlyMap<string, FrameLog[]> {
+  const top = new Map<string, FrameLog[]>();
+  if (!called) return top;
+  const logs = new Map<string, FrameLog>();
+  for (const view of called.frames) {
+    const at = view.workflow.lastIndexOf("@");
+    logs.set(view.key, {
+      key: view.key,
+      workflow: view.workflow,
+      name: at > 0 ? view.workflow.slice(0, at) : view.workflow,
+      version: at > 0 ? view.workflow.slice(at + 1) : "",
+      item: callItem(view.callNode),
+      status: view.status,
+      steps: [],
+    });
+  }
+  // One row per step, where it first ran, with how it last ended.
+  for (const entry of called.trace) {
+    const log = logs.get(entry.frame ?? "");
+    if (!log) continue;
+    const row: FrameStep = {
+      id: entry.nodeId,
+      kind: entry.kind,
+      status: entry.status,
+      summary:
+        entry.status === "completed" ? framedSummary(entry.output) : null,
+      ...(entry.output !== undefined ? { output: entry.output } : {}),
+      needsData: false,
+      frames: [],
+    };
+    const at = log.steps.findIndex((step) => step.id === entry.nodeId);
+    if (at < 0) log.steps.push(row);
+    else log.steps[at] = { ...row, frames: log.steps[at].frames };
+  }
+  const stop = called.blocked;
+  const stopped = stop?.frame
+    ? logs.get(stop.frame)?.steps.find((step) => step.id === stop.nodeId)
+    : undefined;
+  if (stopped) stopped.needsData = true;
+  // Each under the step that called it: this workflow's, or one inside the workflow that called it.
+  for (const view of called.frames) {
+    const log = logs.get(view.key)!;
+    const step = instanceStep(view.callNode);
+    const cut = view.key.lastIndexOf("/");
+    if (cut < 0) {
+      top.set(step, [...(top.get(step) ?? []), log]);
+      continue;
+    }
+    const parent = logs.get(view.key.slice(0, cut));
+    if (!parent) continue;
+    let row = parent.steps.find((item) => item.id === step);
+    if (!row)
+      parent.steps.push(
+        (row = {
+          id: step,
+          kind: "callWorkflow",
+          status: view.status,
+          summary: null,
+          needsData: false,
+          frames: [],
+        }),
+      );
+    row.frames.push(log);
+  }
+  return top;
+}
+/** A called workflow that failed or is still running starts open; one that finished starts closed. */
+export const opensFirst = (frame: FrameLog): boolean =>
+  frame.status !== "completed";
+/** Test output stands in for a task (an action, a model) or for the step the run stopped at. */
+export const takesTestOutput = (step: FrameStep): boolean =>
+  step.needsData || step.kind === "action" || step.kind === "llm";
+/** The call's own row when a workflow it called failed: "Failed in notify-customer". */
+export function failedIn(frames: readonly FrameLog[]): string | null {
+  const failed = frames.find((frame) => frame.status === "failed");
+  return failed ? `Failed in ${failed.name}` : null;
+}
+/** The workflows that ran during an execution, each once, in the order their calls started. */
+export function calledNames(called: CalledRuns | null): string[] {
+  return [
+    ...new Set(
+      (called?.frames ?? []).map((view) =>
+        view.workflow.slice(0, view.workflow.lastIndexOf("@")),
+      ),
+    ),
+  ];
+}
+/** Each call's row with the workflows it called; a call whose workflow failed says in which. */
+function withFrames(
+  entries: RunLogEntry[],
+  calls: ReadonlyMap<string, FrameLog[]>,
+): RunLogEntry[] {
+  return entries.map((entry) => {
+    const frames = calls.get(entry.id);
+    if (!frames?.length) return entry;
+    const failed = entry.status === "failed" ? failedIn(frames) : null;
+    return { ...entry, frames, summary: failed ?? entry.summary };
+  });
+}
+
 /** The header's words for an execution's answer. */
 export function runStatus(
   response: ExecuteResponse,
   target: ExecuteTarget | null,
+  called: CalledRuns | null = null,
 ): string {
   const ran = new Set(
     response.trace
@@ -93,6 +271,15 @@ export function runStatus(
   const steps = `${ran} step${ran === 1 ? "" : "s"}`;
   // Short enough for one line; the question below says what to do.
   const blocked = response.status === "blocked" ? response.blocked : null;
+  const inside = called?.blocked;
+  if (blocked?.reason === "missing_mock" && inside?.frame) {
+    const workflow = called?.frames.find((view) => view.key === inside.frame);
+    const name = workflow?.workflow.slice(
+      0,
+      workflow.workflow.lastIndexOf("@"),
+    );
+    return `${inside.nodeId}${name ? ` in ${name}` : ""} needs test data`;
+  }
   if (blocked?.reason === "signal")
     return `Waiting for ${blocked.message.replace(/^Send signal /, "")}`;
   if (blocked?.reason === "human") return `Waiting for ${blocked.nodeId}`;
@@ -112,16 +299,21 @@ export function runStatus(
   selector: "weave-run-log",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon],
+  imports: [Icon, NgTemplateOutlet],
   styleUrl: "./run-log-panel.css",
   host: { class: "run-log", role: "region", "aria-label": "Run log" },
   template: `@let list = entries();
     <header class="run-log-head">
       <weave-icon name="runHistory" [size]="16" aria-hidden="true" />
       <h2 class="run-log-title">Run log</h2>
-      <span class="run-log-status" role="status" [title]="status()">{{
-        status()
-      }}</span>
+      <!-- A long status takes its own line under the title, whole. -->
+      <span
+        class="run-log-status"
+        role="status"
+        [class.run-log-status-long]="status().length > 26"
+        [title]="status()"
+        >{{ status() }}</span
+      >
       <button
         type="button"
         class="icon-button run-log-close"
@@ -132,10 +324,26 @@ export function runStatus(
         <weave-icon name="close" [size]="16" />
       </button>
     </header>
-    @if (!host().runSession() && host().execution?.sampledInput()) {
-      <p class="run-log-note">
-        Executed with a sample input. Add test input to choose your own.
-      </p>
+    @if (!host().runSession()) {
+      @let sampled = !!host().execution?.sampledInput();
+      @let ran = names();
+      @if (sampled || ran.length) {
+        <!-- Each workflow's name stays whole on a narrow sheet. -->
+        <p class="run-log-note">
+          {{
+            sampled
+              ? "Executed with a sample input. Add test input to choose your own."
+              : "Executed with test input."
+          }}
+          @for (name of ran; track name; let at = $index, count = $count) {
+            <span class="run-log-name">{{ name }}</span
+            >{{ at < count - 2 ? "," : at === count - 2 ? " and" : "" }}
+          }
+          @if (ran.length) {
+            ran on this computer.
+          }
+        </p>
+      }
     }
     @if (host().runSession(); as session) {
       <div class="run-log-controls" role="group" aria-label="Step through">
@@ -198,7 +406,14 @@ export function runStatus(
         </button>
       </form>
     }
-    @if (list.length) {
+    @if (host().executeRefusal?.(); as refused) {
+      <!-- Nothing ran: what stopped it, in place of the last run's steps. -->
+      <p class="run-log-refusal" data-tone="warning">
+        <weave-icon name="warning" [size]="16" aria-hidden="true" />{{
+          refused
+        }}
+      </p>
+    } @else if (list.length) {
       <ul class="run-log-list" aria-label="Steps that ran">
         @for (entry of list; track entry.id) {
           <li class="run-log-row">
@@ -226,6 +441,12 @@ export function runStatus(
                 <span class="run-log-breakpoint" title="Breakpoint"></span>
               }
             </button>
+            @if (entry.frames) {
+              <ng-container
+                [ngTemplateOutlet]="framesOf"
+                [ngTemplateOutletContext]="{ $implicit: entry.frames }"
+              />
+            }
           </li>
         }
       </ul>
@@ -233,7 +454,154 @@ export function runStatus(
       <p class="run-log-empty">
         Execute the workflow to see each step it runs here.
       </p>
-    }`,
+    }
+    <!-- The workflows a step called: a row that opens to their steps, and the calls inside them under their own step. -->
+    <ng-template #framesOf let-frames>
+      <ul class="run-log-frames">
+        @for (frame of asFrames(frames); track frame.key) {
+          @let open = isOpen(frame);
+          <li class="run-log-frame">
+            <button
+              type="button"
+              class="run-log-frame-row"
+              [attr.data-frame]="frame.key"
+              [attr.data-status]="frame.status"
+              [attr.aria-expanded]="open"
+              [attr.aria-label]="frameLabel(frame)"
+              [title]="frame.name + ' ' + frame.version"
+              (click)="toggle(frame)"
+              (keydown)="frameKey($event, frame)"
+            >
+              <weave-icon
+                class="run-log-chevron"
+                [name]="open ? 'chevronDown' : 'chevron'"
+                [size]="16"
+                aria-hidden="true"
+              />
+              <weave-icon
+                class="run-log-icon"
+                [name]="icons[frame.status]"
+                [size]="16"
+                aria-hidden="true"
+              />
+              <strong class="run-log-frame-name">{{ frame.name }}</strong>
+              <span class="run-log-frame-version">{{ frame.version }}</span>
+              @if (frame.item) {
+                <span class="run-log-frame-item">{{ frame.item }}</span>
+              }
+              @if (frame.status !== "completed") {
+                <span class="run-log-frame-status">{{
+                  frameWords[frame.status]
+                }}</span>
+              }
+            </button>
+            @if (open) {
+              <ul
+                class="run-log-frame-steps"
+                [attr.aria-label]="'Steps of ' + frame.name"
+                (keydown)="stepsKey($event, frame)"
+              >
+                @for (step of frame.steps; track step.id) {
+                  <li class="run-log-frame-step">
+                    <div
+                      class="run-log-entry run-log-inside"
+                      [attr.data-status]="
+                        step.needsData ? 'needs' : step.status
+                      "
+                    >
+                      <weave-icon
+                        class="run-log-icon"
+                        [name]="step.needsData ? 'warning' : icons[step.status]"
+                        [size]="16"
+                        aria-hidden="true"
+                      />
+                      <strong class="run-log-step">{{ step.id }}</strong>
+                      @let said =
+                        step.status === "failed"
+                          ? "Failed"
+                          : step.needsData
+                            ? ""
+                            : (step.summary ?? "");
+                      <span class="run-log-summary" [title]="said">{{
+                        said
+                      }}</span>
+                      @if (settable(step)) {
+                        <button
+                          type="button"
+                          class="sm run-log-set"
+                          [class.shown]="step.needsData"
+                          [attr.data-set]="frame.key + '/' + step.id"
+                          [attr.aria-label]="
+                            'Set test output for ' +
+                            step.id +
+                            ' in ' +
+                            frame.name
+                          "
+                          (click)="startEdit(frame, step)"
+                        >
+                          <weave-icon
+                            name="pin"
+                            [size]="16"
+                            aria-hidden="true"
+                          />
+                          Set test output
+                        </button>
+                      }
+                    </div>
+                    @if (step.needsData) {
+                      <p class="run-log-inside-note">Needs test data</p>
+                    }
+                    @if (
+                      editing()?.frame === frame.key &&
+                      editing()?.step === step.id
+                    ) {
+                      <form
+                        class="run-log-question run-log-set-form"
+                        (submit)="saveOutput($event, frame, step)"
+                        (keydown.escape)="cancelEdit(frame, step, $event)"
+                      >
+                        <label class="run-log-json-label" [for]="setId"
+                          >Test output for {{ step.id }} (JSON)</label
+                        >
+                        <textarea
+                          class="param-input run-log-json"
+                          [id]="setId"
+                          rows="4"
+                          spellcheck="false"
+                          [value]="setJson()"
+                          (input)="setJson.set($any($event.target).value)"
+                        ></textarea>
+                        @if (setProblem()) {
+                          <p class="pane-problem" role="alert">
+                            {{ setProblem() }}
+                          </p>
+                        }
+                        <div class="run-log-set-actions">
+                          <button type="submit" class="primary sm">Save</button>
+                          <button
+                            type="button"
+                            class="sm"
+                            (click)="cancelEdit(frame, step)"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    }
+                    @if (step.frames.length) {
+                      <ng-container
+                        [ngTemplateOutlet]="framesOf"
+                        [ngTemplateOutletContext]="{ $implicit: step.frames }"
+                      />
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </li>
+        }
+      </ul>
+    </ng-template>`,
 })
 export class RunLogPanel {
   readonly host = input.required<RunLogHost>();
@@ -242,6 +610,8 @@ export class RunLogPanel {
   readonly json = signal("{}");
   readonly chosen = signal("");
   readonly problem = signal("");
+  private readonly el: ElementRef<HTMLElement> = inject(ElementRef);
+  private readonly injector = inject(Injector);
 
   private steps(): Step[] {
     return allSteps(this.host().model.definition.spec.steps ?? []);
@@ -252,6 +622,7 @@ export class RunLogPanel {
   }
   status(): string {
     const host = this.host();
+    if (host.executeRefusal?.()) return "Didn't start";
     const session = host.runSession();
     if (session) {
       const view = session.view as {
@@ -266,7 +637,9 @@ export class RunLogPanel {
       return at ? `Waiting at ${at}` : "Waiting";
     }
     const last = host.execution?.last();
-    return last ? runStatus(last, host.lastTarget) : "Nothing ran yet";
+    return last
+      ? runStatus(last, host.lastTarget, this.called())
+      : "Nothing ran yet";
   }
   readonly entries = computed((): RunLogEntry[] => {
     const host = this.host();
@@ -315,8 +688,123 @@ export class RunLogPanel {
         breakpoint: marks.has(entry.nodeId),
       });
     }
-    return [...seen.values()];
+    return withFrames([...seen.values()], this.calls());
   });
+
+  // Called workflows: what ran inside them, opened and closed in place.
+  readonly frameWords: Record<TraceStatus, string> = {
+    completed: "Completed",
+    failed: "Failed",
+    waiting: "Waiting",
+    running: "Running",
+  };
+  readonly setId = `run-log-set-${Math.random().toString(36).slice(2, 8)}`;
+  readonly setJson = signal("{}");
+  readonly setProblem = signal("");
+  /** The step inside a called workflow whose test output is being set. */
+  readonly editing = signal<{ frame: FrameKey; step: string } | null>(null);
+  /** Called workflows opened or closed by hand, for the answer they belong to. */
+  private readonly opened = signal<{
+    called: CalledRuns | null;
+    open: ReadonlyMap<FrameKey, boolean>;
+  }>({ called: null, open: new Map() });
+  private called(): CalledRuns | null {
+    return this.host().execution?.called() ?? null;
+  }
+  readonly calls = computed(() => frameLog(this.called()));
+  readonly names = computed(() => calledNames(this.called()));
+  /** The template's context value, typed. */
+  asFrames(frames: unknown): FrameLog[] {
+    return frames as FrameLog[];
+  }
+  isOpen(frame: FrameLog): boolean {
+    const kept = this.opened();
+    return kept.called === this.called() && kept.open.has(frame.key)
+      ? kept.open.get(frame.key)!
+      : opensFirst(frame);
+  }
+  toggle(frame: FrameLog, open = !this.isOpen(frame)) {
+    const called = this.called();
+    const kept = this.opened();
+    const next = new Map(kept.called === called ? kept.open : []);
+    next.set(frame.key, open);
+    this.opened.set({ called, open: next });
+  }
+  /** "notify-customer 1.0.0, item 3, failed": the row says whether it is open (aria-expanded). */
+  frameLabel(frame: FrameLog): string {
+    return [
+      `${frame.name} ${frame.version}`.trim(),
+      frame.item?.toLowerCase(),
+      frame.status,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  }
+  /** → opens a called workflow's row, ← closes it; Enter and Space are the button's own. */
+  frameKey(event: KeyboardEvent, frame: FrameLog) {
+    const open = this.isOpen(frame);
+    if (event.key === "ArrowRight" && !open) this.toggle(frame, true);
+    else if (event.key === "ArrowLeft" && open) this.toggle(frame, false);
+    else return;
+    event.preventDefault();
+  }
+  /** Escape inside a called workflow's steps closes it, and focus goes back to its row. */
+  stepsKey(event: KeyboardEvent, frame: FrameLog) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.focusOn(`[data-frame="${CSS.escape(frame.key)}"]`);
+    this.toggle(frame, false);
+  }
+  private focusOn(selector: string, later = false) {
+    const focus = () =>
+      this.el.nativeElement.querySelector<HTMLElement>(selector)?.focus();
+    if (later) afterNextRender(focus, { injector: this.injector });
+    else focus();
+  }
+  readonly settable = takesTestOutput;
+  startEdit(frame: FrameLog, step: FrameStep) {
+    const kept =
+      this.host().testData?.data().workflows?.[frame.workflow]?.mocks[step.id]
+        ?.output ??
+      step.output ??
+      {};
+    this.setJson.set(JSON.stringify(kept, null, 2));
+    this.setProblem.set("");
+    this.editing.set({ frame: frame.key, step: step.id });
+    this.focusOn(`#${this.setId}`, true);
+  }
+  cancelEdit(frame: FrameLog, step: FrameStep, event?: Event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.editing.set(null);
+    this.focusOn(`[data-set="${CSS.escape(`${frame.key}/${step.id}`)}"]`, true);
+  }
+  async saveOutput(event: Event, frame: FrameLog, step: FrameStep) {
+    event.preventDefault();
+    let value: Json;
+    try {
+      value = JSON.parse(this.setJson() || "{}") as Json;
+    } catch {
+      this.setProblem.set(
+        "This isn't JSON yet. Check the brackets and quotes.",
+      );
+      return;
+    }
+    this.setProblem.set("");
+    // Under the called workflow's test data; the last execution runs again when it stopped here.
+    const saved = await this.host().keepForRunLog(
+      (data, now) => withCalleeMock(data, frame.workflow, step.id, value, now),
+      segment("workflows") +
+        segment(frame.workflow) +
+        segment("mocks") +
+        segment(step.id),
+      step.needsData,
+    );
+    if (!saved) return;
+    this.editing.set(null);
+    this.focusOn(`[data-frame="${CSS.escape(frame.key)}"]`, true);
+  }
   /** What the run waits for that the test data doesn't answer: a signal or a person. */
   question() {
     const host = this.host();
@@ -344,15 +832,17 @@ export class RunLogPanel {
       return;
     }
     this.problem.set("");
-    const saved =
+    // Kept as the step's test answer; the last execution runs again, so the next one doesn't ask.
+    const section = asked.reason === "signal" ? "signals" : "humans";
+    const entry: SignalEntry | HumanEntry =
       asked.reason === "signal"
-        ? await this.host().answerScript("signals", asked.nodeId, {
-            payload: value,
-          })
-        : await this.host().answerScript("humans", asked.nodeId, {
-            decision: this.chosen(),
-            data: value,
-          });
+        ? { payload: value, source: "manual" }
+        : { decision: this.chosen(), data: value, source: "manual" };
+    const saved = await this.host().keepForRunLog(
+      (data, now) => withScript(data, section, asked.nodeId, entry, now),
+      segment(section) + segment(asked.nodeId),
+      true,
+    );
     if (saved) this.json.set("{}");
   }
   label(entry: RunLogEntry): string {

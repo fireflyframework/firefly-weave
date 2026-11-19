@@ -174,7 +174,7 @@ for (const size of [
         source: definition(twoSteps, { callable: {} }),
       });
       await expect(
-        tileNamed(page, "Called by a workflow trigger, Any workflow here"),
+        tileNamed(page, "Called by a workflow trigger, Any workflow"),
       ).toBeAttached();
       await expect(
         tileNamed(page, "Manual form trigger, 1 field"),
@@ -301,7 +301,7 @@ for (const size of [
         ["Manual form", "1 field"],
         ["Webhook", "Set up at activation"],
         ["Kafka message", "Set up at activation"],
-        ["Called by a workflow", "Any workflow here"],
+        ["Called by a workflow", "Any workflow"],
         ["App event", "Set up at activation"],
       ]);
       for (const part of labels.flat()) {

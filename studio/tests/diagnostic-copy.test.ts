@@ -131,7 +131,7 @@ describe("plain-language diagnostic copy", () => {
       "This step can continue after the called run fails only when it waits for the called workflow's result.",
     );
     expect(view.hint).toBe(
-      "Set When it runs to Wait for its result, or clear If the called run fails.",
+      "Set When it runs to Wait for its result, or clear If it fails.",
     );
   });
   it("explains the dominance error in the author's terms", () => {

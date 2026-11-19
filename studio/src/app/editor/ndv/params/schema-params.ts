@@ -22,7 +22,11 @@ SPDX-License-Identifier: Apache-2.0
 import { isFileSchema } from "../../../forms/core/file-reference";
 import { memberField } from "../../../forms/core/form-model";
 import { canonicalJson } from "../../../forms/core/json";
-import { fieldsOf, type FieldInfo } from "../../../forms/core/resolve";
+import {
+  fieldsOf,
+  type FieldInfo,
+  type ResolveOptions,
+} from "../../../forms/core/resolve";
 import type { FormSpec, ParamSpec, ParamType, Path } from "../registry";
 
 export interface SchemaParamOptions {
@@ -33,6 +37,8 @@ export interface SchemaParamOptions {
   idPrefix: string;
   /** Deepest nested group drawn as fields before a group becomes JSON (default 3). */
   maxDepth?: number;
+  /** Where the schema's references resolve: shared schemas by name. */
+  resolve?: ResolveOptions;
 }
 
 const typeOf = (
@@ -199,7 +205,7 @@ export function paramsFromSchema(
   options: SchemaParamOptions,
 ): FormSpec {
   const maxDepth = options.maxDepth ?? 3;
-  const params = shownInfos(fieldsOf(schema)).map((info) =>
+  const params = shownInfos(fieldsOf(schema, options.resolve)).map((info) =>
     paramFromField(info, [...base, info.key], options.idPrefix, 0, maxDepth),
   );
   return {

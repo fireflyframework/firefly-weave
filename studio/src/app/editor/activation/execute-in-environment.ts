@@ -26,6 +26,13 @@ import type { Json } from "../../forms/core/json";
 import type { TriggerIntent } from "../state/canvas-sidecar";
 import type { RowMenuItem } from "../../row-menu";
 import { connectionsPort } from "../connections/connections-port";
+import {
+  calledReferenceSites,
+  callPins,
+  proposePins,
+  type CalleeActivation,
+  type CalleeVersion,
+} from "./callee-pins";
 import type { StepDetailsHost } from "../ndv/step-details-host";
 import { handOverLinkedRun } from "../runs-tab/run-links";
 import type {
@@ -115,6 +122,84 @@ export function workflowTestBindings(
 }
 
 /**
+ * The activation each workflow the draft calls runs on, as the activation
+ * dialog pins them (the latest activation of the called version), or which
+ * called versions aren't active in the environment.
+ */
+export function calleePins(
+  definition: unknown,
+  versions: readonly CalleeVersion[],
+  activations: readonly CalleeActivation[],
+  environment: string,
+): { pins: Record<string, string> } | { refusal: string } {
+  const sites = calledReferenceSites(definition);
+  if (!sites.length) return { pins: {} };
+  const rows = proposePins(sites, [...versions], [...activations]);
+  const inactive = rows
+    .filter((row) => row.kind !== "proposed")
+    .map((row) => row.reference.replace("@", " "));
+  if (!inactive.length) return { pins: callPins(rows) };
+  return {
+    refusal:
+      inactive.length === 1
+        ? `This workflow calls ${inactive[0]}, which isn't active in ${environment}. Activate it first.`
+        : `This workflow calls ${listed(inactive)}, which aren't active in ${environment}. Activate them first.`,
+  };
+}
+
+const text = (value: unknown) => (typeof value === "string" ? value : "");
+const record = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+/** Pages read of each list (published versions, activations), at most. */
+const MAX_PAGES = 10;
+
+/**
+ * The pins of the workflows the draft calls, read from the project's
+ * published versions and the environment's activations; none are read for a
+ * draft that calls nothing.
+ */
+async function readCalleePins(
+  host: WorkflowTestHost,
+  environment: string,
+): Promise<{ pins: Record<string, string> } | { refusal: string }> {
+  const definition = host.model.definition;
+  if (!calledReferenceSites(definition).length) return { pins: {} };
+  const pages = async (collection: string, inEnvironment: boolean) => {
+    const items: Record<string, unknown>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const answer = await host.api.page(collection, inEnvironment, cursor);
+      items.push(...answer.items);
+      if (!answer.next_cursor) break;
+      cursor = answer.next_cursor;
+    }
+    return items;
+  };
+  const [versions, activations] = await Promise.all([
+    pages("workflows", false),
+    pages("activations", true),
+  ]);
+  return calleePins(
+    definition,
+    versions.map((item) => ({
+      id: text(item["id"]),
+      name: text(item["name"]),
+      version: text(item["version"]),
+    })),
+    activations.map((item) => ({
+      id: text(item["id"]),
+      name: text(item["name"]),
+      revision: Number(item["revision"]) || 0,
+      retired: item["retired"] === true,
+      versionId: text(record(item["request"])["version_id"]),
+    })),
+    environment,
+  );
+}
+
+/**
  * The menu entry: absent without a platform environment or the step tester
  * role, and on the Runs tab; disabled with the reason when it can't run.
  */
@@ -160,7 +245,7 @@ export async function executeWorkflowIn(
   dialogs: DialogService,
 ): Promise<void> {
   const port = connectionsPort(host);
-  if (!port) return;
+  if (!port || port.runningWorkflowTest()) return;
   const environment = port.environment.name;
   const service = port.testActivations(host, ({ steps }) =>
     dialogs.confirm(sideEffectQuestion(steps, environment)),
@@ -170,10 +255,26 @@ export async function executeWorkflowIn(
     port.binding(workflow, slot),
   );
   const draftId = host.draftId ?? "";
+  const opened = host.model.opened;
   try {
+    // Starting from the first read: Execute can't start a second run meanwhile.
     const outcome = await port.trackWorkflowTest(
-      service.execute(host.execution?.workflowInput() ?? {}, bindings),
+      (async () => {
+        // Each workflow the draft calls runs on its activation here, as an activation pins it.
+        const called = await readCalleePins(host, environment);
+        if (host.model.opened !== opened || (host.draftId ?? "") !== draftId)
+          return null;
+        if ("refusal" in called) {
+          host.notify(called.refusal, undefined, "danger");
+          return null;
+        }
+        const pinned: DraftTestBindings = Object.keys(called.pins).length
+          ? { ...bindings, workflow_activation_ids: called.pins }
+          : bindings;
+        return service.execute(host.execution?.workflowInput() ?? {}, pinned);
+      })(),
     );
+    if (!outcome) return;
     if (outcome.ok) {
       port.ownRuns.add(outcome.value.run.id);
       handOverLinkedRun(draftId, outcome.value.run.id);
@@ -208,13 +309,35 @@ export function listenFor(
     dialogs.confirm(sideEffectQuestion(steps, environment)),
   );
   const workflow = host.model.definition.metadata.name;
-  void listener.start(
-    trigger,
-    workflowTestBindings(host.workflowSlots, (slot) =>
-      port.binding(workflow, slot),
-    ),
-    payloadSample,
-  ).done;
+  const bindings = workflowTestBindings(host.workflowSlots, (slot) =>
+    port.binding(workflow, slot),
+  );
+  const opened = host.model.opened;
+  void (async () => {
+    let called: Awaited<ReturnType<typeof readCalleePins>>;
+    try {
+      called = await readCalleePins(host, environment);
+    } catch (error) {
+      host.notify(
+        `Couldn't check the called workflows: ${describeError(error).message}`,
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    if (host.model.opened !== opened) return;
+    if ("refusal" in called) {
+      host.notify(called.refusal, undefined, "danger");
+      return;
+    }
+    await listener.start(
+      trigger,
+      Object.keys(called.pins).length
+        ? { ...bindings, workflow_activation_ids: called.pins }
+        : bindings,
+      payloadSample,
+    ).done;
+  })();
 }
 
 /** Stops listening, which retires the test URL. */

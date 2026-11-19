@@ -29,12 +29,23 @@ import { ExecutionService, type ExecutionHost } from "./execution-service";
 import { checkInputsOf } from "./test-data-inputs";
 import type { CheckInputs } from "./test-data-check";
 import {
-  studioDefinitions,
+  studioDefinitions as definitionsOf,
   type StudioDefinitionsHost,
 } from "./host-definitions";
+import { calleeDefinitions, type CalleesHost } from "../calls/callee-drafts";
 import type { Workflow } from "../../model";
 export { checkInputsOf } from "./test-data-inputs";
-export { studioDefinitions } from "./host-definitions";
+export { studioCallees } from "../calls/callee-drafts";
+
+/**
+ * Studio's definitions for its host: the drafts and copies the workflow
+ * uses, then the workflows it calls, so a call's output has fields.
+ */
+export async function studioDefinitions(
+  host: StudioDefinitionsHost & CalleesHost,
+) {
+  return [...(await definitionsOf(host)), ...(await calleeDefinitions(host))];
+}
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
@@ -131,7 +142,7 @@ export function simulationDataOf(
 
 /** What the Studio host checks test data against, with the drafts and copies the workflow uses. */
 export async function checkInputsFor(
-  host: StudioDefinitionsHost,
+  host: StudioDefinitionsHost & CalleesHost,
 ): Promise<CheckInputs> {
   return {
     ...checkInputsOf(host.model.definition as Workflow, host.catalogContracts),

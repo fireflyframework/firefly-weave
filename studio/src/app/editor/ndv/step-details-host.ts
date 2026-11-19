@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What step details need from the editor that hosts them. The shell (App)
 // already has every member; nothing here is new state of its own.
+import type { LocalDrafts } from "../../local-drafts";
 import type { CanvasRun } from "../canvas/run-state";
 import type { RunDataPort, RunViewPort } from "../runs-tab/run-port";
 import type { Signal, WritableSignal } from "@angular/core";
@@ -136,6 +137,15 @@ export interface StepDetailsHost {
   readonly draftRevision?: number;
   /** The workflow has changes autosave hasn't sent yet. */
   readonly dirty?: boolean;
+  /** The drafts kept on this computer, which a call step may call. */
+  readonly localDrafts?: LocalDrafts;
+  /** Opens a workflow a call step calls, or one that calls this one (`name@version`). */
+  openWorkflow?(uses: string): void;
+  /** Removes a trigger choice, asking first for Called by a workflow. */
+  removeTrigger?(id: string): Promise<void>;
+  /** Opens a workflow by its draft's ID (Open run reaches a called workflow's draft this way). */
+  restoreWorkflow?(id: string): Promise<boolean>;
+  navigate?(view: "designer"): Promise<unknown>;
   /** The open workflow is kept on this computer (opened from this computer's drafts). */
   readonly keptLocally?: boolean;
   /** The connected environment's name ("local"), or null before it's known. */

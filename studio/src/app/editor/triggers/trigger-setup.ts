@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // What a trigger choice's Parameters show above its fields: a schedule's
-// calendar builder, and for an email trigger the question asked when the
+// calendar builder, who may call a workflow Called by a workflow, and for an
+// email trigger the question asked when the
 // workflow's input doesn't take the received message. The message's schema
 // comes from the Studio host, which serves the platform's own.
 import {
@@ -29,6 +30,7 @@ import type { StudioApi } from "../../api";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { FormSession } from "../ndv/params/form-session";
 import type { TriggerIntent } from "../state/canvas-sidecar";
+import { CalledByTrigger } from "./called-by-trigger";
 import { ScheduleBuilder } from "./schedule-builder";
 import { inputFit } from "./trigger-forms";
 
@@ -53,9 +55,11 @@ function emailMessageSchema(
   selector: "weave-trigger-setup",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ScheduleBuilder],
+  imports: [CalledByTrigger, ScheduleBuilder],
   template: `@if (trigger().kind === "schedule") {
       <weave-schedule-builder [session]="session()" [trigger]="trigger()" />
+    } @else if (trigger().kind === "called") {
+      <weave-called-by-trigger [session]="session()" />
     }
     @if (question(); as asked) {
       <!-- A question waiting for an answer: a warning notice, Replace first. -->

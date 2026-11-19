@@ -60,7 +60,7 @@ export class ResourceViewerLayer implements AfterViewInit {
   imports: [Icon, Modal, Select, ResourceViewerLayer],
   template: `@let modes = this.modes();
     <div class="param-resource">
-      @if (modes.length > 1) {
+      @if (modes.length > 1 && !readOnly()) {
         <div
           class="param-segments param-resource-modes"
           role="radiogroup"
@@ -89,6 +89,7 @@ export class ResourceViewerLayer implements AfterViewInit {
             [hideLabel]="true"
             [controlId]="controlId()"
             [options]="options()"
+            [note]="spec().listNote ?? null"
             [value]="value()"
             [disabled]="!!readOnly()"
             [describedBy]="description()"
@@ -106,7 +107,7 @@ export class ResourceViewerLayer implements AfterViewInit {
             [attr.aria-invalid]="!!problem() || null"
             [readOnly]="!!readOnly()"
             [placeholder]="placeholder()"
-            [value]="text()"
+            [value]="readOnly() ? shownName(text()) : text()"
             (focus)="retainMode()"
             (input)="edit($event)"
             (change)="typed()"
@@ -237,6 +238,11 @@ export class ResourceField {
       ? resourceProblem(this.draft.mode, this.draft.text.trim())
       : "";
   }
+  /** Read only, a versioned reference reads as its name and version: "notify-customer 1.0.0". */
+  shownName(text: string): string {
+    const at = text.lastIndexOf("@");
+    return at > 0 ? `${text.slice(0, at)} ${text.slice(at + 1)}` : text;
+  }
   description(): string {
     return [
       this.describedBy(),
@@ -246,13 +252,18 @@ export class ResourceField {
       .join(" ");
   }
   options(): SelectOption[] {
-    const options = this.choices().map((choice) => ({
-      value: String(choice.value),
-      label: choice.label,
-      description: choice.disabled ?? choice.description,
-      group: choice.group,
-      disabled: !!choice.disabled,
-    }));
+    const options = this.choices().map(
+      (choice): SelectOption => ({
+        value: String(choice.value),
+        label: choice.label,
+        description: choice.disabled ?? choice.description,
+        group: choice.group,
+        heading: choice.heading,
+        note: choice.note,
+        aside: choice.aside,
+        disabled: !!choice.disabled,
+      }),
+    );
     const value = this.value();
     if (value && !options.some((option) => option.value === value))
       options.unshift({

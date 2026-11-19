@@ -114,4 +114,25 @@ describe("contract gaps on the canvas", () => {
       ),
     ).toEqual([]);
   });
+
+  it("asks a call step for the workflow it calls, and nothing more", () => {
+    const call = (uses?: string) =>
+      ({
+        id: "notify",
+        kind: "callWorkflow",
+        mode: "wait",
+        with: { literal: {} },
+        ...(uses === undefined ? {} : { uses }),
+      }) as unknown as Step;
+    const gap = {
+      label: "Choose a workflow to call",
+      field: "uses",
+      dataPath: [],
+    };
+    expect(contractGaps(call(), undefined, workflow)).toEqual([gap]);
+    expect(contractGaps(call(""), undefined, workflow)).toEqual([gap]);
+    expect(
+      contractGaps(call("notify-customer@1.0.0"), undefined, workflow),
+    ).toEqual([]);
+  });
 });

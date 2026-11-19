@@ -60,8 +60,59 @@ import {
 import type { FormSession } from "../params/form-session";
 import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
-import { OMISSION_WORDS } from "../../../operate/run-contracts";
-import { shortId } from "../../../format";
+import {
+  asRunViewsApi,
+  listRunSummaries,
+  OMISSION_WORDS,
+  type RunSummary,
+} from "../../../operate/run-contracts";
+import { durationText, shortId } from "../../../format";
+
+/** The most pages of a run's child runs read for one card: 20 pages of 100. */
+const CHILD_PAGES = 20;
+/** A child run's summary, from the pages of its parent's child runs (a call in a loop makes many). */
+async function childSummary(
+  api: ReturnType<typeof asRunViewsApi>,
+  parent: string,
+  child: string,
+): Promise<RunSummary | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < CHILD_PAGES; page++) {
+    const answer = await listRunSummaries(api, {
+      caller_run_id: parent,
+      include_test: true,
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    const found = answer.items.find(
+      (item): item is RunSummary =>
+        item.id === child && !("unavailable" in item),
+    );
+    if (found) return found;
+    if (!answer.next_cursor) return null;
+    cursor = answer.next_cursor;
+  }
+  return null;
+}
+/** "notify-customer 1.0.0 · failed at send: SMTP_REJECTED · took 2 s". */
+function childLine(run: RunSummary): string {
+  const failed = run.failed_step;
+  const how =
+    run.status === "failed"
+      ? failed
+        ? `failed at ${failed.node_id}${failed.error_code ? `: ${failed.error_code}` : ""}`
+        : "failed"
+      : run.status === "succeeded"
+        ? "completed"
+        : run.status.replace("_", " ");
+  return [
+    `${run.workflow.name} ${run.workflow.version}`,
+    how,
+    run.duration_ms === null ? "" : `took ${durationText(run.duration_ms)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 import { instanceStep } from "../../state/instance-keys";
 import { isRecordedRun } from "../../canvas/run-state";
 import { RunStepLogs } from "./run-step-logs";
@@ -152,7 +203,9 @@ import { describeError } from "../../../errors";
         }
       } @else if (recorded) {
         <span class="pill" [attr.data-tone]="recorded.tone">{{
-          recorded.pill
+          calledRunFailed(recorded)
+            ? "Finished · the called run failed"
+            : recorded.pill
         }}</span>
         <span class="pill pane-source-tag" data-tone="info">{{
           recorded.tag
@@ -185,7 +238,10 @@ import { describeError } from "../../../errors";
       }
       @let paths = this.paths();
       <span class="pane-count">{{
-        none || stop || (recorded && recorded.output.kind !== "value")
+        none ||
+        stop ||
+        detachedCall() ||
+        (recorded && recorded.output.kind !== "value")
           ? ""
           : paths
             ? paths.took
@@ -240,6 +296,7 @@ import { describeError } from "../../../errors";
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
               [canExecute]="session().controller.canExecute()"
+              [executeLabel]="executeLabel()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
               (execute)="execute()"
@@ -339,8 +396,17 @@ import { describeError } from "../../../errors";
             }
           }
           @if (notice(); as said) {
-            <div class="pane-notice" role="status">
-              <p class="pane-notice-text">{{ said.message }}</p>
+            <div
+              class="pane-notice"
+              role="status"
+              [attr.data-tone]="said.reason === 'callee' ? 'warning' : null"
+            >
+              <p class="pane-notice-text">
+                @if (said.reason === "callee") {
+                  <weave-icon name="warning" [size]="16" aria-hidden="true" />
+                }
+                {{ said.message }}
+              </p>
               @if (said.action; as act) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="act.run()">
@@ -348,7 +414,20 @@ import { describeError } from "../../../errors";
                   </button>
                 </div>
               }
-              @if (said.reason === "missing_mock" && canPin && !pin) {
+              @if (said.reason === "callee" && canPin && !pin) {
+                <!-- A call without its workflow: test data for the call when
+                     Studio can check it (it knows the call's output), or the workflow. -->
+                <div class="pane-empty-actions">
+                  @if (calleeKnown()) {
+                    <button type="button" class="sm" (click)="setOutput()">
+                      Set test output
+                    </button>
+                  }
+                  <button type="button" class="sm" (click)="openCallee()">
+                    <weave-icon name="external" [size]="16" />Open workflow
+                  </button>
+                </div>
+              } @else if (said.reason === "missing_mock" && canPin && !pin) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="setOutput()">
                     Set test output
@@ -361,6 +440,26 @@ import { describeError } from "../../../errors";
             </div>
           }
           @if (recorded) {
+            @if (recorded.child && callStep()) {
+              <!-- The run this call started, first: how it went, and Open run. -->
+              @let card = childCard(recorded.child, recorded.runId);
+              <div class="pane-child-run" role="group" aria-label="Called run">
+                <weave-icon name="callWorkflow" [size]="16" />
+                <div class="pane-child-text">
+                  <p class="pane-child-title">{{ card.title }}</p>
+                  @if (card.line) {
+                    <p class="pane-child-line">{{ card.line }}</p>
+                  }
+                </div>
+                <button
+                  type="button"
+                  class="sm"
+                  (click)="openChildRun(recorded.child)"
+                >
+                  <weave-icon name="external" [size]="16" />Open run
+                </button>
+              </div>
+            }
             @if (recorded.changed) {
               <div class="notice pane-run-notice" data-tone="info">
                 <weave-icon name="stale" [size]="16" />
@@ -368,11 +467,16 @@ import { describeError } from "../../../errors";
               </div>
             }
             @if (recorded.failed) {
+              @let callFailed = callFailure(recorded.runId);
               <div class="notice pane-run-notice" data-tone="danger">
                 <weave-icon name="critical" [size]="16" />
                 <div>
-                  <p>{{ recorded.failed }}</p>
-                  <p>A failed step returns no output.</p>
+                  <p>{{ callFailed?.title ?? recorded.failed }}</p>
+                  <p>
+                    {{
+                      callFailed?.detail ?? "A failed step returns no output."
+                    }}
+                  </p>
                 </div>
               </div>
             }
@@ -411,7 +515,7 @@ import { describeError } from "../../../errors";
                 </div>
               }
             }
-            @if (recorded.child; as child) {
+            @if (!callStep() && recorded.child; as child) {
               <p class="pane-called-run">
                 Called run {{ child.slice(0, 8) }}
                 <button type="button" class="sm" (click)="openRun(child)">
@@ -466,7 +570,9 @@ import { describeError } from "../../../errors";
                 <div class="pane-empty-actions pane-real-actions">
                   @if (session().controller.canExecute()) {
                     <button type="button" class="sm" (click)="execute()">
-                      <weave-icon name="execute" [size]="16" />Execute step
+                      <weave-icon name="execute" [size]="16" />{{
+                        executeLabel()
+                      }}
                     </button>
                   }
                   @if (canPin) {
@@ -483,7 +589,11 @@ import { describeError } from "../../../errors";
                   /></span>
                   <h4>No output yet</h4>
                   <p>
-                    Execute this step to see its output.{{
+                    {{
+                      callStep()
+                        ? "Execute the workflow to see this step's output."
+                        : "Execute this step to see its output."
+                    }}{{
                       canPin
                         ? " You can also set test output, or generate a sample."
                         : ""
@@ -492,7 +602,9 @@ import { describeError } from "../../../errors";
                   <div class="pane-empty-actions">
                     @if (session().controller.canExecute()) {
                       <button type="button" class="sm" (click)="execute()">
-                        <weave-icon name="execute" [size]="16" />Execute step
+                        <weave-icon name="execute" [size]="16" />{{
+                          executeLabel()
+                        }}
                       </button>
                     }
                     @if (canPin) {
@@ -507,7 +619,9 @@ import { describeError } from "../../../errors";
                 </div>
               }
             }
-            @if (rows.length) {
+            @if (detachedCall()) {
+              <!-- A call that didn't wait has no result to describe. -->
+            } @else if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
             } @else if (!stop) {
               <p class="pane-empty-text">
@@ -825,6 +939,122 @@ export class OutputPane {
   }
   openRun(id: string) {
     void this.session().host.viewRun?.({ id });
+  }
+  /** The runs this window read the summary of, by account and run ID; a run asked once isn't asked again. */
+  private readonly childSummaries = signal<ReadonlyMap<string, RunSummary>>(
+    new Map(),
+  );
+  private readonly askedChildren = new Set<string>();
+  /** A call step's child run on the Runs tab: what started it, and how it went once its summary arrives. */
+  childCard(child: string, parent: string) {
+    const { controller, target, host } = this.session();
+    const step = controller.step(target);
+    const uses = typeof step?.["uses"] === "string" ? step["uses"] : "";
+    const name = uses.slice(0, Math.max(0, uses.lastIndexOf("@"))) || uses;
+    const detached = step?.["mode"] === "detach";
+    const key = `${host.stepDataScope ?? ""}|${child}`;
+    const summary = this.childSummaries().get(key);
+    if (!summary && !this.askedChildren.has(key)) {
+      this.askedChildren.add(key);
+      // The parent's child runs hold this one's summary: its version, status and time.
+      void childSummary(asRunViewsApi(host.api), parent, child)
+        .then((found) => {
+          if (found)
+            this.childSummaries.update((kept) => new Map(kept).set(key, found));
+        })
+        .catch(() => undefined);
+    }
+    return {
+      title: `${detached ? "Started" : "Ran as"} run ${shortId(child)} of ${name}`,
+      // A call that didn't wait says so, then how the run it started went, once read.
+      line: detached
+        ? [
+            `${host.model.definition.metadata.name} didn't wait for it`,
+            ...(summary ? [childLine(summary)] : []),
+          ].join(" · ")
+        : summary
+          ? childLine(summary)
+          : "",
+    };
+  }
+  /** A call step that failed in the run: its call failed, and If it fails stopped the workflow. */
+  callFailure(runId: string) {
+    if (!this.callStep()) return null;
+    const { target, host } = this.session();
+    return {
+      title: `${target} failed in run ${shortId(runId)}: its call failed.`,
+      detail: `If it fails is Stop this workflow, so ${host.model.definition.metadata.name} stopped here. Open the run to see the step that failed.`,
+    };
+  }
+  /** Open run: the called workflow's Runs tab on that run, as Debug in editor opens a run. */
+  async openChildRun(id: string) {
+    const session = this.session();
+    const host = session.host;
+    if (!host.restoreWorkflow || !host.navigate || !host.selectTab)
+      return this.openRun(id);
+    const { openRunInEditor } = await import("../../runs-tab/open-run");
+    await openRunInEditor(
+      {
+        api: host.api,
+        profile: host.profile,
+        stepDataScope: host.stepDataScope ?? "",
+        get draftId() {
+          return host.draftId ?? "";
+        },
+        get draftRevision() {
+          return host.draftRevision;
+        },
+        get model() {
+          return host.model;
+        },
+        dialogs: { confirm: (options) => session.confirm(options) },
+        notify: (text, action, tone) => host.notify(text, action, tone),
+        restoreWorkflow: (draft) => host.restoreWorkflow!(draft),
+        navigate: (view) => host.navigate!(view),
+        selectTab: (tab) => host.selectTab!(tab),
+      },
+      id,
+      null,
+    );
+  }
+  /** A call that doesn't wait: it has no result. */
+  detachedCall(): boolean {
+    const { controller, target } = this.session();
+    return this.callStep() && controller.step(target)?.["mode"] === "detach";
+  }
+  /** A call that finished in the run while the run it called failed. */
+  calledRunFailed(recorded: { child: string | null; pill: string }): boolean {
+    // A call that doesn't wait finished on its own, whatever its run did.
+    if (!recorded.child || !this.callStep() || this.detachedCall())
+      return false;
+    const key = `${this.session().host.stepDataScope ?? ""}|${recorded.child}`;
+    return (
+      recorded.pill === "Finished in this run" &&
+      this.childSummaries().get(key)?.status === "failed"
+    );
+  }
+  /** Studio knows what the called workflow returns, so test output for the call can be checked. */
+  calleeKnown(): boolean {
+    const { controller, target } = this.session();
+    const uses = controller.step(target)?.["uses"];
+    return (
+      typeof uses === "string" &&
+      controller.kindContext().workflowContract(uses) !== null
+    );
+  }
+  /** Open workflow, from a call that needs the workflow it calls. */
+  openCallee() {
+    const { controller, target, host } = this.session();
+    const uses = controller.step(target)?.["uses"];
+    if (typeof uses === "string" && uses) host.openWorkflow?.(uses);
+  }
+  /** A step that calls a workflow: it runs only when the whole workflow executes. */
+  callStep(): boolean {
+    const { controller, target } = this.session();
+    return (controller.step(target)?.kind as string) === "callWorkflow";
+  }
+  executeLabel(): string {
+    return this.callStep() ? "Execute workflow" : "Execute step";
   }
   /** Execute step from the pane (its empty state, the stale pin's banner). */
   execute() {

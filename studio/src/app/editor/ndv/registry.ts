@@ -67,12 +67,24 @@ export interface KindContext {
   actionContract(uses: string): Json | null;
   /** DecisionTable document. */
   tableContract(uses: string): Json | null;
-  /** Callee interface for `callWorkflow`: {inputSchema, outputSchema, callable}, or null when unknown. */
+  /**
+   * Callee interface for `callWorkflow`: {inputSchema, outputSchema,
+   * callable, source ("project" or "local"), schemas (shared schemas its
+   * schemas may reference)}, or null when unknown.
+   */
   workflowContract(uses: string): Json | null;
+  /**
+   * For a call step: why `uses` can't be found here ("Studio can't find …",
+   * not connected, no catalog read); without `uses`, why the project's
+   * workflows aren't offered; null when there's nothing to say.
+   */
+  callNote?(uses?: string): string | null;
   /** The recipe of an action this workflow owns (its method, path, timeout and retry), or null. */
   ownedAction?(uses: string): Json | null;
   /** The draft of a published action's next version kept on this computer, or null. */
   actionDraft?(uses: string): Json | null;
+  /** On the Runs tab: the step is read from a run, so notes about editing it say nothing. */
+  viewingRun?: boolean;
 }
 export interface FieldSpec {
   /** Relative to the step, e.g. ["with"], ["cases", 0, "when"]. */
@@ -131,6 +143,12 @@ export interface Choice {
   /** Why the choice can't be used; it stays visible. */
   disabled?: string;
   group?: string;
+  /** A heading inside the group (a workflow's name over its versions). */
+  heading?: string;
+  /** A caution in the warning ink; the choice stays usable. */
+  note?: string;
+  /** A short fact at the end of the row ("Draft"). */
+  aside?: string;
 }
 /** A button under a field (Edit table, New table). */
 export interface FieldAction {
@@ -140,6 +158,8 @@ export interface FieldAction {
   run(ctx: NdvContext): void;
   /** Why the button can't be used now; null when it can. */
   disabled?(step: Step, ctx: NdvContext): string | null;
+  /** It opens something and changes nothing, so it stays usable while the field is read only (the Runs tab). */
+  whileReadOnly?: boolean;
 }
 /** One field of a form, drawn by the shared renderer. */
 export interface ParamSpec {
@@ -185,10 +205,14 @@ export interface ParamSpec {
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   /** resource only: what an empty list says instead of "Nothing to choose from yet". */
   emptyChoices?(ctx: NdvContext): string | null;
+  /** resource only: a line at the top of the open list, not a choice (why some choices are missing). */
+  listNote?: string;
   /** What the field says while it is required and empty, in the words of its kind. */
   requiredText?: string;
   /** Buttons in the field's action row, under its control: commands, not fields. */
   actions?: FieldAction[];
+  /** From 768 px up, the action row sits beside the control; on a phone, under the field's hint. */
+  actionsBeside?: boolean;
   min?: number;
   max?: number;
   /**
@@ -228,8 +252,8 @@ export interface ParamSpec {
   expandChildren?: boolean;
   /** "Add recipient", "Add header". */
   addLabel?: string;
-  /** list only: chips for short identifier lists such as answers. */
-  display?: "rows" | "chips";
+  /** list: chips for short identifier lists such as answers; select: segments whatever the labels' length. */
+  display?: "rows" | "chips" | "segments";
   /**
    * fields only: shown as one more card after the cards of the list just
    * before it, above that list's add button (a decision's Otherwise, after
@@ -382,10 +406,24 @@ export interface NdvContext {
       connector?: string;
     }): Promise<{ uses: string; title: string }[]>;
     contract(uses: string): Promise<Json | null>;
-    /** Published workflows; with callableBy, those that don't allow that caller carry `disabled`. */
-    workflows(filter?: {
-      callableBy?: string;
-    }): Promise<{ uses: string; title: string; disabled?: string }[]>;
+    /**
+     * Workflows a step may call; with callableBy, those that don't allow that
+     * caller carry `disabled`. `group` says where a version lives ("In this
+     * project", "On this computer"); `description` is a line under it, and
+     * `aside` a short fact at the end of the row ("Draft").
+     */
+    workflows(filter?: { callableBy?: string }): Promise<
+      {
+        uses: string;
+        title: string;
+        disabled?: string;
+        group?: string;
+        heading?: string;
+        description?: string;
+        note?: string;
+        aside?: string;
+      }[]
+    >;
     /** Published decision tables, newest version first, then those on this computer. */
     tables(): Promise<{ uses: string; title: string }[]>;
     /** Why the table list is empty for now (no signed-in account yet); null otherwise. */
@@ -414,6 +452,8 @@ export interface NdvContext {
   closeParameterComponent?(): void;
   /** A toast, with an action such as Undo. */
   notify?(text: string, action?: { label: string; run(): void }): void;
+  /** Opens a called workflow version: its draft on this computer, else the published version read-only. */
+  openWorkflow?(uses: string): void;
   /** The decision tables this step can read and change on this computer. */
   readonly tables?: StepTables;
 }

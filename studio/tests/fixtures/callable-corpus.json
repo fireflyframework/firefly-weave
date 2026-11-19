@@ -1,0 +1,897 @@
+{
+  "description": "Who may call a workflow version and what a call step outputs, as the platform decides them (allows_caller, check_call_target and call_output_schema). Studio's callable list and the platform test against the same cases. Lock entries carry the platform's digest of their document; tests/unit/test_callable_corpus.py names the right one when a document changes.",
+  "allows": [
+    {
+      "name": "no callable field",
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "callable null",
+      "callable": null,
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "any workflow in the project",
+      "callable": {},
+      "caller": "order-intake",
+      "allowed": true
+    },
+    {
+      "name": "allowedCallers null means any workflow",
+      "callable": {
+        "allowedCallers": null
+      },
+      "caller": "order-intake",
+      "allowed": true
+    },
+    {
+      "name": "the caller is listed",
+      "callable": {
+        "allowedCallers": [
+          "billing-close",
+          "order-intake"
+        ]
+      },
+      "caller": "order-intake",
+      "allowed": true
+    },
+    {
+      "name": "the caller is not listed",
+      "callable": {
+        "allowedCallers": [
+          "billing-close"
+        ]
+      },
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "an empty list",
+      "callable": {
+        "allowedCallers": []
+      },
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "names are case sensitive",
+      "callable": {
+        "allowedCallers": [
+          "Order-Intake"
+        ]
+      },
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "a version reference is not a name",
+      "callable": {
+        "allowedCallers": [
+          "order-intake@1.2.0"
+        ]
+      },
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "allowedCallers that is not a list",
+      "callable": {
+        "allowedCallers": "order-intake"
+      },
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "callable that is true",
+      "callable": true,
+      "caller": "order-intake",
+      "allowed": false
+    },
+    {
+      "name": "callable that is a list",
+      "callable": [
+        "order-intake"
+      ],
+      "caller": "order-intake",
+      "allowed": false
+    }
+  ],
+  "lists": [
+    {
+      "name": "the project's versions, newest first, then the drafts on this computer",
+      "caller": "order-intake",
+      "callerVersion": "1.2.0",
+      "lock": {
+        "definitions": [
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "1.0.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "customerId": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email",
+                        "sms"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "customerId"
+                  ],
+                  "additionalProperties": false
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sent"
+                  ]
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {}
+              }
+            },
+            "digest": "dd920c09d133bd72668bf0655b324e7c64229640e7a3f0511abd304946da9f48"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "1.10.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "customerId": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email",
+                        "sms"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "customerId"
+                  ],
+                  "additionalProperties": false
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sent"
+                  ]
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {
+                  "allowedCallers": [
+                    "order-intake"
+                  ]
+                }
+              }
+            },
+            "digest": "04b8468eb80d4abcae02387589a274b0606225af766b59bc467a982081b45092"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "1.9.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "customerId": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email",
+                        "sms"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "customerId"
+                  ],
+                  "additionalProperties": false
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sent"
+                  ]
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {
+                  "allowedCallers": [
+                    "billing-close"
+                  ]
+                }
+              }
+            },
+            "digest": "b9051503c9538f8069d7cce94f53ec67c4a256fe45d1f036d298a9f1b8244eff"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "2.0.0-rc.1"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "customerId": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "email",
+                        "sms"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "customerId"
+                  ],
+                  "additionalProperties": false
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sent"
+                  ]
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {}
+              }
+            },
+            "digest": "219fa2e3141692bdeff9ca35725e4af2c89af77fd7d70a5e73dcae36b30c5e04"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "customer-profile",
+                "version": "2.0.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                }
+              }
+            },
+            "digest": "bd31cdb5259ea46b1ee3834b4cbe2adfb0e7845592c74ca683c04cc1f95fa6ae"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "order-intake",
+                "version": "1.1.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {}
+              }
+            },
+            "digest": "1032e0200af2bcee9c1d1a518cb8780150e79203e4074f426d184d2b6ff2fa7b"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Action",
+              "metadata": {
+                "name": "crm.lookup",
+                "version": "1.0.0"
+              },
+              "spec": {
+                "implementation": {
+                  "kind": "worker",
+                  "taskType": "crm.lookup",
+                  "taskVersion": "1.0.0"
+                },
+                "sideEffect": "read_only",
+                "timeoutSeconds": 30,
+                "retry": {
+                  "maxAttempts": 1,
+                  "initialDelaySeconds": 1,
+                  "maxDelaySeconds": 30
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                }
+              }
+            },
+            "digest": "3d1e69b84f7d78b3673aa207cd11e1fca2adb7ddb0593179602f7228c1417650"
+          }
+        ],
+        "tasks": [],
+        "adapters": [],
+        "schemas": {}
+      },
+      "drafts": [
+        {
+          "name": "lookup-customer",
+          "version": "0.1.0",
+          "document": {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+              "name": "lookup-customer",
+              "version": "0.1.0"
+            },
+            "spec": {
+              "inputSchema": {
+                "type": "object"
+              },
+              "outputSchema": {
+                "type": "object"
+              },
+              "steps": [],
+              "output": {
+                "literal": {}
+              },
+              "callable": {
+                "allowedCallers": [
+                  "order-intake"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "name": "notify-customer",
+          "version": "1.0.0",
+          "document": {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+              "name": "notify-customer",
+              "version": "1.0.0"
+            },
+            "spec": {
+              "inputSchema": {
+                "type": "object"
+              },
+              "outputSchema": {
+                "type": "object"
+              },
+              "steps": [],
+              "output": {
+                "literal": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "archive-order",
+          "version": "0.2.0",
+          "document": {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+              "name": "archive-order",
+              "version": "0.2.0"
+            },
+            "spec": {
+              "inputSchema": {
+                "type": "object"
+              },
+              "outputSchema": {
+                "type": "object"
+              },
+              "steps": [],
+              "output": {
+                "literal": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "archive-order",
+          "version": "0.10.0",
+          "document": {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+              "name": "archive-order",
+              "version": "0.10.0"
+            },
+            "spec": {
+              "inputSchema": {
+                "type": "object"
+              },
+              "outputSchema": {
+                "type": "object"
+              },
+              "steps": [],
+              "output": {
+                "literal": {}
+              },
+              "callable": {}
+            }
+          }
+        },
+        {
+          "name": "broken-draft",
+          "version": "0.1.0",
+          "document": null
+        }
+      ],
+      "items": [
+        {
+          "uses": "customer-profile@2.0.0",
+          "name": "customer-profile",
+          "version": "2.0.0",
+          "source": "project",
+          "disabled": "This workflow version does not allow calls from order-intake; add order-intake to its callable.allowedCallers in a new version."
+        },
+        {
+          "uses": "notify-customer@2.0.0-rc.1",
+          "name": "notify-customer",
+          "version": "2.0.0-rc.1",
+          "source": "project"
+        },
+        {
+          "uses": "notify-customer@1.10.0",
+          "name": "notify-customer",
+          "version": "1.10.0",
+          "source": "project"
+        },
+        {
+          "uses": "notify-customer@1.9.0",
+          "name": "notify-customer",
+          "version": "1.9.0",
+          "source": "project",
+          "disabled": "This workflow version does not allow calls from order-intake; add order-intake to its callable.allowedCallers in a new version."
+        },
+        {
+          "uses": "notify-customer@1.0.0",
+          "name": "notify-customer",
+          "version": "1.0.0",
+          "source": "project"
+        },
+        {
+          "uses": "order-intake@1.1.0",
+          "name": "order-intake",
+          "version": "1.1.0",
+          "source": "project"
+        },
+        {
+          "uses": "archive-order@0.10.0",
+          "name": "archive-order",
+          "version": "0.10.0",
+          "source": "local"
+        },
+        {
+          "uses": "archive-order@0.2.0",
+          "name": "archive-order",
+          "version": "0.2.0",
+          "source": "local",
+          "disabled": "This workflow version does not allow calls from order-intake; add order-intake to its callable.allowedCallers in a new version."
+        },
+        {
+          "uses": "broken-draft@0.1.0",
+          "name": "broken-draft",
+          "version": "0.1.0",
+          "source": "local",
+          "warning": "Studio can't tell whether broken-draft 0.1.0 allows this workflow."
+        },
+        {
+          "uses": "lookup-customer@0.1.0",
+          "name": "lookup-customer",
+          "version": "0.1.0",
+          "source": "local"
+        }
+      ]
+    },
+    {
+      "name": "a caller with no name yet",
+      "caller": "",
+      "callerVersion": "0.1.0",
+      "lock": {
+        "definitions": [
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "1.0.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {}
+              }
+            },
+            "digest": "fd5eba9341830f13fe24753f052da83b4d19917f82b0da48144f20dd1eed930a"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "notify-customer",
+                "version": "1.1.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                },
+                "callable": {
+                  "allowedCallers": [
+                    "order-intake"
+                  ]
+                }
+              }
+            },
+            "digest": "bc5239ae7ca91d60bb61ade6ec67fbaeae628e654096a43c6e968db1d4a65e5c"
+          },
+          {
+            "document": {
+              "apiVersion": "weave/v1alpha1",
+              "kind": "Workflow",
+              "metadata": {
+                "name": "customer-profile",
+                "version": "2.0.0"
+              },
+              "spec": {
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                },
+                "connections": {},
+                "steps": [],
+                "output": {
+                  "literal": {}
+                }
+              }
+            },
+            "digest": "bd31cdb5259ea46b1ee3834b4cbe2adfb0e7845592c74ca683c04cc1f95fa6ae"
+          }
+        ],
+        "tasks": [],
+        "adapters": [],
+        "schemas": {}
+      },
+      "drafts": [],
+      "items": [
+        {
+          "uses": "customer-profile@2.0.0",
+          "name": "customer-profile",
+          "version": "2.0.0",
+          "source": "project",
+          "warning": "Studio can't tell whether customer-profile 2.0.0 allows this workflow."
+        },
+        {
+          "uses": "notify-customer@1.1.0",
+          "name": "notify-customer",
+          "version": "1.1.0",
+          "source": "project",
+          "warning": "Studio can't tell whether notify-customer 1.1.0 allows this workflow."
+        },
+        {
+          "uses": "notify-customer@1.0.0",
+          "name": "notify-customer",
+          "version": "1.0.0",
+          "source": "project"
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "a call that waits reads the called workflow's output",
+      "mode": "wait",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      }
+    },
+    {
+      "name": "stop on failure keeps the called workflow's output",
+      "mode": "wait",
+      "onFailure": "stop",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      }
+    },
+    {
+      "name": "continue on failure wraps it with the result status",
+      "mode": "wait",
+      "onFailure": "continue",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "sent": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "sent"
+            ]
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "runId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "a call that doesn't wait outputs null",
+      "mode": "detach",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "null"
+      }
+    },
+    {
+      "name": "a call that doesn't wait ignores onFailure",
+      "mode": "detach",
+      "onFailure": "continue",
+      "callee": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "output": {
+        "type": "null"
+      }
+    },
+    {
+      "name": "an unknown called workflow's output is any value",
+      "mode": "wait",
+      "callee": {},
+      "output": {}
+    },
+    {
+      "name": "continue on failure wraps an unknown output too",
+      "mode": "wait",
+      "onFailure": "continue",
+      "callee": {},
+      "output": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output": {},
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "runId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

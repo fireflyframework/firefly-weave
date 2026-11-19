@@ -21,7 +21,7 @@ import { missingBound, formFields } from "../forms/core/form-model";
 import { fieldsOf, type FieldInfo } from "../forms/core/resolve";
 export interface ContractGap {
   label: string;
-  field: "with" | "connection";
+  field: "with" | "connection" | "uses";
   dataPath: string[];
 }
 const record = (value: unknown): Record<string, unknown> =>
@@ -33,6 +33,11 @@ export function contractGaps(
   contract: unknown,
   workflow: Workflow,
 ): ContractGap[] {
+  // A call step needs the workflow it calls before anything else.
+  if ((step.kind as string) === "callWorkflow")
+    return step["uses"]
+      ? []
+      : [{ label: "Choose a workflow to call", field: "uses", dataPath: [] }];
   if (!["action", "decisionTable", "llm"].includes(step.kind)) return [];
   const spec = record(record(contract)["spec"]),
     gaps: ContractGap[] = [];

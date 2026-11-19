@@ -24,7 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
-import { canonicalJson, getAt } from "../../forms/core/json";
+import { canonicalJson, getAt, isJsonObject } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
 import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
@@ -154,6 +154,11 @@ import {
   publishTable,
 } from "../decision-grid/publish-table";
 import type { TableSpec } from "../decision-grid/rules-model";
+import {
+  callSources,
+  workflowRows,
+  type CallSources,
+} from "../calls/call-sources";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -173,6 +178,9 @@ export type ControllerHost = Pick<
   | "runView"
   | "profile"
   | "stepDataScope"
+  | "localDrafts"
+  | "openWorkflow"
+  | "removeTrigger"
   | "api"
   | "diagnostics"
   | "diagnosticsDefinition"
@@ -846,7 +854,10 @@ export class StepDetailsController {
       features: this.features(),
       actionContract: (uses) => this.actionContract(uses),
       tableContract: (uses) => this.tableContract(uses),
-      workflowContract: () => null,
+      workflowContract: (uses) => this.callSources().contract(uses),
+      callNote: (uses) =>
+        this.viewingRuns() ? null : this.callSources().note(uses),
+      viewingRun: this.viewingRuns(),
       ownedAction: (uses) =>
         (owned[uses] as unknown as Json | undefined) ?? null,
       actionDraft: (uses) =>
@@ -1449,8 +1460,35 @@ export class StepDetailsController {
   }
 
   commit(target: string, changes: FormChange[], field: string): CommitOutcome {
-    if (!changes.length) return { ok: false, removed: [] };
+    if (!changes.length || this.turnsOffCallable(target, changes))
+      return { ok: false, removed: [] };
     return this.commitChanges(target, () => changes, field);
+  }
+  /**
+   * Turning the settings' Callable off removes Called by a workflow, which
+   * writes the same `spec.callable`, after the same question.
+   */
+  private turnsOffCallable(target: string, changes: FormChange[]): boolean {
+    const model = this.host.model;
+    if (
+      target !== "$workflow" ||
+      !isJsonObject(model.definition.spec["callable"])
+    )
+      return false;
+    const off = changes.some(
+      (change) =>
+        change.scope === "workflow" &&
+        change.path.length === 2 &&
+        change.path[0] === "spec" &&
+        change.path[1] === "callable" &&
+        !isJsonObject(change.value),
+    );
+    const called = triggerIntents(model.canvas).find(
+      (intent) => intent.kind === "called",
+    );
+    if (!off || !called || !this.host.removeTrigger) return false;
+    void this.host.removeTrigger(called.id);
+    return true;
   }
 
   private commitChanges(
@@ -1759,7 +1797,19 @@ export class StepDetailsController {
             ]
           : undefined;
       },
+      workflowOutput: (uses) => {
+        const contract = this.callSources().contract(uses);
+        return contract &&
+          typeof contract === "object" &&
+          !Array.isArray(contract)
+          ? contract["outputSchema"]
+          : undefined;
+      },
     };
+  }
+  /** The workflows a call step may call, and the callers of this one, for this window. */
+  callSources(): CallSources {
+    return callSources(this.host);
   }
 
   /**
@@ -1915,7 +1965,15 @@ export class StepDetailsController {
             return { uses, title: uses };
           }),
         contract: async (uses) => this.actionContract(uses),
-        workflows: async () => [],
+        workflows: async (filter) => {
+          const sources = this.callSources();
+          sources.refresh();
+          await sources.lock.read();
+          if (host.model !== model || model.opened !== opened) return [];
+          return workflowRows(
+            sources.list(filter?.callableBy ?? model.definition.metadata.name),
+          );
+        },
         tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),
         tables: async () => {
           if (this.tables) {
@@ -1989,6 +2047,7 @@ export class StepDetailsController {
       },
       notify: (text, action) => host.notify(text, action),
       tables: this.stepTables(target, model, opened),
+      openWorkflow: (uses) => host.openWorkflow?.(uses),
     };
     return ctx;
   }

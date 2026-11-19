@@ -29,6 +29,7 @@ export const kindRegistrations: readonly KindRegistrationLoader[] = [
   () => import("./builtin"),
   () => import("./llm"),
   () => import("./decision-grid"),
+  () => import("./call"),
 ];
 
 /**
