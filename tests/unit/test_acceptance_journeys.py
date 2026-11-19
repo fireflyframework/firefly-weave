@@ -150,6 +150,8 @@ def test_the_committed_map_is_valid():
         "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
+        # An AI task runs for real from step details, as a step test.
+        "ai-task",
         # The platform runs AI agents and their conversation memory; their Studio editor and acceptance stay off.
         "agents",
         "agent-memory",
@@ -209,7 +211,7 @@ AGENT_STEPS = tuple(f"J4.{n}" for n in range(7, 16))
 def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
     # J4.1 to J4.6 are the Studio steps, which wait for the agent editor; the platform's own steps follow them.
     enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
-    assert enablement.journey_steps("J4") == AGENT_STEPS
+    assert enablement.journey_steps("J4") == (*AGENT_STEPS, AI_TASK_STEP)
     for step in AGENT_STEPS:
         assert enablement.missing(step) == (), step
         assert {"real-platform-journeys", "agents"} <= set(enablement.steps[step]), step
@@ -223,6 +225,21 @@ def test_the_agent_journey_runs_from_the_sdk_and_cli_in_the_ai_profiles():
     assert enablement.checks("J4.9") == ("J4.9/injected-cancel",)
     # The conversation step needs conversation memory too.
     assert "agent-memory" in enablement.steps["J4.15"]
+
+
+AI_TASK_STEP = "J4.16"
+
+
+def test_the_ai_task_runs_for_real_as_a_step_test_in_the_ai_profiles():
+    # After J4.7 enabled AI with the gated model: an AI task of a saved draft runs once as a step test.
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert set(enablement.steps[AI_TASK_STEP]) == {"real-platform-journeys", "ai-task", "step-tests"}
+    assert enablement.missing(AI_TASK_STEP) == ()
+    assert [profile for profile in journeys.PROFILES if enablement.applies(AI_TASK_STEP, profile)] == [
+        "ai",
+        "nightly",
+        "release",
+    ]
 
 
 def orders_fixture():
