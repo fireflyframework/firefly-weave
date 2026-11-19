@@ -285,6 +285,12 @@ button.cb-add {
   color: var(--text);
   font-weight: 600;
 }
+button.cb-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
 
 /* A phone: one column, taller rows, the short caller lines, Open as an icon. */
 @media (max-width: 767px) {

@@ -820,6 +820,8 @@ export class StepDetails {
     if (this.target() === "$trigger")
       return "Manual form · starts a run with its input fields";
     const choice = this.triggerChoice();
+    if (choice?.kind === "called")
+      return "Runs when another workflow calls it.";
     if (choice) return TRIGGER_DESCRIPTIONS[choice.kind];
     if (this.target() === "$end") return "End · what the workflow returns";
     const step = this.controller().step(this.target());

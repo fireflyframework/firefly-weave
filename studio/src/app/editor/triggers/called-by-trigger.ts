@@ -62,7 +62,7 @@ interface Box {
 /** The Called by section: the callers, or why there are none to show. */
 type CallersView =
   | { kind: "callers"; callers: Caller[] }
-  | { kind: "empty"; title: string; detail: string };
+  | { kind: "empty"; title: string; detail: string; retry?: boolean };
 
 const SCHEMA_PATH: Record<Side, string[]> = {
   input: ["spec", "inputSchema"],
@@ -277,6 +277,7 @@ export class CalledByTrigger {
           kind: "empty",
           title: "Studio couldn't read this project's published workflows.",
           detail: state.message,
+          retry: true,
         };
       case "ready": {
         const callers = calledBy({

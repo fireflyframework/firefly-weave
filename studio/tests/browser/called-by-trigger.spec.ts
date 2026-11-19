@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // (spec.callable), what callers send and read, the published workflows that
 // call it (from the project's catalog lock, mocked here), and the question
 // before it goes, from the canvas or from the workflow settings.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { parse, stringify } from "yaml";
 import { connected, sourceText } from "./support";
 import {
@@ -102,6 +102,8 @@ const LOCK = {
 async function open(
   page: Page,
   callable: unknown = { allowedCallers: ALLOWED },
+  catalog: (route: Route) => Promise<void> = (route) =>
+    route.fulfill({ json: LOCK }),
 ) {
   return openStepFixture(
     page,
@@ -109,9 +111,7 @@ async function open(
     async (p) => {
       const result = await connected(p);
       await withLanguageFeatures(p, ["flow.callWorkflow"]);
-      await p.route(/\/projects\/[^/]+\/catalog$/, (route) =>
-        route.fulfill({ json: LOCK }),
-      );
+      await p.route(/\/projects\/[^/]+\/catalog$/, catalog);
       return result;
     },
   );
@@ -170,6 +170,31 @@ test.describe("the Called by a workflow trigger", () => {
     await expect(
       dialog.getByRole("group", { name: "Result", exact: true }),
     ).toContainText("accepted");
+    // The radio stays at its card's start with its words beside it, with the
+    // schema designer open and after Done.
+    const radioAtStart = async () => {
+      for (const name of [
+        "Any workflow in this project",
+        "Only these workflows",
+      ]) {
+        const card = dialog
+          .locator(".cb-card")
+          .filter({ has: page.getByRole("radio", { name }) });
+        const box = (await card.boundingBox())!;
+        const radio = (await card.getByRole("radio").boundingBox())!;
+        const words = (await card.locator(".cb-card-text").boundingBox())!;
+        expect(radio.x - box.x).toBeLessThanOrEqual(16);
+        expect(radio.width).toBeLessThanOrEqual(20);
+        expect(words.x - (radio.x + radio.width)).toBeLessThanOrEqual(16);
+      }
+    };
+    const edit = dialog.getByRole("button", { name: "Edit the input" });
+    await edit.click();
+    await expect(edit).toHaveAttribute("aria-expanded", "true");
+    await radioAtStart();
+    await edit.click();
+    await expect(edit).toHaveText("Edit");
+    await radioAtStart();
     const callers = dialog.locator(".cb-caller");
     await expect(dialog.locator(".cb-section").last()).toContainText(
       "4 published workflows",
@@ -298,6 +323,38 @@ test.describe("the Called by a workflow trigger", () => {
     await expect(calledTile(page)).toHaveCount(0);
     await settings.getByRole("button", { name: "Close", exact: true }).click();
     expect(await callable(page)).toBeUndefined();
+  });
+});
+
+test.describe("when the callers can't show", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("not connected, it says where callers come from", async ({ page }) => {
+    const details = await openStepFixture(
+      page,
+      yamlFile("notify-customer.yaml", workflow({})),
+    );
+    const dialog = await openTrigger(page, details);
+    await expect(dialog.locator(".cb-none")).toContainText(
+      "Connect to a platform to see which workflows call this one.Studio reads the callers from the project's published workflows.",
+    );
+  });
+
+  test("a failed read offers Try again, which reads the callers", async ({
+    page,
+  }) => {
+    let answers = 0;
+    const details = await open(page, { allowedCallers: ALLOWED }, (route) =>
+      ++answers === 1
+        ? route.fulfill({ status: 500, json: { title: "Server error" } })
+        : route.fulfill({ json: LOCK }),
+    );
+    const dialog = await openTrigger(page, details);
+    await expect(dialog.locator(".cb-none-title")).toHaveText(
+      "Studio couldn't read this project's published workflows.",
+    );
+    await dialog.getByRole("button", { name: "Try again" }).click();
+    await expect(dialog.locator(".cb-caller")).toHaveCount(4);
   });
 });
 

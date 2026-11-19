@@ -239,6 +239,11 @@ SPDX-License-Identifier: Apache-2.0
       @if (view.detail) {
         <p>{{ view.detail }}</p>
       }
+      @if (view.retry) {
+        <button type="button" class="sm cb-retry" (click)="refresh()">
+          <weave-icon name="refresh" [size]="16" />Try again
+        </button>
+      }
     </div>
   }
 </section>
