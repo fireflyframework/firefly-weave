@@ -56,7 +56,8 @@ SPDX-License-Identifier: Apache-2.0
     @if (spec.labelHidden && spec.hint) {
       <p class="param-intro">{{ spec.hint }}</p>
     }
-    @if (spec.required && !quiet) {
+    <!-- A read-only field (a run, a locked setting) asks for nothing: no star. -->
+    @if (spec.required && !quiet && !readOnly()) {
       <span class="param-required" aria-hidden="true">*</span>
     }
     @if (spec.description) {

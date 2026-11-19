@@ -367,6 +367,8 @@ test.describe("a call step on the Runs tab", () => {
       field.getByRole("radiogroup", { name: "Mode for Workflow" }),
     ).toHaveCount(0);
     await expect(field).not.toContainText("published workflows");
+    // Nothing to fill in a run: no Required star.
+    await expect(field.locator(".param-required")).toHaveCount(0);
     await expect(page.locator('[data-param="input"]')).toHaveCount(0);
     const openCallee = field.getByRole("button", { name: "Open workflow" });
     await expect(openCallee).not.toHaveAttribute("aria-disabled", "true");
