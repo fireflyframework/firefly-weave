@@ -299,6 +299,14 @@ test.describe("called workflows in the run log", () => {
     await expect(log.locator(".run-log-status")).toHaveText(
       "send in notify-customer needs test data",
     );
+    // The whole status shows: it takes its own line rather than being cut.
+    await expect
+      .poll(() =>
+        log
+          .locator(".run-log-status")
+          .evaluate((status) => status.scrollWidth <= status.clientWidth),
+      )
+      .toBe(true);
     // It stopped inside notify-customer: open on the step that needs test output.
     const notify = log.getByRole("button", {
       name: "notify-customer 1.0.0, waiting",
@@ -332,5 +340,35 @@ test.describe("called workflows in the run log", () => {
     await expect(log.locator(".run-log-status")).toHaveText(
       "audit needs test data",
     );
+  });
+});
+
+test.describe("called workflows in the run log on a phone", () => {
+  test.use({ viewport: { width: 360, height: 780 } });
+
+  test("a called workflow's row keeps its name and status word; the version gives way first", async ({
+    page,
+  }) => {
+    const { calls } = await open(
+      page,
+      [call("notify", "notify-customer@1.0.0"), value("summarize", {})],
+      [NOTIFY_FAILING],
+    );
+    await executeWorkflow(page);
+    await expect.poll(() => executions(calls).length).toBe(1);
+    const row = runLog(page).getByRole("button", {
+      name: "notify-customer 1.0.0, failed",
+    });
+    await expect(row).toBeVisible();
+    const whole = (selector: string) =>
+      row
+        .locator(selector)
+        .evaluate((part) => part.scrollWidth <= part.clientWidth);
+    expect(await whole(".run-log-frame-name")).toBe(true);
+    expect(await whole(".run-log-frame-status")).toBe(true);
+    // Inside the run log, never wider than it.
+    const box = (await row.boundingBox())!;
+    const log = (await runLog(page).boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(log.x + log.width);
   });
 });

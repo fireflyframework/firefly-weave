@@ -64,8 +64,20 @@ SPDX-License-Identifier: Apache-2.0
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The head wraps only for a long status, which then has a line of its own. */
+.run-log-head {
+  flex-wrap: wrap;
+}
+.run-log-head:has(.run-log-status-long) {
+  padding-block: var(--space-1);
+}
+.run-log-status-long {
+  order: 3;
+  flex-basis: 100%;
+}
 .run-log-close {
   flex: none;
+  margin-left: auto;
   width: 32px;
   min-width: 32px;
   height: 32px;
@@ -344,6 +356,21 @@ SPDX-License-Identifier: Apache-2.0
     height: var(--run-log-sheet, 40%);
     border-top: 1px solid var(--border);
     border-left: 0;
+  }
+}
+/* On a phone a called workflow sits 16 px in, and its version gives way
+   before its name and status word. */
+@media (max-width: 767px) {
+  .run-log-frame-row {
+    width: calc(100% - 24px);
+    margin-right: 8px;
+    margin-left: 16px;
+  }
+  .run-log-frame-steps {
+    margin-left: 24px;
+  }
+  .run-log-frame-version {
+    min-width: 1.5em;
   }
 }
 @media (max-width: 767px), (pointer: coarse) {

@@ -304,9 +304,14 @@ export function runStatus(
     <header class="run-log-head">
       <weave-icon name="runHistory" [size]="16" aria-hidden="true" />
       <h2 class="run-log-title">Run log</h2>
-      <span class="run-log-status" role="status" [title]="status()">{{
-        status()
-      }}</span>
+      <!-- A long status takes its own line under the title, whole. -->
+      <span
+        class="run-log-status"
+        role="status"
+        [class.run-log-status-long]="status().length > 26"
+        [title]="status()"
+        >{{ status() }}</span
+      >
       <button
         type="button"
         class="icon-button run-log-close"
