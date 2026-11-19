@@ -132,6 +132,8 @@ const workflowChoices = (ndv: NdvContext) =>
 /** Input: rows from the called workflow's input, free-form JSON when Studio can't read it. */
 function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
   const called = calleeInput(step, ctx);
+  // Read from a run, the Input pane holds what the call received.
+  if (!called && ctx.viewingRun) return { fields: [] };
   if (!called)
     return {
       fields: [
@@ -225,7 +227,8 @@ function workflowActions(step: Step, ctx: KindContext): FieldAction[] {
     run: (ndv) => ndv.openWorkflow?.(uses),
     whileReadOnly: true,
   };
-  if (contractOf(step, ctx)) return [open];
+  // Read from a run, it only opens the workflow.
+  if (ctx.viewingRun || contractOf(step, ctx)) return [open];
   return [
     open,
     {

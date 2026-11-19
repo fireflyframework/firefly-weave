@@ -60,7 +60,7 @@ export class ResourceViewerLayer implements AfterViewInit {
   imports: [Icon, Modal, Select, ResourceViewerLayer],
   template: `@let modes = this.modes();
     <div class="param-resource">
-      @if (modes.length > 1) {
+      @if (modes.length > 1 && !readOnly()) {
         <div
           class="param-segments param-resource-modes"
           role="radiogroup"
@@ -106,7 +106,7 @@ export class ResourceViewerLayer implements AfterViewInit {
             [attr.aria-invalid]="!!problem() || null"
             [readOnly]="!!readOnly()"
             [placeholder]="placeholder()"
-            [value]="text()"
+            [value]="readOnly() ? shownName(text()) : text()"
             (focus)="retainMode()"
             (input)="edit($event)"
             (change)="typed()"
@@ -236,6 +236,11 @@ export class ResourceField {
     return this.draft
       ? resourceProblem(this.draft.mode, this.draft.text.trim())
       : "";
+  }
+  /** Read only, a versioned reference reads as its name and version: "notify-customer 1.0.0". */
+  shownName(text: string): string {
+    const at = text.lastIndexOf("@");
+    return at > 0 ? `${text.slice(0, at)} ${text.slice(at + 1)}` : text;
   }
   description(): string {
     return [

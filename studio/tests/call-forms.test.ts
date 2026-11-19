@@ -655,3 +655,25 @@ describe("the form contract", () => {
       expect(formProblems(CALL, step, context(step))).toEqual([]);
   });
 });
+
+describe("a call step read from a run", () => {
+  it("names the version and only opens it: no input it can't read, no catalog note, no Choose another", () => {
+    const step = call({ uses: "gone-workflow@1.0.0" });
+    const ctx = { ...context(step), viewingRun: true };
+    const form = callForm(step, ctx);
+    const labels = form.fields.map((field) => field.label);
+    expect(labels).not.toContain("Input");
+    const workflow = form.fields.find((field) => field.label === "Workflow")!;
+    expect(workflow.actions?.map((action) => action.label)).toEqual([
+      "Open workflow",
+    ]);
+    // Editing, the same step offers Choose another and free-form input.
+    const editing = callForm(step, context(step));
+    expect(editing.fields.map((field) => field.label)).toContain("Input");
+    expect(
+      editing.fields
+        .find((field) => field.label === "Workflow")!
+        .actions?.map((action) => action.label),
+    ).toEqual(["Open workflow", "Choose another"]);
+  });
+});

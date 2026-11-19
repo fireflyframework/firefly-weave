@@ -334,18 +334,34 @@ test.describe("a call step on the Runs tab", () => {
     await expect(card.locator(".pane-child-line")).toHaveText(
       "notify-customer 1.0.0 · failed at send: SMTP_REJECTED · took 2 s",
     );
+    // The call finished here, but the run it called failed: the pill says both.
+    await expect(output.locator(".pane-sub .pill").first()).toHaveText(
+      "Finished · the called run failed",
+    );
     await expect(
       output.getByRole("button", { name: "Open in Operate" }),
     ).toHaveCount(0);
-    // Read only here, Open workflow still opens the called workflow, and
-    // the field's commands sit under it with their reasons.
+    // Read from the run: the Workflow field names the version it called,
+    // without the list's switch or the catalog's note, Open workflow beside
+    // it; the Input pane holds what the call received, so Parameters has no
+    // Input saying Studio can't read it.
     const field = page.locator('[data-param="workflow"]');
+    await expect(field.locator("input.param-input")).toHaveValue(
+      "notify-customer 1.0.0",
+    );
+    await expect(
+      field.getByRole("radiogroup", { name: "Mode for Workflow" }),
+    ).toHaveCount(0);
+    await expect(field).not.toContainText("published workflows");
+    await expect(page.locator('[data-param="input"]')).toHaveCount(0);
     const openCallee = field.getByRole("button", { name: "Open workflow" });
     await expect(openCallee).not.toHaveAttribute("aria-disabled", "true");
+    await expect(
+      field.getByRole("button", { name: "Choose another" }),
+    ).toHaveCount(0);
     const value = (await field.locator("input.param-input").boundingBox())!;
-    expect((await openCallee.boundingBox())!.y).toBeGreaterThan(
-      value.y + value.height,
-    );
+    const button = (await openCallee.boundingBox())!;
+    expect(button.x).toBeGreaterThan(value.x + value.width);
     await card.getByRole("button", { name: "Open run" }).click();
     // notify-customer has no draft here: Studio offers one from the version the run used.
     await expect(
@@ -362,6 +378,10 @@ test.describe("a call step on the Runs tab", () => {
     await expect(card.locator(".pane-child-line")).toHaveText(
       "invoice-approval didn't wait for it",
     );
+    // A call that didn't wait has no result: no schema line, no field count.
+    await expect(output.locator("weave-data-tree")).toHaveCount(0);
+    await expect(output).not.toContainText("Empty");
+    await expect(output.locator(".pane-count")).toHaveText("");
   });
 
   test("a call that failed says If it fails stopped the workflow", async ({

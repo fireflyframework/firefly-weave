@@ -177,7 +177,9 @@ import { describeError } from "../../../errors";
         }
       } @else if (recorded) {
         <span class="pill" [attr.data-tone]="recorded.tone">{{
-          recorded.pill
+          calledRunFailed(recorded)
+            ? "Finished · the called run failed"
+            : recorded.pill
         }}</span>
         <span class="pill pane-source-tag" data-tone="info">{{
           recorded.tag
@@ -210,7 +212,10 @@ import { describeError } from "../../../errors";
       }
       @let paths = this.paths();
       <span class="pane-count">{{
-        none || stop || (recorded && recorded.output.kind !== "value")
+        none ||
+        stop ||
+        detachedCall() ||
+        (recorded && recorded.output.kind !== "value")
           ? ""
           : paths
             ? paths.took
@@ -579,7 +584,9 @@ import { describeError } from "../../../errors";
                 </div>
               }
             }
-            @if (rows.length) {
+            @if (detachedCall()) {
+              <!-- A call that didn't wait has no result to describe. -->
+            } @else if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
             } @else if (!stop) {
               <p class="pane-empty-text">
@@ -977,6 +984,20 @@ export class OutputPane {
       },
       id,
       null,
+    );
+  }
+  /** A call that doesn't wait: it has no result. */
+  detachedCall(): boolean {
+    const { controller, target } = this.session();
+    return this.callStep() && controller.step(target)?.["mode"] === "detach";
+  }
+  /** A call that finished in the run while the run it called failed. */
+  calledRunFailed(recorded: { child: string | null; pill: string }): boolean {
+    if (!recorded.child || !this.callStep()) return false;
+    const key = `${this.session().host.stepDataScope ?? ""}|${recorded.child}`;
+    return (
+      recorded.pill === "Finished in this run" &&
+      this.childSummaries().get(key)?.status === "failed"
     );
   }
   /** Studio knows what the called workflow returns, so test output for the call can be checked. */

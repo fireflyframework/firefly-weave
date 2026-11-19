@@ -855,7 +855,9 @@ export class StepDetailsController {
       actionContract: (uses) => this.actionContract(uses),
       tableContract: (uses) => this.tableContract(uses),
       workflowContract: (uses) => this.callSources().contract(uses),
-      callNote: (uses) => this.callSources().note(uses),
+      callNote: (uses) =>
+        this.viewingRuns() ? null : this.callSources().note(uses),
+      viewingRun: this.viewingRuns(),
       ownedAction: (uses) =>
         (owned[uses] as unknown as Json | undefined) ?? null,
       actionDraft: (uses) =>

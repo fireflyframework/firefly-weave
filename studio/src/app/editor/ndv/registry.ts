@@ -83,6 +83,8 @@ export interface KindContext {
   ownedAction?(uses: string): Json | null;
   /** The draft of a published action's next version kept on this computer, or null. */
   actionDraft?(uses: string): Json | null;
+  /** On the Runs tab: the step is read from a run, so notes about editing it say nothing. */
+  viewingRun?: boolean;
 }
 export interface FieldSpec {
   /** Relative to the step, e.g. ["with"], ["cases", 0, "when"]. */

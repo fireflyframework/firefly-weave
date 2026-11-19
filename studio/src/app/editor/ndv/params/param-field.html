@@ -29,7 +29,9 @@ SPDX-License-Identifier: Apache-2.0
   [class.has-error]="line.kind === 'error' || !!local"
   [class.is-readonly]="!!reason"
   [class.has-actions-beside]="
-    !!spec.actionsBeside && !!spec.actions?.length && !reason
+    !!spec.actionsBeside &&
+    !!spec.actions?.length &&
+    (!reason || spec.actions.length === 1)
   "
   (focusout)="left($event)"
 >
