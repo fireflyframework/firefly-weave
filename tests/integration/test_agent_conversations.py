@@ -701,6 +701,23 @@ async def test_an_expired_conversation_is_never_listed_or_read(platform):
 async def test_deleting_a_conversation_is_audited_and_names_the_runs_that_loaded_it(platform):
     first, _ = await converse(platform, "C-4", "Hello", "Hi.")
     second, _ = await converse(platform, "C-4", "Again", "Yes.")
+    # A test run for the same key loads nothing, so it is not named as a run that loaded the conversation.
+    tested = await platform.runtime.start(
+        platform.author,
+        platform.scope,
+        StartRunRequest(activation_id=platform.activation.id, input={"customerId": "C-4", "message": "Test"}),
+        "call-" + uuid4().hex,
+        context=platform.context,
+        start_facts=RunStartFacts(
+            origin="call", test=True, caller=RunSummaryCaller(run_id=first.id, node_id="call", instance_key="")
+        ),
+    )
+    await scan(platform)
+    await answer(platform, final("Test answer."))
+    [load] = await owner_rows(
+        platform, "SELECT test,delivered_at FROM agent_memory_loads WHERE run_id=:run", run=tested.id
+    )
+    assert load["test"] is True and load["delivered_at"] is not None
     service = await conversations(platform)
     key_hash = conversation_key_hash(WORKFLOW, "C-4")
 
