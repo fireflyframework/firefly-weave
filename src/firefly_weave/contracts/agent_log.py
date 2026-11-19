@@ -37,6 +37,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field
 
+from firefly_weave.contracts.agent_conversations import ConversationKeyHash
 from firefly_weave.contracts.definitions import NAME_PATTERN, ContractModel, ResourceName
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER
@@ -176,11 +177,22 @@ class AgentTurn(ContractModel):
     error: AgentError | None
 
 
+class AgentConversationUse(ContractModel):
+    """The conversation an agent with conversation memory loaded: its key hash, the version it read, whether it had
+    expired, and whether the run was a test run (which loads nothing). Never its messages or its key."""
+
+    key_hash: ConversationKeyHash
+    version: Count
+    expired: bool
+    test: bool = Field(default=False, exclude_if=lambda v: not v)
+
+
 class AgentMemoryUse(ContractModel):
     """The agent's memory scope and how many remembered messages its first turn carried."""
 
     scope: Literal["step", "run", "conversation"]
     loaded: Count
+    conversation: AgentConversationUse | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class AgentTotals(ContractModel):

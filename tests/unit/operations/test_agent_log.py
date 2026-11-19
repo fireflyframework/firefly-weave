@@ -25,11 +25,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
 from agent_fixtures import (  # noqa: E402
     CANCEL,
+    CONVERSATION,
     INPUT,
     LOOKUP,
     NOW,
@@ -37,13 +40,14 @@ from agent_fixtures import (  # noqa: E402
     agent,
     answering,
     artifact,
+    conversation_memory_enabled,  # noqa: F401 - a fixture
     plain,
     workflow,
 )
 from test_agent_workflows import PROFILE, catalog, order_action, orders_connector  # noqa: E402
 
 from firefly_weave.compiler.ir import WorkflowIR  # noqa: E402
-from firefly_weave.contracts.agent_log import AgentError, shown_name  # noqa: E402
+from firefly_weave.contracts.agent_log import AgentConversationUse, AgentError, shown_name  # noqa: E402
 from firefly_weave.contracts.agent_turns import TurnOutput  # noqa: E402
 from firefly_weave.operations.agent_log import RecordedResult, StepRecord, TurnRecord, assemble  # noqa: E402
 from firefly_weave.operations.facts import FactRepository  # noqa: E402
@@ -222,7 +226,7 @@ class Recorded:
             input_digest=self.humans[key].context["inputDigest"],
         )
 
-    def log(self, key: str = "support", withheld=None):
+    def log(self, key: str = "support", withheld=None, conversations=None):
         """The log as a page reads it; ``withheld`` maps the keys whose values the page's limit left out to what the
         page still reads of them: a turn's shape, or None for a call."""
         withheld = withheld or {}
@@ -238,6 +242,7 @@ class Recorded:
             intents=[turn_record(name, value) for name, value in self.turns.items()],
             state=self.state.agents.get(key),
             withheld=withheld,
+            conversation=(conversations or {}).get(key),
         )
 
 
@@ -641,3 +646,51 @@ def test_values_past_the_page_limit_are_left_out_with_their_reason():
     assert [(turn.input_tokens, turn.output_tokens) for turn in log.turns] == [(612, 48), (731, 35)]
     assert (log.status, log.stop, log.totals.tool_calls) == ("succeeded", "final", 1)
     assert "A-17" not in log.model_dump_json()
+
+
+CONVERSATION_HASH = "3f2a" + "0" * 60
+REMEMBERED = [
+    {"role": "user", "content": "What is the status of order A-17?"},
+    {"role": "assistant", "content": "A-17 has shipped."},
+]
+
+
+def conversation_run(**loaded) -> Recorded:
+    memory = {**CONVERSATION, "key": {"ref": "/input/region"}}
+    run = Recorded(answering(workflow(agent(tools=[LOOKUP], memory=memory))))
+    run.send("started", NOW, admission_policy="classified-v1")
+    key_hash = run.state.agents["support"].conversation
+    data = {"node_id": "support", "key_hash": key_hash, "version": 1, "expired": False, "messages": REMEMBERED}
+    run.send("memory_loaded", NOW + SECONDS, **(data | loaded))
+    run.complete("support#1", NOW + 2 * SECONDS, answer("A-17."))
+    return run
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_an_agent_with_conversation_memory_shows_its_key_hash_version_and_loaded_count():
+    run = conversation_run()
+    use = AgentConversationUse(key_hash=CONVERSATION_HASH, version=1, expired=False)
+
+    memory = run.log(conversations={"support": use}).memory
+
+    assert memory.model_dump(mode="json") == {
+        "scope": "conversation",
+        "loaded": 2,
+        "conversation": {"key_hash": CONVERSATION_HASH, "version": 1, "expired": False},
+    }
+
+
+@pytest.mark.usefixtures("conversation_memory_enabled")
+def test_a_test_runs_agent_shows_test_and_loaded_0():
+    run = conversation_run(version=0, test=True, messages=[])
+    use = AgentConversationUse(key_hash=CONVERSATION_HASH, version=0, expired=False, test=True)
+
+    memory = run.log(conversations={"support": use}).memory
+
+    assert memory.loaded == 0 and memory.model_dump(mode="json")["conversation"]["test"] is True
+
+
+def test_step_and_run_memory_show_no_conversation():
+    run = mockup_run()
+
+    assert run.log().memory.model_dump_json() == '{"scope":"step","loaded":0}'
