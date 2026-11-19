@@ -295,7 +295,6 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
         "Loop over items",
         blocks=[("body", "/body", "For each item")],
         scope_roots=["/item", "/index", "/loops"],
-        studio="pending",
     ),
     _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow", studio="pending"),
     _kind(

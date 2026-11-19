@@ -116,6 +116,35 @@ describe.skipIf(!available)(
         );
       }
     });
+    it("edits every field of a loop in step details once loops are ready", async () => {
+      expect(ready(manifest.step_kinds).map((entry) => entry.kind)).toContain(
+        "forEach",
+      );
+      await loadKindRegistrations();
+      const loop = ndvRegistry.kind("forEach")!;
+      const step = createStep("forEach", "loop");
+      const workflow = freshWorkflow();
+      const form = loop.form!(step, {
+        workflow,
+        features: ["flow.forEach"],
+        actionContract: () => null,
+        tableContract: () => null,
+        workflowContract: () => null,
+      });
+      // Items and the options by their first key; the body by its container.
+      const edited = new Set(
+        [
+          ...form.fields,
+          ...(form.options ?? []),
+          ...(loop.containers?.(step) ?? []),
+        ].map((part) => part.path[0]),
+      );
+      edited.add("id");
+      edited.add("kind");
+      expect([...edited].sort()).toEqual(
+        (schema.steps["forEach"] as string[]).sort(),
+      );
+    });
     it("covers ready workflow configuration and metadata without hiding fields in source mode", () => {
       const fields = propertyFields(freshWorkflow());
       const spec = fields

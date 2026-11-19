@@ -77,8 +77,7 @@ describe("built-in step kinds", () => {
         .kinds()
         .map((d) => d.kind)
         .sort(),
-      // A loop has step details before Add step lists it with the others.
-    ).toEqual([...kinds, "forEach"].sort());
+    ).toEqual([...kinds].sort());
   });
 
   it("creates the classic editor's defaults and ID prefixes", () => {

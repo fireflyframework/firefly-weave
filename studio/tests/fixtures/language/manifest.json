@@ -607,7 +607,7 @@
           "/index",
           "/loops"
         ],
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "kind": "callWorkflow",

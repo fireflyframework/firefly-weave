@@ -108,6 +108,7 @@ export const kinds: Kind[] = [
   "signal",
   "humanTask",
   "fail",
+  "forEach",
 ];
 /** The readable start of a new step's ID: decision-1, approval-1, call-action-1. */
 export const stepIdPrefix: Record<Kind, string> = {
