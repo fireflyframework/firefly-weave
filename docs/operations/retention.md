@@ -231,8 +231,11 @@ it alone:
   each time; one that is refreshed before then is kept.
 - **Deleting.** People with `run.purge` delete one conversation, by key (hashed
   by the SDK or CLI) or key hash, or every conversation of a workflow, 1,000 at
-  a time: `weave agent-conversations delete --workflow <name> --key <key>`, or
-  `weave agent-conversations purge-workflow`. Both are audited. A run still
+  a time: `weave agent-conversations delete --workflow <name> --key-stdin`, or
+  `weave agent-conversations purge-workflow`. `--key` also works, but it puts
+  the key in shell history and the process list; `--key-stdin` reads it from
+  standard input, and `--key-hash` takes the hash from the SDK's
+  `conversation_hash`. Reads, deletes and purges are audited. A run still
   running when its conversation is deleted starts a new conversation with its
   own exchange when it completes.
 - **Copies in runs.** Each run that loaded a conversation keeps the loaded
@@ -240,6 +243,12 @@ it alone:
   purged. Purging a run leaves the conversation. A delete answers `loaded_by`,
   up to 100 runs that loaded the conversation (`more_loaded_by` says when there
   are more), so an erasure can purge those runs too.
+- **Erasing a person's conversation completely.** Delete it, then purge the
+  runs in `loaded_by`. While `more_loaded_by` is true, purge those runs and call
+  delete again: each call names the next runs that loaded the conversation. A
+  workflow purge answers no `loaded_by`, so erasing all of a workflow's
+  conversations also means purging that workflow's runs. Exports of runs made
+  before a delete keep the messages those runs loaded.
 - **Environments.** Deleting an environment deletes its conversations.
 - **Backups** keep deleted conversations until the backups rotate; see
   [Backup and restore](backup-restore.md).

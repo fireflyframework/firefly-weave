@@ -205,9 +205,12 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 if "{workflow}" in operation.path:
                     conversation["workflow"] = workflow
                 if "{key_hash}" in operation.path:
-                    conversation["key_hash"] = conversation_hash(
-                        workflow, options.get("conversation_key"), options.get("key_hash")
-                    )
+                    key = options.get("conversation_key")
+                    if options.get("key_stdin"):
+                        if key is not None or options.get("key_hash") is not None:
+                            raise ValueError("Name a conversation by one of --key, --key-stdin and --key-hash")
+                        key = _stdin_key()
+                    conversation["key_hash"] = conversation_hash(workflow, key, options.get("key_hash"))
                 if operation_id == "agent_conversations.purge_workflow":
                     from firefly_weave.contracts.agent_conversations import ConversationPurgeRequest
 
@@ -396,6 +399,12 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 ["--key", "conversation_key"],
                 help="The conversation's key, such as a customer ID; hashed with --workflow here and never sent.",
             ),
+            click.Option(
+                ["--key-stdin"],
+                is_flag=True,
+                help="Read the key as one line from standard input, one trailing newline removed, so it stays out "
+                "of shell history and the process list.",
+            ),
             click.Option(["--key-hash"], help="The conversation's key hash, instead of --key."),
         ]
     if operation_id == "agent_conversations.purge_workflow":
@@ -476,6 +485,27 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
         callback=execute,
         help=operation.id + ": " + operation.capability,
     )
+
+
+# The longest key, 256 characters of up to 4 bytes each, plus a line ending.
+_STDIN_KEY_BYTES = 256 * 4 + 2
+
+
+def _stdin_key() -> str:
+    """A conversation key read as one line from standard input; a terminal is fine, a key is not a secret."""
+    import sys
+
+    raw = sys.stdin.buffer.read(_STDIN_KEY_BYTES + 1)
+    if len(raw) > _STDIN_KEY_BYTES:
+        raise ValueError("The key read from standard input is too long")
+    text = raw.decode("utf-8")
+    for ending in ("\r\n", "\n"):
+        if text.endswith(ending):
+            text = text[: -len(ending)]
+            break
+    if not text or "\n" in text or "\r" in text:
+        raise ValueError("Standard input must hold the key as one non-empty line")
+    return text
 
 
 def _agent_log_key(ctx: click.Context, parameter: click.Parameter, value: str | None) -> str | None:

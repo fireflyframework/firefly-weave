@@ -783,8 +783,9 @@ def test_an_append_changes_nothing_in_the_session():
     [
         [{"role": "tool", "content": "x"}],
         [{"role": "user", "content": "x" * 140_000}, {"role": "assistant", "content": "y" * 140_000}],
+        [{"role": "user", "content": "x"}] * 201,
     ],
-    ids=["tool-role", "over-256-kib"],
+    ids=["tool-role", "over-256-kib", "over-200-messages"],
 )
 def test_a_seed_that_breaks_the_conversation_shape_is_refused_at_load(seed):
     flow = remembering()

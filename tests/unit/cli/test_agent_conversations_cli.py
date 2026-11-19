@@ -34,7 +34,7 @@ ENVIRONMENT = f"/api/v1/tenants/{SCOPE.tenant_id}/projects/{SCOPE.project_id}/en
 AT = "2026-11-18T12:00:00Z"
 
 
-def run_cli(monkeypatch, *arguments: str, request_file=None) -> tuple[object, list[httpx.Request]]:
+def run_cli(monkeypatch, *arguments: str, stdin: str | None = None) -> tuple[object, list[httpx.Request]]:
     calls: list[httpx.Request] = []
     real = sdk.WeaveClient
 
@@ -74,7 +74,7 @@ def run_cli(monkeypatch, *arguments: str, request_file=None) -> tuple[object, li
     scope = ["--base-url", "https://platform.example", "--tenant", str(SCOPE.tenant_id)]
     scope += ["--project", str(SCOPE.project_id), "--environment", str(SCOPE.environment_id)]
     group = family("agent-conversations", "agent_conversations")
-    return CliRunner().invoke(group, [*arguments, *scope]), calls
+    return CliRunner().invoke(group, [*arguments, *scope], input=stdin), calls
 
 
 @pytest.mark.parametrize("command", ["read", "delete"])
@@ -129,3 +129,30 @@ def test_the_cli_purges_a_workflow_with_its_confirmation(monkeypatch):
     assert call.url.path == f"{ENVIRONMENT}/agent-conversations/support-chat/purge"
     assert json.loads(call.content) == {"confirm_workflow": "support-chat"}
     assert call.headers["Idempotency-Key"] == "purge-1"
+
+
+@pytest.mark.parametrize("command", ["read", "delete"])
+def test_the_cli_reads_a_key_from_standard_input_and_hashes_it(monkeypatch, command):
+    result, calls = run_cli(monkeypatch, command, "--workflow", "support-chat", "--key-stdin", stdin="C-4777\n")
+
+    assert result.exit_code == 0, result.output
+    [call] = calls
+    assert call.url.path == f"{ENVIRONMENT}/agent-conversations/support-chat/{HASH}"
+    assert "C-4777" not in str(call.url) and b"C-4777" not in call.content and "C-4777" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("names", "stdin"),
+    [
+        (["--key-stdin", "--key", "C-4777"], "C-4777\n"),
+        (["--key-stdin", "--key-hash", HASH], "C-4777\n"),
+        (["--key-stdin"], ""),
+        (["--key-stdin"], "\n"),
+        (["--key-stdin"], "C-4\nC-9\n"),
+    ],
+    ids=["with-key", "with-key-hash", "empty", "blank-line", "two-lines"],
+)
+def test_the_cli_refuses_a_standard_input_key_it_cant_use_before_sending(monkeypatch, names, stdin):
+    result, calls = run_cli(monkeypatch, "read", "--workflow", "support-chat", *names, stdin=stdin)
+
+    assert result.exit_code == 2 and calls == []
