@@ -265,9 +265,67 @@ test.describe("the Called by a workflow trigger", () => {
     expect(await callable(page)).toEqual({ allowedCallers: ["order-intake"] });
     await openTrigger(page, details);
     await any.check();
+    // From a list of names, Any workflow asks first.
+    await page
+      .getByRole("dialog", {
+        name: "Let any workflow in this project call notify-customer?",
+      })
+      .getByRole("button", { name: "Let any workflow call it", exact: true })
+      .click();
     await expect(subtitle).toContainText("Any workflow");
     await details.close();
     expect(await callable(page)).toEqual({});
+  });
+
+  test("an arrow key from Only these workflows asks before any workflow may call, and the names come back", async ({
+    page,
+  }) => {
+    const details = await open(page);
+    const dialog = await openTrigger(page, details);
+    const only = dialog.getByRole("radio", { name: "Only these workflows" });
+    const chips = dialog.locator(".cb-chip");
+    await only.focus();
+    await page.keyboard.press("ArrowUp");
+    const question = page.getByRole("dialog", {
+      name: "Let any workflow in this project call notify-customer?",
+    });
+    await expect(
+      question.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
+    await question.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(only).toBeChecked();
+    await expect(only).toBeFocused();
+    await expect(chips).toHaveText(ALLOWED);
+    await expect(calledTile(page)).toContainText("Only 3 workflows");
+    await only.focus();
+    await page.keyboard.press("ArrowUp");
+    await question
+      .getByRole("button", { name: "Let any workflow call it", exact: true })
+      .click();
+    await expect(calledTile(page)).toContainText("Any workflow");
+    await expect(chips).toHaveCount(0);
+    // Only these workflows brings back the names it had in this session.
+    await only.check();
+    await expect(chips).toHaveText(ALLOWED);
+    await expect(calledTile(page)).toContainText("Only 3 workflows");
+    await details.close();
+    expect(await callable(page)).toEqual({ allowedCallers: ALLOWED });
+  });
+
+  test("at 100 names, Allow it is off and says why", async ({ page }) => {
+    const hundred = [
+      ...ALLOWED,
+      ...Array.from({ length: 97 }, (_, n) => `workflow-${n}`),
+    ];
+    const details = await open(page, { allowedCallers: hundred });
+    const dialog = await openTrigger(page, details);
+    const refused = dialog.locator(".cb-caller.is-refused");
+    await expect(
+      refused.getByRole("button", { name: "Allow it" }),
+    ).toBeDisabled();
+    await expect(refused).toContainText(
+      "Up to 100 workflows can be named here.",
+    );
   });
 
   test("removing it names the callers and their steps, starting on Cancel", async ({

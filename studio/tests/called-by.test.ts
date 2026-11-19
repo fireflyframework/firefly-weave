@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // agent's tool), and whether this workflow still allows it.
 import { describe, expect, it } from "vitest";
 import {
+  anyCallerQuestion,
   calledBy,
   callerLine,
   callerProblem,
@@ -301,5 +302,22 @@ describe("removing the Called by trigger", () => {
     ).toEqual([
       "Other workflows can no longer call notify-customer from its next version. Callable by other workflows in the workflow settings turns off too.",
     ]);
+  });
+});
+
+describe("letting any workflow call", () => {
+  it("asks, starting on Cancel, and says the names come back", () => {
+    expect(
+      anyCallerQuestion("notify-customer", ["order-intake", "billing-close"]),
+    ).toEqual({
+      title: "Let any workflow in this project call notify-customer?",
+      message:
+        "Only order-intake and billing-close can call it now. Studio keeps these names while notify-customer is open, so choosing Only these workflows again brings them back.",
+      confirmLabel: "Let any workflow call it",
+      startOnCancel: true,
+    });
+    expect(anyCallerQuestion("notify-customer", ["order-intake"]).message).toBe(
+      "Only order-intake can call it now. Studio keeps this name while notify-customer is open, so choosing Only these workflows again brings it back.",
+    );
   });
 });

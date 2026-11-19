@@ -207,12 +207,20 @@ SPDX-License-Identifier: Apache-2.0
             <span class="cb-caller-line cb-narrow">{{
               line(caller, true)
             }}</span>
+            @if (!caller.allowed && allowProblem(caller); as full) {
+              <span class="cb-caller-line" [id]="id + '-full-' + caller.name">{{
+                full
+              }}</span>
+            }
           </span>
           @if (!caller.allowed) {
             <button
               type="button"
               class="sm"
-              [disabled]="!!reason"
+              [disabled]="!!reason || !!allowProblem(caller)"
+              [attr.aria-describedby]="
+                allowProblem(caller) ? id + '-full-' + caller.name : null
+              "
               (click)="allow(caller)"
             >
               Allow it

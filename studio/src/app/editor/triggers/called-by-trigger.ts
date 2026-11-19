@@ -36,6 +36,7 @@ import { schemaTypes, typeIcon, typeLabel } from "../../forms/core/scope";
 import { SchemaDesigner } from "../../forms/ui/schema-designer";
 import { Icon } from "../../icon";
 import {
+  anyCallerQuestion,
   calledBy,
   callerLine,
   callerProblem,
@@ -71,6 +72,12 @@ const SCHEMA_PATH: Record<Side, string[]> = {
 const KEEP_ONE =
   "Keep at least one workflow here, or choose Any workflow in this project.";
 let sequence = 0;
+/**
+ * The names Only these workflows held before Any workflow was chosen, by
+ * workflow model and opening: choosing Only again in the same session brings
+ * them back.
+ */
+const keptNames = new WeakMap<object, { opened: number; names: string[] }>();
 
 @Component({
   selector: "weave-called-by-trigger",
@@ -138,17 +145,50 @@ export class CalledByTrigger {
     if (kept) session.announce(announce);
     return kept;
   }
-  chooseAny() {
-    this.choosingOnly.set(false);
+  /** Any workflow: from a list of names it asks first, and an arrow key alone never widens who may call. */
+  async chooseAny() {
     this.adding.set(false);
     this.problem.set("");
-    if (this.names().length)
-      this.write({}, "Any workflow in this project can call this one.");
+    const names = this.names();
+    if (!names.length) return this.choosingOnly.set(false);
+    const session = this.session();
+    const model = session.host.model;
+    const opened = model.opened;
+    const sure = await session.confirm(anyCallerQuestion(this.name(), names));
+    const same =
+      this.session() === session &&
+      model.opened === opened &&
+      this.names().length > 0;
+    if (!sure || !same) {
+      // Cancel keeps Only these workflows: the radio the arrow key moved goes back.
+      const only = this.radio("only");
+      if (only) only.checked = true;
+      // After the question hands focus back to the radio that opened it.
+      setTimeout(() => this.radio("only")?.focus());
+      return;
+    }
+    keptNames.set(model, { opened, names });
+    this.choosingOnly.set(false);
+    this.write({}, "Any workflow in this project can call this one.");
   }
   chooseOnly() {
     if (this.names().length) return;
+    const model = this.session().host.model;
+    const kept = keptNames.get(model);
+    if (kept && kept.opened === model.opened && kept.names.length) {
+      this.write(
+        { allowedCallers: [...kept.names] },
+        "Only these workflows can call this one again.",
+      );
+      return;
+    }
     this.choosingOnly.set(true);
     this.startAdding();
+  }
+  private radio(value: "any" | "only") {
+    return this.element.nativeElement.querySelector<HTMLInputElement>(
+      `input[value='${value}']`,
+    );
   }
   startAdding() {
     this.adding.set(true);
@@ -202,8 +242,13 @@ export class CalledByTrigger {
     if (this.write(next, `${name} can no longer call this workflow.`))
       this.focusChip(names[at + 1] ?? names[at - 1]);
   }
+  /** Why Allow it can't add this caller (the list is full), or null. */
+  allowProblem(caller: Caller): string | null {
+    return callerProblem(caller.name, this.names());
+  }
   /** Allow it: the caller joins Only these workflows, and focus moves to its chip. */
   allow(caller: Caller) {
+    if (this.allowProblem(caller)) return;
     if (
       this.write(
         withCaller(this.callable(), caller.name),

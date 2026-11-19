@@ -210,3 +210,16 @@ export function removalQuestion(
     startOnCancel: true,
   };
 }
+
+/**
+ * The question before Only these workflows gives way to Any workflow in this
+ * project: it widens who may call, so it is asked, starting on Cancel.
+ */
+export function anyCallerQuestion(workflow: string, names: readonly string[]) {
+  return {
+    title: `Let any workflow in this project call ${workflow}?`,
+    message: `Only ${listed(names)} can call it now. Studio keeps ${names.length === 1 ? "this name" : "these names"} while ${workflow} is open, so choosing Only these workflows again brings ${names.length === 1 ? "it" : "them"} back.`,
+    confirmLabel: "Let any workflow call it",
+    startOnCancel: true,
+  };
+}
