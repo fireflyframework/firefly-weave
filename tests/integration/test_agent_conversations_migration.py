@@ -173,23 +173,41 @@ async def test_the_app_may_update_only_the_listed_columns(upgraded):
         assert await connection.scalar(privileges, {"t": "agent_memory_loads"}) is False
 
 
+USAGE = text(
+    "SELECT coalesce(sum(value),0) FROM operation_usage WHERE tenant_id=:tenant AND project_id=:project "
+    "AND metric='ordinary_bytes'"
+)
+
+
 async def test_a_conversation_and_a_load_are_charged_on_insert_and_refunded_on_delete(upgraded):
     engine, ids = upgraded
     async with engine.begin() as connection:
+        before = await connection.scalar(USAGE, ids)
         await scope_as_app(connection, ids)
         await seed_conversation(connection, ids)
+        await connection.execute(text("RESET ROLE"))
+        conversation = await connection.scalar(USAGE, ids)
+        await scope_as_app(connection, ids)
         await seed_load(connection, ids)
         await connection.execute(text("RESET ROLE"))
+        loaded = await connection.scalar(USAGE, ids)
         await assert_usage(connection, ids)
+    # Each row costs its bytes: the conversation, then the load.
+    assert before < conversation < loaded
     async with engine.begin() as connection:
         await scope_as_app(connection, ids)
         await connection.execute(
             text("UPDATE agent_conversations SET messages=messages||cast(:more AS jsonb),version=2"),
             {"more": json.dumps(EXCHANGE)},
         )
+        await connection.execute(text("RESET ROLE"))
+        assert await connection.scalar(USAGE, ids) > loaded
+        await scope_as_app(connection, ids)
         await connection.execute(text("DELETE FROM agent_conversations"))
         await connection.execute(text("RESET ROLE"))
         await assert_usage(connection, ids)
+        # The delete refunds the conversation; the load's charge stays until its run is purged.
+        assert await connection.scalar(USAGE, ids) == loaded - (conversation - before)
 
 
 async def archive_and_purge(engine, ids):
