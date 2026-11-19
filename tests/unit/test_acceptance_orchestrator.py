@@ -95,6 +95,47 @@ def test_commands_are_recorded_with_exit_codes_and_the_stage_deadline():
         acceptance.Recorder(deadline=time.monotonic() - 1).run([sys.executable, "-c", "pass"])
 
 
+def failing_recorder(tmp_path):
+    """A prepare-stage Recorder on a private folder whose run has the canary wv-canary-0123, and the environment
+    of a command whose ERROR names it, so the canary is in the command's output but not in its argv."""
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "canaries.json").write_text(json.dumps({"acme": "wv-canary-0123"}), encoding="utf-8")
+    recorder = acceptance.Recorder(deadline=time.monotonic() + 30, private=private, stage="prepare")
+    return private, recorder, {"ERROR": "registry refused wv-canary-0123"}
+
+
+def test_a_failed_command_keeps_its_output_in_the_private_folder_redacted_and_out_of_the_job_log(tmp_path):
+    private, recorder, env = failing_recorder(tmp_path)
+    recorder.run([sys.executable, "-c", "pass"])
+    script = "import os, sys; print('built 3 layers'); sys.exit(os.environ['ERROR'])"
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", script], env=env)
+    (log,) = (private / "commands" / "prepare").glob("2-*.log")
+    assert f"exited 1; its output is in private/commands/prepare/{log.name}" in str(failed.value)
+    # The job log is public: without show_error the message carries none of the output.
+    assert "refused" not in str(failed.value)
+    saved = log.read_text(encoding="utf-8")
+    assert "built 3 layers" in saved and "registry refused [redacted]" in saved
+    assert "wv-canary-0123" not in saved
+
+
+def test_a_command_that_shows_its_error_ends_the_message_with_its_last_lines_redacted(tmp_path):
+    _, recorder, env = failing_recorder(tmp_path)
+    script = (
+        "import os, sys\nfor n in range(60):\n    print(f'step {n}', file=sys.stderr)\nsys.exit(os.environ['ERROR'])"
+    )
+    with pytest.raises(acceptance.StageFailed) as failed:
+        recorder.run([sys.executable, "-c", script], env=env, show_error=True)
+    assert "wv-canary-0123" not in str(failed.value)
+    shown = str(failed.value).splitlines()
+    assert shown[-41:] == [
+        "The last lines of its error output:",
+        *[f"step {n}" for n in range(21, 60)],
+        "registry refused [redacted]",
+    ]
+
+
 def test_a_failed_stage_skips_run_but_still_collects_scans_and_cleans_up(tmp_path):
     plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, {"profile": "pr"})
     order = []
