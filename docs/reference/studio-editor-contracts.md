@@ -82,6 +82,7 @@ Role and category are the registry's `NodeRole` and `PanelCategory` values.
 | `wait` | `wait` | `wait` | No | — |
 | `signal` | `signal` | `wait` | No | `signal` |
 | `humanTask` | `human` | `human` | No | `human` |
+| `callWorkflow` (Call a workflow) | `sub-workflow` | `flow` | When it waits | — |
 
 A nested step list lives at the path of a branch plus `steps`:
 `["cases", 0, "steps"]` and `["default", "steps"]` for a decision,
@@ -90,6 +91,14 @@ the fixed branches of a kind, such as `default` for a decision and `body` for a
 loop (`["body", "steps"]`); decision cases and parallel branches are found by
 position and by name. Output handles are `case:<index>` and `default` for a
 decision and `branch:<name>` for a parallel step; `fail` has none.
+
+A `callWorkflow` step's output is the called workflow's `outputSchema` when the
+call waits (the result status around it when **If it fails** continues), and
+`null` when it doesn't wait; its tile summary is the reference it calls, such as
+`notify-customer 1.0.0`, and a new one starts as `{mode: "wait", with:
+{literal: {}}}`. `KindContext.workflowContract(uses)` returns the called
+version's `{inputSchema, outputSchema, callable}`, or null while Studio doesn't
+know it.
 
 ### Editing from a parameters component
 
@@ -122,7 +131,14 @@ expression at that path can read: `input`, the `output` of each step under
 `steps`, and, inside a loop, the roots of the iteration picked in the Input
 pane: `item`, `index` and `loops` (every enclosing loop by step ID).
 `catalog.workflows({callableBy})` lists published workflows; those that don't
-allow that caller stay listed and carry `disabled` with the reason.
+allow that caller stay listed and carry `disabled` with the reason. Studio reads
+them from the project's catalog lock, `GET {PROJECT}/catalog`, with the
+`catalog.read` capability: once per account and environment while the editor is
+open, again on Refresh, and after a failed read only after a pause that starts
+at 5 seconds and doubles up to 60. Without `catalog.read`, or not connected,
+only the drafts on this computer are listed. Before Execute sends the workflows
+a draft calls, it waits for that read at most 3 seconds, so a published version
+wins over a draft on this computer with the same name and version.
 
 ### Running a step in an environment
 
@@ -263,8 +279,9 @@ bodies are camelCase. The Python models are in
   response carries `trace` and a `compile` summary, and the summary carries
   `diagnostics` and `stubs`; any of the three lists can be empty. `blocked`
   names its `reason` (`missing_mock`, `signal`, `human`, `path`, `callee`)
-  exactly when the status is `blocked`, and a definition that doesn't compile
-  reports `failed` with its diagnostics in `compile.diagnostics`. The
+  exactly when the status is `blocked`, and `frame` when the step it stopped
+  at is inside a called workflow. A definition that doesn't compile reports
+  `failed` with its diagnostics in `compile.diagnostics`. The
   response's own `diagnostics` list holds debugger errors, such as a missing
   mock. Each `trace` entry names `nodeId` (the step ID) and `instanceKey` (`""`
   when it equals the step ID), and `frame` inside a called workflow; `loops`,
