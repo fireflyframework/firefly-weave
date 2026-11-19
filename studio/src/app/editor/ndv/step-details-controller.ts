@@ -79,7 +79,11 @@ import {
   withoutPin,
   withScript,
 } from "../state/test-data-ops";
-import { fingerprints, type StepFingerprints } from "../state/fingerprints";
+import {
+  fingerprints,
+  staleReason,
+  type StepFingerprints,
+} from "../state/fingerprints";
 import {
   contractOf,
   keepPinned as keepPin,
@@ -445,13 +449,23 @@ export class StepDetailsController {
     this.syncTestEvent();
     const service = this.testData;
     service.version();
-    if (this.stale() || !service.data().pins?.[target]) return null;
+    const entry = service.data().pins?.[target];
+    if (this.stale() || !entry) return null;
+    // One item's pin (send[2]): judged against its step's fingerprints.
+    const stepId = instanceStep(target);
+    if (stepId !== target)
+      return {
+        key: target,
+        entry,
+        stale: staleReason(entry, this.prints().get(stepId)),
+      };
     return pinsView(service.data(), this.prints()).get(target) ?? null;
   }
   /** A step's pinned output as previews may read it: secret fields left out. */
-  pinnedOutput(stepId: string): Json | undefined {
-    const pin = this.pinOfTarget(stepId);
+  pinnedOutput(key: string): Json | undefined {
+    const pin = this.pinOfTarget(key);
     if (!pin) return undefined;
+    const stepId = instanceStep(key);
     const schema = this.descriptor(stepId)?.outputSchema(
       this.step(stepId)!,
       this.kindContext(),
@@ -491,6 +505,12 @@ export class StepDetailsController {
     const output = run.output(key);
     if (output.kind === "loading") run.read(stepId);
     return output;
+  }
+  /** Where a pin of this step goes: the item picked inside a loop's body (send[2]), else the step. */
+  pinKey(target: string): string {
+    return (
+      (!this.viewingRuns() && this.iterations.instanceKey(target)) || target
+    );
   }
   /**
    * A step's data for the item picked in the loops around it: its own run
@@ -581,10 +601,10 @@ export class StepDetailsController {
    */
   async pinReal(target: string): Promise<string | null> {
     const real = this.realResult(target);
-    const data = this.stepData(target);
+    const data = this.pickedStepData(target);
     if (!real || data?.source !== "test-call")
       return "There's no output from a real run to pin.";
-    return this.pin(target, data.value, "test-call", {
+    return this.pin(this.pinKey(target), data.value, "test-call", {
       runId: real.runId,
       runEnvironmentId: real.environmentId,
     });
@@ -686,11 +706,13 @@ export class StepDetailsController {
     source: DataSource,
     provenance: Provenance = {},
   ): Promise<string | null> {
-    const locked = this.readOnlyReason(target);
+    // Inside a loop, the target may be one item (send[2]): the step decides.
+    const stepId = instanceStep(target);
+    const locked = this.readOnlyReason(stepId);
     if (locked) return locked;
-    if (!this.pinnable(target)) return "This step's output can't be pinned.";
+    if (!this.pinnable(stepId)) return "This step's output can't be pinned.";
     if (this.stale()) return "This workflow's test data is still opening.";
-    const now = this.prints().get(target);
+    const now = this.prints().get(stepId);
     if (!now) return "This step's output can't be pinned.";
     const service = this.testData;
     const at = new Date().toISOString();
@@ -733,10 +755,12 @@ export class StepDetailsController {
   }
   /** Keep pinned: the same output, current again (today's fingerprints). */
   keepPinned(target: string): void {
-    if (this.readOnlyReason(target)) return;
+    // An item's pin (send[2]) is kept against its step's fingerprints.
+    const stepId = instanceStep(target);
+    if (this.readOnlyReason(stepId)) return;
     const service = this.testData;
     const entry = service.data().pins?.[target];
-    const now = this.prints().get(target);
+    const now = this.prints().get(stepId);
     if (!entry || !now) return;
     const at = new Date().toISOString();
     void service
@@ -761,7 +785,7 @@ export class StepDetailsController {
       // anyOf, allOf, an unknown format or bounds no value meets.
       return CANT_SAMPLE;
     }
-    return this.pin(target, sample, "schema");
+    return this.pin(this.pinKey(target), sample, "schema");
   }
   /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
   private offerUndo(
@@ -2023,7 +2047,8 @@ export class StepDetailsController {
           return data ? { state: "available" as const, ...data } : none;
         },
         setPin: async (value) => {
-          const message = await this.pin(target, value, "manual");
+          // Inside a loop's body: for the item picked.
+          const message = await this.pin(this.pinKey(target), value, "manual");
           return message === null ? { ok: true } : { ok: false, message };
         },
         clearPin: () => this.unpin(target),

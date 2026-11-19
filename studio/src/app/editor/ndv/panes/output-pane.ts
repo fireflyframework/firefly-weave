@@ -211,7 +211,7 @@ import { describeError } from "../../../errors";
           recorded.tag
         }}</span>
       } @else if (pin) {
-        <span class="pill" data-tone="info">Pinned</span>
+        <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
       } @else if (real) {
         <button
           type="button"
@@ -232,7 +232,7 @@ import { describeError } from "../../../errors";
           ><weave-icon name="external" [size]="16" />
         </button>
       } @else if (ran) {
-        <span class="pill pane-source-tag">Simulated</span>
+        <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
@@ -292,6 +292,8 @@ import { describeError } from "../../../errors";
         } @else {
           @if (pin) {
             <weave-pinned-banner
+              [item]="pickedItem()"
+              [forEveryItem]="pin.key === session().target"
               [stale]="pin.stale !== null"
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
@@ -299,6 +301,7 @@ import { describeError } from "../../../errors";
               [executeLabel]="executeLabel()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
+              (everyItem)="pinForEveryItem()"
               (execute)="execute()"
             />
           }
@@ -759,7 +762,7 @@ export class OutputPane {
       !!real &&
       real.status === "succeeded" &&
       !this.pinned() &&
-      controller.stepData(target)?.source === "test-call" &&
+      controller.pickedStepData(target)?.source === "test-call" &&
       !controller.readOnlyReason(target)
     );
   }
@@ -773,7 +776,7 @@ export class OutputPane {
   realFiles(): { label: string; file: FileReference }[] {
     const { controller, target } = this.session();
     if (!this.realOf()) return [];
-    const data = controller.stepData(target);
+    const data = controller.pickedStepData(target);
     return data?.source === "test-call" ? filesIn(data.value) : [];
   }
   fileDetail(file: FileReference): string {
@@ -826,7 +829,7 @@ export class OutputPane {
     const { controller, target } = this.session();
     return isTriggerTarget(target)
       ? controller.testEvent()
-      : controller.stepData(target)?.value;
+      : controller.pickedStepData(target)?.value;
   }
   /**
    * A decision that ran: its paths as the last execution took them, the
@@ -870,7 +873,7 @@ export class OutputPane {
   returnedNull(): boolean {
     const { controller, target } = this.session();
     if (target.startsWith("$")) return false;
-    const data = controller.stepData(target);
+    const data = controller.pickedStepData(target);
     // A decision whose path has no result says so in its path list.
     return (
       (data?.source === "simulated" || data?.source === "run") &&
@@ -1065,7 +1068,7 @@ export class OutputPane {
     const { controller, target } = this.session();
     return (
       !target.startsWith("$") &&
-      controller.stepData(target)?.source === "simulated"
+      controller.pickedStepData(target)?.source === "simulated"
     );
   }
   /** What the last execution said about this step (it needs test data, a path it didn't take…). */
@@ -1081,7 +1084,34 @@ export class OutputPane {
     const { controller, target } = this.session();
     // The draft's pin isn't what the run returned.
     if (controller.viewingRuns()) return null;
-    return target.startsWith("$") ? null : controller.pinOfTarget(target);
+    if (target.startsWith("$")) return null;
+    // Inside a loop's body: the item's own pin, else the one for every item.
+    return (
+      controller.pinOfTarget(controller.pinKey(target)) ??
+      controller.pinOfTarget(target)
+    );
+  }
+  /** The item picked inside a loop's body, one-based and as people count; null elsewhere. */
+  pickedItem(): string | null {
+    const { controller, target } = this.session();
+    const key = controller.pinKey(target);
+    if (key === target) return null;
+    return [...key.matchAll(/\[(\d+)\]/g)]
+      .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+      .join(" › ");
+  }
+  /** "Pinned", or inside a loop "Pinned for item 3" / "Pinned for every item". */
+  pinWords(key: string): string {
+    const item = this.pickedItem();
+    if (item === null) return "Pinned";
+    return key === this.session().target
+      ? "Pinned for every item"
+      : `Pinned for item ${item}`;
+  }
+  /** "Simulated", or "Simulated · item 3" inside a loop's body. */
+  simulatedWords(): string {
+    const item = this.pickedItem();
+    return item === null ? "Simulated" : `Simulated · item ${item}`;
   }
   /** On the Runs tab with no run's data: why Output shows nothing; null otherwise. */
   noRunShown(): string | null {
@@ -1130,7 +1160,9 @@ export class OutputPane {
   }
   localOnly(): boolean {
     const { controller, target } = this.session();
-    const key = target.replace(/~/g, "~0").replace(/\//g, "~1");
+    const key = (this.pinned()?.key ?? target)
+      .replace(/~/g, "~0")
+      .replace(/\//g, "~1");
     return controller.testData.localOnly().has(`/pins/${key}`);
   }
   pinTitle(pinned: boolean): string {
@@ -1149,11 +1181,25 @@ export class OutputPane {
   }
   unpin() {
     this.problem.set("");
-    this.session().controller.unpin(this.session().target);
+    const { controller, target } = this.session();
+    controller.unpin(this.pinned()?.key ?? target);
+    this.focusPin();
+  }
+  /** The item's pin, for every item: pinned on the step, and the item's own goes. */
+  async pinForEveryItem() {
+    const { controller, target } = this.session();
+    const pin = this.pinned();
+    if (!pin || pin.key === target) return;
+    const value = controller.pinnedOutput(pin.key) ?? pin.entry.output;
+    const refused = await controller.pin(target, value as Json, "manual");
+    this.problem.set(refused ?? "");
+    if (refused) return;
+    await controller.unpin(pin.key);
     this.focusPin();
   }
   keepPinned() {
-    this.session().controller.keepPinned(this.session().target);
+    const { controller, target } = this.session();
+    controller.keepPinned(this.pinned()?.key ?? target);
     this.focusPin();
   }
   /**

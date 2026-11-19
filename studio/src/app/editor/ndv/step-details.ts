@@ -1543,9 +1543,11 @@ export class StepDetails {
     const id = this.target();
     const controller = this.controller();
     const workflow = host.model.definition;
+    // Inside a loop's body, the item picked: Execute runs that one.
+    const item = controller.iterations.instanceKey(id);
     const target: ExecuteTarget = this.runsWorkflow()
       ? { mode: "workflow" }
-      : { mode, stepId: id };
+      : { mode, stepId: id, ...(item ? { instanceKey: item } : {}) };
     // Execute step shows every message of the step, required ones too.
     controller.reveal(id);
     const runs =
@@ -1558,7 +1560,9 @@ export class StepDetails {
     const gate = executeGate(
       issues,
       runs,
-      mode === "step" && target.mode === "step" && !!controller.pinOfTarget(id),
+      mode === "step" &&
+        target.mode === "step" &&
+        !!(controller.pinOfTarget(item ?? id) ?? controller.pinOfTarget(id)),
     );
     if (gate.kind === "fix") {
       this.question.set({ ...gate, issues: gate.issues as ExecuteIssue[] });
