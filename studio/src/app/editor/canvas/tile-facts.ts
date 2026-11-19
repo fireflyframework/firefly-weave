@@ -199,18 +199,6 @@ export function tileName(parts: TileNameParts): string {
     .join(", ");
 }
 
-/**
- * What a loop's run gave, under its frame: "20 items", or "20 items, 2
- * skipped" when Skip empty results left some out ("No items" for an empty
- * list). `results` is how many the loop returned; null when not known.
- */
-export function loopResultText(count: number, results: number | null): string {
-  if (!count) return "No items";
-  const items = `${count} ${count === 1 ? "item" : "items"}`;
-  const skipped = results === null ? 0 : count - results;
-  return skipped > 0 ? `${items}, ${skipped} skipped` : items;
-}
-
 /** "3 fields": what the Manual form trigger asks for, from the workflow's inputs. */
 export function triggerSubtitle(workflow: {
   spec: Record<string, unknown>;

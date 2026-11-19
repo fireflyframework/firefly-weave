@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // the run's state and its step facts; the steps inside it in the item
 // picked; one item's input recomputed from what the run recorded.
 import { describe, expect, it } from "vitest";
-import { loopResultText } from "../src/app/editor/canvas/tile-facts";
+import { loopResultText } from "../src/app/editor/canvas/loop-frame";
 import { RunData } from "../src/app/editor/runs-tab/run-data";
 import {
   defaultPick,

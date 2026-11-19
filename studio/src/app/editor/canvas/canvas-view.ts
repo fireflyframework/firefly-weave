@@ -130,6 +130,7 @@ import {
   endsAtFrame,
   frameHeaderHeight,
   loopHeaderParts,
+  loopResultText,
 } from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
@@ -172,7 +173,6 @@ import {
   type Unreadable,
 } from "../state/clipboard";
 import {
-  loopResultText,
   runText,
   tileBadge,
   tileBorders,
