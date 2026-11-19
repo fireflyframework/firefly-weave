@@ -33,12 +33,15 @@ async def sweep(tx: Transaction, now: datetime, *, batch: int = SWEEP_BATCH) -> 
     conversation an append refreshed meanwhile is kept. An expired conversation is never loaded, listed or read, so a
     sweep that falls behind leaves nothing visible.
     """
+    # The batch is materialized once: as an IN subquery its LIMIT and SKIP LOCKED could run again per row and
+    # delete more than one batch.
     deleted = await tx.session.scalar(
         text(
-            f"WITH gone AS (DELETE FROM agent_conversations WHERE {_SCOPE} AND (workflow,key_hash) IN "
-            f"(SELECT workflow,key_hash FROM agent_conversations WHERE {_SCOPE} AND expires_at<=:now "
-            "ORDER BY expires_at LIMIT :batch FOR UPDATE SKIP LOCKED) AND expires_at<=:now RETURNING 1) "
-            "SELECT count(*) FROM gone"
+            "WITH batch AS MATERIALIZED (SELECT workflow,key_hash FROM agent_conversations "
+            f"WHERE {_SCOPE} AND expires_at<=:now ORDER BY expires_at LIMIT :batch FOR UPDATE SKIP LOCKED), "
+            "gone AS (DELETE FROM agent_conversations c USING batch b "
+            f"WHERE c.{_SCOPE.replace(' AND ', ' AND c.')} AND c.workflow=b.workflow AND c.key_hash=b.key_hash "
+            "AND c.expires_at<=:now RETURNING 1) SELECT count(*) FROM gone"
         ),
         {
             "tenant": tx.scope.tenant_id,
