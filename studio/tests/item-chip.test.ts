@@ -63,6 +63,10 @@ describe("the item chip", () => {
   it("says the item's status and what the button does", () => {
     expect(chipName(2, ORDERS)).toBe("Item 3 of 4, Failed. Choose an item");
     expect(chipName(3, ORDERS)).toBe("Item 4 of 4, Not run. Choose an item");
+    // Cut off by a cancelled run, or one that timed out.
+    const ended = loop([item(0, "stopped"), item(1, "timed-out")]);
+    expect(chipName(0, ended)).toBe("Item 1 of 2, Stopped. Choose an item");
+    expect(chipName(1, ended)).toBe("Item 2 of 2, Timed out. Choose an item");
   });
 
   it("lists the failed items first, then every item", () => {

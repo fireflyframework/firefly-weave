@@ -95,6 +95,14 @@ function failedRun(): RunFixture {
   const state = base.view["state"] as Record<string, unknown>;
   return {
     ...base,
+    summary: {
+      ...base.summary,
+      failed_step: {
+        node_id: "send",
+        instance_key: "send[3]",
+        error_code: "SMTP_REJECTED",
+      },
+    },
     view: {
       ...base.view,
       state: {
@@ -141,6 +149,34 @@ function finishedRun(): RunFixture {
   };
 }
 
+/** The loop cancelled while items 2 and 3 ran: they were cut off. */
+function cancelledRun(): RunFixture {
+  const base = runFixture("loop");
+  const state = base.view["state"] as Record<string, unknown>;
+  return {
+    ...base,
+    summary: { ...base.summary, status: "cancelled", failed_step: null },
+    view: {
+      ...base.view,
+      state: {
+        ...state,
+        status: "cancelled",
+        steps: { fetch: { output: { rows: ROWS } } },
+        loops: { orders: { owner: "orders", count: 5 } },
+        incidents: {},
+      },
+    },
+    facts: [
+      fact("fetch", "succeeded"),
+      ...items(1, "succeeded"),
+      fact("check[1]", "succeeded"),
+      fact("send[1]", "cancelled"),
+      fact("check[2]", "cancelled"),
+      fact("orders", "cancelled"),
+    ],
+  };
+}
+
 /** The Runs tab on the loop run, its version answered as the loop workflow. */
 async function openLoopRun(page: Page, run: RunFixture, collect = "all") {
   const workflow = loopWorkflow(collect);
@@ -181,6 +217,13 @@ test.describe("A recorded loop at 1440x900", () => {
       "Item 4 of 5, Failed. Choose an item",
     );
     await expect.poll(() => tileState(page, "send")).toBe("failed");
+    // The run's header and its row in the list name the item.
+    await expect(
+      page.getByText("Failed at send, item 4: SMTP_REJECTED"),
+    ).toBeVisible();
+    await expect(
+      page.locator(`.runs-list [data-run="${RUN_IDS.loop}"]`),
+    ).toContainText("at send, item 4");
     // Above the frame's top right, at screen size.
     const frame = page.locator('.loop-frame[data-frame="orders"]');
     const spot = (await chip.locator(".item-chip").boundingBox())!;
@@ -263,6 +306,31 @@ test.describe("A recorded loop at 1440x900", () => {
     await expect(
       page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
     ).toHaveText("5 items, 2 skipped");
+  });
+});
+
+test.describe("A cancelled loop at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the items the run cut off read Stopped, and nothing reads Failed", async ({
+    page,
+  }) => {
+    const { chip } = await openLoopRun(page, cancelledRun());
+    const item = chip.getByRole("button", { name: /Choose an item$/ });
+    await expect(item).toHaveAccessibleName(
+      "Item 1 of 5, Finished. Choose an item",
+    );
+    await item.click();
+    const list = page.getByRole("dialog", { name: "Items of orders" });
+    const options = list.getByRole("option");
+    await expect(options).toHaveText([
+      /Item 1\s*Finished/,
+      /Item 2\s*Stopped/,
+      /Item 3\s*Stopped/,
+      /Item 4\s*Not run/,
+      /Item 5\s*Not run/,
+    ]);
+    await expect(list.getByText("Failed", { exact: true })).toHaveCount(0);
   });
 });
 

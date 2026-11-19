@@ -152,7 +152,14 @@ export function loopProgress(
 /** One item of a loop in a recorded run, and what it did. */
 export interface RecordedItem {
   index: number;
-  status: "finished" | "failed" | "running" | "not-run";
+  /** "stopped": a cancelled run cut it off; "timed-out": the run timed out while it ran. */
+  status:
+    | "finished"
+    | "failed"
+    | "running"
+    | "not-run"
+    | "stopped"
+    | "timed-out";
   /** A failed item's error code. */
   code: string | null;
 }

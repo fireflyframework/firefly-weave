@@ -236,6 +236,47 @@ describe("a recorded run's loops", () => {
     expect(bare.items[3].code).toBe("SMTP_REJECTED");
   });
 
+  it("says an item a cancelled run cut off was stopped, never finished", () => {
+    // As the reviewer's probe: the platform closes open facts as cancelled.
+    const cancelled = record({ status: "cancelled", incidents: {} });
+    const facts = [
+      fact("check[0]", "succeeded"),
+      fact("send[0]", "cancelled"),
+      fact("check[1]", "succeeded"),
+      fact("send[1]", "running"),
+    ];
+    const [orders] = recordedLoops(workflow(), cancelled, facts);
+    expect(orders.items.slice(0, 2).map((item) => item.status)).toEqual([
+      "stopped",
+      "stopped",
+    ]);
+    // A run that timed out: its open items timed out.
+    const timedOut = record({ status: "timed_out", incidents: {} });
+    const [late] = recordedLoops(workflow(), timedOut, [
+      fact("check[0]", "succeeded"),
+      fact("send[0]", "timed_out"),
+      fact("check[1]", "running"),
+    ]);
+    expect(late.items.slice(0, 2).map((item) => item.status)).toEqual([
+      "timed-out",
+      "timed-out",
+    ]);
+    // A failure inside an item still reads failed, and only failures go first.
+    const [mixed] = recordedLoops(workflow(), cancelled, [
+      fact("check[0]", "failed"),
+      fact("send[0]", "cancelled"),
+      fact("check[1]", "succeeded"),
+      fact("send[1]", "cancelled"),
+    ]);
+    expect(mixed.items.slice(0, 2).map((item) => item.status)).toEqual([
+      "failed",
+      "stopped",
+    ]);
+    expect(failedFirst(mixed).map((item) => item.index)).toEqual([
+      0, 1, 2, 3, 4,
+    ]);
+  });
+
   it("lists a nested loop once per item of the loop around it", () => {
     const lines = recordedLoops(workflow(), record(), FACTS).filter(
       (loop) => loop.id === "lines",
@@ -331,6 +372,28 @@ describe("a recorded run's loops", () => {
 });
 
 describe("one item's input in a recorded run", () => {
+  it("says why when the loop's list reads a step the run didn't record", () => {
+    const definition = workflow({
+      object: { to: { ref: "/item/email" } },
+    });
+    const orders = definition.spec.steps[1];
+    orders["items"] = {
+      op: {
+        name: "coalesce",
+        // Without the refusal, the fallback list would stand in for the record.
+        args: [
+          { ref: "/steps/lookup/output" },
+          { literal: [{ email: "fallback@x" }] },
+        ],
+      },
+    };
+    const data = new RunData(record(), ENVIRONMENT, definition);
+    expect(data.received("send", "send[0]")).toEqual({
+      ok: false,
+      reason: "Studio can't recompute one iteration's input yet.",
+    });
+  });
+
   const reads = {
     object: { to: { ref: "/item/email" }, position: { ref: "/index" } },
   };

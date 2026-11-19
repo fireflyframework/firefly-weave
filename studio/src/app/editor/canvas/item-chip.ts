@@ -41,12 +41,17 @@ const WORDS: Readonly<Record<RecordedItem["status"], string>> = {
   failed: "Failed",
   running: "Running",
   "not-run": "Not run",
+  stopped: "Stopped",
+  "timed-out": "Timed out",
 };
 const ICONS: Readonly<Record<RecordedItem["status"], string>> = {
   finished: "ok",
   failed: "failCircle",
   running: "spinner",
   "not-run": "revoke",
+  // The run's own icons, as the Runs list draws a cancelled or timed-out run.
+  stopped: "off",
+  "timed-out": "schedule",
 };
 
 /** "Item 4 of 20", one-based; "Item 4" while the count isn't the run's. */

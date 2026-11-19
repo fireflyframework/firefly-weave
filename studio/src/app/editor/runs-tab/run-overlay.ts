@@ -106,7 +106,10 @@ const ITEM_RANK: Readonly<Record<RecordedItem["status"], number>> = {
   "not-run": 0,
   finished: 1,
   running: 2,
-  failed: 3,
+  // Cut off by the run's end: above finished, below a failure.
+  stopped: 3,
+  "timed-out": 3,
+  failed: 4,
 };
 
 /** Each step inside a loop, and the loops around it, outermost first. */
@@ -121,6 +124,25 @@ function loopsAround(
     for (const list of childLists(step)) loopsAround(list, inner, found);
   }
   return found;
+}
+
+/**
+ * What one step instance says of its item. A run that ended closes the
+ * instances still open as cancelled, or timed out when the run timed out:
+ * the item was cut off, never finished.
+ */
+function itemStatus(
+  fact: StepStatus,
+  run: RunRecord["status"],
+): RecordedItem["status"] | null {
+  const cutOff = run === "timed_out" ? "timed-out" : "stopped";
+  if (fact === "cancelled") return "stopped";
+  if (fact === "timed_out") return run === "timed_out" ? "timed-out" : "failed";
+  const state = FACT_STATES[fact];
+  if (state === "failed") return "failed";
+  if (state === "completed") return "finished";
+  if (!state) return null;
+  return terminalRunStatuses.includes(run) ? cutOff : "running";
 }
 
 /** Each loop of a workflow, the loops around it and the steps inside it. */
@@ -161,19 +183,13 @@ export function recordedLoops(
   const marks: [string, RecordedItem["status"], string | null][] = [
     ...(facts ?? []).flatMap(
       (fact): [string, RecordedItem["status"], string | null][] => {
-        const state = FACT_STATES[fact.status];
-        if (!state) return [];
+        const status = itemStatus(fact.status, run.status);
+        if (!status) return [];
         return [
           [
             factKey(fact),
-            state === "failed"
-              ? "failed"
-              : state === "completed"
-                ? "finished"
-                : over
-                  ? "finished"
-                  : "running",
-            state === "failed" ? (fact.error_code ?? fact.status) : null,
+            status,
+            status === "failed" ? (fact.error_code ?? fact.status) : null,
           ],
         ];
       },
