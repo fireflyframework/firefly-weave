@@ -186,6 +186,21 @@ describe("connection rows", () => {
     expect([bound.chosen, bound.chosenBy]).toEqual(["r-other", "dev-binding"]);
   });
 
+  it("leaves a required slot for the person when several revisions carry its name", () => {
+    // The listing has no revision number, so Studio can't tell the newest
+    // revision of crm: choosing one could pick old settings.
+    const older = { ...http("r-crm-a", "crm"), connectionId: "c-crm" };
+    const newer = { ...http("r-crm-b", "crm"), connectionId: "c-crm" };
+    for (const bindable of [
+      [older, newer, http("r-other", "acme-local")],
+      [newer, older, http("r-other", "acme-local")],
+      [newer, older],
+    ]) {
+      const [row] = connectionRows({ ...NEEDS, bindable });
+      expect([row.chosen, row.chosenBy]).toEqual([undefined, undefined]);
+    }
+  });
+
   it("leaves the choice to the person when there are several and no dev binding", () => {
     const [row] = connectionRows({
       ...NEEDS,

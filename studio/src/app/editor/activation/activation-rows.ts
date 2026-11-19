@@ -149,11 +149,13 @@ export function connectionRows(needs: ConnectionNeeds): ConnectionRow[] {
         row.tested = `Tested ${relativeTime(dev.tested.at, needs.now)}`;
     } else if (row.required) {
       // A required slot takes the connection named like it (a connection
-      // made for this slot elsewhere), else the only one. An optional slot is
-      // chosen only from a choice the person made on this computer.
-      const named = row.candidates.find((choice) => choice.name === row.slot);
-      if (named) {
-        row.chosen = named.revisionId;
+      // made for this slot elsewhere), else the only one. Several revisions
+      // with its name stay for the person: the listing can't tell the newest.
+      // An optional slot is chosen only from a choice the person made on
+      // this computer.
+      const named = row.candidates.filter((choice) => choice.name === row.slot);
+      if (named.length === 1) {
+        row.chosen = named[0].revisionId;
         row.chosenBy = "slot-name";
       } else if (row.candidates.length === 1) {
         row.chosen = row.candidates[0].revisionId;
