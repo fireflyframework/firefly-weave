@@ -277,6 +277,40 @@ const defaults = (): Record<string, Answer> => ({
   }),
 });
 
+/** The list each change writes to, as the platform keeps it. */
+const kept: Record<string, string> = {
+  acknowledge: "firing",
+  createRule: "rules",
+  updateRule: "rules",
+  deleteRule: "rules",
+  createChannel: "channels",
+  updateChannel: "channels",
+  deleteChannel: "channels",
+};
+/**
+ * Keeps what a change answered in the list it belongs to, so the page's next
+ * read sees the platform after the change, as it would. A list a test set to
+ * a status or a function stays as the test set it.
+ */
+function keep(
+  answers: Record<string, Answer>,
+  name: string,
+  path: string,
+  json: unknown,
+) {
+  const list = answers[kept[name]];
+  if (!list || typeof list !== "object" || !("items" in list)) return;
+  const items = (list as { items: { id: string }[] }).items;
+  const id = path.split("/").pop();
+  const record = json as { id: string } | null;
+  const next = name.startsWith("delete")
+    ? items.filter((item) => item.id !== id)
+    : items.some((item) => item.id === record?.id)
+      ? items.map((item) => (item.id === record?.id ? record! : item))
+      : [...items, record!];
+  answers[kept[name]] = { ...list, items: next };
+}
+
 /**
  * Connects as the fixture's person with `capabilities` in local at 10:54,
  * answers the alert operations from the fixture, and opens `path`.
@@ -356,16 +390,17 @@ export async function alertsPlatform(
           status: answer,
           json: problems[answer] ?? { code: "WV-ERROR", message: "Failed" },
         });
-      if (typeof answer === "function")
-        return route.fulfill({ json: answer(request) });
       if (
         answer &&
+        typeof answer === "object" &&
         "status" in answer &&
         "json" in answer &&
         typeof (answer as { status: unknown }).status === "number"
       )
         return route.fulfill(answer as { status: number; json: unknown });
-      return route.fulfill({ json: answer });
+      const json = typeof answer === "function" ? answer(request) : answer;
+      if (name in kept) keep(platform.answers, name, url.pathname, json);
+      return route.fulfill({ json });
     },
   );
   await page.goto(options.path ?? "/operate/alerts");

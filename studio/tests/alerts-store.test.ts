@@ -106,7 +106,16 @@ function platform() {
     answer("/subscriptions", fixture.subscriptions(), environment);
     answer("/operations/summary", { health: [] }, environment);
   };
-  return { host, where, pending, answer, fail, answerAll };
+  /** Settles only the oldest waiting request whose path contains `part`. */
+  const answerFirst = (part: string, value: unknown, environment = "a") => {
+    const request = pending.find(
+      (item) => item.environment === environment && item.path.includes(part),
+    );
+    if (!request) throw new Error(`nothing waits for ${part}`);
+    pending.splice(pending.indexOf(request), 1);
+    request.resolve(value);
+  };
+  return { host, where, pending, answer, answerFirst, fail, answerAll };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const now = () => Date.parse(fixture.NOW);
@@ -219,6 +228,93 @@ describe("answers land only where they were asked", () => {
     expect(
       shown.kind === "ready" && shown.value.firing[0].acknowledged_by,
     ).toBe(fixture.ME);
+  });
+  it("a read that started before a rule switch doesn't undo it", async () => {
+    const p = platform();
+    const store = new AlertsStore(p.host, { now });
+    const load = store.load();
+    p.answerAll();
+    await load;
+    const shown = store.rules();
+    const rule =
+      shown.kind === "ready" ? shown.value.find((item) => item.enabled) : null;
+    if (!rule) throw new Error("no enabled rule in the fixture");
+    // A scheduled read is out; its rules list was taken before the switch.
+    const older = store.load().catch(() => undefined);
+    const switched = store.setEnabled(rule, false);
+    await settle();
+    p.answer(`/alert-rules/${rule.id}`, {
+      ...rule,
+      enabled: false,
+      revision: rule.revision + 1,
+    });
+    await switched;
+    p.answerFirst("/alert-rules", {
+      items: fixture.rules(),
+      next_cursor: null,
+    });
+    // A read asked after the switch gets the platform's list as it is now.
+    p.answer("/alert-rules", {
+      items: fixture
+        .rules()
+        .map((item) =>
+          item.id === rule.id
+            ? { ...item, enabled: false, revision: rule.revision + 1 }
+            : item,
+        ),
+      next_cursor: null,
+    });
+    p.answerAll();
+    await older;
+    await settle();
+    const after = store.rules();
+    const row =
+      after.kind === "ready" && after.value.find((r) => r.id === rule.id);
+    expect(row && [row.enabled, row.revision]).toEqual([
+      false,
+      rule.revision + 1,
+    ]);
+  });
+  it("a read that started before an acknowledgement doesn't undo it", async () => {
+    const p = platform();
+    const store = new AlertsStore(p.host, { now });
+    const load = store.load();
+    p.answerAll();
+    await load;
+    const older = store.load().catch(() => undefined);
+    const acknowledged = store.acknowledge(fixture.ids.firingRate);
+    await settle();
+    p.answer("/acknowledge", {
+      ...fixture.firing()[0],
+      acknowledged_at: fixture.NOW,
+      acknowledged_by: fixture.ME,
+    });
+    expect(await acknowledged).toBe("applied");
+    // The older read's firing list still has the alert unacknowledged.
+    p.answerFirst("/alerts?state=firing", fixture.alertPage(fixture.firing()));
+    // A read asked after it gets the platform's alerts as they are now.
+    p.answer(
+      "/alerts?state=firing",
+      fixture.alertPage(
+        fixture.firing().map((item) =>
+          item.id === fixture.ids.firingRate
+            ? {
+                ...item,
+                acknowledged_at: fixture.NOW,
+                acknowledged_by: fixture.ME,
+              }
+            : item,
+        ),
+      ),
+    );
+    p.answerAll();
+    await older;
+    await settle();
+    const shown = store.alerts();
+    const alert =
+      shown.kind === "ready" &&
+      shown.value.firing.find((item) => item.id === fixture.ids.firingRate);
+    expect(alert && alert.acknowledged_by).toBe(fixture.ME);
   });
 });
 

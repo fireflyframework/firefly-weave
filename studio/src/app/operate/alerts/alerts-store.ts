@@ -320,7 +320,9 @@ export class AlertsStore {
   /**
    * Runs a change and applies its answer while the view still holds.
    * Resolves with the answer, or null when the view moved on meanwhile;
-   * rejects with the platform's error otherwise.
+   * rejects with the platform's error otherwise. A read that started before
+   * the change answered describes the platform before it, so its answer is
+   * dropped and the page reads again.
    */
   private async change<T>(
     run: (api: AlertsTransport) => Promise<T>,
@@ -331,6 +333,8 @@ export class AlertsStore {
       const value = await run(this.host.api());
       if (!current()) return null;
       apply(value);
+      this.loads++;
+      void this.poller.refresh();
       return value;
     } catch (error) {
       if (!current()) return null;
