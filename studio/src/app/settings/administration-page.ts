@@ -170,7 +170,8 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
               <p class="access">
                 <weave-icon name="lock" [size]="16" /><span
                   >Running a check needs <code>compatibility.check</code> in
-                  {{ environment() }}.</span
+                  {{ environment() }}. Ask an administrator in Settings › People
+                  and access.</span
                 >
               </p>
             }
@@ -297,9 +298,11 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                       <span role="cell" class="muted">{{
                         consent.statement
                       }}</span>
-                      <span role="cell" class="muted">{{
-                        recorded(consent)
-                      }}</span>
+                      @let when = recorded(consent);
+                      <span role="cell" class="muted"
+                        ><span class="nb">{{ when.who }}</span
+                        ><span class="day">{{ when.day }}</span></span
+                      >
                       <span role="cell">
                         @if (canChange()) {
                           <button
@@ -366,7 +369,8 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 <weave-icon name="lock" [size]="16" /><span
                   >Changing domains and opt-ins needs
                   <code>alert.manage</code> and
-                  <code>environment.manage</code> in {{ environment() }}.</span
+                  <code>environment.manage</code> in {{ environment() }}. Ask an
+                  administrator in Settings › People and access.</span
                 >
               </p>
             }
@@ -446,6 +450,15 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                   Edit
                 </button>
               </div>
+            } @else {
+              <p class="access">
+                <weave-icon name="lock" [size]="16" /><span
+                  >Changing approval notifications needs
+                  <code>alert.manage</code> and
+                  <code>environment.manage</code> in {{ environment() }}. Ask an
+                  administrator in Settings › People and access.</span
+                >
+              </p>
             }
           }
           <p class="hint">
@@ -955,7 +968,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
       day: "numeric",
       month: "short",
     }).format(new Date(consent.created_at));
-    return `${this.person(consent.created_by)} · ${day}`;
+    return { who: this.person(consent.created_by), day };
   }
   /** What revoking stops, and which channels keep their other recipients. */
   revokeText(consent: RecipientConsent) {

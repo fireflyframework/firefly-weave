@@ -215,7 +215,91 @@ for (const size of [
         "carla@acme.example",
       );
       await expectTargets(page, address, size.touch);
+      // It lines up with the Editor card above it.
+      const editor = await box(page.getByRole("heading", { name: "Editor" }));
+      const mine = await box(
+        address.getByRole("heading", { name: "My alert address" }),
+      );
+      expect(Math.round(mine.x)).toBe(Math.round(editor.x));
       await noSideways(page);
     });
   });
 }
+
+test.describe("alerts and administration at 1920x1080", () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  test("Alerts keeps to 1200 px", async ({ page }) => {
+    await alertsPlatform(page);
+    await expect(
+      page.getByRole("table", { name: "Firing alerts" }),
+    ).toBeVisible();
+    expect(
+      (await box(page.locator("weave-alerts-page"))).width,
+    ).toBeLessThanOrEqual(1200);
+  });
+
+  test("Administration keeps to 1200 px in two columns, and an opt-in's address and date stay whole", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, {
+      capabilities: administrator,
+      path: "/settings/administration",
+    });
+    const cards = page.locator(".card");
+    await expect(cards).toHaveCount(7);
+    expect(
+      (await box(page.locator("weave-administration-page"))).width,
+    ).toBeLessThanOrEqual(1200);
+    const [platform, compatibility] = [
+      await box(cards.nth(0)),
+      await box(cards.nth(1)),
+    ];
+    expect(Math.round(compatibility.y)).toBe(Math.round(platform.y));
+    const optins = page.getByRole("table", { name: "Opt-ins" });
+    // Each line is one box: the address and the day never wrap.
+    const lines = await optins
+      .locator("[role=row]:not(.h) [role=cell]")
+      .evaluateAll((cells) =>
+        cells
+          .slice(0, 3)
+          .map((cell) => [...cell.querySelectorAll(".nb, .day")])
+          .flat()
+          .map((part) => (part as HTMLElement).getClientRects().length),
+      );
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines.every((count) => count === 1)).toBe(true);
+  });
+});
+
+test.describe("the Rules tab at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Now fits its line, with the icon in the muted color: Severity carries the tone", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, { path: "/operate/alerts?tab=rules" });
+    const now = page
+      .getByRole("table", { name: "Alert rules" })
+      .getByRole("cell")
+      .filter({ hasText: "acknowledged" });
+    await expect(now).toBeVisible();
+    const look = await now.evaluate((cell) => {
+      const text = cell.querySelector(":scope > span:last-child")!;
+      const icon = cell.querySelector("weave-icon")!;
+      const muted = getComputedStyle(document.body)
+        .getPropertyValue("--muted")
+        .trim();
+      const probe = document.createElement("span");
+      probe.style.color = muted;
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        lines: text.getClientRects().length,
+        muted: getComputedStyle(icon).color === expected,
+      };
+    });
+    expect(look).toEqual({ lines: 1, muted: true });
+  });
+});

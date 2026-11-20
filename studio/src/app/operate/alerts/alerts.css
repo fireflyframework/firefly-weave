@@ -23,6 +23,9 @@ SPDX-License-Identifier: Apache-2.0
   --target: var(--control-md);
   --small-target: var(--control-sm);
   display: block;
+  /* Operate's pages keep to 1200 px, as Clusters does. */
+  max-width: 1200px;
+  margin: 0 auto;
   min-width: 0;
 }
 @media (max-width: 767px), (pointer: coarse) {
@@ -318,8 +321,14 @@ section:first-child > .section-head {
   --cols: 120px minmax(0, 1.4fr) 150px minmax(0, 1.6fr) 140px;
 }
 .rules-list {
-  --cols: minmax(0, 1.5fr) minmax(0, 1.3fr) 110px minmax(0, 1fr)
-    minmax(0, 1.4fr) 104px;
+  /* The switch and Edit take what they need; Now gets the widest share, so
+     "Firing for 38 min · 1 · acknowledged" keeps to one line at 1440 px. */
+  --cols: minmax(0, 1.5fr) minmax(0, 1.3fr) 110px minmax(0, 0.9fr)
+    minmax(0, 1.6fr) auto;
+}
+/* Now's icon stays quiet: the Severity column carries the tone. */
+.now-icon {
+  color: var(--muted);
 }
 .channels-list {
   --cols: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 2fr) 104px;
@@ -390,6 +399,20 @@ section:first-child > .section-head {
   border-radius: var(--radius-md);
   background: var(--surface);
   list-style: none;
+}
+.presets ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.presets-head {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
 }
 .presets li {
   display: flex;

@@ -25,6 +25,10 @@ SPDX-License-Identifier: Apache-2.0
   display: block;
   min-width: 0;
 }
+/* Administration keeps to 1200 px under the Settings tabs. */
+:host(weave-administration-page) {
+  max-width: 1200px;
+}
 @media (max-width: 767px), (pointer: coarse) {
   :host {
     --target: var(--control-touch);
@@ -66,6 +70,8 @@ code {
   align-items: stretch;
 }
 .card {
+  /* Tables inside stack by the card's width, not the window's. */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -234,7 +240,13 @@ code {
 }
 .mini > div > * {
   min-width: 0;
-  overflow-wrap: anywhere;
+  /* An address or a date moves to the next line whole. */
+  overflow-wrap: break-word;
+}
+/* Who recorded an opt-in, then the day on its own line. */
+.day {
+  display: block;
+  white-space: nowrap;
 }
 .mini > .h {
   min-height: 32px;
@@ -299,7 +311,16 @@ code {
   .card dd {
     margin-bottom: var(--space-2);
   }
-  .mini > .h {
+  .mini:not(.optins) > .h {
+    display: none;
+  }
+  .periods > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+/* Opt-ins stack once their card is too narrow for four columns. */
+@container (width < 560px) {
+  .optins > .h {
     display: none;
   }
   .optins > div {
@@ -310,9 +331,6 @@ code {
   .optins button {
     justify-self: start;
     margin-top: 6px;
-  }
-  .periods > div {
-    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 @media (max-width: 767px), (pointer: coarse) {

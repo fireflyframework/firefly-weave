@@ -163,8 +163,10 @@ export type RuleTarget =
       @if (store.evaluatorDown()) {
         <div class="notice alerts-notice" role="status">
           <weave-icon name="warning" [size]="16" /><span
-            >Alert rules aren't being checked right now. Check Operate ›
-            Overview.</span
+            >Alert rules aren't being checked right now. Check
+            <a href="/operate/overview" (click)="openOverview($event)"
+              >Operate › Overview</a
+            >.</span
           >
         </div>
       }
@@ -501,7 +503,7 @@ export type RuleTarget =
                         <span role="cell" class="wide line"
                           ><weave-icon
                             [name]="now.icon"
-                            [class]="'tone-' + now.tone"
+                            class="now-icon"
                             [size]="16" /><span
                             ><ng-container
                               [ngTemplateOutlet]="named"
@@ -771,30 +773,38 @@ export type RuleTarget =
     </ng-template>
     <ng-template #presetList>
       @if (presetsOpen()) {
-        <ul class="presets" id="alerts-presets" aria-label="Suggested rules">
-          @for (preset of suggested(); track preset.id) {
-            <li>
-              <span
-                ><b>{{ preset.name }}</b
-                ><span class="muted">{{ condition(preset.rule) }}</span></span
-              >
-              @if (preset.installed_rule_id) {
-                <span class="muted">Added</span>
-              } @else {
-                <button
-                  type="button"
-                  class="sm"
-                  [attr.aria-label]="'Start from ' + preset.name"
-                  (click)="openEditor({ kind: 'preset', preset })"
+        <div class="presets" id="alerts-presets">
+          <p class="presets-head">
+            <b id="alerts-presets-title">Suggested by Weave</b
+            ><span class="muted"
+              >Start from one and change it before you save.</span
+            >
+          </p>
+          <ul aria-labelledby="alerts-presets-title">
+            @for (preset of suggested(); track preset.id) {
+              <li>
+                <span
+                  ><b>{{ preset.name }}</b
+                  ><span class="muted">{{ condition(preset.rule) }}</span></span
                 >
-                  Start from this
-                </button>
-              }
-            </li>
-          } @empty {
-            <li class="muted">This platform suggests no rules.</li>
-          }
-        </ul>
+                @if (preset.installed_rule_id) {
+                  <span class="muted">Added</span>
+                } @else {
+                  <button
+                    type="button"
+                    class="sm"
+                    [attr.aria-label]="'Start from ' + preset.name"
+                    (click)="openEditor({ kind: 'preset', preset })"
+                  >
+                    Start from this
+                  </button>
+                }
+              </li>
+            } @empty {
+              <li class="muted">This platform suggests no rules.</li>
+            }
+          </ul>
+        </div>
       }
     </ng-template>`,
 })
@@ -1164,6 +1174,13 @@ export class AlertsPage implements DoCheck, OnDestroy {
         problem: state !== "ok",
       };
     });
+  }
+  /** Opens Operate › Overview here; a modified click opens a new tab. */
+  openOverview(event: MouseEvent) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey)
+      return;
+    event.preventDefault();
+    void this.host.navigate("overview");
   }
   webhookText() {
     const count = this.store.webhooks() ?? 0;

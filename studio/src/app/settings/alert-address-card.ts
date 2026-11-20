@@ -45,7 +45,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   imports: [Icon],
   styleUrl: "./administration.css",
   template: `<section
-    class="card address-card"
+    class="settings-card address-card"
     aria-labelledby="alert-address-title"
   >
     <div class="ch"><h2 id="alert-address-title">My alert address</h2></div>
@@ -121,7 +121,11 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     :host {
       max-width: 720px;
     }
+    /* Studio's Preferences card, as the Editor card above it. */
     .address-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
       margin: var(--space-6) 0;
     }
     .form {

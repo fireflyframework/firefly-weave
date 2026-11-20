@@ -109,13 +109,19 @@ test.describe("Settings › Administration actions", () => {
       "You need retention.plan in local. Ask an administrator in Settings › People and access.",
     );
     await expect(card(page, "Compatibility")).toContainText(
-      "Running a check needs compatibility.check in local.",
+      "Running a check needs compatibility.check in local. Ask an administrator in Settings › People and access.",
     );
     const email = card(page, "Alert email");
     await expect(email).toContainText(
-      "Changing domains and opt-ins needs alert.manage and environment.manage in local.",
+      "Changing domains and opt-ins needs alert.manage and environment.manage in local. Ask an administrator in Settings › People and access.",
     );
     await expect(email.getByRole("button")).toHaveCount(0);
+    // Without Edit, the section says why.
+    const approvals = card(page, "Approval notifications");
+    await expect(approvals.getByRole("button")).toHaveCount(0);
+    await expect(approvals).toContainText(
+      "Changing approval notifications needs alert.manage and environment.manage in local. Ask an administrator in Settings › People and access.",
+    );
     await expect(card(page, "Platform")).toContainText("0.1.0a17");
     await shot(page, "administration-access-1440");
   });

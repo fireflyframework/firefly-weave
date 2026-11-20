@@ -440,6 +440,10 @@ test.describe("Operate › Alerts states", () => {
     );
     await expect(page.getByRole("button", { name: "Add rule" })).toBeVisible();
     await page.getByRole("button", { name: "Suggested rules" }).click();
+    // The list says what it is before its rules.
+    await expect(page.locator("#alerts-presets")).toContainText(
+      "Suggested by WeaveStart from one and change it before you save.",
+    );
     await expect(
       page.getByRole("button", {
         name: "Start from Run failure rate above 10 %",
@@ -461,6 +465,10 @@ test.describe("Operate › Alerts states", () => {
       "Alert rules aren't being checked right now. Check Operate › Overview.",
     );
     await shot(page, "alerts-evaluator-down-1440");
+    const overview = page.getByRole("link", { name: "Operate › Overview" });
+    await expect(overview).toHaveAttribute("href", "/operate/overview");
+    await overview.click();
+    await expect(page).toHaveURL(/\/operate\/overview$/);
   });
 
   test("a read-only person sees alerts without the actions", async ({
