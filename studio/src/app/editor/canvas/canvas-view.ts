@@ -146,6 +146,7 @@ import {
   type CanvasRun,
   type TileRun,
   frameRun,
+  frameExecuted,
   framedStep,
   isRecordedRun,
   loopProgress,
@@ -439,6 +440,22 @@ export class CanvasView implements OnInit, DoCheck {
       },
       { injector: this.injector },
     );
+    // Execute workflow frames the run it plays back: when it starts and
+    // when it ends.
+    effect(() => {
+      const run = this.host().canvasRun();
+      untracked(() => {
+        if (run?.mode !== "simulated" || !run.trace) return;
+        const phase = run.ended ? "end" : run.at === 0 ? "start" : null;
+        const last = this.framedPlay;
+        if (!phase || (last?.trace === run.trace && last.phase === phase))
+          return;
+        this.framedPlay = { trace: run.trace, phase };
+        afterNextRender(() => this.frameExecution(), {
+          injector: this.injector,
+        });
+      });
+    });
     // The Runs tab frames the run it draws: when it is chosen, and when a
     // followed run moves to another step.
     effect(() => {
@@ -2068,6 +2085,88 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** The step the drawn run was last framed on, and the run. */
   private framed = "";
+  /** The playback Execute workflow last framed, and when. */
+  private framedPlay: {
+    trace: readonly unknown[];
+    phase: "start" | "end";
+  } | null = null;
+  /**
+   * The canvas area a run is framed in: above the band that holds the canvas
+   * tools, and clear of the run log, which docks over the canvas's right
+   * side (a sheet over its bottom on narrow windows).
+   */
+  private runArea(): { width: number; height: number } {
+    const root = this.root().nativeElement;
+    const frame = root.getBoundingClientRect();
+    const tools = [
+      ...root.querySelectorAll<HTMLElement>(
+        ".canvas-v2-tools, .canvas-v2-tools-menu, .canvas-read-only",
+      ),
+    ].reduce((most, item) => Math.max(most, item.offsetHeight), 0);
+    let width = root.clientWidth;
+    let height = Math.max(1, root.clientHeight - (16 + tools + 8));
+    const log = root.closest(".canvas-panel")?.querySelector("weave-run-log");
+    const box = log?.getBoundingClientRect();
+    if (box?.width && box.height) {
+      if (box.top <= frame.top + 1)
+        width = Math.max(1, Math.min(width, box.left - frame.left));
+      else height = Math.max(1, Math.min(height, box.top - frame.top));
+    }
+    return { width, height };
+  }
+  /**
+   * Frames the run Execute workflow plays back in a workflow with loops: the
+   * whole workflow at 55% or more; else the loop holding the step it failed
+   * or is at (else the last it finished); else that step at 60%.
+   */
+  private frameExecution() {
+    const run = this.host().canvasRun();
+    const root = this.root().nativeElement;
+    if (run?.mode !== "simulated" || !run.trace) return;
+    if (!this.ready || !root.clientWidth) return;
+    const layout = this.layout();
+    // Workflows without loops keep their steps in sight as before (keepRunInView).
+    if (!layout.frames.length) return;
+    const order = layout.tiles.map((tile) => tile.id);
+    const at =
+      run.current.find((id) => order.includes(id)) ??
+      [...order].reverse().find((id) => run.done.includes(id)) ??
+      null;
+    const loopId = at
+      ? layout.frames.some((frame) => frame.id === at)
+        ? at
+        : this.loopsAroundOf(layout)(at).at(-1)
+      : undefined;
+    const loop = layout.frames.find((frame) => frame.id === loopId);
+    const tile = layout.tiles.find((item) => item.id === at);
+    const halves = this.labelTextHalves(layout);
+    const outlineAt = (zoom: number) => {
+      const bounds = runOutline(layout, zoom, (id) => halves.get(id));
+      return {
+        x: bounds.minX,
+        y: bounds.minY,
+        width: bounds.maxX - bounds.minX,
+        height: bounds.maxY - bounds.minY,
+      };
+    };
+    this.framedView = this.frameView(
+      frameExecuted(
+        outlineAt,
+        loop
+          ? { x: loop.x, y: loop.y, width: loop.width, height: loop.height }
+          : null,
+        tile
+          ? {
+              x: tile.x,
+              y: tile.y,
+              width: tile.width,
+              height: tile.labelY + LTR.labelHeight - tile.y,
+            }
+          : null,
+        this.runArea(),
+      ),
+    );
+  }
   /**
    * Frames a run that happened (the Runs tab) in the area the canvas tools
    * leave: the whole workflow from 100% to 60%, else the step that failed,
@@ -2165,6 +2264,7 @@ export class CanvasView implements OnInit, DoCheck {
     if (!this.framedView || this.view !== this.framedView) return;
     this.framed = "";
     this.frameRecorded();
+    this.frameExecution();
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   /**
@@ -2179,6 +2279,8 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
       return;
+    // A run of a workflow with loops is framed as Execute workflow frames it.
+    if (h.canvasRun()?.trace && this.layout().frames.length) return;
     const frame = root.getBoundingClientRect();
     // Tiles as drawn (body, label, summary line), in world units.
     const { zoom, pan } = this.view;

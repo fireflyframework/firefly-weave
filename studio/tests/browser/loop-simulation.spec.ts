@@ -301,3 +301,59 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
     );
   });
 });
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 768, height: 1024 },
+]) {
+  test.describe(`Execute workflow's framing at ${size.width}x${size.height}`, () => {
+    test.use({ viewport: size });
+
+    test("the loop that failed, else its failed step, is in view beside the run log", async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await openExecuteWorkflow(page, REJECTED);
+      const panel = page.locator("section.inspector");
+      const wide = size.width >= 1280;
+      if (wide) await expect(panel).toBeVisible();
+      await execute(page);
+      await expect(runText(page)).toHaveText("· failed at item 3");
+      const log = page.getByRole("region", { name: "Run log" });
+      await expect(log).toBeVisible();
+      // Below 1600 px, the run log takes the Workflow panel's room.
+      if (wide) await expect(panel).toBeHidden();
+      const canvas = page.locator(".canvas-v2");
+      await expect
+        .poll(async () => {
+          const area = (await canvas.boundingBox())!;
+          const logBox = (await log.boundingBox())!;
+          // The loop where it fits at 55%; else the step that failed.
+          const shown = (await page
+            .locator(
+              wide
+                ? '.canvas-v2 .loop-frame[data-frame="orders"]'
+                : '.canvas-v2 .tile-node[data-tile="reject"] .tile-body',
+            )
+            .boundingBox())!;
+          const right = logBox.y <= area.y + 1 ? logBox.x : area.x + area.width;
+          const bottom =
+            logBox.y <= area.y + 1 ? area.y + area.height : logBox.y;
+          return (
+            shown.x >= area.x &&
+            shown.x + shown.width <= right &&
+            shown.y >= area.y &&
+            shown.y + shown.height <= bottom
+          );
+        })
+        .toBe(true);
+      const level = await canvas.locator(".zoom-level").textContent();
+      expect(parseInt(level ?? "0", 10)).toBeGreaterThanOrEqual(55);
+      // The panel comes back when the run log closes.
+      if (wide) {
+        await log.getByRole("button", { name: /^Close/ }).click();
+        await expect(panel).toBeVisible();
+      }
+    });
+  });
+}

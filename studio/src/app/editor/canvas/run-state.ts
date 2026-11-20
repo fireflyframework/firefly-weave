@@ -394,6 +394,54 @@ export function frameRun(
   };
 }
 
+/** The zooms Execute workflow frames at: 100% down to 55%, in 2% steps, then 55%. */
+const EXECUTE_ZOOMS = [
+  ...Array.from({ length: 23 }, (_, i) => (100 - 2 * i) / 100),
+  0.55,
+];
+
+/** The largest zoom of `zooms` at which a box fits the area with 8 px to spare, centered; null when none does. */
+function fitBox(
+  boxAt: (zoom: number) => FrameBox,
+  area: { width: number; height: number },
+  zooms: readonly number[],
+): { zoom: number; pan: { x: number; y: number } } | null {
+  for (const zoom of zooms) {
+    const box = boxAt(zoom);
+    if (
+      box.width * zoom + 16 <= area.width + 1e-6 &&
+      box.height * zoom + 16 <= area.height + 1e-6
+    )
+      return {
+        zoom,
+        pan: {
+          x: (area.width - box.width * zoom) / 2 - box.x * zoom,
+          y: (area.height - box.height * zoom) / 2 - box.y * zoom,
+        },
+      };
+  }
+  return null;
+}
+
+/**
+ * How Execute workflow frames its run in the canvas area the run log
+ * leaves: the whole workflow's outline at 55% or more; else the loop that
+ * holds the step the run failed or is at, at 55% or more; else that step
+ * at 60%, as the Runs tab frames one.
+ */
+export function frameExecuted(
+  workflow: (zoom: number) => FrameBox,
+  loop: FrameBox | null,
+  step: FrameBox | null,
+  area: { width: number; height: number },
+): { zoom: number; pan: { x: number; y: number } } {
+  return (
+    fitBox(workflow, area, EXECUTE_ZOOMS) ??
+    (loop ? fitBox(() => loop, area, EXECUTE_ZOOMS) : null) ??
+    frameRun(workflow, step ?? loop, area)
+  );
+}
+
 /**
  * The step a run is framed on: where it failed, else where it is, else the
  * last step it finished, else the trigger. `tiles` are in the canvas's order.

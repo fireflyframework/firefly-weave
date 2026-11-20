@@ -7546,7 +7546,7 @@ export class App implements CanvasHost {
     )
       outcome = await service.execute(target, { ...options, catalog: "none" });
     if (outcome.kind === "done") {
-      this.runLogOpen.set(true);
+      this.showRunLog(true);
       this.playRun(outcome.response);
     } else if (outcome.kind !== "stale") {
       const text =
@@ -7559,7 +7559,7 @@ export class App implements CanvasHost {
       // Execute workflow reports in the run log, as a run that stops does.
       if (target.mode === "workflow") {
         this.executeRefusal.set(text);
-        this.runLogOpen.set(true);
+        this.showRunLog(true);
       }
     }
     this.cdr.markForCheck();
@@ -7583,7 +7583,26 @@ export class App implements CanvasHost {
   /** The run log beside the canvas (L, or any execution, opens it). */
   readonly runLogOpen = signal(false);
   toggleRunLog(): void {
-    this.runLogOpen.update((open) => !open);
+    this.showRunLog(!this.runLogOpen());
+  }
+  /** The run log closed the Workflow panel to make room: it opens again with the log's close. */
+  private panelMadeRoom = false;
+  /**
+   * Opens or closes the run log. Below 1600 px wide the log takes the
+   * Workflow panel's room, so the canvas keeps enough to show the run; the
+   * panel comes back when the log closes.
+   */
+  private showRunLog(open: boolean): void {
+    if (open === this.runLogOpen()) return;
+    this.runLogOpen.set(open);
+    if (open && this.windowWidth < 1600 && this.showInspector) {
+      this.showInspector = false;
+      this.panelMadeRoom = true;
+    } else if (!open && this.panelMadeRoom) {
+      this.panelMadeRoom = false;
+      this.showInspector = true;
+    }
+    this.cdr.markForCheck();
   }
   /** What the last execution ran: answering the run log's question runs it again. */
   lastTarget: ExecuteTarget | null = null;
@@ -7620,7 +7639,7 @@ export class App implements CanvasHost {
       if (session)
         session = await service.sessions.command({ kind: "continue" });
       this.runSession.set(session);
-      this.runLogOpen.set(true);
+      this.showRunLog(true);
     } catch (error) {
       if (error instanceof ApiError && error.status === 429)
         // Run logs left open elsewhere (another window): offer to close them.
