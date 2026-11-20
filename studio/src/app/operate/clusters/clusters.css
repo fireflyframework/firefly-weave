@@ -333,10 +333,12 @@ dd {
 .chooser-option strong weave-icon {
   color: var(--muted);
 }
+/* A link moves to the next line whole, so its focus ring stays one box. */
 .chooser-option a {
   color: var(--link);
   text-decoration: underline;
   text-underline-offset: 2px;
+  white-space: nowrap;
 }
 /* Kubernetes is the way in that needs a step from the administrator. */
 .chooser-kubernetes {
