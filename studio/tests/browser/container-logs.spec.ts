@@ -227,6 +227,9 @@ const fetchButton = (page: Page) =>
     .locator(".fetchbar")
     .getByRole("button", { name: /Fetch logs|Fetching/ });
 const member = (page: Page, name: string) => page.getByRole("region", { name });
+/** 5 seconds after the page's own (installed) clock: an expiry the test then runs past. */
+const soon = async (page: Page) =>
+  new Date((await page.evaluate(() => Date.now())) + 5_000).toISOString();
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: `${captures}/${name}.png`, fullPage: true });
 /**
@@ -478,14 +481,13 @@ test.describe("Operate › Logs › Container logs", () => {
       "The runner of local-docker didn't answer within 2 minutes. Try again, or check its runner in Operate › Clusters.",
     );
     await shot(page, "container-logs-no-answer-1440");
-    logs.reads = [snapshot("ready")];
+    // A snapshot whose hour ends 5 seconds from now: once it has, it shows nothing of its lines.
+    logs.reads = [snapshot("ready", { expires_at: await soon(page) })];
     await fetchButton(page).click();
     await page.clock.runFor(1_000);
     await expect(member(page, FIRST)).toBeVisible();
-    // An hour later the same snapshot shows nothing of its lines.
-    await page.clock.fastForward(3_600_000);
+    await page.clock.runFor(10_000);
     await page.getByLabel("Since").selectOption("3600");
-    // The runner, last in touch an hour ago too, now reads offline above it.
     await expect(
       page.getByText(
         "This snapshot expired after 1 hour. Fetch logs again to see current lines.",
@@ -593,16 +595,19 @@ for (const size of sizes)
       await expect(member(page, SECOND)).toBeVisible();
       expect(await noSideways(page)).toBe(true);
       await shot(page, name("3-snapshot"));
+      // The page scrolls inside the shell: the members' lines, scrolled to.
+      await member(page, SECOND).scrollIntoViewIfNeeded();
+      await shot(page, name("3b-snapshot-lines"));
       logs.reads = [snapshot("failed", { failure: "unreadable" })];
       await fetchButton(page).click();
       await page.clock.runFor(1_000);
       await expect(page.getByRole("alert")).toBeVisible();
       await shot(page, name("4-failed"));
-      logs.reads = [snapshot("ready")];
+      logs.reads = [snapshot("ready", { expires_at: await soon(page) })];
       await fetchButton(page).click();
       await page.clock.runFor(1_000);
       await expect(member(page, FIRST)).toBeVisible();
-      await page.clock.fastForward(3_600_000);
+      await page.clock.runFor(10_000);
       await page.getByLabel("Since").selectOption("3600");
       await expect(
         page.getByText("This snapshot expired after 1 hour."),
