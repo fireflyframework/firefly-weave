@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // that holds data or a formula, so a value that happens to contain a list
 // called `steps` is not read as steps.
 import type { Step } from "../../model";
-import { blockSteps, blocksOf } from "../step-blocks";
+import { blocksOf, type StepBlock } from "../step-blocks";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -32,6 +32,8 @@ const stepsOf = (branch: unknown): Step[] => {
   const inner = isRecord(branch) ? branch["steps"] : undefined;
   return Array.isArray(inner) ? (inner.filter(isRecord) as Step[]) : [];
 };
+/** The steps of a block, when it holds a list of them. */
+export const blockSteps = (block: StepBlock): Step[] => stepsOf(block.branch);
 
 function* walk(steps: readonly Step[], seen: Set<Step>): Generator<Step> {
   for (const step of steps) {

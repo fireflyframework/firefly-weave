@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // too). DOM-free.
 import type { Step, Workflow } from "../../model";
 import { calledReferenceSites } from "../activation/callee-pins";
-import { blockSteps, blocksOf } from "../step-blocks";
+import { blockSteps } from "../ndv/step-walk";
+import { blocksOf } from "../step-blocks";
 import type { Json } from "../ndv/registry";
 import type {
   Blocked,

@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // (`/cases/j/steps/k`, `/default/steps/k`, `/branches/<name>/steps/k`,
 // `/body/steps/k`, `/errorPath/steps/k`) select the innermost step;
 // `/spec/...` and `/metadata/...` select the workflow settings.
-import { BLOCK_FIELDS, blocksOf } from "../editor/step-blocks";
+import { ERROR_PATH, blocksOf } from "../editor/step-blocks";
 import { WORKFLOW } from "../forms/core/scope";
 import type { Step } from "../model";
 
@@ -64,6 +64,14 @@ const index = (segment: string | undefined) =>
     : -1;
 
 const EXPRESSION_FIELDS = new Set(["with", "value", "title", "context"]);
+/** The step fields that hold blocks (step-blocks.ts), for a pointer into one a step no longer has. */
+const BLOCK_FIELDS = new Set([
+  "cases",
+  "default",
+  "branches",
+  "body",
+  ERROR_PATH,
+]);
 
 /** Strips Weave Expression wrappers to the target data keys. */
 function dataKeys(segments: string[]): string[] {

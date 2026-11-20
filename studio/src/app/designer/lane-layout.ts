@@ -24,7 +24,7 @@ import type {
   Target,
   Workflow,
 } from "../model";
-import { blocksOf } from "../editor/step-blocks";
+import { ERROR_PATH, blocksOf } from "../editor/step-blocks";
 import { branchName, parseCondition } from "./conditions";
 
 export const laneGeometry = {
@@ -62,11 +62,9 @@ export interface LaneLayout {
 }
 const children = (step: Step): [string, Branch][] =>
   blocksOf(step).map((block) => [block.name, block.branch]);
-/** True when a block is a step's error path, which runs only after it fails. */
+/** True when a block is a step's error path (a parallel step has none), which runs only after it fails. */
 const isErrorPath = (step: Step, name: string) =>
-  blocksOf(step).some(
-    (block) => block.name === name && block.kind === "errorPath",
-  );
+  name === ERROR_PATH && step.kind !== "parallel";
 const completes = (steps: Step[]): boolean =>
   steps.every((step) => {
     if (step.kind === "fail") return false;

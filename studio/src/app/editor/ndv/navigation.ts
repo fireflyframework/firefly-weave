@@ -23,7 +23,8 @@ import { isTriggerTarget } from "../triggers/trigger-target";
 import { conditionSummary } from "../../designer/conditions";
 import { getAt } from "../../forms/core/json";
 import { branchTitle, type Step, type Workflow } from "../../model";
-import { blockSteps, blocksOf, type StepBlock } from "../step-blocks";
+import { blocksOf, type StepBlock } from "../step-blocks";
+import { blockSteps } from "./step-walk";
 
 export interface Place {
   id: string;

@@ -285,17 +285,11 @@ export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
   const split = owner.indexOf("/");
   const parent = owner.slice(0, split);
   const name = owner.slice(split + 1);
-  const step = steps?.get(parent);
-  const title = step
-    ? branchTitle(step, name)
-    : name.startsWith("case ")
-      ? `Case ${name.slice(5)}`
-      : name === "default"
-        ? "Otherwise"
-        : name === ERROR_PATH
-          ? "Error path"
-          : name;
-  return `${title} of ${parent}`;
+  // Without the step, a decision's paths and Otherwise are told by their names.
+  const step =
+    steps?.get(parent) ??
+    ({ kind: /^(case |default$)/.test(name) ? "switch" : "" } as Step);
+  return `${branchTitle(step, name)} of ${parent}`;
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -369,14 +363,8 @@ function expressionRefs(
       expressionRefs(arg, [...path, "op", "args", i], holder, out),
     );
 }
-/** The expression fields of a step, as paths relative to the step; an error path's output too. */
+/** The expression fields of a step, as paths relative to the step. */
 function expressionPaths(step: Step): (string | number)[][] {
-  return [
-    ...ownExpressionPaths(step),
-    ...(isRecord(step[ERROR_PATH]) ? [[ERROR_PATH, "output"]] : []),
-  ];
-}
-function ownExpressionPaths(step: Step): (string | number)[][] {
   switch (step.kind) {
     case "llm":
       return [["prompt"], ["context"]];
@@ -649,12 +637,6 @@ export class StructuredCanvasAdapter {
           throw Error(
             `Unsupported step ${s.kind}; source is preserved. The last valid graph is read-only.`,
           );
-        if (
-          (s.kind === "switch" && !Array.isArray(s["cases"])) ||
-          (s.kind === "parallel" &&
-            (!s["branches"] || typeof s["branches"] !== "object"))
-        )
-          throw Error(`Invalid branches in ${s.id}.`);
         for (const [, b] of branches(s)) {
           if (!b || !Array.isArray(b.steps))
             throw Error(`Invalid branches in ${s.id}.`);
@@ -950,7 +932,8 @@ export class StructuredCanvasAdapter {
     const visit = (steps: Step[], path: (string | number)[]) =>
       steps.forEach((step, i) => {
         const at = [...path, i];
-        for (const field of expressionPaths(step))
+        // An error path's output is the step's too; absent, it reads nothing.
+        for (const field of [...expressionPaths(step), [ERROR_PATH, "output"]])
           expressionRefs(
             readPath(step, field),
             [...at, ...field],

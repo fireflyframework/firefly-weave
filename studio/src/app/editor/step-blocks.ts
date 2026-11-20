@@ -26,15 +26,6 @@ import type { Branch, Step } from "../model";
 /** The field, and the block name, of a step's error path: its owner is "<step>/errorPath". */
 export const ERROR_PATH = "errorPath";
 
-/** The step fields that hold blocks, for pointers into a block a step no longer has. */
-export const BLOCK_FIELDS: ReadonlySet<string> = new Set([
-  "cases",
-  "default",
-  "branches",
-  "body",
-  ERROR_PATH,
-]);
-
 export type BlockKind = "case" | "default" | "branch" | "body" | "errorPath";
 export interface StepBlock {
   /**
@@ -53,65 +44,44 @@ export interface StepBlock {
   kind: BlockKind;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
+// Kept small: the model and the designer read blocks on the first page.
+const block = (
+  name: string,
+  path: (string | number)[],
+  branch: unknown,
+  kind = name as BlockKind,
+): StepBlock => ({ name, path, branch: branch as Branch, kind });
 
-/** A step's own blocks, by kind; a kind without blocks holds none. */
+/**
+ * A step's own blocks, by kind; a kind without blocks holds none. A
+ * decision without a list of paths, or a parallel step without branches,
+ * reads as one block that is no branch (0): the model's check refuses it,
+ * and walks find nothing in it.
+ */
 function ownBlocks(step: Step): StepBlock[] {
+  const { cases, branches } = step;
   switch (step.kind as string) {
-    case "switch": {
-      const cases = Array.isArray(step["cases"]) ? step["cases"] : [];
+    case "switch":
       return [
-        ...cases.map(
-          (branch, index): StepBlock => ({
-            name: `case ${index + 1}`,
-            path: ["cases", index],
-            branch: branch as Branch,
-            kind: "case",
-          }),
+        ...(Array.isArray(cases) ? cases : [0]).map((branch, index) =>
+          block(`case ${index + 1}`, ["cases", index], branch, "case"),
         ),
-        {
-          name: "default",
-          path: ["default"],
-          branch: step["default"] as Branch,
-          kind: "default",
-        },
+        block("default", ["default"], step["default"]),
       ];
-    }
     case "parallel":
       // Read as entries whatever object holds them, as the model always has.
-      return step["branches"] && typeof step["branches"] === "object"
-        ? Object.entries(step["branches"]).map(
-            ([name, branch]): StepBlock => ({
-              name,
-              path: ["branches", name],
-              branch: branch as Branch,
-              kind: "branch",
-            }),
-          )
-        : [];
+      return Object.entries(
+        branches && typeof branches === "object" ? branches : { "": 0 },
+      ).map(([name, branch]) =>
+        block(name, ["branches", name], branch, "branch"),
+      );
     case "forEach":
-      return [
-        {
-          name: "body",
-          path: ["body"],
-          branch: step["body"] as Branch,
-          kind: "body",
-        },
-      ];
+      return [block("body", ["body"], step["body"])];
     case "transaction":
       // A transaction is a block itself: its own steps and output.
-      return [
-        {
-          name: "steps",
-          path: [],
-          branch: step as unknown as Branch,
-          kind: "body",
-        },
-      ];
-    default:
-      return [];
+      return [block("steps", [], step, "body")];
   }
+  return [];
 }
 
 /**
@@ -121,17 +91,6 @@ function ownBlocks(step: Step): StepBlock[] {
 export function blocksOf(step: Step): StepBlock[] {
   const blocks = ownBlocks(step);
   if (step[ERROR_PATH] !== undefined)
-    blocks.push({
-      name: ERROR_PATH,
-      path: [ERROR_PATH],
-      branch: step[ERROR_PATH] as Branch,
-      kind: "errorPath",
-    });
+    blocks.push(block(ERROR_PATH, [ERROR_PATH], step[ERROR_PATH]));
   return blocks;
-}
-
-/** The steps of a block, when it holds a list of them; only objects can be steps. */
-export function blockSteps(block: StepBlock): Step[] {
-  const steps = isRecord(block.branch) ? block.branch["steps"] : undefined;
-  return Array.isArray(steps) ? (steps.filter(isRecord) as Step[]) : [];
 }
