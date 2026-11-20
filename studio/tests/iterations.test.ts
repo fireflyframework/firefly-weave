@@ -480,6 +480,62 @@ spec:
     expect(controller.ndvContext("send").instanceKey).toBe("send[0]");
   });
 
+  it("shows the item the Runs tab's chip picked in run mode, and moves the chip when step details picks another", () => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(SOURCE, "yaml");
+    const picks = signal<Record<string, number>>({ orders: 3 });
+    const moved: [string, number][] = [];
+    const canvas = computed(() => ({
+      mode: "real",
+      status: "failed",
+      current: [],
+      active: [],
+      done: [],
+      changed: [],
+      added: [],
+      failures: {},
+      // The run reached four of its five items.
+      loops: [{ id: "orders", within: [], count: 5, known: true, items: [] }],
+      picks: picks(),
+      pick: (loop: string, index: number) => {
+        moved.push([loop, index]);
+        picks.update((all) => ({ ...all, [loop]: index }));
+      },
+    }));
+    const runData = {
+      version: () => 0,
+      // The failed item first, as the run lists them.
+      iterations: (stepId: string) =>
+        stepId === "send"
+          ? ["send[3]", "send[0]", "send[1]", "send[2]", "send[4]"]
+          : [],
+    };
+    const host = {
+      model,
+      label: (kind: string) => kind,
+      viewingRuns: true,
+      runData,
+      runView: () => ({ canvas: () => canvas() }),
+      api: { request: async () => ({ features: [] }) },
+    } as unknown as ControllerHost;
+    const controller = new StepDetailsController(host);
+    expect(controller.runKey("send")).toBe("send[3]");
+    picks.set({ orders: 2 });
+    expect(controller.runKey("send")).toBe("send[2]");
+    // Choosing item 5 in step details moves the chip, and step details follows it.
+    controller.chooseRunIteration("send", "send[4]");
+    expect(moved).toEqual([["orders", 4]]);
+    expect(controller.runKey("send")).toBe("send[4]");
+    // A step outside the loop keeps its own key.
+    expect(controller.runKey("after")).toBe("after");
+    // The select offers every item of the loop, the one the run never reached too.
+    expect(controller.runItems("send")).toEqual({
+      count: 5,
+      keys: ["send[0]", "send[1]", "send[2]", "send[3]", "send[4]"],
+    });
+    expect(controller.runItems("after")).toBeNull();
+  });
+
   it("leaves run mode's iteration alone and never picks for the draft", () => {
     const { controller } = opened(true);
     controller.iteration.set({ send: "send[4]" });

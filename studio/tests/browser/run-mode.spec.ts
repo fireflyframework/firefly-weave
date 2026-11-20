@@ -359,7 +359,7 @@ test.describe("step details in run mode", () => {
     });
     const details = await choose(page, runs, RUN_IDS.loop);
     await details.openWithKeyboard("send");
-    const iteration = details.dialog.getByLabel("Iteration");
+    const iteration = details.dialog.getByRole("combobox", { name: /^Item\b/ });
     await expect(iteration.locator("option:checked")).toHaveText(
       "Item 2 of 3 · Failed",
     );

@@ -338,6 +338,50 @@ test.describe("A recorded loop's step details at 1440x900", () => {
   });
 });
 
+test.describe("A recorded loop's item in the chip and in step details at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the chip and step details show one item: each follows the other", async ({
+    page,
+  }) => {
+    // Each item's send kept what it returned.
+    const run = failedRun();
+    run.facts = run.facts.map((each) =>
+      each.node_id === "send" && each.status === "succeeded"
+        ? { ...each, output: { to: ROWS[each.iteration[0]].name } }
+        : each,
+    );
+    const { chip } = await openLoopRun(page, run);
+    const item = chip.getByRole("button", { name: /Choose an item$/ });
+    await chip.getByRole("button", { name: "Previous item" }).click();
+    await expect(item).toHaveAccessibleName(
+      "Item 3 of 5, Finished. Choose an item",
+    );
+    const details = new StepDetailsPage(page);
+    await details.open("send");
+    // The run's Item select, beside the run chip.
+    const select = details.dialog.getByRole("combobox", { name: /^Item\b/ });
+    await expect(select.locator("option:checked")).toHaveText(
+      "Item 3 of 5 · Finished",
+    );
+    const output = details.dialog.locator("weave-output-pane");
+    await output.getByRole("radio", { name: "JSON" }).click();
+    await expect(output.locator(".pane-json")).toContainText('"Cy"');
+    // Another item chosen in step details moves the chip.
+    await select.selectOption({ label: "Item 1 of 5 · Finished" });
+    await expect(output.locator(".pane-json")).toContainText('"Ada"');
+    await expect(item).toHaveAccessibleName(
+      "Item 1 of 5, Finished. Choose an item",
+    );
+    // The step before it in the loop opens on the same item.
+    await details.close();
+    await details.open("check");
+    await expect(select.locator("option:checked")).toHaveText(
+      "Item 1 of 5 · Finished",
+    );
+  });
+});
+
 test.describe("A cancelled loop at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 

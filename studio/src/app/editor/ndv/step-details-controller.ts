@@ -144,7 +144,8 @@ import {
   type PendingOwner,
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
-import { LoopScopes } from "../formula/loops";
+import { LoopScopes, enclosingLoops } from "../formula/loops";
+import { isRecordedRun, type RecordedRun } from "../canvas/run-state";
 import { Iterations, itemPicks } from "../state/iterations";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -507,14 +508,71 @@ export class StepDetailsController {
   }
   /** Each step's chosen iteration in run mode (its instance key). */
   readonly iteration = signal<Readonly<Record<string, string>>>({});
-  /** The instance key run mode shows for a step: the chosen iteration, else the first (failed first). */
+  /**
+   * The instance key run mode shows for a step: inside loops, the item the
+   * Runs tab's chips show; else the chosen iteration, else the first
+   * (failed first).
+   */
   runKey(target: string): string {
     const run = this.run();
     if (!run || instanceStep(target) !== target) return target;
     run.version();
+    const chip = this.chipKey(target);
+    if (chip !== null) return chip;
     const keys = run.iterations(target);
     const chosen = this.iteration()[target];
     return chosen && keys.includes(chosen) ? chosen : (keys[0] ?? target);
+  }
+  /**
+   * Run mode's Item select: inside loops it moves the Runs tab's chips, so
+   * the canvas and step details show one item; elsewhere it is the step's.
+   */
+  chooseRunIteration(target: string, key: string): void {
+    const pick = this.recordedRun()?.pick;
+    const picks = itemPicks(this.host.model.definition, key);
+    if (pick && picks.length) {
+      for (const { loopId, index } of picks) pick(loopId, index);
+      return;
+    }
+    this.iteration.update((all) => ({ ...all, [target]: key }));
+  }
+  /**
+   * Run mode's Item options for a step inside loops: every item of its
+   * innermost loop, in the items the chips show around it, reached or not;
+   * null outside loops or without the run's loops.
+   */
+  runItems(target: string): { count: number; keys: string[] } | null {
+    const loops = this.recordedRun()?.loops;
+    const chip = this.chipKey(target);
+    if (!loops || chip === null) return null;
+    const within = [...chip.matchAll(/\[(\d+)\]/g)]
+      .map((match) => Number(match[1]))
+      .slice(0, -1);
+    const [innermost] = enclosingLoops(this.host.model.definition, target);
+    const loop = loops.find(
+      (each) => each.id === innermost && each.within.join() === within.join(),
+    );
+    if (!loop) return null;
+    const prefix = target + within.map((index) => `[${index}]`).join("");
+    return {
+      count: loop.count,
+      keys: Array.from({ length: loop.count }, (_, i) => `${prefix}[${i}]`),
+    };
+  }
+  /** The run the Runs tab draws, with the items its chips picked; null elsewhere. */
+  private recordedRun(): RecordedRun | null {
+    const canvas = this.host.runView?.()?.canvas() ?? null;
+    return isRecordedRun(canvas) ? canvas : null;
+  }
+  /** The step in the items the Runs tab's chips show (`send[2]`); null outside loops. */
+  private chipKey(target: string): string | null {
+    const picks = this.recordedRun()?.picks;
+    if (!picks) return null;
+    const loops = enclosingLoops(this.host.model.definition, target).reverse();
+    const indexes = loops.map((loopId) => picks[loopId]);
+    if (!loops.length || indexes.some((index) => index === undefined))
+      return null;
+    return target + indexes.map((index) => `[${index}]`).join("");
   }
   /** What a step returned in the run, read from the platform the first time it's shown. */
   runOutput(target: string): RecordedOutput {

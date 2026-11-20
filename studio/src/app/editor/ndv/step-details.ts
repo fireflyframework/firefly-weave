@@ -1185,24 +1185,34 @@ export class StepDetails {
     const target = this.target();
     if (!run || target.startsWith("$")) return [];
     run.version();
-    const keys = run.iterations(target);
-    if (keys.length < 2) return [];
-    // Numbered in loop order; listed failed first, as iterations() gives them.
-    const ordered = [...keys].sort((a, b) => indexOf(a) - indexOf(b));
     const states = {
       failed: "Failed",
       running: "Running",
       finished: "Finished",
       "not-reached": "Not reached",
     } as const;
+    // Inside a loop: every item of the loop, the failed ones first.
+    const items = this.controller().runItems(target);
+    if (items) {
+      const failed = (key: string) => (run.state(key) === "failed" ? 0 : 1);
+      return [...items.keys]
+        .sort((a, b) => failed(a) - failed(b) || indexOf(a) - indexOf(b))
+        .map((key) => ({
+          key,
+          label: `Item ${(indexOf(key) + 1).toLocaleString("en-US")} of ${items.count.toLocaleString("en-US")} · ${states[run.state(key)]}`,
+        }));
+    }
+    const keys = run.iterations(target);
+    if (keys.length < 2) return [];
+    // Numbered in loop order; listed failed first, as iterations() gives them.
+    const ordered = [...keys].sort((a, b) => indexOf(a) - indexOf(b));
     return keys.map((key) => ({
       key,
       label: `Item ${ordered.indexOf(key) + 1} of ${keys.length} · ${states[run.state(key)]}`,
     }));
   }
   chooseIteration(key: string): void {
-    const target = this.target();
-    this.controller().iteration.update((all) => ({ ...all, [target]: key }));
+    this.controller().chooseRunIteration(this.target(), key);
   }
   backToEditing(): void {
     void this.host().selectTab?.("Designer");
