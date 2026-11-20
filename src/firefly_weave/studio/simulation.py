@@ -763,7 +763,6 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
-    from firefly_weave.operations.incident_codes import INCIDENT_CODES
     from firefly_weave.runtime.kernel import KernelError, prepare
     from firefly_weave.studio.local_contracts import (
         Blocked,
@@ -900,7 +899,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             stopping = trace[last_of_run]
             update: dict[str, Any] = {"status": "failed"}
             if frame is None and stopping.handled is None:
-                stopped = _stopping_error(stopping.instanceKey or stopping.nodeId, request.errors, uses, reported)
+                key = stopping.instanceKey or stopping.nodeId
+                stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
                 if stopped is not None:
                     update["error"] = stopped
             trace[last_of_run] = stopping.model_copy(update=update)
@@ -927,8 +927,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             )
         )
     for code in [*([held] if held is not None else []), *held_frames.values()]:
-        known = INCIDENT_CODES.get(code)
-        words = known.meaning if known is not None else "The simulated run stopped."
+        words = _incident_words(code)
         extra.append(Diagnostic(code=code, severity="error", stage="evaluation", path="", message=words))
     if unsimulated_at is not None:
         extra.append(
@@ -1086,34 +1085,62 @@ def _handled_entry(
     return entry
 
 
-def _error_object(key: str, code: Any, outcome: Any, attempts: Any, child_run_id: Any = None) -> Any:
+def _incident_words(code: str) -> str:
+    """An incident's meaning in plain words, as the simulated run's diagnostics give it."""
+    from firefly_weave.operations.incident_codes import INCIDENT_CODES
+
+    known = INCIDENT_CODES.get(code)
+    return known.meaning if known is not None else "The simulated run stopped."
+
+
+def _error_object(
+    key: str, code: Any, outcome: Any, attempts: Any, child_run_id: Any = None, message: str | None = None
+) -> Any:
     """The error object of a failure of the step instance ``key``, or None when its parts don't make one."""
     from firefly_weave.contracts.step_errors import StepError, step_error
 
     try:
         return StepError.model_validate(
-            step_error(code, outcome, attempts, key, child_run_id=child_run_id), strict=False
+            step_error(code, outcome, attempts, key, message=message, child_run_id=child_run_id), strict=False
         )
     except (TypeError, ValueError):
         return None
 
 
 def _stopping_error(
-    key: str, errors: Mapping[str, Any], uses: Mapping[str, str], reported: Mapping[str, Mapping[str, Any]]
+    key: str,
+    kind: str,
+    errors: Mapping[str, Any],
+    uses: Mapping[str, str],
+    reported: Mapping[str, Mapping[str, Any]],
+    incident: str | None,
 ) -> Any:
     """The error of the failure that stopped the run at the step instance ``key``: the simulated failure that applies
-    to it (its instance key, then its step, then its action, as the simulator picks), else the failure it reported."""
+    to it (its instance key, then its step, then its action, as the simulator picks), else the failure it reported,
+    else the incident the run is held on, in the incident's words."""
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES, RECONCILED_FAILURE_CODES
 
     step = node_of(key)
     for candidate in ("node:" + key, "node:" + step, "action:" + uses.get(step, "")):
         if (failure := errors.get(candidate)) is not None:
             return _error_object(key, failure.code, failure.outcome, failure.attempts)
     report = reported.get(key)
-    if report is None:
+    if report is not None:
+        outcome, attempts = report.get("outcome", "unknown"), report.get("attempts", 1)
+        return _error_object(key, report.get("code"), outcome, attempts, report.get("child_run_id"))
+    if incident is None:
         return None
-    outcome, attempts = report.get("outcome", "unknown"), report.get("attempts", 1)
-    return _error_object(key, report.get("code"), outcome, attempts, report.get("child_run_id"))
+    # A step that couldn't be evaluated did nothing; an effect that may have happened is unknown.
+    if incident in HANDLED_KERNEL_CODES:
+        outcome = "not_started"
+    elif incident in RECONCILED_FAILURE_CODES:
+        outcome = "unknown"
+    else:
+        outcome = "failed"
+    # As the runtime counts them: an action or a call that never started made no attempt.
+    attempts = 0 if outcome == "not_started" and kind in {"action", "callWorkflow"} else 1
+    return _error_object(key, incident, outcome, attempts, message=_incident_words(incident))
 
 
 def _frame_status(status: str) -> Literal["running", "waiting", "completed", "failed"]:

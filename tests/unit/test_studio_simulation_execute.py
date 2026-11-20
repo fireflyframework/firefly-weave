@@ -654,6 +654,56 @@ def test_one_iteration_fails_and_is_handled_while_the_others_go_on():
     assert [loop["status"] for loop in answer["loops"]] == ["completed"]
 
 
+def test_one_iteration_runs_its_error_path_and_gets_its_own_output_while_the_others_go_on():
+    path = {"steps": [NOTIFY_TEAM], "output": {"ref": "/steps/notify-team/output"}}
+    item = {"object": {"customerId": {"ref": "/item"}}}
+    guarded = CHECK | {"with": item, "onError": "errorOutput", "errorPath": path}
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/ids"},
+        "maxItems": 10,
+        "body": {"steps": [guarded], "output": {"ref": "/steps/check/output"}},
+    }
+    ids = {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
+    answer = run(
+        workflow(each, input_schema=ids),
+        input={"ids": ["c-1", "c-2", "c-3"]},
+        mocks={"node:check": {"eligible": True}},
+        errors={"node:check[1]": REFUSED},
+    )
+    assert answer["status"] == "completed"
+    found = entries(answer)
+    handled = found["check[1]"]
+    # The path's output comes from the join of item 1's error path, never from another item's.
+    assert (handled["status"], handled["handled"], handled["output"]) == ("failed", "errorOutput", "REQUEST_REFUSED")
+    assert handled["error"] == refused("check[1]")
+    assert [(found[key]["status"], found[key]["output"]) for key in ("check[0]", "check[2]")] == [
+        ("completed", {"eligible": True}),
+        ("completed", {"eligible": True}),
+    ]
+    assert "handled" not in found["check[0]"] and "error" not in found["check[2]"]
+    assert [key for key in found if key.startswith("notify-team")] == ["notify-team[1]"]
+    assert [loop["status"] for loop in answer["loops"]] == ["completed"]
+
+
+def test_a_step_that_stops_the_run_with_nothing_scripted_carries_the_incident_as_its_error():
+    broken = {"id": "broken", "kind": "transform", "value": {"ref": "/input/missing"}}
+    answer = run(workflow(broken))
+    assert answer["status"] == "failed"
+    [diagnostic] = [d for d in answer["diagnostics"] if d["code"] == "WV-EXPR-MISSING"]
+    stopped = entries(answer)["broken"]
+    assert stopped["status"] == "failed" and "handled" not in stopped
+    # An evaluation failure happens before the step does anything.
+    assert stopped["error"] == {
+        "code": "WV-EXPR-MISSING",
+        "message": diagnostic["message"],
+        "outcome": "not_started",
+        "attempts": 1,
+        "instanceKey": "broken",
+    }
+
+
 def test_a_call_that_waits_handles_its_called_run_failing_with_its_error_path():
     failing = callee_definition()
     failing["spec"]["steps"] = [{"id": "stop", "kind": "fail", "code": "REQUEST_REFUSED", "message": "No."}]
@@ -692,18 +742,41 @@ def test_an_ai_task_takes_a_scripted_failure():
     assert (summarize["handled"], summarize["error"]) == ("continue", refused("summarize"))
 
 
+def continuing_ai_workflow() -> str:
+    document = json.loads(ai_workflow())
+    document["spec"]["steps"][0]["onError"] = "continue"
+    return json.dumps(document)
+
+
+SAVED_TURNS = {"summarize": {"turns": [{"final": "Two sentences."}], "source": "manual"}}
+
+
 @pytest.mark.parametrize(
-    ("steps", "fields", "code"),
+    ("source", "key", "fields", "code"),
     [
-        ([CHECK | {"onError": "continue"}], {"mocks": {"node:check": {"eligible": True}}}, "WV-DEBUG-MOCK-CONFLICT"),
-        ([SHAPE | {"value": {"literal": 1}}], {}, "WV-DEBUG-MOCK-KEY"),
+        (
+            workflow(CHECK | {"onError": "continue"}),
+            "node:check",
+            {"mocks": {"node:check": {"eligible": True}}},
+            "WV-DEBUG-MOCK-CONFLICT",
+        ),
+        (
+            continuing_ai_workflow(),
+            "node:summarize",
+            {"definitions": [], "scripts": {"aiTurns": SAVED_TURNS}},
+            "WV-DEBUG-MOCK-CONFLICT",
+        ),
+        (workflow(SHAPE | {"value": {"literal": 1}}), "node:shape", {}, "WV-DEBUG-MOCK-KEY"),
     ],
-    ids=["a pin and a failure on the same key", "a step that can't fail this way"],
+    ids=[
+        "a pin and a failure on the same key",
+        "an AI task's saved turns and a failure on the same key",
+        "a step that can't fail this way",
+    ],
 )
-def test_a_failure_the_simulation_cannot_apply_is_refused_with_its_code(steps, fields, code):
-    key = "node:" + steps[0]["id"]
+def test_a_failure_the_simulation_cannot_apply_is_refused_with_its_code(source, key, fields, code):
     with pytest.raises(SimulationRefused) as refusal:
-        run(workflow(*steps), errors={key: REFUSED}, **fields)
+        run(source, errors={key: REFUSED}, **fields)
     assert (refusal.value.status, refusal.value.code) == (422, code)
 
 
