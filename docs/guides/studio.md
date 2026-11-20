@@ -1240,7 +1240,12 @@ becomes part of the workflow definition.
   "This data is pinned for test runs. Production runs ignore it." **Edit
   output** opens the JSON again; closing step details with an edit not saved
   asks first. Steps whose output is computed from their input, such as a
-  Transform, can't be pinned: pin the steps they read instead.
+  Transform, can't be pinned: pin the steps they read instead. On an AI task,
+  **Generate sample** keeps a sample answer instead of a pin. **Execute step**
+  replays it without calling a model, and the pane shows no **Pinned** banner.
+  The pin button there is **Keep as test data**, which keeps a real answer
+  the same way, as the [step reference](studio-step-reference.md#ai-task)
+  describes.
 - **Pin and unpin.** Press **P** outside a field, in step details or on the
   canvas (for every selected step), or use the step's menu. **Unpin** shows
   **Undo**. On the canvas, pinned steps show a pin badge.
@@ -1435,7 +1440,10 @@ runtime. **Execute step** still simulates on this computer, and
   moves files, or calls an API marked as changing data) asks every time:
   "send-invoice changes data in local. Repeating it repeats the change." with
   **Run it** and **Cancel**. **Cancel** sends nothing. Steps that only read run
-  at once. When several releases could run the step, Studio asks which one and
+  at once. An AI task on a connection marked **Local** in **Model** runs at
+  once too. On any other connection it asks every time, naming the model and
+  the cost: "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost."
+  When several releases could run the step, Studio asks which one and
   remembers the answer for this session.
 - **Before it runs.** Studio saves the draft first, and publishes the
   workflow's own actions when the step calls one that isn't published yet. A
@@ -1457,8 +1465,8 @@ in local:" with the error's code and message. Files show as files, with name,
 size and type, and **Download** when you may read files there.
 
 A real result stays in memory only: Studio never keeps it on this computer,
-and a later Execute step replaces it. **Pin output** keeps it as test data
-from that run. The platform then treats the workflow's test data as holding
+and a later Execute step replaces it. **Pin output** (**Keep as test data** on
+an AI task) keeps it as test data from that run. The platform then treats the workflow's test data as holding
 run data, so reading it back needs permission to read runs in that
 environment.
 
