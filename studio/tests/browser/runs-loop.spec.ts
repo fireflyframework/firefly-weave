@@ -458,6 +458,13 @@ test.describe("A recorded loop on a phone", () => {
     expect(shown.width).toBeGreaterThanOrEqual(150);
     expect(shown.height).toBeGreaterThanOrEqual(44);
     expect(shown.y).toBeGreaterThanOrEqual(close.y + close.height);
+    // Whole on the screen, its label included.
+    expect(shown.x + shown.width).toBeLessThanOrEqual(360);
+    expect(
+      await select.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
   });
 
   test("the chip is one button that opens the items as a sheet", async ({

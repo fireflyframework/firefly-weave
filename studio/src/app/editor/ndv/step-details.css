@@ -924,8 +924,10 @@ weave-issues-indicator {
   .sd-top > .sd-run-chip {
     margin-left: 0;
   }
+  /* Never narrower than its label and a 12em select: where the chip leaves
+     less, it takes the next row whole. */
   .sd-iteration {
-    flex: 1;
+    flex: 1 0 auto;
   }
   .sd-iteration select {
     flex: 1;
