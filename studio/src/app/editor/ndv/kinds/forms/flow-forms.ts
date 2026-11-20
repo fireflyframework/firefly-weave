@@ -163,6 +163,7 @@ export const loopForm = (): FormSpec => ({
       required: true,
       requiredText: "Choose the list to loop over.",
       hint: "The list to run the steps for, one item at a time.",
+      typeTag: "List",
     },
   ],
   options: [

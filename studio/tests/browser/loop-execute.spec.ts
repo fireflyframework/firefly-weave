@@ -205,6 +205,15 @@ test.describe("one item of a loop at 1440x900", () => {
   }) => {
     const { details } = await openExecuteWorkflow(page, LOOP);
     await details.open("orders");
+    // Items says it takes a list, beside its label.
+    await expect(
+      details.dialog.locator('[data-param="items"] .param-type'),
+    ).toHaveText("List");
+    // The loop's own Execute step runs every item.
+    await expect(executeButton(details.dialog)).toHaveAttribute(
+      "title",
+      "Execute the steps inside for every item (Ctrl/Cmd+Enter)",
+    );
     const answered = page.waitForResponse("**/studio/local/debug/execute");
     await executeButton(details.dialog).click();
     await answered;

@@ -1146,14 +1146,22 @@ export class StepDetails {
   executeLabel(): string {
     return this.runsWorkflow() ? "Execute workflow" : "Execute step";
   }
-  /** The primary button's tooltip: why a call step executes the whole workflow. */
+  /**
+   * The primary button's tooltip: why a call step executes the whole
+   * workflow, the item a step inside a loop executes on, and what a loop's
+   * own Execute step runs.
+   */
   executeTitle(): string {
     const item = this.pickedItem();
+    const loop =
+      (this.controller().step(this.target())?.kind as string) === "forEach";
     return this.callTarget()
       ? "A call runs only when the whole workflow executes."
       : item && !this.runsWorkflow()
         ? `Execute step on item ${item} (Ctrl/Cmd+Enter)`
-        : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+        : loop
+          ? "Execute the steps inside for every item (Ctrl/Cmd+Enter)"
+          : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
   }
   /** Inside a loop's body: the item picked, as people count it ("3", "2 › 1"); null elsewhere. */
   pickedItem(): string | null {

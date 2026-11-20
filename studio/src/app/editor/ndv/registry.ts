@@ -184,6 +184,8 @@ export interface ParamSpec {
   placeholder?: string;
   /** One short sentence under the field. */
   hint?: string;
+  /** What the field takes, said quietly beside its label ("List"), before any error says it. */
+  typeTag?: string;
   /**
    * The label names the group for assistive technology only; its hint shows
    * in the label's place and introduces the group (a decision's paths).
