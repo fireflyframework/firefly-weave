@@ -538,6 +538,19 @@ def test_a_failed_suite_still_runs_the_studio_journeys(tmp_path):
     assert any(acceptance.STUDIO_JOURNEYS_CONFIG in argv for argv, _ in recorder.calls)
 
 
+def test_the_cluster_profiles_run_the_studio_cluster_connect_suite(tmp_path):
+    for profile, runs in (("cluster", True), ("k3d", True), ("pr", False)):
+        state = {"profile": profile, "origins": [acceptance.FIXTURE_ORIGIN], "acme_control_port": 40001}
+        plan = acceptance.Plan(tmp_path / profile, RUN, profile, "default", False, False, state)
+        plan.private.mkdir(parents=True)
+        plan.evidence.mkdir()
+        recorder = CallRecorder()
+        acceptance.run(plan, recorder)
+        commands = [" ".join(argv) for argv, _ in recorder.calls]
+        found = any("tests/browser/cluster-connect-real.spec.ts" in command for command in commands)
+        assert found is runs, profile
+
+
 def journeys_map(tmp_path, enabled):
     """The committed map with real-platform-journeys switched on or off."""
     text = (acceptance.ROOT / "tests/acceptance/journeys.toml").read_text(encoding="utf-8")

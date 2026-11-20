@@ -2256,6 +2256,31 @@ how they are redacted, and their limits.
 keys, archiving, and deletion in depth. To try a workflow without running it for
 real, use [Simulate](#simulate-a-run).
 
+**Connect a local cluster in Clusters.** To try Kubernetes on this computer,
+open **Operate › Clusters**, select **Add target**, and select **Connect a
+cluster** under **Kubernetes** (you need `target.manage`). Choose **kind** or
+**k3d**, and enter a **Cluster name** and a **Namespace**; `weave-test` and
+`weave-workers` are filled in to start with. Studio shows the name the target
+gets, such as `kind-weave-test`, and two commands with **Copy**:
+
+1. `weave platform cluster create --provider kind --name weave-test` creates the
+   cluster. Skip it if the cluster exists.
+2. `weave platform cluster connect --provider kind --name weave-test --namespace weave-workers`
+   connects the namespace as a deployment target.
+
+Run them in a terminal in the folder where you ran `weave platform up`. Under
+each command, Studio says what it changes. While the wizard is open, **What
+Studio sees** checks every 5 seconds and reads **Waiting for the cluster**,
+then **Registered** until the target's runner makes contact, then **Cluster
+connected** with **Open target** and **New change request**. When the name
+belongs to another target, it says so. After 15 minutes without the target, it
+stops looking until you select **Keep waiting**. Studio only reads the
+platform's targets, runners, and observations, and never receives your
+kubeconfig. [Connect a kind or k3d cluster on this
+computer](../operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer)
+explains what each command does. For a cluster that isn't on this computer, use
+**Other** and the [Kubernetes operations guide](../operations/kubernetes.md).
+
 **If the network fails after you submit a change, the result is unknown.** Studio
 says, for example, "Studio didn't get an answer for "Start run".", keeps the
 exact request, and offers **Check now**, which resends the same request with the
