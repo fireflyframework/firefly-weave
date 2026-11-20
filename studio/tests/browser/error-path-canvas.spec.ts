@@ -177,3 +177,45 @@ test("deleting a step takes its error path, says which steps went, and Undo brin
   expect(await canvas.rootSteps()).toEqual(["submit", "summarize"]);
   expect(await errorPathOf(page)).toEqual(["notify-team", "flag-request"]);
 });
+
+test("the Error output is a keyboard stop that adds a step at the start of the error path", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, WITH_PATH);
+  const output = canvas.root.getByRole("button", {
+    name: "Add a step to the error path of submit",
+    exact: true,
+  });
+  await expect(output).toHaveAttribute("data-handle", "submit:path:errorPath");
+  await expect(output).toHaveAttribute(
+    "title",
+    "Add a step to the error path of submit · Enter",
+  );
+  // Tab reaches it from its step, after the step's own commands.
+  await canvas.tileBody("submit").click();
+  await canvas.closeInspector();
+  await canvas.tileBody("submit").focus();
+  const reached: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Tab");
+    const name = await page.evaluate(
+      () => document.activeElement?.getAttribute("aria-label") ?? "",
+    );
+    reached.push(name);
+    if (name === "Add a step to the error path of submit") break;
+  }
+  expect(reached).toEqual([
+    "Delete submit",
+    "More commands for submit",
+    "Add a step to the error path of submit",
+  ]);
+  await expect(output).toBeFocused();
+  await page.keyboard.press("Enter");
+  await canvas.pick("Transform");
+  await canvas.closeInspector();
+  expect(await errorPathOf(page)).toEqual([
+    "transform-1",
+    "notify-team",
+    "flag-request",
+  ]);
+});

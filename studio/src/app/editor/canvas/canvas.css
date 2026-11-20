@@ -724,6 +724,15 @@ weave-canvas-view,
 .canvas-v2 .handle[data-tone="danger"] {
   border-color: var(--danger);
 }
+/* The Error output is a button: drawn as the handle, with a ring on hover. */
+.canvas-v2 button.handle {
+  min-height: 0;
+  padding: 0;
+}
+.canvas-v2 button.handle:hover {
+  background: var(--danger-bg);
+  box-shadow: 0 0 0 4px var(--danger-bd);
+}
 .canvas-v2 .join-bar {
   position: absolute;
   z-index: 2;

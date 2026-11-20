@@ -1064,7 +1064,27 @@ export class CanvasView implements OnInit, DoCheck {
           }),
         );
       }
-      return { pluses, slots, onEdges };
+      // A step's Error output is a keyboard stop too: Enter adds a step at
+      // the start of its error path. An empty path's slot, beside it, does
+      // that already, under the same name: the output stays a drawing.
+      const slotted = new Set(layout.slots.map((slot) => slot.insert.owner));
+      const outputs = new Map<string, InsertView>();
+      for (const handle of layout.handles) {
+        if (handle.tone !== "danger" || slotted.has(handle.insert.owner))
+          continue;
+        const view = offer({
+          key: handle.key,
+          tile: handle.tile,
+          x: handle.x,
+          y: handle.y,
+          name: handle.name,
+          insert: handle.insert,
+          moving: false,
+          tabIndex: tab(handle.tile),
+        });
+        if (view) outputs.set(handle.key, view);
+      }
+      return { pluses, slots, onEdges, outputs };
     },
   );
   private targets() {
@@ -1077,6 +1097,10 @@ export class CanvasView implements OnInit, DoCheck {
   }
   pluses(): InsertView[] {
     return this.locked() ? [] : this.targets().pluses;
+  }
+  /** The Error output `key` as a button; null draws it as a plain handle. */
+  outputButton(key: string): InsertView | null {
+    return this.locked() ? null : (this.targets().outputs.get(key) ?? null);
   }
   slots(): InsertView[] {
     return this.targets().slots;
