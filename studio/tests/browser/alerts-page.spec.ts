@@ -304,6 +304,55 @@ for (const size of [
 test.describe("Operate › Alerts states", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("the bell shows the firing count and rings while one is critical", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, { path: "/operate/runs" });
+    const entry = page
+      .locator("nav")
+      .getByRole("button", { name: "Alerts, 2 firing, 1 critical" });
+    await expect(entry).toBeVisible();
+    const badge = entry.locator(".nav-badge");
+    await expect(badge).toHaveText("2");
+    await expect(badge).toHaveClass(/critical/);
+    await expect(entry.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "alertFiring",
+    );
+    await entry.click();
+    await expect(page).toHaveURL(/\/operate\/alerts$/);
+  });
+
+  test("with warnings only the badge keeps the accent and the bell is still", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, {
+      path: "/operate/runs",
+      answers: { firing: fixture.alertPage([fixture.firing()[1]], 1, 0) },
+    });
+    const entry = page
+      .locator("nav")
+      .getByRole("button", { name: "Alerts, 1 firing" });
+    await expect(entry.locator(".nav-badge")).toHaveText("1");
+    await expect(entry.locator(".nav-badge")).not.toHaveClass(/critical/);
+    await expect(entry.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "alerts",
+    );
+  });
+
+  test("no badge request without alert.read", async ({ page }) => {
+    const platform = await alertsPlatform(page, {
+      capabilities: ["run.read", "status.read", "catalog.read"],
+      path: "/operate/runs",
+    });
+    await page.clock.runFor(35_000);
+    await expect(page.locator(".nav-badge")).toHaveCount(0);
+    expect(
+      platform.sent.filter((request) => request.query.get("limit") === "1"),
+    ).toEqual([]);
+  });
+
   test("without alert.read there is no entry, and a deep link says what's needed", async ({
     page,
   }) => {
