@@ -994,6 +994,8 @@ for (const size of sizes)
           .getByRole("link", { name: "Operate › Clusters" }),
       ).toBeVisible();
       expect(await noSideways(page)).toBe(true);
+      // The page scrolls inside the shell: the notice, scrolled to.
+      await page.getByRole("alert").scrollIntoViewIfNeeded();
       await shot(page, name("4b-no-answer"));
     });
 
