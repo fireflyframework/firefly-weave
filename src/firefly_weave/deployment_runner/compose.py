@@ -189,6 +189,7 @@ class ComposeAdapter:
         for fact in groups[component]:
             found.setdefault(fact["id"][:12], []).append(fact["id"])
         running = {fact["id"][:12] for fact in groups[component] if fact["state"] == "running"}
+        restarts = {fact["id"]: fact["restart"] for fact in groups[component]}
         # A prefix two containers share names neither.
         unique = sorted(
             (host for host, ids in found.items() if len(ids) == 1), key=lambda host: (host not in running, host)
@@ -205,7 +206,8 @@ class ComposeAdapter:
                 cut = True
                 continue
             lines, shortened = member_lines(printed.stdout, printed.stderr, tail=tail_lines)
-            result.append(MemberLog(member=host, lines=lines))
+            # One container keeps its lines across its restarts, so none of them is a previous container's.
+            result.append(MemberLog(member=host, lines=lines, restarts=restarts[found[host][0]]))
             cut = cut or shortened or printed.cut
         if not result:
             raise LogRefused("unreadable")

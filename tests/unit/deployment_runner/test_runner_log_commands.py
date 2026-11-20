@@ -55,9 +55,11 @@ def compose_policy(tmp_path) -> DestinationPolicy:
     )
 
 
-def compose(config, containers):
-    """A Compose daemon whose `worker` service runs `containers` (ID, state); `api` has none."""
+def compose(config, containers, restarts=None):
+    """A Compose daemon whose `worker` service runs `containers` (ID, state); `api` has none. `restarts` gives a
+    container's restart count (0 by default)."""
     calls = []
+    restarts = restarts or {}
 
     async def command(argv, **kwargs):
         calls.append(argv)
@@ -75,7 +77,7 @@ def compose(config, containers):
                 "image": IMAGE,
                 "state": state,
                 "started": "2026-11-19T10:00:00Z",
-                "restart": 0,
+                "restart": restarts.get(identifier, 0),
                 "project": "weave-test",
                 "service": "worker",
                 "target": str(config.target_id),
@@ -329,6 +331,10 @@ async def test_a_restarted_pod_shows_what_its_previous_container_printed_before_
         "Worker ready: 4 slots, task types sql.lookup",
         "Reported failure SMTP_REJECTED for task send",
     ]
+    # The member says it restarted, and which of its lines the previous container printed.
+    assert (restarted.restarts, restarted.previous_lines) == (3, 1)
+    steady = next(member for member in members if member.member == "weave-worker-7c9f-p8sd")
+    assert (steady.restarts, steady.previous_lines) == (0, 0)
     assert cut is False
     # The tail still bounds the member: the newest lines of both containers together.
     members, cut = await adapter.read_logs("weave-worker", ["weave-worker-7c9f-x2k4"], 900, 2)
@@ -336,6 +342,7 @@ async def test_a_restarted_pod_shows_what_its_previous_container_printed_before_
         "Worker ready: 4 slots, task types sql.lookup",
         "Reported failure SMTP_REJECTED for task send",
     ]
+    assert (members[0].restarts, members[0].previous_lines) == (3, 0)
     assert cut is True
 
 
@@ -366,6 +373,21 @@ async def test_a_member_that_cant_be_read_is_left_out_and_the_snapshot_says_so(t
 
     members, cut = await ComposeAdapter(config, command=command, output=removed).read_logs("worker", [], 900, 200)
     assert [member.member for member in members] == [RUNNING[:12]] and cut is True
+
+
+@pytest.mark.asyncio
+async def test_a_compose_member_says_how_often_it_restarted_and_one_that_printed_nothing_has_no_lines(tmp_path):
+    config = compose_policy(tmp_path)
+    command, _ = compose(config, [(RUNNING, "running"), (EXITED, "exited")], restarts={RUNNING: 2})
+
+    async def output(argv, **kwargs):
+        # The exited container printed nothing in the range asked for.
+        return CommandOutput(stdout=b"" if argv[-1] == EXITED else STDOUT, stderr=b"", cut=False)
+
+    members, cut = await ComposeAdapter(config, command=command, output=output).read_logs("worker", [], 900, 200)
+    facts = {member.member: (member.restarts, member.previous_lines, len(member.lines)) for member in members}
+    # Docker keeps one container's lines across its restarts, so none of them is a previous container's.
+    assert facts == {RUNNING[:12]: (2, 0, 2), EXITED[:12]: (0, 0, 0)} and cut is False
 
     pods = pod_line("weave-worker-7c9f-x2k4") + pod_line("weave-worker-7c9f-p8sd")
 

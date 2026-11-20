@@ -90,7 +90,7 @@ def stored_members(members: Sequence[MemberLog]) -> tuple[list[MemberLog], bool]
             kept, shortened = cut_line(redacted.text)
             cut = cut or redacted.truncated or shortened
             lines.append(line if kept == line.text else line.model_copy(update={"text": kept}))
-        redone.append(MemberLog(member=member.member, lines=lines))
+        redone.append(member.model_copy(update={"lines": lines}))
     kept_members, older = newest_lines(redone)
     return kept_members, cut or older
 

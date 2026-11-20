@@ -1651,7 +1651,12 @@ the target must have been in touch within 90 seconds (otherwise 409
 reports, `ready` with each member's lines (`at`, `stream`, `text`), `failed`
 with a `failure` code, and `expired` one hour after it was made, when the
 server deletes it and its lines. A runner that hasn't answered within 2
-minutes leaves the request `failed` with `no_answer`.
+minutes leaves the request `failed` with `no_answer`. Each member also says
+how many times its container restarted (`restarts`) and how many of its first
+lines came from the container that ran before the last restart
+(`previous_lines`, Kubernetes only; 0 otherwise). A member that printed nothing
+comes back with no lines; a member the runner couldn't read is left out, and
+the snapshot is marked `truncated`.
 
 The runner claims log requests with `deployment_runners.claim_logs` and reports
 the lines with `deployment_runners.report_logs`, beside its jobs, so a log

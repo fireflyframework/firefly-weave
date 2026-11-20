@@ -76,6 +76,17 @@ def test_only_the_newest_lines_within_256_kib_are_kept_and_each_member_stays_in_
         assert [item.at for item in member.lines] == sorted(item.at for item in member.lines)
 
 
+def test_a_restarted_member_keeps_its_restarts_and_counts_only_the_previous_lines_kept():
+    # 100 lines of the previous container, then 100 of the current one: only the newest 131 fit 256 KiB.
+    previous = [line(f"p{n:03d}" + "a" * 1996, n) for n in range(100)]
+    current = [line(f"c{n:03d}" + "b" * 1996, 100 + n) for n in range(100)]
+    member = MemberLog(member="w1", lines=previous + current, restarts=3, previous_lines=100)
+    [kept], truncated = stored_members([member])
+    assert truncated is True and len(kept.lines) == 131
+    assert (kept.restarts, kept.previous_lines) == (3, 31)
+    assert kept.lines[30].text.startswith("p099") and kept.lines[31].text.startswith("c000")
+
+
 def test_a_snapshot_within_its_bounds_is_kept_whole():
     report = [MemberLog(member="w1", lines=[line("one", 0), line("two", 1)]), MemberLog(member="w2", lines=[])]
     assert stored_members(report) == (report, False)

@@ -29,6 +29,7 @@ from firefly_weave.contracts.deployments import (
     LogReportAccepted,
     LogRequestCreate,
     LogRequestView,
+    MemberLog,
     RunnerClaimRequest,
     RunnerRegistration,
     TargetRequest,
@@ -146,6 +147,17 @@ def test_a_report_holds_up_to_five_members_of_short_lines_or_says_why_it_has_non
     ):
         with pytest.raises(ValueError):
             wire(LogReport, {"proof": PROOF, **refused})
+
+
+def test_a_member_says_how_often_it_restarted_and_which_lines_its_previous_container_printed():
+    member = {"member": "weave-worker-1", "lines": [LINE, LINE]}
+    plain = wire(MemberLog, member)
+    assert (plain.restarts, plain.previous_lines) == (0, 0)
+    restarted = wire(MemberLog, {**member, "restarts": 3, "previous_lines": 1})
+    assert (restarted.restarts, restarted.previous_lines) == (3, 1)
+    for refused in ({"previous_lines": 3}, {"previous_lines": -1}, {"restarts": -1}):
+        with pytest.raises(ValueError):
+            wire(MemberLog, {**member, **refused})
 
 
 def test_a_view_says_its_state_and_when_it_expires():

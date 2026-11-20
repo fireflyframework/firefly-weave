@@ -30,6 +30,7 @@ from typing import Any, NamedTuple
 from firefly_weave.contracts.deployments import (
     ComponentSpec,
     DeploymentPlan,
+    LogLine,
     MemberLog,
     MemberSelectionError,
     ObservationReport,
@@ -401,19 +402,30 @@ class KubernetesAdapter:
                 # The pod went away or its node can't be reached: the others still show.
                 cut = True
                 continue
-            earlier = b""
+            earlier: list[LogLine] = []
             if restarts.get(host):
                 try:
                     before = await self.output(argv(host, "--previous"), timeout=30)
-                    earlier, cut = before.stdout + b"\n", cut or before.cut
+                    earlier, earlier_cut = member_lines(before.stdout, None, tail=tail_lines)
+                    cut = cut or earlier_cut or before.cut
                 except CommandError:
                     # The previous container's logs are gone (it was removed): its current lines still show.
                     pass
-            # kubectl's own warnings go to stderr; only stdout holds the container's lines. The previous container
-            # stopped before the current one started, so its lines come first.
-            lines, shortened = member_lines(earlier + printed.stdout, None, tail=tail_lines)
-            result.append(MemberLog(member=host, lines=lines))
-            cut = cut or shortened or printed.cut
+            # kubectl's own warnings go to stderr; only stdout holds the container's lines.
+            current, shortened = member_lines(printed.stdout, None, tail=tail_lines)
+            # The previous container stopped before the current one started, so its lines come first; the tail
+            # keeps the newest of both.
+            joined = earlier + current
+            lines = joined[-tail_lines:]
+            result.append(
+                MemberLog(
+                    member=host,
+                    lines=lines,
+                    restarts=restarts.get(host, 0),
+                    previous_lines=max(0, len(earlier) - (len(joined) - len(lines))),
+                )
+            )
+            cut = cut or shortened or printed.cut or len(joined) > tail_lines
         if not result:
             raise LogRefused("unreadable")
         kept, older = newest_lines(result)

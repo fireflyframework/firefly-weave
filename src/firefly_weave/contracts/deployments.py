@@ -595,6 +595,17 @@ class LogLine(ContractModel):
 class MemberLog(ContractModel):
     member: WorkerHost
     lines: list[LogLine] = Field(default_factory=list, max_length=1000)
+    # How many times the member's container restarted, as the runner saw it.
+    restarts: int = Field(default=0, ge=0, le=2147483647)
+    # The first `previous_lines` lines came from the container that ran before the last restart; Kubernetes reads
+    # it with --previous, so a crash shows. Always 0 on Compose, where one container keeps its lines across restarts.
+    previous_lines: int = Field(default=0, ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def previous_lines_are_lines(self) -> Self:
+        if self.previous_lines > len(self.lines):
+            raise ValueError("previous_lines counts lines of this member")
+        return self
 
 
 def cut_line(text: str, limit: int = LOG_LINE_BYTES) -> tuple[str, bool]:
@@ -627,16 +638,19 @@ def newest_lines(members: Sequence[MemberLog], budget: int = LOG_SNAPSHOT_BYTES)
             break
         spent += size
         kept.add((index, position))
-    result = [
-        MemberLog(
-            member=member.member,
-            lines=sorted(
-                (line for position, line in enumerate(member.lines) if (index, position) in kept),
-                key=lambda line: line.at,
-            ),
+    result = []
+    for index, member in enumerate(members):
+        lines = sorted(
+            (line for position, line in enumerate(member.lines) if (index, position) in kept),
+            key=lambda line: line.at,
         )
-        for index, member in enumerate(members)
-    ]
+        # The oldest lines go first, and the previous container's lines are the oldest.
+        left_out = len(member.lines) - len(lines)
+        result.append(
+            member.model_copy(
+                update={"lines": lines, "previous_lines": max(0, member.previous_lines - left_out)},
+            )
+        )
     return result, len(kept) < len(timed)
 
 
