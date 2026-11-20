@@ -181,6 +181,9 @@ SPDX-License-Identifier: Apache-2.0
   of any other runtime is now under **Add target › Other**. See [Connect a kind
   or k3d cluster on this
   computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
+- In Settings, changing *When Studio opens* quickly with the arrow keys no
+  longer loses the last choice: an earlier save's answer no longer checks the
+  choice you just left.
 
 ### Development and testing
 
