@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 from pathlib import Path
@@ -33,6 +34,7 @@ from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.deployments import (
     DeploymentLease,
     DeploymentRunner,
+    LogClaim,
     RunnerClaimRequest,
     RunnerRegistration,
 )
@@ -40,6 +42,7 @@ from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import LOG, InfrastructureAdapter, OperationsRunner
 from firefly_weave.sdk._retry import kind, raise_if_cancelled, retry_delay, unavailable
 from firefly_weave.sdk.client import AsyncTokenProvider, WeaveClient
+from firefly_weave.sdk.errors import WeaveError
 from firefly_weave.sdk.token_relay import start_relay
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, _read_mount, private_transport
 
@@ -52,6 +55,8 @@ HEARTBEAT_FILE = "WEAVE_RUNNER_HEARTBEAT_FILE"
 # probe that restarts a silent runner.
 CLAIM_RETRY_SECONDS = 0.5
 MAX_CLAIM_RETRY_SECONDS = 10.0
+# A log claim the platform refused for another reason than being unreachable is tried again after this long.
+LOG_REFUSAL_SECONDS = 60.0
 
 
 def _private_plaintext(base_url: str) -> bool:
@@ -138,6 +143,31 @@ def runner_registration(destination: Any) -> RunnerRegistration:
     )
 
 
+async def register(client: WeaveClient, destination: DestinationPolicy) -> DeploymentRunner:
+    """Register this runner with the capabilities its local policy enables.
+
+    A target registered before container logs lacks read_logs, and the platform refuses a runner that offers more
+    than its target allows. Such a runner registers again without read_logs, so its jobs go on and it answers no log
+    request until read_logs is added to the target; any other refusal stops it as before.
+    """
+    try:
+        return cast(
+            DeploymentRunner,
+            await client.invoke("deployment_runners.create", body=runner_registration(destination)),
+        )
+    except WeaveError as error:
+        if error.status != 403 or "read_logs" not in destination.capabilities:
+            raise
+    without = destination.model_copy(
+        update={"capabilities": [item for item in destination.capabilities if item != "read_logs"]}
+    )
+    registration = cast(
+        DeploymentRunner, await client.invoke("deployment_runners.create", body=runner_registration(without))
+    )
+    LOG.warning("The target doesn't allow read_logs, so this runner answers no log requests until it does")
+    return registration
+
+
 def _beat(path: Path | None) -> None:
     """Touch the heartbeat file (0600) after the platform answered; a liveness probe restarts a silent runner."""
     if path is None:
@@ -176,17 +206,53 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
             transport=transport,
             private_origin="runner" if plain else None,
         ) as client:
-            registration = cast(
-                DeploymentRunner,
-                await client.invoke(
-                    "deployment_runners.create",
-                    body=runner_registration(config.destination),
-                ),
-            )
+            registration = await register(client, config.destination)
             runner = OperationsRunner(client, config.destination, adapter, on_contact=lambda: _beat(heartbeat))
             loop, task = asyncio.get_running_loop(), asyncio.current_task()
             assert task is not None
             loop.add_signal_handler(signal.SIGTERM, task.cancel)
+
+            async def log_requests() -> None:
+                """Claim and answer log requests beside the jobs, so a log request never waits behind a running job.
+
+                A failure here never stops the runner: its jobs go on, and the log claim is tried again later.
+                """
+                failures = 0
+                while True:
+                    try:
+                        claim = cast(
+                            LogClaim | None,
+                            await client.invoke(
+                                "deployment_runners.claim_logs", body=RunnerClaimRequest(runner_id=registration.id)
+                            ),
+                        )
+                        failures = 0
+                        _beat(heartbeat)
+                        if claim is not None:
+                            await runner.serve_logs(claim)
+                            continue
+                    except Exception as error:
+                        raise_if_cancelled(error)
+                        failures += 1
+                        delay = (
+                            retry_delay(failures, CLAIM_RETRY_SECONDS, MAX_CLAIM_RETRY_SECONDS)
+                            if unavailable(error)
+                            else LOG_REFUSAL_SECONDS
+                        )
+                        LOG.warning(
+                            "A log claim failed (%s, %d in a row); claiming again in %.1f s",
+                            kind(error),
+                            failures,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    await asyncio.sleep(config.poll_seconds)
+
+            # One claim of --once is a job's; log requests are answered by a runner that keeps running, whose local
+            # policy reads logs and whom the platform registered to read them.
+            reads_logs = "read_logs" in config.destination.capabilities and "read_logs" in registration.capabilities
+            logs = asyncio.create_task(log_requests()) if reads_logs and not once else None
             # Claims in a row that could not reach the API.
             failures = 0
             try:
@@ -225,6 +291,10 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
                     await asyncio.sleep(config.poll_seconds)
             finally:
                 loop.remove_signal_handler(signal.SIGTERM)
+                if logs is not None:
+                    logs.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await logs
     finally:
         if relay is not None:
             relay.close()

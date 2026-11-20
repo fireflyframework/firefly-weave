@@ -84,6 +84,7 @@ import type {
 } from "../state/step-test-service";
 import { sideEffectOf } from "../state/step-test-service";
 import type { SideEffect } from "../state/execution";
+import { effectToAcknowledge, withoutAsking } from "./kinds/ai-task-model";
 import { realEndWords, refusalWords, upstreamMissing } from "./real-words";
 import { pendingOwned } from "./owned/owned-versions";
 import { sliceStepIds } from "../state/execute-request";
@@ -1364,9 +1365,13 @@ export class StepDetails {
   }
   /** Fix: the step's Connection field, in view (Parameters on a narrow window), with its choices open. */
   private openConnection() {
+    // An AI task chooses its connection with its model, in the Model field.
     const field = this.session()
       .placedSpecs()
-      .find((placed) => placed.spec.type === "connection");
+      .find(
+        (placed) =>
+          placed.spec.type === "connection" || placed.spec.type === "model",
+      );
     if (field) this.focusField(field, true);
   }
   /** A notice in this step's Output, said aloud as well. */
@@ -1429,12 +1434,18 @@ export class StepDetails {
     }
     const uses = String(controller.step(id)?.["uses"] ?? "");
     const effect = sideEffectOf(controller.kindContext().actionContract(uses));
+    // An AI task on a local connection: a model call with no cost to name.
+    const accepted = withoutAsking(request, effect);
+    if (accepted) return this.runReal(request.body, accepted);
     if (
       effect === "non_idempotent" ||
       effect === "idempotency_key" ||
       request.confirm
     ) {
-      this.realPending = { body: request.body, ack: effect };
+      this.realPending = {
+        body: request.body,
+        ack: effectToAcknowledge(request.body, effect),
+      };
       this.question.set({
         kind: "real",
         title: `Execute ${id} in ${env}?`,

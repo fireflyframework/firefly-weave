@@ -157,6 +157,17 @@ prove gets a warning (`WV-COMP-UNKNOWN_COMPATIBILITY`); the run's input is
 checked when it starts either way. A workflow reacts to its own events only
 when its `from` names it.
 
+Steps read the event under `/input`, such as `/input/type` or
+`/input/transaction/business_key`. A field every event carries compiles without
+warnings. `cause`, `incident_id`, and the lists under `steps` are only in some
+events, so a plain read of one warns `WV-COMP-REFERENCE_PRESENCE`; read it with
+`coalesce`, or check it with `exists` first:
+
+```yaml
+incident:
+  op: {name: coalesce, args: [{ref: /input/transaction/incident_id}, {literal: ""}]}
+```
+
 ### Bind it to the events
 
 Activate the workflow, then bind the activation to some or all of the events it

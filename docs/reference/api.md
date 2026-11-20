@@ -1586,6 +1586,10 @@ switches a rule off needs neither.
 | `deployment_change_requests.replan` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/replan` | deployment.plan |
 | `deployment_change_requests.decline` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/decline` | deployment.approve |
 | `deployment_change_requests.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/cancel` | deployment.plan |
+| `deployment_runners.claim_logs` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/claim-logs` | runner.claim |
+| `deployment_runners.report_logs` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/report-logs` | runner.report |
+| `deployment_log_requests.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-log-requests` | deployment_log.read and deployment.read |
+| `deployment_log_requests.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-log-requests/{identifier}` | deployment_log.read and deployment.read |
 | `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
 
@@ -1631,7 +1635,36 @@ authority again. `deployment_plans.approval` returns the recorded approval or
 | `deployment_approver` | Approve the exact immutable plan |
 | `deployment_operator` | Apply or cancel work |
 | `deployment_runner` | Dedicated application's registration, claims, renewals, and reports |
+| `deployment_log_reader` | Read snapshots of a target's worker container logs, with `deployment.read` on the target |
 | `worker_operator` | Drain or resume a specific worker instance |
+
+A container log request asks the target's runner for a snapshot of what one
+worker component's containers or pods printed: up to 5 running members (all of
+them, up to 5, when the request names none), from the last 60 seconds to 24
+hours, and the last 1 to 1,000 lines of each. Both
+`deployment_log_requests` operations need `deployment_log.read` and
+`deployment.read` on the target. The target and its runner's registration must
+both hold `read_logs` (otherwise 422 `WV-DEPLOYMENT-UNSUPPORTED`), a runner of
+the target must have been in touch within 90 seconds (otherwise 409
+`WV-RUNNER-OFFLINE`), and a target takes at most 10 requests a minute (429
+`WV-LOG-RATE` with `Retry-After`). A request reads `pending` until its runner
+reports, `ready` with each member's lines (`at`, `stream`, `text`), `failed`
+with a `failure` code, and `expired` one hour after it was made, when the
+server deletes it and its lines. A runner that hasn't answered within 2
+minutes leaves the request `failed` with `no_answer`. Each member also says
+how many times its container restarted (`restarts`) and how many of its first
+lines came from the container that ran before the last restart
+(`previous_lines`, Kubernetes only; 0 otherwise). A member that printed nothing
+comes back with no lines; a member the runner couldn't read is left out, and
+the snapshot is marked `truncated`.
+
+The runner claims log requests with `deployment_runners.claim_logs` and reports
+the lines with `deployment_runners.report_logs`, beside its jobs, so a log
+request never waits for or blocks a target's job. It reads only worker
+components its local policy binds and members it observed itself, with a fixed
+`docker logs` or `kubectl logs` argument list, cuts each line to 2 KiB and the
+snapshot to 256 KiB, and redacts secrets before reporting; the server redacts
+every line again. Studio never forwards the two runner operations.
 
 Provider credentials and configuration templates stay on the outbound runner.
 The API accepts typed intent, immutable image digests, and local configuration

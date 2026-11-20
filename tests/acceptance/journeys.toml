@@ -55,7 +55,7 @@
 "ai-gateway" = true
 "ai-setup" = false
 "ai-models-screen" = true
-"ai-task" = false
+"ai-task" = true
 "weave-ai-ollama" = false
 "agents" = true
 "agent-editor" = false
@@ -191,6 +191,9 @@ J15 = ["SC1", "SC7"]
 # Conversation memory from the SDK and CLI: a second run for one customer remembers the first, another customer
 # starts empty, and a deleted conversation starts over. Studio's own conversation step stays with the agent editor.
 "J4.15" = ["real-platform-journeys", "agents", "agent-memory"]
+# An AI task of a saved draft runs once for real as a step test, as Execute in local runs it from step details,
+# on the model J4.7 enabled: a text result and a structured one, each checked against its result fields.
+"J4.16" = ["real-platform-journeys", "ai-task", "step-tests"]
 # J5 platform administration (operator); J5.1 belongs to the operations reads above.
 "J5.2" = ["real-platform-journeys", "run-views", "compose-operations"]
 "J5.3" = ["real-platform-journeys", "run-views", "compose-operations"]

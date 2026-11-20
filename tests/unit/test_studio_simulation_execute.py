@@ -551,3 +551,22 @@ def test_test_data_too_large_to_check_is_refused_as_too_large():
 def test_the_answer_keeps_only_the_paths_decisions_took():
     answer = run(workflow(CHECK, SHAPE), mocks={"node:check": {"eligible": True}})
     assert set(answer.get("variables", {})) <= {"branches"}
+
+
+def test_a_project_schema_under_the_platform_event_name_wins_and_is_refused_by_the_compile():
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.transaction_resolve import PLATFORM_EVENT_SCHEMA
+
+    step = {"id": "key", "kind": "transform", "value": {"ref": "/input/transaction/state"}}
+    reaction = json.loads(workflow(step, input_schema={"$ref": PLATFORM_EVENT_SCHEMA}))
+    reaction["spec"]["eventTrigger"] = {"events": ["transaction.in_doubt"]}
+    malformed = request(json.dumps(reaction), catalog="project", input={"version": "weave/platform-event-v1"})
+    # Without a project schema under the name, the platform's view checks the event before anything runs.
+    with pytest.raises(SimulationRefused) as refused:
+        execute(malformed, CatalogSnapshot.empty())
+    assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-INVALID_INSTANCE", ["/input"])
+    # A project's own schema under the name wins over the view, and the compile refuses it, so nothing runs.
+    shadow = CatalogSnapshot.from_definitions([], schema_bundle={PLATFORM_EVENT_SCHEMA: {}})
+    answer = execute(malformed, shadow).model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert answer["status"] == "failed" and answer["trace"] == []
+    assert "WV-COMP-RESERVED_SCHEMA" in [item["code"] for item in answer["compile"]["diagnostics"]]

@@ -105,6 +105,97 @@ def test_a_null_call_mock_completes_the_call_with_null(tmp_path):
         ]
 
 
+EVENT = {"$ref": "weave.platform-event-v1"}
+SAMPLE_EVENT = {
+    "version": "weave/platform-event-v1",
+    "event_id": "6f1d2c3b-0a9e-4f8d-8c7b-6a5e4d3c2b1a",
+    "type": "transaction.in_doubt",
+    "emitted_at": "2026-11-19T10:00:00Z",
+    "transaction": {
+        "workflow": {"name": "move-between-systems", "version": "1.0.0"},
+        "run_id": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "instance_key": "move-1",
+        "business_key": "REF-1029",
+        "state": "in_doubt",
+        "steps": {"done": [{"step": "hold", "instance_key": "hold-1", "how": "reserve"}]},
+        "test": False,
+    },
+}
+REACTION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "notify-team", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": EVENT,
+        "outputSchema": {},
+        "eventTrigger": {"events": ["transaction.in_doubt"]},
+        "steps": [{"id": "key", "kind": "transform", "value": {"ref": "/input/transaction/business_key"}}],
+        "output": {"literal": None},
+    },
+}
+
+
+def test_a_sample_platform_event_executes_a_workflow_that_reacts_to_it(tmp_path):
+    body = BODY | {"source": json.dumps(REACTION), "input": SAMPLE_EVENT}
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=body, headers=pair(browser))
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["status"] == "completed"
+        assert [(e["nodeId"], e["output"]) for e in answer.json()["trace"]] == [("key", "REF-1029")]
+
+
+def test_test_input_that_isnt_a_platform_event_is_refused(tmp_path):
+    body = BODY | {"source": json.dumps(REACTION), "input": {"version": "weave/platform-event-v1"}}
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=body, headers=pair(browser))
+        assert answer.status_code == 422
+        assert (answer.json()["code"], answer.json()["result"]) == ("WV-SCHEMA-INVALID_INSTANCE", {"paths": ["/input"]})
+
+
+READ_EVENT = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Action",
+    "metadata": {"name": "read-event", "version": "1.0.0"},
+    "spec": {
+        "implementation": {"kind": "worker", "taskType": "read-event", "taskVersion": "1.0.0"},
+        "sideEffect": "read_only",
+        "timeoutSeconds": 30,
+        "inputSchema": {},
+        "outputSchema": EVENT,
+    },
+}
+
+
+def reading_an_event(pin) -> dict:
+    """An Execute body for a workflow whose one step is an action that returns a platform event, pinned to ``pin``."""
+    reading = json.loads(json.dumps(WORKFLOW))
+    reading["spec"]["steps"] = [{"id": "read", "kind": "action", "uses": "read-event@1.0.0", "with": {"literal": {}}}]
+    return BODY | {"source": json.dumps(reading), "definitions": [READ_EVENT], "mocks": {"node:read": pin}}
+
+
+def test_a_pinned_platform_event_from_an_action_is_its_output(tmp_path):
+    body = reading_an_event(SAMPLE_EVENT)
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=body, headers=pair(browser))
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["status"] == "completed"
+        assert [(e["nodeId"], e["output"]) for e in answer.json()["trace"]] == [("read", SAMPLE_EVENT)]
+
+
+def test_a_pinned_output_that_isnt_a_platform_event_is_left_out(tmp_path):
+    body = reading_an_event({"version": "weave/platform-event-v1"})
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=body, headers=pair(browser))
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["status"] == "blocked"
+        assert answer.json()["blocked"]["message"] == (
+            "The pinned output of read doesn't fit its output fields. Edit it, or unpin it."
+        )
+        assert [(e["nodeId"], e["status"], e.get("output")) for e in answer.json()["trace"]] == [
+            ("read", "waiting", None)
+        ]
+
+
 def test_a_body_that_isnt_an_execute_request_is_refused(tmp_path):
     with client(tmp_path) as browser:
         answer = browser.post("/studio/local/debug/execute", json=BODY | {"extra": 1}, headers=pair(browser))

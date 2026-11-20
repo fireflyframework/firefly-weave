@@ -95,6 +95,7 @@ import {
 import { changeSlot, slotValidation } from "./integrations/connection-slots";
 import {
   Component,
+  ErrorHandler,
   HostListener,
   Injector,
   afterEveryRender,
@@ -103,6 +104,7 @@ import {
   viewChild,
   inject,
   ChangeDetectorRef,
+  type Type,
 } from "@angular/core";
 import type { FileAccess } from "./forms/core/file-reference";
 import { Title } from "@angular/platform-browser";
@@ -252,15 +254,11 @@ import {
   workspaceLong,
   workspaceShort,
 } from "./format";
-// The operations pages and Settings load lazily (@defer): only these classes.
-import { ClustersPage } from "./operate/clusters/clusters-page";
-import { WorkersPage } from "./operate/workers/workers-page";
-import { IncidentsPage } from "./operate/incidents/incidents-page";
-import { MetricsPage } from "./operate/metrics/metrics-page";
-import { LogsPage } from "./operate/logs/logs-page";
-import { AlertsPage } from "./operate/alerts/alerts-page";
-import { OverviewPage } from "./operate/overview/overview-page";
-import { RunsPage } from "./operate/runs/runs-page";
+// The Operate pages, Settings and the record lists load the first time they
+// open (page-loaders.ts): only the Clusters page's type is named here.
+import type { ClustersPage } from "./operate/clusters/clusters-page";
+import { pageKey, pageLoaders, type PageKey } from "./page-loaders";
+import { PageOutlet } from "./page-outlet";
 import {
   clustersRecordPath,
   navEntryVisible,
@@ -272,8 +270,6 @@ import { ApprovalWatch } from "./operate/clusters/approvals-inbox";
 import { approvable } from "./operate/clusters/change-request-model";
 import { Poller, browserEnvironment } from "./operate/operate-store";
 import { scopeKeyOf } from "./operate/operate-list";
-import { RecordsView } from "./operations/records-view";
-import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
 import { typingIn } from "./editor/state/typing";
 import type {
@@ -539,16 +535,7 @@ const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
     TemplateGallery,
     ToastHost,
     DesignerView,
-    RecordsView,
-    ClustersPage,
-    MetricsPage,
-    LogsPage,
-    AlertsPage,
-    WorkersPage,
-    IncidentsPage,
-    OverviewPage,
-    RunsPage,
-    SettingsPage,
+    PageOutlet,
     LumiPanel,
   ],
   templateUrl: "./app.html",
@@ -595,12 +582,40 @@ export class App implements CanvasHost {
     kept?: boolean;
   } | null = null;
   lumiOpen = false;
-  // A query by name, not by class: the Clusters area stays in its deferred chunk.
-  private readonly operationsView = viewChild<ClustersPage>("clustersPage");
+  // The page outlet's component, not a query by class: the Clusters area
+  // stays in its own chunk.
+  private readonly pageOutlet = viewChild(PageOutlet);
   get lumiOperationAttachments() {
     return this.view === "clusters"
-      ? (this.operationsView()?.lumiAttachments ?? [])
+      ? ((this.pageOutlet()?.page?.instance as ClustersPage | undefined)
+          ?.lumiAttachments ?? [])
       : [];
+  }
+  /** The pages whose code has loaded; a new one bumps pagesLoaded. */
+  private readonly pages = new Map<PageKey, Type<unknown>>();
+  private readonly pagesLoaded = signal(0);
+  /** Pages whose code is loading, or failed to: a failure isn't retried. */
+  private readonly pageLoads = new Set<PageKey>();
+  private readonly errorHandler = inject(ErrorHandler);
+  /**
+   * The page the outlet shows for a view, once its code has loaded; asking
+   * starts the load. A failed load leaves the area empty and reports the
+   * error, as a deferred block does.
+   */
+  pageFor(view: View): Type<unknown> | null {
+    this.pagesLoaded();
+    const key = pageKey(view);
+    const page = this.pages.get(key);
+    if (page || this.pageLoads.has(key)) return page ?? null;
+    this.pageLoads.add(key);
+    pageLoaders[key]().then(
+      (component) => {
+        this.pages.set(key, component);
+        this.pagesLoaded.update((count) => count + 1);
+      },
+      (error: unknown) => this.errorHandler.handleError(error),
+    );
+    return null;
   }
   platformMenuOpen = false;
   platformBusy = "";

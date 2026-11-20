@@ -105,6 +105,11 @@ from firefly_weave.contracts.deployments import (
     DeploymentTarget,
     DrainProgress,
     JobCancelRequest,
+    LogClaim,
+    LogReport,
+    LogReportAccepted,
+    LogRequestCreate,
+    LogRequestView,
     ObserveRequest,
     PlanApproval,
     PlanApprovalRequest,
@@ -765,6 +770,54 @@ OPERATIONS = {
             "POST",
             DeploymentRunner,
             "target.manage",
+        ),
+        Operation(
+            "deployment_runners.claim_logs",
+            ENVIRONMENT + "/deployment-runners/claim-logs",
+            "POST",
+            LogClaim | None,
+            "runner.claim",
+            RunnerClaimRequest,
+            description=(
+                "Runner-only, beside its jobs: the oldest log request of the runner's target that waits for a runner "
+                "registered with read_logs, or null."
+            ),
+        ),
+        Operation(
+            "deployment_runners.report_logs",
+            ENVIRONMENT + "/deployment-runners/report-logs",
+            "POST",
+            LogReportAccepted,
+            "runner.report",
+            LogReport,
+            description=(
+                "Runner-only: the lines read for a claim, before the claim expires (409 WV-RUNNER-FENCE otherwise). "
+                "The server redacts every line again and keeps at most 256 KiB of lines; the body holds at most 1 MiB "
+                "(413 WV-LOG-SIZE)."
+            ),
+        ),
+        Operation(
+            "deployment_log_requests.create",
+            ENVIRONMENT + "/deployment-log-requests",
+            "POST",
+            LogRequestView,
+            "deployment_log.read and deployment.read",
+            LogRequestCreate,
+            (201,),
+            idempotency=True,
+            description=(
+                "Both on the target. 422 WV-DEPLOYMENT-UNSUPPORTED when the target's runner can't read logs; 409 "
+                "WV-RUNNER-OFFLINE when no runner of the target has been in touch within 90 seconds; 429 WV-LOG-RATE "
+                "after 10 requests for one target within a minute, with Retry-After."
+            ),
+        ),
+        Operation(
+            "deployment_log_requests.read",
+            ENVIRONMENT + "/deployment-log-requests/{identifier}",
+            "GET",
+            LogRequestView,
+            "deployment_log.read and deployment.read",
+            description="Both on the request's target. A request and its snapshot expire one hour after the request.",
         ),
         Operation(
             "deployment_change_requests.create",

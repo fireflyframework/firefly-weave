@@ -46,6 +46,7 @@ class FakeAPI:
     def __init__(self):
         self.calls = []
         self.fail = None
+        self.target = None
 
     async def invoke(self, operation, **kwargs):
         if self.fail == operation:
@@ -55,6 +56,8 @@ class FakeAPI:
         if operation == "deployment_runners.list":
             fresh = datetime.now(UTC) + timedelta(seconds=60)
             return SimpleNamespace(items=[SimpleNamespace(revoked=False, expires_at=fresh)])
+        if operation == "deployment_targets.read":
+            return self.target
         return SimpleNamespace(id=uuid4())
 
     def count(self, operation):
@@ -268,9 +271,35 @@ def test_local_docker_lets_the_local_owner_plan_and_approve(operations):
     enable(case)
     (request,) = [kwargs["body"] for name, kwargs in case.api.calls if name == "deployment_targets.create"]
     assert request.approval_policy.distinct_approver is False
-    assert request.capabilities == ["observe", "deploy", "update", "scale_workers", "restart_workers"]
+    assert request.capabilities == ["observe", "deploy", "update", "scale_workers", "restart_workers", "read_logs"]
     assert "drain_workers" not in request.capabilities and request.name == "local-docker"
     assert request.boundary == f"weave-local-{OWNER}-workers"
+
+
+def test_a_local_docker_target_registered_before_container_logs_gains_read_logs_on_the_next_up(operations):
+    case = operations
+    target_id = enable(case)["target_id"]
+    # An installation an earlier release set up: its target lacks read_logs, and its receipt doesn't say otherwise.
+    path = case.directory / "operations.json"
+    value = json.loads(path.read_text())
+    value.pop("target_capabilities")
+    path.write_text(json.dumps(value))
+    runner = uuid4()
+    earlier = ["observe", "deploy", "update", "scale_workers", "restart_workers"]
+    case.api.target = SimpleNamespace(
+        id=target_id, revision=3, runner_principal_id=runner, disabled=False, capabilities=earlier
+    )
+    calls = len(case.api.calls)
+    enable(case)
+    (update,) = [kwargs for name, kwargs in case.api.calls[calls:] if name == "deployment_targets.update"]
+    assert (str(update["identifier"]), update["revision"]) == (target_id, 3)
+    assert update["body"].capabilities == [*earlier, "read_logs"]
+    assert (update["body"].runner_principal_id, update["body"].disabled) == (runner, False)
+    assert update["body"].approval_policy is None
+    # Once it holds them, a rerun reads and changes no target.
+    calls = len(case.api.calls)
+    enable(case)
+    assert [name for name, _ in case.api.calls[calls:]] == ["deployment_runners.list"]
 
 
 def test_no_operations_skips_the_step_and_status_says_so(owned, monkeypatch):

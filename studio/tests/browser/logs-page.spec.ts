@@ -170,9 +170,17 @@ for (const size of [
       const logs = await platform(page);
       await openLogs(page);
       await expect(page.locator("#main")).toContainText(
-        "Log entries from every run in this environment.",
+        "Log entries from every run in this environment, and snapshots of container logs.",
       );
-      await expect(page.getByRole("tablist")).toHaveCount(0);
+      // Run logs is the first of the two tabs, and the default.
+      await expect(page.getByRole("tab")).toHaveText([
+        "Run logs",
+        "Container logs",
+      ]);
+      await expect(page.getByRole("tab", { name: "Run logs" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
       await expect(rows(page)).toHaveCount(6);
       if (phone)
         await expect(page.locator(".filter-summary")).toContainText(
