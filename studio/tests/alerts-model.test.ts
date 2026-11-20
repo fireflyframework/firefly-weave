@@ -344,6 +344,17 @@ describe("the rule a form makes", () => {
       },
     });
   });
+  it("won't save a rule whose signal this Studio doesn't know, so its workflow and window stay", () => {
+    // A newer server's signal: Studio can't tell its selector or window.
+    const opened = formFromRule({
+      ...rules[1],
+      signal: "runs.newer_ratio",
+      selector: { workflow: "billing" },
+    });
+    expect(ruleDraft(opened)).toEqual({
+      problems: { signal: "Choose a signal from the list to save the rule." },
+    });
+  });
 });
 
 describe("recipient refusals", () => {

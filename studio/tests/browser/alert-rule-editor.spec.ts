@@ -166,6 +166,27 @@ test.describe("The rule editor's states", () => {
     expect(sentTo(platform, "/alert-rules", "POST")).toHaveLength(0);
   });
 
+  test("a rule with a signal Studio doesn't know asks for another before it saves", async ({
+    page,
+  }) => {
+    const platform = await alertsPlatform(page, {
+      path: "/operate/alerts?tab=rules",
+    });
+    await page
+      .getByRole("button", { name: "Edit Transactions in doubt" })
+      .click();
+    await page.getByRole("button", { name: "Save rule" }).click();
+    const signal = page.getByLabel("Signal");
+    await expect(signal).toBeFocused();
+    await expect(signal).toHaveAttribute("aria-invalid", "true");
+    await expect(page.locator("#rule-signal-problem")).toHaveText(
+      "Choose a signal from the list to save the rule.",
+    );
+    expect(
+      sentTo(platform, `/alert-rules/${fixture.ids.inDoubt}`, "PUT"),
+    ).toHaveLength(0);
+  });
+
   test("a save someone else overtook says so and keeps the form", async ({
     page,
   }) => {

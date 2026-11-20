@@ -100,7 +100,12 @@ const selectorLabels = {
             <label for="rule-signal">Signal</label>
             <select
               id="rule-signal"
-              aria-describedby="rule-signal-hint"
+              [attr.aria-describedby]="
+                p.signal
+                  ? 'rule-signal-problem rule-signal-hint'
+                  : 'rule-signal-hint'
+              "
+              [attr.aria-invalid]="p.signal ? 'true' : null"
               (change)="setSignal(value($event))"
             >
               @if (!words()) {
@@ -121,6 +126,11 @@ const selectorLabels = {
                   : "This server doesn't know this signal. Choose another to save the rule."
               }}
             </p>
+            @if (p.signal) {
+              <p class="problem" id="rule-signal-problem">
+                <weave-icon name="failCircle" [size]="16" />{{ p.signal }}
+              </p>
+            }
           </div>
           @if (selector(); as key) {
             <div class="field">

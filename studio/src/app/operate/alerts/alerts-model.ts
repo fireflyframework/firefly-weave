@@ -549,8 +549,13 @@ export type RuleProblems = Partial<Record<keyof RuleForm, string>>;
 export function ruleDraft(
   form: RuleForm,
 ): { draft: AlertRuleDraft } | { problems: RuleProblems } {
-  const problems: RuleProblems = {};
   const words = signalWords(form.signal);
+  // A newer server's signal: saving would drop its selector and window.
+  if (!words)
+    return {
+      problems: { signal: "Choose a signal from the list to save the rule." },
+    };
+  const problems: RuleProblems = {};
   const name = form.name.trim();
   if (!name) problems.name = "Name the rule.";
   else if (name.length > NAME_LIMIT)
