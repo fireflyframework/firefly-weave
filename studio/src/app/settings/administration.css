@@ -94,27 +94,6 @@ code {
   font: var(--type-caption);
   color: var(--muted);
 }
-.pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  font: var(--type-caption);
-  color: var(--muted);
-  white-space: nowrap;
-}
-.pill[data-tone="success"] {
-  border-color: var(--success-bd);
-  background: var(--success-bg);
-  color: var(--success-ink);
-}
-.pill[data-tone="warning"] {
-  border-color: var(--warning-bd);
-  background: var(--warning-bg);
-  color: var(--warning-ink);
-}
 .card dl {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
