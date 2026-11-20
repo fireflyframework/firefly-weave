@@ -207,7 +207,10 @@ export class AlertsStore {
       this.settings,
     ])
       if (section().kind === "idle") section.set({ kind: "loading" });
-    const from = new Date(this.now() - RECENT_MS).toISOString();
+    // Whole seconds, so a cursor's query reads the same on every page.
+    const from = new Date(Math.floor((this.now() - RECENT_MS) / 1000) * 1000)
+      .toISOString()
+      .replace(".000Z", "Z");
     const results = await Promise.all([
       this.read(this.alerts, current, async () => {
         const [firing, recent] = await Promise.all([

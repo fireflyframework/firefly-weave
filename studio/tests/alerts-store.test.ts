@@ -255,7 +255,7 @@ describe("sections", () => {
       item.path.includes("state=resolved"),
     )!;
     expect(new URL(recent.path, "http://studio").searchParams.get("from")).toBe(
-      "2026-11-11T10:54:10.000Z",
+      "2026-11-11T10:54:10Z",
     );
     p.answerAll("a");
     await load;

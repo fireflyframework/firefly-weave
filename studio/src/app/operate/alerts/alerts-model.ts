@@ -631,3 +631,35 @@ export function recipientProblem(
       return "The platform refused this recipient.";
   }
 }
+
+/**
+ * A sentence split around the names it mentions, so a page can keep each
+ * name whole on its line ("kind-weave-test" never breaks at its hyphen).
+ */
+export function nameParts(
+  text: string,
+  names: readonly string[],
+): { text: string; name: boolean }[] {
+  const found = names.filter(Boolean).sort((a, b) => b.length - a.length);
+  const parts: { text: string; name: boolean }[] = [];
+  let rest = text;
+  while (rest) {
+    let at = -1;
+    let name = "";
+    for (const candidate of found) {
+      const index = rest.indexOf(candidate);
+      if (index !== -1 && (at === -1 || index < at)) {
+        at = index;
+        name = candidate;
+      }
+    }
+    if (at === -1) {
+      parts.push({ text: rest, name: false });
+      break;
+    }
+    if (at > 0) parts.push({ text: rest.slice(0, at), name: false });
+    parts.push({ text: name, name: true });
+    rest = rest.slice(at + name.length);
+  }
+  return parts;
+}

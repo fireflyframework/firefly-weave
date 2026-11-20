@@ -34,6 +34,7 @@ import {
   emptyRuleForm,
   formFromRule,
   fromPercent,
+  nameParts,
   notificationText,
   recipientProblem,
   resolvedText,
@@ -359,5 +360,25 @@ describe("recipient refusals", () => {
     expect(recipientProblem("not_member", "", "local")).toBe(
       "This person isn't a member of the project anymore.",
     );
+  });
+});
+
+describe("names in sentences", () => {
+  it("splits a sentence around the names it mentions, longest first", () => {
+    expect(
+      nameParts("Not checked: your access to kind-weave-test was removed", [
+        "kind-weave-test",
+      ]),
+    ).toEqual([
+      { text: "Not checked: your access to ", name: false },
+      { text: "kind-weave-test", name: true },
+      { text: " was removed", name: false },
+    ]);
+    expect(
+      nameParts("a-b and a-b-c", ["a-b", "a-b-c"]).map((part) => part.text),
+    ).toEqual(["a-b", " and ", "a-b-c"]);
+    expect(nameParts("No names here", [""])).toEqual([
+      { text: "No names here", name: false },
+    ]);
   });
 });
