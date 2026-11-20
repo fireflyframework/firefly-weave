@@ -327,12 +327,15 @@ def classify_test_data(
     saved tool call's arguments by its tool's input. Both lists are refused before anything is simulated.
     """
     from firefly_weave.compiler.agent_tools import offline_input_schema
+    from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.compiler.test_data import output_target, step_at
     from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
 
-    bundle = {name: schema.value for name, schema in catalog.schemas.items()}
+    # Platform schemas resolve here as they do in the analysis; a catalog's own schema under a platform name wins
+    # here and is refused by the analysis.
+    bundle = platform_schema_bundle() | {name: schema.value for name, schema in catalog.schemas.items()}
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
     secret: list[str] = []
     unclassified: list[str] = []
@@ -1070,10 +1073,11 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
 def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catalog: CatalogSnapshot) -> set[str]:
     """Step mocks that no longer fit their step's output fields: left out, so the step asks for test data instead of
     the whole run being refused for a pin it may never reach."""
+    from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import validate_payload
     from firefly_weave.compiler.test_data import output_target, step_at
 
-    bundle = {name: schema.value for name, schema in catalog.schemas.items()}
+    bundle = platform_schema_bundle() | {name: schema.value for name, schema in catalog.schemas.items()}
     misfits = set()
     for key, value in mocks.items():
         if not key.startswith("node:"):

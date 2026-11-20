@@ -32,6 +32,7 @@ from firefly_weave.compiler.agent_tools import model_parameters, offline_input_s
 from firefly_weave.compiler.agents import agent_output_schema
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.llm import llm_output_schema
+from firefly_weave.compiler.platform_catalog import platform_schema_bundle
 from firefly_weave.compiler.schema_profile import schema_children
 from firefly_weave.compiler.schemas import _Failure, validate_payload
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
@@ -303,5 +304,7 @@ def check_test_data(
     workflow: JsonObject, data: StudioTestData, catalog: CatalogSnapshot
 ) -> list[tuple[str, CheckCode | None]]:
     """Each entry's pointer and why it is refused, or None when it may be kept; in document order."""
-    bundle = {name: schema.value for name, schema in catalog.schemas.items()}
+    # Platform schemas resolve here as they do in the analysis; a catalog's own schema under a platform name wins
+    # here and is refused by the analysis.
+    bundle = platform_schema_bundle() | {name: schema.value for name, schema in catalog.schemas.items()}
     return [(path, _verdict(target, value, bundle)) for path, target, value in _targets(workflow, data, catalog)]
