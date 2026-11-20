@@ -55,6 +55,12 @@ const OUTCOMES: Record<string, string> = {
         Edit
       </button>
     </p>
+    @if (sessionOnly()) {
+      <p class="pinned-banner-note">
+        This platform can't save simulated failures yet. They last until you
+        close this workflow.
+      </p>
+    }
     @if (overPin()) {
       <p class="pinned-banner-note">
         Its pinned output is kept for when you remove the failure.
@@ -66,6 +72,8 @@ export class FailureBanner {
   failure = input.required<ErrorEntry>();
   /** "step" outside loops; inside one, the picked item's own or every item's. */
   scope = input<"step" | "item" | "every">("step");
+  /** The platform can't save simulated failures: this one lasts for the session. */
+  sessionOnly = input(false);
   /** Pinned output is there too, kept while the failure is. */
   overPin = input(false);
   readonly remove = output<void>();

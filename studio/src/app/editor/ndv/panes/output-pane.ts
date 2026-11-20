@@ -379,6 +379,7 @@ import { describeError } from "../../../errors";
               [failure]="failing.entry"
               [scope]="failing.scope"
               [overPin]="!!pin"
+              [sessionOnly]="session().controller.testData.failuresInSession()"
               (remove)="removeFailure(failing.key)"
               (edit)="openSimulate()"
             />

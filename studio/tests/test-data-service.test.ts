@@ -23,6 +23,7 @@ import {
 import { CHECK_WORDS } from "../src/app/editor/state/test-data-check";
 import {
   emptyTestData,
+  withFailure,
   withInput,
   withPin,
 } from "../src/app/editor/state/test-data-ops";
@@ -706,5 +707,53 @@ describe("test data with runs the reader can't read", () => {
     await service.open({ kind: "local", draftId: "d-1" });
     expect(service.platformSaveAllowed()).toBe(true);
     expect(service.notice()).toBeNull();
+  });
+});
+
+describe("simulated failures a platform can't save", () => {
+  const SCOPE = {
+    profileName: "Acme",
+    subject: "user-1",
+    tenantId: "7b0c1c43-3f5a-4cde-9f0e-3c2d5a6b7c8d",
+    projectId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+  };
+  const OTHER = { ...SCOPE, projectId: "1b1c2d3e-4f50-4a61-8b72-c3d4e5f60719" };
+  const failing = () =>
+    withFailure(
+      withPin(emptyTestData(ISO), "lookup", pin({ id: 1 }), ISO),
+      "submit",
+      { code: "REQUEST_REFUSED", source: "manual" },
+      ISO,
+    );
+
+  it("stay in this session only: never sent to the platform, never kept on this computer", async () => {
+    const { value, store } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    expect(await service.change(failing(), [])).toMatchObject({ ok: true });
+    expect(service.toPlatform().document.errors).toBeDefined();
+    service.keepFailuresInSession();
+    expect(service.failuresInSession()).toBe(true);
+    // Still there to execute with, and everything else goes on as before.
+    expect(service.data().errors).toEqual(failing().errors);
+    expect(service.toPlatform().document).not.toHaveProperty("errors");
+    expect(service.toPlatform().document.pins).toEqual(failing().pins);
+    await service.flush();
+    const kept = [...store.values.values()].map((text) => JSON.parse(text));
+    expect(kept.some((data) => data.pins?.lookup)).toBe(true);
+    expect(kept.some((data) => "errors" in data)).toBe(false);
+  });
+
+  it("go when another account or environment opens", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    await service.change(failing(), []);
+    service.keepFailuresInSession();
+    await service.open({ kind: "connected", scope: OTHER, draftId: "d-1" });
+    expect(service.failuresInSession()).toBe(false);
+    expect(service.data().errors).toBeUndefined();
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    expect(service.data().errors).toBeUndefined();
   });
 });

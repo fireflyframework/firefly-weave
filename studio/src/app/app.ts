@@ -8132,6 +8132,29 @@ export class App implements CanvasHost {
         false,
       );
     }
+    // A platform that predates simulated failures refuses them naming no
+    // path: it can't save them only when the same save without them works.
+    const { errors, ...rest } = document as StudioTestData;
+    if (
+      kind === "test-data" &&
+      service &&
+      answer.code === "WV-STUDIO-DOCUMENT-SCHEMA" &&
+      !answer.paths.length &&
+      errors &&
+      again
+    ) {
+      const saved = await this.savePlatformDocument(
+        kind,
+        rest,
+        revision,
+        false,
+      );
+      if (saved && open()) {
+        service.keepFailuresInSession();
+        this.cdr.markForCheck();
+      }
+      return saved;
+    }
     if (
       kind === "test-data" &&
       service &&
