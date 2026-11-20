@@ -262,13 +262,19 @@ for (const size of [
       await expect(sheet).toContainText(
         "Saving makes you this channel's owner: its mail goes out as you, from acme-mail",
       );
-      await expect(sheet.getByLabel("Outside address 1")).toHaveValue(
-        "oncall@vendor.example",
+      // A saved address is a chip; only a new one is a field.
+      await expect(
+        sheet.getByRole("button", { name: "Remove oncall@vendor.example" }),
+      ).toBeVisible();
+      await expect(sheet.getByRole("textbox", { name: /Outside/ })).toHaveCount(
+        0,
       );
       await sheet
         .getByRole("button", { name: "Add an outside address" })
         .click();
-      const added = sheet.getByLabel("Outside address 2");
+      const added = sheet.getByRole("textbox", {
+        name: "New outside address 1",
+      });
       await expect(added).toBeFocused();
       await added.fill("alerts@example.org");
       await sheet.getByRole("button", { name: "Save channel" }).click();
@@ -492,7 +498,66 @@ test.describe("Operate › Alerts states", () => {
     await expect(sheet).toContainText(
       "Outside addresses can't be used in local yet. An administrator can allow a domain in Settings › Administration.",
     );
+    // Nothing offers an outside address that can't be used.
+    await expect(
+      sheet.getByRole("button", { name: "Add an outside address" }),
+    ).toHaveCount(0);
+    await expect(sheet).not.toContainText(
+      "Outside addresses need an allowed domain",
+    );
+    await expect(sheet).toContainText(
+      /Saving adds the channel to local\. Its mail goes out as you, from .+, when a rule that sends to it fires\./,
+    );
     await shot(page, "alerts-no-domain-1440");
+  });
+
+  test("a saved outside address whose domain is no longer allowed says so before Save", async ({
+    page,
+  }) => {
+    const platform = await alertsPlatform(page, {
+      path: "/operate/alerts?tab=channels",
+      answers: {
+        settings: {
+          recipient_domains: [],
+          approval_channel_ids: [],
+          revision: 0,
+        },
+      },
+    });
+    const row = page
+      .getByRole("table", { name: "Email channels" })
+      .getByRole("row")
+      .filter({ hasText: "Platform team" });
+    await expect(row).toContainText(
+      "oncall@vendor.example: vendor.example isn't an allowed email domain in local.",
+    );
+    await page.getByRole("button", { name: "Edit Platform team" }).click();
+    const sheet = page.getByRole("dialog", { name: "Edit Platform team" });
+    const remove = sheet.getByRole("button", {
+      name: "Remove oncall@vendor.example",
+    });
+    await expect(remove).toHaveAccessibleDescription(
+      "vendor.example isn't an allowed email domain in local. Remove this address to save the channel. It gets no alert mail until an administrator allows the domain.",
+    );
+    await sheet.getByRole("button", { name: "Save channel" }).click();
+    await expect(remove).toBeFocused();
+    expect(
+      sentTo(platform, `/alert-channels/${fixture.ids.team}`, "PUT"),
+    ).toHaveLength(0);
+    await remove.click();
+    // Focus stays in the sheet: with no address left to add, on Save.
+    const save = sheet.getByRole("button", { name: "Save channel" });
+    await expect(save).toBeFocused();
+    await save.click();
+    await expect(sheet).toHaveCount(0);
+    const [update] = sentTo(
+      platform,
+      `/alert-channels/${fixture.ids.team}`,
+      "PUT",
+    );
+    expect(
+      (update.body as { recipients: object[] }).recipients,
+    ).not.toContainEqual({ address: "oncall@vendor.example" });
   });
 
   test("recipients never reach the address bar, storage or console", async ({
@@ -504,7 +569,9 @@ test.describe("Operate › Alerts states", () => {
     await page.getByRole("button", { name: "Edit Platform team" }).click();
     const sheet = page.getByRole("dialog", { name: "Edit Platform team" });
     await sheet.getByRole("button", { name: "Add an outside address" }).click();
-    await sheet.getByLabel("Outside address 2").fill("pager@vendor.example");
+    await sheet
+      .getByRole("textbox", { name: "New outside address 1" })
+      .fill("pager@vendor.example");
     await sheet.getByRole("button", { name: "Save channel" }).click();
     await expect(sheet).toHaveCount(0);
     const stored = await page.evaluate(() =>

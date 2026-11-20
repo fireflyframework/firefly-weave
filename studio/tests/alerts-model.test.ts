@@ -33,6 +33,7 @@ import {
   alertsPath,
   alertsTab,
   conditionText,
+  domainOf,
   emptyRuleForm,
   formFromRule,
   fromPercent,
@@ -358,6 +359,10 @@ describe("the rule a form makes", () => {
 });
 
 describe("recipient refusals", () => {
+  it("compares an address's domain in lower case, as allowed domains are kept", () => {
+    expect(domainOf("Oncall@Vendor.Example")).toBe("vendor.example");
+    expect(domainOf("a@b@sub.example.org")).toBe("sub.example.org");
+  });
   it("says why the platform refused an outside address", () => {
     expect(
       recipientProblem("domain_not_allowed", "alerts@example.org", "local"),

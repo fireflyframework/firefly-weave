@@ -617,6 +617,10 @@ export function ruleDraft(
 
 // ------------------------------------------------------------------ recipients
 
+/** An address's domain as allowed domains are kept: lower case. */
+export const domainOf = (address: string) =>
+  address.slice(address.lastIndexOf("@") + 1).toLowerCase();
+
 /** Why the platform refused an outside address (WV-ALERT-RECIPIENT reasons). */
 export function recipientProblem(
   reason: string,

@@ -62,8 +62,10 @@ import {
   alertsTab,
   alertsTabs,
   conditionText,
+  domainOf,
   nameParts,
   notificationTone,
+  recipientProblem,
   resolvedText,
   severityWords,
   signalName,
@@ -762,7 +764,8 @@ export type RuleTarget =
         @if (part.name) {
           <span class="nb">{{ part.text }}</span>
         } @else {
-          {{ part.text }}
+          <!-- No space of its own: "address: why" keeps its colon close. -->
+          <ng-container>{{ part.text }}</ng-container>
         }
       }
     </ng-template>
@@ -1112,8 +1115,21 @@ export class AlertsPage implements DoCheck, OnDestroy {
       channel.recipient_states.map((item) => [item.index, item.state]),
     );
     const environment = this.environmentName();
+    const settings = this.store.settings();
+    // Delivery skips an address whose domain an administrator removed.
+    const allowed =
+      settings.kind === "ready"
+        ? new Set(settings.value.recipient_domains)
+        : null;
     return channel.recipients.map((recipient: Recipient, index) => {
-      const state = states.get(index) ?? "ok";
+      const read = states.get(index) ?? "ok";
+      const state =
+        read === "ok" &&
+        "address" in recipient &&
+        allowed &&
+        !allowed.has(domainOf(recipient.address))
+          ? "domain_not_allowed"
+          : read;
       const key = "member" in recipient ? recipient.member : recipient.address;
       if ("member" in recipient) {
         const you = recipient.member === this.host.identity?.principal_id;
@@ -1136,7 +1152,7 @@ export class AlertsPage implements DoCheck, OnDestroy {
       }
       const text =
         state === "domain_not_allowed"
-          ? `${recipient.address}: its domain isn't allowed in ${environment} anymore, so the channel skips it.`
+          ? `${recipient.address}: ${recipientProblem("domain_not_allowed", recipient.address, environment)}`
           : state === "without_consent"
             ? `${recipient.address} has no opt-in in ${environment}, so the channel skips it.`
             : `${recipient.address} · outside address`;

@@ -702,3 +702,8 @@ button.link-button {
 .outside .problem {
   grid-column: 1 / -1;
 }
+/* A saved address: a chip at its own width, its problem under it. */
+.outside.saved {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+}

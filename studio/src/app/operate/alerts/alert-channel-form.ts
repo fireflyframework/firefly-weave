@@ -46,7 +46,7 @@ import type {
   AlertSettings,
   Recipient,
 } from "./alerts-api";
-import { recipientProblem } from "./alerts-model";
+import { domainOf, recipientProblem } from "./alerts-model";
 import type { AlertsStore } from "./alerts-store";
 
 /** A mail connection the person may send from. */
@@ -58,6 +58,8 @@ interface Outside {
   id: number;
   value: string;
   problem: string;
+  /** Saved with the channel: shown as a chip, not a field. */
+  saved: boolean;
 }
 const NAME_LIMIT = 80;
 const RECIPIENT_LIMIT = 10;
@@ -201,45 +203,78 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             >
           </p>
         }
-        @for (row of outside(); track row.id; let index = $index) {
-          <div class="outside">
-            <input
-              type="email"
-              autocomplete="off"
-              spellcheck="false"
-              [attr.aria-label]="'Outside address ' + (index + 1)"
-              [id]="'channel-outside-' + row.id"
-              [value]="row.value"
-              [attr.aria-invalid]="row.problem ? 'true' : null"
-              [attr.aria-describedby]="
-                row.problem ? 'channel-outside-problem-' + row.id : null
-              "
-              (input)="editAddress(row.id, value($event))"
-            />
+        @for (row of outsideRows(); track row.id) {
+          @if (row.saved) {
+            <div class="outside saved">
+              <span class="chip" [class.warn]="row.shown"
+                ><weave-icon
+                  [name]="row.shown ? 'warning' : 'email'"
+                  [size]="16" /><span>{{ row.value }}</span
+                ><button
+                  type="button"
+                  [id]="'channel-outside-' + row.id"
+                  [attr.aria-label]="'Remove ' + row.value"
+                  [attr.aria-describedby]="
+                    row.shown ? 'channel-outside-problem-' + row.id : null
+                  "
+                  [attr.data-problem]="row.shown ? 'true' : null"
+                  (click)="removeAddress(row.id)"
+                >
+                  <weave-icon name="close" [size]="16" /></button
+              ></span>
+              @if (row.shown) {
+                <p class="problem" [id]="'channel-outside-problem-' + row.id">
+                  <weave-icon name="failCircle" [size]="16" />{{ row.shown }}
+                </p>
+              }
+            </div>
+          } @else {
+            <div class="outside">
+              <input
+                type="email"
+                autocomplete="off"
+                spellcheck="false"
+                [attr.aria-label]="row.label"
+                [id]="'channel-outside-' + row.id"
+                [value]="row.value"
+                [attr.aria-invalid]="row.shown ? 'true' : null"
+                [attr.aria-describedby]="
+                  row.shown ? 'channel-outside-problem-' + row.id : null
+                "
+                (input)="editAddress(row.id, value($event))"
+              />
+              <button
+                type="button"
+                class="icon-button"
+                [attr.aria-label]="'Remove ' + (row.value || row.label)"
+                (click)="removeAddress(row.id)"
+              >
+                <weave-icon name="close" [size]="16" />
+              </button>
+              @if (row.shown) {
+                <p class="problem" [id]="'channel-outside-problem-' + row.id">
+                  <weave-icon name="failCircle" [size]="16" />{{ row.shown }}
+                </p>
+              }
+            </div>
+          }
+        }
+        @if (domains().length) {
+          @if (room()) {
             <button
               type="button"
-              class="icon-button"
-              [attr.aria-label]="'Remove ' + (row.value || 'this address')"
-              (click)="removeAddress(row.id)"
+              class="link-button"
+              id="channel-outside-add"
+              (click)="addAddress()"
             >
-              <weave-icon name="close" [size]="16" />
+              <weave-icon name="plus" [size]="16" />Add an outside address
             </button>
-            @if (row.problem) {
-              <p class="problem" [id]="'channel-outside-problem-' + row.id">
-                <weave-icon name="failCircle" [size]="16" />{{ row.problem }}
-              </p>
-            }
-          </div>
+          }
+          <p class="hint">
+            Outside addresses need an allowed domain and an opt-in an
+            administrator recorded.
+          </p>
         }
-        @if (room()) {
-          <button type="button" class="link-button" (click)="addAddress()">
-            <weave-icon name="plus" [size]="16" />Add an outside address
-          </button>
-        }
-        <p class="hint">
-          Outside addresses need an allowed domain and an opt-in an
-          administrator recorded.
-        </p>
       </div>
       <p class="says">{{ saying() }}</p>
       @if (saveError()) {
@@ -363,6 +398,26 @@ export class AlertChannelForm implements OnInit {
   readonly room = computed(
     () => this.memberIds().length + this.outside().length < RECIPIENT_LIMIT,
   );
+  /**
+   * The outside addresses as the sheet shows them: a saved one as a chip that
+   * says when its domain is no longer allowed (delivery skips it), a new one
+   * as a field, each with the problem under it.
+   */
+  readonly outsideRows = computed(() => {
+    const settings = this.settings();
+    const allowed = settings ? new Set(settings.recipient_domains) : null;
+    const environment = this.environment();
+    let added = 0;
+    return this.outside().map((row) => ({
+      ...row,
+      label: row.saved ? row.value : `New outside address ${++added}`,
+      shown:
+        row.problem ||
+        (row.saved && allowed && !allowed.has(domainOf(row.value))
+          ? `${recipientProblem("domain_not_allowed", row.value, environment)} Remove this address to save the channel. It gets no alert mail until an administrator allows the domain.`
+          : ""),
+    }));
+  });
   /** Who owns the channel now, when it isn't the person editing it. */
   readonly ownerHint = computed(() => {
     const channel = this.channel();
@@ -376,7 +431,7 @@ export class AlertChannelForm implements OnInit {
       this.connections().find((item) => item.revisionId === this.from())
         ?.name ?? "the connection you choose";
     if (!channel)
-      return `Saving adds the channel to ${this.environment()}. Its mail goes out as you, from ${from}, to the rules that send to it.`;
+      return `Saving adds the channel to ${this.environment()}. Its mail goes out as you, from ${from}, when a rule that sends to it fires.`;
     const uses = this.rules().filter((rule) =>
       rule.channel_ids.includes(channel.id),
     ).length;
@@ -412,6 +467,7 @@ export class AlertChannelForm implements OnInit {
             id: ++this.rows,
             value: item.address,
             problem: "",
+            saved: true,
           })),
       );
     }
@@ -431,7 +487,10 @@ export class AlertChannelForm implements OnInit {
   }
   addAddress() {
     const id = ++this.rows;
-    this.outside.update((rows) => [...rows, { id, value: "", problem: "" }]);
+    this.outside.update((rows) => [
+      ...rows,
+      { id, value: "", problem: "", saved: false },
+    ]);
     afterNextRender(
       () =>
         (
@@ -447,8 +506,23 @@ export class AlertChannelForm implements OnInit {
       rows.map((row) => (row.id === id ? { ...row, value, problem: "" } : row)),
     );
   }
+  /** Removes an address and keeps focus in the list: the next address, Add, or Save. */
   removeAddress(id: number) {
-    this.outside.update((rows) => rows.filter((row) => row.id !== id));
+    const rows = this.outside();
+    const at = rows.findIndex((row) => row.id === id);
+    const next = rows[at + 1] ?? rows[at - 1];
+    this.outside.set(rows.filter((row) => row.id !== id));
+    afterNextRender(
+      () => {
+        const root = this.element.nativeElement as HTMLElement;
+        const target =
+          (next && root.querySelector(`#channel-outside-${next.id}`)) ||
+          root.querySelector("#channel-outside-add") ||
+          root.querySelector('button[type="submit"]');
+        (target as HTMLElement | null)?.focus();
+      },
+      { injector: this.injector },
+    );
   }
 
   /** The channel the sheet describes, or null after naming what's missing. */
@@ -471,9 +545,10 @@ export class AlertChannelForm implements OnInit {
         .filter((row) => row.value.trim())
         .map((row) => ({
           ...row,
-          problem: mailbox.test(row.value.trim())
-            ? ""
-            : "Enter an email address, such as oncall@example.org.",
+          problem:
+            row.saved || mailbox.test(row.value.trim())
+              ? ""
+              : "Enter an email address, such as oncall@example.org.",
         })),
     );
     const recipients: Recipient[] = [
@@ -489,7 +564,7 @@ export class AlertChannelForm implements OnInit {
       this.nameProblem() ||
       this.fromProblem() ||
       this.memberProblem() ||
-      this.outside().some((row) => row.problem)
+      this.outsideRows().some((row) => row.shown)
     ) {
       this.focusProblem();
       return null;
@@ -506,7 +581,7 @@ export class AlertChannelForm implements OnInit {
       () =>
         (
           this.element.nativeElement.querySelector(
-            '[aria-invalid="true"]',
+            '[aria-invalid="true"], [data-problem="true"]',
           ) as HTMLElement | null
         )?.focus(),
       { injector: this.injector },
