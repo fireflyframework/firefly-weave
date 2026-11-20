@@ -22,7 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // waiting, expired, failed and no-access states. The platform is mocked.
 import { mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { test, expect, type Page, type Request } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type Request,
+  type Route,
+} from "@playwright/test";
 import { connected } from "./support";
 
 const captures = resolve(
@@ -237,6 +243,16 @@ const fetchButton = (page: Page) =>
     .locator(".fetchbar")
     .getByRole("button", { name: /Fetch logs|Fetching/ });
 const member = (page: Page, name: string) => page.getByRole("region", { name });
+/** A color token as the page computes it, such as "rgb(149, 149, 144)". */
+const token = (page: Page, name: string) =>
+  page.evaluate((name) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, name);
 /** Hides or shows the page, as switching browser tabs does. */
 const shown = (page: Page, visible: boolean) =>
   page.evaluate((visible) => {
@@ -297,7 +313,9 @@ for (const size of [
       );
       await fetchButton(page).click();
       await expect(fetchButton(page)).toHaveAttribute("aria-busy", "true");
-      await expect(fetchButton(page)).toHaveText("Fetching…");
+      await expect(fetchButton(page)).toHaveText("Fetching…", {
+        useInnerText: true,
+      });
       await expect(page.locator(".fetchbar")).toContainText(
         "Asking the runner of local-docker. A snapshot usually arrives within 10 seconds.",
       );
@@ -333,7 +351,9 @@ for (const size of [
       await expect(member(page, SECOND).locator(".count")).toHaveText(
         "3 lines",
       );
-      await expect(fetchButton(page)).toHaveText("Fetch logs");
+      await expect(fetchButton(page)).toHaveText("Fetch logs", {
+        useInnerText: true,
+      });
       expect(await noSideways(page)).toBe(true);
       await shot(page, `container-logs-snapshot-${size.width}`);
     });
@@ -392,18 +412,44 @@ test.describe("Operate › Logs › Container logs", () => {
           `${new Date(at).toISOString()} ${stream} ${line}\n`,
       ).join(""),
     );
-    await first
-      .getByRole("button", { name: `Copy the lines of ${FIRST}` })
-      .click();
-    // Seen and announced alike, then cleared so no stale confirmation stays.
-    const copied = page.locator(".container-logs .copied[role=status]");
-    await expect(copied).toBeVisible();
-    await expect(copied).toHaveText(`Copied 4 lines of ${FIRST}.`);
+    const copy = first.getByRole("button", {
+      name: `Copy the lines of ${FIRST}`,
+    });
+    const second = member(page, SECOND);
+    const before = [await copy.boundingBox(), await second.boundingBox()];
+    await copy.click();
+    // Beside the Copy that was pressed, seen and announced alike, with a check.
+    const copied = first.locator(".copy-tip[role=status]");
+    await expect(copied).toHaveText("Copied 4 lines");
+    await expect(copy.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "check",
+    );
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
       "Reported failure SMTP_REJECTED for task send",
     );
+    // Nothing moves while it shows, and it clears so no stale confirmation stays.
+    expect([await copy.boundingBox(), await second.boundingBox()]).toEqual(
+      before,
+    );
     await page.clock.runFor(4_000);
     await expect(copied).toHaveText("");
+    await expect(copy.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "copy",
+    );
+    await expect(page.locator(".container-logs p.copied")).toHaveCount(0);
+    // A copy the browser refuses says what to do instead, in the same place.
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
+    });
+    await copy.click();
+    await expect(copied).toHaveText(
+      "Couldn't copy. Select the lines and copy them.",
+    );
+    expect([await copy.boundingBox(), await second.boundingBox()]).toEqual(
+      before,
+    );
   });
 
   test("markup in a line shows as text", async ({ page }) => {
@@ -431,7 +477,7 @@ test.describe("Operate › Logs › Container logs", () => {
     page,
   }) => {
     const logs = await platform(page);
-    // The runner couldn't read the second member, so only the first is there.
+    // The runner couldn't read the second chosen member, so only the first came back.
     logs.reads = [
       snapshot("ready", { truncated: true }, { [FIRST]: lines[FIRST] }),
     ];
@@ -439,10 +485,111 @@ test.describe("Operate › Logs › Container logs", () => {
     await fetchButton(page).click();
     await page.clock.runFor(1_000);
     await expect(member(page, FIRST)).toBeVisible();
-    await expect(member(page, SECOND)).toHaveCount(0);
+    const unread = member(page, SECOND);
+    await expect(unread).toContainText(
+      "Weave couldn't read this member's logs. It may have stopped or been removed since the list was read.",
+    );
+    await expect(unread.getByRole("button")).toHaveCount(0);
+    await expect(page.locator(".snapshot-note")).toContainText(
+      "Some lines are missing: long lines were cut, or older lines were left out to keep the snapshot within 256 KiB.",
+    );
+    await expect(page.locator(".snapshot-note")).not.toContainText(
+      "couldn't be read",
+    );
+    // With no member chosen, a member left out has no box to say so: the note does.
+    for (const host of [FIRST, SECOND])
+      await page.getByRole("button", { name: `Remove ${host}` }).click();
+    logs.reads = [
+      snapshot(
+        "ready",
+        { truncated: true, requested_members: [] },
+        { [FIRST]: [] },
+      ),
+    ];
+    await fetchButton(page).click();
+    await page.clock.runFor(1_000);
     await expect(page.locator(".snapshot-note")).toContainText(
       "Some lines are missing: long lines were cut, older lines were left out to keep the snapshot within 256 KiB, or a member couldn't be read.",
     );
+    // A member that printed nothing came back, so it was read.
+    await expect(member(page, FIRST)).toContainText(
+      "Nothing printed in this range.",
+    );
+    await expect(member(page, SECOND)).toHaveCount(0);
+  });
+
+  test("a restarted member marks where its previous container's lines end", async ({
+    page,
+  }) => {
+    const logs = await platform(page);
+    const ready = snapshot("ready", {}, { [FIRST]: lines[FIRST] });
+    logs.reads = [
+      {
+        ...ready,
+        requested_members: [FIRST],
+        members: [{ ...ready.members[0], restarts: 3, previous_lines: 1 }],
+      },
+    ];
+    await openContainers(page);
+    await fetchButton(page).click();
+    await page.clock.runFor(1_000);
+    const box = member(page, FIRST);
+    await expect(box.locator(".count")).toHaveText(
+      "4 lines · restarted 3 times",
+    );
+    const rows = box.getByRole("row");
+    await expect(rows).toHaveCount(5);
+    await expect(rows.nth(0)).toContainText(
+      "Worker weave-worker-7c9f-x2k4 ready",
+    );
+    await expect(rows.nth(1)).toHaveText(
+      "Restarted. Lines above are from the previous container.",
+    );
+    await expect(rows.nth(2)).toContainText("Claimed task fetch");
+  });
+
+  test("Follow fetches quietly and the snapshot note says when it updated", async ({
+    page,
+  }) => {
+    const logs = await platform(page);
+    await openContainers(page);
+    const hint = page.locator(".fetchbar .hint");
+    const said = await hint.textContent();
+    const width = (await fetchButton(page).boundingBox())?.width;
+    await page.getByRole("switch", { name: "Follow" }).check();
+    await expect.poll(() => logs.creates.length).toBe(1);
+    // Mid-tick, waiting for the runner: the button and the live hint stay as they were.
+    await expect(fetchButton(page)).toHaveText("Fetch logs", {
+      useInnerText: true,
+    });
+    await expect(fetchButton(page)).not.toHaveAttribute("aria-busy", "true");
+    await expect(hint).toHaveText(said ?? "");
+    await page.clock.runFor(1_000);
+    await expect(member(page, FIRST)).toBeVisible();
+    await expect(page.locator(".snapshot-note")).toHaveText(
+      /^\s*Following: updated \d\d:\d\d:\d\d\. Snapshots expire after 1 hour\. Secrets are redacted before they leave the runner\.\s*$/,
+    );
+    expect((await fetchButton(page).boundingBox())?.width).toBe(width);
+    await page.getByRole("switch", { name: "Follow" }).uncheck();
+    await expect(page.locator(".snapshot-note")).toHaveText(
+      /^\s*Snapshot from /,
+    );
+  });
+
+  test("Follow waits for a runner out of touch and says so", async ({
+    page,
+  }) => {
+    // Last seen 5 s before the page's clock: out of touch 85 s later.
+    const logs = await platform(page);
+    await openContainers(page);
+    await page.getByRole("switch", { name: "Follow" }).check();
+    await expect.poll(() => logs.creates.length).toBe(1);
+    for (let tick = 0; tick < 9; tick++) await page.clock.runFor(10_000);
+    await expect(page.locator(".fetchbar .hint")).toHaveText(
+      "Follow is waiting for the runner of local-docker. It fetches again once the runner is back in touch.",
+    );
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeChecked();
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeEnabled();
   });
 
   test("Follow asks for a new snapshot every 10 seconds", async ({ page }) => {
@@ -562,13 +709,27 @@ test.describe("Operate › Logs › Container logs", () => {
   }) => {
     const logs = await platform(page, { lastSeen: "2026-11-19T10:52:01Z" });
     await openContainers(page);
-    await expect(page.locator(".container-logs .notice")).toHaveText(
+    const notice = page.locator(".container-logs .notice");
+    await expect(notice).toHaveText(
       "The runner for local-docker hasn't been in touch for 2 min, so Weave can't fetch its logs.",
     );
     await expect(fetchButton(page)).toHaveAttribute("aria-disabled", "true");
     await fetchButton(page).click({ force: true });
     expect(logs.creates).toHaveLength(0);
+    // A turned-off Follow looks turned off.
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeDisabled();
+    expect(
+      await page
+        .locator(".fetchbar .checkbox-field")
+        .evaluate((label) => getComputedStyle(label).color),
+    ).toBe(await token(page, "--disabled-ink"));
     await shot(page, "container-logs-runner-offline-1440");
+    // Before the form, so a phone shows it before anyone fills the form in.
+    await expect(
+      page.locator(".container-logs > .notice + .container-form"),
+    ).toHaveCount(1);
+    await page.setViewportSize({ width: 360, height: 740 });
+    await expect(notice).toBeInViewport();
   });
 
   test("a target whose runner can't read logs says so", async ({ page }) => {
@@ -578,6 +739,9 @@ test.describe("Operate › Logs › Container logs", () => {
       "This target's runner can't fetch logs.",
     );
     await expect(fetchButton(page)).toHaveAttribute("aria-disabled", "true");
+    await expect(
+      page.locator(".container-logs > .notice + .container-form"),
+    ).toHaveCount(1);
     await shot(page, "container-logs-no-read-logs-1440");
   });
 
@@ -592,6 +756,9 @@ test.describe("Operate › Logs › Container logs", () => {
     await expect(page.getByRole("alert")).toHaveText(
       "The runner of local-docker didn't answer within 2 minutes. Try again, or check its runner in Operate › Clusters.",
     );
+    await expect(
+      page.getByRole("alert").getByRole("link", { name: "Operate › Clusters" }),
+    ).toHaveAttribute("href", `/operate/clusters/targets/${TARGET}`);
     await shot(page, "container-logs-no-answer-1440");
     // A snapshot whose hour ends 5 seconds from now: once it has, it shows nothing of its lines.
     logs.reads = [snapshot("ready", { expires_at: await soon(page) })];
@@ -615,8 +782,26 @@ test.describe("Operate › Logs › Container logs", () => {
     const logs = await platform(page);
     logs.reads = [snapshot("pending"), snapshot("pending"), snapshot("ready")];
     await openContainers(page);
+    const follow = page.getByRole("switch", { name: "Follow" });
+    const idle = [
+      await fetchButton(page).boundingBox(),
+      await follow.boundingBox(),
+    ];
     await fetchButton(page).click();
     await expect(fetchButton(page)).toHaveAttribute("aria-busy", "true");
+    await expect(fetchButton(page)).toHaveText("Fetching…", {
+      useInnerText: true,
+    });
+    // The button keeps its width, so Follow never moves under the pointer, and it is busy, not unavailable.
+    expect([
+      await fetchButton(page).boundingBox(),
+      await follow.boundingBox(),
+    ]).toEqual(idle);
+    expect(
+      await fetchButton(page).evaluate(
+        (button) => getComputedStyle(button).backgroundColor,
+      ),
+    ).toBe(await token(page, "--accent"));
     await shot(page, "container-logs-waiting-1440");
     await page.clock.runFor(2_000);
     await expect(fetchButton(page)).toHaveAttribute("aria-busy", "true");
@@ -747,5 +932,181 @@ for (const size of sizes)
       await openContainers(page);
       await expect(page.locator(".container-logs .logs-access")).toBeVisible();
       await shot(page, name("8-no-access"));
+    });
+
+    test("Follow: mid-tick, updated, and waiting for the runner", async ({
+      page,
+    }) => {
+      const logs = await platform(page);
+      await openContainers(page);
+      await page.getByRole("switch", { name: "Follow" }).check();
+      await expect.poll(() => logs.creates.length).toBe(1);
+      await shot(page, name("9a-following-mid-tick"));
+      await page.clock.runFor(1_000);
+      await expect(member(page, FIRST)).toBeVisible();
+      await expect(page.locator(".snapshot-note")).toContainText("Following");
+      await shot(page, name("9b-following-updated"));
+      // The runner, last seen 5 s before the page's clock, is out of touch 85 s later.
+      for (let tick = 0; tick < 9; tick++) await page.clock.runFor(10_000);
+      await expect(page.locator(".fetchbar .hint")).toContainText(
+        "Follow is waiting",
+      );
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("10-following-runner-offline"));
+    });
+
+    test("lines missing: a member unread, and every member read", async ({
+      page,
+    }) => {
+      const logs = await platform(page);
+      logs.reads = [
+        snapshot("ready", { truncated: true }, { [FIRST]: lines[FIRST] }),
+      ];
+      await openContainers(page);
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      await member(page, SECOND).scrollIntoViewIfNeeded();
+      await expect(member(page, SECOND)).toContainText("couldn't read");
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("11a-truncated-unread"));
+      logs.reads = [snapshot("ready", { truncated: true })];
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      await expect(member(page, SECOND)).toContainText("3 lines");
+      await page.locator(".snapshot-note").scrollIntoViewIfNeeded();
+      await shot(page, name("11b-truncated-all-read"));
+    });
+
+    test("a member that restarted", async ({ page }) => {
+      const logs = await platform(page);
+      const ready = snapshot("ready", {}, { [FIRST]: lines[FIRST] });
+      logs.reads = [
+        {
+          ...ready,
+          requested_members: [FIRST],
+          members: [{ ...ready.members[0], restarts: 3, previous_lines: 1 }],
+        },
+      ];
+      await openContainers(page);
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      await member(page, FIRST).scrollIntoViewIfNeeded();
+      await expect(member(page, FIRST).locator(".restart")).toBeVisible();
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("12-restarted"));
+    });
+
+    test("Copy pressed, after 4 seconds, and a refused copy", async ({
+      page,
+      context,
+    }) => {
+      test.skip(
+        size.width !== 1440 && size.width !== 360,
+        "the copy states at 1440 and 360",
+      );
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await platform(page);
+      await openContainers(page);
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      const copy = member(page, FIRST).getByRole("button", {
+        name: `Copy the lines of ${FIRST}`,
+      });
+      await member(page, FIRST).scrollIntoViewIfNeeded();
+      await copy.click();
+      await expect(member(page, FIRST).locator(".copy-tip")).toHaveText(
+        "Copied 4 lines",
+      );
+      // Past the fade-in, as a person sees it.
+      await page.clock.runFor(300);
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("13a-copied"));
+      await page.clock.runFor(4_000);
+      await expect(member(page, FIRST).locator(".copy-tip")).toHaveText("");
+      await shot(page, name("13b-copied-after-4s"));
+      await page.evaluate(() => {
+        navigator.clipboard.writeText = () =>
+          Promise.reject(new Error("denied"));
+      });
+      await copy.click();
+      await page.clock.runFor(300);
+      await expect(member(page, FIRST).locator(".copy-tip")).toContainText(
+        "Couldn't copy",
+      );
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("13c-copy-refused"));
+    });
+
+    test("states no shot had: no targets, loading, errors, choices", async ({
+      page,
+    }) => {
+      test.skip(
+        size.width !== 1440 && size.width !== 360,
+        "the remaining states at 1440 and 360",
+      );
+      const logs = await platform(page);
+      // Routes added later answer first.
+      let answer: ((route: Route) => Promise<void>) | null = (route) =>
+        route.fulfill({ json: { items: [], next_cursor: null } });
+      const held: Route[] = [];
+      await page.route("**/deployment-targets?**", async (route) => {
+        if (answer) return answer(route);
+        held.push(route);
+      });
+      await openContainers(page);
+      await expect(
+        page.getByText("No targets to read logs from."),
+      ).toBeVisible();
+      await shot(page, name("14-no-targets"));
+      answer = null;
+      await page.reload();
+      await expect(
+        page.locator(".container-logs weave-operate-state"),
+      ).toBeVisible();
+      await shot(page, name("15-loading"));
+      for (const route of held.splice(0))
+        await route.fulfill({
+          status: 500,
+          json: { code: "WV-INTERNAL", message: "The platform failed." },
+        });
+      await expect(
+        page.getByRole("button", { name: "Try again" }),
+      ).toBeVisible();
+      await shot(page, name("16-targets-error"));
+      answer = (route) =>
+        route.fulfill({
+          status: 403,
+          json: { code: "WV-FORBIDDEN", message: "Not allowed." },
+        });
+      await page.reload();
+      await expect(page.locator(".container-logs .logs-access")).toContainText(
+        "deployment.read",
+      );
+      await shot(page, name("17-no-deployment-read"));
+      // Back to the platform's own targets.
+      answer = (route) => route.fallback();
+      await page.reload();
+      await page.getByLabel("Last lines").fill("5000");
+      await expect(page.locator("#container-tail-problem")).toBeVisible();
+      await shot(page, name("18-invalid-last-lines"));
+      await page.getByLabel("Last lines").fill("200");
+      for (const host of [FIRST, SECOND])
+        await page.getByRole("button", { name: `Remove ${host}` }).click();
+      await expect(page.getByLabel("Add a member")).toBeVisible();
+      await shot(page, name("19-every-running-member"));
+      logs.reads = [
+        snapshot(
+          "ready",
+          { requested_members: [] },
+          { [FIRST]: lines[FIRST], [SECOND]: [] },
+        ),
+      ];
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      await member(page, SECOND).scrollIntoViewIfNeeded();
+      await expect(member(page, SECOND)).toContainText(
+        "Nothing printed in this range.",
+      );
+      await shot(page, name("20-member-printed-nothing"));
     });
   });

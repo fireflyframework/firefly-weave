@@ -17,18 +17,28 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it, vi } from "vitest";
 import type {
+  LogRequestView,
   LogRunner,
   LogTarget,
   MemberLog,
 } from "../src/app/operate/logs/container-logs-api";
 import {
+  COPY_FAILED,
+  RESTART_NOTE,
+  UNREAD_NOTE,
+  copiedNote,
   defaultMembers,
   delay,
   downloadName,
   failureNote,
+  followWaitingNote,
+  followingNote,
   lineCount,
   lineTime,
+  memberBoxes,
+  memberCount,
   memberText,
+  missingNote,
   runnerStatus,
   snapshotNote,
   tailProblem,
@@ -101,9 +111,76 @@ describe("what a fetch asks for", () => {
   });
 });
 
+describe("what a snapshot shows of its members", () => {
+  const log = (member: string, restarts = 0): MemberLog => ({
+    member,
+    lines: [],
+    restarts,
+    previousLines: 0,
+  });
+  const snapshot = (requestedMembers: string[], members: MemberLog[]) =>
+    ({ requestedMembers, members }) as LogRequestView;
+
+  it("draws every chosen member, and says which ones couldn't be read", () => {
+    const boxes = memberBoxes(
+      snapshot(["w-2", "w-1", "w-3"], [log("w-1"), log("w-2")]),
+    );
+    expect(boxes.map((box) => [box.member, box.log?.member ?? null])).toEqual([
+      ["w-2", "w-2"],
+      ["w-1", "w-1"],
+      ["w-3", null],
+    ]);
+    // With none chosen, the runner read every running member: each one it sent is drawn.
+    expect(
+      memberBoxes(snapshot([], [log("w-1"), log("w-2")])).map(
+        (box) => box.member,
+      ),
+    ).toEqual(["w-1", "w-2"]);
+    expect(UNREAD_NOTE).toBe(
+      "Weave couldn't read this member's logs. It may have stopped or been removed since the list was read.",
+    );
+  });
+
+  it("says why lines may be missing, naming an unread member only when none was drawn", () => {
+    expect(missingNote(true)).toBe(
+      "Some lines are missing: long lines were cut, or older lines were left out to keep the snapshot within 256 KiB.",
+    );
+    expect(missingNote(false)).toBe(
+      "Some lines are missing: long lines were cut, older lines were left out to keep the snapshot within 256 KiB, or a member couldn't be read.",
+    );
+  });
+
+  it("counts lines and restarts, and marks where the previous container's lines end", () => {
+    expect([memberCount(4, 0), memberCount(4, 1), memberCount(1, 3)]).toEqual([
+      "4 lines",
+      "4 lines · restarted once",
+      "1 line · restarted 3 times",
+    ]);
+    expect(RESTART_NOTE).toBe(
+      "Restarted. Lines above are from the previous container.",
+    );
+  });
+
+  it("while following, says when the snapshot was updated, and what Follow waits for", () => {
+    expect(followingNote("2026-11-19T10:54:15Z", "UTC")).toBe(
+      "Following: updated 10:54:15. Snapshots expire after 1 hour. Secrets are redacted before they leave the runner.",
+    );
+    expect(followWaitingNote("local-docker")).toBe(
+      "Follow is waiting for the runner of local-docker. It fetches again once the runner is back in touch.",
+    );
+    expect([copiedNote(4), copiedNote(1), COPY_FAILED]).toEqual([
+      "Copied 4 lines",
+      "Copied 1 line",
+      "Couldn't copy. Select the lines and copy them.",
+    ]);
+  });
+});
+
 describe("a snapshot on screen", () => {
   const member: MemberLog = {
     member: "weave-worker-7c9f-x2k4",
+    restarts: 0,
+    previousLines: 0,
     lines: [
       {
         at: "2026-11-19T10:41:52.123Z",

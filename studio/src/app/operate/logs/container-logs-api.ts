@@ -62,6 +62,10 @@ export interface LogLine {
 export interface MemberLog {
   member: string;
   lines: LogLine[];
+  /** How many times the member's container restarted. */
+  restarts: number;
+  /** How many of the first lines the container before the last restart printed. */
+  previousLines: number;
 }
 export type LogRequestState = "pending" | "ready" | "failed" | "expired";
 export type LogFailureCode =
@@ -221,8 +225,18 @@ function readMember(value: unknown): MemberLog | null {
   )
     return null;
   const lines = value["lines"].map(readLine);
-  return lines.every((line): line is LogLine => line !== null)
-    ? { member: value["member"], lines }
+  // Both counts are 0 when the platform leaves them out.
+  const restarts = value["restarts"] ?? 0;
+  const previous = value["previous_lines"] ?? 0;
+  return lines.every((line): line is LogLine => line !== null) &&
+    isCount(restarts, 0, 2147483647) &&
+    isCount(previous, 0, lines.length)
+    ? {
+        member: value["member"],
+        lines,
+        restarts: restarts as number,
+        previousLines: previous as number,
+      }
     : null;
 }
 /** A log request as deployment_log_requests answers it; throws for anything else. */

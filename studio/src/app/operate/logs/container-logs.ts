@@ -29,14 +29,17 @@ import {
   DoCheck,
   OnDestroy,
   computed,
+  inject,
   input,
   signal,
 } from "@angular/core";
+import { Router } from "@angular/router";
 import { ApiError } from "../../api";
 import type { App } from "../../app";
 import { describeError, type PlainError } from "../../errors";
 import { Icon } from "../../icon";
 import { scopeKeyOf } from "../operate-list";
+import { clustersRecordPath } from "../operate-routes";
 import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import {
@@ -54,32 +57,42 @@ import {
 } from "./container-logs-api";
 import {
   CONTAINER_FOLLOW_MS,
+  COPY_FAILED,
   DEFAULT_SINCE,
   DEFAULT_TAIL,
   EXPIRED_NOTE,
   MAX_MEMBERS,
+  RESTART_NOTE,
   RUNNER_REFRESH_MS,
+  UNREAD_NOTE,
   WAIT_MS,
+  copiedNote,
   defaultMembers,
   delay,
   downloadName,
   failureNote,
   fetchingNote,
-  lineCount,
+  followWaitingNote,
+  followingNote,
   lineTime,
+  memberBoxes,
+  memberCount,
   memberText,
+  missingNote,
   runnerStatus,
   sinceChoices,
   snapshotNote,
   tailProblem,
   waitingNote,
+  type MemberBox,
   type RunnerStatus,
 } from "./container-logs-model";
 
 /** How long Studio waits for a snapshot: the platform gives the runner 2 minutes. */
 const WAIT_LIMIT_MS = 130_000;
-/** How long "Copied …" stays before it clears. */
+/** How long "Copied …" stays before it clears, the last part of it fading out. */
 const COPIED_MS = 4_000;
+const COPIED_FADE_MS = 200;
 const READ = ["deployment_log.read", "deployment.read"];
 
 type Load = "loading" | "ready" | "error" | "refused";
@@ -132,6 +145,18 @@ type Load = "loading" | "ready" | "error" | "refused";
         </p>
       </div>
     } @else {
+      <!-- Before the form at every width, so nobody fills it in to learn it can't run. -->
+      @if (status(); as now) {
+        @if (now.kind === "offline") {
+          <div class="notice logs-notice" role="status">
+            <p><weave-icon name="off" [size]="16" />{{ now.text }}</p>
+          </div>
+        } @else if (now.kind === "unsupported") {
+          <div class="notice logs-notice" data-tone="info" role="status">
+            <p><weave-icon name="info" [size]="16" />{{ now.text }}</p>
+          </div>
+        }
+      }
       <div class="container-form" role="group" aria-label="What to fetch">
         <div class="container-fields">
           <div class="field">
@@ -236,30 +261,24 @@ type Load = "loading" | "ready" | "error" | "refused";
             }
           </div>
         </div>
-        @if (status(); as now) {
-          @if (now.kind === "offline") {
-            <div class="notice logs-notice" role="status">
-              <p><weave-icon name="off" [size]="16" />{{ now.text }}</p>
-            </div>
-          } @else if (now.kind === "unsupported") {
-            <div class="notice logs-notice" data-tone="info" role="status">
-              <p><weave-icon name="info" [size]="16" />{{ now.text }}</p>
-            </div>
-          }
-        }
         <div class="fetchbar">
+          <!-- Both labels share one cell, so the button keeps one width and Follow never moves. -->
           <button
             type="button"
-            class="primary"
+            class="primary fetch"
             [attr.aria-disabled]="fetchable() && !fetching() ? null : 'true'"
             [attr.aria-busy]="fetching() ? 'true' : null"
             (click)="fetchNow()"
           >
-            @if (fetching()) {
-              <weave-icon name="spinner" [size]="16" class="spin" />Fetching…
-            } @else {
-              Fetch logs
-            }
+            <span class="fetch-label" [class.inactive]="fetching()"
+              >Fetch logs</span
+            ><span class="fetch-label" [class.inactive]="!fetching()"
+              ><weave-icon
+                name="spinner"
+                [size]="16"
+                class="spin"
+              />Fetching…</span
+            >
           </button>
           <label class="checkbox-field"
             ><input
@@ -270,9 +289,7 @@ type Load = "loading" | "ready" | "error" | "refused";
               (change)="setFollow(checked($event))"
             />Follow</label
           >
-          <p class="hint" role="status">
-            {{ fetching() ? waiting() : fetchingNote(targetName()) }}
-          </p>
+          <p class="hint" role="status">{{ hint() }}</p>
         </div>
       </div>
       @if (fetchError(); as error) {
@@ -299,69 +316,99 @@ type Load = "loading" | "ready" | "error" | "refused";
         } @else if (snapshot.state === "failed" && snapshot.failure) {
           <div class="notice logs-notice" data-tone="danger" role="alert">
             <p>
-              <weave-icon name="failCircle" [size]="16" />{{
-                failure(snapshot)
-              }}
+              <weave-icon name="failCircle" [size]="16" />
+              @if (snapshot.failure === "no_answer") {
+                The runner of {{ targetName() }} didn't answer within 2 minutes.
+                Try again, or check its runner in
+                <a [href]="clustersPath()" (click)="openClusters($event)"
+                  >Operate › Clusters</a
+                >.
+              } @else {
+                {{ failure(snapshot) }}
+              }
             </p>
           </div>
         } @else if (snapshot.state === "ready" && snapshot.readAt) {
           <p class="hint snapshot-note">
             {{ note(snapshot.readAt) }}
             @if (snapshot.truncated) {
-              Some lines are missing: long lines were cut, older lines were left
-              out to keep the snapshot within 256 KiB, or a member couldn't be
-              read.
+              {{ missing(snapshot) }}
             }
           </p>
-          <!-- Seen and announced alike, and cleared after a few seconds so no stale "Copied" stays. -->
-          <p class="hint copied" role="status">{{ copied() }}</p>
-          @for (member of snapshot.members; track member.member) {
-            <section class="member" [attr.aria-label]="member.member">
+          @for (box of boxes(snapshot); track box.member) {
+            <section class="member" [attr.aria-label]="box.member">
               <div class="member-head">
-                <h3>{{ member.member }}</h3>
-                <span class="count">{{ count(member.lines.length) }}</span>
-                <span class="member-actions">
-                  <button
-                    type="button"
-                    class="sm"
-                    [attr.aria-label]="'Copy the lines of ' + member.member"
-                    (click)="copy(member)"
-                  >
-                    <weave-icon name="copy" [size]="16" />Copy
-                  </button>
-                  <button
-                    type="button"
-                    class="sm"
-                    [attr.aria-label]="'Download the lines of ' + member.member"
-                    (click)="download(snapshot, member)"
-                  >
-                    <weave-icon name="download" [size]="16" />Download
-                  </button>
-                </span>
+                <h3>{{ box.member }}</h3>
+                @if (box.log; as log) {
+                  <span class="count">{{
+                    count(log.lines.length, log.restarts)
+                  }}</span>
+                  <span class="member-actions">
+                    <span class="copy">
+                      <button
+                        type="button"
+                        class="sm"
+                        [attr.aria-label]="'Copy the lines of ' + log.member"
+                        (click)="copy(log)"
+                      >
+                        <weave-icon
+                          [name]="copiedCheck(log.member) ? 'check' : 'copy'"
+                          [size]="16"
+                        />Copy
+                      </button>
+                      <!-- Beside the Copy pressed, seen and announced alike; it fades and clears, moving nothing. -->
+                      <span
+                        class="copy-tip"
+                        role="status"
+                        [class.shown]="copiedShown(log.member)"
+                        >{{ copiedText(log.member) }}</span
+                      >
+                    </span>
+                    <button
+                      type="button"
+                      class="sm"
+                      [attr.aria-label]="'Download the lines of ' + log.member"
+                      (click)="download(snapshot, log)"
+                    >
+                      <weave-icon name="download" [size]="16" />Download
+                    </button>
+                  </span>
+                }
               </div>
-              @if (member.lines.length) {
-                <div
-                  class="member-lines"
-                  role="table"
-                  [attr.aria-label]="'Lines of ' + member.member"
-                >
-                  @for (line of member.lines; track $index) {
-                    <div class="line" role="row">
-                      <span role="cell" class="t"
-                        ><time [attr.datetime]="line.at">{{
-                          time(line.at)
-                        }}</time></span
-                      ><span
-                        role="cell"
-                        class="stream"
-                        [attr.data-stream]="line.stream"
-                        >{{ line.stream }}</span
-                      ><span role="cell" class="text">{{ line.text }}</span>
-                    </div>
-                  }
-                </div>
+              @if (box.log; as log) {
+                @if (log.lines.length) {
+                  <div
+                    class="member-lines"
+                    role="table"
+                    [attr.aria-label]="'Lines of ' + log.member"
+                  >
+                    @for (line of log.lines; track $index) {
+                      <div class="line" role="row">
+                        <span role="cell" class="t"
+                          ><time [attr.datetime]="line.at">{{
+                            time(line.at)
+                          }}</time></span
+                        ><span
+                          role="cell"
+                          class="stream"
+                          [attr.data-stream]="line.stream"
+                          >{{ line.stream }}</span
+                        ><span role="cell" class="text">{{ line.text }}</span>
+                      </div>
+                      @if ($index + 1 === log.previousLines) {
+                        <div class="line restart" role="row">
+                          <span role="cell">{{ restartNote }}</span>
+                        </div>
+                      }
+                    }
+                  </div>
+                } @else {
+                  <p class="hint member-empty">
+                    Nothing printed in this range.
+                  </p>
+                }
               } @else {
-                <p class="hint member-empty">Nothing printed in this range.</p>
+                <p class="hint member-empty">{{ unreadNote }}</p>
               }
             </section>
           } @empty {
@@ -393,7 +440,13 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   readonly fetching = signal(false);
   readonly fetchError = signal<PlainError | null>(null);
   readonly following = signal(false);
-  readonly copied = signal("");
+  /** The member whose Copy was pressed last, what its confirmation says, and whether it shows. */
+  readonly copied = signal<{
+    member: string;
+    text: string;
+    ok: boolean;
+    shown: boolean;
+  } | null>(null);
   /** When the targets, runners and components last loaded (epoch milliseconds). */
   readonly updatedAt = signal<number | null>(null);
   readonly busy = signal(false);
@@ -412,7 +465,12 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   /** Bumped by every change of what is shown, so a late answer is dropped. */
   private generation = 0;
   private wait: { cancel(): void } | null = null;
-  private copiedTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The generation of the fetch running now, quiet or not; null when none is. */
+  private running: number | null = null;
+  private copiedTimers: ReturnType<typeof setTimeout>[] = [];
+  private readonly router = inject(Router);
+  readonly unreadNote = UNREAD_NOTE;
+  readonly restartNote = RESTART_NOTE;
 
   readonly target = computed(
     () => this.targets().find((item) => item.id === this.targetId()) ?? null,
@@ -440,6 +498,17 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     return (component?.members ?? []).filter((host) => !chosen.has(host));
   });
   readonly waiting = computed(() => waitingNote(this.targetName()));
+  /**
+   * The fetch bar's live hint. It changes for the fetches the person starts,
+   * and once when Follow starts waiting for a runner out of touch, never on
+   * Follow's own ticks.
+   */
+  hint() {
+    if (this.fetching()) return this.waiting();
+    if (this.following() && this.status()?.kind === "offline")
+      return followWaitingNote(this.targetName());
+    return fetchingNote(this.targetName());
+  }
 
   /** With deployment_log.read and deployment.read somewhere in the workspace. */
   readable() {
@@ -472,14 +541,17 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     this.view.set(null);
     this.fetching.set(false);
     this.fetchError.set(null);
-    this.copied.set("");
+    this.clearCopied();
   }
   private clearWait() {
     // Ending the wait lets the fetch awaiting it see that it no longer applies.
     this.wait?.cancel();
     this.wait = null;
-    if (this.copiedTimer) clearTimeout(this.copiedTimer);
-    this.copiedTimer = null;
+  }
+  private clearCopied() {
+    this.copiedTimers.forEach(clearTimeout);
+    this.copiedTimers = [];
+    this.copied.set(null);
   }
   private api(): ContainerLogsApi | null {
     try {
@@ -574,6 +646,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     this.generation++;
     this.stopFollowing();
     this.clearWait();
+    this.clearCopied();
     this.view.set(null);
     this.fetching.set(false);
     this.fetchError.set(null);
@@ -623,7 +696,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   }
   fetchNow() {
     if (!this.fetchable() || this.fetching()) return;
-    void this.fetch();
+    void this.fetch(false);
   }
   setFollow(on: boolean) {
     this.following.set(on);
@@ -637,18 +710,26 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   private async followFetch(): Promise<boolean> {
     // Back to every 10 s after a wait the platform asked for.
     this.follower.setInterval(CONTAINER_FOLLOW_MS);
-    if (this.fetching()) return false;
+    const busy = () => this.fetching() || this.running === this.generation;
+    if (busy()) return false;
     // What the page read of the runner may be older than its 90 s in touch (a
     // hidden page reads nothing): it is read again before this tick decides.
     if (this.status()?.kind === "offline")
       await this.readRunners().catch(() => false);
     // Only the person, a 403 or the platform's own WV-RUNNER-OFFLINE turns
     // Follow off; until a snapshot can be asked for, its ticks pass by.
-    if (!this.following() || !this.fetchable() || this.fetching()) return false;
-    return (await this.fetch()) === "applied";
+    if (!this.following() || !this.fetchable() || busy()) return false;
+    return (await this.fetch(true)) === "applied";
   }
-  /** Asks the runner for a snapshot, then waits for it; the answer applies only to what was asked. */
-  private async fetch(): Promise<"applied" | "dropped" | "failed"> {
+  /**
+   * Asks the runner for a snapshot, then waits for it; the answer applies only
+   * to what was asked. A `quiet` fetch (Follow's) changes neither the button
+   * nor the live hint, so a screen reader hears nothing every 10 seconds; only
+   * its failures speak, through the alert.
+   */
+  private async fetch(
+    quiet: boolean,
+  ): Promise<"applied" | "dropped" | "failed"> {
     const api = this.api();
     const target = this.target();
     if (!api || !target) return "dropped";
@@ -658,9 +739,12 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     const scope = this.scopeKey;
     const current = () =>
       generation === this.generation && scope === this.scopeKey;
-    this.fetching.set(true);
-    this.fetchError.set(null);
-    this.copied.set("");
+    this.running = generation;
+    if (!quiet) {
+      this.fetching.set(true);
+      this.fetchError.set(null);
+      this.clearCopied();
+    }
     try {
       let snapshot = await createLogRequest(
         api,
@@ -687,6 +771,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
       }
       if (!current()) return "dropped";
       this.view.set(snapshot);
+      this.fetchError.set(null);
       // The runner answered, so it is in touch: what the page says about it is read again.
       void this.runnerWatch.refresh();
       return "applied";
@@ -716,7 +801,8 @@ export class ContainerLogs implements DoCheck, OnDestroy {
       this.signInGone(error);
       return "failed";
     } finally {
-      if (current()) this.fetching.set(false);
+      if (this.running === generation) this.running = null;
+      if (current() && !quiet) this.fetching.set(false);
     }
   }
   expired(snapshot: LogRequestView) {
@@ -730,28 +816,72 @@ export class ContainerLogs implements DoCheck, OnDestroy {
       ? failureNote(snapshot.failure, this.targetName(), snapshot.component)
       : "";
   }
+  /** While following, when the newest snapshot was read; otherwise when this one was. */
   note(readAt: string) {
-    return snapshotNote(readAt);
+    return this.following() ? followingNote(readAt) : snapshotNote(readAt);
   }
-  count(lines: number) {
-    return lineCount(lines);
+  missing(snapshot: LogRequestView) {
+    return missingNote(snapshot.requestedMembers.length > 0);
+  }
+  boxes(snapshot: LogRequestView): MemberBox[] {
+    return memberBoxes(snapshot);
+  }
+  count(lines: number, restarts: number) {
+    return memberCount(lines, restarts);
   }
   time(at: string) {
     return lineTime(at);
   }
+  /** The target's own screen in Operate › Clusters. */
+  clustersPath() {
+    return clustersRecordPath("targets", this.targetId());
+  }
+  /** Opens Clusters in place; a modified or middle click opens the link as the browser does. */
+  openClusters(event: MouseEvent) {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    event.preventDefault();
+    const path = this.clustersPath();
+    void this.host()
+      .navigate("clusters")
+      .then(() => this.router.navigateByUrl(path));
+  }
+  copiedShown(member: string) {
+    const copied = this.copied();
+    return copied?.member === member && copied.shown;
+  }
+  copiedCheck(member: string) {
+    const copied = this.copied();
+    return copied?.member === member && copied.ok;
+  }
+  copiedText(member: string) {
+    const copied = this.copied();
+    return copied?.member === member ? copied.text : "";
+  }
   async copy(member: MemberLog) {
-    if (this.copiedTimer) clearTimeout(this.copiedTimer);
+    this.clearCopied();
+    let ok = true;
     try {
       await navigator.clipboard.writeText(memberText(member));
-      this.copied.set(
-        `Copied ${lineCount(member.lines.length)} of ${member.member}.`,
-      );
     } catch {
-      this.copied.set(
-        "Studio couldn't copy the lines. Select them and copy them instead.",
-      );
+      ok = false;
     }
-    this.copiedTimer = setTimeout(() => this.copied.set(""), COPIED_MS);
+    const text = ok ? copiedNote(member.lines.length) : COPY_FAILED;
+    this.copied.set({ member: member.member, text, ok, shown: true });
+    // It fades out, then clears, so no stale confirmation stays for a screen reader.
+    this.copiedTimers = [
+      setTimeout(() => {
+        const copied = this.copied();
+        if (copied) this.copied.set({ ...copied, shown: false });
+      }, COPIED_MS - COPIED_FADE_MS),
+      setTimeout(() => this.copied.set(null), COPIED_MS),
+    ];
   }
   download(snapshot: LogRequestView, member: MemberLog) {
     const blob = new Blob([memberText(member)], { type: "text/plain" });

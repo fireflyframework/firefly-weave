@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import type {
   LogComponent,
   LogFailureCode,
+  LogRequestView,
   LogRunner,
   LogTarget,
   MemberLog,
@@ -150,6 +151,53 @@ export const snapshotNote = (readAt: string, timeZone?: string) =>
   `Snapshot from ${clock(readAt, timeZone)} · ${KEPT}`;
 export const lineCount = (count: number) =>
   count === 1 ? "1 line" : `${count.toLocaleString("en-US")} lines`;
+/** The snapshot note while Follow is on: when its newest snapshot was read. */
+export const followingNote = (readAt: string, timeZone?: string) =>
+  `Following: updated ${clock(readAt, timeZone)}. ${KEPT}`;
+/** The fetch bar's hint while Follow waits for a runner out of touch. */
+export const followWaitingNote = (target: string) =>
+  `Follow is waiting for the runner of ${target}. It fetches again once the runner is back in touch.`;
+/**
+ * Why a snapshot's lines may be missing. With members chosen, each one the
+ * runner couldn't read has its own box, so only the cuts remain to say.
+ */
+export const missingNote = (chosen: boolean) =>
+  chosen
+    ? "Some lines are missing: long lines were cut, or older lines were left out to keep the snapshot within 256 KiB."
+    : "Some lines are missing: long lines were cut, older lines were left out to keep the snapshot within 256 KiB, or a member couldn't be read.";
+export const UNREAD_NOTE =
+  "Weave couldn't read this member's logs. It may have stopped or been removed since the list was read.";
+export const RESTART_NOTE =
+  "Restarted. Lines above are from the previous container.";
+/** "4 lines", or "4 lines · restarted 3 times" for a member whose container restarted. */
+export const memberCount = (lines: number, restarts: number) =>
+  restarts === 0
+    ? lineCount(lines)
+    : `${lineCount(lines)} · restarted ${restarts === 1 ? "once" : `${restarts.toLocaleString("en-US")} times`}`;
+export const copiedNote = (lines: number) => `Copied ${lineCount(lines)}`;
+export const COPY_FAILED = "Couldn't copy. Select the lines and copy them.";
+
+/** One member's box: its lines, or null when the runner couldn't read it. */
+export interface MemberBox {
+  member: string;
+  log: MemberLog | null;
+}
+/**
+ * The member boxes of a snapshot: each chosen member in the order chosen,
+ * read or not, since a member that printed nothing still comes back with no
+ * lines; with none chosen, every member the runner read.
+ */
+export function memberBoxes(
+  snapshot: Pick<LogRequestView, "requestedMembers" | "members">,
+): MemberBox[] {
+  if (!snapshot.requestedMembers.length)
+    return snapshot.members.map((log) => ({ member: log.member, log }));
+  const read = new Map(snapshot.members.map((log) => [log.member, log]));
+  return snapshot.requestedMembers.map((member) => ({
+    member,
+    log: read.get(member) ?? null,
+  }));
+}
 
 const failures: Record<
   LogFailureCode,

@@ -423,14 +423,43 @@ code {
   font: var(--type-small);
   color: var(--text);
 }
+/* A turned-off Follow looks turned off. */
+.fetchbar .checkbox-field:has(> input:disabled) {
+  color: var(--disabled-ink);
+  cursor: not-allowed;
+}
+/* Both labels share one cell, so Fetch logs keeps its busy width and Follow
+   never moves under the pointer. */
+.fetchbar button.fetch {
+  display: inline-grid;
+}
+.fetch-label {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+.fetch-label.inactive {
+  visibility: hidden;
+}
+/* Busy is the accent with its spinner at every width, not the unavailable
+   grey; aria-disabled still makes a second click do nothing. */
+.fetchbar button.primary[aria-busy="true"],
+.fetchbar button.primary[aria-busy="true"]:hover {
+  opacity: 1;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  cursor: progress;
+}
 .fetchbar .hint {
   flex: 1 1 20em;
 }
 .spin {
   animation: spin 1s linear infinite;
 }
-.snapshot-note,
-.copied:not(:empty) {
+.snapshot-note {
   margin-bottom: var(--group-gap);
 }
 :host(.container-logs) :is(.logs-notice, .logs-access, .logs-empty) {
@@ -445,7 +474,11 @@ code {
   border: thin solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
-  overflow: hidden;
+}
+/* The box doesn't clip, so Copy's confirmation can show above it: its last
+   part takes the rounded corners instead. */
+.member > :last-child {
+  border-radius: 0 0 calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px);
 }
 .member-head {
   display: flex;
@@ -473,6 +506,43 @@ code {
 }
 .member-actions button {
   min-height: var(--control-sm);
+}
+/* Copy's confirmation floats above the Copy that was pressed, so nothing
+   moves; it fades in and out with opacity, which keeps it a live region. */
+.copy {
+  position: relative;
+  display: inline-flex;
+}
+.copy-tip {
+  position: absolute;
+  z-index: 1;
+  inset-block-end: calc(100% + var(--space-1));
+  /* Copy sits at the box's end, so the bubble grows toward its start. */
+  inset-inline-end: 0;
+  inline-size: max-content;
+  max-inline-size: calc(100vw - 2 * var(--space-6));
+  padding: var(--space-1) var(--space-2);
+  background: var(--raised);
+  border: thin solid var(--line);
+  border-radius: var(--radius-sm);
+  font: var(--type-caption);
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.copy-tip.shown {
+  opacity: 1;
+}
+/* Where a restarted pod's previous container's lines end. */
+.line.restart {
+  display: block;
+  margin: var(--space-1) 0;
+  padding: var(--space-1) var(--space-4);
+  border-block: thin solid var(--line);
+  background: var(--sunken);
+  font: var(--type-caption);
+  color: var(--muted);
 }
 .member-lines {
   container: lines / inline-size;
@@ -519,6 +589,13 @@ code {
   .member-actions {
     margin-left: 0;
     flex-basis: 100%;
+  }
+  /* Here the actions start their own row, Copy first: the bubble grows toward the end. */
+  .copy-tip {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
+    /* Copy starts past the rail, the gutter and the box's padding. */
+    max-inline-size: calc(100vw - 7rem);
   }
   .member-actions button {
     min-height: var(--control-touch);

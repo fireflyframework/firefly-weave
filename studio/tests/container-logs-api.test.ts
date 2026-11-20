@@ -61,7 +61,7 @@ describe("reading a log request", () => {
       createdAt: "2026-11-19T10:54:00Z",
       expiresAt: "2026-11-19T11:54:00Z",
       readAt: "2026-11-19T10:54:05Z",
-      members: view.members,
+      members: [{ ...view.members[0], restarts: 0, previousLines: 0 }],
       truncated: false,
       failure: null,
     });
@@ -76,6 +76,33 @@ describe("reading a log request", () => {
       null,
       [],
     ]);
+  });
+
+  it("reads how often a member restarted and which lines came before the restart", () => {
+    const restarted = readLogRequest({
+      ...view,
+      members: [{ ...view.members[0], restarts: 3, previous_lines: 1 }],
+    });
+    expect(restarted.members[0]).toMatchObject({
+      restarts: 3,
+      previousLines: 1,
+    });
+    // A member without the fields restarted never as far as anyone said.
+    expect(readLogRequest(view).members[0]).toMatchObject({
+      restarts: 0,
+      previousLines: 0,
+    });
+    for (const facts of [
+      { previous_lines: 2 },
+      { restarts: -1 },
+      { restarts: "3" },
+    ])
+      expect(() =>
+        readLogRequest({
+          ...view,
+          members: [{ ...view.members[0], ...facts }],
+        }),
+      ).toThrow(ApiError);
   });
 
   it("refuses an answer that isn't a log request, whole or in one line", () => {
