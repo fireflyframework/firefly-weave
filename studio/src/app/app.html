@@ -132,14 +132,19 @@ SPDX-License-Identifier: Apache-2.0
                       : null
                   "
                   [attr.title]="item.label"
-                  [attr.aria-label]="navName(item.id, item.label)"
+                  [attr.aria-label]="navBadge(item.id)?.name ?? null"
                   (click)="navigate(item.id)"
                 >
-                  <weave-icon [name]="item.id" /><span>{{ item.label }}</span>
-                  @if (item.id === "clusters" && approvalWatch.count) {
-                    <b class="nav-badge" aria-hidden="true">{{
-                      approvalWatch.count
-                    }}</b>
+                  <weave-icon
+                    [name]="navBadge(item.id)?.icon ?? item.id"
+                  /><span>{{ item.label }}</span>
+                  @if (navBadge(item.id); as badge) {
+                    <b
+                      class="nav-badge"
+                      [class.critical]="badge.critical"
+                      aria-hidden="true"
+                      >{{ badge.count }}</b
+                    >
                   }
                 </button>
               </li>

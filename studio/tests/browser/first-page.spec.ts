@@ -162,7 +162,9 @@ test("the Operate pages, Settings and the record lists load outside the first pa
     "clusters-page",
     "metrics-page",
     "logs-page",
+    "alerts-page",
     "settings-page",
+    "administration-page",
     "records-view",
   ].map((name) => `weave-${name}`);
   const named = first.flatMap((file) => {

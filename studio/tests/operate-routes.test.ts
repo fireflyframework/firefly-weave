@@ -114,6 +114,7 @@ describe("Operate routes", () => {
       "operate/clusters",
       "operate/metrics",
       "operate/logs",
+      "operate/alerts",
       "operate/runs/:id",
       "operate/workers/releases",
       "operate/workers/releases/:id",
@@ -224,6 +225,7 @@ describe("Operate routes", () => {
       "clusters",
       "metrics",
       "logs",
+      "alerts",
       "tasks",
     ])
       expect(navEntryVisible(entry, null)).toBe(true);
@@ -242,8 +244,20 @@ describe("Operate routes", () => {
     // Logs reads run log entries, which need run.read like the runs.
     expect(navEntryVisible("logs", holds)).toBe(true);
     expect(navEntryVisible("logs", (c) => c === "status.read")).toBe(false);
+    // Alerts needs alert.read; nobody holds it by default.
+    expect(navEntryVisible("alerts", holds)).toBe(false);
+    expect(navEntryVisible("alerts", (c) => c === "alert.read")).toBe(true);
     // Pages outside Operate never hide: their own pages explain access.
     expect(navEntryVisible("tasks", holds)).toBe(true);
     expect(navEntryVisible("connections", () => false)).toBe(true);
+  });
+});
+
+describe("Alerts routes", () => {
+  it("serves the Alerts page at /operate/alerts", () => {
+    expect(viewFromPath("/operate/alerts")).toEqual({ view: "alerts", id: "" });
+    expect(operateRoutes.some((route) => route.path === "operate/alerts")).toBe(
+      true,
+    );
   });
 });

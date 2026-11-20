@@ -466,7 +466,30 @@ access** (`/settings/people`) appears for administrators; **AI models**
 (`/settings/ai`) appears once a platform is connected and holds provider cards,
 your AI connections, the readiness checklist and the Weave AI card (see
 [Set up models in Studio](ollama.md#set-up-models-in-studio)); **Preferences**
-(`/settings/preferences`) holds Studio's own options.
+(`/settings/preferences`) holds Studio's own options and, once you're signed in,
+**My alert address**: where alerts sent to you as a project member go. Only you
+can set it, and a channel that lists you skips you until you do.
+**Administration** (`/settings/administration`) appears to people who read the
+environment's status (`status.read`). Each of its sections asks for its own
+access and says what it needs when you lack it:
+
+- **Platform**: the version, the build, and how long the API has run.
+- **Compatibility**: whether this version can serve everything recorded, and
+  **Run check** (`compatibility.check`), which reads runs, activations, workers
+  and connections and changes nothing.
+- **Alert email**: the domains outside addresses must use, and the opt-ins an
+  administrator recorded for outside addresses, with how each person agreed.
+  Changing either needs `alert.manage` and `environment.manage`; **Revoke** asks
+  first, and mail to that address stops at the next send.
+- **Approval notifications**: the channels that are mailed when a change
+  request needs approval.
+- **Retention**: **Make a plan** (`retention.plan`) lists the expired debug
+  sessions that can be deleted, and **Apply** (`retention.apply`) asks before
+  it deletes them.
+- **Telemetry export**: where the platform exports traces and metrics, by host
+  only; the platform's `WEAVE_TELEMETRY` setting decides it.
+- **Operations data retention**: how long the environment keeps each kind of
+  operations record.
 
 ### Manage saved platforms
 
@@ -2259,6 +2282,46 @@ them, their limits and how they are redacted.
 Worker and connector entries are kept for 7 days by default; [Run
 logs](../operations/observability.md#run-logs) explains where entries come from,
 how they are redacted, and their limits.
+
+**Watch for problems in Alerts.** **Alerts**, after **Logs** under **Operate**,
+needs `alert.read`; **Acknowledge** and changing rules and channels need
+`alert.manage` ([Alerts](../operations/observability.md#alerts) explains the
+signals, evaluation, and delivery). The navigation entry counts the alerts
+firing now; the bell rings and the count turns red while one of them is
+critical. The address keeps the tab you chose, such as
+`/operate/alerts?tab=rules`.
+
+- **Firing and recent** lists each firing alert with its severity, its rule, its
+  value against the threshold (such as "Firing · 14.6 % > 10 %"), when it
+  started, how long it has fired, and what each channel did with the
+  notification: **Sent**, **Pending**, **Skipped: hourly limit reached**, or
+  **Failed** with the reason, such as that the mail server refused the message.
+  **Acknowledge** stops repeat notifications until the alert resolves.
+  **Recent** lists the alerts resolved in the last 7 days and how each ended.
+- **Rules** lists each rule's condition, severity, and channels, and where it
+  stands now: OK with its value, firing, the last check failing, or not checked
+  because the server doesn't know the signal or your access to its target was
+  removed. A switch turns a rule off and on. **Add rule** opens the editor, and
+  **Suggested rules** starts from a rule the platform suggests; a rule Weave
+  installed carries the tag **Suggested by Weave**. In the editor, choose a
+  signal, narrow it to a workflow, task type, or target when the signal allows,
+  and set the condition: a percent for a failure rate (10 is sent as 0.1), the
+  window, how long it must hold (**For**), the fewest ended runs (**Only with at
+  least**), the severity, up to 5 email channels, and how often it repeats while
+  it fires. **Preview** reads the signal's value now for the rule without saving
+  it, and says when there is no data yet.
+- **Channels** lists the email channels, who each one reaches, and what uses it.
+  A channel sends as the person who last saved it, from one of their email
+  connections, so saving someone else's channel makes you its owner; the sheet
+  says so before **Save channel**. Add project members first; an outside address
+  needs a domain an administrator allowed and an opt-in an administrator
+  recorded. A member who hasn't set an alert address is named, and the rest of
+  the channel still sends. **Send a test** mails every recipient once within 10
+  seconds. The tab also counts the webhook subscriptions that receive alert
+  changes; manage them with `weave subscriptions`.
+
+The page reads every 30 seconds while it's open and visible, and warns when the
+alert checker isn't running.
 
 [Manage runs and business cases](execution-management.md) explains business
 keys, archiving, and deletion in depth. To try a workflow without running it for

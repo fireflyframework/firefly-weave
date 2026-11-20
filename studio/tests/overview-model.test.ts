@@ -465,14 +465,14 @@ describe("Overview model", () => {
   });
 
   it("leads an attention item of a kind it doesn't know with a neutral word and icon", () => {
-    // A firing critical alert is named by its rule and has no record page yet.
+    // Needs attention links a critical alert, named by its rule, to Alerts.
     const alert = {
       kind: "alert",
       id: id(9),
       title: "Run failure rate above 10 %",
     } as const;
     expect(attentionLabel(alert.kind)).toEqual(["Alert", "alertFiring"]);
-    expect(attentionLink(alert)).toBeNull();
+    expect(attentionLink(alert)).toBe("/operate/alerts?tab=firing");
     // A newer server's kind shows without a link instead of breaking Needs attention.
     expect(attentionLabel("drift")).toEqual(["Other", "info"]);
     expect(

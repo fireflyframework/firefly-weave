@@ -29,6 +29,7 @@ import {
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { triggerChoiceTarget } from "./editor/triggers/trigger-target";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
+import type { AlertWatch } from "./operate/alerts/alert-watch";
 import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
 import { placeMark } from "./editor/add-step/place";
 import type { PanelEntry } from "./editor/add-step/entries";
@@ -261,6 +262,7 @@ import { PageOutlet } from "./page-outlet";
 import {
   clustersRecordPath,
   navEntryVisible,
+  operatePages,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
@@ -296,6 +298,7 @@ export type View =
   | "clusters"
   | "metrics"
   | "logs"
+  | "alerts"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -880,6 +883,7 @@ export class App implements CanvasHost {
     { id: "clusters", label: "Clusters" },
     { id: "metrics", label: "Metrics" },
     { id: "logs", label: "Logs" },
+    { id: "alerts", label: "Alerts" },
     { id: "settings", label: "Settings" },
   ];
   private readonly navSections: [string, View[]][] = [
@@ -896,6 +900,7 @@ export class App implements CanvasHost {
         "clusters",
         "metrics",
         "logs",
+        "alerts",
       ],
     ],
   ];
@@ -1372,6 +1377,11 @@ export class App implements CanvasHost {
       )
     );
   }
+  /**
+   * The Alerts badge: the firing alerts, red while one is critical, read
+   * every 30 s with alert.read by a watcher that loads after the first page.
+   */
+  alertWatch: AlertWatch | null = null;
   /** Reads the badge again, for example right after an approval. */
   refreshApprovals() {
     return this.approvalPoller.refresh();
@@ -1401,13 +1411,23 @@ export class App implements CanvasHost {
       });
   }
   /**
-   * A navigation entry's accessible name: its label, and for Clusters the changes waiting for this person's
-   * approval, so the name stays "Clusters" when the sidebar shows icons only.
+   * A navigation entry's badge, its icon and its accessible name: the changes
+   * waiting for this person's approval on Clusters, or the firing alerts on
+   * Alerts (the bell rings while one is critical). The name keeps the count
+   * when the sidebar shows icons only.
    */
-  navName(id: string, label: string): string | null {
+  navBadge(
+    id: string,
+  ): { count: number; critical: boolean; icon?: string; name: string } | null {
+    if (id === "alerts") return this.alertWatch?.badge() ?? null;
     const count = this.approvalWatch.count;
-    if (id !== "clusters" || !count) return null;
-    return `${label}, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`;
+    return id === "clusters" && count
+      ? {
+          count,
+          critical: false,
+          name: `Clusters, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`,
+        }
+      : null;
   }
   /** Opens a change request on the Clusters page. */
   async openChangeRequest(id: string) {
@@ -1416,6 +1436,12 @@ export class App implements CanvasHost {
   }
   constructor() {
     this.approvalPoller.start(false);
+    afterNextRender(async () => {
+      this.alertWatch = (
+        await import("./operate/alerts/alert-watch")
+      ).watchAlerts(this);
+      this.cdr.markForCheck();
+    });
     history.replaceState(
       { ...history.state, weavePosition: this.historyPosition },
       "",
@@ -6885,14 +6911,11 @@ export class App implements CanvasHost {
       await this.loadAdministration();
       return;
     }
+    // Operate's pages, Runs aside, read their own data.
     if (
       this.view === "connect" ||
-      this.view === "overview" ||
-      this.view === "clusters" ||
-      this.view === "metrics" ||
-      this.view === "logs" ||
-      this.view === "workers" ||
-      this.view === "incidents"
+      (this.view !== "runs" &&
+        (operatePages as readonly string[]).includes(this.view))
     )
       return;
     if (this.view === "runs") {

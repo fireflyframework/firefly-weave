@@ -46,6 +46,8 @@ export const pageLoaders: Record<PageKey, () => Promise<Type<unknown>>> = {
   metrics: () =>
     import("./operate/metrics/metrics-page").then((m) => m.MetricsPage),
   logs: () => import("./operate/logs/logs-page").then((m) => m.LogsPage),
+  alerts: () =>
+    import("./operate/alerts/alerts-page").then((m) => m.AlertsPage),
   settings: () =>
     import("./settings/settings-page").then((m) => m.SettingsPage),
   records: () => import("./operations/records-view").then((m) => m.RecordsView),
