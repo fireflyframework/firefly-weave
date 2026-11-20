@@ -32,6 +32,9 @@ import {
   type ResolveOptions,
 } from "../../../forms/core/resolve";
 import type { Step } from "../../../model";
+import type { ErrorEntry } from "../../state/test-data";
+import type { Json } from "../registry";
+import { PLATFORM_FAILURES } from "../../state/failure-codes";
 import { uiKey, type BrowserStorage } from "../../state/browser-store";
 import { studioStorage } from "../../state/studio-storage";
 import { isFileSchema } from "../../../forms/core/file-reference";
@@ -167,7 +170,25 @@ export interface Source {
 
 export function inputSources(scope: {
   steps: { id: string; kind: string }[];
+  entries?: readonly {
+    source: string;
+    stepId?: string;
+    path: unknown[];
+    optional?: boolean;
+  }[];
 }): Source[] {
+  // Inside a step's error path the step has failed: its error comes first.
+  const errors = (scope.entries ?? [])
+    .filter(
+      (entry) =>
+        entry.source === "error" && !entry.path.length && !entry.optional,
+    )
+    .map((entry) => ({
+      id: `error:${entry.stepId}`,
+      label: `Error of ${entry.stepId}`,
+      detail: "",
+      icon: "warning",
+    }));
   const steps = [...scope.steps].reverse().map((step, i) => ({
     id: `step:${step.id}`,
     label: step.id,
@@ -175,9 +196,21 @@ export function inputSources(scope: {
     icon: step.kind,
   }));
   return [
+    ...errors,
     ...steps,
     { id: "input", label: "Workflow input", detail: "", icon: "source" },
   ];
+}
+/** A simulated failure as the platform reports the step's error: its message, outcome and attempts. */
+export function errorData(failure: ErrorEntry): Json {
+  return {
+    code: failure.code,
+    message:
+      PLATFORM_FAILURES.find((item) => item.code === failure.code)?.message ??
+      `The step failed with code ${failure.code}.`,
+    outcome: failure.outcome ?? "failed",
+    attempts: failure.attempts ?? 1,
+  };
 }
 /** An entry of what a step can read: the offline scope's, or the host's inside a loop body, with the loop's item and position. */
 export type PaneEntry = Omit<ScopeEntry, "source"> & {
@@ -240,6 +273,8 @@ export function rootOf(source: string): string {
   if (source === "item" || source === "index") return `/${source}`;
   const loop = /^loop(-index)?:(.*)$/.exec(source);
   if (loop) return `/loops/${escaped(loop[2])}/${loop[1] ? "index" : "item"}`;
+  if (source.startsWith("error:"))
+    return `/steps/${escaped(source.slice(6))}/error`;
   return `/steps/${escaped(source.slice(5))}/output`;
 }
 

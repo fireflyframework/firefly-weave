@@ -131,3 +131,53 @@ test("a transform that stops the run says why it can't simulate a failure", asyn
     "This step's failure would stop the run. Choose Continue or Continue with error output first.",
   );
 });
+
+test("inside the error path, the Input pane starts on the failed step's error, simulated", async ({
+  page,
+}) => {
+  const canvas = await openNewWorkflow(page);
+  const text = JSON.stringify({
+    weaveClipboard: 1,
+    steps: [
+      {
+        id: "submit",
+        kind: "transform",
+        value: { object: { sent: { literal: true } } },
+        onError: "errorOutput",
+        errorPath: {
+          steps: [
+            {
+              id: "notify-team",
+              kind: "transform",
+              value: { ref: "/steps/submit/error/code" },
+            },
+          ],
+          output: { literal: null },
+        },
+      },
+    ],
+    connections: {},
+    llmProfiles: {},
+    pins: {},
+    errors: { submit: { code: "WV-EXPR-MISSING", source: "manual" } },
+  });
+  await page.evaluate((value) => navigator.clipboard.writeText(value), text);
+  await canvas.root.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(canvas.tile("notify-team")).toBeVisible();
+  const details = new StepDetailsPage(page);
+  await details.open("notify-team");
+  const tabs = details.dialog
+    .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+    .getByRole("tab", { name: "Input" });
+  if (await tabs.count()) await tabs.first().click();
+  const pane = details.dialog.locator("weave-input-pane");
+  await expect(pane.getByLabel("Input source")).toContainText(
+    "Error of submit",
+  );
+  await expect(
+    pane.locator(".pane-source-tag", { hasText: "Simulated failure" }),
+  ).toBeVisible();
+  await pane.getByRole("radio", { name: "JSON" }).click();
+  await expect(pane).toContainText("A value the step reads is missing.");
+});
