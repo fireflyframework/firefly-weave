@@ -617,13 +617,21 @@ for (const size of [
           left.push(rows[0].x);
           left.push((await textBox(pane.locator(".pane-caption"))).x);
         } else {
-          // Pin, then Edit at the sub-row's end, on the count's line (as the design has them).
+          // Pin, Edit, then More output actions where a step offers it, at
+          // the sub-row's end on the count's line (as the design has them).
           const pin = await box(pane.locator(".pane-pin"));
           const edit = await box(pane.locator(".pane-edit"));
-          expectAligned([pin.middle, edit.middle, count.middle], "sub-row", 2);
-          expectAligned([edit.right, edges.right], "sub-row right edge");
+          const more = pane.locator(".pane-more .row-menu-toggle");
+          const last = (await more.count()) ? await box(more) : edit;
+          expectAligned(
+            [pin.middle, edit.middle, count.middle, last.middle],
+            "sub-row",
+            2,
+          );
+          expectAligned([last.right, edges.right], "sub-row right edge");
           expect(pin.x).toBeGreaterThan(count.right);
           expect(pin.right).toBeLessThanOrEqual(edit.x);
+          expect(edit.right).toBeLessThanOrEqual(last.right);
         }
         expectAligned(left, `${name} pane left edge`);
         expect(await clippedText(details.dialog)).toEqual([]);
