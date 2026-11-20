@@ -730,8 +730,42 @@ weave-canvas-view,
   padding: 0;
 }
 .canvas-v2 button.handle:hover {
-  background: var(--danger-bg);
-  box-shadow: 0 0 0 4px var(--danger-bd);
+  box-shadow: 0 0 0 4px var(--danger-bg);
+}
+/* What Enter does, under the Error output while it has keyboard focus; and
+   the words beside the pointer while a drag from it runs. */
+.canvas-v2 :is(.handle-tip, .band-ghost) {
+  position: absolute;
+  z-index: 7;
+  width: max-content;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font: var(--type-caption);
+  pointer-events: none;
+}
+.canvas-v2 .handle-tip {
+  display: none;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(var(--tip-scale, 1));
+  transform-origin: top center;
+}
+.canvas-v2 button.handle:focus-visible .handle-tip {
+  display: block;
+}
+.canvas-v2 .band-ghost {
+  transform: translate(12px, 12px) scale(var(--tip-scale, 1));
+  transform-origin: top left;
+}
+/* The empty path a drag from its step's Error output adds to. */
+.canvas-v2 .lane-slot.drop-target {
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
 }
 .canvas-v2 .join-bar {
   position: absolute;

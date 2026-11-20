@@ -1102,6 +1102,32 @@ export class CanvasView implements OnInit, DoCheck {
   outputButton(key: string): InsertView | null {
     return this.locked() ? null : (this.targets().outputs.get(key) ?? null);
   }
+  /** Draws a tip at its size on screen, whatever the zoom. */
+  tipScale() {
+    return 1 / this.view.zoom;
+  }
+  /** The sequence a drag from an output adds to: its empty slot is the target. */
+  bandOwner(): string {
+    const key = this.band?.key;
+    return key
+      ? (this.layout().handles.find((item) => item.key === key)?.insert.owner ??
+          "")
+      : "";
+  }
+  /**
+   * Beside the pointer while a drag from a step's Error output runs; gone
+   * once it is let go, though the line stays while Add a step is open.
+   */
+  bandGhost(): string {
+    const press = this.press;
+    return press?.kind === "handle" &&
+      press.dragging &&
+      this.layout().handles.some(
+        (item) => item.key === press.key && item.tone === "danger",
+      )
+      ? "Add to the error path"
+      : "";
+  }
   slots(): InsertView[] {
     return this.targets().slots;
   }

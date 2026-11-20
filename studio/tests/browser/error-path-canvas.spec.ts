@@ -132,7 +132,16 @@ test("a drag from the Error output adds a step to the error path", async ({
   await page.mouse.down();
   // Let go on empty canvas, below and right of the handle.
   await page.mouse.move(from.x + 160, from.y + 120, { steps: 10 });
+  // While it runs, the words beside the pointer say where the step goes,
+  // and the empty path's slot is the target.
+  await expect(canvas.root.locator(".band-ghost")).toHaveText(
+    "Add to the error path",
+  );
+  await expect(
+    canvas.insertTarget("Add a step to the error path of submit"),
+  ).toHaveClass(/\bdrop-target\b/);
   await page.mouse.up();
+  await expect(canvas.root.locator(".band-ghost")).toHaveCount(0);
   await canvas.pick("Transform");
   await canvas.closeInspector();
   expect(await errorPathOf(page)).toEqual(["transform-1"]);
@@ -198,10 +207,13 @@ test("the Error output is a keyboard stop that adds a step at the start of the e
     exact: true,
   });
   await expect(output).toHaveAttribute("data-handle", "submit:path:errorPath");
+  // The pointer's tooltip names it; keyboard focus adds what Enter does.
   await expect(output).toHaveAttribute(
     "title",
-    "Add a step to the error path of submit · Enter",
+    "Add a step to the error path of submit",
   );
+  const tip = output.locator(".handle-tip");
+  await expect(tip).toBeHidden();
   // Tab reaches it from its step, after the step's own commands.
   await canvas.tileBody("submit").click();
   await canvas.closeInspector();
@@ -221,6 +233,10 @@ test("the Error output is a keyboard stop that adds a step at the start of the e
     "Add a step to the error path of submit",
   ]);
   await expect(output).toBeFocused();
+  await expect(tip).toBeVisible();
+  await expect(tip).toHaveText(
+    "Add a step to the error path of submit · Enter",
+  );
   await page.keyboard.press("Enter");
   await canvas.pick("Transform");
   await canvas.closeInspector();
