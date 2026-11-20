@@ -54,10 +54,18 @@ const refused = (code: CheckCode): EntryVerdict => ({
 export async function checkEntries(
   api: Pick<StudioApi, "request">,
   data: StudioTestData,
-  pointers: string[],
+  all: string[],
   inputs: CheckInputs,
 ): Promise<Map<string, EntryVerdict>> {
   const verdicts = new Map<string, EntryVerdict>();
+  // A simulated failure holds a code, an outcome and attempts, read as test
+  // data already: no value for the host to check against a schema.
+  const pointers = all.filter((pointer) => {
+    if (!pointer.startsWith("/errors/")) return true;
+    verdicts.set(pointer, { ok: true });
+    return false;
+  });
+  if (!pointers.length) return verdicts;
   try {
     const answer = await api.request<CheckTestDataResult>(
       "/studio/local/testdata/check",

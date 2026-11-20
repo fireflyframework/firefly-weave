@@ -30,6 +30,7 @@ import {
   withScript,
 } from "../src/app/editor/state/test-data-ops";
 import { readTestData } from "../src/app/editor/state/test-data-read";
+import { checkEntries } from "../src/app/editor/state/test-data-check";
 import type {
   ErrorEntry,
   StudioTestData,
@@ -131,5 +132,24 @@ describe("a simulated failure in test data", () => {
         readTestData(document({ submit: refused })),
         JSON.stringify(refused),
       ).toMatchObject({ ok: false });
+  });
+});
+
+describe("a simulated failure checked as test data", () => {
+  it("is never sent to the host's value check, which has nothing to check in it", async () => {
+    const asked: string[] = [];
+    const verdicts = await checkEntries(
+      {
+        request: async <T>() => {
+          asked.push("check");
+          return { entries: [{ path: "/pins/after", ok: true }] } as T;
+        },
+      },
+      withFailure(emptyTestData(AT), "submit", REFUSED, AT),
+      ["/errors/submit"],
+      { source: "{}", definitions: [], schemaOf: () => undefined },
+    );
+    expect(verdicts.get("/errors/submit")).toEqual({ ok: true });
+    expect(asked).toEqual([]);
   });
 });
