@@ -1156,8 +1156,12 @@ export class FormSession {
         this.controller.scopeOptions(),
       );
     }
+    // The loop roots go to loopEntries; a failed step's error stays with the data.
     const entries = hosted.filter(
-      (entry) => entry.source === "input" || entry.source === "step",
+      (entry) =>
+        entry.source === "input" ||
+        entry.source === "step" ||
+        entry.source === "error",
     ) as unknown as ScopeEntry[];
     const steps: VisibleStep[] = hosted
       .filter((entry) => entry.source === "step" && entry.path.length === 0)
