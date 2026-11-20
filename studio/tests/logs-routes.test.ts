@@ -31,7 +31,9 @@ import {
 
 describe("the Logs page's address", () => {
   it("comes after Metrics under Operate and needs run.read", () => {
-    expect(operatePages.slice(-2)).toEqual(["metrics", "logs"]);
+    expect(operatePages.indexOf("logs")).toBe(
+      operatePages.indexOf("metrics") + 1,
+    );
     expect(operateCapabilities.logs).toBe("run.read");
     expect(navEntryVisible("logs", (c) => c === "status.read")).toBe(false);
     expect(navEntryVisible("logs", (c) => c === "run.read")).toBe(true);
