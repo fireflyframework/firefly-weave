@@ -5146,6 +5146,113 @@ spec:
     await expect(page.getByText(`Scale workers · ${deployment}`)).toBeVisible();
     await shot("90-clusters-approvals");
   },
+  // Clusters › Add target › Kubernetes: the chooser, the connect wizard as it
+  // waits, once the cluster has connected, with an invalid name, and the
+  // whole form on a phone.
+  async "206-210-kubernetes-connect"({ page, shot, size }) {
+    await connected(page, {
+      capabilities: ["deployment.read", "deployment.plan", "target.manage"],
+    });
+    const scope = {
+      tenant_id: "tenant",
+      project_id: "project",
+      environment_id: "development",
+    };
+    const target = {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "kind-weave-test",
+      adapter: "kubernetes",
+      external_identity: "6f1c7e1a-4b55-4a8e-9a7e-0d6c1f0a2b3c",
+      boundary: "weave-workers",
+      runner_principal_id: "44444444-4444-4444-8444-444444444444",
+      capabilities: ["observe", "update", "scale_workers", "restart_workers"],
+      approval_policy: { distinct_approver: false },
+      scope,
+      revision: 1,
+      disabled: false,
+      created_at: "2026-11-19T11:59:00Z",
+    };
+    const later = (seconds: number) =>
+      new Date(Date.now() + seconds * 1000).toISOString();
+    // The cluster connects once the wizard has looked for it.
+    let joined = false;
+    await page.route(`${environment}/deployment-targets?*`, (r) =>
+      r.fulfill({ json: { items: joined ? [target] : [], next_cursor: null } }),
+    );
+    await page.route(`${environment}/deployment-runners?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: joined
+            ? [
+                {
+                  id: "71111111-7777-4777-8777-777777777777",
+                  principal_id: "55555555-5555-4555-8555-555555555555",
+                  target_id: target.id,
+                  adapter: "kubernetes",
+                  adapter_version: "2",
+                  capabilities: target.capabilities,
+                  last_seen: later(-5),
+                  expires_at: later(3600),
+                  revoked: false,
+                },
+              ]
+            : [],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-observations?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: joined
+            ? [
+                {
+                  id: "91111111-9999-4999-8999-999999999999",
+                  target_id: target.id,
+                  target_revision: 1,
+                  observed_at: later(-12),
+                  expires_at: later(3600),
+                  digest: "sha256:0",
+                  resources: [],
+                  complete: true,
+                  settled: true,
+                },
+              ]
+            : [],
+          next_cursor: null,
+        },
+      }),
+    );
+    await open(page, "Clusters");
+    await page.getByRole("button", { name: "Add target" }).click();
+    await expect(
+      page.getByRole("button", { name: "Connect a cluster" }),
+    ).toBeVisible();
+    await shot("206-kubernetes-chooser");
+    const looked = page.waitForResponse((r) =>
+      r.url().includes("/deployment-targets?"),
+    );
+    await page.getByRole("button", { name: "Connect a cluster" }).click();
+    await looked;
+    const status = page.getByRole("complementary", {
+      name: "What Studio sees",
+    });
+    await expect(status.getByRole("status")).toContainText(
+      "Waiting for the cluster",
+    );
+    await shot("207-kubernetes-connect-waiting");
+    if (size.tag === "360x740")
+      await shot("210-kubernetes-connect-360", { end: ".page-content" });
+    joined = true;
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(status.getByRole("status")).toContainText("Cluster connected");
+    await shot("208-kubernetes-connect-connected");
+    await page
+      .getByRole("textbox", { name: "Cluster name" })
+      .fill("Weave_Test");
+    await expect(status.getByRole("status")).toContainText("Not looking yet");
+    await shot("209-kubernetes-connect-invalid");
+  },
   async connections({ page, shot }) {
     const state: ConnectionsState = {
       bindable: {
