@@ -17,6 +17,7 @@
 """Container log requests on real PostgreSQL: who may ask and read, when the target's runner may answer, the rate per
 target, what the server keeps of a report, and how long it keeps it."""
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -36,6 +37,7 @@ from firefly_weave.contracts.deployments import (
     RunnerClaimRequest,
     RunnerRegistration,
     TargetRequest,
+    TargetUpdate,
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.leases import DeploymentLeases
@@ -329,3 +331,61 @@ async def test_expiry_lasts_an_hour_from_the_request(logs):
     first = await logs.target()
     created = await logs.requests.create(asked(first.target), uuid4().hex, **logs.authority("reader"))
     assert created.expires_at - created.created_at == timedelta(hours=1)
+
+
+async def test_a_report_after_read_logs_was_removed_from_the_target_keeps_no_lines(logs):
+    first = await logs.target()
+    created = await logs.requests.create(asked(first.target), uuid4().hex, **logs.authority("reader"))
+    claim = await logs.requests.claim(RunnerClaimRequest(runner_id=first.runner.id), **logs.authority("runner"))
+    assert claim is not None
+    # Between the claim and its report, a target manager takes read_logs away.
+    await logs.service.update_target(
+        first.target.id,
+        TargetUpdate(runner_principal_id=first.target.runner_principal_id, capabilities=["observe", "scale_workers"]),
+        first.target.revision,
+        **logs.authority("runner"),
+    )
+    line = LogLine(at=created.created_at, stream="stdout", text="ready")
+    error = await refused(logs.requests.report(report(claim, [line]), **logs.authority("runner")))
+    assert (error.status, error.code) == (409, "WV-RUNNER-FENCE")
+    assert (await logs.requests.read(created.id, **logs.authority("reader"))).members == []
+    async with logs.access[1]() as session:
+        assert await session.scalar(text("SELECT count(*) FROM deployment_log_snapshots")) == 0
+
+
+async def test_fifteen_requests_at_once_for_one_target_create_ten(logs):
+    first = await logs.target()
+
+    async def ask() -> str:
+        """Ask until the platform answers more than "busy": created, or refused for the rate."""
+        while True:
+            try:
+                await logs.requests.create(asked(first.target), uuid4().hex, **logs.authority("reader"))
+                return "created"
+            except CatalogError as error:
+                if error.code != "WV-OPERATION-CAPACITY":
+                    return error.code
+
+    answers = await asyncio.gather(*(ask() for _ in range(15)))
+    assert sorted(answers) == ["WV-LOG-RATE"] * 5 + ["created"] * 10
+    async with logs.access[1]() as session:
+        stored = await session.scalar(
+            text("SELECT count(*) FROM deployment_log_requests WHERE target_id=:target"), {"target": first.target.id}
+        )
+    assert stored == 10
+
+
+async def test_a_token_whose_log_reader_grant_was_revoked_reads_nothing_not_even_a_missing_request(logs):
+    first = await logs.target()
+    principal = await logs.access[2].create_principal(logs.admin, "application")
+    binding = await logs.access[2].grant(logs.admin, principal, Grant(role="deployment_log_reader", scope=logs.scope))
+    await logs.access[2].grant(logs.admin, principal, Grant(role="deployment_reader", scope=logs.scope))
+    logs.people["revoked"] = await logs.access[2].load_principal(principal)
+    created = await logs.requests.create(asked(first.target), uuid4().hex, **logs.authority("revoked"))
+    # The token still names the role; the stored grant is gone.
+    await logs.access[2].revoke_grant(logs.admin, logs.scope, binding)
+    for identifier in (created.id, uuid4()):
+        with pytest.raises(AccessDenied):
+            await logs.requests.read(identifier, **logs.authority("revoked"))
+    with pytest.raises(AccessDenied):
+        await logs.requests.create(asked(first.target), uuid4().hex, **logs.authority("revoked"))

@@ -319,6 +319,9 @@ class LogRequestService:
             runner, target = await DeploymentLeases(self.deployments).runner(
                 repo, proof.runner_id, actor, "runner.report", context
             )
+            # read_logs may have been taken away since the claim: then nothing the runner read is kept.
+            if "read_logs" not in runner.capabilities or "read_logs" not in target.capabilities:
+                raise CatalogError(409, "WV-RUNNER-FENCE", "This log claim is no longer the runner's")
             row = await self.row(repo, proof.request_id, lock=True)
             if row["target_id"] != target.id or row["runner_id"] != runner.id or row["claim_token"] != proof.token:
                 raise CatalogError(409, "WV-RUNNER-FENCE", "This log claim is no longer the runner's")
