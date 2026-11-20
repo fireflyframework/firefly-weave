@@ -652,10 +652,11 @@ export async function canUndo(page: Page) {
   return enabled;
 }
 
-/** Add target, then the generic registration a Kubernetes cluster uses. */
+/** Add target, then Other's generic registration of a target and its runner. */
 export async function registerTarget(page: Page) {
   await page.getByRole("button", { name: "Add target", exact: true }).click();
+  await page.getByText("Other", { exact: true }).click();
   await page
-    .getByRole("button", { name: "Register a cluster", exact: true })
+    .getByRole("button", { name: "Register target", exact: true })
     .click();
 }
