@@ -186,6 +186,7 @@ import {
   type StepFacts,
   type TileBorders,
 } from "./tile-facts";
+import { failureText } from "./error-lane";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_STEP_FACTS: ReadonlyMap<string, StepFacts> = new Map();
@@ -930,16 +931,24 @@ export class CanvasView implements OnInit, DoCheck {
       !runLine &&
       tile.kind === "callWorkflow" &&
       tile.step["mode"] === "detach";
+    // What the step's failure does: in its name, and under a step that
+    // continues on error while no run line shows (its outputs say the rest).
+    const failure = failureText(tile.step);
+    const continues = !runLine && tile.step["onError"] === "continue";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      output: detached ? "Doesn't wait" : runLine,
+      output: detached
+        ? "Doesn't wait"
+        : continues
+          ? "Continues on error"
+          : runLine,
       outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
-        id: tile.id,
+        id: failure ? `${tile.id}, ${failure}` : tile.id,
         kindLabel,
         // A loop's summary under its frame is in its name, whole.
         summary:

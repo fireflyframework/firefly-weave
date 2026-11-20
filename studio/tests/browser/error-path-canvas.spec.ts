@@ -1,0 +1,113 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// A step's error path on the canvas: Success and Error outputs, each with
+// its label (Error with its icon too, so color is never alone), the empty
+// path's slot that adds a step to it, and tile names that say what a
+// step's failure does.
+import { expect, test, type Page } from "@playwright/test";
+import { parse } from "yaml";
+import { openWorkflow } from "./canvas-po";
+import { yamlFile } from "./step-details-po";
+import { sourceText } from "./support";
+
+/** lookup continues on error; submit continues with error output into an empty path; then summarize. */
+const GUARDED = yamlFile(
+  "request-intake.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: request-intake, version: 1.3.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: lookup
+      kind: transform
+      value: {object: {found: {literal: true}}}
+      onError: continue
+    - id: submit
+      kind: transform
+      value: {object: {sent: {literal: true}}}
+      onError: errorOutput
+      errorPath:
+        steps: []
+        output: {literal: null}
+    - id: summarize
+      kind: transform
+      value: {object: {done: {literal: true}}}
+  output: {literal: null}
+`,
+);
+/** The steps of the error path of submit, read from Source. */
+async function errorPathOf(page: Page): Promise<string[]> {
+  const source = parse(await sourceText(page)) as {
+    spec: { steps: { id: string; errorPath?: { steps: { id: string }[] } }[] };
+  };
+  const submit = source.spec.steps.find((step) => step.id === "submit");
+  return (submit?.errorPath?.steps ?? []).map((step) => step.id);
+}
+
+test.use({ viewport: { width: 1440, height: 900 } });
+
+test("a step that continues with error output shows Success and Error outputs, each labeled", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, GUARDED);
+  const success = canvas.branchLabel("submit/success");
+  const error = canvas.branchLabel("submit/errorPath");
+  await expect(success).toHaveText("Success");
+  await expect(success).toHaveAttribute("data-tone", "muted");
+  await expect(error).toHaveText("Error");
+  await expect(error).toHaveAttribute("data-tone", "danger");
+  // Color is never alone: the Error label carries the warning icon.
+  await expect(error.locator("weave-icon")).toHaveAttribute("name", "warning");
+  await expect(canvas.handle("submit:path:errorPath")).toHaveAttribute(
+    "data-tone",
+    "danger",
+  );
+  await expect(canvas.handle("submit:path:success")).toBeVisible();
+});
+
+test("tiles say what their failure does, in their names and under a step that continues", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, GUARDED);
+  await expect(canvas.tileBody("lookup")).toHaveAccessibleName(
+    /^lookup, continues on error, /,
+  );
+  await expect(canvas.tileBody("submit")).toHaveAccessibleName(
+    /^submit, continues with error output, /,
+  );
+  await expect(canvas.tile("lookup")).toContainText("Continues on error");
+});
+
+test("the empty error path's slot adds a step to the path, by keyboard", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, GUARDED);
+  const slot = canvas.insertTarget("Add a step to the error path of submit");
+  await slot.focus();
+  await page.keyboard.press("Enter");
+  await canvas.pick("Transform");
+  await canvas.closeInspector();
+  expect(await errorPathOf(page)).toEqual(["transform-1"]);
+  await canvas.ready();
+  // The new step sits on the Error row, below submit.
+  const submit = await canvas.tileBody("submit").boundingBox();
+  const added = await canvas.tileBody("transform-1").boundingBox();
+  expect(added!.y).toBeGreaterThan(submit!.y + submit!.height);
+});

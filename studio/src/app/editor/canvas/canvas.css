@@ -709,6 +709,21 @@ weave-canvas-view,
   transform: scale(var(--path-label-scale, 1));
   transform-origin: bottom left;
 }
+/* A step's Error output: its label in the danger ink with the warning icon,
+   its handle with a danger border. Success stays muted. */
+.canvas-v2 .branch-label[data-tone="danger"] {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
+.canvas-v2 .branch-label > weave-icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.canvas-v2 .handle[data-tone="danger"] {
+  border-color: var(--danger);
+}
 .canvas-v2 .join-bar {
   position: absolute;
   z-index: 2;

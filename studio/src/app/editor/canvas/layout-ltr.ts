@@ -165,6 +165,8 @@ export interface LtrHandle {
   /** The "+" shown when nothing follows this output in its sequence. */
   plus: Point | null;
   name: string;
+  /** A step's Error output, drawn in the danger ink. */
+  tone?: "danger";
 }
 export interface LtrEdge {
   key: string;
@@ -631,6 +633,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         label,
         plus: null,
         name,
+        ...(tone === "danger" ? { tone } : {}),
       };
       layout.handles.push(handle);
       layout.edges.push({

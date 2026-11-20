@@ -26,7 +26,7 @@ import {
   type LtrLayout,
   type LtrOptions,
 } from "../src/app/editor/canvas/layout-ltr";
-import { errorLane, tileName } from "../src/app/editor/canvas/error-lane";
+import { errorLane, failureText } from "../src/app/editor/canvas/error-lane";
 import type { NodeRole } from "../src/app/editor/ndv/registry";
 import { createStep, freshWorkflow, type Step } from "../src/app/model";
 
@@ -81,11 +81,13 @@ describe("the error lane of a step", () => {
   });
 
   it("names a tile by what its failure does", () => {
-    expect(tileName({ ...step("lookup", "action"), onError: "continue" })).toBe(
-      "continues on error",
+    expect(
+      failureText({ ...step("lookup", "action"), onError: "continue" }),
+    ).toBe("continues on error");
+    expect(failureText(guarded("submit", []))).toBe(
+      "continues with error output",
     );
-    expect(tileName(guarded("submit", []))).toBe("continues with error output");
-    expect(tileName(step("plain"))).toBe("");
+    expect(failureText(step("plain"))).toBe("");
   });
 });
 
@@ -123,6 +125,7 @@ describe("a step that continues with error output", () => {
       label: "Error",
       plus: null,
       name: "Add a step to the error path of submit",
+      tone: "danger",
     });
     expect(layout.slots).toEqual([
       {

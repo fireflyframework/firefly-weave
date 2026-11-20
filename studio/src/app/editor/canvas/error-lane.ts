@@ -44,7 +44,7 @@ export function errorLane(step: Step): ErrorLane | null {
 }
 
 /** What a tile's name adds for a step that handles its failures: "continues on error". */
-export function tileName(step: Step): string {
+export function failureText(step: Step): string {
   if (step["onError"] === "continue") return "continues on error";
   if (step["onError"] === "errorOutput") return "continues with error output";
   return "";
