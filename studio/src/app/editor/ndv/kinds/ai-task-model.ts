@@ -24,7 +24,7 @@ import type {
   BindableConnection,
   AiModel,
 } from "../../../integrations/ai-setup-api";
-import type { Json } from "../../../forms/core/json";
+import { canonicalJson, type Json } from "../../../forms/core/json";
 import type { SelectOption } from "../../../forms/ui/select";
 import type { Step, Workflow } from "../../../model";
 import type { SideEffect, StepTestRequest } from "../../state/execution";
@@ -508,14 +508,60 @@ const count = (value: unknown): value is number =>
   Number.isInteger(value) && (value as number) >= 0;
 const plural = (n: number, word: string) =>
   `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
-/** "1 request · 812 in · 64 out tokens" for an AI task's output; null without usage counts. */
+/**
+ * "1 request · 812 in · 64 out tokens" for an AI task's output, or what a
+ * replay did when no model was called; null without usage counts.
+ */
 export function usageLine(output: unknown): string | null {
   const usage = isRecord(output) ? output["usage"] : null;
   if (!isRecord(usage)) return null;
   const { requests, inputTokens, outputTokens } = usage;
   if (!count(requests) || !count(inputTokens) || !count(outputTokens))
     return null;
+  if (requests === 0) return "No model call · replayed the saved answer";
   return `${plural(requests, "request")} · ${inputTokens.toLocaleString("en-US")} in · ${plural(outputTokens, "out token")}`;
+}
+
+/**
+ * Generate sample's answer for a text result: the result fields' first
+ * example, else a sentence naming the step. Null for structured results,
+ * whose sample comes from their fields.
+ */
+export function textSample(workflow: Workflow, step: Step): Json | null {
+  const schema = resultSchemaOf(workflow, step);
+  // A plain string; a constrained one (a list of values, a pattern, a format)
+  // gets a sample that meets its constraint from its fields instead.
+  if (
+    !isRecord(schema) ||
+    schema["type"] !== "string" ||
+    ["enum", "const", "pattern", "format"].some((key) => key in schema)
+  )
+    return null;
+  const examples = schema["examples"];
+  return Array.isArray(examples) && typeof examples[0] === "string"
+    ? examples[0]
+    : `Sample answer from ${step.id}.`;
+}
+
+/**
+ * Whether a saved turn holds the answer shown: it came from the same run, or
+ * its final answer is the shown result (compared by value).
+ */
+export function holdsAnswer(
+  entry: unknown,
+  shown: unknown,
+  runId: string | null,
+): boolean {
+  if (!isRecord(entry) || !isRecord(shown)) return false;
+  if (runId && entry["runId"] === runId) return true;
+  const turns = entry["turns"];
+  const first = Array.isArray(turns) ? turns[0] : undefined;
+  return (
+    isRecord(first) &&
+    "final" in first &&
+    "result" in shown &&
+    canonicalJson(first["final"]) === canonicalJson(shown["result"])
+  );
 }
 
 const slotOf = (step: Step): string =>
@@ -553,15 +599,58 @@ export function stepTestBody(
  * free; any other, or one never listed, may bill.
  */
 const listed = new Map<string, { label: string; local: boolean }>();
+/** "OpenAI (openai-prod)": the provider, then the connection's name, from a label "OpenAI · openai-prod". */
+function connectionWords(connection: BindableConnection): string {
+  const { label, name } = connection;
+  const suffix = ` · ${name}`;
+  if (label && label.endsWith(suffix) && label.length > suffix.length)
+    return `${label.slice(0, -suffix.length)} (${name})`;
+  return label && label !== name ? `${label} (${name})` : name;
+}
 export function rememberConnections(
   connections: readonly BindableConnection[],
 ): void {
   for (const connection of connections)
     listed.set(connection.revision_id, {
-      label: connection.label || connection.name,
+      label: connectionWords(connection),
       local: local(connection),
     });
 }
+/** What keeps a slot's binding on this computer (the connections port). */
+export interface BindingStore {
+  setBinding(
+    workflow: string,
+    slot: string,
+    value: { connectionId: string; revisionId: string; name: string },
+  ): Promise<boolean>;
+}
+/**
+ * Keeps the connection chosen with a model as its slot's binding on this
+ * computer, for Execute in an environment; the sentence to show when it
+ * couldn't be kept (a refused or failed write), else null.
+ */
+export async function bindChosen(
+  store: BindingStore,
+  workflow: string,
+  slot: string,
+  connection: Pick<
+    BindableConnection,
+    "connection_id" | "revision_id" | "name"
+  >,
+): Promise<string | null> {
+  const unkept = `${connection.name} is the connection for slot ${slot} for now, but Studio couldn't keep the choice on this computer.`;
+  try {
+    const kept = await store.setBinding(workflow, slot, {
+      connectionId: connection.connection_id,
+      revisionId: connection.revision_id,
+      name: connection.name,
+    });
+    return kept ? null : unkept;
+  } catch {
+    return unkept;
+  }
+}
+
 /** The cost sentence before a step test on a connection that may bill; null for a local one. */
 export function costNotice(
   model: string,

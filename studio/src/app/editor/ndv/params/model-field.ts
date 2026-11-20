@@ -39,6 +39,7 @@ import type { StudioApi } from "../../../api";
 import { connectionsPort } from "../../connections/connections-port";
 import {
   AI_CONNECTOR,
+  bindChosen,
   chooseModel,
   currentModelValue,
   modelOptions,
@@ -251,19 +252,11 @@ export class ModelField {
     const port = connectionsPort(session.host);
     if (!port) return;
     const workflow = session.host.model.definition.metadata.name;
-    const kept = await port.setBinding(workflow, slot, {
-      connectionId: connection.connection_id,
-      revisionId: connection.revision_id,
-      name: connection.name,
-    });
+    // A refused or failed write is said; it never escapes as an unhandled rejection.
+    const unkept = await bindChosen(port, workflow, slot, connection);
     if (!port.live || !session.isCurrent()) return;
     port.bound(session.host, slot);
-    if (!kept)
-      session.host.notify(
-        `${connection.name} is the connection for slot ${slot} for now, but Studio couldn't keep the choice on this computer.`,
-        undefined,
-        "danger",
-      );
+    if (unkept) session.host.notify(unkept, undefined, "danger");
   }
   choose(value: string): void {
     const session = this.session();

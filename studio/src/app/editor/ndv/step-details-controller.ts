@@ -79,7 +79,9 @@ import {
 import {
   aiTaskReplay,
   aiTaskTurn,
+  holdsAnswer,
   resultSchemaOf,
+  textSample,
   type TurnProvenance,
 } from "./kinds/ai-task-model";
 import { TestDataService } from "../state/test-data-service";
@@ -187,6 +189,11 @@ import {
 export function pinSubject(key: string): string {
   const item = pinItem(key);
   return item ? `${instanceStep(key)} for item ${item}` : instanceStep(key);
+}
+/** Whose answer an AI task's toast names: "summarize", or "summarize, item 2" inside a loop. */
+function answerSubject(key: string): string {
+  const item = pinItem(key);
+  return item ? `${instanceStep(key)}, item ${item}` : instanceStep(key);
 }
 /** The item of a pin inside a loop's body, one-based ("3", "3 › 1"); null for a step's pin. */
 function pinItem(key: string): string | null {
@@ -747,25 +754,38 @@ export class StepDetailsController {
       ? undefined
       : { value, source: "simulated" as const, stale: null };
   }
-  /** An AI task's answer kept as the turn Execute step replays; null when kept, else why not. */
+  /**
+   * An AI task's answer kept as the turn Execute step replays, under `key`
+   * (the step, or the item picked in a loop). An answer it replaces can come
+   * back with Undo, as a replaced pin can.
+   */
   private async keepTurn(
-    target: string,
+    key: string,
     value: Json,
     provenance: TurnProvenance,
-  ): Promise<string | null> {
-    const locked = this.readOnlyReason(target);
-    if (locked) return locked;
-    const step = this.step(instanceStep(target));
-    if (!step) return "This step's output can't be pinned.";
+  ): Promise<{ ok: false; message: string } | { ok: true; replaced: boolean }> {
+    const locked = this.readOnlyReason(key);
+    if (locked) return { ok: false, message: locked };
+    const step = this.step(instanceStep(key));
+    if (!step)
+      return { ok: false, message: "This step's output can't be pinned." };
     const made = aiTaskTurn(
       this.host.model.definition,
       step,
       value,
       provenance,
     );
-    if ("problem" in made) return made.problem;
-    const kept = await this.setScript(target, made.entry as unknown as Json);
-    return kept.ok ? null : kept.message;
+    if ("problem" in made) return { ok: false, message: made.problem };
+    const previous = this.testData.data();
+    const replaced = Object.hasOwn(previous.aiTurns ?? {}, key);
+    const kept = await this.setScript(key, made.entry as unknown as Json);
+    if (!kept.ok) return kept;
+    if (replaced)
+      this.offerUndo(
+        `Replaced the kept answer for ${answerSubject(key)}.`,
+        previous,
+      );
+    return { ok: true, replaced };
   }
   /**
    * Pin output on a real result: kept as test data that came from a run, with
@@ -784,21 +804,42 @@ export class StepDetailsController {
         : undefined;
       if (answer === undefined)
         return "There's no output from a real run to pin.";
-      const refused = await this.keepTurn(this.pinKey(target), answer, {
+      const key = this.pinKey(target);
+      const kept = await this.keepTurn(key, answer, {
         source: "test-call",
         runId: real.runId,
         runEnvironmentId: real.environmentId,
       });
-      if (!refused)
+      if (!kept.ok) return kept.message;
+      // A replaced answer's toast offers Undo instead.
+      if (!kept.replaced)
         this.host.notify(
-          `Kept this answer as test data for ${target}. Execute step replays it.`,
+          `Kept this answer as test data for ${answerSubject(key)}. Execute step replays it.`,
         );
-      return refused;
+      return null;
     }
     return this.pin(this.pinKey(target), data.value, "test-call", {
       runId: real.runId,
       runEnvironmentId: real.environmentId,
     });
+  }
+  /** Whether the answer an AI task shows is the one its saved turn holds, which Execute step replays. */
+  keptAnswer(target: string): boolean {
+    if (this.answerSection(target) !== "aiTurns") return false;
+    return holdsAnswer(
+      this.scriptOf(this.pinKey(target)),
+      this.pickedStepData(target)?.value ?? null,
+      this.realResult(target)?.runId ?? null,
+    );
+  }
+  /** Removes the saved turn that holds the answer shown, with an Undo toast; true once removed. */
+  async forgetAnswer(target: string): Promise<boolean> {
+    if (this.readOnlyReason(target) || !this.keptAnswer(target)) return false;
+    const key = this.pinKey(target);
+    const held = Object.hasOwn(this.testData.data().aiTurns ?? {}, key)
+      ? key
+      : instanceStep(key);
+    return (await this.setScript(held, null)).ok;
   }
   /** Where a step's real result came from, when its last result ran for real in an environment. */
   realResult(key: string): RealResult | null {
@@ -880,7 +921,12 @@ export class StepDetailsController {
     );
     if (!outcome.ok) return { ok: false, message: outcome.message };
     if (entry === null)
-      this.offerUndo(`Removed the test answer of ${key}.`, outcome.previous);
+      this.offerUndo(
+        section === "aiTurns"
+          ? `Removed the kept answer for ${answerSubject(key)}.`
+          : `Removed the test answer of ${key}.`,
+        outcome.previous,
+      );
     return { ok: true };
   }
 
@@ -1022,14 +1068,19 @@ export class StepDetailsController {
     if (!schema) return "Studio doesn't know this step's output fields yet.";
     let sample: Json;
     try {
-      sample = sampleFromSchema(schema) as Json;
+      // An AI task's text answer reads as one (its first example, else a sentence).
+      sample =
+        (answer ? textSample(this.host.model.definition, step) : null) ??
+        (sampleFromSchema(schema) as Json);
     } catch {
       // anyOf, allOf, an unknown format or bounds no value meets.
       return CANT_SAMPLE;
     }
-    return answer
-      ? this.keepTurn(this.pinKey(target), sample, { source: "simulated" })
-      : this.pin(this.pinKey(target), sample, "schema");
+    if (!answer) return this.pin(this.pinKey(target), sample, "schema");
+    const kept = await this.keepTurn(this.pinKey(target), sample, {
+      source: "simulated",
+    });
+    return kept.ok ? null : kept.message;
   }
   /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
   private offerUndo(

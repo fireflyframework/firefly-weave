@@ -22,7 +22,9 @@ import {
   TEXT_RESULT,
   aiTaskReplay,
   aiTaskTurn,
+  bindChosen,
   effectToAcknowledge,
+  holdsAnswer,
   rememberConnections,
   stepTestBody,
   usageLine,
@@ -377,7 +379,10 @@ describe("an AI task's usage line", () => {
     expect(usageLine(usage(1, 812, 64))).toBe(
       "1 request · 812 in · 64 out tokens",
     );
-    expect(usageLine(usage(0, 0, 0))).toBe("0 requests · 0 in · 0 out tokens");
+    // A replay called no model: it says so instead of counting zeros.
+    expect(usageLine(usage(0, 0, 0))).toBe(
+      "No model call · replayed the saved answer",
+    );
     expect(usageLine(usage(2, 12345, 1))).toBe(
       "2 requests · 12,345 in · 1 out token",
     );
@@ -485,8 +490,9 @@ describe("an AI task run for real", () => {
     const asked = real(prompted(), cloud);
     expect(asked).toMatchObject({
       body: { connections: { ai: cloud.revisionId } },
+      // The provider, then the connection in parentheses.
       confirm:
-        "This calls qwen3:4b on OpenAI · openai-prod and may incur cost.",
+        "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.",
     });
     expect("body" in asked && asked.body.acknowledged_side_effect).toBeFalsy();
     // A connection Studio hasn't listed is asked about too, by its name.
@@ -580,10 +586,29 @@ describe("an AI task's step test body", () => {
 
 const RUN = "55555555-5555-4555-8555-555555555555";
 const ENVIRONMENT = "66666666-6666-4666-8666-666666666666";
-/** Step details over one AI task, with test data in memory that the host accepts (or refuses as secret). */
-function details(results: LastResults | null = null, secret = false) {
+/**
+ * Step details over one AI task (inside a loop over tickets when `loop`), with
+ * test data in memory that the host accepts (or refuses as secret).
+ */
+function details(
+  results: LastResults | null = null,
+  secret = false,
+  loop = false,
+) {
   const model = new StructuredCanvasAdapter();
-  const { workflow } = prompted();
+  const { workflow, step } = prompted();
+  if (loop)
+    workflow.spec.steps = [
+      {
+        id: "tickets",
+        kind: "forEach",
+        items: { ref: "/input/tickets" },
+        concurrency: 1,
+        maxItems: 1000,
+        collect: "all",
+        body: { steps: [step], output: { ref: "/item" } },
+      },
+    ];
   model.replace(workflow);
   model.clearHistory();
   const values = new Map<string, string>();
@@ -622,10 +647,15 @@ function details(results: LastResults | null = null, secret = false) {
     }),
   });
   const notices: string[] = [];
+  /** Each toast's action (Undo), by the toast's text. */
+  const actions = new Map<string, { label: string; run(): void }>();
   const host = {
     model,
     perform: (edit: () => void) => edit(),
-    notify: (text: string) => void notices.push(text),
+    notify: (text: string, action?: { label: string; run(): void }) => {
+      notices.push(text);
+      if (action) actions.set(text, action);
+    },
     undo: () => model.undo(),
     undoIfUnchanged: async () => "undone" as const,
     catalogContracts: new Map(),
@@ -641,18 +671,24 @@ function details(results: LastResults | null = null, secret = false) {
     can: () => true,
     testData,
     openTestData: () => false,
-    execution: { results: () => results, running: () => null } as never,
+    execution: {
+      results: () => results,
+      running: () => null,
+      last: () => null,
+      sampleUsed: () => null,
+    } as never,
   } as unknown as ControllerHost;
   const controller = new StepDetailsController(host, () => 1000);
-  return { controller, testData, checked, notices };
+  return { controller, testData, checked, notices, actions, model };
 }
 
 describe("an AI task's test data in step details", () => {
   it("Generate sample saves a sample answer as the turn Execute step replays", async () => {
     const { controller, testData, checked } = details();
     expect(await controller.generateOutput("summarize")).toBeNull();
+    // A text answer reads as one, named after the step.
     expect(testData.data().aiTurns?.["summarize"]).toEqual({
-      turns: [{ final: "text" }],
+      turns: [{ final: "Sample answer from summarize." }],
       source: "simulated",
     });
     expect(testData.data().pins?.["summarize"]).toBeUndefined();
@@ -660,12 +696,44 @@ describe("an AI task's test data in step details", () => {
     // The Output pane shows what Execute step would return.
     expect(controller.stepData("summarize")).toMatchObject({
       value: {
-        result: "text",
+        result: "Sample answer from summarize.",
         usage: { requests: 0, inputTokens: 0, outputTokens: 0 },
         model: "qwen3:4b",
       },
       source: "simulated",
     });
+    // The answer shown is the one kept as test data.
+    expect(controller.keptAnswer("summarize")).toBe(true);
+  });
+  it("a text result's sample is its first example when the result fields give one", async () => {
+    const { controller, testData, model } = details();
+    const workflow = structuredClone(model.definition);
+    (workflow.spec["llmProfiles"] as Record<string, Record<string, unknown>>)[
+      "summarize"
+    ]["outputSchema"] = {
+      type: "string",
+      maxLength: 20000,
+      examples: ["The customer can't sign in."],
+    };
+    model.replace(workflow);
+    expect(await controller.generateOutput("summarize")).toBeNull();
+    expect(testData.data().aiTurns?.["summarize"]?.turns).toEqual([
+      { final: "The customer can't sign in." },
+    ]);
+  });
+  it("removes the kept answer on a second click, with Undo", async () => {
+    const { controller, testData, notices, actions } = details();
+    await controller.generateOutput("summarize");
+    expect(await controller.forgetAnswer("summarize")).toBe(true);
+    expect(testData.data().aiTurns).toBeUndefined();
+    expect(controller.keptAnswer("summarize")).toBe(false);
+    const removed = "Removed the kept answer for summarize.";
+    expect(notices).toContain(removed);
+    expect(actions.get(removed)?.label).toBe("Undo");
+    actions.get(removed)!.run();
+    expect(testData.data().aiTurns?.["summarize"]?.turns).toEqual([
+      { final: "Sample answer from summarize." },
+    ]);
   });
   it("reads and keeps the AI task's turn as its test answer", async () => {
     const { controller, testData } = details();
@@ -685,7 +753,10 @@ describe("an AI task's test data in step details", () => {
   });
   it("keeps a real answer as test data with its run, never as a pin", async () => {
     const { controller, testData, notices } = details(realAnswer());
+    expect(controller.keptAnswer("summarize")).toBe(false);
     expect(await controller.pinReal("summarize")).toBeNull();
+    // The real answer shown is now the kept one (the same run).
+    expect(controller.keptAnswer("summarize")).toBe(true);
     expect(testData.data().aiTurns?.["summarize"]).toEqual({
       turns: [{ final: "Two sentences." }],
       source: "test-call",
@@ -707,6 +778,105 @@ describe("an AI task's test data in step details", () => {
     const sample = details(null, true);
     expect(await sample.controller.generateOutput("summarize")).toBe(secret);
     expect(sample.testData.data().aiTurns).toBeUndefined();
+  });
+});
+
+describe("an AI task's kept answer inside a loop", () => {
+  it("Generate sample keeps the answer for the item picked only", async () => {
+    const { controller, testData } = details(null, false, true);
+    controller.iterations.pick("tickets", 1);
+    expect(await controller.generateOutput("summarize")).toBeNull();
+    expect(Object.keys(testData.data().aiTurns ?? {})).toEqual([
+      "summarize[1]",
+    ]);
+    expect(controller.stepData("summarize[1]")?.value).toMatchObject({
+      result: "Sample answer from summarize.",
+    });
+    expect(controller.stepData("summarize[0]")).toBeUndefined();
+  });
+  it("keeps a real answer for the item picked, and says which item", async () => {
+    const { controller, testData, notices } = details(
+      realAnswer(),
+      false,
+      true,
+    );
+    controller.iterations.pick("tickets", 1);
+    expect(await controller.pinReal("summarize")).toBeNull();
+    expect(Object.keys(testData.data().aiTurns ?? {})).toEqual([
+      "summarize[1]",
+    ]);
+    expect(notices).toContain(
+      "Kept this answer as test data for summarize, item 2. Execute step replays it.",
+    );
+  });
+});
+
+describe("replacing a kept answer", () => {
+  it("offers Undo, as replacing a pin does", async () => {
+    const { controller, testData, notices, actions } = details(realAnswer());
+    await controller.generateOutput("summarize");
+    expect(await controller.pinReal("summarize")).toBeNull();
+    const replaced = "Replaced the kept answer for summarize.";
+    expect(notices).toContain(replaced);
+    expect(actions.get(replaced)?.label).toBe("Undo");
+    actions.get(replaced)!.run();
+    expect(testData.data().aiTurns?.["summarize"]?.turns).toEqual([
+      { final: "Sample answer from summarize." },
+    ]);
+  });
+});
+
+describe("keeping the connection chosen with a model", () => {
+  const connection = {
+    connection_id: BOUND.connectionId,
+    revision_id: BOUND.revisionId,
+    name: "ollama-local",
+    connector: "weave-agentic-provider@1.0.0",
+    label: "Ollama · ollama-local",
+    enabled: true,
+  };
+  const port = (setBinding: () => Promise<boolean>) => ({ setBinding });
+  it("keeps it as the slot's binding", async () => {
+    const calls: unknown[][] = [];
+    const kept = {
+      setBinding: async (...args: unknown[]) => (calls.push(args), true),
+    };
+    expect(
+      await bindChosen(kept, "support-inbox", "ai", connection),
+    ).toBeNull();
+    expect(calls).toEqual([
+      [
+        "support-inbox",
+        "ai",
+        {
+          connectionId: BOUND.connectionId,
+          revisionId: BOUND.revisionId,
+          name: "ollama-local",
+        },
+      ],
+    ]);
+  });
+  it("says so when this computer can't keep it, or keeping it fails", async () => {
+    const words =
+      "ollama-local is the connection for slot ai for now, but Studio couldn't keep the choice on this computer.";
+    expect(
+      await bindChosen(
+        port(async () => false),
+        "support-inbox",
+        "ai",
+        connection,
+      ),
+    ).toBe(words);
+    expect(
+      await bindChosen(
+        port(async () => {
+          throw new Error("storage is full");
+        }),
+        "support-inbox",
+        "ai",
+        connection,
+      ),
+    ).toBe(words);
   });
 });
 
@@ -736,3 +906,36 @@ function realAnswer(): LastResults {
     },
   };
 }
+
+describe("whether a saved turn holds the answer shown", () => {
+  const shown = { result: "Two sentences.", usage: { requests: 1 } };
+  it("holds it for the same run, or the same final answer", () => {
+    const fromRun = {
+      turns: [{ final: "Other words." }],
+      source: "test-call",
+      runId: RUN,
+      runEnvironmentId: ENVIRONMENT,
+    };
+    expect(holdsAnswer(fromRun, shown, RUN)).toBe(true);
+    expect(
+      holdsAnswer({ turns: [{ final: "Two sentences." }] }, shown, null),
+    ).toBe(true);
+    // Structured answers compare by value, whatever the key order.
+    expect(
+      holdsAnswer(
+        { turns: [{ final: { b: 2, a: 1 } }] },
+        { result: { a: 1, b: 2 } },
+        null,
+      ),
+    ).toBe(true);
+  });
+  it("doesn't for another answer, another run, or no turn at all", () => {
+    expect(holdsAnswer({ turns: [{ final: "Other." }] }, shown, RUN)).toBe(
+      false,
+    );
+    expect(holdsAnswer(null, shown, RUN)).toBe(false);
+    expect(
+      holdsAnswer({ turns: [{ final: "Two sentences." }] }, null, null),
+    ).toBe(false);
+  });
+});

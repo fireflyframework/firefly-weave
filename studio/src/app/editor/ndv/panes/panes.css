@@ -164,6 +164,30 @@ weave-test-event-pane {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* An AI task's text answer, read before keeping it: wrapped as written, at
+   most eight lines until Show all, above the answer's fields. */
+.pane-answer {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.pane-answer-text {
+  margin: 0;
+  max-width: 100%;
+  font: var(--type-body);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pane-answer-text.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  overflow: hidden;
+}
 weave-input-pane .pane-count {
   margin-left: auto;
   text-align: right;

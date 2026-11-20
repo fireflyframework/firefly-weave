@@ -27,6 +27,7 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  afterEveryRender,
   inject,
   input,
   effect,
@@ -71,6 +72,8 @@ import {
 } from "../../../operate/run-contracts";
 import { durationText, shortId } from "../../../format";
 
+/** Numbers each pane's answer, for its Show all button's aria-controls. */
+let answerSequence = 0;
 /** The most pages of a run's child runs read for one card: 20 pages of 100. */
 const CHILD_PAGES = 20;
 /** A child run's summary, from the pages of its parent's child runs (a call in a loop makes many). */
@@ -149,6 +152,8 @@ import { describeError } from "../../../errors";
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
+    @let kept = !pin && answerKept();
+    @let keepsAnswer = !pin && aiTask();
     @let rows = this.rows();
     @let shown = filter(rows);
     <header class="sd-pane-head">
@@ -259,13 +264,19 @@ import { describeError } from "../../../errors";
         <button
           type="button"
           class="icon-button pane-pin"
-          [attr.aria-pressed]="!!pin"
-          [attr.aria-label]="pin ? 'Unpin output' : 'Pin output'"
-          [attr.aria-disabled]="pin || realPinnable() ? null : 'true'"
+          [attr.aria-pressed]="!!pin || kept"
+          [attr.aria-label]="
+            keepsAnswer
+              ? 'Keep as test data'
+              : pin
+                ? 'Unpin output'
+                : 'Pin output'
+          "
+          [attr.aria-disabled]="pin || kept || realPinnable() ? null : 'true'"
           [title]="pinTitle(!!pin)"
           (click)="togglePin()"
         >
-          <weave-icon [name]="pin ? 'unpin' : 'pin'" [size]="16" />
+          <weave-icon [name]="pin || kept ? 'unpin' : 'pin'" [size]="16" />
         </button>
         <button
           type="button"
@@ -283,6 +294,30 @@ import { describeError } from "../../../errors";
       <!-- An AI task's model use, on a row of its own: the source and the
            controls above keep their room. -->
       <p class="pane-usage">{{ line }}</p>
+    }
+    @if (answerText(); as text) {
+      <!-- A text answer, to read before keeping it: eight lines, then Show all. -->
+      @let open = answerOpen() === text;
+      <div class="pane-answer">
+        <p
+          #answerText
+          class="pane-answer-text"
+          [class.is-clamped]="!open"
+          [id]="answerId"
+          [textContent]="text"
+        ></p>
+        @if (answerLonger()) {
+          <button
+            type="button"
+            class="text-link pane-answer-more"
+            [attr.aria-expanded]="open"
+            [attr.aria-controls]="answerId"
+            (click)="toggleAnswer(text)"
+          >
+            {{ open ? "Show less" : "Show all" }}
+          </button>
+        }
+      </div>
     }
     @let around = pickerRows();
     @if (around.length) {
@@ -1120,10 +1155,50 @@ export class OutputPane {
   }
   /** An AI task's model requests and tokens for the output shown ("1 request · 812 in · 64 out tokens"). */
   usage(): string | null {
+    return this.aiTask() ? usageLine(this.event()) : null;
+  }
+  // ------------------------------------------------- an AI task's answer
+  /** The step is an AI task (its test data is the answer Execute step replays). */
+  aiTask(): boolean {
     const { controller, target } = this.session();
-    return controller.descriptor(target)?.script === "ai-turns"
-      ? usageLine(this.event())
+    return controller.descriptor(target)?.script === "ai-turns";
+  }
+  /** The answer shown is the one kept as test data: Execute step replays it. */
+  answerKept(): boolean {
+    const { controller, target } = this.session();
+    return !controller.viewingRuns() && controller.keptAnswer(target);
+  }
+  /** A text answer to read in full above its fields; null for structured results. */
+  answerText(): string | null {
+    const shown = this.event();
+    const result =
+      shown && typeof shown === "object" && !Array.isArray(shown)
+        ? (shown as Record<string, Json>)["result"]
+        : undefined;
+    return this.aiTask() && typeof result === "string" && result
+      ? result
       : null;
+  }
+  readonly answerId = `pane-answer-${++answerSequence}`;
+  /** The answer shown in full (Show all), until another answer shows. */
+  readonly answerOpen = signal<string | null>(null);
+  /** The clamped answer has more lines than it shows. */
+  readonly answerLonger = signal(false);
+  private readonly answerElement =
+    viewChild<ElementRef<HTMLElement>>("answerText");
+  private readonly measureAnswer = afterEveryRender({
+    read: () => {
+      const element = this.answerElement()?.nativeElement;
+      const longer =
+        !!element &&
+        (this.answerOpen() === this.answerText() ||
+          element.scrollHeight > element.clientHeight + 1);
+      if (longer !== untracked(this.answerLonger))
+        this.answerLonger.set(longer);
+    },
+  });
+  toggleAnswer(text: string) {
+    this.answerOpen.set(this.answerOpen() === text ? null : text);
   }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {
@@ -1238,12 +1313,18 @@ export class OutputPane {
   }
   pinTitle(pinned: boolean): string {
     if (pinned) return "Pin output (P)";
+    if (this.answerKept())
+      return "Kept as test data. Execute step replays this answer.";
+    if (this.aiTask() && this.realPinnable())
+      return "Keep as test data: Execute step replays this answer.";
     return this.realPinnable()
       ? "Pin output: keep this run's output as test data"
       : this.noPinYet;
   }
   togglePin() {
     if (!this.pinned()) {
+      // A second click on a kept answer removes it, with Undo.
+      if (this.answerKept()) return void this.forgetAnswer();
       if (this.realPinnable()) return void this.pinReal();
       this.problem.set(this.noPinYet);
       return;
@@ -1254,6 +1335,13 @@ export class OutputPane {
     this.problem.set("");
     const { controller, target } = this.session();
     controller.unpin(this.pinned()?.key ?? target);
+    this.focusPin();
+  }
+  /** Removes the AI task's kept answer (the Undo toast says so). */
+  async forgetAnswer() {
+    this.problem.set("");
+    const { controller, target } = this.session();
+    await controller.forgetAnswer(target);
     this.focusPin();
   }
   /** The item's pin, for every item: pinned on the step, and the item's own goes. */
@@ -1296,7 +1384,12 @@ export class OutputPane {
     if (this.session() !== session) return;
     this.problem.set(refused ?? "");
     if (!refused) {
-      session.announce(`Pinned a sample output for ${session.target}.`);
+      // An AI task keeps a sample answer; other steps pin a sample output.
+      session.announce(
+        this.aiTask()
+          ? `Kept a sample answer as test data for ${session.target}.`
+          : `Pinned a sample output for ${session.target}.`,
+      );
       this.focusPin();
     }
   }
