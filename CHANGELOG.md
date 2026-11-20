@@ -20,6 +20,18 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Workflow language
+
+- A workflow whose input is `{$ref: weave.platform-event-v1}` reads the event's
+  fields without presence warnings: a field every event carries, such as
+  `/input/transaction/business_key`, is present, while `cause`, `incident_id`,
+  and the lists under `steps` still warn `WV-COMP-REFERENCE_PRESENCE` unless
+  read with `coalesce` or `exists`, and a field the event doesn't have is
+  `WV-COMP-MISSING_REFERENCE`. The compiled bytes of event-triggered workflows
+  published on 0.1.0a19 change, so publishing one again gives a new artifact;
+  published artifacts keep running as they are, and workflows that don't
+  reference a platform schema keep their bytes.
+
 ### Runs, incidents, and workers
 
 - Workers and native connectors write log entries about the tasks they run.
@@ -178,6 +190,11 @@ SPDX-License-Identifier: Apache-2.0
   item in the run log, the failed one open on its steps and error, and a list longer than Up to fails the loop as
   a real run does. On the Runs tab, a recorded loop has an item chip, failed items first, and step details open on
   the same item. Execute workflow also stops at any step where a real run would stop on an incident.
+- Studio's data scope lists the platform event's fields under `/input`, the
+  local host serves the event's schema at `GET /studio/contracts/platform-event`,
+  and Execute and saved test data accept a sample platform event as input. A
+  project catalog that brings its own schema under that name is still refused
+  when the workflow compiles.
 
 ### Development and testing
 
