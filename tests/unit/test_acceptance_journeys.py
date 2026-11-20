@@ -242,6 +242,15 @@ def test_the_ai_task_runs_for_real_as_a_step_test_in_the_ai_profiles():
     ]
 
 
+def test_the_steps_that_call_the_host_model_run_before_j4_14_stops_it():
+    # In host mode J4.14 leaves the computer's Ollama stopped; pytest runs the agent journey in source order, so every
+    # step that calls a model there is defined in the same file before it.
+    source = (ROOT / "tests/acceptance/test_agent_journeys.py").read_text(encoding="utf-8")
+    stops = source.index('@pytest.mark.journey_step("J4.14")')
+    for step in ("J4.15", AI_TASK_STEP):
+        assert source.index(f'@pytest.mark.journey_step("{step}")') < stops, step
+
+
 def orders_fixture():
     spec = importlib.util.spec_from_file_location(
         "orders_fixture", ROOT / "tests/acceptance/fixtures/agents/orders_server.py"
