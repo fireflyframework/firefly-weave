@@ -1561,6 +1561,13 @@ export class StepDetails {
     const controller = this.controller();
     untracked(() => controller.pickRunItem(target));
   });
+  /** A run log row opened a step on one item of a loop: step details show that item. */
+  private readonly openedItem = effect(() => {
+    const opened = this.host().openedItem?.();
+    const target = this.target();
+    const controller = this.controller();
+    untracked(() => controller.pickOpenedItem(opened, target));
+  });
   /**
    * Execute step (or Execute previous steps): asks first about errors in the
    * steps it runs and, for a pinned step, about its pin; then executes on the

@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // A simulated run played back on the canvas, one step every 120 ms: the
 // current tile gets the live border, finished ones the check, a failed one
 // the error. With reduced motion only the last frame is shown. DOM-free.
+import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
+import { stepPointerOf } from "../formula/loops";
 import type { ExecuteResponse } from "../state/execution";
 import {
   LOOP_LIMIT,
@@ -154,10 +156,56 @@ export function loopsInTrace(
   return (stepId) => around.get(stepId) ?? [];
 }
 
-/** What the live region says when the playback ends: a loop that failed names its item. */
+/** Up to when a loop leaves it out. */
+const DEFAULT_MAX_ITEMS = 1000;
+
+/**
+ * A loop that failed over its Up to: Up to, and how many items its list
+ * held when the answer says, or when Items reads a step's output the run
+ * recorded (`steps.fetch.output.rows`); null otherwise.
+ */
+export function overLimitOf(
+  definition: unknown,
+  response: ExecuteResponse,
+  loopId: string,
+): { count: number | null; limit: number } {
+  const pointer = stepPointerOf(definition, loopId);
+  const loop =
+    pointer === null ? null : getAt(definition, parsePointer(pointer)!);
+  const maxItems = isJsonObject(loop) ? loop["maxItems"] : undefined;
+  const limit =
+    typeof maxItems === "number" && maxItems > 0 ? maxItems : DEFAULT_MAX_ITEMS;
+  const counted = countsOf(response)[loopId];
+  if (counted !== undefined) return { count: counted, limit };
+  const items = isJsonObject(loop) ? loop["items"] : undefined;
+  const ref =
+    isJsonObject(items) && Object.keys(items).length === 1
+      ? items["ref"]
+      : null;
+  const path = typeof ref === "string" ? parsePointer(ref) : null;
+  if (!path || path[0] !== "steps" || path[2] !== "output")
+    return { count: null, limit };
+  const ran = response.trace.find(
+    (entry) =>
+      !entry.frame &&
+      entry.nodeId === path[1] &&
+      !entry.instanceKey &&
+      entry.status === "completed",
+  );
+  const list =
+    ran?.output === undefined ? undefined : getAt(ran.output, path.slice(3));
+  return { count: Array.isArray(list) ? list.length : null, limit };
+}
+
+/**
+ * What the live region says when the playback ends: a loop that failed
+ * names its item, or for a list longer than Up to, with the workflow,
+ * how many items and Up to.
+ */
 export function finalAnnouncement(
   response: ExecuteResponse,
   loopsAround?: (stepId: string) => readonly string[],
+  definition?: unknown,
 ): string {
   const trace = stepsOf(response);
   const failed = loopProgress(
@@ -172,7 +220,7 @@ export function finalAnnouncement(
     return failed.failedAt !== null
       ? `${failed.id} failed at item ${failed.failedAt}.`
       : failed.overLimit
-        ? `${failed.id} failed: its list is longer than Up to.`
+        ? overLimitSaid(failed.id, response, definition)
         : `${failed.id} failed.`;
   if (response.status === "completed") {
     const count = new Set(
@@ -187,4 +235,19 @@ export function finalAnnouncement(
   if (response.status === "limit")
     return "The simulation stopped at its limit.";
   return "The test run failed.";
+}
+
+/** "orders failed: 3 items, more than Up to allows (2)." */
+function overLimitSaid(
+  loopId: string,
+  response: ExecuteResponse,
+  definition: unknown,
+): string {
+  if (definition === undefined)
+    return `${loopId} failed: more items than Up to allows.`;
+  const { count, limit } = overLimitOf(definition, response, loopId);
+  const allows = `Up to allows (${limit.toLocaleString("en-US")})`;
+  return count === null
+    ? `${loopId} failed: more items than ${allows}.`
+    : `${loopId} failed: ${count.toLocaleString("en-US")} items, more than ${allows}.`;
 }

@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { openExecuteWorkflow } from "./execute-po";
 import { hasPython } from "./local-authoring";
-import { yamlFile } from "./step-details-po";
+import { StepDetailsPage, yamlFile } from "./step-details-po";
 
 test.skip(!hasPython, "Create the Python development environment first.");
 
@@ -204,14 +204,36 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
       "2 of 4 items finished",
     );
     const items = log.getByRole("list", { name: "Items of orders" });
-    await expect(items.getByRole("button")).toHaveText([
+    await expect(items.locator(":scope > li > .run-log-item")).toHaveText([
       /Item 1\s*check, route, send/,
       /Item 2\s*check, route, send/,
       /Item 3\s*Failed at reject/,
     ]);
+    // The failed item shows open: the steps it went through, then the error.
+    const steps = items.getByRole("list", { name: "Steps of Item 3" });
+    await expect(steps.getByRole("button")).toHaveText([
+      /check\s*2 fields/,
+      /^\s*route\s*$/,
+      /reject\s*SMTP_REJECTED/,
+    ]);
+    await expect(steps.getByRole("button").nth(2)).toHaveAttribute(
+      "data-status",
+      "failed",
+    );
+    await expect(items.locator(".run-log-item-message")).toHaveText("rejected");
     await expect(items.locator(".run-log-not-run")).toHaveText(
       "Item 4 didn't run.",
     );
+    // A step row opens that step on the item it ran in.
+    await steps.getByRole("button", { name: /^check/ }).click();
+    const details = new StepDetailsPage(page);
+    await expect(details.dialog).toBeVisible();
+    await expect(
+      details.dialog
+        .locator("weave-input-pane")
+        .getByRole("group", { name: "Items of orders" })
+        .getByRole("button", { name: /Choose an item$/ }),
+    ).toHaveAccessibleName("Item 3 of 4. Choose an item");
     // The steps inside the loop show only under its items.
     await expect(log.locator('[data-entry="send"]')).toHaveCount(0);
   });
@@ -222,13 +244,24 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await openExecuteWorkflow(page, OVER);
     await execute(page);
-    await expect(runText(page)).toHaveText("· failed: list longer than Up to");
+    await expect(runText(page)).toHaveText("· failed: over Up to");
     await expect(runText(page)).toHaveAttribute("data-tone", "failed");
     await expect(
       page.locator('.canvas-v2 .loop-frame[data-frame="orders"]'),
     ).toHaveClass(/\berror\b/);
     await expect(page.locator(".canvas-run-alert")).toHaveText(
-      "orders failed: its list is longer than Up to.",
+      "orders failed: 3 items, more than Up to allows (2).",
+    );
+    // The run log says it in the same words, and what to do.
+    const log = page.getByRole("region", { name: "Run log" });
+    await expect(log.locator(".run-log-status")).toHaveText(
+      "Failed at orders: more items than Up to",
+    );
+    await expect(log.locator('[data-entry="orders"]')).toContainText(
+      "3 items, Up to 2",
+    );
+    await expect(log.locator(".run-log-loop-message")).toHaveText(
+      "This list has 3 items, more than Up to allows (2). Raise Up to or shorten the list.",
     );
   });
 

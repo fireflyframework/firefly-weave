@@ -19,15 +19,20 @@ SPDX-License-Identifier: Apache-2.0
 // many items finished at each step of the playback, then how it ended.
 import "@angular/compiler";
 import { describe, expect, it } from "vitest";
-import { loopRunText } from "../src/app/editor/canvas/loop-frame";
+import {
+  loopLimitText,
+  loopRunText,
+} from "../src/app/editor/canvas/loop-frame";
 import {
   loopProgress,
   type TraceStep,
 } from "../src/app/editor/canvas/run-state";
 import {
   finalAnnouncement,
+  overLimitOf,
   playbackFrames,
 } from "../src/app/editor/canvas/trace-playback";
+import { createStep, freshWorkflow, type Step } from "../src/app/model";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
 import { loopLog, runStatus } from "../src/app/editor/debugger/run-log-panel";
 
@@ -50,6 +55,20 @@ const OK: TraceStep[] = [
   step("send", "send[2]"),
   step("summarize"),
 ];
+/** fetch, then orders over fetch's rows, Up to 2. */
+const OVER_LIMIT = (() => {
+  const workflow = freshWorkflow();
+  workflow.spec.steps = [
+    { id: "fetch", kind: "transform", value: { literal: {} } } as Step,
+    {
+      ...createStep("forEach", "orders"),
+      items: { ref: "/steps/fetch/output/rows" },
+      maxItems: 2,
+      body: { steps: [], output: { ref: "/item" } },
+    },
+  ];
+  return workflow;
+})();
 /** Execute previous steps for send in item 2, as the simulator answers: the loop is still running. */
 const BEFORE_SEND_2: TraceStep[] = [
   step("orders", "", "running", "forEach"),
@@ -186,7 +205,7 @@ describe("a loop's progress during a playback", () => {
     // The frame's header says it.
     expect(
       loopRunText(loopProgress(over, over.length, {}, around, true)[0]),
-    ).toBe("failed: list longer than Up to");
+    ).toBe("failed: over Up to");
     expect(loopRunText(run)).toBe("failed");
   });
 
@@ -370,7 +389,25 @@ describe("the playback's frames", () => {
         })),
       }) as ExecuteResponse;
     expect(finalAnnouncement(answer(["WV-RUNTIME-LOOP-LIMIT"]), around)).toBe(
-      "orders failed: its list is longer than Up to.",
+      "orders failed: more items than Up to allows.",
+    );
+    // With the workflow: how many items and Up to, when the list says.
+    expect(
+      finalAnnouncement(answer(["WV-RUNTIME-LOOP-LIMIT"]), around, OVER_LIMIT),
+    ).toBe("orders failed: more items than Up to allows (2).");
+    const listed = {
+      ...answer(["WV-RUNTIME-LOOP-LIMIT"]),
+      trace: [
+        { index: 0, ...step("fetch"), output: { rows: [1, 2, 3] } },
+        { index: 1, ...step("orders", "", "failed", "forEach") },
+      ],
+    } as ExecuteResponse;
+    expect(finalAnnouncement(listed, around, OVER_LIMIT)).toBe(
+      "orders failed: 3 items, more than Up to allows (2).",
+    );
+    // One caption for the run log.
+    expect(runStatus(listed, null)).toBe(
+      "Failed at orders: more items than Up to",
     );
     // The frame reads the same reason from the playback.
     expect(
@@ -378,6 +415,50 @@ describe("the playback's frames", () => {
         ?.trace?.[1],
     ).toMatchObject({ code: "WV-RUNTIME-LOOP-LIMIT" });
     expect(finalAnnouncement(answer([]), around)).toBe("orders failed.");
+  });
+});
+
+describe("a list longer than Up to", () => {
+  it("says what to do about it, with how many items when known", () => {
+    expect(loopLimitText(3, 2)).toBe(
+      "This list has 3 items, more than Up to allows (2). Raise Up to or shorten the list.",
+    );
+    expect(loopLimitText(2345, 1000)).toBe(
+      "This list has 2,345 items, more than Up to allows (1,000). Raise Up to or shorten the list.",
+    );
+    expect(loopLimitText(null, 2)).toBe(
+      "This list has more items than Up to allows (2). Raise Up to or shorten the list.",
+    );
+  });
+
+  it("counts the list from the step whose output it reads, and reads Up to from the loop", () => {
+    const answer = (rows: unknown) =>
+      ({
+        status: "failed",
+        compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+        trace: [
+          { index: 0, ...step("fetch"), output: { rows } },
+          { index: 1, ...step("orders", "", "failed", "forEach") },
+        ],
+      }) as ExecuteResponse;
+    expect(overLimitOf(OVER_LIMIT, answer([1, 2, 3]), "orders")).toEqual({
+      count: 3,
+      limit: 2,
+    });
+    // Not a list there, or Items isn't a plain reference: the count isn't known.
+    expect(overLimitOf(OVER_LIMIT, answer("x"), "orders")).toEqual({
+      count: null,
+      limit: 2,
+    });
+    const formula = structuredClone(OVER_LIMIT);
+    formula.spec.steps[1]["items"] = {
+      call: "concat",
+      args: [{ ref: "/steps/fetch/output/rows" }],
+    };
+    expect(overLimitOf(formula, answer([1, 2, 3]), "orders").count).toBeNull();
+    // A loop without Up to allows 1,000 items.
+    delete formula.spec.steps[1]["maxItems"];
+    expect(overLimitOf(formula, answer([1, 2, 3]), "orders").limit).toBe(1000);
   });
 });
 
@@ -393,10 +474,10 @@ describe("the run log of a loop", () => {
       step("route", `route[${i}]`, "completed", "switch"),
       step("send", `send[${i}]`),
     ]),
-    step("check", "check[2]"),
+    { ...step("check", "check[2]"), output: { name: "c", ok: false } },
     step("route", "route[2]", "running", "switch"),
     step("reject", "reject[2]", "failed", "fail"),
-  ];
+  ] as TraceStep[];
   const inOrders = (id: string): readonly string[] =>
     ["check", "route", "send", "reject"].includes(id) ? ["orders"] : around(id);
   const failed = {
@@ -414,6 +495,15 @@ describe("the run log of a loop", () => {
         status: "failed",
       },
     ],
+    diagnostics: [
+      {
+        code: "SMTP_REJECTED",
+        severity: "error",
+        stage: "evaluation",
+        message: "The mail relay refused the message.",
+        path: "",
+      },
+    ],
   } as ExecuteResponse;
 
   it("lists each item with the steps it went through, the failed one, and the items that didn't run", () => {
@@ -428,25 +518,109 @@ describe("the run log of a loop", () => {
             label: "Item 1",
             status: "completed",
             text: "check, route, send",
-            step: "send",
+            key: "send[0]",
           },
           {
             label: "Item 2",
             status: "completed",
             text: "check, route, send",
-            step: "send",
+            key: "send[1]",
           },
+          // The failed item opens to the steps it went through and the error.
           {
             label: "Item 3",
             status: "failed",
             text: "Failed at reject",
-            step: "reject",
+            key: "reject[2]",
+            steps: [
+              {
+                id: "check",
+                key: "check[2]",
+                status: "completed",
+                text: "2 fields",
+              },
+              { id: "route", key: "route[2]", status: "completed", text: null },
+              {
+                id: "reject",
+                key: "reject[2]",
+                status: "failed",
+                text: "SMTP_REJECTED",
+              },
+            ],
+            message: "The mail relay refused the message.",
           },
         ],
         notRun: "Item 4 didn't run.",
       },
     ]);
     expect(runStatus(failed, null)).toBe("Failed at reject, item 3");
+  });
+
+  it("takes a Fail step's code and message from the workflow when the answer has no error", () => {
+    const workflow = freshWorkflow();
+    workflow.spec.steps = [
+      {
+        ...createStep("forEach", "orders"),
+        items: { ref: "/input/orders" },
+        body: {
+          steps: [
+            {
+              id: "reject",
+              kind: "fail",
+              code: "SMTP_REJECTED",
+              message: "rejected",
+            } as Step,
+          ],
+          output: { ref: "/item" },
+        },
+      },
+    ];
+    const [orders] = loopLog(
+      { ...failed, diagnostics: [] },
+      inOrders,
+      workflow,
+    );
+    expect(orders.items[2]).toMatchObject({
+      steps: [
+        { id: "check" },
+        { id: "route" },
+        { id: "reject", status: "failed", text: "SMTP_REJECTED" },
+      ],
+      message: "rejected",
+    });
+  });
+
+  it("says a list longer than Up to on the loop's row, and what to do", () => {
+    const over = {
+      status: "failed",
+      compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+      trace: [
+        { index: 0, ...step("fetch"), output: { rows: [1, 2, 3] } },
+        { index: 1, ...step("orders", "", "failed", "forEach") },
+      ],
+      loops: [],
+      diagnostics: [
+        {
+          code: "WV-RUNTIME-LOOP-LIMIT",
+          severity: "error",
+          stage: "evaluation",
+          message: "A loop's list was longer than its item limit.",
+          path: "",
+        },
+      ],
+    } as ExecuteResponse;
+    expect(loopLog(over, around, OVER_LIMIT)).toEqual([
+      {
+        id: "orders",
+        within: [],
+        summary: "3 items, Up to 2",
+        progress: null,
+        items: [],
+        notRun: null,
+        message:
+          "This list has 3 items, more than Up to allows (2). Raise Up to or shorten the list.",
+      },
+    ]);
   });
 
   it("says a loop the run ended inside isn't finished, and where its last item got to", () => {
@@ -467,13 +641,13 @@ describe("the run log of a loop", () => {
             label: "Item 1",
             status: "completed",
             text: "check, send",
-            step: "send",
+            key: "send[0]",
           },
           {
             label: "Item 2",
             status: "running",
             text: "at check",
-            step: "check",
+            key: "check[1]",
           },
         ],
         notRun: "Item 3 didn't run.",

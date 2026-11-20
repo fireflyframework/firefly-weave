@@ -221,6 +221,7 @@ export type ControllerHost = Pick<
   | "runAccount"
   | "environmentName"
   | "runNotice"
+  | "openedItem"
   | "draftId"
 >;
 /** A diagnostic of one step, located in it. */
@@ -603,6 +604,29 @@ export class StepDetailsController {
     for (const { loopId, index } of itemPicks(
       this.host.model.definition,
       notice.key,
+    ))
+      this.iterations.pick(loopId, index);
+  }
+  private openedItem: object | null = null;
+  /**
+   * A run log row opened this step on one item of a loop: step details show
+   * that item, once for each row chosen; a pick made after stays.
+   */
+  pickOpenedItem(
+    opened: { draftId: string; key: string } | null | undefined,
+    target: string,
+  ): void {
+    if (
+      !opened ||
+      opened === this.openedItem ||
+      opened.draftId !== this.host.draftId ||
+      instanceStep(opened.key) !== target
+    )
+      return;
+    this.openedItem = opened;
+    for (const { loopId, index } of itemPicks(
+      this.host.model.definition,
+      opened.key,
     ))
       this.iterations.pick(loopId, index);
   }

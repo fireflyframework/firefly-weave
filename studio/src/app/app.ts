@@ -7683,9 +7683,13 @@ export class App implements CanvasHost {
     if (executeAgain && this.lastTarget) await this.executeIn(this.lastTarget);
     return true;
   }
-  /** An entry's step details, on its Input or Output when asked. */
+  /** A run log row opened a step on one item of a loop (`send[2]`). */
+  readonly openedItem = signal<{ draftId: string; key: string } | null>(null);
+  /** An entry's step details, on its Input or Output when asked; for `send[2]`, on that item. */
   openEntry(id: string, pane?: "input" | "output"): void {
-    void this.openStepDetails(id, {
+    const cut = id.search(/[[#~]/);
+    if (cut > 0) this.openedItem.set({ draftId: this.draftId, key: id });
+    void this.openStepDetails(cut > 0 ? id.slice(0, cut) : id, {
       focus: pane ? { kind: "region", region: pane } : { kind: "first" },
     });
   }
@@ -7724,7 +7728,12 @@ export class App implements CanvasHost {
         this.playTimer = setTimeout(next, tools.PLAYBACK_STEP_MS);
       else
         this.runAnnouncement.set({
-          text: tools.finalAnnouncement(response),
+          // With the draft: a list over Up to says how many items and Up to.
+          text: tools.finalAnnouncement(
+            response,
+            undefined,
+            this.model.definition,
+          ),
           urgent: response.status === "failed",
         });
     };
@@ -7781,6 +7790,19 @@ export class App implements CanvasHost {
     const failed = last.trace.find((entry) => entry.status === "failed");
     if (failed?.nodeId !== stepId) return null;
     const diagnostic = last.diagnostics?.[0];
+    // A list over Up to: how many items, Up to, and what to do.
+    const tools = this.tools;
+    if (diagnostic?.code === "WV-RUNTIME-LOOP-LIMIT" && tools) {
+      const { count, limit } = tools.overLimitOf(
+        this.model.definition,
+        last,
+        stepId,
+      );
+      return {
+        code: diagnostic.code,
+        message: tools.loopLimitText(count, limit),
+      };
+    }
     return diagnostic
       ? { code: diagnostic.code, message: diagnostic.message }
       : {};

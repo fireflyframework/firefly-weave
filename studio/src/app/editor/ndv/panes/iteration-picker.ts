@@ -33,6 +33,7 @@ import {
 import { Icon } from "../../../icon";
 import { AnchoredPopover } from "../../../forms/ui/anchored-popover";
 import type { Step } from "../../../model";
+import { loopLimitText } from "../../canvas/loop-frame";
 import type { Iterations, LoopCount, LoopPick } from "../../state/iterations";
 
 /** One loop around the step, as its picker row shows it. */
@@ -104,9 +105,7 @@ export function pickerView(loop: PickerLoop): PickerView {
     first: loop.index === 0,
     last: loop.index >= loop.count - 1,
     empty: false,
-    note: over
-      ? `This list has ${number(loop.count)} items, more than Up to allows (${number(loop.limit)}). Executing the loop fails here: raise Up to or shorten the list.`
-      : null,
+    note: over ? loopLimitText(loop.count, loop.limit) : null,
     tone: over ? "warning" : null,
   };
 }

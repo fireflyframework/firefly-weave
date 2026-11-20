@@ -145,10 +145,24 @@ export function loopRunText(run: {
       ? `failed at item ${run.failedAt.toLocaleString("en-US")}`
       : // Before its first item: the reason when the run says it.
         run.overLimit
-        ? "failed: list longer than Up to"
+        ? "failed: over Up to"
         : "failed";
   const finished = run.finished.toLocaleString("en-US");
   return run.count === null
     ? `${finished} finished`
     : `${finished} of ${run.count.toLocaleString("en-US")}`;
+}
+
+/**
+ * What a list longer than Up to means, said the same way in the picker, the
+ * run log and step details: how many items (when known), Up to, and what to
+ * do about it.
+ */
+export function loopLimitText(count: number | null, limit: number): string {
+  const allows = `more than Up to allows (${limit.toLocaleString("en-US")})`;
+  return `${
+    count === null
+      ? `This list has more items than Up to allows (${limit.toLocaleString("en-US")})`
+      : `This list has ${count.toLocaleString("en-US")} items, ${allows}`
+  }. Raise Up to or shorten the list.`;
 }

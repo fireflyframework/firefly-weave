@@ -111,7 +111,7 @@ describe("the iteration picker's row", () => {
   it("warns when the list has more items than Up to: the run fails there", () => {
     expect(pickerView(loop({ count: 2345, limit: 1000 }))).toMatchObject({
       item: "Item 3 of 2,345",
-      note: "This list has 2,345 items, more than Up to allows (1,000). Executing the loop fails here: raise Up to or shorten the list.",
+      note: "This list has 2,345 items, more than Up to allows (1,000). Raise Up to or shorten the list.",
       tone: "warning",
     });
     // Every item of the list can be looked at.
