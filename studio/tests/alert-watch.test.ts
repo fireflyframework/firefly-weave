@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // gives the firing and critical counts; the bell rings and the badge turns
 // red exactly while a critical alert fires; nothing is read without
 // alert.read; and an answer for another environment never lands.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AlertWatch,
   alertBadge,
@@ -92,5 +92,40 @@ describe("the Alerts badge", () => {
     h.answer({ items: [], next_cursor: null });
     await expect(load).rejects.toThrow();
     expect(watch.badge()).toBeNull();
+  });
+  it("asks nothing before the environment is known", async () => {
+    const h = host();
+    const watch = new AlertWatch({
+      ...h.watchHost,
+      environment: () => {
+        throw new Error("Choose an environment.");
+      },
+    });
+    await watch.load();
+    expect(h.asked).toEqual([]);
+    expect(watch.badge()).toBeNull();
+  });
+  it("reads within 2 s of the person signing in, and not before", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = host(false);
+      const quiet = {
+        now: () => 0,
+        setTimeout: () => 0,
+        clearTimeout: () => undefined,
+        visible: () => true,
+        onVisibilityChange: () => () => undefined,
+      };
+      const watch = new AlertWatch(h.watchHost, quiet);
+      watch.start();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(h.asked).toEqual([]);
+      h.where.readable = true;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(h.asked).toEqual(["/env/a/alerts?state=firing&limit=1"]);
+      watch.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
