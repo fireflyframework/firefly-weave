@@ -264,6 +264,7 @@ import { RunsPage } from "./operate/runs/runs-page";
 import {
   clustersRecordPath,
   navEntryVisible,
+  operatePages,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
@@ -6895,15 +6896,11 @@ export class App implements CanvasHost {
       await this.loadAdministration();
       return;
     }
+    // Operate's pages, Runs aside, read their own data.
     if (
       this.view === "connect" ||
-      this.view === "overview" ||
-      this.view === "clusters" ||
-      this.view === "metrics" ||
-      this.view === "logs" ||
-      this.view === "alerts" ||
-      this.view === "workers" ||
-      this.view === "incidents"
+      (this.view !== "runs" &&
+        (operatePages as readonly string[]).includes(this.view))
     )
       return;
     if (this.view === "runs") {
