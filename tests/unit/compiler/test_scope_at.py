@@ -248,14 +248,12 @@ def test_scope_lists_the_platform_event_fields():
     assert found["/input/transaction/incident_id"].optional
     assert (found["/input/type"].types, found["/input/type"].optional) == (["string"], False)
     assert found["/input"].types == ["object"]
-
-
-def test_a_project_schema_by_name_lists_nothing_below_it():
-    document = workflow(transform("notify", ref("/input/key")), input_schema={"$ref": "notify.request-v1"})
+    # Only platform schema names are followed: a project's own schema by name lists nothing below it.
+    named = workflow(transform("notify", ref("/input/key")), input_schema={"$ref": "notify.request-v1"})
     shared = {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}
     catalog = CatalogSnapshot.from_definitions([], schema_bundle={"notify.request-v1": shared})
-    result = scope_at(document, "/spec/output", catalog=catalog)
-    assert [item.ref for item in result.entries if item.source == "input"] == ["/input"]
+    project = scope_at(named, "/spec/output", catalog=catalog)
+    assert [item.ref for item in project.entries if item.source == "input"] == ["/input"]
 
 
 def test_large_inputs_are_truncated_at_the_entry_budget():
