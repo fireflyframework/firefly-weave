@@ -32,7 +32,12 @@ import {
 } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
-import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
+import {
+  stepIdentities,
+  type StructuredCanvasAdapter,
+  type Step,
+  type Workflow,
+} from "../../model";
 import { applyEdits } from "./edits";
 import { findStep } from "./step-walk";
 import {
@@ -1979,6 +1984,10 @@ export class StepDetailsController {
     let moves: VersionMove[] = [];
     // Set inside perform(); typed so the check after it isn't narrowed to null.
     let ended = null as OnErrorWrite | null;
+    let held = null as {
+      steps: ReadonlySet<string>;
+      identities: (id: string) => string | undefined;
+    } | null;
     this.host.perform(() => {
       const changes = changesOf();
       if (!changes.length) return;
@@ -2047,12 +2056,25 @@ export class StepDetailsController {
         outcome = { ok: true, removed: [] };
         return;
       }
+      // An error path removed here takes its steps' test data, as deleting
+      // them on the canvas does: read the steps as they are, for Undo.
+      if (env.subject.step?.["errorPath"] !== undefined)
+        held = {
+          steps: model.stepIdSet(),
+          identities: stepIdentities(model.definition),
+        };
       if (merge) model.continueEdit(burst!.revision, apply);
       else model.batch(apply);
       outcome = { ok: true, removed: hidden.labels };
       reasons = hidden.reasons;
     });
     if (!outcome.ok) return outcome;
+    if (held) {
+      // Kept by the test data for an Undo that brings the same steps back.
+      const { steps, identities } = held;
+      const after = model.stepIdSet();
+      this.testData.prune((id) => after.has(id) || !steps.has(id), identities);
+    }
     this.burst = { key, revision: model.revision, at: this.now() };
     if (moves.length) this.host.notify(versionMoveText(moves[0]));
     const revision = model.revision;

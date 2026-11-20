@@ -183,7 +183,7 @@ import {
   kinds,
   ownerLabel,
   renamedSteps,
-  sequencesOf,
+  stepIdentities,
   StructuredCanvasAdapter,
   Workflow,
   Node,
@@ -501,18 +501,6 @@ const sideEffects: Record<string, string> = {
   idempotency_key: "Retried with an idempotency key",
   non_idempotent: "Not idempotent — never retried automatically",
 };
-/** Each step as it is in a definition, by ID: a deleted step's test data returns only to the same step. */
-function stepIdentities(
-  definition: Workflow,
-): (id: string) => string | undefined {
-  // Read now: the definition may change in place afterwards.
-  const found = new Map(
-    [...sequencesOf(definition).values()]
-      .flat()
-      .map((step) => [step.id, JSON.stringify(step)]),
-  );
-  return (id) => found.get(id);
-}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 

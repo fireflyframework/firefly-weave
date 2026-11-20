@@ -312,6 +312,18 @@ export function sequencesOf(definition: Workflow): Map<string, Step[]> {
   visit(definition.spec.steps);
   return map;
 }
+/** Each step as it is in a definition, by ID: a deleted step's test data returns only to the same step. */
+export function stepIdentities(
+  definition: Workflow,
+): (id: string) => string | undefined {
+  // Read now: the definition may change in place afterwards.
+  const found = new Map(
+    [...sequencesOf(definition).values()]
+      .flat()
+      .map((step) => [step.id, JSON.stringify(step)]),
+  );
+  return (id) => found.get(id);
+}
 /** The first `<prefix>-<n>` (n from 1) that no taken ID uses. */
 export function nextFreeId(prefix: string, taken: ReadonlySet<string>): string {
   let i = 1;
