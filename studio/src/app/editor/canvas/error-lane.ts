@@ -18,9 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // A step's error path on the canvas: the lane its Error output leads to,
 // named "On error" in Outline and for screen readers, and the words a
 // tile's name adds for what the step's failure does.
-import type { Step, Workflow } from "../../model";
-import { removedPathToast } from "../ndv/settings/on-error";
-import { allSteps, findStep } from "../ndv/step-walk";
+import type { Step } from "../../model";
 import { blocksOf } from "../step-blocks";
 
 export interface ErrorLane {
@@ -50,26 +48,4 @@ export function failureText(step: Step): string {
   if (step["onError"] === "continue") return "continues on error";
   if (step["onError"] === "errorOutput") return "continues with error output";
   return "";
-}
-
-/**
- * The toast after step `id` was deleted with its error path: "Deleted
- * submit and its error path (2 steps)" and which steps were in it. Null
- * when the step has no error path, or one without steps: deleting it asks
- * nothing more. Read before the deletion.
- */
-export function deletedPathToast(
-  workflow: Workflow,
-  id: string,
-): { text: string; detail: string } | null {
-  const step = findStep(workflow.spec.steps, (item) => item.id === id);
-  const lane = step && errorLane(step);
-  const held = lane ? allSteps(lane.steps).map((inner) => inner.id) : [];
-  const removed = removedPathToast(held.length, held);
-  if (!removed) return null;
-  const count = held.length === 1 ? "1 step" : `${held.length} steps`;
-  return {
-    text: `Deleted ${id} and its error path (${count})`,
-    detail: removed.detail,
-  };
 }

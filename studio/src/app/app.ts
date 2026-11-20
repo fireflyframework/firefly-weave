@@ -3198,42 +3198,25 @@ export class App implements CanvasHost {
   }
   /**
    * Deletes one step or several as one undo step: groups with steps inside
-   * ask first, and a toast offers Undo while the workflow is still as the
-   * deletion left it. False when nothing was deleted.
+   * ask first, a step's error path goes with it unasked, and a toast offers
+   * Undo while the workflow is still as the deletion left it. False when
+   * nothing was deleted.
    */
   private async deleteSteps(ids: readonly string[]): Promise<boolean> {
     const one = ids.length === 1 ? ids[0] : "";
-    // A step's error path goes with it unasked; the toast names its steps.
-    // The words load with the canvas, not with the first page.
-    const path = one
-      ? (await import("./editor/canvas/error-lane")).deletedPathToast(
-          this.model.definition,
-          one,
-        )
-      : null;
-    const contained = path
-      ? 0
-      : ids.reduce((sum, id) => sum + this.model.containedSteps(id), 0);
-    const inside = contained === 1 ? "1 step" : `${contained} steps`;
+    // The workflow the person saw, read before the wait for the words'
+    // code (it loads with the canvas, not the first page); an edit during
+    // the wait deletes nothing.
+    const { definition, revision: seen } = this.model;
+    const contained = ids.map((id) => this.model.containedSteps(id));
+    const deletion = (await import("./editor/canvas/deletion")).deletionOf(
+      definition,
+      ids,
+      contained,
+    );
     if (
-      contained &&
-      !(await this.dialogs.confirm(
-        one
-          ? {
-              title: `Delete ${one} and the ${inside} inside it?`,
-              message:
-                "The group and every step in its branches are removed from the workflow. You can undo this.",
-              confirmLabel: "Delete group",
-              danger: true,
-            }
-          : {
-              title: `Delete ${ids.length} steps and the ${inside} inside them?`,
-              message:
-                "The groups and every step in their branches are removed from the workflow. You can undo this.",
-              confirmLabel: "Delete steps",
-              danger: true,
-            },
-      ))
+      this.model.revision !== seen ||
+      (deletion.question && !(await this.dialogs.confirm(deletion.question)))
     )
       return false;
     // Their inspector edits go with them.
@@ -3241,7 +3224,7 @@ export class App implements CanvasHost {
     const identities = stepIdentities(this.model.definition);
     this.perform(() =>
       one
-        ? this.model.remove(one, { contents: contained > 0 })
+        ? this.model.remove(one, { contents: !!deletion.question })
         : this.model.removeSteps(ids),
     );
     if (this.error) {
@@ -3252,13 +3235,10 @@ export class App implements CanvasHost {
     const steps = this.model.stepIdSet();
     const pruned =
       this.testData?.prune((id) => steps.has(id), identities) ?? [];
-    const what = one || `${ids.length} steps`;
+    const words = deletion.done(pruned.length > 0);
     const revision = this.model.revision;
-    const withData = pruned.length
-      ? ` and ${one ? "its" : "their"} pinned output`
-      : "";
     this.notify(
-      path?.text ?? `Deleted ${what}${withData}.`,
+      words.text,
       {
         label: "Undo",
         run: async () => {
@@ -3270,12 +3250,12 @@ export class App implements CanvasHost {
               `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
             );
           if (done !== "undone") return;
-          this.notify(`Restored ${what}${withData}.`);
+          this.notify(words.restored);
           if (one) this.focusStep(one);
         },
       },
       "neutral",
-      path?.detail,
+      words.detail,
     );
     return true;
   }
