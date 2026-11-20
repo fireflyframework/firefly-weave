@@ -32,6 +32,10 @@ import {
   targetRunner,
 } from "./cluster-model";
 
+/** The guide for connecting a cluster that isn't on this computer. */
+const KUBERNETES_GUIDE =
+  "https://fireflyframework.github.io/firefly-weave/operations/kubernetes/";
+
 @Component({
   selector: "weave-cluster-targets-tab",
   standalone: true,
@@ -59,18 +63,37 @@ import {
       @if (choosing && can("target.manage")) {
         <div class="target-chooser" id="add-target-choices">
           <div class="chooser-option">
-            <strong>Docker on this computer</strong>
+            <strong
+              ><weave-icon name="compose" [size]="16" />Docker on this
+              computer</strong
+            >
             <span
               >Added for you when the local platform starts. Look for
               <em>local-docker</em> in the list below.</span
             >
           </div>
-          <div class="chooser-option">
-            <strong>Kubernetes</strong>
-            <span>Register a cluster and the runner that works inside it.</span>
-            <button type="button" (click)="register()">
-              Register a cluster
+          <div class="chooser-option chooser-kubernetes">
+            <strong
+              ><weave-icon name="kubernetes" [size]="16" />Kubernetes</strong
+            >
+            <span>Connect a kind or k3d cluster on this computer.</span>
+            <button
+              type="button"
+              class="primary"
+              (click)="page.openKubernetesConnect()"
+            >
+              Connect a cluster
             </button>
+            <span
+              >For a cluster that isn't on this computer, use Other and follow
+              the
+              <a
+                [href]="kubernetesGuide"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Kubernetes operations guide</a
+              >.</span
+            >
           </div>
           <details class="chooser-option">
             <summary>Other</summary>
@@ -153,6 +176,7 @@ import {
 })
 export class ClusterTargetsTab extends ClusterSection {
   readonly icon = adapterIcon;
+  readonly kubernetesGuide = KUBERNETES_GUIDE;
   /** Whether the Add target choices are open. */
   choosing = false;
   register() {

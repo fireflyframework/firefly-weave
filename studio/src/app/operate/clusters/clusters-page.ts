@@ -81,6 +81,8 @@ import { ClusterPlanDetail } from "./cluster-plan-detail";
 import { ClusterRunnersTab } from "./cluster-runners-tab";
 import { ClusterTargetDetail } from "./cluster-target-detail";
 import { ClusterTargetsTab } from "./cluster-targets-tab";
+import { KubernetesConnect } from "./kubernetes-connect";
+import { CONNECT_POLL_MS } from "./kubernetes-connect-model";
 import {
   clustersRecordPath,
   clustersRoute,
@@ -111,6 +113,7 @@ import { RefreshStatus } from "../refresh-status";
     ChangeRequestProgress,
     ClusterJobsTab,
     ClusterRunnersTab,
+    KubernetesConnect,
     OperateState,
     RefreshStatus,
   ],
@@ -189,7 +192,7 @@ import { RefreshStatus } from "../refresh-status";
           uncertain result.
         </p>
       }
-      @if (screen !== "overview") {
+      @if (screen !== "overview" && screen !== "kubernetes-connect") {
         <button class="tertiary" (click)="overview()">Back to Clusters</button>
       }
       @if (editingAuthority && target && targetUpdateSchema) {
@@ -270,6 +273,8 @@ import { RefreshStatus } from "../refresh-status";
             (targetChange)="wizardTargetChanged($event)"
           />
         </section>
+      } @else if (screen === "kubernetes-connect") {
+        <weave-kubernetes-connect [page]="this" />
       } @else if (screen === "change" && change) {
         <section class="operations-panel change-panel">
           <h2 tabindex="-1">Change request</h2>
@@ -383,8 +388,16 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   readonly adapterLabels = adapterLabels;
   readonly terminalJobs = terminalJobs;
   readonly observationState = observationState;
-  screen: "overview" | "target" | "deployment" | "plan" | "job" | "change" =
-    "overview";
+  screen:
+    | "overview"
+    | "target"
+    | "deployment"
+    | "plan"
+    | "job"
+    | "change"
+    | "kubernetes-connect" = "overview";
+  /** The open Kubernetes connect wizard, which looks for its target on each poll. */
+  connect: KubernetesConnect | null = null;
   /** The change request on screen, and its workers' progress while they finish. */
   change: ChangeRequest | null = null;
   drainProgress: DrainProgress | null = null;
@@ -711,6 +724,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   private get recordMissing() {
     return (
       this.screen !== "overview" &&
+      this.screen !== "kubernetes-connect" &&
       !this.target &&
       !this.deployment &&
       !this.plan &&
@@ -804,20 +818,26 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.planning ||
       this.wizardOpen ||
       this.store.mutating ||
-      this.recordMissing
+      this.recordMissing ||
+      (this.screen === "kubernetes-connect" && !!this.connect?.paused())
     );
   }
   /** One load of what is on screen; throws when any of it failed. */
   private async pollOnce() {
     const loaded = await this.refresh();
-    // 2 s while an open job runs, else 15 s: kept right after every load.
+    // 5 s while the Kubernetes wizard looks for its target, 2 s while an
+    // open job runs, else 15 s: kept right after every load.
     this.poller.setInterval(
-      (this.screen === "job" &&
-        this.job &&
-        !terminalJobs.has(this.job.state)) ||
-        (this.screen === "change" && this.change && isActive(this.change.state))
-        ? 2000
-        : 15000,
+      this.screen === "kubernetes-connect"
+        ? CONNECT_POLL_MS
+        : (this.screen === "job" &&
+              this.job &&
+              !terminalJobs.has(this.job.state)) ||
+            (this.screen === "change" &&
+              this.change &&
+              isActive(this.change.state))
+          ? 2000
+          : 15000,
     );
     if (!loaded) throw new Error("Clusters could not load every section.");
   }
@@ -997,7 +1017,9 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     const arrived = (...names: Collection[]) => {
       if (names.some((name) => this.store.errors[name])) failed = true;
     };
-    if (this.change) {
+    if (this.screen === "kubernetes-connect") {
+      if (this.connect && !(await this.connect.poll())) failed = true;
+    } else if (this.change) {
       if (!(await this.refreshChange())) failed = true;
     } else if (this.target) {
       const names: Collection[] = ["observations", "runners", "deployments"];
@@ -1518,6 +1540,33 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         .length,
     };
     return known.length === members.length;
+  }
+  /**
+   * Opens the Kubernetes connect wizard from Add target: Clusters then looks
+   * for the new target every 5 s.
+   */
+  async openKubernetesConnect() {
+    if (!this.host.can("target.manage")) return;
+    this.resetDetails();
+    this.store.cancelMutation();
+    this.screen = "kubernetes-connect";
+    this.poller.setInterval(CONNECT_POLL_MS);
+    this.focusDetail();
+    await this.poller.refresh();
+  }
+  /** Back to Clusters (or Escape): the Targets tab, with focus on Add target. */
+  async closeKubernetesConnect() {
+    if (this.screen !== "kubernetes-connect") return;
+    this.resetDetails();
+    this.screen = "overview";
+    this.tab = "targets";
+    this.shown = this.addressKey(null, "", this.tab);
+    this.cdr.detectChanges();
+    this.element.nativeElement
+      .querySelector<HTMLElement>('[aria-controls="add-target-choices"]')
+      ?.focus();
+    await this.router.navigateByUrl(clustersTabPath(this.tab));
+    await this.poller.refresh();
   }
   /** Opens the wizard, for a target and deployment when one is given. */
   async openWizard(targetId = "", deploymentId = "") {

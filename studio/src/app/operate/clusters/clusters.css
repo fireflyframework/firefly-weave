@@ -323,6 +323,25 @@ dd {
   color: var(--muted);
   font: var(--type-small);
 }
+.chooser-option strong {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--type-label);
+  line-height: 20px;
+}
+.chooser-option strong weave-icon {
+  color: var(--muted);
+}
+.chooser-option a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Kubernetes is the way in that needs a step from the administrator. */
+.chooser-kubernetes {
+  border-color: var(--accent);
+}
 .chooser-option button {
   justify-self: start;
 }

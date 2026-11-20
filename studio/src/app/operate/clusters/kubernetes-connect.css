@@ -1,0 +1,449 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Connect a kind or k3d cluster: the form at most 720 px wide and "What
+   Studio sees" beside it, or below the connect command when the page can't
+   hold both (720 + 24 + 320 px). Controls are 36 px with a fine pointer and
+   44 px on touch or below 768 px. Tokens only. */
+.connect {
+  container-type: inline-size;
+}
+.connect-back {
+  margin: 0 0 var(--space-4) calc(-1 * var(--space-2));
+}
+.connect-wizard {
+  display: grid;
+  grid-template-columns: minmax(0, 720px) minmax(320px, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+@container (width < 1064px) {
+  .connect-wizard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Sections 12 px apart and their items 8 px apart, so at 1440 x 900 the
+   connect command and its Copied note end above the fold. */
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+}
+.connect-form h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+}
+.connect-form h3 {
+  margin: 0;
+  font: var(--type-label);
+  line-height: 20px;
+}
+.connect-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.connect-form p {
+  margin: 0;
+}
+
+/* Provider, Cluster name and Namespace on one row; a refusal spans the row. */
+.connect-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  align-items: start;
+}
+.connect-fields .field {
+  gap: 6px;
+  min-width: 0;
+}
+.connect-fields .field > label,
+.connect-provider legend {
+  font: var(--type-label);
+  line-height: 20px;
+}
+.connect-fields input {
+  background: var(--sunken);
+}
+.connect-provider {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.connect-provider legend {
+  float: left;
+  padding: 0;
+}
+.connect-segments {
+  display: inline-flex;
+  height: var(--control-md);
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.connect-segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  font: 600 13px/20px var(--font-sans);
+  color: var(--muted);
+  cursor: pointer;
+}
+.connect-segment:hover {
+  color: var(--text);
+}
+/* The native radio covers its segment: one tab stop, arrow keys choose. */
+.connect-segment input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.connect-segment:has(input:checked) {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.connect-segment:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.connect-problem {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--danger-ink);
+}
+.connect-problem weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.connect-target-line {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.connect-target-line code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font: 600 13px/20px var(--font-mono);
+  color: var(--text);
+}
+
+/* Inline code sits tight against its punctuation. */
+.connect code {
+  font: 12px/18px var(--font-mono);
+  color: var(--text);
+}
+:is(.connect-steps, .connect-note) code {
+  padding: 1px 3px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+}
+/* A name inside a sentence never breaks at its hyphens: it moves to the next
+   line whole, and only a name longer than the line breaks. */
+.connect-name {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Before you start: numbered, because it is a sequence. */
+.connect-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.connect-steps > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--text);
+}
+.connect-steps > li::before {
+  counter-increment: step;
+  content: counter(step);
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--raised);
+  font: 600 12px/1 var(--font-sans);
+  color: var(--muted);
+}
+.connect-steps > li > * {
+  grid-column: 2;
+}
+.connect-steps > li > p:first-child {
+  margin-top: 2px;
+}
+.connect-says,
+.connect-changes {
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* A command wraps between its arguments, each flag with its value; Copy
+   sits beside the text, so it is always visible. */
+.connect-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: 10px 10px 10px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  min-width: 0;
+}
+.connect-command pre {
+  margin: 0;
+  min-width: 0;
+  padding: 6px 0;
+  font: 400 13px/20px var(--font-mono);
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* An argument wider than the box fills each line and goes on, never past the
+   box; the flag stays on the line its value starts on. */
+.connect-arg {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-all;
+}
+.connect-command.off {
+  border-style: dashed;
+}
+.connect-command.off p {
+  padding: 6px 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.connect-copy.copied {
+  border-color: var(--success-bd);
+  color: var(--success-ink);
+}
+.connect-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: calc(-1 * var(--space-1));
+  font: var(--type-small);
+  color: var(--muted);
+}
+.connect-note:empty {
+  display: none;
+}
+.connect-note weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--success-ink);
+}
+.connect-note.refused weave-icon {
+  color: var(--warning-ink);
+}
+
+/* What Studio sees: one line announced as it changes, then the names. */
+.connect-status {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+.connect-status.success {
+  border-color: var(--success-bd);
+}
+.connect-status h3 {
+  margin: 0;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.connect-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.connect-line strong {
+  display: block;
+  font: var(--type-title-sm);
+}
+.connect-line p {
+  margin: 2px 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.connect-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--muted);
+}
+.connect-mark[data-tone="live"] {
+  background: var(--accent-soft);
+  color: var(--live);
+  box-shadow: 0 0 0 4px var(--live-glow);
+}
+.connect-mark[data-tone="success"] {
+  background: var(--success-bg);
+  color: var(--success-ink);
+}
+.connect-mark[data-tone="warning"] {
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.connect-mark[data-tone="danger"] {
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+}
+/* The waiting ring turns once a second, and stays still with reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .connect-mark[data-tone="live"] weave-icon {
+    animation: connect-turn 1s linear infinite;
+  }
+}
+@keyframes connect-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.connect-status dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--space-4);
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--line);
+  font: var(--type-small);
+}
+.connect-status dt {
+  font-weight: 400;
+  color: var(--muted);
+}
+.connect-status dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.connect-status dd.connect-mono {
+  font: 13px/20px var(--font-mono);
+}
+.connect-status dd.connect-none {
+  color: var(--subtle);
+}
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@container (width < 1064px) {
+  .connect-status {
+    position: static;
+  }
+}
+
+/* Touch, or narrower than 768 px: 44 px controls, the fields stacked, each
+   radio its own target, and each command on one line with its own scroll. */
+@media (max-width: 767px), (pointer: coarse) {
+  .connect-fields input,
+  .connect-copy {
+    min-height: var(--control-touch);
+  }
+  .connect-segments {
+    height: auto;
+  }
+  .connect-segment {
+    min-height: var(--control-touch);
+  }
+}
+@media (max-width: 767px) {
+  .connect-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .connect-segments {
+    display: flex;
+  }
+  .connect-segment {
+    flex: 1 1 0;
+  }
+  .connect-status {
+    padding: var(--space-4);
+  }
+  .connect-steps > li > :is(.connect-command, .connect-note, .connect-says) {
+    grid-column: 1 / -1;
+  }
+  .connect-command {
+    align-items: center;
+    padding: 6px 6px 6px var(--space-3);
+  }
+  .connect-command pre {
+    padding: 12px 0;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-wrap: normal;
+    scrollbar-width: thin;
+    mask-image: linear-gradient(
+      to right,
+      var(--text) calc(100% - 24px),
+      transparent
+    );
+  }
+  .connect-arg {
+    display: inline;
+    white-space: nowrap;
+  }
+}
