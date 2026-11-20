@@ -177,9 +177,10 @@ SPDX-License-Identifier: Apache-2.0
   target's runner is online, with **Open target** and **New change request**;
   it also says when the target is registered but its runner hasn't made
   contact, when it is already connected, or when another target has the name.
-  It only reads targets, runners and observations. The generic registration
-  of any other runtime is now under **Add target › Other**. See [Connect a kind
-  or k3d cluster on this
+  It only reads targets, runners and observations. **Register a cluster** is
+  no longer under Kubernetes: to register a cluster that isn't on this
+  computer, use **Add target › Other** and **Register target**. See [Connect a
+  kind or k3d cluster on this
   computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 - In Settings, changing *When Studio opens* quickly with the arrow keys no
   longer loses the last choice: an earlier save's answer no longer checks the
