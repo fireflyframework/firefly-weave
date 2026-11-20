@@ -26,12 +26,12 @@ import yaml
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from firefly_weave.compiler import platform_events
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.language_support import COMPILED_FEATURES
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.compiler.platform_catalog import platform_event_view, platform_schema_bundle
-from firefly_weave.compiler.platform_events import platform_view
 from firefly_weave.compiler.schemas import validate_payload, validate_schema
 from firefly_weave.contracts.definitions import NAME_PATTERN, load_definition
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
@@ -173,12 +173,12 @@ def test_a_shared_schema_reference_keeps_its_warning():
 
 
 def test_only_the_platforms_own_bytes_give_the_view():
-    bundle = platform_schema_bundle()
-    assert platform_view(EVENT, bundle) == platform_event_view()
-    assert platform_view(EVENT, {PLATFORM_EVENT_SCHEMA: {"type": "object"}}) is None
-    assert platform_view(EVENT, {}) is None
-    assert platform_view({"$ref": PLATFORM_EVENT_SCHEMA, "title": "Event"}, bundle) is None
-    assert platform_view({}, bundle) is None
+    view, bundle = platform_events.platform_view, platform_schema_bundle()
+    assert view(EVENT, bundle) == platform_event_view()
+    assert view(EVENT, {PLATFORM_EVENT_SCHEMA: {"type": "object"}}) is None
+    assert view(EVENT, {}) is None
+    assert view({"$ref": PLATFORM_EVENT_SCHEMA, "title": "Event"}, bundle) is None
+    assert view({}, bundle) is None
 
 
 def caller(*steps, **spec):
