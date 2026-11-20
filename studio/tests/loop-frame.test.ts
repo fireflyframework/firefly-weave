@@ -35,6 +35,37 @@ const loop = (extra: Record<string, unknown>): Step => ({
   ...extra,
 });
 
+describe("the badge at a loop's header", () => {
+  const facts = { errors: [], warnings: [], setup: [] };
+  it("says a loop without a list needs one, as setup", () => {
+    expect(loopFacts(loop({}), facts).setup).toEqual([
+      "choose the list to loop over",
+    ]);
+    expect(
+      loopFacts(loop({ items: { ref: "/input/orders" } }), facts).setup,
+    ).toEqual([]);
+    // Said once, whatever else the step needs.
+    expect(
+      loopFacts(loop({}), { ...facts, setup: ["choose the list to loop over"] })
+        .setup,
+    ).toEqual(["choose the list to loop over"]);
+  });
+
+  it("keeps what the loop needs and leaves run states to the steps inside", () => {
+    const badge = (kind: string) => ({
+      kind,
+      tone: "info" as const,
+      icons: [],
+      text: kind,
+    });
+    for (const kept of ["setup", "error", "warning"])
+      expect(frameBadge(badge(kept))?.kind).toBe(kept);
+    for (const dropped of ["failed", "done", "changed", "added", "pinned"])
+      expect(frameBadge(badge(dropped))).toBeNull();
+    expect(frameBadge(null)).toBeNull();
+  });
+});
+
 describe("a loop's header", () => {
   it("names the list and how many items run at a time", () => {
     expect(
@@ -203,36 +234,5 @@ describe("a loop's run status in its header", () => {
     expect(loopRunText(run({ count: 1200, finished: 1000 }))).toBe(
       "1,000 of 1,200",
     );
-  });
-});
-
-describe("the badge at a loop's header", () => {
-  const facts = { errors: [], warnings: [], setup: [] };
-  it("says a loop without a list needs one, as setup", () => {
-    expect(loopFacts(loop({}), facts).setup).toEqual([
-      "choose the list to loop over",
-    ]);
-    expect(
-      loopFacts(loop({ items: { ref: "/input/orders" } }), facts).setup,
-    ).toEqual([]);
-    // Said once, whatever else the step needs.
-    expect(
-      loopFacts(loop({}), { ...facts, setup: ["choose the list to loop over"] })
-        .setup,
-    ).toEqual(["choose the list to loop over"]);
-  });
-
-  it("keeps what the loop needs and leaves run states to the steps inside", () => {
-    const badge = (kind: string) => ({
-      kind,
-      tone: "info" as const,
-      icons: [],
-      text: kind,
-    });
-    for (const kept of ["setup", "error", "warning"])
-      expect(frameBadge(badge(kept))?.kind).toBe(kept);
-    for (const dropped of ["failed", "done", "changed", "added", "pinned"])
-      expect(frameBadge(badge(dropped))).toBeNull();
-    expect(frameBadge(null)).toBeNull();
   });
 });

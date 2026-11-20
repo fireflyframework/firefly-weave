@@ -130,6 +130,27 @@ function setup() {
   return { model, host, controller, testData };
 }
 
+describe("a run log row for one item of a loop", () => {
+  it("opens its step on that item each time it is chosen, and only for that step", () => {
+    const { controller, host } = setup();
+    Object.assign(host, { draftId: "draft-1" });
+    const third = { draftId: "draft-1", key: "send[2]" };
+    controller.pickOpenedItem(third, "send");
+    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
+    // A pick made after stays while step details follow the same row.
+    controller.iterations.pick("orders", 0);
+    controller.pickOpenedItem(third, "send");
+    expect(controller.iterations.instanceKey("send")).toBe("send[0]");
+    // The row chosen again picks its item again.
+    controller.pickOpenedItem({ draftId: "draft-1", key: "send[2]" }, "send");
+    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
+    // Another step, or another draft's row, picks nothing.
+    controller.pickOpenedItem({ draftId: "draft-1", key: "send[1]" }, "orders");
+    controller.pickOpenedItem({ draftId: "draft-9", key: "send[1]" }, "send");
+    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
+  });
+});
+
 describe("Debug in editor on a failed item", () => {
   it("picks the item the run failed at in each loop around the step", () => {
     const { model } = setup();
@@ -200,27 +221,6 @@ describe("Debug in editor on a failed item", () => {
     });
     other.controller.pickRunItem("send");
     expect(other.controller.iterations.instanceKey("send")).toBe("send[0]");
-  });
-});
-
-describe("a run log row for one item of a loop", () => {
-  it("opens its step on that item each time it is chosen, and only for that step", () => {
-    const { controller, host } = setup();
-    Object.assign(host, { draftId: "draft-1" });
-    const third = { draftId: "draft-1", key: "send[2]" };
-    controller.pickOpenedItem(third, "send");
-    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
-    // A pick made after stays while step details follow the same row.
-    controller.iterations.pick("orders", 0);
-    controller.pickOpenedItem(third, "send");
-    expect(controller.iterations.instanceKey("send")).toBe("send[0]");
-    // The row chosen again picks its item again.
-    controller.pickOpenedItem({ draftId: "draft-1", key: "send[2]" }, "send");
-    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
-    // Another step, or another draft's row, picks nothing.
-    controller.pickOpenedItem({ draftId: "draft-1", key: "send[1]" }, "orders");
-    controller.pickOpenedItem({ draftId: "draft-9", key: "send[1]" }, "send");
-    expect(controller.iterations.instanceKey("send")).toBe("send[2]");
   });
 });
 
