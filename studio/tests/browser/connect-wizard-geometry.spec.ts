@@ -247,6 +247,12 @@ for (const size of SIZES)
       await expectCommand(page, command(page, "Connect"));
       await expectControls(page);
       await expectWholeNames(page);
+      // Each command comes first, then what it changes, so the connect
+      // command stays high on the page.
+      expect(
+        (await box(page.locator(".connect-changes"))).y,
+        "what connecting changes, under its command",
+      ).toBeGreaterThan((await box(command(page, "Connect"))).bottom);
       // The connect command is in view without scrolling on a desktop.
       if (size.tag === "1440x900" || size.tag === "1920x1080")
         expect(

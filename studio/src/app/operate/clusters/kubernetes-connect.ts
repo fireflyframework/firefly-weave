@@ -199,6 +199,10 @@ type Which = "create" | "connect";
           </div>
           <div class="connect-section">
             <h3>Connect</h3>
+            <ng-container
+              [ngTemplateOutlet]="command"
+              [ngTemplateOutletContext]="{ $implicit: 'connect' }"
+            />
             <p class="connect-changes">
               @if (valid()) {
                 Creates the namespaces
@@ -215,10 +219,6 @@ type Which = "create" | "connect";
                 Fix the {{ problemField() }} to see what connecting changes.
               }
             </p>
-            <ng-container
-              [ngTemplateOutlet]="command"
-              [ngTemplateOutletContext]="{ $implicit: 'connect' }"
-            />
           </div>
         </section>
         <aside
