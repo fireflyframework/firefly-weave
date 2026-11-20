@@ -32,7 +32,11 @@ from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.deployments import (
     DeploymentLease,
     DeploymentPlan,
+    LogClaim,
+    LogReport,
+    MemberLog,
     ObservationReport,
+    RunnerLogFailure,
     RunnerReport,
     SafeDeploymentReceipt,
 )
@@ -91,6 +95,31 @@ def observed_time(value: object) -> datetime | None:
 class InfrastructureAdapter(Protocol):
     async def observe(self) -> ObservationReport: ...
     async def apply(self, plan: DeploymentPlan, before_write: Callable[[], Awaitable[None]]) -> ObservationReport: ...
+
+
+class LogReader(Protocol):
+    """An adapter that reads container logs: each member's last lines, and whether any was cut or left out. It
+    raises LogRefused for a component or members it won't read."""
+
+    async def read_logs(
+        self, component: str, members: list[str], since_seconds: int, tail_lines: int
+    ) -> tuple[list[MemberLog], bool]: ...
+
+
+def validate_log_claim(claim: LogClaim, policy: DestinationPolicy) -> None:
+    """A log claim for this runner's own target, which both the platform and the local policy let it read."""
+    target = claim.target
+    if (
+        target.id != policy.target_id
+        or target.disabled
+        or target.adapter != policy.adapter
+        or target.external_identity != policy.external_identity
+        or target.boundary != policy.boundary
+        or "read_logs" not in target.capabilities
+        or "read_logs" not in policy.capabilities
+        or claim.expires_at <= datetime.now(UTC)
+    ):
+        raise RunnerPolicyError()
 
 
 def validate_lease(lease: DeploymentLease, policy: DestinationPolicy) -> None:
@@ -208,6 +237,40 @@ class OperationsRunner:
                     raise
             await asyncio.sleep(delay)
             delay = min(delay * 2, 8 * REPORT_RETRY_SECONDS)
+
+    async def serve_logs(self, claim: LogClaim) -> None:
+        """Read what a log claim asks for and report it, or report why nothing was read.
+
+        A claim that doesn't match this runner's target or local policy reads nothing. No line read is ever logged:
+        a failure logs the request and where the runner failed, never what a container or the provider printed.
+        """
+        from firefly_weave.deployment_runner.logs import LogRefused
+
+        failure: RunnerLogFailure | None = None
+        members: list[MemberLog] = []
+        cut = False
+        try:
+            validate_log_claim(claim, self.policy)
+            read_logs = getattr(self.adapter, "read_logs", None)
+            if read_logs is None:
+                raise RunnerPolicyError()
+            # The report must reach the platform before the claim lapses.
+            left = (claim.expires_at - datetime.now(UTC)).total_seconds() - 5
+            async with asyncio.timeout(max(1.0, min(45.0, left))):
+                members, cut = await cast(LogReader, self.adapter).read_logs(
+                    claim.component, list(claim.members), claim.since_seconds, claim.tail_lines
+                )
+        except asyncio.CancelledError:
+            raise
+        except LogRefused as refusal:
+            failure = refusal.failure
+        except Exception as error:
+            LOG.warning("Log request %s read nothing: %s", claim.proof.request_id, failure_location(error))
+            failure = "unreadable"
+        report = LogReport(
+            proof=claim.proof, members=members if failure is None else [], truncated=cut, failure=failure
+        )
+        await self.send("deployment_runners.report_logs", report)
 
     async def execute(self, initial: DeploymentLease) -> None:
         lease = initial

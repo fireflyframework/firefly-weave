@@ -20,6 +20,18 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Workflow language
+
+- A workflow whose input is `{$ref: weave.platform-event-v1}` reads the event's
+  fields without presence warnings: a field every event carries, such as
+  `/input/transaction/business_key`, is present, while `cause`, `incident_id`,
+  and the lists under `steps` still warn `WV-COMP-REFERENCE_PRESENCE` unless
+  read with `coalesce` or `exists`, and a field the event doesn't have is
+  `WV-COMP-MISSING_REFERENCE`. The compiled bytes of event-triggered workflows
+  published on 0.1.0a19 change, so publishing one again gives a new artifact;
+  published artifacts keep running as they are, and workflows that don't
+  reference a platform schema keep their bytes.
+
 ### Runs, incidents, and workers
 
 - Workers and native connectors write log entries about the tasks they run.
@@ -78,6 +90,29 @@ SPDX-License-Identifier: Apache-2.0
 - Log entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default, 1 to
   30), go with their run when it is purged, and count toward no usage;
   `operations_retention.read` lists their period.
+- Container logs: a person with the new `deployment_log_reader` role and
+  `deployment.read` on a target asks for a snapshot of what its worker
+  containers printed (`deployment_log_requests.create`, `POST
+  {environment}/deployment-log-requests`, with an `Idempotency-Key`), up to 5
+  members, from 60 seconds to 24 hours back and 1 to 1,000 lines each, and
+  reads it with `deployment_log_requests.read`. The local owner gets
+  `deployment_log_reader`. The target's runner claims the request beside its
+  jobs (`deployment_runners.claim_logs`, `deployment_runners.report_logs`),
+  reads only worker containers or pods it observed itself with a fixed
+  `docker logs` or `kubectl logs` argument list (with `--previous` too for a
+  pod whose container restarted; each member says how often it restarted and
+  how many of its lines came from the previous container), and redacts and
+  cuts each line to 2 KiB and the snapshot to 256 KiB; the platform redacts
+  every line again. A target takes 10 requests a minute (`429 WV-LOG-RATE`), a
+  runner out of touch for 90 seconds answers `409 WV-RUNNER-OFFLINE`, a
+  request no runner answered within 2 minutes reads failed, and a request and
+  its snapshot are deleted an hour after it was made.
+- Deployment targets and runner policies gain the capability `read_logs`
+  (Compose and Kubernetes). local-docker and connected cluster targets hold it;
+  an existing local-docker target gains it on the next `weave platform up`, and
+  a cluster runner's Role may `get` `pods/log` in its workers namespace. A
+  runner whose target lacks `read_logs` registers without it and keeps running
+  its jobs.
 
 ### AI and connections
 
@@ -168,9 +203,29 @@ SPDX-License-Identifier: Apache-2.0
   there instead of failing the test with a server error.
 - On the Runs tab, a call step's Output names the run it started, says how it
   went, and opens it.
+- Studio guides connecting a local kind or k3d cluster. **Operate › Clusters ›
+  Add target › Connect a cluster** shows the `weave platform cluster create`
+  and `weave platform cluster connect` commands for the provider, cluster name
+  and namespace you choose, with **Copy** and what each command changes, and
+  refuses the names the command line refuses. While the wizard stays open,
+  Studio checks every 5 seconds and shows **Cluster connected** once the new
+  target's runner is online, with **Open target** and **New change request**;
+  it also says when the target is registered but its runner hasn't made
+  contact, when it is already connected, or when another target has the name.
+  It only reads targets, runners and observations. **Register a cluster** is
+  no longer under Kubernetes: to register a cluster that isn't on this
+  computer, use **Add target › Other** and **Register target**. See [Connect a
+  kind or k3d cluster on this
+  computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 - In Settings, changing *When Studio opens* quickly with the arrow keys no
   longer loses the last choice: an earlier save's answer no longer checks the
   choice you just left.
+- Operate › Logs has two tabs, Run logs and Container logs. Container logs
+  chooses a target, a worker component, up to five members, Since and Last
+  lines; **Fetch logs** shows each member's lines with **Copy** and
+  **Download** (plain text), marks a restarted pod's previous lines, and says
+  which chosen member couldn't be read; **Follow** asks quietly for a new
+  snapshot every 10 seconds while the page is open.
 - Studio edits loops (Loop over items): a loop draws as a frame around the steps it repeats, with its list and
   limits (At a time, Up to, Results, Result per item) in step details. Inside a loop, one item picker chooses the
   item that the Input and Output panes, previews, pins and Execute step use; Pin for every item pins one output
@@ -178,6 +233,11 @@ SPDX-License-Identifier: Apache-2.0
   item in the run log, the failed one open on its steps and error, and a list longer than Up to fails the loop as
   a real run does. On the Runs tab, a recorded loop has an item chip, failed items first, and step details open on
   the same item. Execute workflow also stops at any step where a real run would stop on an incident.
+- Studio's data scope lists the platform event's fields under `/input`, the
+  local host serves the event's schema at `GET /studio/contracts/platform-event`,
+  and Execute and saved test data accept a sample platform event as input. A
+  project catalog that brings its own schema under that name is still refused
+  when the workflow compiles.
 
 ### Development and testing
 
@@ -191,6 +251,10 @@ SPDX-License-Identifier: Apache-2.0
   test-only `note` input, which the acceptance journeys and
   `tests/e2e/test_operations_logs.py` use to prove a planted secret never
   reaches log answers or stored entries.
+- The `cluster` and `k3d` acceptance profiles run
+  `tests/browser/cluster-connect-real.spec.ts`: Studio copies the connect
+  command for a namespace of the run's cluster, the command runs as copied,
+  and Studio must show **Cluster connected** within 15 seconds of its end.
 
 ### Versions and schema
 
@@ -209,6 +273,10 @@ SPDX-License-Identifier: Apache-2.0
   `agent_memory_loads`, scoped by row-level security and charged to usage.
   Purging a run deletes its loads and keeps the conversation; deleting an
   environment deletes both.
+- `0046_operations_log_requests` adds the empty `deployment_log_requests` and
+  `deployment_log_snapshots` tables with row-level security and adds the role
+  check again with `deployment_log_reader`. Upgrade the server before runners
+  and CLIs: earlier ones refuse the `read_logs` capability.
 - Security: Studio's development tools update `@angular/cli` and
   `@angular/build` to 22.2.5, which bring the Angular CLI's MCP server to
   2.3.1 (GHSA-46jr-4wx8-v453, GHSA-f897-62hf-6gxq, GHSA-jm63-cq47-j5jp,

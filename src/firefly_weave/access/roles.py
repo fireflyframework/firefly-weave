@@ -63,6 +63,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         "deployment_approver": frozenset({"deployment.read", "deployment.approve"}),
         "deployment_operator": frozenset({"deployment.read", "deployment.apply", "deployment.cancel"}),
         "deployment_runner": frozenset({"runner.register", "runner.claim", "runner.renew", "runner.report"}),
+        # Snapshots of what a target's worker containers printed; deployment.read on the target is needed too.
+        "deployment_log_reader": frozenset({"deployment_log.read"}),
         "worker_operator": frozenset({"status.read", "worker.drain"}),
         # Resolving a transaction by hand asserts facts about other systems, a duty apart from operating runs.
         "transaction_reconciler": frozenset({"transaction.reconcile"}),

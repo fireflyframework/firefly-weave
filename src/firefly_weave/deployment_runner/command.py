@@ -19,9 +19,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import os
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 
 # The longest one command may run: within the runner's 600 s job budget, long enough to stop drained workers
@@ -71,6 +73,19 @@ async def _finish_cleanup(process: asyncio.subprocess.Process) -> None:
         raise failure
 
 
+def _fixed(argv: list[str], timeout: float) -> bool:
+    """A bounded argument list for an absolute executable, and a bounded time, on POSIX."""
+    return (
+        os.name == "posix"
+        and bool(argv)
+        and len(argv) <= 128
+        and all(isinstance(value, str) and len(value) <= 4096 and "\0" not in value for value in argv)
+        and Path(argv[0]).is_absolute()
+        and math.isfinite(timeout)
+        and 0 < timeout <= MAX_COMMAND_SECONDS
+    )
+
+
 async def run_command(
     argv: list[str],
     *,
@@ -85,17 +100,7 @@ async def run_command(
     This POSIX runner owns process cleanup even when the caller is cancelled.
     Adapters, not API payloads, choose executables and argument structure.
     """
-    if (
-        os.name != "posix"
-        or not argv
-        or len(argv) > 128
-        or any(not isinstance(value, str) or len(value) > 4096 or "\0" in value for value in argv)
-        or not Path(argv[0]).is_absolute()
-        or not math.isfinite(timeout)
-        or not 0 < timeout <= MAX_COMMAND_SECONDS
-        or not 1 <= limit <= 1024 * 1024
-        or (stdin is not None and len(stdin) > 256 * 1024)
-    ):
+    if not _fixed(argv, timeout) or not 1 <= limit <= 1024 * 1024 or (stdin is not None and len(stdin) > 256 * 1024):
         raise CommandError()
     try:
         process = await asyncio.create_subprocess_exec(
@@ -140,6 +145,80 @@ async def run_command(
             if status != 0:
                 raise CommandError()
             return stdout.result()
+    except Exception:
+        raise CommandError() from None
+    finally:
+        await _finish_cleanup(process)
+
+
+# Reading logs keeps the last 512 KiB of each stream and reads at most 8 MiB in all before it stops the command.
+OUTPUT_KEEP = 512 * 1024
+OUTPUT_READ = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class CommandOutput:
+    """What a command printed: the last whole lines of stdout and of stderr, and whether earlier output was left out
+    or the read stopped at its bound."""
+
+    stdout: bytes
+    stderr: bytes
+    cut: bool
+
+
+async def read_output(
+    argv: list[str], *, timeout: float = 20, keep: int = OUTPUT_KEEP, limit: int = OUTPUT_READ
+) -> CommandOutput:
+    """Run fixed adapter argv without a shell and keep the last `keep` bytes of whole lines of each stream.
+
+    For reading logs, where a container's own stderr is output too: unlike `run_command`, both streams are kept, and
+    output past `limit` bytes in all stops the command instead of failing it. What was read is returned marked cut,
+    without the partial line the stop left. A command that exits with an error, or runs past `timeout`, fails.
+    """
+    if not _fixed(argv, timeout) or not 1 <= keep <= limit <= 64 * 1024 * 1024:
+        raise CommandError()
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+    except (OSError, ValueError):
+        raise CommandError() from None
+    count = 0
+    cut = stopped = False
+
+    async def consume(stream: asyncio.StreamReader) -> bytes:
+        nonlocal count, cut, stopped
+        kept = bytearray()
+        while not stopped and (chunk := await stream.read(16384)):
+            count += len(chunk)
+            kept.extend(chunk)
+            if len(kept) > keep:
+                # Drop the oldest bytes, then the rest of the line they cut, so the output starts with a whole line.
+                del kept[: len(kept) - keep]
+                del kept[: kept.find(b"\n") + 1]
+                cut = True
+            if count > limit:
+                cut = stopped = True
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+        if stopped and not kept.endswith(b"\n"):
+            del kept[kept.rfind(b"\n") + 1 :]
+        return bytes(kept)
+
+    try:
+        async with asyncio.timeout(timeout):
+            assert process.stdout is not None and process.stderr is not None
+            async with asyncio.TaskGroup() as tasks:
+                stdout = tasks.create_task(consume(process.stdout))
+                stderr = tasks.create_task(consume(process.stderr))
+                status = await process.wait()
+            if status != 0 and not stopped:
+                raise CommandError()
+            return CommandOutput(stdout=stdout.result(), stderr=stderr.result(), cut=cut)
     except Exception:
         raise CommandError() from None
     finally:

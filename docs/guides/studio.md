@@ -2235,6 +2235,19 @@ are withheld reads "This run's details are withheld." without its text.
   that doesn't serve logs yet says "This platform can't show logs yet." once,
   and Studio asks it no more until you reload the page.
 
+**Read what worker containers printed in Container logs.** The **Container
+logs** tab of **Logs** needs `deployment_log.read` and `deployment.read` on the
+target. Choose a **Target**, a **Component**, up to five **Members**, **Since**
+(the last 5 minutes to 24 hours) and **Last lines** (1 to 1,000 per member),
+then **Fetch logs**. Fetching asks the target's runner for a snapshot and
+changes nothing on the target; the snapshot usually arrives within 10 seconds
+and expires after 1 hour. Each member shows its lines with **Copy** and
+**Download**; a chosen member Weave couldn't read says so, and a restarted pod
+marks where its previous container's lines end. **Follow** asks for a new
+snapshot every 10 seconds while the page is open and visible. [Container
+logs](../operations/observability.md#container-logs) explains who may read
+them, their limits and how they are redacted.
+
 Worker and connector entries are kept for 7 days by default; [Run
 logs](../operations/observability.md#run-logs) explains where entries come from,
 how they are redacted, and their limits.
@@ -2242,6 +2255,31 @@ how they are redacted, and their limits.
 [Manage runs and business cases](execution-management.md) explains business
 keys, archiving, and deletion in depth. To try a workflow without running it for
 real, use [Simulate](#simulate-a-run).
+
+**Connect a local cluster in Clusters.** To try Kubernetes on this computer,
+open **Operate › Clusters**, select **Add target**, and select **Connect a
+cluster** under **Kubernetes** (you need `target.manage`). Choose **kind** or
+**k3d**, and enter a **Cluster name** and a **Namespace**; `weave-test` and
+`weave-workers` are filled in to start with. Studio shows the name the target
+gets, such as `kind-weave-test`, and two commands with **Copy**:
+
+1. `weave platform cluster create --provider kind --name weave-test` creates the
+   cluster. Skip it if the cluster exists.
+2. `weave platform cluster connect --provider kind --name weave-test --namespace weave-workers`
+   connects the namespace as a deployment target.
+
+Run them in a terminal in the folder where you ran `weave platform up`. Under
+each command, Studio says what it changes. While the wizard is open, **What
+Studio sees** checks every 5 seconds and reads **Waiting for the cluster**,
+then **Registered** until the target's runner makes contact, then **Cluster
+connected** with **Open target** and **New change request**. When the name
+belongs to another target, it says so. After 15 minutes without the target, it
+stops looking until you select **Keep waiting**. Studio only reads the
+platform's targets, runners, and observations, and never receives your
+kubeconfig. [Connect a kind or k3d cluster on this
+computer](../operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer)
+explains what each command does. For a cluster that isn't on this computer, use
+**Other** and the [Kubernetes operations guide](../operations/kubernetes.md).
 
 **If the network fails after you submit a change, the result is unknown.** Studio
 says, for example, "Studio didn't get an answer for "Start run".", keeps the

@@ -993,7 +993,7 @@ test.describe("who approves a target", () => {
     await page.getByRole("button", { name: "Add target" }).click();
     await expect(page.getByText("Docker on this computer")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Register a cluster" }),
+      page.getByRole("button", { name: "Connect a cluster" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Register target" }),
