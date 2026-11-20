@@ -171,6 +171,14 @@ import {
   workflowRows,
   type CallSources,
 } from "../calls/call-sources";
+import {
+  endedOnError,
+  onErrorFields,
+  onErrorKinds,
+  removedPathToast,
+  type OnErrorContext,
+  type OnErrorWrite,
+} from "./settings/on-error";
 
 /**
  * A pin's step as toasts name it: the step, and inside a loop's body the
@@ -992,6 +1000,12 @@ export class StepDetailsController {
   }
 
   readonly features = signal<readonly string[]>([]);
+  /** The kinds the target's language manifest lets choose On error; null when it lists none. */
+  readonly onErrorKinds = signal<readonly string[] | null>(null);
+  /** What On error rules read: the kind context and the manifest's On error kinds. */
+  onErrorContext(): OnErrorContext {
+    return { ...this.kindContext(), onErrorKinds: this.onErrorKinds() };
+  }
   /** What fields in loop bodies can read, from the Studio host. */
   readonly loopScopes = new LoopScopes(
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
@@ -1129,6 +1143,7 @@ export class StepDetailsController {
     if (this.featureLoad?.profile === profile && this.featureLoad.api === api)
       return this.featureLoad.promise;
     this.features.set([]);
+    this.onErrorKinds.set(null);
     const load = { profile, api, promise: Promise.resolve() };
     this.featureLoad = load;
     const current = () =>
@@ -1141,10 +1156,14 @@ export class StepDetailsController {
           ? `${api.project}/language`
           : "/studio/contracts/language";
         const manifest = await api.request<{ features?: string[] }>(path);
-        if (current()) this.features.set(manifest.features ?? []);
+        if (current()) {
+          this.features.set(manifest.features ?? []);
+          this.onErrorKinds.set(onErrorKinds(manifest));
+        }
       } catch {
         if (current()) {
           this.features.set([]);
+          this.onErrorKinds.set(null);
           this.featureLoad = null;
         }
       }
@@ -1287,12 +1306,15 @@ export class StepDetailsController {
   }
   settings(target: string): FormSpec {
     const step = this.step(target);
-    return (
-      (step &&
-        this.descriptor(target)?.settings?.(step, this.kindContext())) || {
-        fields: [],
-      }
-    );
+    const own = (step &&
+      this.descriptor(target)?.settings?.(step, this.kindContext())) || {
+      fields: [],
+    };
+    // On error, and Result on error with it, come after the kind's own settings.
+    const onError = step ? onErrorFields(step, this.onErrorContext()) : [];
+    return onError.length
+      ? { ...own, fields: [...own.fields, ...onError] }
+      : own;
   }
 
   private set(map: Map<string, Set<string>>, target: string): Set<string> {
@@ -1828,6 +1850,8 @@ export class StepDetailsController {
     let outcome: CommitOutcome = { ok: false, removed: [] };
     let reasons: string[] = [];
     let moves: VersionMove[] = [];
+    // Set inside perform(); typed so the check after it isn't narrowed to null.
+    let ended = null as OnErrorWrite | null;
     this.host.perform(() => {
       const changes = changesOf();
       if (!changes.length) return;
@@ -1862,6 +1886,17 @@ export class StepDetailsController {
         afterEnv,
         new Set(),
       );
+      // A change that ends On error (a call that stops waiting for its
+      // result) removes the setting and its error path in the same step.
+      let settled = subject;
+      for (const change of hidden.changes)
+        settled = applyChange(settled, change);
+      ended = settled.step ? endedOnError(settled.step) : null;
+      const endChanges: FormChange[] = (ended?.patch ?? []).map((edit) => ({
+        scope: "step",
+        path: edit.path,
+        value: edit.value,
+      }));
       // Changes that leave the step as it is write nothing: the file keeps
       // its bytes (a space typed in a formula, a value set to itself).
       // Key order counts: moving rows reorders an object's keys.
@@ -1870,11 +1905,16 @@ export class StepDetailsController {
       const unchanged =
         !!step &&
         !hidden.changes.length &&
+        !endChanges.length &&
         same(subject.step, env.subject.step) &&
         same(subject.action, env.subject.action) &&
         same(subject.workflow, env.subject.workflow);
       const apply = () => {
-        moves = this.write(target, [...changes, ...hidden.changes]);
+        moves = this.write(target, [
+          ...changes,
+          ...hidden.changes,
+          ...endChanges,
+        ]);
       };
       if (unchanged) {
         outcome = { ok: true, removed: [] };
@@ -1888,22 +1928,30 @@ export class StepDetailsController {
     if (!outcome.ok) return outcome;
     this.burst = { key, revision: model.revision, at: this.now() };
     if (moves.length) this.host.notify(versionMoveText(moves[0]));
-    if (outcome.removed.length) {
-      const revision = model.revision;
-      const opened = model.opened;
-      this.host.notify(
-        `Removed ${outcome.removed.join(", ")}.${reasons.length ? ` ${reasons[0]}.` : ""}`,
-        {
-          label: "Undo",
-          run: () =>
-            void this.host.undoIfUnchanged(
-              () =>
-                this.host.model === model &&
-                model.opened === opened &&
-                model.revision === revision,
-            ),
-        },
-      );
+    const revision = model.revision;
+    const opened = model.opened;
+    const undo = {
+      label: "Undo",
+      run: () =>
+        void this.host.undoIfUnchanged(
+          () =>
+            this.host.model === model &&
+            model.opened === opened &&
+            model.revision === revision,
+        ),
+    };
+    // The steps an error path held are the larger loss: their toast names them.
+    const path = ended && removedPathToast(ended.removed, ended.names);
+    if (path) this.host.notify(path.text, undo, "neutral", path.detail);
+    else {
+      const removed = ended
+        ? [...outcome.removed, "On error"]
+        : outcome.removed;
+      if (removed.length)
+        this.host.notify(
+          `Removed ${removed.join(", ")}.${reasons.length ? ` ${reasons[0]}.` : ""}`,
+          undo,
+        );
     }
     return outcome;
   }

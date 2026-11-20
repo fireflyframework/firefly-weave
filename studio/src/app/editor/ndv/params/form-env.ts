@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // workflow: the expression fields of the step, the schemas they target,
 // and the read-only reason and added options of this session.
 import type { Step, Workflow } from "../../../model";
+import { ERROR_PATH } from "../../step-blocks";
 import type { Json, KindContext, StepKindDescriptor } from "../registry";
 import type { FormEnv } from "./form-model";
 import { samePath } from "./paths";
@@ -34,11 +35,16 @@ export function stepSubject(
   action: Json | null,
 ): FormSubject {
   const fields = descriptor.fields(step);
+  // A step with an error path has one more expression: Result on error.
+  const errorOutput =
+    step[ERROR_PATH] && typeof step[ERROR_PATH] === "object"
+      ? [[ERROR_PATH, "output"]]
+      : [];
   return {
     step,
     workflow: ctx.workflow,
     action,
-    roots: fields.map((field) => field.path),
+    roots: [...fields.map((field) => field.path), ...errorOutput],
     schemaOf: (root) =>
       fields
         .find((field) => samePath(field.path, root))

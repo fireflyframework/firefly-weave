@@ -251,7 +251,13 @@ def test_new_constructs_stay_pending_until_studio_ships_them():
     }
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
     assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {"eventTrigger"}
-    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo", "onError"}
+    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}
+
+
+def test_studio_edits_what_a_steps_failure_does():
+    on_error = next(entry for entry in language_manifest().step_fields if entry.name == "onError")
+    assert on_error.studio == "ready"
+    assert on_error.block is not None and on_error.block.path == "/errorPath"
 
 
 def test_loop_and_join_entries_match_the_spec_example():
