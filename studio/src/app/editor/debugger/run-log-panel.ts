@@ -323,6 +323,24 @@ export function loopLog(
         ...(over ? { message: loopLimitText(over.count, over.limit) } : {}),
       };
     }
+    // Another reason it failed before its first item: the run's own words.
+    const self = entries.find(
+      (entry) =>
+        entry.kind === "forEach" &&
+        entry.nodeId === run.id &&
+        entry === failedAt &&
+        iterationOf(entry.instanceKey).join() === run.within.join(),
+    );
+    if (run.status === "failed" && !reached.length && self && error?.code)
+      return {
+        id: run.id,
+        within: run.within,
+        summary: `Failed: ${error.code}`,
+        progress: null,
+        items: [],
+        notRun: null,
+        ...(error.message ? { message: error.message } : {}),
+      };
     const count = run.count;
     const first = reached.length ? reached[reached.length - 1] + 2 : 1;
     return {

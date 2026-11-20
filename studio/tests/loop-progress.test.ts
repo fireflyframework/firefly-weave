@@ -623,6 +623,38 @@ describe("the run log of a loop", () => {
     ]);
   });
 
+  it("says why a loop failed before its first item, in the run's own words", () => {
+    const held = {
+      status: "failed",
+      compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+      trace: [
+        { index: 0, ...step("fetch"), output: { rows: "x" } },
+        { index: 1, ...step("orders", "", "failed", "forEach") },
+      ],
+      loops: [],
+      diagnostics: [
+        {
+          code: "WV-RUNTIME-LOOP-ITEMS",
+          severity: "error",
+          stage: "evaluation",
+          message: "A loop's list was not a list.",
+          path: "",
+        },
+      ],
+    } as ExecuteResponse;
+    expect(loopLog(held, around, OVER_LIMIT)).toEqual([
+      {
+        id: "orders",
+        within: [],
+        summary: "Failed: WV-RUNTIME-LOOP-ITEMS",
+        progress: null,
+        items: [],
+        notRun: null,
+        message: "A loop's list was not a list.",
+      },
+    ]);
+  });
+
   it("says a loop the run ended inside isn't finished, and where its last item got to", () => {
     const before = {
       status: "completed",
