@@ -25,6 +25,7 @@ import {
   countAlertWebhooks,
   createRule,
   listAlerts,
+  listChannels,
   readAlertPage,
   readChannel,
   readRule,
@@ -116,6 +117,26 @@ describe("typed readers", () => {
 });
 
 describe("requests", () => {
+  it("reads every page while a cursor comes back, and stops at a cursor it saw", async () => {
+    // Five pages: more than any fixed page count would read.
+    const [first] = fixture.channels();
+    const pages = (path: string) => {
+      const at = Number(
+        new URL(path, "http://x").searchParams.get("cursor") ?? 0,
+      );
+      return {
+        items: [{ ...first, id: `c0000000-0000-4000-8000-00000000000${at}` }],
+        next_cursor: at < 4 ? String(at + 1) : null,
+      };
+    };
+    const { api, sent } = transport(({ path }) => pages(path));
+    expect(await listChannels(api)).toHaveLength(5);
+    expect(sent).toHaveLength(5);
+    // A server that answers the same cursor again doesn't keep Studio reading.
+    const looping = transport(() => ({ items: [first], next_cursor: "again" }));
+    expect(await listChannels(looping.api)).toHaveLength(2);
+    expect(looping.sent).toHaveLength(2);
+  });
   it("asks for firing alerts with the state and limit in the query", async () => {
     const { api, sent } = transport(() => fixture.alertPage([], 0, 0));
     await listAlerts(api, { state: "firing", limit: 1 });

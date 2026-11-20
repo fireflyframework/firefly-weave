@@ -641,8 +641,6 @@ export function readAlertPage(value: unknown): AlertPage {
 
 // ------------------------------------------------------------------ calls
 
-/** The most pages a list reads: rules and channels have environment limits of 100 and 20. */
-const PAGES = 3;
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values))
@@ -657,14 +655,21 @@ const revised = (revision: number) => ({ "If-Match": `"${revision}"` });
 const tenantOf = (api: AlertsTransport) =>
   api.project.slice(0, api.project.lastIndexOf("/projects/"));
 
+/**
+ * Every page of a list, 100 at a time, while the platform gives a cursor:
+ * opt-ins, members and subscriptions have no fixed limit. A cursor that comes
+ * back a second time ends the list, so a faulty answer can't loop.
+ */
 async function listAll<T>(
   api: AlertsTransport,
   path: string,
   reader: (item: unknown) => T | null,
 ): Promise<T[]> {
   const items: T[] = [];
+  const seen = new Set<string>();
   let cursor: string | null = null;
-  for (let page = 0; page < PAGES; page++) {
+  do {
+    if (cursor) seen.add(cursor);
     const answer: { items: T[]; nextCursor: string | null } = readPage(
       await api.request<unknown>(
         `${path}${query({ limit: 100, cursor: cursor ?? undefined })}`,
@@ -673,8 +678,7 @@ async function listAll<T>(
     );
     items.push(...answer.items);
     cursor = answer.nextCursor;
-    if (!cursor) break;
-  }
+  } while (cursor && !seen.has(cursor));
   return items;
 }
 
