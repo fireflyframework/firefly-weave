@@ -111,3 +111,54 @@ test("the empty error path's slot adds a step to the path, by keyboard", async (
   const added = await canvas.tileBody("transform-1").boundingBox();
   expect(added!.y).toBeGreaterThan(submit!.y + submit!.height);
 });
+
+/** submit's error path holds notify-team and flag-request. */
+const WITH_PATH = yamlFile(
+  "request-intake-path.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: request-intake, version: 1.3.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: submit
+      kind: transform
+      value: {object: {sent: {literal: true}}}
+      onError: errorOutput
+      errorPath:
+        steps:
+          - id: notify-team
+            kind: transform
+            value: {ref: /steps/submit/error/code}
+          - id: flag-request
+            kind: transform
+            value: {object: {flagged: {literal: true}}}
+        output: {literal: null}
+    - id: summarize
+      kind: transform
+      value: {object: {done: {literal: true}}}
+  output: {literal: null}
+`,
+);
+
+test("deleting a step takes its error path, says which steps went, and Undo brings them back", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, WITH_PATH);
+  await canvas.tileBody("submit").focus();
+  await page.keyboard.press("Delete");
+  // No question first: the toast names what went and offers Undo.
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  const toast = page.locator(".toast");
+  await expect(toast.locator("strong")).toHaveText(
+    "Deleted submit and its error path (2 steps)",
+  );
+  await expect(toast.locator(".toast-detail")).toHaveText(
+    "notify-team and flag-request were in it.",
+  );
+  expect(await canvas.rootSteps()).toEqual(["summarize"]);
+  await toast.getByRole("button", { name: "Undo" }).click();
+  expect(await canvas.rootSteps()).toEqual(["submit", "summarize"]);
+  expect(await errorPathOf(page)).toEqual(["notify-team", "flag-request"]);
+});

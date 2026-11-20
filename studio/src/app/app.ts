@@ -3203,10 +3203,17 @@ export class App implements CanvasHost {
    */
   private async deleteSteps(ids: readonly string[]): Promise<boolean> {
     const one = ids.length === 1 ? ids[0] : "";
-    const contained = ids.reduce(
-      (sum, id) => sum + this.model.containedSteps(id),
-      0,
-    );
+    // A step's error path goes with it unasked; the toast names its steps.
+    // The words load with the canvas, not with the first page.
+    const path = one
+      ? (await import("./editor/canvas/error-lane")).deletedPathToast(
+          this.model.definition,
+          one,
+        )
+      : null;
+    const contained = path
+      ? 0
+      : ids.reduce((sum, id) => sum + this.model.containedSteps(id), 0);
     const inside = contained === 1 ? "1 step" : `${contained} steps`;
     if (
       contained &&
@@ -3250,21 +3257,26 @@ export class App implements CanvasHost {
     const withData = pruned.length
       ? ` and ${one ? "its" : "their"} pinned output`
       : "";
-    this.notify(`Deleted ${what}${withData}.`, {
-      label: "Undo",
-      run: async () => {
-        const done = await this.undoIfUnchanged(
-          () => this.model.revision === revision && this.model.canUndo,
-        );
-        if (done === "changed")
-          this.notify(
-            `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+    this.notify(
+      path?.text ?? `Deleted ${what}${withData}.`,
+      {
+        label: "Undo",
+        run: async () => {
+          const done = await this.undoIfUnchanged(
+            () => this.model.revision === revision && this.model.canUndo,
           );
-        if (done !== "undone") return;
-        this.notify(`Restored ${what}${withData}.`);
-        if (one) this.focusStep(one);
+          if (done === "changed")
+            this.notify(
+              `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+            );
+          if (done !== "undone") return;
+          this.notify(`Restored ${what}${withData}.`);
+          if (one) this.focusStep(one);
+        },
       },
-    });
+      "neutral",
+      path?.detail,
+    );
     return true;
   }
   /** Makes a copy of a step right after it (the inspector's ⋯ menu). */
