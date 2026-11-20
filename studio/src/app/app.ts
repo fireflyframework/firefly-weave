@@ -7593,9 +7593,14 @@ export class App implements CanvasHost {
    * panel comes back when the log closes.
    */
   private showRunLog(open: boolean): void {
-    if (open === this.runLogOpen()) return;
     this.runLogOpen.set(open);
-    if (open && this.windowWidth < 1600 && this.showInspector) {
+    // Once: a panel opened again while the log shows stays open.
+    if (
+      open &&
+      !this.panelMadeRoom &&
+      this.windowWidth < 1600 &&
+      this.showInspector
+    ) {
       this.showInspector = false;
       this.panelMadeRoom = true;
     } else if (!open && this.panelMadeRoom) {
