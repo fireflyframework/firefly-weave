@@ -234,6 +234,48 @@ describe("a step that continues with error output", () => {
     expect(record.y).toBeGreaterThanOrEqual(notify.y + LTR.lane);
   });
 
+  it("holds a decision inside its lane, whose paths stay below the step's row and above the next path", () => {
+    const triage: Step = {
+      ...createStep("switch", "triage"),
+      cases: [
+        {
+          when: { literal: true },
+          steps: [step("notify-team")],
+          output: { literal: {} },
+        },
+      ],
+      default: { steps: [step("flag-request")], output: { literal: {} } },
+    };
+    const layout = layoutOf([guarded("submit", [triage]), step("summarize")]);
+    const submit = tile(layout, "submit");
+    const decision = tile(layout, "triage");
+    const notify = tile(layout, "notify-team");
+    const flag = tile(layout, "flag-request");
+    // The decision is the lane's first step, on the Error row.
+    expect(decision).toMatchObject({
+      owner: "submit/errorPath",
+      y: submit.y + LTR.lane,
+    });
+    // Its paths run inside the error lane: right of it, its Otherwise below.
+    expect(notify.owner).toBe("triage/case 1");
+    expect(notify.x).toBeGreaterThan(decision.x);
+    expect(flag.y).toBeGreaterThan(notify.y);
+    // Nothing overlaps: every two tiles are apart.
+    for (const a of layout.tiles)
+      for (const b of layout.tiles)
+        if (a !== b)
+          expect(
+            a.x + LTR.tile <= b.x ||
+              b.x + LTR.tile <= a.x ||
+              a.y + LTR.tile <= b.y ||
+              b.y + LTR.tile <= a.y,
+          ).toBe(true);
+    // The step after waits for the whole lane, decision and all.
+    expect(tile(layout, "summarize").x).toBeGreaterThan(
+      Math.max(notify.x, flag.x) + LTR.tile,
+    );
+  });
+
   it("grows a loop's frame down to hold its lane", () => {
     const orders: Step = {
       ...createStep("forEach", "orders"),
