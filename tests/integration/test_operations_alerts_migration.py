@@ -420,7 +420,10 @@ async def test_the_role_check_accepts_the_alert_manager(upgraded):
         )
     from firefly_weave.access.roles import ROLE_CAPABILITIES
 
-    assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES)
+    # Roles that later migrations add are checked by those migrations' tests (deployment_log_reader:
+    # 0046_operations_log_requests).
+    later = {"deployment_log_reader"}
+    assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES) - later
 
 
 async def test_the_alert_tenant_page_is_for_the_scheduler_only(upgraded):
