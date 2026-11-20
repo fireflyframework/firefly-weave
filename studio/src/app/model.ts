@@ -269,7 +269,8 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
  * a step's "Error path", or a parallel branch's own name.
  */
 export function branchTitle(step: Step, name: string) {
-  if (name === ERROR_PATH && step.kind !== "parallel") return "Error path";
+  if (blocksOf(step).some((b) => b.name === name && b.kind === "errorPath"))
+    return "Error path";
   if (step.kind === "switch")
     return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
   if (step.kind === "forEach") return "For each item";
@@ -285,10 +286,14 @@ export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
   const split = owner.indexOf("/");
   const parent = owner.slice(0, split);
   const name = owner.slice(split + 1);
-  // Without the step, a decision's paths and Otherwise are told by their names.
+  // Without the step, a decision's paths and Otherwise are told by their
+  // names, and a block named errorPath is the step's error path.
   const step =
     steps?.get(parent) ??
-    ({ kind: /^(case |default$)/.test(name) ? "switch" : "" } as Step);
+    ({
+      kind: /^(case |default$)/.test(name) ? "switch" : "",
+      [name]: 0,
+    } as unknown as Step);
   return `${branchTitle(step, name)} of ${parent}`;
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
