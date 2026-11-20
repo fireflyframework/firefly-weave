@@ -38,6 +38,7 @@ import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
 import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
 import { DataTable } from "./data-table";
+import { leftOutText } from "../../state/iterations";
 import { PathList } from "./path-list";
 import { ScriptEditor } from "./script-editor";
 import { pathRows, type PathRow } from "../../state/run-summary";
@@ -548,11 +549,16 @@ import { describeError } from "../../../errors";
             <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
             @if (view() === "table") {
+              <!-- A loop's results: the item each came from first. -->
+              @let loop = loopTable();
               <weave-data-table
-                [value]="event()"
+                [value]="loop ? loop.value : event()"
                 label="Output data"
                 [query]="query()"
               />
+              @if (loop?.note; as note) {
+                <p class="data-table-note">{{ note }}</p>
+              }
             } @else {
               <pre class="pane-json" tabindex="0" aria-label="Output data">{{
                 json(event())
@@ -830,6 +836,30 @@ export class OutputPane {
     return isTriggerTarget(this.session().target);
   }
   /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
+  /**
+   * A loop's results as its Table shows them: each with the item it came
+   * from ("Item"), and a note naming the items Skip empty results left out;
+   * null for another step, or when Studio can't tell which item gave which.
+   */
+  loopTable(): { value: Json; note: string | null } | null {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || controller.step(target)?.kind !== "forEach")
+      return null;
+    const results = this.event();
+    const placed = controller.loopResults(target);
+    if (!Array.isArray(results) || !placed) return null;
+    return {
+      value: results.map((result, at) => ({
+        Item: placed.items[at],
+        ...(result !== null &&
+        typeof result === "object" &&
+        !Array.isArray(result)
+          ? result
+          : { Value: result }),
+      })),
+      note: leftOutText(placed.left),
+    };
+  }
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
     const { controller, target } = this.session();

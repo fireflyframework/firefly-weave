@@ -24,7 +24,12 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
-import { canonicalJson, getAt, isJsonObject } from "../../forms/core/json";
+import {
+  canonicalJson,
+  getAt,
+  isJsonObject,
+  parsePointer,
+} from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
 import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
@@ -146,7 +151,7 @@ import {
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes, enclosingLoops } from "../formula/loops";
 import { isRecordedRun, type RecordedRun } from "../canvas/run-state";
-import { Iterations, itemPicks } from "../state/iterations";
+import { Iterations, itemPicks, resultItems } from "../state/iterations";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ActionDraftEntry } from "../state/action-drafts";
@@ -1018,6 +1023,62 @@ export class StepDetailsController {
         }),
       };
     return this.picked.iterations;
+  }
+  /**
+   * The item (one-based) each result of a loop's output came from, and the
+   * items Skip empty results left out; null when Studio can't tell.
+   */
+  loopResults(loopId: string): { items: number[]; left: number[] } | null {
+    const step = this.step(loopId);
+    const results = this.pickedStepData(loopId)?.value;
+    if (step?.kind !== "forEach" || !Array.isArray(results)) return null;
+    return resultItems(step["collect"], results, this.itemResults(step));
+  }
+  /**
+   * What each item of a loop gave, when its result per item reads the item,
+   * its position or a step inside by a plain reference; null otherwise.
+   */
+  private itemResults(step: Step): unknown[] | null {
+    const body = step["body"];
+    const output = isJsonObject(body) ? body["output"] : undefined;
+    const ref =
+      isJsonObject(output) && Object.keys(output).length === 1
+        ? output["ref"]
+        : null;
+    const path = typeof ref === "string" ? parsePointer(ref) : null;
+    if (!path) return null;
+    const items = this.step(step.id)?.["items"];
+    const listed =
+      items && typeof items === "object"
+        ? this.previews.preview(
+            items as Expression,
+            ["items"],
+            this.ndvContext(step.id),
+          )
+        : null;
+    const list =
+      listed?.ok && Array.isArray(listed.value) ? listed.value : null;
+    const counted = this.iterations.counts(step.id);
+    const count = counted.known ? counted.count : list?.length;
+    if (count === undefined) return null;
+    const around = this.iterations
+      .picks(step.id)
+      .map(({ index }) => `[${index}]`)
+      .join("");
+    const gave: unknown[] = [];
+    for (let index = 0; index < count; index++) {
+      let value: unknown;
+      if (path[0] === "index" && path.length === 1) value = index;
+      else if (path[0] === "item" && list)
+        value = getAt(list[index], path.slice(1));
+      else if (path[0] === "steps" && path[2] === "output") {
+        const ran = this.stepData(`${path[1]}${around}[${index}]`);
+        if (!ran) return null;
+        value = getAt(ran.value, path.slice(3));
+      } else return null;
+      gave.push(value === undefined ? null : value);
+    }
+    return gave;
   }
   /**
    * The picked item of each loop around a step, from the loop's Items

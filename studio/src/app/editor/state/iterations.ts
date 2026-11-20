@@ -273,3 +273,37 @@ export class Iterations {
     this.synced = revision;
   }
 }
+
+/**
+ * The item (one-based) each result of a loop's output came from, and the
+ * items Skip empty results (`nonNull`) left out. `perItem` is what each
+ * item gave, when Studio can tell; null when it can't say which.
+ */
+export function resultItems(
+  collect: unknown,
+  results: readonly unknown[],
+  perItem: readonly unknown[] | null,
+): { items: number[]; left: number[] } | null {
+  if (collect !== "nonNull")
+    return { items: results.map((_, index) => index + 1), left: [] };
+  if (!perItem) return null;
+  const items: number[] = [];
+  const left: number[] = [];
+  perItem.forEach((value, index) =>
+    (value === null ? left : items).push(index + 1),
+  );
+  return items.length === results.length ? { items, left } : null;
+}
+
+/** "Items 5 and 9 had an empty result. Results is Skip empty results, so they are left out."; null for none. */
+export function leftOutText(left: readonly number[]): string | null {
+  if (!left.length) return null;
+  const numbers = left.map((at) => at.toLocaleString("en-US"));
+  const list =
+    numbers.length === 1
+      ? numbers[0]
+      : `${numbers.slice(0, -1).join(", ")} and ${numbers.at(-1)}`;
+  return left.length === 1
+    ? `Item ${list} had an empty result. Results is Skip empty results, so it is left out.`
+    : `Items ${list} had an empty result. Results is Skip empty results, so they are left out.`;
+}

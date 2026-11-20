@@ -24,6 +24,8 @@ import type { LoopProgress } from "../src/app/editor/state/execution";
 import { isInstanceKey } from "../src/app/editor/state/instance-keys";
 import {
   Iterations,
+  leftOutText,
+  resultItems,
   type IterationsHost,
   type LoopPick,
 } from "../src/app/editor/state/iterations";
@@ -543,5 +545,37 @@ spec:
     expect(controller.iterations.picks("send")).toEqual([
       { loopId: "orders", index: 0 },
     ]);
+  });
+});
+
+describe("the item each result of a loop came from", () => {
+  it("numbers every result when the loop keeps every result", () => {
+    expect(resultItems("all", ["a", null, "c"], null)).toEqual({
+      items: [1, 2, 3],
+      left: [],
+    });
+  });
+
+  it("says which items Skip empty results left out, from what each item gave", () => {
+    expect(resultItems("nonNull", ["a", "c"], ["a", null, "c", null])).toEqual({
+      items: [1, 3],
+      left: [2, 4],
+    });
+    // Without each item's result, or when they don't add up, it can't say.
+    expect(resultItems("nonNull", ["a", "c"], null)).toBeNull();
+    expect(resultItems("nonNull", ["a"], ["a", "b"])).toBeNull();
+  });
+
+  it("says the items left out in a sentence", () => {
+    expect(leftOutText([5])).toBe(
+      "Item 5 had an empty result. Results is Skip empty results, so it is left out.",
+    );
+    expect(leftOutText([5, 9])).toBe(
+      "Items 5 and 9 had an empty result. Results is Skip empty results, so they are left out.",
+    );
+    expect(leftOutText([2, 5, 9])).toBe(
+      "Items 2, 5 and 9 had an empty result. Results is Skip empty results, so they are left out.",
+    );
+    expect(leftOutText([])).toBeNull();
   });
 });
