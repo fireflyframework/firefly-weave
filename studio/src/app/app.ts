@@ -29,6 +29,7 @@ import {
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { triggerChoiceTarget } from "./editor/triggers/trigger-target";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
+import type { AlertWatch } from "./operate/alerts/alert-watch";
 import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
 import { placeMark } from "./editor/add-step/place";
 import type { PanelEntry } from "./editor/add-step/entries";
@@ -95,6 +96,7 @@ import {
 import { changeSlot, slotValidation } from "./integrations/connection-slots";
 import {
   Component,
+  ErrorHandler,
   HostListener,
   Injector,
   afterEveryRender,
@@ -103,6 +105,7 @@ import {
   viewChild,
   inject,
   ChangeDetectorRef,
+  type Type,
 } from "@angular/core";
 import type { FileAccess } from "./forms/core/file-reference";
 import { Title } from "@angular/platform-browser";
@@ -252,17 +255,15 @@ import {
   workspaceLong,
   workspaceShort,
 } from "./format";
-// The operations pages and Settings load lazily (@defer): only these classes.
-import { ClustersPage } from "./operate/clusters/clusters-page";
-import { WorkersPage } from "./operate/workers/workers-page";
-import { IncidentsPage } from "./operate/incidents/incidents-page";
-import { MetricsPage } from "./operate/metrics/metrics-page";
-import { LogsPage } from "./operate/logs/logs-page";
-import { OverviewPage } from "./operate/overview/overview-page";
-import { RunsPage } from "./operate/runs/runs-page";
+// The Operate pages, Settings and the record lists load the first time they
+// open (page-loaders.ts): only the Clusters page's type is named here.
+import type { ClustersPage } from "./operate/clusters/clusters-page";
+import { pageKey, pageLoaders, type PageKey } from "./page-loaders";
+import { PageOutlet } from "./page-outlet";
 import {
   clustersRecordPath,
   navEntryVisible,
+  operatePages,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
@@ -270,8 +271,6 @@ import { ApprovalWatch } from "./operate/clusters/approvals-inbox";
 import { approvable } from "./operate/clusters/change-request-model";
 import { Poller, browserEnvironment } from "./operate/operate-store";
 import { scopeKeyOf } from "./operate/operate-list";
-import { RecordsView } from "./operations/records-view";
-import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
 import { typingIn } from "./editor/state/typing";
 import type {
@@ -300,6 +299,7 @@ export type View =
   | "clusters"
   | "metrics"
   | "logs"
+  | "alerts"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -524,15 +524,7 @@ const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
     TemplateGallery,
     ToastHost,
     DesignerView,
-    RecordsView,
-    ClustersPage,
-    MetricsPage,
-    LogsPage,
-    WorkersPage,
-    IncidentsPage,
-    OverviewPage,
-    RunsPage,
-    SettingsPage,
+    PageOutlet,
     LumiPanel,
   ],
   templateUrl: "./app.html",
@@ -579,12 +571,40 @@ export class App implements CanvasHost {
     kept?: boolean;
   } | null = null;
   lumiOpen = false;
-  // A query by name, not by class: the Clusters area stays in its deferred chunk.
-  private readonly operationsView = viewChild<ClustersPage>("clustersPage");
+  // The page outlet's component, not a query by class: the Clusters area
+  // stays in its own chunk.
+  private readonly pageOutlet = viewChild(PageOutlet);
   get lumiOperationAttachments() {
     return this.view === "clusters"
-      ? (this.operationsView()?.lumiAttachments ?? [])
+      ? ((this.pageOutlet()?.page?.instance as ClustersPage | undefined)
+          ?.lumiAttachments ?? [])
       : [];
+  }
+  /** The pages whose code has loaded; a new one bumps pagesLoaded. */
+  private readonly pages = new Map<PageKey, Type<unknown>>();
+  private readonly pagesLoaded = signal(0);
+  /** Pages whose code is loading, or failed to: a failure isn't retried. */
+  private readonly pageLoads = new Set<PageKey>();
+  private readonly errorHandler = inject(ErrorHandler);
+  /**
+   * The page the outlet shows for a view, once its code has loaded; asking
+   * starts the load. A failed load leaves the area empty and reports the
+   * error, as a deferred block does.
+   */
+  pageFor(view: View): Type<unknown> | null {
+    this.pagesLoaded();
+    const key = pageKey(view);
+    const page = this.pages.get(key);
+    if (page || this.pageLoads.has(key)) return page ?? null;
+    this.pageLoads.add(key);
+    pageLoaders[key]().then(
+      (component) => {
+        this.pages.set(key, component);
+        this.pagesLoaded.update((count) => count + 1);
+      },
+      (error: unknown) => this.errorHandler.handleError(error),
+    );
+    return null;
   }
   platformMenuOpen = false;
   platformBusy = "";
@@ -852,6 +872,7 @@ export class App implements CanvasHost {
     { id: "clusters", label: "Clusters" },
     { id: "metrics", label: "Metrics" },
     { id: "logs", label: "Logs" },
+    { id: "alerts", label: "Alerts" },
     { id: "settings", label: "Settings" },
   ];
   private readonly navSections: [string, View[]][] = [
@@ -868,6 +889,7 @@ export class App implements CanvasHost {
         "clusters",
         "metrics",
         "logs",
+        "alerts",
       ],
     ],
   ];
@@ -1344,6 +1366,11 @@ export class App implements CanvasHost {
       )
     );
   }
+  /**
+   * The Alerts badge: the firing alerts, red while one is critical, read
+   * every 30 s with alert.read by a watcher that loads after the first page.
+   */
+  alertWatch: AlertWatch | null = null;
   /** Reads the badge again, for example right after an approval. */
   refreshApprovals() {
     return this.approvalPoller.refresh();
@@ -1373,13 +1400,23 @@ export class App implements CanvasHost {
       });
   }
   /**
-   * A navigation entry's accessible name: its label, and for Clusters the changes waiting for this person's
-   * approval, so the name stays "Clusters" when the sidebar shows icons only.
+   * A navigation entry's badge, its icon and its accessible name: the changes
+   * waiting for this person's approval on Clusters, or the firing alerts on
+   * Alerts (the bell rings while one is critical). The name keeps the count
+   * when the sidebar shows icons only.
    */
-  navName(id: string, label: string): string | null {
+  navBadge(
+    id: string,
+  ): { count: number; critical: boolean; icon?: string; name: string } | null {
+    if (id === "alerts") return this.alertWatch?.badge() ?? null;
     const count = this.approvalWatch.count;
-    if (id !== "clusters" || !count) return null;
-    return `${label}, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`;
+    return id === "clusters" && count
+      ? {
+          count,
+          critical: false,
+          name: `Clusters, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`,
+        }
+      : null;
   }
   /** Opens a change request on the Clusters page. */
   async openChangeRequest(id: string) {
@@ -1388,6 +1425,12 @@ export class App implements CanvasHost {
   }
   constructor() {
     this.approvalPoller.start(false);
+    afterNextRender(async () => {
+      this.alertWatch = (
+        await import("./operate/alerts/alert-watch")
+      ).watchAlerts(this);
+      this.cdr.markForCheck();
+    });
     history.replaceState(
       { ...history.state, weavePosition: this.historyPosition },
       "",
@@ -6811,14 +6854,11 @@ export class App implements CanvasHost {
       await this.loadAdministration();
       return;
     }
+    // Operate's pages, Runs aside, read their own data.
     if (
       this.view === "connect" ||
-      this.view === "overview" ||
-      this.view === "clusters" ||
-      this.view === "metrics" ||
-      this.view === "logs" ||
-      this.view === "workers" ||
-      this.view === "incidents"
+      (this.view !== "runs" &&
+        (operatePages as readonly string[]).includes(this.view))
     )
       return;
     if (this.view === "runs") {

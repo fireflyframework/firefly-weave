@@ -251,6 +251,21 @@ SPDX-License-Identifier: Apache-2.0
   and Execute and saved test data accept a sample platform event as input. A
   project catalog that brings its own schema under that name is still refused
   when the workflow compiles.
+- Studio's first page is smaller: the Operate pages, Settings and the record
+  lists load through one shared page area, and another page opens at the top.
+- **Operate › Alerts** (needs `alert.read`) shows the alerts firing now, with
+  each channel's notification status and **Acknowledge**, and the alerts
+  resolved in the last 7 days; **Rules** shows where each rule stands, with an
+  editor that previews a rule before saving and **Suggested rules**; **Channels**
+  shows who each email channel reaches and who it can't. Acknowledging and
+  changing rules and channels need `alert.manage`. The navigation entry counts
+  firing alerts and turns red while one is critical.
+- **Settings › Administration** (needs `status.read`) shows the platform's
+  version and uptime, compatibility with **Run check**, allowed alert email
+  domains and recorded opt-ins, approval notification channels, retention plans
+  with **Apply**, telemetry export, and how long operations data is kept; each
+  section says what access it needs when you lack it. **Settings › Preferences**
+  adds **My alert address**.
 
 ### Development and testing
 

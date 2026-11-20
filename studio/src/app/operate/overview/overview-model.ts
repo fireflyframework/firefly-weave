@@ -484,6 +484,8 @@ export function attentionLink(item: AttentionItem): string | null {
       return clustersTabPath("runners");
     case "run":
       return viewPath("runs", item.id);
+    case "alert":
+      return `${viewPath("alerts")}?tab=firing`;
     default:
       return null;
   }

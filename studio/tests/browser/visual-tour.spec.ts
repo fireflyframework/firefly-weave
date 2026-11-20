@@ -60,6 +60,7 @@ import {
   globexPlatform,
 } from "./platform-host";
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
+import { administrator, alertsPlatform } from "./alerts-po";
 import {
   openCallRun,
   openCallRunLog,
@@ -5798,6 +5799,51 @@ spec:
       await expect(page.getByLabel("Time", { exact: true })).toBeFocused();
       await shot("193-logs-filters", { end: ".page-content" });
     }
+  },
+  // Operate › Alerts: two alerts firing, one of them critical, then the rule
+  // editor with Preview's answer beside the fields or below them.
+  async alerts({ page, shot }) {
+    await alertsPlatform(page);
+    await expect(
+      page.getByRole("table", { name: "Firing alerts" }),
+    ).toBeVisible();
+    await shot("240-alerts-firing", { end: ".page-content" });
+    await page.getByRole("tab", { name: /^Rules/ }).click();
+    await page
+      .getByRole("button", { name: "Edit Run failure rate above 10 %" })
+      .click();
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await expect(page.locator(".preview-result")).toContainText("No data");
+    await shot("241-alerts-rule-editor", { end: ".page-content" });
+  },
+  // A channel's sheet before any outside domain is allowed.
+  async "alerts-channel"({ page, shot }) {
+    await alertsPlatform(page, {
+      path: "/operate/alerts?tab=channels",
+      answers: {
+        settings: {
+          recipient_domains: [],
+          approval_channel_ids: [],
+          revision: 0,
+        },
+      },
+    });
+    await page.getByRole("button", { name: "Edit Platform team" }).click();
+    await expect(page.getByRole("dialog")).toContainText(
+      "Outside addresses can't be used in local yet.",
+    );
+    await shot("242-alerts-channel-no-domain", { end: ".modal-panel" });
+  },
+  // Settings › Administration, every section with its access.
+  async administration({ page, shot }) {
+    await alertsPlatform(page, {
+      capabilities: administrator,
+      path: "/settings/administration",
+    });
+    await expect(
+      page.getByRole("region", { name: "Platform", exact: true }),
+    ).toContainText("0.1.0a17");
+    await shot("243-administration", { end: ".page-content" });
   },
   // Operate › Logs › Container logs: a snapshot of what the worker containers
   // printed; then a member that restarted beside one the runner couldn't read.

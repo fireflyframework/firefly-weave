@@ -631,6 +631,10 @@ pre {
   text-align: center;
   box-sizing: border-box;
 }
+/* Red exactly while a critical alert fires. */
+.nav-badge.critical {
+  background: var(--danger);
+}
 .collapsed .nav-badge {
   position: absolute;
   top: 4px;

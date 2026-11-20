@@ -17,7 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Settings: Platforms (saved platforms, how Studio starts, keyboard controls),
 // People and access for administrators, AI models once a platform is
-// connected, and Preferences, each tab at its own address (/settings/<tab>).
+// connected, Preferences (with the person's own alert address once
+// connected), and Administration for people who read the environment's
+// status, each tab at its own address (/settings/<tab>).
 // The shell (App)
 // owns the state and the commands; this page loads lazily (@defer).
 import {
@@ -33,7 +35,9 @@ import { ModalSheet, sheetWhen } from "../modal-sheet";
 import { PlatformList } from "../platform-list";
 import { RowMenu, type RowMenuItem } from "../row-menu";
 import { statusLabel } from "../status-labels";
+import { AdministrationPage } from "./administration-page";
 import { AiModelsPage } from "./ai-models-page";
+import { AlertAddressCard } from "./alert-address-card";
 import {
   settingsPath,
   settingsTab,
@@ -57,7 +61,15 @@ interface AccountRow {
   selector: "weave-settings-page",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, PlatformList, RowMenu, ModalSheet, AiModelsPage],
+  imports: [
+    Icon,
+    PlatformList,
+    RowMenu,
+    ModalSheet,
+    AiModelsPage,
+    AdministrationPage,
+    AlertAddressCard,
+  ],
   styleUrl: "./settings-page.css",
   template: `@let h = host();
     <div class="page-heading">
@@ -519,6 +531,18 @@ interface AccountRow {
           <p role="status">Loading AI models…</p>
         }
       </div>
+    } @else if (current === "administration") {
+      <div
+        role="tabpanel"
+        id="settings-panel-administration"
+        aria-labelledby="settings-tab-administration"
+      >
+        @defer (on immediate) {
+          <weave-administration-page [host]="h" />
+        } @placeholder {
+          <p role="status">Loading administration…</p>
+        }
+      </div>
     } @else {
       <div
         role="tabpanel"
@@ -545,6 +569,11 @@ interface AccountRow {
             choice in this browser.
           </p>
         </section>
+        @if (h.profile && h.identity) {
+          @defer (on immediate) {
+            <weave-alert-address-card [host]="h" />
+          }
+        }
       </div>
     }`,
 })
@@ -560,7 +589,13 @@ export class SettingsPage {
   ];
   /** Which optional tabs this person sees. */
   access() {
-    return { people: this.showPeople(), ai: !!this.host().profile };
+    const h = this.host();
+    return {
+      people: this.showPeople(),
+      ai: !!h.profile,
+      administration:
+        !!h.profile && !!h.identity && h.canAnywhere("status.read"),
+    };
   }
   /** The tabs this person sees. */
   tabs() {

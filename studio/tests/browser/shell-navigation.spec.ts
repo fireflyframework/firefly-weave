@@ -103,6 +103,7 @@ for (const viewport of [
             "Clusters",
             "Metrics",
             "Logs",
+            "Alerts",
             "Settings",
             "Collapse sidebar",
           ]);

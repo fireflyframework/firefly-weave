@@ -16,22 +16,30 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Settings has one address per tab: /settings/platforms, /settings/people,
-// /settings/ai and /settings/preferences; /settings opens Platforms. People
-// and access shows only to people who can manage members or grants; AI models
-// shows once a platform is connected.
+// /settings/ai, /settings/preferences and /settings/administration;
+// /settings opens Platforms. People and access shows only to people who can
+// manage members or grants; AI models shows once a platform is connected;
+// Administration shows to people who read the environment's status.
 import type { Routes } from "@angular/router";
 
-export type SettingsTab = "platforms" | "people" | "ai" | "preferences";
+export type SettingsTab =
+  | "platforms"
+  | "people"
+  | "ai"
+  | "preferences"
+  | "administration";
 export const SETTINGS_TABS: readonly { id: SettingsTab; label: string }[] = [
   { id: "platforms", label: "Platforms" },
   { id: "people", label: "People and access" },
   { id: "ai", label: "AI models" },
   { id: "preferences", label: "Preferences" },
+  { id: "administration", label: "Administration" },
 ];
 /** Which optional tabs this person sees. */
 export interface SettingsAccess {
   people: boolean;
   ai: boolean;
+  administration: boolean;
 }
 
 export const settingsPath = (tab: SettingsTab): string => `/settings/${tab}`;
@@ -40,7 +48,9 @@ export const settingsPath = (tab: SettingsTab): string => `/settings/${tab}`;
 export function settingsTabs(access: SettingsAccess) {
   return SETTINGS_TABS.filter(
     (tab) =>
-      (tab.id !== "people" || access.people) && (tab.id !== "ai" || access.ai),
+      (tab.id !== "people" || access.people) &&
+      (tab.id !== "ai" || access.ai) &&
+      (tab.id !== "administration" || access.administration),
   );
 }
 
