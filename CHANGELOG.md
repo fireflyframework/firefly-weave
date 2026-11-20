@@ -199,6 +199,22 @@ SPDX-License-Identifier: Apache-2.0
   `agent_memory_loads`, scoped by row-level security and charged to usage.
   Purging a run deletes its loads and keeps the conversation; deleting an
   environment deletes both.
+- Security: Studio's development tools update `@angular/cli` and
+  `@angular/build` to 22.2.5, which bring the Angular CLI's MCP server to
+  2.3.1 (GHSA-46jr-4wx8-v453, GHSA-f897-62hf-6gxq, GHSA-jm63-cq47-j5jp,
+  GHSA-rvq5-wwqv-78pq), zod to 4.6.6 (GHSA-mrhx-c7xc-m3w5) and the Vite
+  development server to 8.3.5 (GHSA-587h-7wmj-h5pm, GHSA-698v-4r3x-3vcv,
+  GHSA-9jrq-w75r-8gcw, GHSA-r825-w8mm-5pxw, GHSA-rq7h-c2jc-7f22,
+  GHSA-vfpm-58rq-9qcg); Vitest goes to 4.1.12 (GHSA-qxg6-89mg-rqv8,
+  GHSA-xp26-3454-mjgp) and fast-uri to 3.1.9 (GHSA-333x-w4r6-6crp,
+  GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr, GHSA-xhq7-xmqj-769h). None of
+  them is in the Studio bundle.
+- Security: opentelemetry-api is updated to 1.45.2 (GHSA-mf5v-w3w3-f6cg,
+  GHSA-xcq7-p3pf-p88h) in the server and both workers. The Agentic worker
+  also updates joserfc to 1.7.6 (GHSA-9pg5-8c7x-5hfx), fastmcp-slim to 4.1.2
+  (GHSA-7xgj-8392-5q4r, GHSA-vqqp-x5qm-5qp4) and logfire to 5.2.0, the first
+  release that accepts OpenTelemetry 1.45.
+- Security: the desktop app updates tokio to 1.53.3 (RUSTSEC-2026-0386).
 
 ## 0.1.0a19
 
