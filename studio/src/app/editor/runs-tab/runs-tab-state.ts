@@ -42,7 +42,13 @@ import {
   type StepFact,
 } from "../../operate/run-contracts";
 import { RunData } from "./run-data";
-import { OVERLAY_FACTS_LIMIT, overlayOf, type RunOverlay } from "./run-overlay";
+import {
+  OVERLAY_FACTS_LIMIT,
+  overlayOf,
+  picksFor,
+  recordedLoops,
+  type RunOverlay,
+} from "./run-overlay";
 import { dropDebug } from "./run-links";
 import { readRunRecord, type RunRecord } from "./run-record";
 import {
@@ -152,6 +158,9 @@ export class RunsTabState {
   readonly updatedAt = signal<number | null>(null);
   readonly filters = signal<RunsTabFilters>(defaultRunsTabFilters());
   readonly chosen = signal<ChosenRun | null>(null);
+  /** The items picked on the chosen run's loops (loop step ID to index), and its last read. */
+  private picked: Record<string, number> = {};
+  private lastRead: RunRead | null = null;
   /** Older runs: another page to read, the 500-run limit reached, or none. */
   readonly older = signal<"more" | "limit" | "none">("none");
   /**
@@ -258,6 +267,9 @@ export class RunsTabState {
     this.sync();
     if (this.destroyed) return;
     this.stopFollowing();
+    // Each run opens its loops on their first failed items.
+    this.picked = {};
+    this.lastRead = null;
     const ticket = this.runTicket(id, ++this.runGeneration);
     const listed = this.items().find((item) => item.id === id);
     const summary = listed && !isUnavailableRun(listed) ? listed : null;
@@ -559,8 +571,14 @@ export class RunsTabState {
     summary: RunSummary | null,
     definition: Workflow | null,
   ): RunOverlay {
+    this.lastRead = read;
     const draft = this.host.draft();
-    return overlayOf(
+    // A loop's steps show one item at a time: the one picked, else the first failed one.
+    const loops = recordedLoops(draft, read.record, read.facts);
+    const picks = loops.length
+      ? picksFor(draft, loops, this.picked)
+      : undefined;
+    const overlay = overlayOf(
       read.record,
       read.facts,
       {
@@ -573,7 +591,28 @@ export class RunsTabState {
         test: summary?.test ?? false,
       },
       this.env.now(),
+      picks,
     );
+    return picks
+      ? {
+          ...overlay,
+          canvas: {
+            ...overlay.canvas,
+            pick: (loop: string, index: number) => this.pickItem(loop, index),
+          },
+        }
+      : overlay;
+  }
+  /** Shows another item of a loop in the chosen run, without reading it again. */
+  pickItem(loop: string, index: number): void {
+    this.picked = { ...this.picked, [loop]: index };
+    const chosen = this.chosen();
+    if (!chosen || !this.lastRead || chosen.record !== this.lastRead.record)
+      return;
+    this.chosen.set({
+      ...chosen,
+      overlay: this.overlay(this.lastRead, chosen.summary, chosen.definition),
+    });
   }
   /** Reads the run every 2 s until it ends, for 30 minutes at most. */
   private follow(id: string, now = true): Promise<void> {

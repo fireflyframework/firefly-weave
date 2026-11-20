@@ -69,7 +69,9 @@ const children = (step: Step): [string, Branch][] =>
           ),
           ["default", step["default"] as Branch],
         ]
-      : [];
+      : step.kind === "forEach"
+        ? [["body", step["body"] as Branch]]
+        : [];
 const completes = (steps: Step[]): boolean =>
   steps.every((step) => {
     if (step.kind === "fail") return false;

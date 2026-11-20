@@ -204,8 +204,10 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
       : item.retried_from_run_id
         ? `Retry of ${shortId(item.retried_from_run_id)}`
         : null,
-    failedAt: item.failed_step ? `Failed at ${item.failed_step.node_id}` : null,
-    at: item.failed_step?.node_id ?? null,
+    failedAt: item.failed_step
+      ? `Failed at ${failedStep(item.failed_step)}`
+      : null,
+    at: item.failed_step ? failedStep(item.failed_step) : null,
     unavailable: false,
   };
 }
@@ -242,4 +244,20 @@ export function emptyText(
         detail: "Runs appear here once it's activated and started.",
         clear: false,
       };
+}
+
+/**
+ * The step a run failed at: "send", or "send, item 4" inside a loop (one-based,
+ * "item 2 › 1" in a nested loop), from its instance key.
+ */
+export function failedStep(step: {
+  node_id: string;
+  instance_key?: string | null;
+}): string {
+  const items = [
+    ...(step.instance_key ?? "").replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g),
+  ].map((match) => Number(match[1]) + 1);
+  return items.length
+    ? `${step.node_id}, item ${items.join(" › ")}`
+    : step.node_id;
 }

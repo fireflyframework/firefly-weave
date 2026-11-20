@@ -58,6 +58,19 @@ export interface Box {
 }
 
 const FIXED_ONLY = "This field takes a fixed value.";
+export const OUTSIDE_LOOP = "Only steps inside the loop can read its items";
+
+/**
+ * A loop's item or position dragged to a field that loop isn't around: the
+ * current item (`/item`, `/index`) needs a loop around the field, and a named
+ * loop's (`/loops/orders/…`) needs that loop. `loops` are the field's, innermost first.
+ */
+export function outsideLoop(ref: string, loops: readonly string[]): boolean {
+  const [root, id] = parsePointer(ref) ?? [];
+  if (root === "item" || root === "index") return !loops.length;
+  if (root === "loops") return typeof id !== "string" || !loops.includes(id);
+  return false;
+}
 const isObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -147,6 +160,8 @@ export function planDrop(
   },
 ): DropPlan {
   if (options.mode === null) return { kind: "refuse", reason: FIXED_ONLY };
+  if (outsideLoop(drag.ref, options.parse?.loops ?? []))
+    return { kind: "refuse", reason: OUTSIDE_LOOP };
   const reference: ParamValue = {
     mode: "mapped",
     expression: { ref: drag.ref },

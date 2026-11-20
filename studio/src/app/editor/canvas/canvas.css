@@ -236,6 +236,255 @@ weave-canvas-view,
   pointer-events: none;
 }
 
+/* A loop: a frame around the steps it repeats, whose header band is the
+   loop's tile: the loop has no tile of its own. The frame has no fill, so
+   the canvas shows through, and its border is the edges' dim stroke; only
+   selected, live and error color it. The header names the loop and its list
+   on one line and shortens instead of wrapping: "For each item in" goes
+   first (from sight only), then the at-a-time suffix, then the list down to
+   2.5 em; the name keeps at most 40% and never goes. Its text draws larger
+   by --frame-text-scale below 92% zoom, like the labels under tiles. */
+.canvas-v2 .loop-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--flow-line-dim);
+  border-radius: var(--radius-md);
+  background: transparent;
+  pointer-events: none;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+.canvas-v2 .frame-header:hover ~ .loop-frame:not(.selected, .live, .error) {
+  border-color: var(--field-border-hover);
+}
+.canvas-v2 .loop-frame.selected {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-glow);
+}
+/* Live and error: 2 px, no halo; a frame is too large for a glow. */
+.canvas-v2 .loop-frame.live {
+  border-color: var(--live);
+  box-shadow: inset 0 0 0 1px var(--live);
+}
+.canvas-v2 .loop-frame.error {
+  border-color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.canvas-v2 .tile-body.frame-header {
+  bottom: auto;
+  height: var(--frame-band, 32px);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 calc(10px * var(--frame-text-scale, 1)) 0
+    calc(8px * var(--frame-text-scale, 1));
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font: 500 calc(12px * var(--frame-text-scale, 1)) / 1.3333 var(--font-sans);
+  color: var(--muted);
+}
+.canvas-v2 .frame-header .tile-shape,
+.canvas-v2 .frame-header .tile-shape:is(.selected, .live, .error) {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0 0;
+  background: var(--surface);
+  box-shadow: none;
+  animation: none;
+}
+.canvas-v2 .frame-header:hover .tile-shape {
+  background: var(--hover);
+}
+.canvas-v2 .frame-header .tile-shape.selected {
+  background: var(--selected);
+}
+.canvas-v2 .frame-title {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.canvas-v2 .frame-icon {
+  flex: none;
+  width: calc(16px * var(--frame-text-scale, 1));
+  height: calc(16px * var(--frame-text-scale, 1));
+  margin-right: 0.5em;
+  color: var(--text);
+}
+.canvas-v2 .frame-name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 0.6em;
+  font-size: 1.0833em;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-v2 .frame-lead {
+  flex: none;
+  margin-right: 0.33em;
+}
+.canvas-v2 .frame-items {
+  flex: 0 10 auto;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.canvas-v2 .frame-suffix {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 0.33em;
+}
+/* While a run shows, its status ends the header and never shortens: "· 7 of
+   20" with a live dot, "· 20 of 20", or "· failed at item 4" in danger ink. A
+   2 px line along the band's bottom grows with each finished item. */
+.canvas-v2 .frame-run {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  margin-left: 0.33em;
+  color: var(--text);
+}
+.canvas-v2 .frame-run[data-tone="failed"] {
+  color: var(--danger-ink);
+}
+/* A cancelled run cut the loop off: said quietly, it wasn't a failure. */
+.canvas-v2 .frame-run[data-tone="stopped"] {
+  color: var(--muted);
+}
+.canvas-v2 .frame-live-dot {
+  width: 0.67em;
+  height: 0.67em;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0.2em var(--live-glow);
+}
+.canvas-v2 .frame-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(2px * var(--frame-text-scale, 1));
+  background: var(--line);
+}
+.canvas-v2 .frame-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--frame-progress, 0) * 100%);
+  background: var(--live);
+  transition: width var(--dur) var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-v2 .frame-progress::after {
+    transition: none;
+  }
+}
+/* No list yet: "loop-1 For each item in …" stays whole. */
+.canvas-v2 .frame-pending .frame-items {
+  flex: none;
+  min-width: 0;
+}
+/* When the whole header doesn't fit (node-tile measures it and marks the
+   header tight), "For each item in" leaves sight first; when it still
+   doesn't fit without it (crowded), the at-a-time suffix goes too, before
+   the list shows an ellipsis. Both stay in the header's accessible name, and
+   their margins stay, so the measure doesn't change. */
+.canvas-v2 .frame-header.frame-tight:not(.frame-pending) .frame-lead,
+.canvas-v2 .frame-header.frame-crowded:not(.frame-pending) .frame-suffix {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* What the loop's data holds and its note, under the frame's bottom left. */
+.canvas-v2 .tile-label.frame-label {
+  left: 0;
+  text-align: left;
+}
+.canvas-v2 .tile-label.frame-label span {
+  justify-self: start;
+}
+/* A loop's summary ("20 items, 2 skipped") at screen size, never cut: it may
+   run past the frame's right edge. */
+.canvas-v2 .tile-label.frame-label {
+  width: max-content;
+}
+/* The header's whole sentence under its band, at screen size. It waits a
+   moment, so crossing a header with the pointer or walking past it with the
+   arrow keys doesn't flash it over the body's first steps; it goes as focus
+   moves into the body. */
+.canvas-v2 .frame-tip {
+  position: absolute;
+  z-index: 7;
+  width: max-content;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font: var(--type-caption);
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  transform: scale(var(--tip-scale, 1));
+  transform-origin: top left;
+}
+.canvas-v2 .frame-tip {
+  animation: frame-tip-in var(--dur-fast) var(--ease) 500ms both;
+}
+.canvas-v2 .frame-tip.pointer {
+  animation-delay: 300ms;
+}
+/* Shown by keyboard focus, it lets the pointer through to the steps under
+   it; shown by the pointer, it keeps it, so the pointer can move onto it. */
+.canvas-v2 .frame-tip:not(.pointer) {
+  pointer-events: none;
+}
+@keyframes frame-tip-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-v2 .frame-tip {
+    animation-duration: 0s;
+  }
+}
+
+/* A recorded run's item chip: at screen size above the frame's top right,
+   its right edge on the frame's, so it reads as the loop's own control. */
+.canvas-v2 .item-chip-spot {
+  position: absolute;
+  z-index: 6;
+  width: 0;
+  height: 0;
+}
+.canvas-v2 .item-chip-spot weave-item-chip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  pointer-events: auto;
+  transform: scale(var(--chip-scale, 1));
+  transform-origin: right bottom;
+}
+
 /* Corner badge */
 .canvas-v2 .tile-badge {
   position: absolute;
@@ -811,6 +1060,7 @@ weave-canvas-view,
 }
 .canvas-v2.lod-minimal
   :is(
+    .frame-title,
     .tile-label,
     .branch-label,
     .join-label,

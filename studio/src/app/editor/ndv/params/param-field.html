@@ -60,6 +60,9 @@ SPDX-License-Identifier: Apache-2.0
     @if (spec.required && !quiet && !readOnly()) {
       <span class="param-required" aria-hidden="true">*</span>
     }
+    @if (spec.typeTag && !quiet) {
+      <span class="param-type">{{ spec.typeTag }}</span>
+    }
     @if (spec.description) {
       <weave-toggletip
         [label]="spec.label"

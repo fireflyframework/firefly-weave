@@ -135,7 +135,12 @@ export class OutputEditor {
     const { controller, target } = this.session();
     this.saving.set(true);
     try {
-      const refused = await controller.pin(target, parsed.value, "manual");
+      // Inside a loop's body: for the item picked.
+      const refused = await controller.pin(
+        controller.pinKey(target),
+        parsed.value,
+        "manual",
+      );
       if (refused) {
         this.refuse(refused);
         return false;

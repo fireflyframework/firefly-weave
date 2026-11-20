@@ -41,7 +41,7 @@ SPDX-License-Identifier: Apache-2.0
       @let iterations = runIterations();
       @if (iterations.length) {
         <label class="sd-iteration">
-          <span>Iteration</span>
+          <span>Item</span>
           <select (change)="chooseIteration($any($event.target).value)">
             @for (item of iterations; track item.key) {
               <option

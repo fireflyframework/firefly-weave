@@ -71,6 +71,11 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-label);
   color: var(--danger-ink);
 }
+/* What the field takes ("List"), as quiet as the Result panel's type. */
+.param-type {
+  font: var(--type-caption);
+  color: var(--muted);
+}
 .param-intro {
   flex: 1;
   min-width: 0;

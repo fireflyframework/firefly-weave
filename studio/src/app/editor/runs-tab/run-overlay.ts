@@ -18,14 +18,18 @@ SPDX-License-Identifier: Apache-2.0
 // A run drawn over the draft that is open: each step's state in the run, by
 // step ID, the canvas's run, and what changed in the draft since the version
 // the run used. Pure.
-import type { Workflow } from "../../model";
+import type { Step, Workflow } from "../../model";
 import {
   terminalRunStatuses,
   type StepFact,
   type StepStatus,
 } from "../../operate/run-contracts";
-import type { RecordedRun } from "../canvas/run-state";
-import { allSteps, withChildIds } from "../ndv/step-walk";
+import type {
+  RecordedItem,
+  RecordedLoop,
+  RecordedRun,
+} from "../canvas/run-state";
+import { allSteps, childLists, withChildIds } from "../ndv/step-walk";
 import { fingerprint } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
 import type { RunRecord } from "./run-record";
@@ -67,26 +71,240 @@ const FACT_STATES: Readonly<Partial<Record<StepStatus, RunStepState>>> = {
 export function stepStates(
   run: RunRecord,
   facts: readonly StepFact[] | null,
+  /** Only these instances count, for a step inside a loop: the item picked. */
+  counts: (key: string) => boolean = () => true,
 ): Map<string, RunStepState> {
   const states = new Map<string, RunStepState>();
   const over = terminalRunStatuses.includes(run.status);
-  const mark = (id: string, state: RunStepState) => {
+  const mark = (key: string, state: RunStepState) => {
     if (over && (state === "running" || state === "waiting")) return;
+    if (!counts(key)) return;
+    const id = instanceStep(key);
     const was = states.get(id);
     if (!was || RANK[state] > RANK[was]) states.set(id, state);
   };
-  for (const key of Object.keys(run.completed))
-    mark(instanceStep(key), "completed");
-  for (const key of run.waiting) mark(instanceStep(key), "waiting");
+  for (const key of Object.keys(run.completed)) mark(key, "completed");
+  for (const key of run.waiting) mark(key, "waiting");
   // A run that waits is waiting at the steps it is at (a person, a signal).
   const at = run.status === "waiting" ? "waiting" : "running";
-  for (const key of run.active) mark(instanceStep(key), at);
-  for (const { key } of run.incidents) mark(instanceStep(key), "failed");
+  for (const key of run.active) mark(key, at);
+  for (const { key } of run.incidents) mark(key, "failed");
   for (const fact of facts ?? []) {
     const state = FACT_STATES[fact.status];
-    if (state) mark(fact.node_id, state);
+    if (state) mark(factKey(fact), state);
   }
   return states;
+}
+
+const factKey = (fact: StepFact) => fact.instance_key || fact.node_id;
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+const ITEM_RANK: Readonly<Record<RecordedItem["status"], number>> = {
+  "not-run": 0,
+  finished: 1,
+  running: 2,
+  // Cut off by the run's end: above finished, below a failure.
+  stopped: 3,
+  "timed-out": 3,
+  failed: 4,
+};
+
+/** Each step inside a loop, and the loops around it, outermost first. */
+function loopsAround(
+  steps: readonly Step[],
+  around: readonly string[] = [],
+  found = new Map<string, readonly string[]>(),
+): Map<string, readonly string[]> {
+  for (const step of steps) {
+    if (around.length) found.set(step.id, around);
+    const inner = step.kind === "forEach" ? [...around, step.id] : around;
+    for (const list of childLists(step)) loopsAround(list, inner, found);
+  }
+  return found;
+}
+
+/**
+ * What one step instance says of its item. A run that ended closes the
+ * instances still open as cancelled, or timed out when the run timed out:
+ * the item was cut off, never finished.
+ */
+function itemStatus(
+  fact: StepStatus,
+  run: RunRecord["status"],
+): RecordedItem["status"] | null {
+  const cutOff = run === "timed_out" ? "timed-out" : "stopped";
+  if (fact === "cancelled") return "stopped";
+  if (fact === "timed_out") return run === "timed_out" ? "timed-out" : "failed";
+  const state = FACT_STATES[fact];
+  if (state === "failed") return "failed";
+  if (state === "completed") return "finished";
+  if (!state) return null;
+  return terminalRunStatuses.includes(run) ? cutOff : "running";
+}
+
+/** Each loop of a workflow, the loops around it and the steps inside it. */
+function loopsOf(
+  steps: readonly Step[],
+  around: readonly string[] = [],
+): { id: string; around: readonly string[]; inside: Set<string> }[] {
+  return steps.flatMap((step) => {
+    const lists = childLists(step);
+    const inner = step.kind === "forEach" ? [...around, step.id] : around;
+    return [
+      ...(step.kind === "forEach"
+        ? [
+            {
+              id: step.id,
+              around,
+              inside: new Set(lists.flatMap(allSteps).map((s) => s.id)),
+            },
+          ]
+        : []),
+      ...lists.flatMap((list) => loopsOf(list, inner)),
+    ];
+  });
+}
+
+/**
+ * Each run of each loop in a recorded run, with what each of its items did:
+ * failed when a step inside failed in it, running while one is at work,
+ * finished once one ran, else not run. The run's state keeps how many items
+ * a loop had; the step facts say what each did, as its frames are gone.
+ */
+export function recordedLoops(
+  definition: Workflow,
+  run: RunRecord,
+  facts: readonly StepFact[] | null,
+): RecordedLoop[] {
+  const over = terminalRunStatuses.includes(run.status);
+  const marks: [string, RecordedItem["status"], string | null][] = [
+    ...(facts ?? []).flatMap(
+      (fact): [string, RecordedItem["status"], string | null][] => {
+        const status = itemStatus(fact.status, run.status);
+        if (!status) return [];
+        return [
+          [
+            factKey(fact),
+            status,
+            status === "failed" ? (fact.error_code ?? fact.status) : null,
+          ],
+        ];
+      },
+    ),
+    ...run.incidents.map(
+      ({ key, code }): [string, RecordedItem["status"], string | null] => [
+        key,
+        "failed",
+        code,
+      ],
+    ),
+    ...(over ? [] : [...run.active, ...run.waiting]).map(
+      (key): [string, RecordedItem["status"], string | null] => [
+        key,
+        "running",
+        null,
+      ],
+    ),
+  ];
+  return loopsOf(definition.spec.steps).flatMap((loop) => {
+    const depth = loop.around.length;
+    // Within each run of the loop: item index to what it did.
+    const runs = new Map<string, Map<number, RecordedItem>>();
+    const within = (prefix: readonly number[]) => {
+      const name = prefix.join(",");
+      let items = runs.get(name);
+      if (!items) runs.set(name, (items = new Map()));
+      return items;
+    };
+    const instance = (prefix: readonly number[]) =>
+      loop.id + prefix.map((index) => `[${index}]`).join("");
+    for (const key of Object.keys(run.loops)) {
+      if (instanceStep(key) !== loop.id) continue;
+      const prefix = iterationOf(key);
+      if (prefix.length === depth) within(prefix);
+    }
+    for (const [key, status, code] of marks) {
+      if (!loop.inside.has(instanceStep(key))) continue;
+      const iteration = iterationOf(key);
+      if (iteration.length <= depth) continue;
+      const items = within(iteration.slice(0, depth));
+      const index = iteration[depth];
+      const was = items.get(index);
+      if (!was || ITEM_RANK[status] > ITEM_RANK[was.status])
+        items.set(index, { index, status, code });
+    }
+    return [...runs]
+      .map(([name, items]) => {
+        const prefix = name ? name.split(",").map(Number) : [];
+        const recorded = run.loops[instance(prefix)];
+        const binding = run.completed[instance(prefix)];
+        const output =
+          binding && typeof binding === "object"
+            ? (binding as { output?: unknown }).output
+            : undefined;
+        const count =
+          recorded ?? Math.max(0, ...[...items.keys()].map((i) => i + 1));
+        return {
+          id: loop.id,
+          within: prefix,
+          count,
+          known: recorded !== undefined,
+          items: Array.from(
+            { length: count },
+            (_, index): RecordedItem =>
+              items.get(index) ?? { index, status: "not-run", code: null },
+          ),
+          results: Array.isArray(output) ? output.length : null,
+        };
+      })
+      .sort((a, b) => compareIndexes(a.within, b.within));
+  });
+}
+const compareIndexes = (a: readonly number[], b: readonly number[]) => {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const delta = (a[i] ?? -1) - (b[i] ?? -1);
+    if (delta) return delta;
+  }
+  return 0;
+};
+
+/** The item a recorded loop opens on: its first failed one, else the first a cancelled or timed-out run cut off, else its first. */
+export function defaultPick(loop: RecordedLoop): number {
+  const first = (statuses: readonly RecordedItem["status"][]) =>
+    loop.items.find((item) => statuses.includes(item.status))?.index;
+  // A failure first, else the first item a cancelled or timed-out run cut off.
+  return first(["failed"]) ?? first(["stopped", "timed-out"]) ?? 0;
+}
+
+/**
+ * The item each loop shows: the one picked while it is one of its items,
+ * else its first failed one. A nested loop's items are those of its run in
+ * the items picked around it, so outer loops are settled first.
+ */
+export function picksFor(
+  definition: Workflow,
+  loops: readonly RecordedLoop[],
+  picked: Readonly<Record<string, number>>,
+): Record<string, number> {
+  const picks: Record<string, number> = {};
+  const around = loopsAround(definition.spec.steps);
+  for (const { id } of loopsOf(definition.spec.steps)) {
+    const within = (around.get(id) ?? []).map((owner) => picks[owner] ?? 0);
+    const loop = loops.find(
+      (candidate) =>
+        candidate.id === id && compareIndexes(candidate.within, within) === 0,
+    );
+    if (!loop) continue;
+    const wanted = picked[id];
+    picks[id] =
+      wanted !== undefined && wanted >= 0 && wanted < loop.count
+        ? wanted
+        : defaultPick(loop);
+  }
+  return picks;
 }
 
 /** Steps compared by ID between the run's version and the draft. */
@@ -161,8 +379,23 @@ export function overlayOf(
   },
   /** When the run was read (epoch ms), for how long its steps have been at work. */
   now?: number,
+  /** Loop step ID to the item its steps show; without it, every item at once. */
+  picks?: Readonly<Record<string, number>>,
 ): RunOverlay {
-  const reached = stepStates(run, facts);
+  // A step inside a loop shows its instance in the items picked.
+  const wanted = new Map<string, string>();
+  if (picks)
+    for (const [id, around] of loopsAround(versions.draft.spec.steps))
+      wanted.set(
+        id,
+        id + around.map((owner) => `[${picks[owner] ?? 0}]`).join(""),
+      );
+  // A repeated activation (#) or a yield (~) of that instance counts too.
+  const counts = (key: string) => {
+    const want = wanted.get(instanceStep(key));
+    return !want || key.replace(/[#~].*$/, "") === want;
+  };
+  const reached = stepStates(run, facts, counts);
   const states = new Map(reached);
   for (const step of allSteps(versions.draft.spec.steps))
     if (!states.has(step.id)) states.set(step.id, "not-reached");
@@ -173,15 +406,20 @@ export function overlayOf(
       .sort();
   const failures: Record<string, string> = {};
   for (const { key, code } of run.incidents)
-    failures[instanceStep(key)] ??= code;
+    if (counts(key)) failures[instanceStep(key)] ??= code;
   for (const fact of facts ?? [])
-    if (fact.error_code && FACT_STATES[fact.status] === "failed")
+    if (
+      fact.error_code &&
+      FACT_STATES[fact.status] === "failed" &&
+      counts(factKey(fact))
+    )
       failures[fact.node_id] ??= fact.error_code;
   const runningFor: Record<string, number> = {};
   if (now !== undefined && !terminalRunStatuses.includes(run.status))
     for (const fact of facts ?? []) {
       const started = fact.started_at ? Date.parse(fact.started_at) : NaN;
       if (fact.status !== "running" || !Number.isFinite(started)) continue;
+      if (!counts(factKey(fact))) continue;
       runningFor[fact.node_id] = Math.max(
         runningFor[fact.node_id] ?? 0,
         now - started,
@@ -199,6 +437,8 @@ export function overlayOf(
       added: diff?.added ?? [],
       failures,
       ...(Object.keys(runningFor).length ? { runningFor } : {}),
+      loops: recordedLoops(versions.draft, run, facts),
+      ...(picks ? { picks: { ...picks } } : {}),
     },
     states,
     diff,

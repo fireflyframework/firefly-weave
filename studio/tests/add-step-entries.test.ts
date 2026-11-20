@@ -15,7 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { languageTarget } from "../src/app/editor/add-step/catalog-sources";
 import { appName, buildCatalog } from "../src/app/editor/add-step/entries";
 import {
   catalogInput,
@@ -179,6 +182,34 @@ describe("what happens next", () => {
     const unknown = buildCatalog(catalogInput({ language: null }));
     expect(entryById(unknown, "preset:text-template").disabled).toBe(
       "Needs a platform with text templates (text.concat)",
+    );
+  });
+
+  it("offers Loop over items wherever the platform runs loops", () => {
+    // The language manifest as the platform serves it.
+    const { manifest } = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "fixtures/language/manifest.json"),
+        "utf8",
+      ),
+    ) as { manifest: unknown };
+    const language = languageTarget(manifest)!;
+    expect(language.features).toContain("flow.forEach");
+    const loops = buildCatalog(catalogInput({ language }));
+    expect(entryById(loops, "kind:forEach")).toMatchObject({
+      label: "Loop over items",
+      disabled: null,
+    });
+    const older = buildCatalog(
+      catalogInput({
+        language: {
+          ...language,
+          features: language.features.filter((f) => f !== "flow.forEach"),
+        },
+      }),
+    );
+    expect(entryById(older, "kind:forEach").disabled).toBe(
+      "Needs a platform with loops (flow.forEach)",
     );
   });
 

@@ -36,7 +36,9 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
+import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
 import { DataTable } from "./data-table";
+import { leftOutText } from "../../state/iterations";
 import { PathList } from "./path-list";
 import { ScriptEditor } from "./script-editor";
 import { pathRows, type PathRow } from "../../state/run-summary";
@@ -141,6 +143,7 @@ import { describeError } from "../../../errors";
     OutputEditor,
     ScriptEditor,
     RunStepLogs,
+    IterationPicker,
   ],
   template: `@let none = noOutput();
     @let pin = pinned();
@@ -211,7 +214,7 @@ import { describeError } from "../../../errors";
           recorded.tag
         }}</span>
       } @else if (pin) {
-        <span class="pill" data-tone="info">Pinned</span>
+        <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
       } @else if (real) {
         <button
           type="button"
@@ -232,7 +235,7 @@ import { describeError } from "../../../errors";
           ><weave-icon name="external" [size]="16" />
         </button>
       } @else if (ran) {
-        <span class="pill pane-source-tag">Simulated</span>
+        <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
@@ -246,9 +249,9 @@ import { describeError } from "../../../errors";
           : paths
             ? paths.took
             : event() !== undefined && view() === "table"
-              ? tableCount(event(), query())
+              ? tableCountOf()
               : event() !== undefined && view() !== "schema"
-                ? sampleCount(event())
+                ? sampleCount(event()) + skippedText()
                 : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
       @if (canPin) {
@@ -275,6 +278,10 @@ import { describeError } from "../../../errors";
         </button>
       }
     </div>
+    @let around = pickerRows();
+    @if (around.length) {
+      <weave-iteration-picker [loops]="around" (picked)="pick($event)" />
+    }
     <div class="sd-pane-body">
       <div class="pane-content" [class.is-editing]="editing()">
         @if (editing()) {
@@ -292,6 +299,8 @@ import { describeError } from "../../../errors";
         } @else {
           @if (pin) {
             <weave-pinned-banner
+              [item]="pickedItem()"
+              [forEveryItem]="pin.key === session().target"
               [stale]="pin.stale !== null"
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
@@ -299,6 +308,7 @@ import { describeError } from "../../../errors";
               [executeLabel]="executeLabel()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
+              (everyItem)="pinForEveryItem()"
               (execute)="execute()"
             />
           }
@@ -539,11 +549,16 @@ import { describeError } from "../../../errors";
             <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
             @if (view() === "table") {
+              <!-- A loop's results: the item each came from first. -->
+              @let loop = loopTable();
               <weave-data-table
-                [value]="event()"
+                [value]="loop ? loop.value : event()"
                 label="Output data"
                 [query]="query()"
               />
+              @if (loop?.note; as note) {
+                <p class="data-table-note">{{ note }}</p>
+              }
             } @else {
               <pre class="pane-json" tabindex="0" aria-label="Output data">{{
                 json(event())
@@ -759,7 +774,7 @@ export class OutputPane {
       !!real &&
       real.status === "succeeded" &&
       !this.pinned() &&
-      controller.stepData(target)?.source === "test-call" &&
+      controller.pickedStepData(target)?.source === "test-call" &&
       !controller.readOnlyReason(target)
     );
   }
@@ -773,7 +788,7 @@ export class OutputPane {
   realFiles(): { label: string; file: FileReference }[] {
     const { controller, target } = this.session();
     if (!this.realOf()) return [];
-    const data = controller.stepData(target);
+    const data = controller.pickedStepData(target);
     return data?.source === "test-call" ? filesIn(data.value) : [];
   }
   fileDetail(file: FileReference): string {
@@ -821,12 +836,49 @@ export class OutputPane {
     return isTriggerTarget(this.session().target);
   }
   /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
+  /**
+   * A loop's results as its Table shows them: each with the item it came
+   * from ("Item"), and a note naming the items Skip empty results left out;
+   * null for another step, or when Studio can't tell which item gave which.
+   */
+  /** The Table's count: a loop's results, as its Item column shows them, and the items it left out. */
+  tableCountOf(): string {
+    const loop = this.loopTable();
+    return loop
+      ? tableCount(loop.value, this.query()) + this.skippedText()
+      : tableCount(this.event(), this.query());
+  }
+  /** " · 2 skipped": the items Skip empty results left out of a loop's results; "" otherwise. */
+  skippedText(): string {
+    const left = this.loopTable()?.left ?? 0;
+    return left ? ` · ${left.toLocaleString("en-US")} skipped` : "";
+  }
+  loopTable(): { value: Json; note: string | null; left: number } | null {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || controller.step(target)?.kind !== "forEach")
+      return null;
+    const results = this.event();
+    const placed = controller.loopResults(target);
+    if (!Array.isArray(results) || !placed) return null;
+    return {
+      value: results.map((result, at) => ({
+        Item: placed.items[at],
+        ...(result !== null &&
+        typeof result === "object" &&
+        !Array.isArray(result)
+          ? result
+          : { Value: result }),
+      })),
+      note: leftOutText(placed.left),
+      left: placed.left.length,
+    };
+  }
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
     const { controller, target } = this.session();
     return isTriggerTarget(target)
       ? controller.testEvent()
-      : controller.stepData(target)?.value;
+      : controller.pickedStepData(target)?.value;
   }
   /**
    * A decision that ran: its paths as the last execution took them, the
@@ -870,7 +922,7 @@ export class OutputPane {
   returnedNull(): boolean {
     const { controller, target } = this.session();
     if (target.startsWith("$")) return false;
-    const data = controller.stepData(target);
+    const data = controller.pickedStepData(target);
     // A decision whose path has no result says so in its path list.
     return (
       (data?.source === "simulated" || data?.source === "run") &&
@@ -1065,7 +1117,7 @@ export class OutputPane {
     const { controller, target } = this.session();
     return (
       !target.startsWith("$") &&
-      controller.stepData(target)?.source === "simulated"
+      controller.pickedStepData(target)?.source === "simulated"
     );
   }
   /** What the last execution said about this step (it needs test data, a path it didn't take…). */
@@ -1081,7 +1133,43 @@ export class OutputPane {
     const { controller, target } = this.session();
     // The draft's pin isn't what the run returned.
     if (controller.viewingRuns()) return null;
-    return target.startsWith("$") ? null : controller.pinOfTarget(target);
+    if (target.startsWith("$")) return null;
+    // Inside a loop's body: the item's own pin, else the one for every item.
+    return (
+      controller.pinOfTarget(controller.pinKey(target)) ??
+      controller.pinOfTarget(target)
+    );
+  }
+  /** The same picker row as the Input pane's: both show the same item. None outside loops or on the Runs tab. */
+  pickerRows(): PickerLoop[] {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return [];
+    return loopRows(controller.iterations, target, (id) => controller.step(id));
+  }
+  pick({ loopId, index }: { loopId: string; index: number }) {
+    this.session().controller.iterations.pick(loopId, index);
+  }
+  /** The item picked inside a loop's body, one-based and as people count; null elsewhere. */
+  pickedItem(): string | null {
+    const { controller, target } = this.session();
+    const key = controller.pinKey(target);
+    if (key === target) return null;
+    return [...key.matchAll(/\[(\d+)\]/g)]
+      .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+      .join(" › ");
+  }
+  /** "Pinned", or inside a loop "Pinned for item 3" / "Pinned for every item". */
+  pinWords(key: string): string {
+    const item = this.pickedItem();
+    if (item === null) return "Pinned";
+    return key === this.session().target
+      ? "Pinned for every item"
+      : `Pinned for item ${item}`;
+  }
+  /** "Simulated", or "Simulated · item 3" inside a loop's body. */
+  simulatedWords(): string {
+    const item = this.pickedItem();
+    return item === null ? "Simulated" : `Simulated · item ${item}`;
   }
   /** On the Runs tab with no run's data: why Output shows nothing; null otherwise. */
   noRunShown(): string | null {
@@ -1130,7 +1218,9 @@ export class OutputPane {
   }
   localOnly(): boolean {
     const { controller, target } = this.session();
-    const key = target.replace(/~/g, "~0").replace(/\//g, "~1");
+    const key = (this.pinned()?.key ?? target)
+      .replace(/~/g, "~0")
+      .replace(/\//g, "~1");
     return controller.testData.localOnly().has(`/pins/${key}`);
   }
   pinTitle(pinned: boolean): string {
@@ -1149,11 +1239,23 @@ export class OutputPane {
   }
   unpin() {
     this.problem.set("");
-    this.session().controller.unpin(this.session().target);
+    const { controller, target } = this.session();
+    controller.unpin(this.pinned()?.key ?? target);
+    this.focusPin();
+  }
+  /** The item's pin, for every item: pinned on the step, and the item's own goes. */
+  async pinForEveryItem() {
+    const { controller, target } = this.session();
+    const pin = this.pinned();
+    if (!pin || pin.key === target) return;
+    const refused = await controller.pinForEveryItem(pin.key);
+    this.problem.set(refused ?? "");
+    if (refused) return;
     this.focusPin();
   }
   keepPinned() {
-    this.session().controller.keepPinned(this.session().target);
+    const { controller, target } = this.session();
+    controller.keepPinned(this.pinned()?.key ?? target);
     this.focusPin();
   }
   /**
