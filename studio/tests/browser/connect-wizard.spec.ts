@@ -189,6 +189,21 @@ test("an invalid cluster name hides both commands until it is fixed", async ({
   await expect(status(page)).toContainText("Waiting for kind-weave-test…");
 });
 
+test("while a name is invalid Studio isn't looking, so it never claims a fresh look", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await openClusters(page);
+  await openWizard(page);
+  await settled(page);
+  await page.getByRole("textbox", { name: "Cluster name" }).fill("Weave_Test");
+  await expect(status(page)).toContainText("Not looking yet");
+  await page.clock.fastForward(60_000);
+  await expect(page.locator(".refresh-status .updated")).toHaveText(
+    "Updated 1 min ago",
+  );
+});
+
 test("a namespace Kubernetes uses is refused with the command line's sentence", async ({
   page,
 }) => {

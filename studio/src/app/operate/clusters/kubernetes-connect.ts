@@ -506,9 +506,12 @@ export class KubernetesConnect
     if (this.valid()) void this.page.poller.refresh();
   }
 
-  /** Whether Clusters should skip its scheduled loads: patience is over. */
+  /**
+   * Whether Clusters should skip its scheduled loads: a name is invalid, so
+   * there is nothing to look for, or patience is over.
+   */
   paused() {
-    return this.valid() && this.watch().paused;
+    return !this.valid() || this.watch().paused;
   }
   keepWaiting() {
     this.watch.set(keepWaiting(this.watch(), Date.now()));
