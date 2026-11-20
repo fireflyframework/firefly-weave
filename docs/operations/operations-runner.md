@@ -376,7 +376,13 @@ up to five. Each command is a fixed argument list, run without a shell:
 Compose reads every container of the service, exited ones included, because
 they show why a worker stopped before it claimed a task; it keeps stdout and
 stderr apart. Kubernetes reads running pods of the deployment and reports both
-streams as one `output` stream, as `kubectl logs` prints them. The runner
+streams as one `output` stream, as `kubectl logs` prints them. When a pod's
+container has restarted, the runner also reads its previous container (the
+same command with `--previous`), because a crash-looping pod's lines about the
+crash are there; the member then shows the newest lines of both containers,
+oldest first. A member the runner can't read, such as a container removed
+since its inventory, is left out, and the snapshot says lines were left out;
+when no member can be read, the request fails as unreadable. The runner
 redacts each line, cuts it to 2 KiB, keeps the newest 256 KiB of the snapshot,
 and never writes a line it read to its own log. The platform redacts every line
 again, keeps the snapshot for one hour, and then deletes it.

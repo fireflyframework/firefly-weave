@@ -412,13 +412,17 @@ them past an hour.
   many lines (1 to 1,000), then **Fetch logs**. The target's runner reads the
   lines with a fixed command (see
   [Read container logs](operations-runner.md#read-container-logs)) and reports
-  them; a snapshot usually arrives within 10 seconds. **Follow** asks for a new
-  snapshot every 10 seconds while the page is open. **Copy** and **Download**
-  give each member's lines as plain text.
+  them; a snapshot usually arrives within 10 seconds. On Kubernetes, a pod
+  whose container restarted also shows what its previous container printed
+  before it stopped. **Follow** asks for a new snapshot every 10 seconds while
+  the page is open. **Copy** and **Download** give each member's lines as plain
+  text.
 - **When it can't.** A target or runner without `read_logs` can't fetch logs; a
   runner that hasn't been in touch for 90 seconds can't either, and the page
-  says how long it has been. A target takes at most 10 requests a minute. A
-  runner that doesn't answer within 2 minutes leaves the request failed.
+  says how long it has been. A target takes at most 10 requests a minute; when
+  it refuses one, Follow waits as long as the platform says before it asks
+  again. A runner that doesn't answer within 2 minutes leaves the request
+  failed.
 - **Bounds.** Each line keeps 2 KiB and each snapshot the newest 256 KiB; the
   page says when lines were cut or left out.
 - **Privacy.** The runner redacts every line before it leaves the target, and

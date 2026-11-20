@@ -241,9 +241,9 @@ DEPLOYMENT = {
 }
 
 
-def pod_line(name: str, phase: str = "Running") -> str:
-    fields = [name, "weave-workers", "", "7c9f", "apps/v1", "ReplicaSet", "weave-worker-7c9f", phase, "True", "0"]
-    return "\t".join([*fields, "2026-11-19T10:00:00Z", "node-1"]) + "\n"
+def pod_line(name: str, phase: str = "Running", restarts: int = 0) -> str:
+    fields = [name, "weave-workers", "", "7c9f", "apps/v1", "ReplicaSet", "weave-worker-7c9f", phase, "True"]
+    return "\t".join([*fields, str(restarts), "2026-11-19T10:00:00Z", "node-1"]) + "\n"
 
 
 def cluster(pods: str):
@@ -294,6 +294,89 @@ async def test_kubernetes_reads_a_listed_running_pod_with_a_fixed_argument_list(
     with pytest.raises(LogRefused) as refused:
         await adapter.read_logs("weave-worker", ["weave-worker-other"], 900, 200)
     assert refused.value.failure == "no_members"
+
+
+CRASHED = b"2026-11-19T10:39:58Z Traceback: ConnectionRefusedError: billing-db:5432\n"
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_pod_shows_what_its_previous_container_printed_before_it_crashed():
+    pods = pod_line("weave-worker-7c9f-x2k4", restarts=3) + pod_line("weave-worker-7c9f-p8sd")
+    reads = []
+
+    async def output(argv, **kwargs):
+        reads.append(argv)
+        return CommandOutput(stdout=CRASHED if "--previous" in argv else STDOUT, stderr=b"", cut=False)
+
+    adapter = KubernetesAdapter(kubernetes_policy(), command=cluster(pods), output=output)
+    members, cut = await adapter.read_logs("weave-worker", [], 900, 200)
+    # Only the pod that restarted has a previous container to read.
+    previous = [argv for argv in reads if "--previous" in argv]
+    assert [argv[7] for argv in previous] == ["weave-worker-7c9f-x2k4"]
+    assert previous[0][6:] == [
+        "logs",
+        "weave-worker-7c9f-x2k4",
+        "-c",
+        "worker",
+        "--previous",
+        "--timestamps",
+        "--since=900s",
+        "--tail=200",
+    ]
+    restarted = next(member for member in members if member.member == "weave-worker-7c9f-x2k4")
+    assert [line.text for line in restarted.lines] == [
+        "Traceback: ConnectionRefusedError: billing-db:5432",
+        "Worker ready: 4 slots, task types sql.lookup",
+        "Reported failure SMTP_REJECTED for task send",
+    ]
+    assert cut is False
+    # The tail still bounds the member: the newest lines of both containers together.
+    members, cut = await adapter.read_logs("weave-worker", ["weave-worker-7c9f-x2k4"], 900, 2)
+    assert [line.text for line in members[0].lines] == [
+        "Worker ready: 4 slots, task types sql.lookup",
+        "Reported failure SMTP_REJECTED for task send",
+    ]
+    assert cut is True
+
+
+@pytest.mark.asyncio
+async def test_a_previous_container_whose_logs_are_gone_leaves_the_current_lines():
+    pods = pod_line("weave-worker-7c9f-x2k4", restarts=1)
+
+    async def output(argv, **kwargs):
+        if "--previous" in argv:
+            raise CommandError()
+        return CommandOutput(stdout=STDOUT, stderr=b"", cut=False)
+
+    adapter = KubernetesAdapter(kubernetes_policy(), command=cluster(pods), output=output)
+    members, cut = await adapter.read_logs("weave-worker", [], 900, 200)
+    assert [len(member.lines) for member in members] == [2] and cut is False
+
+
+@pytest.mark.asyncio
+async def test_a_member_that_cant_be_read_is_left_out_and_the_snapshot_says_so(tmp_path):
+    config = compose_policy(tmp_path)
+    command, _ = compose(config, [(RUNNING, "running"), (EXITED, "exited")])
+
+    async def removed(argv, **kwargs):
+        # The exited container was removed between the inventory and its read.
+        if argv[-1] == EXITED:
+            raise CommandError()
+        return CommandOutput(stdout=STDOUT, stderr=STDERR, cut=False)
+
+    members, cut = await ComposeAdapter(config, command=command, output=removed).read_logs("worker", [], 900, 200)
+    assert [member.member for member in members] == [RUNNING[:12]] and cut is True
+
+    pods = pod_line("weave-worker-7c9f-x2k4") + pod_line("weave-worker-7c9f-p8sd")
+
+    async def evicted(argv, **kwargs):
+        if "weave-worker-7c9f-p8sd" in argv:
+            raise CommandError()
+        return CommandOutput(stdout=STDOUT, stderr=b"", cut=False)
+
+    adapter = KubernetesAdapter(kubernetes_policy(), command=cluster(pods), output=evicted)
+    members, cut = await adapter.read_logs("weave-worker", [], 900, 200)
+    assert [member.member for member in members] == ["weave-worker-7c9f-x2k4"] and cut is True
 
 
 def configuration():

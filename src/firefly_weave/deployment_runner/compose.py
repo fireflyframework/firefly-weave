@@ -200,10 +200,15 @@ class ComposeAdapter:
             try:
                 printed = await self.output([*argv, found[host][0]], timeout=20)
             except CommandError:
-                raise LogRefused("unreadable") from None
+                # Removed since the inventory, for example: the other containers still show, and the snapshot says
+                # lines were left out.
+                cut = True
+                continue
             lines, shortened = member_lines(printed.stdout, printed.stderr, tail=tail_lines)
             result.append(MemberLog(member=host, lines=lines))
             cut = cut or shortened or printed.cut
+        if not result:
+            raise LogRefused("unreadable")
         kept, older = newest_lines(result)
         return kept, cut or older
 

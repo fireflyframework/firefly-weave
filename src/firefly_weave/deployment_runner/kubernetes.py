@@ -357,7 +357,9 @@ class KubernetesAdapter:
         """The last lines of a bound worker deployment's running pods, as `kubectl logs` prints them for the bound
         container; kubectl gives stdout and stderr as one stream.
 
-        Pods come only from this runner's own listing of the deployment in its pinned namespace.
+        Pods come only from this runner's own listing of the deployment in its pinned namespace. A pod whose
+        container restarted also shows what its previous container printed, which is where a crash says why. A
+        pod that can't be read is left out, and the snapshot says lines were left out.
         """
         binding = next((item for item in self.policy.components if item.name == component), None)
         if binding is None or binding.kind != "worker" or binding.container is None:
@@ -367,11 +369,11 @@ class KubernetesAdapter:
         listed = await self._listing(value, binding) if value else []
         if listed is None:
             raise LogRefused("unreadable")
-        # A pending pod has printed nothing yet; a running one restarting after a crash still has its lines.
-        hosts, more = chosen([member.host for member, _ in listed if member.state == "running"], members)
-        result, cut = [], more
-        for host in hosts:
-            argv = [
+        container = binding.container
+        restarts = {member.host: member.restarts for member, _ in listed}
+
+        def argv(host: str, *previous: str) -> list[str]:
+            return [
                 self.policy.executable,
                 "--context",
                 self.policy.context,
@@ -381,19 +383,39 @@ class KubernetesAdapter:
                 "logs",
                 host,
                 "-c",
-                binding.container,
+                container,
+                *previous,
                 "--timestamps",
                 f"--since={since_seconds}s",
                 f"--tail={tail_lines}",
             ]
+
+        # A pending pod has printed nothing yet. A crash-looping pod is running, but its current container has
+        # just started, so the lines that explain the crash are its previous container's.
+        hosts, more = chosen([member.host for member, _ in listed if member.state == "running"], members)
+        result, cut = [], more
+        for host in hosts:
             try:
-                printed = await self.output(argv, timeout=30)
+                printed = await self.output(argv(host), timeout=30)
             except CommandError:
-                raise LogRefused("unreadable") from None
-            # kubectl's own warnings go to stderr; only stdout holds the container's lines.
-            lines, shortened = member_lines(printed.stdout, None, tail=tail_lines)
+                # The pod went away or its node can't be reached: the others still show.
+                cut = True
+                continue
+            earlier = b""
+            if restarts.get(host):
+                try:
+                    before = await self.output(argv(host, "--previous"), timeout=30)
+                    earlier, cut = before.stdout + b"\n", cut or before.cut
+                except CommandError:
+                    # The previous container's logs are gone (it was removed): its current lines still show.
+                    pass
+            # kubectl's own warnings go to stderr; only stdout holds the container's lines. The previous container
+            # stopped before the current one started, so its lines come first.
+            lines, shortened = member_lines(earlier + printed.stdout, None, tail=tail_lines)
             result.append(MemberLog(member=host, lines=lines))
             cut = cut or shortened or printed.cut
+        if not result:
+            raise LogRefused("unreadable")
         kept, older = newest_lines(result)
         return kept, cut or older
 
