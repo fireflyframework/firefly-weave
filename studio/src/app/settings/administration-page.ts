@@ -300,8 +300,12 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                       }}</span>
                       @let when = recorded(consent);
                       <span role="cell" class="muted"
+                        ><span class="stacked">Recorded by </span
                         ><span class="nb">{{ when.who }}</span
-                        ><span class="day">{{ when.day }}</span></span
+                        ><span class="day"
+                          ><span class="stacked"> on </span
+                          ><span class="date">{{ when.day }}</span></span
+                        ></span
                       >
                       <span role="cell">
                         @if (canChange()) {

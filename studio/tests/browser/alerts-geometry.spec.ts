@@ -263,12 +263,38 @@ test.describe("alerts and administration at 1920x1080", () => {
       .evaluateAll((cells) =>
         cells
           .slice(0, 3)
-          .map((cell) => [...cell.querySelectorAll(".nb, .day")])
+          .map((cell) => [...cell.querySelectorAll(".nb, .date")])
           .flat()
           .map((part) => (part as HTMLElement).getClientRects().length),
       );
     expect(lines.length).toBeGreaterThanOrEqual(3);
     expect(lines.every((count) => count === 1)).toBe(true);
+    // Stacked, without column heads, the last lines say what they are.
+    await expect(
+      optins.locator("[role=row]:not(.h) [role=cell]").nth(2),
+    ).toHaveText("Recorded by Person b3e5f7a9 on 4 Nov", {
+      useInnerText: true,
+    });
+  });
+});
+
+test.describe("Administration at 768x1024", () => {
+  test.use({ viewport: { width: 768, height: 1024 } });
+
+  test("a card wide enough keeps opt-ins as a table, Recorded on two lines under its head", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, {
+      capabilities: administrator,
+      path: "/settings/administration",
+    });
+    const optins = page.getByRole("table", { name: "Opt-ins" });
+    await expect(
+      optins.getByRole("columnheader", { name: "Recorded" }),
+    ).toBeVisible();
+    await expect(
+      optins.locator("[role=row]:not(.h) [role=cell]").nth(2),
+    ).toHaveText("Person b3e5f7a9 4 Nov", { useInnerText: true });
   });
 });
 

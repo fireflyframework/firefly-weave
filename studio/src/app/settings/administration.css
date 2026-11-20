@@ -248,6 +248,10 @@ code {
   display: block;
   white-space: nowrap;
 }
+/* Words that only the stacked opt-ins need: the table has a Recorded head. */
+.stacked {
+  display: none;
+}
 .mini > .h {
   min-height: 32px;
   background: var(--sunken);
@@ -331,6 +335,11 @@ code {
   .optins button {
     justify-self: start;
     margin-top: 6px;
+  }
+  /* "Recorded by Person b3e5f7a9 on 4 Nov", one sentence. */
+  .optins .stacked,
+  .optins .day {
+    display: inline;
   }
 }
 @media (max-width: 767px), (pointer: coarse) {
