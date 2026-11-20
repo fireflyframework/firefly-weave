@@ -3323,6 +3323,7 @@ export class CanvasView implements OnInit, DoCheck {
       ids,
       h.pinsForCopy(),
       ownedActionsOf(h.model.canvas),
+      h.failuresForCopy(),
     );
     if (!(await this.writeClipboard(copied)))
       return h.notify("Studio couldn't write to the clipboard. Try again.");

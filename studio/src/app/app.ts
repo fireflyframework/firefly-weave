@@ -73,6 +73,7 @@ import type { HumanEntry, SignalEntry } from "./editor/state/test-data";
 import type { ExecuteResponse, ExecuteTarget } from "./editor/state/execution";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
+  ErrorEntry,
   PinEntry,
   StudioDocument,
   StudioDocumentKind,
@@ -4473,7 +4474,8 @@ export class App implements CanvasHost {
       }),
     );
     if (this.error) return null;
-    if (Object.keys(planned.pins).length) void this.pastePins(planned.pins);
+    if (Object.keys(planned.pins).length || Object.keys(planned.errors).length)
+      void this.pasteTestData(planned);
     const renamed = Object.keys(planned.renamed).length;
     this.notify(
       `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
@@ -4485,56 +4487,17 @@ export class App implements CanvasHost {
     return planned;
   }
   /**
-   * Pasted steps bring their pinned output (never what runs recorded). Each
-   * value is checked as any pin is; one refused is dropped, and a toast says
-   * why once.
+   * Pasted steps bring their pinned output and hand-set simulated failures
+   * (never what runs recorded); one the check refuses is dropped, and a
+   * toast says why once. The code loads with the paste, not the first page.
    */
-  private async pastePins(pins: Readonly<Record<string, unknown>>) {
+  private async pasteTestData(planned: PastePlan) {
     const service = await this.requireTestData();
-    const {
-      readTestData,
-      testDataOps: { emptyTestData, withPin },
-    } = await this.loadTools();
-    const escape = (key: string) =>
-      key.replace(/~/g, "~0").replace(/\//g, "~1");
-    // What came from the clipboard is read as test data first: only well-formed pins go on.
-    const reading = readTestData({
-      ...emptyTestData(new Date().toISOString()),
-      pins,
-    });
-    let refusal = reading.ok ? "" : reading.reason;
-    let waiting: [string, PinEntry][] = reading.ok
-      ? Object.entries(reading.data.pins ?? {})
-      : [];
-    while (waiting.length) {
-      const at = new Date().toISOString();
-      let next = service.data();
-      for (const [key, entry] of waiting) next = withPin(next, key, entry, at);
-      const outcome = await service.change(
-        next,
-        waiting.map(([key]) => `/pins/${escape(key)}`),
-      );
-      if (outcome.ok) {
-        this.markForeign(waiting.map(([key]) => key));
-        break;
-      }
-      refusal ||= outcome.message;
-      const refused = waiting.find(
-        ([key]) => `/pins/${escape(key)}` === outcome.pointer,
-      );
-      // Nothing to drop by pointer (the document changed meanwhile, say): none is pasted.
-      if (!refused) {
-        waiting = [];
-        break;
-      }
-      waiting = waiting.filter((pair) => pair !== refused);
-    }
-    if (refusal)
-      this.notify(
-        `Some pinned output wasn't pasted: ${refusal}`,
-        undefined,
-        "danger",
-      );
+    const { pinned, refusal } = await (
+      await import("./editor/state/paste-test-data")
+    ).pasteTestData(service, planned);
+    this.markForeign(pinned);
+    if (refusal) this.notify(refusal, undefined, "danger");
   }
   /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
   tidyCanvas(next: CanvasSidecar | null): boolean {
@@ -7924,6 +7887,9 @@ export class App implements CanvasHost {
   }
   pinsForCopy(): Readonly<Record<string, PinEntry>> {
     return this.testData?.data().pins ?? {};
+  }
+  failuresForCopy(): Readonly<Record<string, ErrorEntry>> {
+    return this.testData?.data().errors ?? {};
   }
   /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
   togglePins(ids: readonly string[]): void {

@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter, Workflow } from "../../model";
-import type { PinEntry } from "../state/test-data";
+import type { ErrorEntry, PinEntry } from "../state/test-data";
 import type { CanvasSidecar } from "../state/canvas-sidecar";
 import type { ClipboardContent, PastePlan } from "../state/clipboard";
 import type { KindContext } from "../ndv/registry";
@@ -127,6 +127,8 @@ export interface CanvasHost {
   pinStates(): ReadonlyMap<string, { stale: string | null }>;
   /** The workflow's pinned output, for copying with the steps (run-recorded pins stay behind). */
   pinsForCopy(): Readonly<Record<string, PinEntry>>;
+  /** The workflow's simulated failures, for copying with the steps (run-recorded ones stay behind). */
+  failuresForCopy(): Readonly<Record<string, ErrorEntry>>;
   /** P and the menu, for pinnable steps: unpins the pinned ones as one Undo; others say how to pin. */
   togglePins(ids: readonly string[]): void;
   /** Execute workflow (simulated, on the Studio host); absent where Execute isn't offered. */
