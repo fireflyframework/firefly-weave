@@ -39,5 +39,13 @@
     "prettier": "3.6.2",
     "typescript": "6.0.2",
     "vitest": "4.1.12"
+  },
+  "overrides": {
+    "@angular/build": {
+      "rolldown": "1.2.8",
+      "vite": {
+        "rolldown": "1.2.15"
+      }
+    }
   }
 }

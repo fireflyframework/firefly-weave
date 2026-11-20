@@ -208,7 +208,12 @@ SPDX-License-Identifier: Apache-2.0
   GHSA-vfpm-58rq-9qcg); Vitest goes to 4.1.12 (GHSA-qxg6-89mg-rqv8,
   GHSA-xp26-3454-mjgp) and fast-uri to 3.1.9 (GHSA-333x-w4r6-6crp,
   GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr, GHSA-xhq7-xmqj-769h). None of
-  them is in the Studio bundle.
+  them is in the Studio bundle. An npm override in `studio/package.json`
+  keeps the Angular builder's own rolldown at 1.2.8: from 1.2.9, rolldown
+  keeps `/* @__PURE__ */` comments in the chunks Angular's chunk optimizer
+  writes, which made Studio's first page 2,438 bytes larger. Vite keeps
+  rolldown 1.2.15. The override goes once Angular's chunk optimizer passes a
+  comments option to rolldown, or rolldown stops keeping those comments.
 - Security: opentelemetry-api is updated to 1.45.2 (GHSA-mf5v-w3w3-f6cg,
   GHSA-xcq7-p3pf-p88h) in the server and both workers. The Agentic worker
   also updates joserfc to 1.7.6 (GHSA-9pg5-8c7x-5hfx), fastmcp-slim to 4.1.2
