@@ -106,6 +106,14 @@
   {
     "provider": "kind",
     "cluster": "weave-test",
+    "namespace": "kube-Foo",
+    "target": null,
+    "cluster_problem": null,
+    "namespace_problem": "Use a namespace of 1 to 63 lowercase letters, digits and hyphens."
+  },
+  {
+    "provider": "kind",
+    "cluster": "weave-test",
     "namespace": "default",
     "target": null,
     "cluster_problem": null,
