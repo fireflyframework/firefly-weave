@@ -34,6 +34,7 @@ from firefly_weave.compiler.ir import (
     AgentNode,
     CallWorkflowNode,
     DecisionTableNode,
+    HandlesErrors,
     HumanTaskNode,
     IRNode,
     Participation,
@@ -156,6 +157,18 @@ def _depth(key: str) -> int:
 
 def _path(frame: str, key: str) -> str:
     return f"{frame}/{key}" if frame else key
+
+
+def _handles_its_failure(prepared: PreparedWorkflow, instance: str) -> bool:
+    """Whether a failed step change at ``instance`` is a step's own failure that its onError setting handled.
+
+    An AI agent's turns, tool calls and reviews report their failures under their own keys whatever happens next,
+    even when the run stops or the model reads a tool's failure as its result: those are never handled failures.
+    """
+    if agent_key(prepared.ir, instance) is not None:
+        return False
+    node = prepared.nodes.get(node_of(instance))
+    return isinstance(node, HandlesErrors) and node.on_error is not None
 
 
 # What an agent's mock gives once its saved turns or its tool's sequence ran out: the session stops there.
@@ -886,10 +899,12 @@ class Simulator:
             self._grown(change.output)
             if change.status == "completed":
                 d.outputs[_path(key, change.node_id)] = change.output
-            elif change.error is not None:
-                # Only a failure the step's setting handled is a step change; the run goes on after it.
-                self._grown(change.error)
-                d.failures[_path(key, change.node_id)] = change.error
+            elif change.error is not None and _handles_its_failure(called.prepared, change.node_id):
+                path = _path(key, change.node_id)
+                # An error path's join reports the same error again when the path ends; count it once.
+                if d.failures.get(path) != change.error:
+                    self._grown(change.error)
+                d.failures[path] = change.error
         d.boundaries.append(boundary)
         if run.cursor.done:
             result = run.cursor.result
