@@ -168,6 +168,19 @@ SPDX-License-Identifier: Apache-2.0
   there instead of failing the test with a server error.
 - On the Runs tab, a call step's Output names the run it started, says how it
   went, and opens it.
+- Studio guides connecting a local kind or k3d cluster. **Operate › Clusters ›
+  Add target › Connect a cluster** shows the `weave platform cluster create`
+  and `weave platform cluster connect` commands for the provider, cluster name
+  and namespace you choose, with **Copy** and what each command changes, and
+  refuses the names the command line refuses. While the wizard stays open,
+  Studio checks every 5 seconds and shows **Cluster connected** once the new
+  target's runner is online, with **Open target** and **New change request**;
+  it also says when the target is registered but its runner hasn't made
+  contact, when it is already connected, or when another target has the name.
+  It only reads targets, runners and observations. The generic registration
+  of any other runtime is now under **Add target › Other**. See [Connect a kind
+  or k3d cluster on this
+  computer](docs/operations/cluster-management.md#connect-a-kind-or-k3d-cluster-on-this-computer).
 
 ### Development and testing
 
@@ -181,6 +194,10 @@ SPDX-License-Identifier: Apache-2.0
   test-only `note` input, which the acceptance journeys and
   `tests/e2e/test_operations_logs.py` use to prove a planted secret never
   reaches log answers or stored entries.
+- The `cluster` and `k3d` acceptance profiles run
+  `tests/browser/cluster-connect-real.spec.ts`: Studio copies the connect
+  command for a namespace of the run's cluster, the command runs as copied,
+  and Studio must show **Cluster connected** within 15 seconds of its end.
 
 ### Versions and schema
 
