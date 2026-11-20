@@ -112,6 +112,17 @@ test("the empty error path's slot adds a step to the path, by keyboard", async (
   expect(added!.y).toBeGreaterThan(submit!.y + submit!.height);
 });
 
+test("Send email, added from the empty error path's slot, runs on the error path", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, GUARDED);
+  await canvas.insertTarget("Add a step to the error path of submit").click();
+  await canvas.pick("Send email");
+  await canvas.closeInspector();
+  expect(await errorPathOf(page)).toEqual(["send-email"]);
+  expect(await canvas.rootSteps()).not.toContain("send-email");
+});
+
 test("a drag from the Error output adds a step to the error path", async ({
   page,
 }) => {
