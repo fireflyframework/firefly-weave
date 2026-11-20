@@ -112,6 +112,21 @@ test("the empty error path's slot adds a step to the path, by keyboard", async (
   expect(added!.y).toBeGreaterThan(submit!.y + submit!.height);
 });
 
+test("a drag from the Error output adds a step to the error path", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page, GUARDED);
+  const from = (await canvas.handle("submit:path:errorPath").boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  // Let go on empty canvas, below and right of the handle.
+  await page.mouse.move(from.x + 160, from.y + 120, { steps: 10 });
+  await page.mouse.up();
+  await canvas.pick("Transform");
+  await canvas.closeInspector();
+  expect(await errorPathOf(page)).toEqual(["transform-1"]);
+});
+
 /** submit's error path holds notify-team and flag-request. */
 const WITH_PATH = yamlFile(
   "request-intake-path.yaml",
