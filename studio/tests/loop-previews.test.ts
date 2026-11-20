@@ -325,7 +325,8 @@ spec:
     controller.iterations.pick("orders", 1);
     expect(pane.dataOf("step:check")).toBe("from item 2");
     expect(pane.notRun("step:check")).toBeNull();
-    expect(pane.sourceTag("step:check")).toBe("Simulated");
+    // The item it ran for, as people count it.
+    expect(pane.sourceTag("step:check")).toBe("Simulated · item 2");
     // Item 2's result is out of date, and the pane says so.
     expect(pane.staleSource("step:check")).toBe(true);
     injector.destroy();
@@ -363,7 +364,8 @@ describe("the Input pane inside a loop's body", () => {
     expect(pane.dataOf("loop:orders")).toEqual(ORDERS[1]);
     await controller.iterations.evaluate("orders");
     expect(pane.sourceTag("loop:orders")).toBe("Simulated · item 2");
-    expect(pane.sourceTag("item")).toBe("Simulated · item 1");
+    // The current item of lines, in the second order: the outer item first.
+    expect(pane.sourceTag("item")).toBe("Simulated · item 2 › 1");
     injector.destroy();
   });
 });
