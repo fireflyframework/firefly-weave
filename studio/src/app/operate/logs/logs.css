@@ -283,6 +283,12 @@ code {
 .logs-notice .support-code {
   flex-basis: 100%;
 }
+.logs-notice a,
+.logs-empty a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .logs-notice button {
   min-height: var(--target);
 }
@@ -590,8 +596,12 @@ code {
     margin-left: 0;
     flex-basis: 100%;
   }
-  /* Here the actions start their own row, Copy first: the bubble grows toward the end. */
+  /* Here the actions start their own row under the member's name, Copy first:
+     the bubble sits below Copy, over the first lines rather than the name,
+     and grows toward the end. */
   .copy-tip {
+    inset-block-end: auto;
+    inset-block-start: calc(100% + var(--space-1));
     inset-inline-start: 0;
     inset-inline-end: auto;
     /* Copy starts past the rail, the gutter and the box's padding. */

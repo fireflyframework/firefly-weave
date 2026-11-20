@@ -450,6 +450,36 @@ test.describe("Operate › Logs › Container logs", () => {
     expect([await copy.boundingBox(), await second.boundingBox()]).toEqual(
       before,
     );
+    // A refusal stays while the person follows it, until their next click or key.
+    await page.clock.runFor(10_000);
+    await expect(copied).toHaveText(
+      "Couldn't copy. Select the lines and copy them.",
+    );
+    await page.keyboard.press("Shift");
+    await expect(copied).toHaveText("");
+    await copy.click();
+    await expect(copied).toContainText("Couldn't copy");
+    await page.locator("#main h1").click();
+    await expect(copied).toHaveText("");
+    // Where the actions have their own row, it covers no member's name.
+    await page.setViewportSize({ width: 360, height: 740 });
+    await copy.scrollIntoViewIfNeeded();
+    await copy.click();
+    await expect(copied).toHaveCSS("opacity", "1");
+    const tip = await copied.boundingBox();
+    const names = await page
+      .locator(".member-head h3")
+      .evaluateAll((items) =>
+        items.map((item) => item.getBoundingClientRect().toJSON()),
+      );
+    expect(tip).not.toBeNull();
+    for (const name of names)
+      expect(
+        tip!.x < name.right &&
+          tip!.x + tip!.width > name.left &&
+          tip!.y < name.bottom &&
+          tip!.y + tip!.height > name.top,
+      ).toBe(false);
   });
 
   test("markup in a line shows as text", async ({ page }) => {
@@ -756,9 +786,30 @@ test.describe("Operate › Logs › Container logs", () => {
     await expect(page.getByRole("alert")).toHaveText(
       "The runner of local-docker didn't answer within 2 minutes. Try again, or check its runner in Operate › Clusters.",
     );
-    await expect(
-      page.getByRole("alert").getByRole("link", { name: "Operate › Clusters" }),
-    ).toHaveAttribute("href", `/operate/clusters/targets/${TARGET}`);
+    const link = page
+      .getByRole("alert")
+      .getByRole("link", { name: "Operate › Clusters" });
+    await expect(link).toHaveAttribute(
+      "href",
+      `/operate/clusters/targets/${TARGET}`,
+    );
+    // A link in Studio's link color, set in the sentence: no wider gap than a space on either side.
+    expect(await link.evaluate((a) => getComputedStyle(a).color)).toBe(
+      await token(page, "--link"),
+    );
+    const gaps = await link.evaluate((a) => {
+      const edge = (node: Node | null) => {
+        const range = document.createRange();
+        range.selectNodeContents(node!);
+        return range.getBoundingClientRect();
+      };
+      const box = a.getBoundingClientRect();
+      return [
+        box.left - edge(a.previousSibling).right,
+        edge(a.nextSibling).left - box.right,
+      ];
+    });
+    for (const gap of gaps) expect(gap).toBeLessThan(6);
     await shot(page, "container-logs-no-answer-1440");
     // A snapshot whose hour ends 5 seconds from now: once it has, it shows nothing of its lines.
     logs.reads = [snapshot("ready", { expires_at: await soon(page) })];
@@ -927,6 +978,25 @@ for (const size of sizes)
       await shot(page, name("7-no-read-logs"));
     });
 
+    test("a runner that never answered", async ({ page }) => {
+      test.skip(
+        size.width !== 1440 && size.width !== 360,
+        "the no-answer state at 1440 and 360",
+      );
+      const logs = await platform(page);
+      logs.reads = [snapshot("failed", { failure: "no_answer" })];
+      await openContainers(page);
+      await fetchButton(page).click();
+      await page.clock.runFor(1_000);
+      await expect(
+        page
+          .getByRole("alert")
+          .getByRole("link", { name: "Operate › Clusters" }),
+      ).toBeVisible();
+      expect(await noSideways(page)).toBe(true);
+      await shot(page, name("4b-no-answer"));
+    });
+
     test("no deployment_log.read", async ({ page }) => {
       await platform(page, { capabilities: ["run.read", "deployment.read"] });
       await openContainers(page);
@@ -1018,7 +1088,10 @@ for (const size of sizes)
         "Copied 4 lines",
       );
       // Past the fade-in, as a person sees it.
-      await page.clock.runFor(300);
+      await expect(member(page, FIRST).locator(".copy-tip")).toHaveCSS(
+        "opacity",
+        "1",
+      );
       expect(await noSideways(page)).toBe(true);
       await shot(page, name("13a-copied"));
       await page.clock.runFor(4_000);
@@ -1029,9 +1102,12 @@ for (const size of sizes)
           Promise.reject(new Error("denied"));
       });
       await copy.click();
-      await page.clock.runFor(300);
       await expect(member(page, FIRST).locator(".copy-tip")).toContainText(
         "Couldn't copy",
+      );
+      await expect(member(page, FIRST).locator(".copy-tip")).toHaveCSS(
+        "opacity",
+        "1",
       );
       expect(await noSideways(page)).toBe(true);
       await shot(page, name("13c-copy-refused"));
@@ -1057,6 +1133,11 @@ for (const size of sizes)
       await expect(
         page.getByText("No targets to read logs from."),
       ).toBeVisible();
+      await expect(
+        page
+          .locator(".logs-empty")
+          .getByRole("link", { name: "Operate › Clusters" }),
+      ).toHaveAttribute("href", "/operate/clusters");
       await shot(page, name("14-no-targets"));
       answer = null;
       await page.reload();
@@ -1088,6 +1169,15 @@ for (const size of sizes)
       await page.reload();
       await page.getByLabel("Last lines").fill("5000");
       await expect(page.locator("#container-tail-problem")).toBeVisible();
+      // After Fetch logs' transition to turned off, as a person sees it.
+      const off = await token(page, "--disabled-bg");
+      await expect
+        .poll(() =>
+          fetchButton(page).evaluate(
+            (button) => getComputedStyle(button).backgroundColor,
+          ),
+        )
+        .toBe(off);
       await shot(page, name("18-invalid-last-lines"));
       await page.getByLabel("Last lines").fill("200");
       for (const host of [FIRST, SECOND])

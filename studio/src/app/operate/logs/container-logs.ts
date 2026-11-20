@@ -39,7 +39,7 @@ import type { App } from "../../app";
 import { describeError, type PlainError } from "../../errors";
 import { Icon } from "../../icon";
 import { scopeKeyOf } from "../operate-list";
-import { clustersRecordPath } from "../operate-routes";
+import { clustersRecordPath, clustersTabPath } from "../operate-routes";
 import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import {
@@ -141,7 +141,11 @@ type Load = "loading" | "ready" | "error" | "refused";
         <h2 class="empty-title">No targets to read logs from.</h2>
         <p>
           A target's runner reads its containers' logs. Targets appear here once
-          one is connected in Operate › Clusters and you may read its logs.
+          one is connected in
+          <a [href]="clustersHome" (click)="openClusters($event, clustersHome)"
+            >Operate › Clusters</a
+          >
+          and you may read its logs.
         </p>
       </div>
     } @else {
@@ -318,11 +322,16 @@ type Load = "loading" | "ready" | "error" | "refused";
             <p>
               <weave-icon name="failCircle" [size]="16" />
               @if (snapshot.failure === "no_answer") {
-                The runner of {{ targetName() }} didn't answer within 2 minutes.
-                Try again, or check its runner in
-                <a [href]="clustersPath()" (click)="openClusters($event)"
-                  >Operate › Clusters</a
-                >.
+                <!-- One text item beside the icon, so the link sits in the sentence. -->
+                <span
+                  >The runner of {{ targetName() }} didn't answer within 2
+                  minutes. Try again, or check its runner in
+                  <a
+                    [href]="clustersPath()"
+                    (click)="openClusters($event, clustersPath())"
+                    >Operate › Clusters</a
+                  >.</span
+                >
               } @else {
                 {{ failure(snapshot) }}
               }
@@ -468,6 +477,8 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   /** The generation of the fetch running now, quiet or not; null when none is. */
   private running: number | null = null;
   private copiedTimers: ReturnType<typeof setTimeout>[] = [];
+  /** Removes the listeners that end a copy refusal at the next click or key press. */
+  private copiedListeners: (() => void) | null = null;
   private readonly router = inject(Router);
   readonly unreadNote = UNREAD_NOTE;
   readonly restartNote = RESTART_NOTE;
@@ -551,6 +562,8 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   private clearCopied() {
     this.copiedTimers.forEach(clearTimeout);
     this.copiedTimers = [];
+    this.copiedListeners?.();
+    this.copiedListeners = null;
     this.copied.set(null);
   }
   private api(): ContainerLogsApi | null {
@@ -832,12 +845,14 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   time(at: string) {
     return lineTime(at);
   }
+  /** Operate › Clusters, where targets are connected. */
+  readonly clustersHome = clustersTabPath("targets");
   /** The target's own screen in Operate › Clusters. */
   clustersPath() {
     return clustersRecordPath("targets", this.targetId());
   }
   /** Opens Clusters in place; a modified or middle click opens the link as the browser does. */
-  openClusters(event: MouseEvent) {
+  openClusters(event: MouseEvent, path: string) {
     if (
       event.button !== 0 ||
       event.metaKey ||
@@ -847,7 +862,6 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     )
       return;
     event.preventDefault();
-    const path = this.clustersPath();
     void this.host()
       .navigate("clusters")
       .then(() => this.router.navigateByUrl(path));
@@ -874,6 +888,19 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     }
     const text = ok ? copiedNote(member.lines.length) : COPY_FAILED;
     this.copied.set({ member: member.member, text, ok, shown: true });
+    if (!ok) {
+      // A refusal tells the person what to do: it stays while they follow it,
+      // until their next click or key press.
+      const dismiss = () => this.clearCopied();
+      const options = { capture: true, once: true };
+      document.addEventListener("pointerdown", dismiss, options);
+      document.addEventListener("keydown", dismiss, options);
+      this.copiedListeners = () => {
+        document.removeEventListener("pointerdown", dismiss, options);
+        document.removeEventListener("keydown", dismiss, options);
+      };
+      return;
+    }
     // It fades out, then clears, so no stale confirmation stays for a screen reader.
     this.copiedTimers = [
       setTimeout(() => {
