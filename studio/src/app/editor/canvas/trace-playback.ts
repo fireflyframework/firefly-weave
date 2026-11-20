@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // current tile gets the live border, finished ones the check, a failed one
 // the error. With reduced motion only the last frame is shown. DOM-free.
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
+import { loopLimitText } from "./loop-frame";
 import { stepPointerOf } from "../formula/loops";
 import type { ExecuteResponse } from "../state/execution";
 import {
@@ -250,4 +251,25 @@ function overLimitSaid(
   return count === null
     ? `${loopId} failed: more items than ${allows}.`
     : `${loopId} failed: ${count.toLocaleString("en-US")} items, more than ${allows}.`;
+}
+
+/**
+ * Why the run failed at a step, for its tile and step details: the run's
+ * first error, a list over Up to in Studio's own sentence; null when the
+ * run didn't fail at that step.
+ */
+export function runFailureOf(
+  response: ExecuteResponse,
+  stepId: string,
+  definition: unknown,
+): { code?: string; message?: string } | null {
+  if (response.status !== "failed") return null;
+  const failed = response.trace.find((entry) => entry.status === "failed");
+  if (failed?.nodeId !== stepId) return null;
+  const diagnostic = response.diagnostics?.[0];
+  if (!diagnostic) return {};
+  if (diagnostic.code !== LOOP_LIMIT)
+    return { code: diagnostic.code, message: diagnostic.message };
+  const { count, limit } = overLimitOf(definition, response, stepId);
+  return { code: diagnostic.code, message: loopLimitText(count, limit) };
 }

@@ -7546,7 +7546,7 @@ export class App implements CanvasHost {
     )
       outcome = await service.execute(target, { ...options, catalog: "none" });
     if (outcome.kind === "done") {
-      this.showRunLog(true);
+      this.runLogOpen.set(true);
       this.playRun(outcome.response);
     } else if (outcome.kind !== "stale") {
       const text =
@@ -7559,7 +7559,7 @@ export class App implements CanvasHost {
       // Execute workflow reports in the run log, as a run that stops does.
       if (target.mode === "workflow") {
         this.executeRefusal.set(text);
-        this.showRunLog(true);
+        this.runLogOpen.set(true);
       }
     }
     this.cdr.markForCheck();
@@ -7583,31 +7583,7 @@ export class App implements CanvasHost {
   /** The run log beside the canvas (L, or any execution, opens it). */
   readonly runLogOpen = signal(false);
   toggleRunLog(): void {
-    this.showRunLog(!this.runLogOpen());
-  }
-  /** The run log closed the Workflow panel to make room: it opens again with the log's close. */
-  private panelMadeRoom = false;
-  /**
-   * Opens or closes the run log. Below 1600 px wide the log takes the
-   * Workflow panel's room, so the canvas keeps enough to show the run; the
-   * panel comes back when the log closes.
-   */
-  private showRunLog(open: boolean): void {
-    this.runLogOpen.set(open);
-    // Once: a panel opened again while the log shows stays open.
-    if (
-      open &&
-      !this.panelMadeRoom &&
-      this.windowWidth < 1600 &&
-      this.showInspector
-    ) {
-      this.showInspector = false;
-      this.panelMadeRoom = true;
-    } else if (!open && this.panelMadeRoom) {
-      this.panelMadeRoom = false;
-      this.showInspector = true;
-    }
-    this.cdr.markForCheck();
+    this.runLogOpen.update((open) => !open);
   }
   /** What the last execution ran: answering the run log's question runs it again. */
   lastTarget: ExecuteTarget | null = null;
@@ -7644,7 +7620,7 @@ export class App implements CanvasHost {
       if (session)
         session = await service.sessions.command({ kind: "continue" });
       this.runSession.set(session);
-      this.showRunLog(true);
+      this.runLogOpen.set(true);
     } catch (error) {
       if (error instanceof ApiError && error.status === 429)
         // Run logs left open elsewhere (another window): offer to close them.
@@ -7709,11 +7685,9 @@ export class App implements CanvasHost {
   }
   /** A run log row opened a step on one item of a loop (`send[2]`). */
   readonly openedItem = signal<{ draftId: string; key: string } | null>(null);
-  /** An entry's step details, on its Input or Output when asked; for `send[2]`, on that item. */
+  /** An entry's step details, on its Input or Output when asked. */
   openEntry(id: string, pane?: "input" | "output"): void {
-    const cut = id.search(/[[#~]/);
-    if (cut > 0) this.openedItem.set({ draftId: this.draftId, key: id });
-    void this.openStepDetails(cut > 0 ? id.slice(0, cut) : id, {
+    void this.openStepDetails(id, {
       focus: pane ? { kind: "region", region: pane } : { kind: "first" },
     });
   }
@@ -7810,26 +7784,10 @@ export class App implements CanvasHost {
   /** The code and message of the step a simulated run failed at, or null. */
   runFailure(stepId: string): { code?: string; message?: string } | null {
     const last = this.execution?.last();
-    if (!last || last.status !== "failed") return null;
-    const failed = last.trace.find((entry) => entry.status === "failed");
-    if (failed?.nodeId !== stepId) return null;
-    const diagnostic = last.diagnostics?.[0];
-    // A list over Up to: how many items, Up to, and what to do.
-    const tools = this.tools;
-    if (diagnostic?.code === "WV-RUNTIME-LOOP-LIMIT" && tools) {
-      const { count, limit } = tools.overLimitOf(
-        this.model.definition,
-        last,
-        stepId,
-      );
-      return {
-        code: diagnostic.code,
-        message: tools.loopLimitText(count, limit),
-      };
-    }
-    return diagnostic
-      ? { code: diagnostic.code, message: diagnostic.message }
-      : {};
+    // The tools chunk says why (it made the execution service).
+    return last && this.tools
+      ? this.tools.runFailureOf(last, stepId, this.model.definition)
+      : null;
   }
   /** The place and opening the test data was last opened for. */
   private testDataKey = "";

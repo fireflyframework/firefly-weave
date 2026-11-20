@@ -27,12 +27,14 @@ import {
   Component,
   computed,
   afterNextRender,
+  DestroyRef,
   ElementRef,
   inject,
   Injector,
   input,
   signal,
   type Signal,
+  type WritableSignal,
 } from "@angular/core";
 import { Icon } from "../../icon";
 import type { Step, Workflow } from "../../model";
@@ -76,6 +78,14 @@ export interface RunLogHost {
   readonly executeRefusal?: Signal<string | null>;
   readonly breakpoints: Signal<ReadonlySet<string>>;
   lastTarget: ExecuteTarget | null;
+  /** The Workflow panel shows; the run log closes it to make room below 1,600 px. */
+  showInspector: boolean;
+  readonly windowWidth: number;
+  readonly draftId: string;
+  /** Step details open a step on this item of a loop (`send[2]`). */
+  readonly openedItem?: WritableSignal<{ draftId: string; key: string } | null>;
+  /** Draws the editor again after a change the run log made to it. */
+  refreshView(): void;
   toggleRunLog(): void;
   summaryOf(stepId: string): string | null;
   staleEntries(): ReadonlySet<string>;
@@ -733,7 +743,7 @@ export function runStatus(
                       class="run-log-entry run-log-item"
                       [attr.data-status]="item.status"
                       [attr.aria-label]="item.label + ': ' + item.text"
-                      (click)="host().openEntry(item.key)"
+                      (click)="openItem(item.key)"
                     >
                       <weave-icon
                         class="run-log-icon"
@@ -761,7 +771,7 @@ export function runStatus(
                                 (step.status === 'failed' ? ', failed' : '') +
                                 (step.text ? ': ' + step.text : '')
                               "
-                              (click)="host().openEntry(step.key)"
+                              (click)="openItem(step.key)"
                             >
                               <weave-icon
                                 class="run-log-icon"
@@ -963,6 +973,31 @@ export class RunLogPanel {
   readonly problem = signal("");
   private readonly el: ElementRef<HTMLElement> = inject(ElementRef);
   private readonly injector = inject(Injector);
+
+  constructor() {
+    // Below 1,600 px wide the run log takes the Workflow panel's room, so the
+    // canvas keeps enough to show the run; the panel comes back when it closes.
+    let madeRoom: RunLogHost | null = null;
+    afterNextRender(() => {
+      const host = this.host();
+      if (host.windowWidth >= 1600 || !host.showInspector) return;
+      host.showInspector = false;
+      madeRoom = host;
+      host.refreshView();
+    });
+    inject(DestroyRef).onDestroy(() => {
+      if (!madeRoom) return;
+      madeRoom.showInspector = true;
+      madeRoom.refreshView();
+    });
+  }
+  /** A row for one item of a loop (`send[2]`) opens its step on that item. */
+  openItem(key: string): void {
+    const host = this.host();
+    const stepId = instanceStep(key);
+    if (stepId !== key) host.openedItem?.set({ draftId: host.draftId, key });
+    host.openEntry(stepId);
+  }
 
   private steps(): Step[] {
     return allSteps(this.host().model.definition.spec.steps ?? []);

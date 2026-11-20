@@ -31,6 +31,7 @@ import {
   finalAnnouncement,
   overLimitOf,
   playbackFrames,
+  runFailureOf,
 } from "../src/app/editor/canvas/trace-playback";
 import { createStep, freshWorkflow, type Step } from "../src/app/model";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
@@ -429,6 +430,48 @@ describe("a list longer than Up to", () => {
     expect(loopLimitText(null, 2)).toBe(
       "This list has more items than Up to allows (2). Raise Up to or shorten the list.",
     );
+  });
+
+  it("is what a failed loop's tile and step details say, beside the code", () => {
+    const answer = {
+      status: "failed",
+      compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+      trace: [
+        { index: 0, ...step("fetch"), output: { rows: [1, 2, 3] } },
+        { index: 1, ...step("orders", "", "failed", "forEach") },
+      ],
+      diagnostics: [
+        {
+          code: "WV-RUNTIME-LOOP-LIMIT",
+          severity: "error",
+          stage: "evaluation",
+          message: "A loop's list was longer than its item limit.",
+          path: "",
+        },
+      ],
+    } as ExecuteResponse;
+    expect(runFailureOf(answer, "orders", OVER_LIMIT)).toEqual({
+      code: "WV-RUNTIME-LOOP-LIMIT",
+      message:
+        "This list has 3 items, more than Up to allows (2). Raise Up to or shorten the list.",
+    });
+    // Another step, or a run that didn't fail there: nothing.
+    expect(runFailureOf(answer, "fetch", OVER_LIMIT)).toBeNull();
+    expect(
+      runFailureOf({ ...answer, status: "completed" }, "orders", OVER_LIMIT),
+    ).toBeNull();
+    // Another error keeps the run's own words; none at all says nothing more.
+    const other = {
+      ...answer,
+      diagnostics: [{ ...answer.diagnostics![0], code: "E", message: "m" }],
+    };
+    expect(runFailureOf(other, "orders", OVER_LIMIT)).toEqual({
+      code: "E",
+      message: "m",
+    });
+    expect(
+      runFailureOf({ ...answer, diagnostics: [] }, "orders", OVER_LIMIT),
+    ).toEqual({});
   });
 
   it("counts the list from the step whose output it reads, and reads Up to from the loop", () => {

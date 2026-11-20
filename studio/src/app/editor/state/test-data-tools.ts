@@ -51,11 +51,10 @@ export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
 export {
   finalAnnouncement,
-  overLimitOf,
   playbackFrames,
   PLAYBACK_STEP_MS,
+  runFailureOf,
 } from "../canvas/trace-playback";
-export { loopLimitText } from "../canvas/loop-frame";
 export { summaryLine } from "./run-summary";
 export { findStep } from "../ndv/step-walk";
 export { branchVariables, staleResults } from "./last-results";
