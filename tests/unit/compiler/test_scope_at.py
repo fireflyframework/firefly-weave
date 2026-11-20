@@ -236,6 +236,28 @@ def test_a_catalog_types_action_outputs_and_without_one_they_are_any_value():
     assert entry(online, "/steps/find/output/id").type_label == "Text"
 
 
+def test_scope_lists_the_platform_event_fields():
+    document = workflow(
+        transform("notify", ref("/input/transaction/business_key")), input_schema={"$ref": "weave.platform-event-v1"}
+    )
+    document["spec"]["eventTrigger"] = {"events": ["transaction.in_doubt"]}
+    found = {item.ref: item for item in scope_at(document, "/spec/output").entries}
+    assert {"/input/transaction/business_key", "/input/transaction/incident_id", "/input/type"} <= set(found)
+    key = found["/input/transaction/business_key"]
+    assert (key.types, key.type_label, key.optional) == (["string", "null"], "Text or empty", False)
+    assert found["/input/transaction/incident_id"].optional
+    assert (found["/input/type"].types, found["/input/type"].optional) == (["string"], False)
+    assert found["/input"].types == ["object"]
+
+
+def test_a_project_schema_by_name_lists_nothing_below_it():
+    document = workflow(transform("notify", ref("/input/key")), input_schema={"$ref": "notify.request-v1"})
+    shared = {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}
+    catalog = CatalogSnapshot.from_definitions([], schema_bundle={"notify.request-v1": shared})
+    result = scope_at(document, "/spec/output", catalog=catalog)
+    assert [item.ref for item in result.entries if item.source == "input"] == ["/input"]
+
+
 def test_large_inputs_are_truncated_at_the_entry_budget():
     wide = {"type": "object", "properties": {f"field{n:03}": {"type": "string"} for n in range(250)}}
     result = scope_at(workflow(transform("t", ref("/input")), input_schema=wide), "/spec/steps/0/value")
