@@ -308,7 +308,7 @@ dd {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  margin-block: var(--space-3) var(--space-4);
 }
 .chooser-option {
   display: grid;
@@ -345,12 +345,35 @@ dd {
 .chooser-option button {
   justify-self: start;
 }
+/* Other opens like any disclosure: a chevron right before its label, turned
+   down while it is open; the browser's own marker is removed. */
 .chooser-option summary {
   font-weight: 600;
   cursor: pointer;
-  min-height: var(--control-sm);
+  min-height: var(--control-md);
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+}
+.chooser-option summary::-webkit-details-marker {
+  display: none;
+}
+.chooser-option summary weave-icon {
+  color: var(--muted);
+}
+details.chooser-option[open] summary weave-icon {
+  rotate: 90deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chooser-option summary weave-icon {
+    transition: rotate var(--dur-fast) var(--ease);
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .chooser-option summary {
+    min-height: var(--control-touch);
+  }
 }
 details.chooser-option[open] summary {
   margin-bottom: var(--space-2);

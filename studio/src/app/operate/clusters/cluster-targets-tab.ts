@@ -96,7 +96,7 @@ const KUBERNETES_GUIDE =
             >
           </div>
           <details class="chooser-option">
-            <summary>Other</summary>
+            <summary><weave-icon name="chevron" [size]="16" />Other</summary>
             <span
               >Register any other container runtime with its own runner.</span
             >
