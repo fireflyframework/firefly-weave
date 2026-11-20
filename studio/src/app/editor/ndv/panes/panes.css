@@ -1080,7 +1080,7 @@ dialog.simulate-failure:modal {
 dialog.simulate-failure::backdrop {
   overflow: hidden;
   overscroll-behavior: contain;
-  background: var(--backdrop, rgb(0 0 0 / 0.5));
+  background: var(--scrim);
 }
 .simulate-failure input[type="text"] {
   width: 100%;

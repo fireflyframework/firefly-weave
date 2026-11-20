@@ -80,18 +80,18 @@ describe("test data pasted with steps", () => {
     });
   });
 
-  it("drops a failure the host refuses, keeps the rest, and says so once", async () => {
-    const testData = service(["/errors/submit-1"]);
+  it("drops a pin the host refuses, keeps the failures, and says so once", async () => {
+    const testData = service(["/pins/submit-1"]);
     const pasted = await pasteTestData(testData, {
       pins: { "submit-1": pin },
-      errors: {
-        "submit-1": { code: "REQUEST_REFUSED" },
-        "submit-2": { code: "TIMEOUT" },
-      },
+      errors: { "submit-1": { code: "REQUEST_REFUSED" } },
     });
-    expect(pasted.pinned).toEqual(["submit-1"]);
-    expect(pasted.refusal).toMatch(/^Some simulated failures weren't pasted: /);
-    expect(testData.data().errors).toEqual({ "submit-2": { code: "TIMEOUT" } });
+    expect(pasted.pinned).toEqual([]);
+    expect(pasted.refusal).toMatch(/^Some pinned output wasn't pasted: /);
+    expect(testData.data().pins).toBeUndefined();
+    expect(testData.data().errors).toEqual({
+      "submit-1": { code: "REQUEST_REFUSED" },
+    });
   });
 
   it("refuses a malformed failure before asking the host, as it does a pin", async () => {

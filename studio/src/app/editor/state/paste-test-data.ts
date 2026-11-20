@@ -23,7 +23,6 @@ import { emptyTestData, withFailure, withPin } from "./test-data-ops";
 import type { TestDataService } from "./test-data-service";
 
 const PINS = "Some pinned output wasn't pasted: ";
-const FAILURES = "Some simulated failures weren't pasted: ";
 
 const escape = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 
@@ -81,7 +80,8 @@ export async function pasteTestData(
         refusal,
       };
     const refused = waiting.find((item) => item.pointer === outcome.pointer);
-    refusal ||= `${refused && !("pin" in refused) ? FAILURES : PINS}${outcome.message}`;
+    // Only a pin's value is checked by the host: a refused entry is a pin.
+    refusal ||= `${PINS}${outcome.message}`;
     // Nothing to drop by pointer (the document changed meanwhile, say): none is pasted.
     if (!refused) return { pinned: [], refusal };
     waiting = waiting.filter((item) => item !== refused);

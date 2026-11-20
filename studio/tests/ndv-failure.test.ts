@@ -115,7 +115,8 @@ describe("a step's simulated failure in step details", () => {
         source: "manual",
       },
     });
-    expect(checked.at(-1)).toContain("/errors/submit[2]");
+    // A failure holds no value for the host's check: it isn't asked.
+    expect(checked).toEqual([]);
     expect(controller.failureOf("submit[2]")?.code).toBe("REQUEST_REFUSED");
     // Another item reads the step's failure, and there is none.
     expect(controller.failureOf("submit[3]")).toBeNull();
