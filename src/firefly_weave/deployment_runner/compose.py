@@ -34,14 +34,17 @@ from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.deployments import (
     ComponentSpec,
     DeploymentPlan,
+    MemberLog,
     MemberSelectionError,
     ObservationReport,
     ObservedMember,
     ObservedResource,
+    newest_lines,
     scale_down_members,
 )
 from firefly_weave.contracts.values import JsonObject
-from firefly_weave.deployment_runner.command import run_command
+from firefly_weave.deployment_runner.command import CommandError, CommandOutput, read_output, run_command
+from firefly_weave.deployment_runner.logs import LogRefused, chosen, member_lines
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_time
 
@@ -117,10 +120,16 @@ def _members(facts: list[dict[str, Any]]) -> list[ObservedMember] | None:
 
 
 class ComposeAdapter:
-    def __init__(self, policy: DestinationPolicy, *, command: Callable[..., Awaitable[bytes]] = run_command) -> None:
+    def __init__(
+        self,
+        policy: DestinationPolicy,
+        *,
+        command: Callable[..., Awaitable[bytes]] = run_command,
+        output: Callable[..., Awaitable[CommandOutput]] = read_output,
+    ) -> None:
         if policy.adapter != "docker-compose" or not policy.compose_file or not policy.lock_file:
             raise RunnerPolicyError()
-        self.policy, self.command = policy, command
+        self.policy, self.command, self.output = policy, command, output
         self.base = [policy.executable, "--context", policy.context]
         self.compose = [
             *self.base,
@@ -162,6 +171,48 @@ class ComposeAdapter:
 
     async def observe(self) -> ObservationReport:
         return (await self._inventory())[0]
+
+    async def read_logs(
+        self, component: str, members: list[str], since_seconds: int, tail_lines: int
+    ) -> tuple[list[MemberLog], bool]:
+        """The last lines of a bound worker service's containers, as `docker logs` prints them.
+
+        Containers come only from this runner's own inventory of the project, exited ones included: they may show why
+        a worker stopped before it claimed anything. A member is a container's ID prefix, as the observation names
+        it; running containers come first, and the command names the full ID.
+        """
+        binding = next((item for item in self.policy.components if item.name == component), None)
+        if binding is None or binding.kind != "worker":
+            raise LogRefused("unknown_component")
+        _, groups = await self._inventory()
+        found: dict[str, list[str]] = {}
+        for fact in groups[component]:
+            found.setdefault(fact["id"][:12], []).append(fact["id"])
+        running = {fact["id"][:12] for fact in groups[component] if fact["state"] == "running"}
+        restarts = {fact["id"]: fact["restart"] for fact in groups[component]}
+        # A prefix two containers share names neither.
+        unique = sorted(
+            (host for host, ids in found.items() if len(ids) == 1), key=lambda host: (host not in running, host)
+        )
+        hosts, more = chosen(unique, members)
+        result, cut = [], more
+        for host in hosts:
+            argv = [*self.base, "logs", "--timestamps", "--since", f"{since_seconds}s", "--tail", str(tail_lines)]
+            try:
+                printed = await self.output([*argv, found[host][0]], timeout=20)
+            except CommandError:
+                # Removed since the inventory, for example: the other containers still show, and the snapshot says
+                # lines were left out.
+                cut = True
+                continue
+            lines, shortened = member_lines(printed.stdout, printed.stderr, tail=tail_lines)
+            # One container keeps its lines across its restarts, so none of them is a previous container's.
+            result.append(MemberLog(member=host, lines=lines, restarts=restarts[found[host][0]]))
+            cut = cut or shortened or printed.cut
+        if not result:
+            raise LogRefused("unreadable")
+        kept, older = newest_lines(result)
+        return kept, cut or older
 
     async def _inventory(self) -> tuple[ObservationReport, dict[str, list[dict[str, Any]]]]:
         """The observation and, per service, the inspected containers it was built from."""

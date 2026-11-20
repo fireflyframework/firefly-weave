@@ -646,7 +646,7 @@ def test_connect_runs_its_stages_in_order_and_registers_the_target_only_after_th
         UID,
         "weave-workers",
     )
-    assert request.capabilities == ["observe", "update", "scale_workers", "restart_workers"]
+    assert request.capabilities == ["observe", "update", "scale_workers", "restart_workers", "read_logs"]
     assert request.approval_policy.distinct_approver is False
     (deployment,) = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "deployments.create"]
     assert (deployment.name, deployment.components[0].name, deployment.components[0].replicas) == (
@@ -750,7 +750,8 @@ def test_connecting_a_disconnected_namespace_again_enables_the_target_it_kept(wo
     entry = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
     assert (update["identifier"], update["revision"], update["body"].disabled) == (kept, 3, False)
     assert str(update["body"].runner_principal_id) == entry["runner_principal_id"]
-    assert update["body"].capabilities == ["observe", "update", "scale_workers", "restart_workers"]
+    # A target an earlier release registered gains reading logs when it is connected again.
+    assert update["body"].capabilities == ["observe", "update", "scale_workers", "restart_workers", "read_logs"]
     assert update["body"].approval_policy is None
     assert (entry["target_id"], entry["deployment_id"], entry["state"]) == (str(kept), str(deployment), "connected")
 

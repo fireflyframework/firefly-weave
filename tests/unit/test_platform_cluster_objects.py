@@ -206,11 +206,13 @@ def test_the_runner_liveness_probe_fails_on_a_stale_or_missing_heartbeat(tmp_pat
 
 
 def runner_argv():
-    """The kubectl calls the Kubernetes adapter makes to observe, scale down and restart, on the tests' fake."""
+    """The kubectl calls the Kubernetes adapter makes to observe, scale down, restart and read logs, on the tests'
+    fake."""
     import asyncio
 
     import test_deployment_kubernetes as fake
 
+    from firefly_weave.deployment_runner.command import CommandOutput
     from firefly_weave.deployment_runner.kubernetes import KubernetesAdapter
 
     async def record():
@@ -218,6 +220,12 @@ def runner_argv():
         policy, plan, server = fake.scaled(3, 1)
         server.pods = fake.three_pods()
         await KubernetesAdapter(policy, command=server.command).observe()
+
+        async def output(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return CommandOutput(stdout=b"", stderr=b"", cut=False)
+
+        await KubernetesAdapter(policy, command=server.command, output=output).read_logs("engine", [], 900, 200)
         await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
         calls += server.calls
         policy, plan, server, clock = fake.restart()
@@ -233,6 +241,10 @@ def test_the_runner_rules_are_exactly_what_its_commands_need():
     """Map every kubectl call the adapter makes to its API resource and verb; the rendered RBAC must equal that."""
     needed = set()
     for argv in runner_argv():
+        if argv[0] == "logs":
+            # `kubectl logs <pod>` reads the pod's log subresource, in the workers namespace only.
+            needed.add(("", "pods/log", "get"))
+            continue
         verb, (resource, _, group) = argv[0], argv[1].partition(".")
         # `get` with a selector lists; kubectl's short singular names the plural resource.
         if verb == "get" and any(item.startswith("--selector=") for item in argv):
@@ -345,7 +357,7 @@ def test_the_runner_configuration_validates_with_the_cluster_origins():
         "weave-runner",
         "/usr/local/bin/kubectl",
     )
-    assert policy.capabilities == ["observe", "update", "scale_workers", "restart_workers"]
+    assert policy.capabilities == ["observe", "update", "scale_workers", "restart_workers", "read_logs"]
     (binding,) = policy.components
     assert (binding.name, binding.kind, binding.container, binding.configuration) == (
         "weave-worker",

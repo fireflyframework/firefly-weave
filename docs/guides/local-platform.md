@@ -277,7 +277,7 @@ private record of the account. For an older account, assign roles in Studio's
 
 The account `weave platform up --username NAME` creates (see the
 [Docker development guide](docker-development.md)) gets the local owner roles
-instead of the defaults: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator`, `transaction_reconciler`, `step_tester`, `alert_manager` and `email_sender`.
+instead of the defaults: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator`, `deployment_log_reader`, `transaction_reconciler`, `step_tester`, `alert_manager` and `email_sender`.
 
 ## 6. Sign in from the CLI
 

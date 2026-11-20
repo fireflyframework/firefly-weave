@@ -76,7 +76,8 @@ does not grant deployment authority.
 
 ## 2. Register an existing target
 
-In Studio, open **Operate › Clusters → Register target**. Choose the adapter, the
+In Studio, open **Operate › Clusters**, select **Add target**, open **Other**,
+and select **Register target**. Choose the adapter, the
 existing destination's pinned identity and boundary, the dedicated runner
 application, and capabilities that its local policy will support. Administrators
 can select active application accounts by their available display label. Other
@@ -427,6 +428,15 @@ kubectl: the commands download the pinned versions into the installation
 directory on first use and check each file's SHA-256. Run the commands in the
 folder where you ran `weave platform up`, or name its installation directory
 with `weave platform --directory`.
+
+Studio shows both commands for you. Open **Operate › Clusters**, select **Add
+target**, and select **Connect a cluster** under Kubernetes. Choose kind or k3d
+and enter the cluster name and namespace. Studio shows the target's name, the
+`create` and `connect` commands with **Copy**, and what each one changes. Run
+them in a terminal. While the wizard stays open, Studio checks every 5 seconds
+and shows **Cluster connected** when the target and its runner appear. From
+there, **Open target** opens the new target. Studio only reads targets, runners,
+and observations; your kubeconfig never leaves this computer.
 
 ![A connected local cluster: the platform joins the cluster's own Docker network, and in Weave's namespaces only the runner and workers reach it](../diagrams/local-cluster-connect.svg)
 
