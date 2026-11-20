@@ -46,6 +46,9 @@ import { pathRows, type PathRow } from "../../state/run-summary";
 import { branchVariables } from "../../state/last-results";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
+import { FailureBanner } from "./failure-banner";
+import { failureOf } from "../../state/test-data-ops";
+import type { ErrorEntry } from "../../state/test-data";
 import { OutputEditor } from "./output-editor";
 import {
   countLabel,
@@ -144,6 +147,7 @@ import { describeError } from "../../../errors";
     DataTable,
     PathList,
     PinnedBanner,
+    FailureBanner,
     OutputEditor,
     ScriptEditor,
     RunStepLogs,
@@ -151,6 +155,7 @@ import { describeError } from "../../../errors";
   ],
   template: `@let none = noOutput();
     @let pin = pinned();
+    @let failing = failure();
     @let canPin = pinnable();
     @let kept = !pin && answerKept();
     @let keepsAnswer = !pin && aiTask();
@@ -219,6 +224,8 @@ import { describeError } from "../../../errors";
         <span class="pill pane-source-tag" data-tone="info">{{
           recorded.tag
         }}</span>
+      } @else if (failing) {
+        <span class="pill" data-tone="warning">Fails when executed</span>
       } @else if (pin) {
         <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
       } @else if (real) {
@@ -338,7 +345,14 @@ import { describeError } from "../../../errors";
             <p class="pane-empty-text">Opening the editor…</p>
           }
         } @else {
-          @if (pin) {
+          @if (failing) {
+            <weave-failure-banner
+              [failure]="failing.entry"
+              [scope]="failing.scope"
+              [overPin]="!!pin"
+              (remove)="removeFailure(failing.key)"
+            />
+          } @else if (pin) {
             <weave-pinned-banner
               [item]="pickedItem()"
               [forEveryItem]="pin.key === session().target"
@@ -1330,6 +1344,30 @@ export class OutputPane {
       return;
     }
     this.unpin();
+  }
+  /**
+   * The failure simulated for this step, or the item picked: the item's
+   * own first, else every item's. None on the Runs tab.
+   */
+  failure(): {
+    key: string;
+    entry: ErrorEntry;
+    scope: "step" | "item" | "every";
+  } | null {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return null;
+    const data = controller.testData;
+    data.version();
+    const key = controller.pinKey(target);
+    const found = failureOf(data.data(), key);
+    if (!found) return null;
+    const scope =
+      key === target ? "step" : found.key === target ? "every" : "item";
+    return { ...found, scope };
+  }
+  async removeFailure(key: string) {
+    const removed = await this.session().controller.setFailure(key, null);
+    this.problem.set(removed.ok ? "" : removed.message);
   }
   unpin() {
     this.problem.set("");

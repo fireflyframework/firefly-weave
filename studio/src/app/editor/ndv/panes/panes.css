@@ -629,6 +629,12 @@ weave-input-pane.is-compact .pane-source-field::before {
   margin-top: var(--space-1);
   color: var(--muted);
 }
+/* A simulated failure's code and outcome: the code as typed, never cut. */
+.failure-banner p.failure-banner-code {
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
 .pane-empty-actions {
   display: flex;
   flex-wrap: wrap;
