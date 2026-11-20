@@ -1637,7 +1637,7 @@ items, more than Up to allows (2). Raise Up to or shorten the list."
 **Go to item**. The steps inside show the chosen item's status, and step
 details open on the same item: their **Item** select and the chip always
 show one item. An item a
-cancelled run cut off reads **Stopped**, or **Timed out** when the run timed
+canceled run cut off reads **Stopped**, or **Timed out** when the run timed
 out, and the header says where the run stopped, such as "· canceled at item
 2." In step details, **What it
 received** is recomputed for the item shown from the run's own data, and
