@@ -28,6 +28,7 @@ import {
   type Step,
   type Workflow,
 } from "../src/app/model";
+import { referenceScope } from "../src/app/forms/core/scope";
 import { stringify } from "yaml";
 
 const transform = (id: string, ref = "/input"): Step => ({
@@ -221,6 +222,24 @@ describe("a step's error path in the workflow model", () => {
       ref: "/steps/submit-1/error/code",
     });
     expect(path.output).toEqual({ ref: "/steps/submit-1/error/message" });
+  });
+
+  it("offers the step's error to a step moved out of its path only as maybe missing, as the compiler warns", () => {
+    const model = opened(withErrorPath());
+    const errorOf = () =>
+      referenceScope(model.definition, "notify-team", "/value").entries.find(
+        (entry) => entry.ref === "/steps/submit/error",
+      );
+    // Inside the path submit has failed: its error is always there.
+    expect(errorOf()?.optional).toBe(false);
+    model.move("notify-team", "root", 3);
+    expect(pathIds(model)).toEqual(["flag-request"]);
+    // After submit it may have succeeded: the compiler warns that the
+    // read's presence is unproved (WV-COMP-REFERENCE_PRESENCE).
+    expect(errorOf()?.optional).toBe(true);
+    model.move("notify-team", "root", 0);
+    // Before submit there is no error to read at all.
+    expect(errorOf()).toBeUndefined();
   });
 
   it("connects the step to its error path and, when it succeeds, to the next step", () => {
