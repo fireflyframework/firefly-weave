@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import {
   PLATFORM_FAILURES,
   platformFailures,
-} from "../src/app/editor/ndv/panes/failure-codes";
+} from "../src/app/editor/state/failure-codes";
 import {
   codeProblem,
   codeSuggestions,

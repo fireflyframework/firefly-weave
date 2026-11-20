@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // contracts/step_errors.py) and the step kinds that may return each, as
 // scripts/language_fixtures.py writes them to the step-errors fixture; a
 // test holds this copy to it. Simulate a failure suggests a kind's codes
-// under "Platform failures". Loaded with step details, not the first page.
+// under "Platform failures". These are the platform's own words, shown as
+// it wrote them. Loaded with step details, not the first page.
 
 export interface PlatformFailure {
   code: string;

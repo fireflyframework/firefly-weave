@@ -23,7 +23,7 @@ import type { Step } from "../../../model";
 import { instanceStep } from "../../state/instance-keys";
 import { specOf } from "../kinds/shared";
 import type { Json } from "../registry";
-import { PLATFORM_FAILURES, platformFailures } from "./failure-codes";
+import { PLATFORM_FAILURES, platformFailures } from "../../state/failure-codes";
 
 /** Kinds that can fail on their own, whatever their On error says. */
 const ALWAYS = new Set(["action", "llm", "agent"]);
