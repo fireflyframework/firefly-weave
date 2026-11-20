@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // step's failure does.
 import { expect, test, type Page } from "@playwright/test";
 import { parse } from "yaml";
-import { openWorkflow } from "./canvas-po";
+import { openWorkflow, type CanvasPage } from "./canvas-po";
 import { yamlFile } from "./step-details-po";
 import { sourceText } from "./support";
 
@@ -95,12 +95,37 @@ test("tiles say what their failure does, in their names and under a step that co
   await expect(canvas.tile("lookup")).toContainText("Continues on error");
 });
 
+/** The names Tab reaches from submit, selected, until its error path's entry (at most 6). */
+async function tabToErrorPath(page: Page, canvas: CanvasPage) {
+  await canvas.tileBody("submit").click();
+  await canvas.closeInspector();
+  await canvas.tileBody("submit").focus();
+  const reached: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    const name = await page.evaluate(
+      () => document.activeElement?.getAttribute("aria-label") ?? "",
+    );
+    reached.push(name);
+    if (name === "Add a step to the error path of submit") break;
+  }
+  return reached;
+}
+
 test("the empty error path's slot adds a step to the path, by keyboard", async ({
   page,
 }) => {
   const canvas = await openWorkflow(page, GUARDED);
   const slot = canvas.insertTarget("Add a step to the error path of submit");
-  await slot.focus();
+  // Tab reaches the slot from its step: the step's commands, the "+" on
+  // its Success edge, then the slot below it.
+  expect(await tabToErrorPath(page, canvas)).toEqual([
+    "Delete submit",
+    "More commands for submit",
+    "Insert a step between submit and summarize",
+    "Add a step to the error path of submit",
+  ]);
+  await expect(slot).toBeFocused();
   await page.keyboard.press("Enter");
   await canvas.pick("Transform");
   await canvas.closeInspector();
@@ -215,19 +240,7 @@ test("the Error output is a keyboard stop that adds a step at the start of the e
   const tip = output.locator(".handle-tip");
   await expect(tip).toBeHidden();
   // Tab reaches it from its step, after the step's own commands.
-  await canvas.tileBody("submit").click();
-  await canvas.closeInspector();
-  await canvas.tileBody("submit").focus();
-  const reached: string[] = [];
-  for (let i = 0; i < 4; i++) {
-    await page.keyboard.press("Tab");
-    const name = await page.evaluate(
-      () => document.activeElement?.getAttribute("aria-label") ?? "",
-    );
-    reached.push(name);
-    if (name === "Add a step to the error path of submit") break;
-  }
-  expect(reached).toEqual([
+  expect(await tabToErrorPath(page, canvas)).toEqual([
     "Delete submit",
     "More commands for submit",
     "Add a step to the error path of submit",
