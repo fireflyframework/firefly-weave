@@ -20,10 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 // Studio sees" beside it or below the connect command, commands fully
 // visible (or scrolling on their own line on a phone) with Copy always in
 // view, 36 px controls with a fine pointer and 44 px on touch, and no
-// sideways page scroll. Each state is also saved under
-// test-results/connect-wizard/<size>/ for the design review.
+// sideways page scroll. Each state is also saved under connect-wizard/<size>/
+// in the run's output folder, for the design review.
 import { mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { box, boxes, density } from "./step-geometry";
 import {
@@ -35,6 +35,7 @@ import {
   observation,
   openClusters,
   openWizard,
+  openWizardAndLook,
   settled,
   status,
   type Backend,
@@ -53,7 +54,6 @@ const SIZES = [
     },
   },
 ];
-const folder = resolve("test-results/connect-wizard");
 
 /** The page never scrolls sideways, and every icon has a drawing. */
 async function expectSound(page: Page) {
@@ -76,6 +76,9 @@ const near = (actual: number, expected: number, what: string) =>
 async function shot(page: Page, tag: string, name: string) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.fonts.ready);
+  // The output folder is the run's own (STUDIO_TEST_OUTPUT), so runs on other
+  // ports never overwrite these pictures.
+  const folder = join(test.info().project.outputDir, "connect-wizard");
   const file = join(folder, tag, `${name}.png`);
   mkdirSync(dirname(file), { recursive: true });
   await page.screenshot({ path: file });
@@ -171,6 +174,39 @@ async function expectWholeNames(page: Page) {
   expect(broken, "names broken across lines").toEqual([]);
 }
 
+/**
+ * Punctuation right after a name stays on the name's line: a long name moves
+ * to the next line with its comma or period, never leaving it to start a line.
+ */
+async function expectPunctuationKept(page: Page) {
+  const loose = await page.locator(".connect").evaluate((root) => {
+    const found: string[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent ?? "";
+      const at = text.search(/\S/);
+      if (at < 0 || !/[.,…]/.test(text[at])) continue;
+      let before = node.previousSibling;
+      while (before && before.nodeType === Node.COMMENT_NODE)
+        before = before.previousSibling;
+      if (!(before instanceof Element)) continue;
+      const range = document.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + 1);
+      const mark = range.getClientRects()[0];
+      const rects = before.getClientRects();
+      const last = rects[rects.length - 1];
+      // Lines are 20 px: centres more than half a line apart are on
+      // different lines (mono and sans text start a few px apart on one).
+      const centre = (rect: DOMRect) => rect.top + rect.height / 2;
+      if (mark && last && Math.abs(centre(mark) - centre(last)) > 10)
+        found.push(`${before.textContent}${text[at]}`);
+    }
+    return found;
+  });
+  expect(loose, "punctuation that starts a line").toEqual([]);
+}
+
 /** Every control is 36 px with a fine pointer and 44 px on touch. */
 async function expectControls(page: Page) {
   const { touch } = await density(page);
@@ -229,13 +265,26 @@ for (const size of SIZES)
         touch ? 44 : 36,
         "Connect a cluster",
       );
-      near(
-        (await box(page.getByRole("button", { name: "Add target" }))).height,
-        touch ? 44 : 36,
-        "Add target",
-      );
+      const add = await box(page.getByRole("button", { name: "Add target" }));
+      near(add.height, touch ? 44 : 36, "Add target");
+      // Add target and the choices it opened keep apart.
+      expect(
+        (await box(page.locator("#add-target-choices"))).y - add.bottom,
+        "Add target to its choices",
+      ).toBeGreaterThanOrEqual(11.5);
+      // Other is a control too, and shows that it opens.
+      const other = page.locator("#add-target-choices summary");
+      near((await box(other)).height, touch ? 44 : 36, "Other");
+      const chevron = other.locator("weave-icon");
+      await expect(chevron).toHaveCount(1);
       await expectSound(page);
       await shot(page, size.tag, "01-chooser");
+      const turn = () => chevron.evaluate((e) => getComputedStyle(e).rotate);
+      expect(await turn(), "Other's chevron, closed").toBe("none");
+      await other.click();
+      await expect
+        .poll(turn, { message: "Other's chevron, open" })
+        .toBe("90deg");
     });
 
     test("the form as it opens, waiting", async ({ page }) => {
@@ -247,6 +296,17 @@ for (const size of SIZES)
       await expectCommand(page, command(page, "Connect"));
       await expectControls(page);
       await expectWholeNames(page);
+      await expectPunctuationKept(page);
+      // What each command changes avoids a one-word last line.
+      for (const paragraph of [".connect-says", ".connect-changes"])
+        expect(
+          await page
+            .locator(paragraph)
+            .evaluate((e) =>
+              getComputedStyle(e).getPropertyValue("text-wrap-style"),
+            ),
+          paragraph,
+        ).toBe("pretty");
       // Each command comes first, then what it changes, so the connect
       // command stays high on the page.
       expect(
@@ -282,6 +342,12 @@ for (const size of SIZES)
         (await box(copyButton(page, "connect"))).height,
         (await density(page)).touch ? 44 : 32,
         "Copied",
+      );
+      // Copied keeps Copy's box.
+      near(
+        (await box(copyButton(page, "connect"))).width,
+        (await box(copyButton(page, "create"))).width,
+        "Copied width",
       );
       await expectSound(page);
       await shot(page, size.tag, "03-copied");
@@ -391,8 +457,7 @@ for (const size of SIZES)
     test("patience over", async ({ page }) => {
       await page.clock.install();
       await openClusters(page);
-      await openWizard(page);
-      await settled(page);
+      await openWizardAndLook(page);
       await page.clock.fastForward(15 * 60_000);
       await expect(status(page).getByRole("status")).toContainText(
         "Not seen yet",
@@ -426,9 +491,15 @@ for (const size of SIZES)
       await settled(page);
       backend.unreachable = true;
       await page.getByRole("button", { name: "Refresh" }).click();
-      await expect(
-        page.getByRole("alert").filter({ hasText: "could not be loaded" }),
-      ).toBeVisible();
+      const problem = page
+        .getByRole("alert")
+        .filter({ hasText: "could not be loaded" });
+      await expect(problem).toBeVisible();
+      expect(
+        (await box(page.locator(".connect-wizard"))).y -
+          (await box(problem)).bottom,
+        "space between the error and the wizard",
+      ).toBeGreaterThanOrEqual(15.5);
       await expectSound(page);
       await shot(page, size.tag, "13-platform-unreachable");
     });
@@ -451,6 +522,7 @@ for (const size of SIZES)
         expect(lines, "connect command lines").toBeLessThanOrEqual(4 * 20 + 12);
       }
       await expectLayout(page);
+      await expectPunctuationKept(page);
       await expectSound(page);
       await shot(page, size.tag, "14-longest-names");
     });
