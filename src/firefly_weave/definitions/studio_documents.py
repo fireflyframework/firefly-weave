@@ -81,14 +81,14 @@ def compact_bytes(document: object) -> bytes:
 def run_data(document: JsonObject | StudioTestData) -> tuple[bool, list[UUID]]:
     """Whether a test-data document holds data recorded from runs, and the environments of those runs.
 
-    Read from the typed entries only (the test input, pins, signals, human answers, AI turns and called-workflow
-    mocks) and their provenance fields, never from inside the values they hold: a step may be called ``data`` or
-    ``output``, and a value may hold a field named ``runEnvironmentId``. A document that doesn't parse raises: run
-    data is never guessed.
+    Read from the typed entries only (the test input, pins, signals, human answers, AI turns, simulated failures and
+    called-workflow mocks) and their provenance fields, never from inside the values they hold: a step may be called
+    ``data`` or ``output``, and a value may hold a field named ``runEnvironmentId``. A document that doesn't parse
+    raises: run data is never guessed.
     """
     data = document if isinstance(document, StudioTestData) else parse_test_data(compact_bytes(document))
     entries: list[Any] = [data.input]
-    for section in (data.pins, data.signals, data.humans, data.ai_turns):
+    for section in (data.pins, data.signals, data.humans, data.ai_turns, data.errors):
         entries.extend((section or {}).values())
     for callee in (data.workflows or {}).values():
         entries.extend(callee.mocks.values())
