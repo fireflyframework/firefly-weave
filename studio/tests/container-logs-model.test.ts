@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   LogRunner,
   LogTarget,
@@ -23,6 +23,7 @@ import type {
 } from "../src/app/operate/logs/container-logs-api";
 import {
   defaultMembers,
+  delay,
   downloadName,
   failureNote,
   lineCount,
@@ -163,5 +164,29 @@ describe("a snapshot on screen", () => {
     expect(failureNote("unreadable", "local-docker", "weave-worker")).toBe(
       "The runner of local-docker couldn't read these logs. Try again in a moment.",
     );
+  });
+});
+
+describe("waiting for a snapshot", () => {
+  it("ends at once when cancelled, so nothing awaiting it hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const waits = [delay(1_000), delay(1_000)];
+      const ended = [false, false];
+      waits.forEach((wait, index) =>
+        wait.done.then(() => (ended[index] = true)),
+      );
+      waits[0].cancel();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ended).toEqual([true, false]);
+      // The cancelled wait left no timer behind; the other ends on time.
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(ended[1]).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ended[1]).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

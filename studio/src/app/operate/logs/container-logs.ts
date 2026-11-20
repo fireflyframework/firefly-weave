@@ -32,6 +32,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { ApiError } from "../../api";
 import type { App } from "../../app";
 import { describeError, type PlainError } from "../../errors";
 import { Icon } from "../../icon";
@@ -57,8 +58,10 @@ import {
   DEFAULT_TAIL,
   EXPIRED_NOTE,
   MAX_MEMBERS,
+  RUNNER_REFRESH_MS,
   WAIT_MS,
   defaultMembers,
+  delay,
   downloadName,
   failureNote,
   fetchingNote,
@@ -395,10 +398,19 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   readonly busy = signal(false);
   /** Follow: a new snapshot every 10 s while the page is visible. */
   readonly follower = new Poller(() => this.followFetch(), CONTAINER_FOLLOW_MS);
+  /**
+   * The target's runners, read again every 30 s while the tab shows and after
+   * each fetch: a runner is in touch for 90 s after its last contact, so a
+   * list read once would turn it offline while it still answers.
+   */
+  readonly runnerWatch = new Poller(
+    () => this.readRunners(),
+    RUNNER_REFRESH_MS,
+  );
   private scopeKey = "";
   /** Bumped by every change of what is shown, so a late answer is dropped. */
   private generation = 0;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private wait: { cancel(): void } | null = null;
   private copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly target = computed(
@@ -449,6 +461,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   private forget() {
     this.generation++;
     this.follower.stop();
+    this.runnerWatch.stop();
     this.following.set(false);
     this.clearWait();
     this.load.set("loading");
@@ -461,8 +474,9 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     this.copied.set("");
   }
   private clearWait() {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
+    // Ending the wait lets the fetch awaiting it see that it no longer applies.
+    this.wait?.cancel();
+    this.wait = null;
     if (this.copiedTimer) clearTimeout(this.copiedTimer);
     this.copiedTimer = null;
   }
@@ -505,6 +519,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
       this.load.set("ready");
       this.loadError.set(null);
       this.updatedAt.set(Date.now());
+      this.runnerWatch.start(false);
     } catch (error) {
       if (!current()) return;
       const plain = describeError(error);
@@ -534,6 +549,23 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     if (fresh || !keep) {
       this.componentName.set(components[0]?.name ?? "");
       this.members.set(defaultMembers(components[0] ?? null));
+    }
+  }
+  /** The chosen target's runners again; false when there is nothing to read. */
+  private async readRunners(): Promise<boolean> {
+    const api = this.api();
+    const targetId = this.targetId();
+    if (!api || !targetId) return false;
+    const scope = this.scopeKey;
+    try {
+      const runners = await listRunners(api, targetId);
+      // Fetches don't change the runners, so only another target or scope drops the answer.
+      if (scope !== this.scopeKey || targetId !== this.targetId()) return false;
+      this.runners.set(runners);
+      return true;
+    } catch (error) {
+      if (scope === this.scopeKey) this.signInGone(error);
+      throw error;
     }
   }
   chooseTarget(id: string) {
@@ -602,6 +634,8 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     this.following.set(false);
   }
   private async followFetch(): Promise<boolean> {
+    // Back to every 10 s after a wait the platform asked for.
+    this.follower.setInterval(CONTAINER_FOLLOW_MS);
     if (!this.fetchable()) {
       this.stopFollowing();
       return false;
@@ -641,19 +675,30 @@ export class ContainerLogs implements DoCheck, OnDestroy {
         snapshot.state === "pending" &&
         Date.now() < deadline
       ) {
-        await new Promise<void>((resolve) => {
-          this.timer = setTimeout(resolve, WAIT_MS);
-        });
+        const wait = delay(WAIT_MS);
+        this.wait = wait;
+        await wait.done;
         if (!current()) return "dropped";
         snapshot = await readLogRequestById(api, snapshot.id);
       }
       if (!current()) return "dropped";
       this.view.set(snapshot);
+      // The runner answered, so it is in touch: what the page says about it is read again.
+      void this.runnerWatch.refresh();
       return "applied";
     } catch (error) {
       if (!current()) return "dropped";
       const plain = describeError(error);
       this.fetchError.set(plain);
+      // Follow asks again no sooner than the platform said it may.
+      if (
+        plain.status === 429 &&
+        error instanceof ApiError &&
+        error.retryAfter !== undefined
+      )
+        this.follower.setInterval(
+          Math.max(CONTAINER_FOLLOW_MS, error.retryAfter * 1000),
+        );
       // The runner's state may have changed: what the page says about it is read again.
       if (
         plain.code === "WV-RUNNER-OFFLINE" ||

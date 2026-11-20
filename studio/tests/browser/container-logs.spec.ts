@@ -157,7 +157,9 @@ interface Platform {
   /** What a read of the request answers, in turn; the last repeats. */
   reads: unknown[];
   /** The create's own answer: a pending snapshot, or a problem. */
-  created: { status: number; json: unknown };
+  created: { status: number; json: unknown; headers?: Record<string, string> };
+  /** How many times the target's runners were read. */
+  runnerReads: number;
 }
 async function platform(
   page: Page,
@@ -166,11 +168,14 @@ async function platform(
     lastSeen = "2026-11-19T10:54:00Z",
     targetCapabilities = ["observe", "read_logs"],
     members = [FIRST, SECOND],
+    inTouch = false,
   }: {
     capabilities?: string[];
     lastSeen?: string | null;
     targetCapabilities?: string[];
     members?: string[];
+    /** The runner stays in touch: each read says it was last seen 2 s before the page's clock. */
+    inTouch?: boolean;
   } = {},
 ): Promise<Platform> {
   await page.clock.install({ time: new Date(NOW) });
@@ -182,6 +187,7 @@ async function platform(
     keys: [],
     reads: [snapshot("ready")],
     created: { status: 201, json: snapshot("pending") },
+    runnerReads: 0,
   };
   await page.route("**/deployment-targets?**", (route) =>
     route.fulfill({
@@ -194,11 +200,15 @@ async function platform(
       },
     }),
   );
-  await page.route("**/deployment-runners?**", (route) =>
-    route.fulfill({
-      json: { items: lastSeen ? [runner(lastSeen)] : [], next_cursor: null },
-    }),
-  );
+  await page.route("**/deployment-runners?**", async (route) => {
+    result.runnerReads++;
+    const seen = inTouch
+      ? new Date((await page.evaluate(() => Date.now())) - 2_000).toISOString()
+      : lastSeen;
+    return route.fulfill({
+      json: { items: seen ? [runner(seen)] : [], next_cursor: null },
+    });
+  });
   await page.route("**/deployment-observations?**", (route) =>
     route.fulfill({
       json: { items: [observation(members)], next_cursor: null },
@@ -420,6 +430,54 @@ test.describe("Operate › Logs › Container logs", () => {
     await page.getByRole("switch", { name: "Follow" }).uncheck();
     await page.clock.runFor(30_000);
     expect(logs.creates).toHaveLength(2);
+  });
+
+  test("Follow keeps asking past 2 minutes while the runner stays in touch", async ({
+    page,
+  }) => {
+    const logs = await platform(page, { inTouch: true });
+    logs.created = { status: 201, json: snapshot("ready") };
+    await openContainers(page);
+    await page.getByRole("switch", { name: "Follow" }).check();
+    // 15 snapshots, one every 10 seconds: 2 min 20 s, longer than a runner's 90 s in touch.
+    for (let asked = 1; asked <= 15; asked++) {
+      await expect.poll(() => logs.creates.length).toBe(asked);
+      await page.clock.runFor(10_000);
+    }
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeChecked();
+    await expect(page.locator(".container-logs .notice")).toHaveCount(0);
+    await expect(fetchButton(page)).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(logs.runnerReads).toBeGreaterThan(1);
+  });
+
+  test("Follow waits as long as the platform's Retry-After before asking again", async ({
+    page,
+  }) => {
+    const logs = await platform(page);
+    logs.created = {
+      status: 429,
+      headers: { "Retry-After": "30" },
+      json: {
+        code: "WV-LOG-RATE",
+        message:
+          "This target takes at most 10 log requests a minute; try again shortly",
+      },
+    };
+    await openContainers(page);
+    await page.getByRole("switch", { name: "Follow" }).check();
+    await expect.poll(() => logs.creates.length).toBe(1);
+    await page.clock.runFor(25_000);
+    // Anything those 25 seconds sent has reached the platform by now.
+    await page.waitForLoadState("networkidle");
+    expect(logs.creates).toHaveLength(1);
+    logs.created = { status: 201, json: snapshot("ready") };
+    await page.clock.runFor(6_000);
+    await expect.poll(() => logs.creates.length).toBe(2);
+    await expect(member(page, FIRST)).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeChecked();
   });
 
   test("at most five members are asked for, and none means every running member", async ({

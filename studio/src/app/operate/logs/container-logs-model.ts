@@ -41,6 +41,28 @@ export const MAX_MEMBERS = 5;
 export const CONTAINER_FOLLOW_MS = 10_000;
 /** A pending snapshot is asked about this often until the runner answers. */
 export const WAIT_MS = 1_000;
+/** The target's runners are read again this often while the tab shows: they are in touch for 90 s at a time. */
+export const RUNNER_REFRESH_MS = 30_000;
+
+/** A wait that `cancel` ends at once, so whatever awaits it goes on instead of hanging. */
+export function delay(milliseconds: number): {
+  done: Promise<void>;
+  cancel(): void;
+} {
+  let end = () => {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<void>((resolve) => {
+    end = resolve;
+    timer = setTimeout(resolve, milliseconds);
+  });
+  return {
+    done,
+    cancel() {
+      clearTimeout(timer);
+      end();
+    },
+  };
+}
 
 export type RunnerStatus =
   | { kind: "online" }
