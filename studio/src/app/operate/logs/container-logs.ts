@@ -637,11 +637,14 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   private async followFetch(): Promise<boolean> {
     // Back to every 10 s after a wait the platform asked for.
     this.follower.setInterval(CONTAINER_FOLLOW_MS);
-    if (!this.fetchable()) {
-      this.stopFollowing();
-      return false;
-    }
     if (this.fetching()) return false;
+    // What the page read of the runner may be older than its 90 s in touch (a
+    // hidden page reads nothing): it is read again before this tick decides.
+    if (this.status()?.kind === "offline")
+      await this.readRunners().catch(() => false);
+    // Only the person, a 403 or the platform's own WV-RUNNER-OFFLINE turns
+    // Follow off; until a snapshot can be asked for, its ticks pass by.
+    if (!this.following() || !this.fetchable() || this.fetching()) return false;
     return (await this.fetch()) === "applied";
   }
   /** Asks the runner for a snapshot, then waits for it; the answer applies only to what was asked. */

@@ -237,6 +237,15 @@ const fetchButton = (page: Page) =>
     .locator(".fetchbar")
     .getByRole("button", { name: /Fetch logs|Fetching/ });
 const member = (page: Page, name: string) => page.getByRole("region", { name });
+/** Hides or shows the page, as switching browser tabs does. */
+const shown = (page: Page, visible: boolean) =>
+  page.evaluate((visible) => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => (visible ? "visible" : "hidden"),
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visible);
 /** 5 seconds after the page's own (installed) clock: an expiry the test then runs past. */
 const soon = async (page: Page) =>
   new Date((await page.evaluate(() => Date.now())) + 5_000).toISOString();
@@ -469,6 +478,27 @@ test.describe("Operate › Logs › Container logs", () => {
       "true",
     );
     expect(logs.runnerReads).toBeGreaterThan(1);
+  });
+
+  test("Follow keeps going after the page was hidden for 2 minutes", async ({
+    page,
+  }) => {
+    const logs = await platform(page, { inTouch: true });
+    logs.created = { status: 201, json: snapshot("ready") };
+    await openContainers(page);
+    await page.getByRole("switch", { name: "Follow" }).check();
+    await expect.poll(() => logs.creates.length).toBe(1);
+    // Hidden longer than a runner's 90 s in touch: what the page read of it is out of date.
+    await shown(page, false);
+    await page.clock.runFor(120_000);
+    await page.waitForLoadState("networkidle");
+    expect(logs.creates).toHaveLength(1);
+    await shown(page, true);
+    await expect.poll(() => logs.creates.length).toBe(2);
+    await page.clock.runFor(10_000);
+    await expect.poll(() => logs.creates.length).toBe(3);
+    await expect(page.getByRole("switch", { name: "Follow" })).toBeChecked();
+    await expect(page.locator(".container-logs .notice")).toHaveCount(0);
   });
 
   test("Follow waits as long as the platform's Retry-After before asking again", async ({
