@@ -435,58 +435,11 @@ SPDX-License-Identifier: Apache-2.0
               </p>
             }
           </section>
-        } @else if (view === "overview") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-overview-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "runs") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-runs-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "incidents") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-incidents-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "workers") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-workers-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "clusters") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-clusters-page #clustersPage [host]="this" />
-            }
-          </section>
-        } @else if (view === "metrics") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-metrics-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "logs") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-logs-page [host]="this" />
-            }
-          </section>
-        } @else if (view === "settings") {
-          <section class="page-content">
-            @defer (on immediate) {
-              <weave-settings-page [host]="this" />
-            }
-          </section>
         } @else {
+          <!-- Each page loads the first time it opens, outside the first page. -->
           <section class="page-content">
-            @defer (on immediate) {
-              <weave-records-view [host]="this" />
+            @if (pageFor(view); as page) {
+              <ng-container [weavePage]="page" [weavePageHost]="this" />
             }
           </section>
         }

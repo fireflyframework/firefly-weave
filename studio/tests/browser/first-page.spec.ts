@@ -147,6 +147,33 @@ test("the Runs tab's code stays out of the first page", () => {
   expect(first).not.toContain(holding[0]);
 });
 
+test("the Operate pages, Settings and the record lists load outside the first page", () => {
+  // The shell shows them through one outlet: the first page names none of
+  // them, neither their code nor a deferred block for each.
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  const pages = [
+    "overview-page",
+    "runs-page",
+    "incidents-page",
+    "workers-page",
+    "clusters-page",
+    "metrics-page",
+    "logs-page",
+    "settings-page",
+    "records-view",
+  ].map((name) => `weave-${name}`);
+  const named = first.flatMap((file) => {
+    const code = readFileSync(join(BUILD, file), "utf8");
+    return pages
+      .filter((page) => code.includes(page))
+      .map((page) => `${file}: ${page}`);
+  });
+  expect(named).toEqual([]);
+});
+
 /** The Runs tab's list chunk, at most (gzip). */
 const RUNS_BUDGET = 40_960;
 
