@@ -112,12 +112,11 @@ export class Iterations {
   picks(stepId: string): LoopPick[] {
     this.version();
     this.sync();
+    const loops = enclosingLoops(this.host.definition(), stepId).reverse();
+    if (!loops.length) return [];
     this.readProgress();
     const picks: LoopPick[] = [];
-    for (const loopId of enclosingLoops(
-      this.host.definition(),
-      stepId,
-    ).reverse()) {
+    for (const loopId of loops) {
       const chosen = this.chosen.get(loopId)?.value ?? 0;
       const { count, known } = this.countUnder(loopId, picks);
       picks.push({
@@ -183,6 +182,9 @@ export class Iterations {
 
   /** How many items the loop has for the picks around it. */
   counts(loopId: string): LoopCount {
+    this.version();
+    this.sync();
+    this.readProgress();
     return this.countUnder(loopId, this.picks(loopId));
   }
 
