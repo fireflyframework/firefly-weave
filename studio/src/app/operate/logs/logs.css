@@ -301,3 +301,232 @@ code {
 .logs-footer button {
   min-height: var(--target);
 }
+
+/* ------------------------------------------------------------------- tabs */
+/* Run logs and Container logs; on a phone each fills half the strip. */
+.logs-tabs button {
+  min-height: var(--target);
+}
+@media (max-width: 767px) {
+  .logs-tabs button {
+    flex: 1 1 0;
+    min-height: var(--control-touch);
+  }
+}
+
+/* --------------------------------------------------------- container logs */
+/* One column as wide as the page, never as wide as its longest member name. */
+.container-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--group-gap);
+  margin-bottom: var(--group-gap);
+}
+.container-form > * {
+  min-width: 0;
+}
+.container-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(184px, 100%), 1fr));
+  gap: var(--group-gap) var(--space-4);
+  max-width: 800px;
+}
+.container-fields .field {
+  margin: 0;
+  min-width: 0;
+}
+.container-fields :is(select, input) {
+  width: 100%;
+  min-height: var(--target);
+}
+.container-fields input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+/* "per member" sits inside the field's right edge, as the unit of its number. */
+.suffixed {
+  position: relative;
+  display: block;
+}
+.suffixed input {
+  padding-right: 96px;
+}
+.suffix {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  font: var(--type-small);
+  color: var(--muted);
+  pointer-events: none;
+}
+.members-label {
+  margin: 0 0 var(--space-2);
+  font: var(--type-small);
+  font-weight: 600;
+  color: var(--text);
+}
+.members-label .hint {
+  margin-left: var(--space-2);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 2px 0 var(--space-3);
+  border: thin solid var(--border);
+  border-radius: var(--radius-pill);
+  font: var(--type-small);
+  color: var(--text);
+}
+.chip-text {
+  overflow-wrap: anywhere;
+}
+.chip-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+}
+.chip-remove:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.add-member {
+  min-height: var(--target);
+  max-width: 100%;
+}
+.fetchbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+.fetchbar button {
+  min-height: var(--target);
+}
+.fetchbar .checkbox-field {
+  min-height: var(--target);
+  font: var(--type-small);
+  color: var(--text);
+}
+.fetchbar .hint {
+  flex: 1 1 20em;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+.snapshot-note {
+  margin-bottom: var(--group-gap);
+}
+:host(.container-logs) :is(.logs-notice, .logs-access, .logs-empty) {
+  margin-bottom: var(--group-gap);
+}
+
+/* One box per member: its name, line count, Copy and Download, then its lines
+   on the sunken surface. A line wraps inside its box and never scrolls the
+   page sideways. */
+.member {
+  margin-bottom: var(--group-gap);
+  border: thin solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.member-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: thin solid var(--line);
+}
+.member-head h3 {
+  margin: 0;
+  font: var(--type-small);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.member-head .count {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.member-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.member-actions button {
+  min-height: var(--control-sm);
+}
+.member-lines {
+  container: lines / inline-size;
+  padding: var(--space-2) 0;
+  background: var(--sunken);
+}
+.member-empty {
+  padding: var(--space-3) var(--space-4);
+  background: var(--sunken);
+}
+.line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 var(--space-3);
+  padding: 2px var(--space-4);
+  font: var(--type-mono);
+  line-height: 20px;
+}
+.line .t {
+  color: var(--subtle);
+}
+.line .stream {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.line .stream[data-stream="stderr"] {
+  color: var(--danger-ink);
+}
+.line .text {
+  grid-column: 1 / -1;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+@container lines (min-width: 560px) {
+  .line {
+    grid-template-columns: 80px 64px minmax(0, 1fr);
+  }
+  .line .text {
+    grid-column: auto;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .member-actions {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .member-actions button {
+    min-height: var(--control-touch);
+  }
+  .chip {
+    min-height: var(--control-touch);
+  }
+  .chip-remove {
+    width: var(--control-touch);
+    height: var(--control-touch);
+  }
+}
