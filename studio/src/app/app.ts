@@ -715,6 +715,8 @@ export class App implements CanvasHost {
   startError: { message: string; code: string } | null = null;
   /** The latest "When Studio opens" choice; only its outcome is shown. */
   private startSequence = 0;
+  /** That choice while it is being saved; null once its save has ended. */
+  private startChoice: StartPreference | null = null;
   /** Saves run one after another, so the host keeps the last choice. */
   private startQueue: Promise<unknown> = Promise.resolve();
   model = new StructuredCanvasAdapter();
@@ -9724,8 +9726,13 @@ export class App implements CanvasHost {
       status.preferences?.start !== "local"
     );
   }
-  /** The host's start preference; "ask" when an older host keeps none. */
+  /**
+   * The start preference the radios show: the person's latest choice while it
+   * is being saved, so the host's answer to an earlier save never checks the
+   * radio they left; otherwise the host's, "ask" when an older host keeps none.
+   */
   get startPreference(): StartPreference {
+    if (this.startChoice) return this.startChoice;
     return this.connectionStatus?.preferences?.start === "local"
       ? "local"
       : "ask";
@@ -9749,6 +9756,7 @@ export class App implements CanvasHost {
    */
   async chooseStartPreference(start: StartPreference) {
     const sequence = ++this.startSequence;
+    this.startChoice = start;
     this.startNote = "";
     this.startError = null;
     this.cdr.markForCheck();
@@ -9756,9 +9764,12 @@ export class App implements CanvasHost {
     this.startQueue = saving.catch(() => undefined);
     try {
       await saving;
-      if (sequence === this.startSequence) this.startNote = "Saved.";
+      if (sequence !== this.startSequence) return;
+      this.startChoice = null;
+      this.startNote = "Saved.";
     } catch (e) {
       if (sequence !== this.startSequence) return;
+      this.startChoice = null;
       const plain = describeError(e);
       if (plain.code === "WV-STUDIO-SESSION" && !this.paired) return;
       this.startError = {
