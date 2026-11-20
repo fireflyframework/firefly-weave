@@ -169,6 +169,9 @@ class DebugState(ContractModel):
     # prefixed with the frame key inside called workflows. Omitted when empty, so stored sessions keep their bytes.
     inputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
     outputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # The error object of each failure a step's onError setting handled, keyed like ``outputs``; a failure that stops
+    # the run is not one. Omitted when none, so stored sessions keep their bytes.
+    failures: dict[str, JsonObjectData] = Field(default_factory=dict, exclude_if=lambda v: not v)
     # Steps and phases whose result never arrives in this session, keyed like mocks and sorted. Named apart from
     # ``pending``, the queue of events; omitted when none, so stored sessions keep their bytes.
     pending_keys: list[str] = Field(default_factory=list, max_length=MAX_PENDING_KEYS, exclude_if=lambda v: not v)

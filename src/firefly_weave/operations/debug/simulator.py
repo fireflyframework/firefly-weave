@@ -886,6 +886,10 @@ class Simulator:
             self._grown(change.output)
             if change.status == "completed":
                 d.outputs[_path(key, change.node_id)] = change.output
+            elif change.error is not None:
+                # Only a failure the step's setting handled is a step change; the run goes on after it.
+                self._grown(change.error)
+                d.failures[_path(key, change.node_id)] = change.error
         d.boundaries.append(boundary)
         if run.cursor.done:
             result = run.cursor.result
