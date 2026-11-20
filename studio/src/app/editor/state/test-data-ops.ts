@@ -26,6 +26,7 @@ import {
   TEST_DATA_MAX_BYTES,
   type AiTurnsEntry,
   type DataSource,
+  type ErrorEntry,
   type HumanEntry,
   type PinEntry,
   type Provenance,
@@ -35,8 +36,14 @@ import {
 
 export const TEST_DATA_TOO_LARGE =
   "Test data is limited to 1 MB. Unpin some output to make room.";
-type Keyed = "pins" | "signals" | "humans" | "aiTurns";
-const KEYED: readonly Keyed[] = ["pins", "signals", "humans", "aiTurns"];
+type Keyed = "pins" | "signals" | "humans" | "aiTurns" | "errors";
+const KEYED: readonly Keyed[] = [
+  "pins",
+  "signals",
+  "humans",
+  "aiTurns",
+  "errors",
+];
 
 export function emptyTestData(now: string): StudioTestData {
   return { schemaVersion: 1, kind: "weave.studio/testData", updatedAt: now };
@@ -118,6 +125,31 @@ export function withScript(
     ),
     now,
   );
+}
+/** The simulated failure for one item: its own key first, then its step's. */
+export function failureOf(
+  data: StudioTestData,
+  key: string,
+): { key: string; entry: ErrorEntry } | null {
+  const errors = data.errors ?? {};
+  for (const candidate of [key, instanceStep(key)])
+    if (Object.hasOwn(errors, candidate))
+      return { key: candidate, entry: errors[candidate] };
+  return null;
+}
+/** Sets (or, with null, removes) the simulated failure at `key`; every other section stays. */
+export function withFailure(
+  data: StudioTestData,
+  key: string,
+  entry: ErrorEntry | null,
+  now: string,
+): StudioTestData {
+  const errors = { ...(data.errors ?? {}) };
+  if (entry === null) {
+    if (!Object.hasOwn(errors, key)) return data;
+    delete errors[key];
+  } else errors[key] = entry;
+  return stamped(withSection(data, "errors", errors), now);
 }
 export function withoutPin(
   data: StudioTestData,

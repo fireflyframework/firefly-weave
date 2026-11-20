@@ -250,6 +250,31 @@ function aiTurns(value: unknown) {
   provenance(item);
 }
 
+/** A simulated failure: a code the step could return, never a message (contracts ErrorEntry). */
+const ERROR_CODE = /^[A-Z][A-Z0-9_.-]*$/;
+const OUTCOMES = new Set(["not_started", "failed", "unknown"]);
+const ERROR_SOURCES = new Set(["manual", "run"]);
+function failure(value: unknown) {
+  const item = fields(
+    value,
+    ["code"],
+    ["outcome", "attempts", "source", ...RUN],
+  );
+  check(text(item["code"], ERROR_CODE, 128));
+  if (present(item, "outcome")) check(OUTCOMES.has(item["outcome"] as string));
+  if (present(item, "attempts")) {
+    const attempts = item["attempts"];
+    check(
+      typeof attempts === "number" &&
+        Number.isInteger(attempts) &&
+        attempts >= 0 &&
+        attempts <= 1000,
+    );
+  }
+  sourceOf(item, ERROR_SOURCES, false);
+  provenance(item);
+}
+
 /** Deepest level the platform's JSON parser reads, the document being level 0. */
 const MAX_DEPTH = 200;
 /** Whether text holds a lone surrogate (which UTF-8 can't encode). */
@@ -293,7 +318,16 @@ export function readTestData(value: unknown): TestDataReading {
     const top = fields(
       value,
       ["schemaVersion", "kind", "updatedAt"],
-      ["input", "pins", "signals", "humans", "aiTurns", "workflows", "waits"],
+      [
+        "input",
+        "pins",
+        "signals",
+        "humans",
+        "aiTurns",
+        "workflows",
+        "waits",
+        "errors",
+      ],
     );
     check(top["schemaVersion"] === 1);
     check(top["kind"] === "weave.studio/testData");
@@ -303,6 +337,7 @@ export function readTestData(value: unknown): TestDataReading {
     if (present(top, "signals")) keyed(top["signals"], 1000, signal);
     if (present(top, "humans")) keyed(top["humans"], 1000, human);
     if (present(top, "aiTurns")) keyed(top["aiTurns"], 1000, aiTurns);
+    if (present(top, "errors")) keyed(top["errors"], 1000, failure);
     if (present(top, "workflows"))
       keyed(
         top["workflows"],
