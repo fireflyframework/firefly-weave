@@ -41,6 +41,14 @@ test.skip(!hasPython, "Create the Python development environment first.");
 const runLog = (page: Page) => page.getByRole("region", { name: "Run log" });
 const executeInBar = (page: Page) =>
   page.locator(".editor-bar").getByRole("button", { name: "Execute workflow" });
+/** The host's answer to the next step-through command of `kind`; arm it just before the action. */
+const sessionCommand = (page: Page, kind: string) =>
+  page.waitForResponse(
+    (response) =>
+      /\/studio\/local\/debug\/sessions\/[^/]+\/commands$/.test(
+        new URL(response.url()).pathname,
+      ) && response.request().postDataJSON()?.kind === kind,
+  );
 
 for (const size of sizes)
   test.describe(`executing end to end at ${size.tag}`, () => {
@@ -184,11 +192,23 @@ test.describe("every way to execute on one workflow", () => {
     await details.close();
     // 6. A breakpoint: Execute workflow pauses before rows; Continue finishes.
     await breakAt(page, new CanvasPage(page).tileBody("rows"));
+    await expect(
+      page.locator(".toast", {
+        hasText: "Execute workflow pauses before rows.",
+      }),
+    ).toBeVisible();
+    // The run log shows the last run until the host has answered: starting a
+    // session takes several requests, longer than an expectation waits on a
+    // busy machine, so each check waits for the host's answer first.
+    let answered = sessionCommand(page, "continue");
     await executeInBar(page).click();
+    await answered;
     await expect(log.locator(".run-log-status")).toHaveText(
       "Paused before rows",
     );
+    answered = sessionCommand(page, "continue");
     await log.getByRole("button", { name: "Continue", exact: true }).click();
+    await answered;
     await expect(log.locator(".run-log-status")).toHaveText(/^Completed/);
     expect(executions(calls).length).toBeGreaterThanOrEqual(5);
   });
