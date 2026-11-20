@@ -73,14 +73,14 @@ const submitOf = (model: StructuredCanvasAdapter) =>
   model.definition.spec.steps.find((step) => step.id === "submit")!;
 
 describe("a step's error path in the workflow model", () => {
-  it("is named Error path of its step", () => {
+  it("is named On error of its step, as Outline lists it", () => {
     const model = opened(withErrorPath());
     const steps = new Map(
       model.nodes().map((node) => [node.step.id, node.step]),
     );
-    expect(ownerLabel("submit/errorPath", steps)).toBe("Error path of submit");
-    expect(ownerLabel("submit/errorPath")).toBe("Error path of submit");
-    expect(branchTitle(submitOf(model), "errorPath")).toBe("Error path");
+    expect(ownerLabel("submit/errorPath", steps)).toBe("On error of submit");
+    expect(ownerLabel("submit/errorPath")).toBe("On error of submit");
+    expect(branchTitle(submitOf(model), "errorPath")).toBe("On error");
   });
 
   it("refuses a step ID the error path repeats", () => {

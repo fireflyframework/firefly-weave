@@ -59,6 +59,8 @@ function laneLabel(owner: Step, block: StepBlock, workflow: Workflow): string {
       : `Path ${conditionSummary(when, workflow)}`;
   }
   if (block.kind === "branch") return `Branch ${block.name}`;
+  // The breadcrumb says where a step runs: "Error path of submit".
+  if (block.kind === "errorPath") return "Error path";
   return branchTitle(owner, block.name);
 }
 

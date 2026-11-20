@@ -266,11 +266,12 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
 }
 /**
  * Plain name of a branch: "Case 1", "Otherwise", a loop's "For each item",
- * a step's "Error path", or a parallel branch's own name.
+ * a step's error path "On error" (as Outline lists it), or a parallel
+ * branch's own name.
  */
 export function branchTitle(step: Step, name: string) {
   if (blocksOf(step).some((b) => b.name === name && b.kind === "errorPath"))
-    return "Error path";
+    return "On error";
   if (step.kind === "switch")
     return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
   if (step.kind === "forEach") return "For each item";
@@ -278,7 +279,7 @@ export function branchTitle(step: Step, name: string) {
 }
 /**
  * Where a step sits, in words: "Main sequence", "Case 1 of route",
- * "Otherwise of route", "For each item of orders", "Error path of submit"
+ * "Otherwise of route", "For each item of orders", "On error of submit"
  * or "first of fulfil".
  */
 export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
