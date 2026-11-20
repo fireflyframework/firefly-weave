@@ -745,3 +745,21 @@ for (const size of sizes)
       await expect(pane.locator(".pane-usage")).toHaveText(usage);
     });
   });
+
+test.describe("the cost question on a phone", () => {
+  test.use({ viewport: { width: 360, height: 740 } });
+
+  test("keeps the connection's name on one line", async ({ page }) => {
+    const { details } = await inProduction(page, cloud);
+    await (await executeIn(details, "Production")).click();
+    const question = page.getByRole("alertdialog", {
+      name: "Execute summarize in Production?",
+    });
+    await expect(question).toContainText(
+      "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.",
+    );
+    // "(openai-prod)" is one line box: it never breaks at its hyphen.
+    const name = question.getByText("(openai-prod)", { exact: true });
+    expect(await name.evaluate((e) => e.getClientRects().length)).toBe(1);
+  });
+});
