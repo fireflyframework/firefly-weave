@@ -30,6 +30,8 @@ import {
 import {
   SIGNAL_WORDS,
   alertLine,
+  alertsPath,
+  alertsTab,
   conditionText,
   emptyRuleForm,
   formFromRule,
@@ -380,5 +382,18 @@ describe("names in sentences", () => {
     expect(nameParts("No names here", [""])).toEqual([
       { text: "No names here", name: false },
     ]);
+  });
+});
+
+describe("the tab in the address", () => {
+  it("opens Firing and recent by default and keeps the chosen tab", () => {
+    expect(alertsTab("")).toBe("firing");
+    expect(alertsTab("?tab=firing")).toBe("firing");
+    expect(alertsTab("?tab=rules")).toBe("rules");
+    expect(alertsTab("?tab=channels")).toBe("channels");
+    expect(alertsTab("?tab=settings")).toBe("firing");
+    expect(alertsPath("firing")).toBe("/operate/alerts");
+    expect(alertsPath("rules")).toBe("/operate/alerts?tab=rules");
+    expect(alertsPath("channels")).toBe("/operate/alerts?tab=channels");
   });
 });

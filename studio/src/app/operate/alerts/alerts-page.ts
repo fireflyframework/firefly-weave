@@ -43,12 +43,6 @@ import { absoluteTime, shortId } from "../../format";
 import { Icon } from "../../icon";
 import { platformConnections } from "../../editor/connections/connections-api";
 import { environmentOf, scopeKeyOf } from "../operate-list";
-import {
-  alertsPath,
-  alertsTab,
-  alertsTabs,
-  type AlertsTab,
-} from "../operate-routes";
 import { RefreshStatus } from "../refresh-status";
 import {
   listProjectMembers,
@@ -64,6 +58,9 @@ import { AlertChannelForm, type MailConnection } from "./alert-channel-form";
 import { AlertRuleEditor } from "./alert-rule-editor";
 import {
   alertLine,
+  alertsPath,
+  alertsTab,
+  alertsTabs,
   conditionText,
   nameParts,
   notificationTone,
@@ -74,6 +71,7 @@ import {
   spanText,
   startedText,
   stateLine,
+  type AlertsTab,
   type StateLine,
 } from "./alerts-model";
 import { AlertsStore } from "./alerts-store";

@@ -663,3 +663,24 @@ export function nameParts(
   }
   return parts;
 }
+
+// ------------------------------------------------------------------ the address
+
+// The tab lives here, not with the shell's routes, so the first page doesn't
+// carry it.
+/** The Alerts tabs, in order; Firing and recent is the default. */
+export const alertsTabs = ["firing", "rules", "channels"] as const;
+export type AlertsTab = (typeof alertsTabs)[number];
+
+/** Reads "/operate/alerts?tab=rules"; anything unknown opens Firing and recent. */
+export function alertsTab(search: string): AlertsTab {
+  const tab = new URLSearchParams(search).get("tab") ?? "";
+  return (alertsTabs as readonly string[]).includes(tab)
+    ? (tab as AlertsTab)
+    : "firing";
+}
+
+/** "/operate/alerts", or "/operate/alerts?tab=channels". */
+export function alertsPath(tab: AlertsTab): string {
+  return tab === "firing" ? "/operate/alerts" : `/operate/alerts?tab=${tab}`;
+}
