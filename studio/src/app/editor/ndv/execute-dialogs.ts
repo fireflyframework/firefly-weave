@@ -118,6 +118,10 @@ let sequence = 0;
       color: var(--muted);
       overflow-wrap: anywhere;
     }
+    /* A name in parentheses ("(openai-prod)") never breaks at its hyphen. */
+    .execute-keep {
+      white-space: nowrap;
+    }
   `,
   template: `@let asked = question();
     <section
@@ -163,9 +167,19 @@ let sequence = 0;
           <button type="button" (click)="cancel.emit()">Close</button>
         </div>
       } @else if (asked.kind === "real") {
+        <!-- A step's own sentence (an AI task's cost) says what running it does. -->
         <p class="dialog-message" [id]="messageId">
-          {{ asked.stepId }} changes data in {{ asked.environment }}. Repeating
-          it repeats the change.{{ asked.extra ? " " + asked.extra : "" }}
+          @if (asked.extra) {
+            @for (part of phrases(asked.extra); track $index) {
+              <span
+                [class.execute-keep]="part.keep"
+                [textContent]="part.text"
+              ></span>
+            }
+          } @else {
+            {{ asked.stepId }} changes data in {{ asked.environment }}.
+            Repeating it repeats the change.
+          }
         </p>
         <div class="dialog-actions">
           <!-- Focus starts on Cancel: a held or repeated Enter mustn't run a change. -->
@@ -226,6 +240,13 @@ export class ExecuteDialog implements AfterViewInit {
   readonly fix = output<ExecuteIssue>();
   readonly confirm = output<void>();
   readonly cancel = output<void>();
+  /** A step's own sentence in pieces: each name in parentheses kept on one line. */
+  phrases(text: string): { text: string; keep: boolean }[] {
+    return text
+      .split(/(\([^()]*\))/)
+      .filter((part) => part !== "")
+      .map((part) => ({ text: part, keep: /^\(.*\)$/.test(part) }));
+  }
   /** The release question's answer: a release ID per dependency. */
   readonly released = output<Record<string, string>>();
   private readonly picked: Record<string, string> = {};

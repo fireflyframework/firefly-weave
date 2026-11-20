@@ -482,6 +482,24 @@ export async function routeTestDataCheck(page: Page) {
             : { path, ok: true },
         );
       }
+    // An AI task's saved turns: each final answer against its result fields.
+    const profiles = (spec["llmProfiles"] ?? {}) as Json;
+    for (const [key, entry] of Object.entries(
+      (body.testData["aiTurns"] as Json | undefined) ?? {},
+    )) {
+      const id = key.split(/[[#~]/)[0];
+      const step = stepsOf(spec["steps"]).find((item) => item["id"] === id);
+      const schema = (
+        profiles[String(step?.["profile"])] as Json | undefined
+      )?.["outputSchema"];
+      const turns = ((entry as Json)["turns"] ?? []) as Json[];
+      const path = `/aiTurns/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+      entries.push(
+        turns.some((turn) => "final" in turn && secretIn(schema, turn["final"]))
+          ? { path, ok: false, code: "WV-SCHEMA-SECRET_VALUE" }
+          : { path, ok: true },
+      );
+    }
     await route.fulfill({ json: { entries } });
   });
 }

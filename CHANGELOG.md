@@ -233,6 +233,19 @@ SPDX-License-Identifier: Apache-2.0
   item in the run log, the failed one open on its steps and error, and a list longer than Up to fails the loop as
   a real run does. On the Runs tab, a recorded loop has an item chip, failed items first, and step details open on
   the same item. Execute workflow also stops at any step where a real run would stop on an incident.
+- An AI task can be tried in step details. Generate sample keeps a sample
+  answer as the task's saved turn, and Keep as test data on a real answer
+  keeps that answer with the run it came from; Execute step replays the saved
+  turn without calling a model. The keep button stays pressed while the
+  answer shown is the kept one, and a second click removes it with Undo.
+  The Output pane shows a text answer in full (eight lines, then Show all)
+  and the model requests and tokens ("1 request · 812 in · 64 out tokens",
+  or "No model call · replayed the saved answer").
+- Execute in an environment runs an AI task as a step test, with its prompt,
+  context and AI settings, on the connection chosen with its model; choosing a
+  model now keeps that connection as the slot's binding on this computer. A
+  local connection runs at once; any other asks first and names the cost
+  ("This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.").
 - Studio's data scope lists the platform event's fields under `/input`, the
   local host serves the event's schema at `GET /studio/contracts/platform-event`,
   and Execute and saved test data accept a sample platform event as input. A
@@ -251,6 +264,9 @@ SPDX-License-Identifier: Apache-2.0
   test-only `note` input, which the acceptance journeys and
   `tests/e2e/test_operations_logs.py` use to prove a planted secret never
   reaches log answers or stored entries.
+- The `ai` acceptance profile runs an AI task of a saved draft for real as a
+  step test (J4.16), with a text and a structured result, checking structure
+  only and recording requests, tokens and times.
 - The `cluster` and `k3d` acceptance profiles run
   `tests/browser/cluster-connect-real.spec.ts`: Studio copies the connect
   command for a namespace of the run's cluster, the command runs as copied,

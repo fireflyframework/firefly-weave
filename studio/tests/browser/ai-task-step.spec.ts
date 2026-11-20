@@ -18,9 +18,14 @@ SPDX-License-Identifier: Apache-2.0
 // The AI task in step details: a model chosen connection first, a prompt,
 // options behind Add option and the timeout on Settings. The platform is
 // mocked; real model calls are covered by the AI journeys.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { parse } from "yaml";
-import { openStepFixture, sizes, yamlFile } from "./step-details-po";
+import {
+  openStepFixture,
+  sizes,
+  withLanguageFeatures,
+  yamlFile,
+} from "./step-details-po";
 import {
   box,
   boxes,
@@ -34,6 +39,19 @@ import {
 } from "./step-geometry";
 import { focusStop } from "./step-focus";
 import { connected, expectHitTarget, sourceText } from "./support";
+import { PRODUCTION, openConnected } from "./connections-po";
+import { executeButton, executions } from "./execute-po";
+import { localAuthoring } from "./local-authoring";
+import {
+  RUN_ID,
+  accepted,
+  executeIn,
+  routeStepTests,
+  sent,
+  showOutput,
+  succeeded,
+  view,
+} from "./step-tests-po";
 
 const workflow = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -423,3 +441,325 @@ for (const size of layoutSizes)
       expect(await clippedText(details.dialog)).toEqual([]);
     });
   });
+
+/** An AI task with its model chosen, a prompt and a context: ready to execute. */
+const chosen = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: support-inbox, version: 1.0.0}
+spec:
+  inputSchema: {type: object, properties: {text: {type: string}}}
+  outputSchema: {}
+  connections:
+    ai: {connector: weave-agentic-provider@1.0.0, required: true}
+  llmProfiles:
+    summarize:
+      provider: openai-chat
+      model: "qwen3:4b"
+      options: {max_tokens: 1024}
+      outputSchema: {type: string, maxLength: 20000}
+  steps:
+    - id: summarize
+      kind: llm
+      uses: weave-agentic-generate@1.0.0
+      profile: summarize
+      connection: ai
+      prompt: {literal: "Summarize the ticket in two sentences."}
+      context: {literal: {ticket: "T-1"}}
+  output: {ref: /steps/summarize/output/result}
+`;
+const cloud = {
+  ...ollama,
+  connection_id: "77777777-7777-4777-8777-777777777777",
+  revision_id: "88888888-8888-4888-8888-888888888888",
+  name: "openai-prod",
+  label: "OpenAI · openai-prod",
+  endpoint_origin: "https://api.openai.com",
+};
+const usage = "1 request · 812 in · 64 out tokens";
+const replayed = "No model call · replayed the saved answer";
+const sampleAnswer = "Sample answer from summarize.";
+const keptTitle = "Kept as test data. Execute step replays this answer.";
+const answer = {
+  result: "The customer can't sign in. Support reset the password.",
+  usage: { requests: 1, inputTokens: 812, outputTokens: 64 },
+  provider: "openai-chat",
+  model: "qwen3:4b",
+};
+/** The Output pane's button that keeps the answer shown as test data. */
+const keep = (pane: Locator) =>
+  pane.getByRole("button", { name: "Keep as test data" });
+
+/** Studio connected to Production with one AI connection, the step's model chosen there. */
+async function inProduction(
+  page: Page,
+  connection: typeof ollama,
+  output: typeof answer = answer,
+  /** False: the model is chosen elsewhere, so this computer has no binding for its slot. */
+  choose = true,
+) {
+  const opened = await openConnected(
+    page,
+    { bindable: { [PRODUCTION]: [connection] } },
+    yamlFile("support-inbox.yaml", chosen),
+  );
+  await page.route("**/environments/*/ai/models?*", (r) =>
+    r.fulfill({
+      json: {
+        approval: "served",
+        discovery: "ok",
+        discovered_at: "2026-11-19T10:00:00Z",
+        models: [
+          {
+            name: "qwen3:4b",
+            approved: true,
+            available: true,
+            tools: "yes",
+            context_tokens: 8192,
+          },
+        ],
+      },
+    }),
+  );
+  const steps = await routeStepTests(page, {
+    starts: [
+      { status: 202, json: { ...accepted, side_effect: "non_idempotent" } },
+    ],
+    views: [
+      view({ side_effect: "non_idempotent" }),
+      succeeded(output, { side_effect: "non_idempotent" }),
+    ],
+  });
+  const { details } = opened;
+  await details.open("summarize");
+  if (!choose) return { details, steps };
+  await showParameters(page, details.dialog);
+  const model = details.field("model");
+  await model.getByRole("combobox", { name: "Model" }).click();
+  await page
+    .getByRole("listbox", { name: "Model options" })
+    .getByRole("option", { name: /^qwen3:4b/ })
+    .click();
+  return { details, steps };
+}
+
+for (const size of sizes)
+  test.describe(`AI task executed at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("Generate sample saves an answer that Execute step replays without a model", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(
+        page,
+        yamlFile("support-inbox.yaml", chosen),
+        async (p) => {
+          await platform(p);
+          await withLanguageFeatures(p);
+        },
+      );
+      const calls = await localAuthoring(page);
+      await details.open("summarize");
+      const pane = await showOutput(details);
+      await pane.getByRole("button", { name: "Generate sample" }).click();
+      // Said aloud as an answer kept, not a pinned output.
+      await expect(
+        details.dialog.locator('p.sr-only[aria-live="polite"]').first(),
+      ).toHaveText("Kept a sample answer as test data for summarize.");
+      // The sample shows at once as what Execute step returns: no model call.
+      await expect(pane.locator(".pane-usage")).toHaveText(replayed);
+      await expect(pane.locator(".pane-answer-text")).toHaveText(sampleAnswer);
+      await expect(pane.locator(".pinned-banner")).toHaveCount(0);
+      // It is the answer kept as test data.
+      await expect(keep(pane)).toHaveAttribute("aria-pressed", "true");
+      await expect(keep(pane)).toHaveAttribute("title", keptTitle);
+      const answered = page.waitForResponse("**/studio/local/debug/execute");
+      const run = executeButton(details.dialog);
+      if (!(await run.isVisible())) await showParameters(page, details.dialog);
+      await run.click();
+      expect((await answered).status()).toBe(200);
+      const sentTurns = executions(calls).at(-1)!.body as {
+        scripts: { aiTurns: Record<string, unknown> };
+      };
+      expect(sentTurns.scripts.aiTurns).toEqual({
+        summarize: { turns: [{ final: sampleAnswer }], source: "simulated" },
+      });
+      const shown = await showOutput(details);
+      await expect(shown.locator(".pane-source-tag")).toHaveText("Simulated");
+      await expect(shown.locator(".pane-usage")).toHaveText(replayed);
+      await expect(shown.locator(".pane-answer-text")).toHaveText(sampleAnswer);
+    });
+
+    test("Execute in Production calls a local model at once and keeps its answer as test data", async ({
+      page,
+    }) => {
+      const { details, steps } = await inProduction(page, ollama);
+      await (await executeIn(details, "Production")).click();
+      await sent(steps, 1);
+      expect(steps.posts[0].postDataJSON()).toMatchObject({
+        kind: "llm",
+        step_id: "summarize",
+        uses: "weave-agentic-generate@1.0.0",
+        profile: "summarize",
+        input: {
+          prompt: "Summarize the ticket in two sentences.",
+          context: { ticket: "T-1" },
+        },
+        connections: { ai: ollama.revision_id },
+        timeout_seconds: 120,
+        acknowledged_side_effect: "non_idempotent",
+      });
+      await expect(page.getByRole("alertdialog")).toHaveCount(0);
+      const pane = await showOutput(details);
+      await expect(pane).toContainText(
+        `From Production · run ${RUN_ID.slice(0, 8)}`,
+      );
+      await expect(pane.locator(".pane-usage")).toHaveText(usage);
+      // The answer reads in full, wrapped, above its fields.
+      await expect(pane.locator(".pane-answer-text")).toHaveText(answer.result);
+      await expect(pane.getByRole("button", { name: "Show all" })).toHaveCount(
+        0,
+      );
+      // The usage takes a row of its own: the run's source keeps its words,
+      // and the keep and Edit output buttons stay inside the pane.
+      const source = pane.locator(".pane-real-text");
+      expect(
+        await source.evaluate((e) => e.scrollWidth - e.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      const edges = await box(pane);
+      for (const name of ["Keep as test data", "Edit output"]) {
+        const control = await box(pane.getByRole("button", { name }));
+        expect(control.right, name).toBeLessThanOrEqual(edges.right + 0.5);
+      }
+      // Keeping the real answer makes it the turn Execute step replays, and
+      // the button says so for as long as it holds.
+      await expect(keep(pane)).toHaveAttribute("aria-pressed", "false");
+      await keep(pane).click();
+      await expect(
+        page.getByText(
+          "Kept this answer as test data for summarize. Execute step replays it.",
+        ),
+      ).toBeVisible();
+      await expect(keep(pane)).toHaveAttribute("aria-pressed", "true");
+      await expect(keep(pane)).toHaveAttribute("title", keptTitle);
+      // Execute step now replays it, with the run it came from.
+      const calls = await localAuthoring(page);
+      const run = executeButton(details.dialog);
+      if (!(await run.isVisible())) await showParameters(page, details.dialog);
+      await run.click();
+      await expect.poll(() => executions(calls).length).toBe(1);
+      const kept = executions(calls)[0].body as {
+        scripts: { aiTurns: Record<string, unknown> };
+      };
+      expect(kept.scripts.aiTurns).toEqual({
+        summarize: {
+          turns: [{ final: answer.result }],
+          source: "test-call",
+          runId: RUN_ID,
+          runEnvironmentId: PRODUCTION,
+        },
+      });
+      // A second click removes it, with Undo.
+      const after = await showOutput(details);
+      await expect(keep(after)).toHaveAttribute("aria-pressed", "true");
+      await keep(after).click();
+      const removed = page
+        .locator(".toast")
+        .filter({ hasText: "Removed the kept answer for summarize." });
+      await expect(removed).toBeVisible();
+      await expect(removed.getByRole("button", { name: "Undo" })).toBeVisible();
+      await expect(keep(after)).toHaveAttribute("aria-pressed", "false");
+    });
+
+    test("without the AI connection chosen here, Fix opens the Model field", async ({
+      page,
+    }) => {
+      const { details, steps } = await inProduction(
+        page,
+        ollama,
+        answer,
+        false,
+      );
+      await (await executeIn(details, "Production")).click();
+      const pane = await showOutput(details);
+      await expect(pane).toContainText(
+        "Choose a connection for slot ai to execute summarize in Production.",
+      );
+      expect(steps.posts).toHaveLength(0);
+      await pane.getByRole("button", { name: "Fix" }).click();
+      await expect(
+        page.getByRole("listbox", { name: "Model options" }),
+      ).toBeVisible();
+    });
+
+    test("a long answer shows eight lines, then all of it on Show all", async ({
+      page,
+    }) => {
+      const long = Array.from(
+        { length: 30 },
+        (_, n) => `Line ${n + 1} of the answer.`,
+      ).join("\n");
+      const { details } = await inProduction(page, ollama, {
+        ...answer,
+        result: long,
+      });
+      await (await executeIn(details, "Production")).click();
+      const pane = await showOutput(details);
+      const text = pane.locator(".pane-answer-text");
+      await expect(text).toContainText("Line 1 of the answer.");
+      const lines = async () =>
+        text.evaluate((e) =>
+          Math.round(
+            e.clientHeight / parseFloat(getComputedStyle(e).lineHeight),
+          ),
+        );
+      expect(await lines()).toBe(8);
+      const all = pane.getByRole("button", { name: "Show all" });
+      await expect(all).toHaveAttribute("aria-expanded", "false");
+      await all.click();
+      await expect(
+        pane.getByRole("button", { name: "Show less" }),
+      ).toHaveAttribute("aria-expanded", "true");
+      expect(await lines()).toBeGreaterThanOrEqual(30);
+    });
+
+    test("a connection that may bill asks first, naming the model and the cost", async ({
+      page,
+    }) => {
+      const { details, steps } = await inProduction(page, cloud);
+      await (await executeIn(details, "Production")).click();
+      const question = page.getByRole("alertdialog", {
+        name: "Execute summarize in Production?",
+      });
+      await expect(question).toContainText(
+        "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.",
+      );
+      await expect(question).not.toContainText("changes data");
+      expect(steps.posts).toHaveLength(0);
+      await question.getByRole("button", { name: "Run it" }).click();
+      await sent(steps, 1);
+      expect(steps.posts[0].postDataJSON()).toMatchObject({
+        connections: { ai: cloud.revision_id },
+        acknowledged_side_effect: "non_idempotent",
+      });
+      const pane = await showOutput(details);
+      await expect(pane.locator(".pane-usage")).toHaveText(usage);
+    });
+  });
+
+test.describe("the cost question on a phone", () => {
+  test.use({ viewport: { width: 360, height: 740 } });
+
+  test("keeps the connection's name on one line", async ({ page }) => {
+    const { details } = await inProduction(page, cloud);
+    await (await executeIn(details, "Production")).click();
+    const question = page.getByRole("alertdialog", {
+      name: "Execute summarize in Production?",
+    });
+    await expect(question).toContainText(
+      "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.",
+    );
+    // "(openai-prod)" is one line box: it never breaks at its hyphen.
+    const name = question.getByText("(openai-prod)", { exact: true });
+    expect(await name.evaluate((e) => e.getClientRects().length)).toBe(1);
+  });
+});
