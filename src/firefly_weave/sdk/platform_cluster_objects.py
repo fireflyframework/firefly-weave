@@ -55,7 +55,13 @@ RUNNER_CONTAINER = "runner"
 CONFIGURATION = "local"
 RUNNER_CONTEXT = "weave-runner"
 KUBECTL = "/usr/local/bin/kubectl"
-CAPABILITIES: tuple[DeploymentCapability, ...] = ("observe", "update", "scale_workers", "restart_workers")
+CAPABILITIES: tuple[DeploymentCapability, ...] = (
+    "observe",
+    "update",
+    "scale_workers",
+    "restart_workers",
+    "read_logs",
+)
 USER = 65532
 # A worker's limits, which its runner's binding also allows at most, and the size the registered component states:
 # the runner refuses a plan whose component asks for more than the binding allows.
@@ -86,11 +92,13 @@ WORKER_CONFIG = "weave-worker-config"
 WORKER_IDENTITY = "weave-worker-identity"
 
 # The adapter's kubectl calls, as rules: get and patch the worker Deployment, list, get and patch its pods (kubectl
-# patch reads an object before it patches it). No watch, no Secrets or ConfigMaps, nothing in weave-system, no
-# autoscalers (a cluster target has only a worker component).
+# patch reads an object before it patches it), and read its pods' logs. No watch, no Secrets or ConfigMaps, nothing
+# in weave-system, no autoscalers (a cluster target has only a worker component). The Role lives in the target's
+# workers namespace, so its pods' logs are the only logs the runner may read.
 RUNNER_RULES: tuple[dict[str, Any], ...] = (
     {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "patch"]},
     {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list", "patch"]},
+    {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
 )
 
 # Copies each key of the mounted Secret (kubelet's links are skipped) to a memory-backed folder, owner read-only:

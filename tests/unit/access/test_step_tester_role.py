@@ -26,7 +26,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.sdk import platform
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations/versions"
-LATER_ROLES = {"alert_manager"}
+LATER_ROLES = {"alert_manager", "deployment_log_reader"}
 
 
 def test_the_step_tester_role_holds_only_step_test():

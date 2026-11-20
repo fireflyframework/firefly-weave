@@ -24,6 +24,7 @@ import type { Json } from "../ndv/registry";
 import { instanceStep, renameInstance } from "./instance-keys";
 import {
   TEST_DATA_MAX_BYTES,
+  type AiTurnsEntry,
   type DataSource,
   type HumanEntry,
   type PinEntry,
@@ -99,9 +100,9 @@ export function withPin(
 /** Sets (or, with null, removes) the test answer of a signal or a human task. */
 export function withScript(
   data: StudioTestData,
-  section: "signals" | "humans",
+  section: "signals" | "humans" | "aiTurns",
   key: string,
-  entry: SignalEntry | HumanEntry | null,
+  entry: SignalEntry | HumanEntry | AiTurnsEntry | null,
   now: string,
 ): StudioTestData {
   const current = { ...(data[section] ?? {}) } as Record<string, unknown>;

@@ -26,11 +26,12 @@ import yaml
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from firefly_weave.compiler import platform_events
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.language_support import COMPILED_FEATURES
 from firefly_weave.compiler.parser import parse_source
-from firefly_weave.compiler.platform_catalog import platform_event_view
+from firefly_weave.compiler.platform_catalog import platform_event_view, platform_schema_bundle
 from firefly_weave.compiler.schemas import validate_payload, validate_schema
 from firefly_weave.contracts.definitions import NAME_PATTERN, load_definition
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN
@@ -122,6 +123,63 @@ def test_only_the_platforms_own_event_schema_is_the_platform_event():
     assert ("RESERVED_SCHEMA", "/spec/inputSchema/$ref", "error") in findings(result)
     plain = compiled(workflow({}, output={"literal": None}), catalog)
     assert findings(plain) == [("RESERVED_SCHEMA", "", "error")]
+
+
+def guarded(result) -> list[tuple[str, str]]:
+    return [(item["path"], item["purpose"]) for item in executable(result)["guards"]]
+
+
+@pytest.mark.parametrize(
+    "pointer", ["/input/transaction/business_key", "/input/transaction/workflow/name", "/input/type"]
+)
+def test_reading_a_required_event_field_is_present(pointer):
+    result = compiled(workflow(output={"ref": pointer}))
+    assert result.ok and findings(result) == []
+    assert ("/spec/output", "reference_presence") not in guarded(result)
+
+
+def test_an_optional_event_field_still_warns():
+    fields = {"key": {"ref": "/input/transaction/business_key"}, "incident": {"ref": "/input/transaction/incident_id"}}
+    result = compiled(workflow(output={"object": fields}))
+    assert result.ok and findings(result) == [("REFERENCE_PRESENCE", "/spec/output/object/incident", "warning")]
+    assert [path for path, purpose in guarded(result) if purpose == "reference_presence"] == [
+        "/spec/output/object/incident"
+    ]
+
+
+def test_an_unknown_event_field_is_missing():
+    result = compiled(workflow(output={"ref": "/input/transaction/nope"}))
+    assert findings(result) == [("MISSING_REFERENCE", "/spec/output", "error")]
+
+
+# A workflow whose input is a project's own schema by name, compiled on main before the platform event's fields
+# became readable: only platform schema names are looked through, so it keeps its warning and its bytes.
+SHARED = {
+    "type": "object",
+    "properties": {"key": {"type": "string"}, "note": {"type": "string"}},
+    "required": ["key"],
+    "additionalProperties": False,
+}
+SHARED_DIGEST = "e270b3f3e0db7c6f55ab2d26fa5adc15ae9f78390160ce55637e7bf50a224565"
+
+
+def test_presence_reads_through_platform_schema_names_only():
+    catalog = CatalogSnapshot.from_definitions([], schema_bundle={"notify.request-v1": SHARED})
+    assert findings(compiled(workflow(), catalog)) == []
+    document = workflow({"$ref": "notify.request-v1"}, output={"ref": "/input/key"})
+    del document["spec"]["eventTrigger"]
+    result = compiled(document, catalog)
+    assert findings(result) == [("REFERENCE_PRESENCE", "/spec/output", "warning")]
+    assert result.artifact.digest == SHARED_DIGEST
+
+
+def test_only_the_platforms_own_bytes_give_the_view():
+    view, bundle = platform_events.platform_view, platform_schema_bundle()
+    assert view(EVENT, bundle) == platform_event_view()
+    assert view(EVENT, {PLATFORM_EVENT_SCHEMA: {"type": "object"}}) is None
+    assert view(EVENT, {}) is None
+    assert view({"$ref": PLATFORM_EVENT_SCHEMA, "title": "Event"}, bundle) is None
+    assert view({}, bundle) is None
 
 
 def caller(*steps, **spec):

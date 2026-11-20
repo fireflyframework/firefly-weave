@@ -105,6 +105,12 @@ SUITES: dict[str, dict[str, Any]] = {
         "profiles": ("pr", "nightly", "release"),
         "capability": "run-views",
     },
+    # The Studio wizard connects a namespace of the run's own cluster, so it runs only where prepare made one.
+    "kubernetes": {
+        "spec": "tests/browser/cluster-connect-real.spec.ts",
+        "profiles": ("cluster", "k3d"),
+        "capability": "kubernetes-operations",
+    },
 }
 EGRESS_CHAIN = "WEAVE-ACCEPTANCE"
 # The cluster profiles and the tool that makes each one's cluster, weave-acc-<run-id>: prepare creates it without

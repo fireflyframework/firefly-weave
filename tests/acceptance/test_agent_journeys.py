@@ -1248,6 +1248,158 @@ def test_j4_15_a_second_run_for_one_customer_remembers_the_first(run, orders):
         assert_turns_counted(log)
 
 
+# J4.16: an AI task of a saved draft runs for real as a step test, as Execute in local runs it from Studio's step
+# details: one AI task answering in text and one with structured result fields, on the model J4.7 enabled and the AI
+# connection it made. A small local model answers differently from run to run, so the step checks structure only: the
+# test succeeds, the model was asked at least once, and the result meets the step's own result fields. The evidence
+# keeps counts and times, never the answers. It runs before J4.14, which stops the computer's Ollama.
+
+AI_TASK_ACTION = "weave-agentic-generate@1.0.0"
+# The platform runs a step test for at most five minutes; Studio waits a little longer for its end.
+AI_TASK_SECONDS = 300
+AI_TASK_WAIT_SECONDS = AI_TASK_SECONDS + 60
+AI_TASK_TEXT = {"type": "string", "maxLength": 20000}
+AI_TASK_TRIAGE = {
+    "type": "object",
+    "required": ["category", "urgent"],
+    "additionalProperties": False,
+    "properties": {
+        "category": {"type": "string", "enum": ["login", "billing", "other"]},
+        "urgent": {"type": "boolean"},
+    },
+}
+AI_TASK_TICKET = "I can't sign in since this morning and my invoice is due today."
+AI_TASKS = {
+    "summarize": ("Summarize the support ticket in one sentence.", AI_TASK_TEXT),
+    "triage": ("Classify the support ticket: its category and whether it is urgent.", AI_TASK_TRIAGE),
+}
+
+
+def ai_task_profile(result: dict[str, Any]) -> dict[str, Any]:
+    """An AI task's own settings, as Studio writes them, made repeatable: temperature 0 and seed 42."""
+    return {
+        "provider": "openai-chat",
+        "model": MODEL,
+        "options": {"max_tokens": 256, "temperature": 0, "seed": 42},
+        "reasoning": {"pattern": "none"},
+        "timeoutSeconds": AI_TASK_SECONDS,
+        "outputSchema": result,
+    }
+
+
+def ai_task_draft() -> dict[str, Any]:
+    """The workflow a person builds in Studio: two AI tasks, each with its own settings, on the slot ai."""
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "support-inbox", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}},
+            "outputSchema": {},
+            "connections": {"ai": {"connector": "weave-agentic-provider@1.0.0", "required": True}},
+            "llmProfiles": {name: ai_task_profile(result) for name, (_, result) in AI_TASKS.items()},
+            "steps": [
+                {
+                    "id": name,
+                    "kind": "llm",
+                    "uses": AI_TASK_ACTION,
+                    "profile": name,
+                    "connection": "ai",
+                    "prompt": {"literal": prompt},
+                    "context": {"ref": "/input/text"},
+                }
+                for name, (prompt, _) in AI_TASKS.items()
+            ],
+            "output": {"ref": "/steps/summarize/output/result"},
+        },
+    }
+
+
+def ai_task_connection(run) -> str:
+    """The AI connection revision J4.7's ai enable made, as ai status reports it."""
+    status = ai_status(run)
+    assert status["enabled"] is True, status
+    revision = status.get("connection_revision_id")
+    assert revision, "ai status names no AI connection revision"
+    return str(revision)
+
+
+async def ai_task_step_test(
+    client: Any, run, draft_id: UUID, revision: int, step: str, connection: str
+) -> dict[str, Any]:
+    """Runs one AI task of the draft as a step test and waits for its end; its view and how long it took."""
+    from firefly_weave.contracts.step_tests import StepTestRequest
+
+    request = StepTestRequest(
+        kind="llm",
+        step_id=step,
+        uses=AI_TASK_ACTION,
+        profile=step,
+        input={"prompt": AI_TASKS[step][0], "context": AI_TASK_TICKET},
+        connections={"ai": UUID(connection)},
+        # A model call isn't repeated: Studio acknowledges the AI action's effect for a local connection.
+        acknowledged_side_effect="non_idempotent",
+        draft_id=draft_id,
+        draft_revision=revision,
+        timeout_seconds=AI_TASK_SECONDS,
+    )
+    started = time.monotonic()
+    accepted = await client.invoke("step_tests.create", body=request, idempotency_key=f"j4-16-{step}-{run.run_id}")
+    assert accepted.side_effect == "non_idempotent"
+    deadline = started + AI_TASK_WAIT_SECONDS
+    while True:
+        view = await client.invoke("step_tests.read", identifier=accepted.id)
+        if view.status in SETTLED or time.monotonic() > deadline:
+            break
+        await asyncio.sleep(2)
+    return {"view": view, "seconds": round(time.monotonic() - started, 2)}
+
+
+@pytest.mark.journey_step("J4.16")
+def test_j4_16_an_ai_task_runs_for_real_as_a_step_test(run):
+    from jsonschema import Draft202012Validator
+
+    connection = ai_task_connection(run)
+
+    async def both() -> dict[str, dict[str, Any]]:
+        async with run.client("builder") as client:
+            saved = await client.save_draft(uuid4(), ai_task_draft())
+            return {
+                step: await ai_task_step_test(client, run, saved.id, saved.revision, step, connection)
+                for step in AI_TASKS
+            }
+
+    results = asyncio.run(both())
+    evidence: dict[str, Any] = {"model": MODEL}
+    for step, found in results.items():
+        view = found["view"]
+        output = view.output if isinstance(view.output, dict) else {}
+        usage = output.get("usage") or {}
+        evidence[step] = {
+            "status": view.status,
+            "error": view.error.code if view.error else None,
+            "requests": usage.get("requests"),
+            "input_tokens": usage.get("inputTokens"),
+            "output_tokens": usage.get("outputTokens"),
+            "seconds": found["seconds"],
+            "duration_ms": view.duration_ms,
+        }
+    # Counts and times only, in evidence/ai-task-j4.json.
+    path = run.evidence / "ai-task-j4.json"
+    path.write_text(json.dumps({"J4.16": evidence}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    for step, found in results.items():
+        view = found["view"]
+        assert view.status == "succeeded", (step, view.status, view.error)
+        assert view.omitted is None, (step, view.omitted)
+        output = view.output
+        assert isinstance(output, dict), step
+        assert (output["provider"], output["model"]) == ("openai-chat", MODEL), step
+        assert output["usage"]["requests"] >= 1, step
+        assert output["usage"]["inputTokens"] > 0 and output["usage"]["outputTokens"] > 0, step
+        problems = [error.json_path for error in Draft202012Validator(AI_TASKS[step][1]).iter_errors(output["result"])]
+        assert problems == [], (step, problems)
+
+
 @pytest.mark.journey_step("J4.14")
 def test_j4_14_a_stopped_model_endpoint_fails_with_llm_unreachable_and_the_retry_succeeds(run, orders):
     orders_control(run, "/_control/reset", "POST")

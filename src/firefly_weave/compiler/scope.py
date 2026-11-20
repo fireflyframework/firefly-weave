@@ -30,6 +30,7 @@ from firefly_weave.compiler.analyzer import analyze_scope
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.parser import ParseFailure, parse_source
+from firefly_weave.compiler.platform_catalog import platform_schema
 from firefly_weave.contracts.definitions import (
     ContractModel,
     JsonPointer,
@@ -211,12 +212,18 @@ def _schema_of(value: JsonValue) -> JsonObject:
 
 
 def _resolve(schema: JsonObject, root: JsonObject) -> JsonObject:
-    """Follow local ``#/…`` references within ``root``, at most 16 hops."""
+    """Follow local ``#/…`` references within ``root``, at most 16 hops, and a platform schema's exact name.
+
+    The platform's schemas have no references of their own, so nothing below one resolves against ``root``. A
+    project's schemas referenced by name are not followed: their fields come from the catalog the compile reads.
+    """
     current = schema
     for _ in range(16):
         target = current.get("$ref")
-        if not isinstance(target, str) or not target.startswith("#/"):
+        if not isinstance(target, str):
             return current
+        if not target.startswith("#/"):
+            return platform_schema(target) or current
         node: JsonValue = root
         for segment in target[2:].split("/"):
             key = segment.replace("~1", "/").replace("~0", "~")

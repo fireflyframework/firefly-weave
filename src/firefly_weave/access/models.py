@@ -50,6 +50,7 @@ Role = Literal[
     "transaction_reconciler",
     "step_tester",
     "alert_manager",
+    "deployment_log_reader",
 ]
 
 

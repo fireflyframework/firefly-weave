@@ -204,7 +204,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     import re
 
     from firefly_weave.contracts.surface import OPERATIONS
-    from firefly_weave.studio.service import STUDIO_FAMILIES, STUDIO_OPERATIONS
+    from firefly_weave.studio.service import STUDIO_EXCLUDED, STUDIO_FAMILIES, STUDIO_OPERATIONS
 
     values = {
         "tenant": TENANT,
@@ -225,16 +225,19 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     assert crossing == {
         identifier
         for identifier in OPERATIONS
-        if identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS
+        if (identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS)
+        and identifier not in STUDIO_EXCLUDED
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
     # The AI setup operations add exactly these six, direct incident reads join the incidents
     # family, stale-worker retirement joins the workers family, and the environment summary,
     # telemetry settings and release usage join as reads, change requests join as their own family, and a
     # draft's studio documents join with their own family, and run statistics join as their own family of reads,
-    # and an AI agent's log joins through the runs family, and log entries across runs join as their own family;
-    # every earlier crossing stays as it was.
+    # and an AI agent's log joins through the runs family, and log entries across runs join as their own family, and
+    # container log requests join as their own family; every earlier crossing stays as it was.
     approved_additions = {
+        "deployment_log_requests.create",
+        "deployment_log_requests.read",
         "execution_logs.list",
         "runs.agent_log",
         "run_statistics.series",
@@ -295,6 +298,26 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     # Writing log entries is a worker's: it never crosses, while reading a run's log does.
     assert {"releases.create", "tasks.credentials", "tasks.log", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
     assert "runs.logs" in preserved
+
+
+def test_runner_log_operations_stay_out_of_studio(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+    from firefly_weave.studio.service import STUDIO_EXCLUDED, STUDIO_FAMILIES
+
+    # Claiming and reporting log requests is the target runner's alone, although its family crosses for reads.
+    runner_logs = {"deployment_runners.claim_logs", "deployment_runners.report_logs"}
+    assert runner_logs == STUDIO_EXCLUDED and "deployment_runners" in STUDIO_FAMILIES
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        for identifier in runner_logs:
+            operation = OPERATIONS[identifier]
+            path = operation.canonical_path.format(tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID)
+            assert studio.check_scope(path, operation.method) == 404, identifier
+        assert studio.check_scope(f"{ENVIRONMENT}/deployment-log-requests", "POST") == 200
+        assert studio.check_scope(f"{ENVIRONMENT}/deployment-log-requests/{RESOURCE}", "GET") == 200
+        other = ENVIRONMENT.replace("000000000003", "000000000009")
+        assert studio.check_scope(f"{other}/deployment-log-requests", "POST") == 403
+        assert studio.check_scope(f"{ENVIRONMENT}/deployment-log-requests/{RESOURCE}", "DELETE") == 404
 
 
 def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):

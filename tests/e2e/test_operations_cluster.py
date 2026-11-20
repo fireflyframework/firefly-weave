@@ -701,7 +701,8 @@ async def test_an_unlabeled_pod_cannot_reach_the_platform(run: Any, connected: d
 
 def test_the_runner_account_can_do_only_what_its_commands_need(run: Any, connected: dict[str, Any]) -> None:
     """The runner's service account may read and patch its namespace's worker Deployment, list, read and patch its
-    pods (kubectl patch reads a pod first), and read its own namespace; nothing else, anywhere."""
+    pods (kubectl patch reads a pod first), read its pods' logs for container log snapshots, and read its own
+    namespace; nothing else, anywhere."""
     account = f"system:serviceaccount:{SYSTEM}:weave-runner-{NAMESPACE}"
     allowed = [
         ("get", "deployments.apps", NAMESPACE),
@@ -709,6 +710,8 @@ def test_the_runner_account_can_do_only_what_its_commands_need(run: Any, connect
         ("list", "pods", NAMESPACE),
         ("get", "pods", NAMESPACE),
         ("patch", "pods", NAMESPACE),
+        # can-i reads TYPE/NAME, so `pods/log` would ask about a pod named log: subresources go by --subresource.
+        ("get", "pods --subresource=log", NAMESPACE),
         ("get", f"namespaces/{NAMESPACE}", None),
     ]
     refused = [
@@ -717,8 +720,7 @@ def test_the_runner_account_can_do_only_what_its_commands_need(run: Any, connect
         ("create", "pods", NAMESPACE),
         ("delete", "pods", NAMESPACE),
         ("watch", "pods", NAMESPACE),
-        # can-i reads TYPE/NAME, so `pods/log` would ask about a pod named log: subresources go by --subresource.
-        ("get", "pods --subresource=log", NAMESPACE),
+        ("get", "pods --subresource=log", SYSTEM),
         ("create", "pods --subresource=exec", NAMESPACE),
         ("delete", "deployments.apps", NAMESPACE),
         ("get", "horizontalpodautoscalers.autoscaling", NAMESPACE),

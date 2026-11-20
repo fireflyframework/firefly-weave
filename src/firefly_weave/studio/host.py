@@ -417,6 +417,14 @@ class StudioController:
 
         return JSONResponse(email_input_schema(), headers={"Cache-Control": "no-store"})
 
+    @get_mapping("/studio/contracts/platform-event")
+    async def platform_event_contract(self, request: Request) -> Response:
+        """The run input a platform event starts a run with: the platform's frozen view, as workflows read it."""
+        from firefly_weave.compiler.platform_catalog import platform_schema_bundle
+        from firefly_weave.contracts.transaction_resolve import PLATFORM_EVENT_SCHEMA
+
+        return JSONResponse(platform_schema_bundle()[PLATFORM_EVENT_SCHEMA], headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/llm-profile")
     async def llm_profile_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.llm import LLMProfile

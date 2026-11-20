@@ -80,7 +80,7 @@ from firefly_weave.compiler.loops import (
 )
 from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.platform_catalog import platform_references, platform_schema, platform_schema_digests
-from firefly_weave.compiler.platform_events import check_event_trigger
+from firefly_weave.compiler.platform_events import check_event_trigger, platform_view
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
@@ -341,6 +341,8 @@ class _Analyzer:
         self.signals: dict[str, str] = {}
         self.expression_count = self.step_count = 0
         self.input_schema: JsonObject = {}
+        # The input schema inference last read, and what it reads in its place (see ``input_view``).
+        self.read_input: tuple[JsonObject, JsonObject] | None = None
         self.connections: JsonObject = {}
         self.llm_profiles: JsonObject = {}
         self.kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None = None
@@ -748,6 +750,16 @@ class _Analyzer:
             values.append(("errorPath", cast(JsonObject, step["errorPath"]), path + "/errorPath"))
         return values
 
+    def input_view(self) -> JsonObject:
+        """The input schema as inference reads it: the platform's event view when the input names the platform event.
+
+        The identity check digests the bundle's view, so it runs once per input schema, not once per reference. The
+        input schema is checked, and its platform schemas supplied, before any expression reads it.
+        """
+        if self.read_input is None or self.read_input[0] is not self.input_schema:
+            self.read_input = (self.input_schema, platform_view(self.input_schema, self.bundle) or self.input_schema)
+        return self.read_input[1]
+
     def infer(self, expression: JsonObject, visible: dict[str, JsonObject]) -> InferredType:
         requested: set[str] = set()
         include_input = include_all = include_steps = include_loops = include_undo = False
@@ -773,7 +785,7 @@ class _Analyzer:
             stack.extend(child for child, _ in _children(node, ""))
         context: dict[str, JsonObject] = {}
         if include_input:
-            context["input"] = self.input_schema
+            context["input"] = self.input_view()
         if include_steps:
             entries: dict[str, JsonValue] = {
                 key: self.binding(key, schema) for key, schema in visible.items() if include_all or key in requested
