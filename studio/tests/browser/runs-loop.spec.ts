@@ -309,9 +309,15 @@ test.describe("A recorded loop at 1440x900", () => {
     page,
   }) => {
     await openLoopRun(page, finishedRun(), "nonNull");
-    await expect(
-      page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-output'),
-    ).toHaveText("5 items, 2 skipped");
+    const tile = page.locator('.canvas-v2 .tile-node[data-tile="orders"]');
+    await expect(tile.locator(".tile-output")).toHaveText("5 items, 2 skipped");
+    // Its header counts the items, as Execute does, with no badge of its own.
+    await expect(tile.locator(".frame-run")).toHaveText("· 5 of 5");
+    await expect(tile.locator(".frame-run")).toHaveAttribute(
+      "data-tone",
+      "done",
+    );
+    await expect(tile.locator(".tile-badge")).toHaveCount(0);
   });
 });
 

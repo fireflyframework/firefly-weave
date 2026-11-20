@@ -344,6 +344,29 @@ test.describe("Loop frames at 1440x900", () => {
     expect(await stepsOf(page, "root")).toEqual(["fetch", "loop-1"]);
   });
 
+  test("a loop without a list says it needs one on its header", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, EMPTY);
+    const tile = page.locator('.canvas-v2 .tile-node[data-tile="loop-1"]');
+    const issue = tile.locator(".tile-issue");
+    await expect(issue.locator(".tile-badge")).toHaveAttribute(
+      "data-badge",
+      "setup",
+    );
+    await expect(issue).toHaveAttribute(
+      "title",
+      "Setup needed: choose the list to loop over",
+    );
+    await expect(header(canvas, "loop-1")).toHaveAccessibleName(
+      /Setup needed: choose the list to loop over/,
+    );
+    // At the frame's top right corner.
+    const corner = (await box(frame(canvas, "loop-1"))).right;
+    const plug = await box(issue.locator(".tile-badge"));
+    expect(Math.abs(plug.left + plug.width / 2 - corner)).toBeLessThan(16);
+  });
+
   test("the + after the frame adds a step after the loop", async ({ page }) => {
     const canvas = await openWorkflow(page, EMPTY);
     const plus = canvas.insertTarget("Add a step after loop-1");

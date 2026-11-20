@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // them. Pure, and only loaded with the editor's canvas.
 import type { Step } from "../../model";
 import { printFormula } from "../formula/printer";
+import type { StepFacts, TileBadge } from "./tile-facts";
 
 /** Frame sizes in canvas units. */
 export const FRAME = {
@@ -165,4 +166,25 @@ export function loopLimitText(count: number | null, limit: number): string {
       ? `This list has more items than Up to allows (${limit.toLocaleString("en-US")})`
       : `This list has ${count.toLocaleString("en-US")} items, ${allows}`
   }. Raise Up to or shorten the list.`;
+}
+
+/** What a loop without a list needs, as the canvas's setup badge says it. */
+const CHOOSE_LIST = "choose the list to loop over";
+
+/** A loop's facts for its header's badge: without Items, it needs a list. */
+export function loopFacts(step: Step, facts: StepFacts): StepFacts {
+  if (step["items"] !== undefined || facts.setup.includes(CHOOSE_LIST))
+    return facts;
+  return { ...facts, setup: [...facts.setup, CHOOSE_LIST] };
+}
+
+/**
+ * The badge a loop's header shows: what the loop itself needs (setup, an
+ * error or a warning in its settings). How a run went shows on the steps
+ * inside and in the header's run status, never twice on the frame.
+ */
+export function frameBadge(badge: TileBadge | null): TileBadge | null {
+  return badge && ["setup", "error", "warning"].includes(badge.kind)
+    ? badge
+    : null;
 }

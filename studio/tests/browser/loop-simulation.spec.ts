@@ -192,6 +192,10 @@ test.describe("A loop in Execute workflow at 1440x900", () => {
     await expect(
       page.locator('.canvas-v2 .tile-node[data-tile="reject"] .tile-badge'),
     ).toHaveAttribute("data-badge", "failed");
+    // The frame says it failed in its header, not again with a badge.
+    await expect(
+      page.locator('.canvas-v2 .tile-node[data-tile="orders"] .tile-badge'),
+    ).toHaveCount(0);
     await expect(page.locator(".canvas-run-alert")).toHaveText(
       "orders failed at item 3.",
     );

@@ -128,7 +128,9 @@ import {
 import {
   drawnSelected,
   endsAtFrame,
+  frameBadge,
   frameHeaderHeight,
+  loopFacts,
   loopHeaderParts,
   loopResultText,
   loopRunText,
@@ -671,7 +673,13 @@ export class CanvasView implements OnInit, DoCheck {
           ctx,
           this.withRealSetup(
             tile,
-            this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+            this.withPasteGaps(
+              tile,
+              // A loop without a list says it needs one on its header.
+              tile.step?.kind === "forEach"
+                ? loopFacts(tile.step, facts.get(tile.id) ?? NO_FACTS)
+                : (facts.get(tile.id) ?? NO_FACTS),
+            ),
           ),
           {
             selected: chosen.has(tile.id),
@@ -820,7 +828,19 @@ export class CanvasView implements OnInit, DoCheck {
               tone: "stopped" as const,
               progress: null,
             }
-          : null;
+          : // A recorded loop that finished counts its items, as Execute does.
+            recordedRun && state.run === "done"
+            ? {
+                text: loopRunText({
+                  finished: recordedRun.count,
+                  count: recordedRun.count,
+                  status: "done",
+                  failedAt: null,
+                }),
+                tone: "done" as const,
+                progress: null,
+              }
+            : null;
     const frame = state.frame
       ? frameView(tile.step, state.frame, frameRun)
       : null;
@@ -858,7 +878,8 @@ export class CanvasView implements OnInit, DoCheck {
           selected: state.selected,
           simulated: !!state.simulated,
         };
-    const badge = tileBadge(shown);
+    // A loop's header shows what the loop needs, not how its items ran.
+    const badge = state.frame ? frameBadge(tileBadge(shown)) : tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
     // A loop the run finished says how many items it had under its frame;
