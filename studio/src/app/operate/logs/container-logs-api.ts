@@ -295,16 +295,34 @@ export async function listRunners(
     ),
   );
 }
+/** Observation pages read to find the newest: 1,000 observations. */
+const OBSERVATION_PAGES = 10;
+/**
+ * The worker components of the target's newest observation. The platform pages
+ * observations by ID, not by time, so the newest may be on any page: every page
+ * is read, up to 1,000 observations.
+ */
 export async function listComponents(
   api: ContainerLogsApi,
   targetId: string,
 ): Promise<LogComponent[]> {
-  return readComponents(
-    await api.request<unknown>(
-      `${api.environment}/deployment-observations${query({ target_id: targetId, limit: "100" })}`,
-    ),
-    targetId,
-  );
+  const observations: unknown[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < OBSERVATION_PAGES; page++) {
+    const values: Record<string, string> = {
+      target_id: targetId,
+      limit: "100",
+    };
+    if (cursor) values["cursor"] = cursor;
+    const answer: unknown = await api.request<unknown>(
+      `${api.environment}/deployment-observations${query(values)}`,
+    );
+    observations.push(...items(answer));
+    const next = isRecord(answer) ? answer["next_cursor"] : null;
+    cursor = isText(next) && next ? next : null;
+    if (!cursor) break;
+  }
+  return readComponents({ items: observations }, targetId);
 }
 /** Asks the target's runner for a snapshot; `key` makes a resend the same request. */
 export async function createLogRequest(

@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/app/api";
 import {
   createLogRequest,
+  listComponents,
   readComponents,
   readLogRequest,
   readRunners,
@@ -202,6 +203,65 @@ describe("what a fetch can choose from", () => {
       { name: "weave-worker", members: ["new-1", "new-2"] },
     ]);
     expect(readComponents({ items: [] }, "t1")).toEqual([]);
+  });
+
+  it("finds the newest observation on any page, reading up to 1,000", async () => {
+    // The platform pages observations by ID, not by time: the newest may be on any page.
+    const observed = (observed_at: string, host: string) => ({
+      target_id: "t1",
+      observed_at,
+      complete: true,
+      resources: [
+        { name: "weave-worker", kind: "worker", members: [{ host }] },
+      ],
+    });
+    const asked: string[] = [];
+    const pages: Record<string, unknown> = {
+      "": {
+        items: [observed("2026-10-02T08:00:00Z", "weeks-old")],
+        next_cursor: "c2",
+      },
+      c2: {
+        items: [observed("2026-11-19T10:53:00Z", "current")],
+        next_cursor: null,
+      },
+    };
+    const api: ContainerLogsApi = {
+      environment: "/env",
+      async request<T>(path: string): Promise<T> {
+        asked.push(path);
+        const cursor = new URL(path, "http://x").searchParams.get("cursor");
+        return pages[cursor ?? ""] as T;
+      },
+    };
+    expect(await listComponents(api, "t1")).toEqual([
+      { name: "weave-worker", members: ["current"] },
+    ]);
+    expect(asked).toEqual([
+      "/env/deployment-observations?target_id=t1&limit=100",
+      "/env/deployment-observations?target_id=t1&limit=100&cursor=c2",
+    ]);
+    // A target with more observations than that is read 10 pages deep, never endlessly.
+    let reads = 0;
+    const endless: ContainerLogsApi = {
+      environment: "/env",
+      async request<T>(): Promise<T> {
+        reads++;
+        return {
+          items: [
+            observed(
+              `2026-11-19T10:${String(reads).padStart(2, "0")}:00Z`,
+              `m${reads}`,
+            ),
+          ],
+          next_cursor: `c${reads + 1}`,
+        } as T;
+      },
+    };
+    expect(await listComponents(endless, "t1")).toEqual([
+      { name: "weave-worker", members: ["m10"] },
+    ]);
+    expect(reads).toBe(10);
   });
 });
 
