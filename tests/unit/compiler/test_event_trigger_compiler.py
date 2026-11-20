@@ -163,8 +163,9 @@ SHARED = {
 SHARED_DIGEST = "e270b3f3e0db7c6f55ab2d26fa5adc15ae9f78390160ce55637e7bf50a224565"
 
 
-def test_a_shared_schema_reference_keeps_its_warning():
+def test_presence_reads_through_platform_schema_names_only():
     catalog = CatalogSnapshot.from_definitions([], schema_bundle={"notify.request-v1": SHARED})
+    assert findings(compiled(workflow(), catalog)) == []
     document = workflow({"$ref": "notify.request-v1"}, output={"ref": "/input/key"})
     del document["spec"]["eventTrigger"]
     result = compiled(document, catalog)
