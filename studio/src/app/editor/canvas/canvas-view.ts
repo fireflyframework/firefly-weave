@@ -182,6 +182,8 @@ import {
 import {
   runText,
   tileBadge,
+  runFact,
+  handledStatus,
   tileBorders,
   tileName,
   type StepFacts,
@@ -923,11 +925,13 @@ export class CanvasView implements OnInit, DoCheck {
           text: loopResultText(finishedLoop.count!, finishedLoop.results),
           tone: null,
         }
-      : recordedRun
-        ? null
-        : recorded
-          ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-          : null;
+      : state.run === "handled"
+        ? runFact(shown)
+        : recordedRun
+          ? null
+          : recorded
+            ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+            : null;
     // The Runs tab draws the run only: nothing from the editor's executions.
     // A loop's frame says nothing under it while its playback runs.
     const runLine = fact
@@ -966,7 +970,12 @@ export class CanvasView implements OnInit, DoCheck {
             : detached
               ? `${summary}, doesn't wait`
               : summary,
-        status: note || runText(state.run, tile.kind) || badge?.text || "",
+        status:
+          note ||
+          runText(state.run, tile.kind) ||
+          handledStatus(shown) ||
+          badge?.text ||
+          "",
         index: tile.index,
         count: tile.count,
         place: tile.place,

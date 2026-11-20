@@ -292,11 +292,22 @@ export function groupsEntered(
  * skipped when it ended elsewhere. An edge naming no step stays idle.
  */
 export function edgeRun(
-  edge: { leaves: string | null; enters: string | null },
+  edge: { leaves: string | null; enters: string | null; success?: string },
   run: CanvasRun | null,
   inside: ReadonlySet<string> = NO_GROUPS,
 ): EdgeRun {
-  if (!run || (edge.leaves === null && edge.enters === null)) return "idle";
+  if (!run) return "idle";
+  // A step's Success output: taken when it finished without a failure its
+  // error path handled; when its error path ran, the way it didn't take.
+  if (edge.success !== undefined) {
+    const handled = run.handled?.[edge.success]?.policy === "errorOutput";
+    if (!handled && run.done.includes(edge.success))
+      return runEnded(run) ? "taken" : "live";
+    return runEnded(run) && (handled || run.mode === "simulated")
+      ? "skipped"
+      : "idle";
+  }
+  if (edge.leaves === null && edge.enters === null) return "idle";
   const reached = (id: string) =>
     run.done.includes(id) || (id === "$end" && run.status === "succeeded");
   const here = (id: string) =>

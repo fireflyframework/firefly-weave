@@ -73,6 +73,23 @@ export interface TileBadge {
 export function failureCodeText(code: string): string {
   return code.length > 128 ? code.slice(0, 128) : code;
 }
+/** The line under a handled tile: its code alone, in the warning tone (D28). */
+export function runFact(
+  facts: TileFacts,
+): { text: string; tone: "warning" } | null {
+  const code = facts.failure?.code;
+  return facts.run === "handled" && code
+    ? { text: failureCodeText(code), tone: "warning" }
+    : null;
+}
+/** What a handled tile's name says of its run: "failed and continued, REQUEST_REFUSED". */
+export function handledStatus(facts: TileFacts): string {
+  const code = facts.failure?.code;
+  if (facts.run !== "handled") return "";
+  return code
+    ? `failed and continued, ${failureCodeText(code)}`
+    : "failed and continued";
+}
 export function tileBadge(facts: TileFacts): TileBadge | null {
   if (facts.run === "live" || facts.run === "waiting") return null;
   if (facts.run === "failed") {

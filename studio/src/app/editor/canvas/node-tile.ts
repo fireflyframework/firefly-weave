@@ -77,7 +77,7 @@ export interface TileView {
   /** What its data holds, under the label ("3 fields"); "" when it has none. */
   output: string;
   /** On the Runs tab, the line names the run's fact: a failure's code in danger ink, a change in info ink. */
-  outputTone?: "danger" | "info" | null;
+  outputTone?: "danger" | "warning" | "info" | null;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;

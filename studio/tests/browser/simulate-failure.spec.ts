@@ -211,6 +211,13 @@ test("Execute workflow fails the step as simulated, and its tile says it failed 
     .locator('.tile-badge[data-badge="handled"]');
   await expect(badge).toBeVisible();
   await expect(badge).toHaveAttribute("data-tone", "warning");
+  // Under it, the code alone in the warning tone; its name says the rest.
+  const line = canvas.tile("submit").locator(".tile-output");
+  await expect(line).toHaveText("REQUEST_REFUSED");
+  await expect(line).toHaveAttribute("data-tone", "warning");
+  await expect(canvas.tileBody("submit")).toHaveAccessibleName(
+    /^submit, continues on error, Transform, .*failed and continued, REQUEST_REFUSED, step 1 of 1 in Main sequence$/,
+  );
   // Its tooltip says what failed, and that the run went on.
   await expect(canvas.tileBody("submit")).toHaveAttribute(
     "title",

@@ -186,6 +186,8 @@ export interface LtrEdge {
   leaves: string | null;
   /** The step (or "$end") a run reaches over it; null when it ends at a join. */
   enters: string | null;
+  /** The step whose Success output this edge draws: a run takes it only when the step succeeded. */
+  success?: string;
 }
 export interface LtrSlot {
   owner: string;
@@ -646,6 +648,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         name: null,
         leaves: null,
         enters,
+        ...(key === "success" ? { success: step.id } : {}),
       });
       layout.labels.push({
         owner,
@@ -677,6 +680,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       name: null,
       leaves: step.id,
       enters: null,
+      success: step.id,
     });
     // The error lane makes room for the frames its steps draw above its row.
     const laneTop = top + LTR.lane + riseOf(errors.steps);

@@ -1345,6 +1345,10 @@ weave-canvas-view,
 .canvas-v2 .tile-label span.tile-output[data-tone="danger"] {
   color: var(--danger-ink);
 }
+/* A handled failure's code (D28). */
+.canvas-v2 .tile-label span.tile-output[data-tone="warning"] {
+  color: var(--warning-ink);
+}
 .canvas-v2 .tile-label span.tile-output[data-tone="info"] {
   color: var(--info-ink);
 }

@@ -22,10 +22,18 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   failureCodeText,
+  handledStatus,
+  runFact,
   tileBadge,
   type TileFacts,
 } from "../src/app/editor/canvas/tile-facts";
-import { tileRun } from "../src/app/editor/canvas/run-state";
+import {
+  edgeRun,
+  tileRun,
+  type CanvasRun,
+} from "../src/app/editor/canvas/run-state";
+import { layoutLtr } from "../src/app/editor/canvas/layout-ltr";
+import { freshWorkflow, type Step } from "../src/app/model";
 import { finalRun } from "../src/app/editor/canvas/trace-playback";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
 
@@ -120,5 +128,97 @@ describe("a handled failure in a simulated run", () => {
   it("shows a code as given, cut at 128 characters", () => {
     expect(failureCodeText("request-refused")).toBe("request-refused");
     expect(failureCodeText("A".repeat(140))).toBe("A".repeat(128));
+  });
+});
+
+describe("a handled tile's lines", () => {
+  it("shows the code alone in the warning tone, and says it failed and continued in its name", () => {
+    const handled = facts({
+      run: "handled",
+      failure: { code: "REQUEST_REFUSED", message: "Refused." },
+      handled: "errorOutput",
+    });
+    expect(runFact(handled)).toEqual({
+      text: "REQUEST_REFUSED",
+      tone: "warning",
+    });
+    expect(
+      runFact(facts({ ...handled, failure: { code: "A".repeat(140) } })),
+    ).toEqual({ text: "A".repeat(128), tone: "warning" });
+    expect(handledStatus(handled)).toBe(
+      "failed and continued, REQUEST_REFUSED",
+    );
+    expect(runFact(facts({ run: "done" }))).toBeNull();
+    expect(handledStatus(facts({ run: "done" }))).toBe("");
+  });
+});
+
+describe("the edges around a step whose error path ran", () => {
+  const layout = () => {
+    const workflow = freshWorkflow();
+    const step = (id: string) => ({ id, kind: "transform" }) as Step;
+    workflow.spec.steps = [
+      {
+        id: "submit",
+        kind: "action",
+        uses: "a@1.0.0",
+        onError: "errorOutput",
+        errorPath: { steps: [step("notify-team")], output: { literal: null } },
+      } as Step,
+      step("summarize"),
+    ];
+    return layoutLtr(workflow, {
+      role: () => "app" as never,
+      triggers: [{ id: "manual", kind: "manual" }],
+    });
+  };
+  const states = (run: CanvasRun) =>
+    Object.fromEntries(
+      layout().edges.map((edge) => [edge.key, edgeRun(edge, run)]),
+    );
+
+  it("takes the Error output, the path and the way out of it, never the Success output", () => {
+    const run = finalRun({
+      ...response,
+      trace: [
+        ...response.trace,
+        {
+          index: 2,
+          nodeId: "summarize",
+          instanceKey: "",
+          kind: "transform",
+          status: "completed",
+        },
+      ],
+    } as ExecuteResponse);
+    expect(states(run)).toMatchObject({
+      "submit>submit:path:success": "skipped",
+      "submit:path:success>$join:submit": "skipped",
+      "submit>submit:path:errorPath": "taken",
+      "submit:path:errorPath>notify-team": "taken",
+      "notify-team>$join:submit": "taken",
+      "submit>summarize": "taken",
+    });
+  });
+
+  it("takes the Success output when the step succeeded, and not the error path", () => {
+    const run = finalRun({
+      status: "completed",
+      trace: ["submit", "summarize"].map((nodeId, index) => ({
+        index,
+        nodeId,
+        instanceKey: "",
+        kind: "transform",
+        status: "completed",
+      })),
+      loops: [],
+      blocked: null,
+    } as unknown as ExecuteResponse);
+    expect(states(run)).toMatchObject({
+      "submit>submit:path:success": "taken",
+      "submit:path:success>$join:submit": "taken",
+      "submit>submit:path:errorPath": "skipped",
+      "notify-team>$join:submit": "skipped",
+    });
   });
 });
