@@ -122,6 +122,8 @@ function targetOf(stepId: string, fieldPath: string): Target | null {
     return { stepId, kind: "branch", branch: "default" };
   if (segments[0] === "branches" && segments[2] === "output")
     return { stepId, kind: "branch", branch: `branch:${segments[1]}` };
+  if (segments[0] === "body" && segments[1] === "output")
+    return { stepId, kind: "branch", branch: "body" };
   return { stepId, kind: "step" };
 }
 
@@ -506,7 +508,23 @@ class Walker {
           additionalProperties: false,
         };
       else if (kind === "signal") schema = schemaOf(step["payloadSchema"]);
-      else if (kind === "switch" || kind === "parallel") {
+      else if (kind === "forEach") {
+        // Mirrors `_Analyzer.loop`: the body sees the steps before the loop,
+        // its result per item the whole body; the loop itself completes.
+        const body = schemaOf(step["body"]);
+        const result = this.block(body["steps"], visible);
+        if (
+          this.target.kind === "branch" &&
+          this.target.stepId === id &&
+          this.target.branch === "body"
+        )
+          this.take(result.visible, result.completes);
+        schema = loopOutput(
+          result.completes ? this.infer(body["output"], result.visible) : {},
+          step["maxItems"],
+          step["collect"],
+        );
+      } else if (kind === "switch" || kind === "parallel") {
         const outputs: { name: string; schema: Schema; completes: boolean }[] =
           [];
         for (const [name, label, branch] of branchesOf(step)) {
@@ -580,6 +598,42 @@ class Walker {
 }
 const defined = (value: string | undefined): value is string =>
   value !== undefined;
+
+/**
+ * A loop's output, as `loops.output_schema` writes it: one result per item
+ * in item order, up to its Up to; "Skip empty results" leaves the nulls out,
+ * and a result that is only ever null leaves an empty list.
+ */
+function loopOutput(each: Schema, maxItems: unknown, collect: unknown): Schema {
+  const most = typeof maxItems === "number" ? maxItems : 1000;
+  const items = collect === "nonNull" ? withoutNull(each) : each;
+  return items
+    ? { type: "array", items, maxItems: most }
+    : { type: "array", maxItems: 0 };
+}
+
+/**
+ * A schema without null, as the compiler's `_nonnull` narrows it: its const,
+ * else its enum, else its type; null when only null is left, and any value
+ * (`{}`) when its types aren't listed directly.
+ */
+function withoutNull(schema: Schema): Schema | null {
+  if ("const" in schema) return schema["const"] === null ? null : schema;
+  if ("enum" in schema) {
+    const values = Array.isArray(schema["enum"])
+      ? schema["enum"].filter((value) => value !== null)
+      : [];
+    return values.length ? { ...schema, enum: values } : null;
+  }
+  const type = schema["type"];
+  if (type === "null") return null;
+  if (Array.isArray(type)) {
+    const kinds = type.filter((name) => name !== "null");
+    if (!kinds.length) return null;
+    return { ...schema, type: kinds.length === 1 ? kinds[0] : kinds };
+  }
+  return typeof type === "string" ? schema : {};
+}
 
 function schemaAt(schema: Schema, path: string[]): Schema {
   let current = schema;

@@ -38,6 +38,12 @@ export interface RunRecord {
   /** Instance keys waiting (the keys of `state.waits`). */
   waiting: readonly string[];
   incidents: readonly { key: string; code: string }[];
+  /**
+   * A loop's instance key to how many items it had (`orders`, `lines[2]`):
+   * the one thing the run keeps of a loop that ended, whose items and
+   * frames it clears.
+   */
+  loops: Readonly<Record<string, number>>;
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,7 +74,15 @@ export function readRunRecord(value: unknown): RunRecord | null {
   const waits = objectField(state["waits"]);
   const incidents = objectField(state["incidents"]);
   const branches = objectField(state["branches"]);
-  if (!waits || !incidents || !branches) return null;
+  const loopStates = objectField(state["loops"]);
+  if (!waits || !incidents || !branches || !loopStates) return null;
+  const loops: Record<string, number> = {};
+  for (const [key, loop] of Object.entries(loopStates)) {
+    const count = isRecord(loop) ? loop["count"] : null;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+      return null;
+    loops[key] = count;
+  }
   const completed: Record<string, Json> = { ...steps };
   for (const branch of Object.values(branches)) {
     const inner = isRecord(branch) ? objectField(branch["steps"]) : null;
@@ -94,5 +108,6 @@ export function readRunRecord(value: unknown): RunRecord | null {
     active: [...active],
     waiting: Object.keys(waits),
     incidents: failures,
+    loops,
   };
 }

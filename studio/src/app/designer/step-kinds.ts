@@ -31,6 +31,7 @@ export const stepKindLabels: Record<Kind, string> = {
   signal: "Wait for signal",
   humanTask: "Human task",
   fail: "Fail",
+  forEach: "Loop over items",
 };
 export const stepKindDescriptions: Record<Kind, string> = {
   action: "Run a published action",
@@ -43,6 +44,7 @@ export const stepKindDescriptions: Record<Kind, string> = {
   signal: "Wait for a message from another system",
   humanTask: "Ask a person to decide",
   fail: "Stop the run with a clear reason",
+  forEach: "Run steps once for each item of a list",
 };
 
 /** Everyday words people search with, so "approval" finds the human task. */
@@ -57,6 +59,7 @@ export const stepKindKeywords: Record<Kind, string> = {
   signal: "event message callback receive",
   humanTask: "approval approve review person form manual",
   fail: "error throw stop abort",
+  forEach: "loop each iterate items list batch for",
 };
 /**
  * The palette's groups, in order. "Actions" also holds the published

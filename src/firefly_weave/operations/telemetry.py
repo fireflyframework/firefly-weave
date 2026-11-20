@@ -133,7 +133,7 @@ INSTRUMENTS = frozenset(COUNTERS.values()) | HISTOGRAMS | GAUGES
 _TRACEPARENT = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-(0[01])\Z")
 
 
-def attributes(operation: str = "other", status: str = "other", error_code: str = "none") -> dict[str, str]:
+def attributes(operation: object = "other", status: object = "other", error_code: object = "none") -> dict[str, str]:
     return {
         "operation": operation if isinstance(operation, str) and operation in OPERATIONS_ALLOWED else "other",
         "status": status if isinstance(status, str) and status in STATUSES else "other",

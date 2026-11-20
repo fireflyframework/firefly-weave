@@ -245,6 +245,17 @@ export function propertyFields(step: EditableDocument): Field[] {
     ],
     parallel: [f("Run at most", "concurrency", "positive")],
     switch: [],
+    forEach: [
+      f("Items", "items", "expression"),
+      f("At a time", "concurrency", "positive"),
+      f("Up to", "maxItems", "positive"),
+      f("Results", "collect", "text"),
+      {
+        label: "Result per item",
+        path: ["body", "output"],
+        kind: "expression",
+      },
+    ],
   };
   const fields = result[step.kind] ?? [];
   if (step.kind === "switch") {

@@ -746,6 +746,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
+    from firefly_weave.operations.incident_codes import INCIDENT_CODES
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import (
         Blocked,
@@ -811,9 +812,18 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     seen: set[tuple[str | None, str]] = set()
     # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing.
     frames = {frame.key: frame for frame in view.frames if frame.status != "not_simulated"}
+    # A run held on an incident (a step the runtime refused) stops there until a person ends it: it failed there. So
+    # does a run left waiting on a called run held that way.
+    held = _incident(view.status, view.variables)
+    held_frames = {key: code for key, frame in frames.items() if (code := _incident(frame.status, frame.variables))}
+    statuses: dict[str, Literal["running", "waiting", "completed", "failed"]] = {
+        key: "failed" if key in held_frames else _frame_status(frame.status) for key, frame in frames.items()
+    }
+    waits_on_held = bool(held_frames) and blocked is None and view.status == "waiting"
+    on_hold = held is not None or waits_on_held
     # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
     timed_out = view.status in {"timed_out", "cancelled"}
-    failed = (view.status == "failed" or timed_out) and not view.diagnostics
+    failed = (view.status == "failed" or timed_out or on_hold) and not view.diagnostics
     for boundary in data.boundaries:
         if boundary.kind != "node" or boundary.node_id is None:
             continue
@@ -844,7 +854,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if unsimulated_at is not None:
         failed = True
     # Where each run stopped: the simulated workflow's last step, and the last step of each called run that failed.
-    ended: set[str | None] = {key for key, frame in frames.items() if _frame_status(frame.status) == "failed"}
+    ended: set[str | None] = {key for key, status in statuses.items() if status == "failed"}
     if failed:
         ended.add(None)
     for frame in ended:
@@ -873,6 +883,10 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 message=words,
             )
         )
+    for code in [*([held] if held is not None else []), *held_frames.values()]:
+        known = INCIDENT_CODES.get(code)
+        words = known.meaning if known is not None else "The simulated run stopped."
+        extra.append(Diagnostic(code=code, severity="error", stage="evaluation", path="", message=words))
     if unsimulated_at is not None:
         extra.append(
             Diagnostic(
@@ -936,7 +950,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                     break
     if blocked is not None:
         status: Literal["completed", "blocked", "failed", "limit"] = "blocked"
-    elif view.diagnostics or view.status == "failed" or timed_out or unsimulated_at is not None:
+    elif view.diagnostics or view.status == "failed" or timed_out or on_hold or unsimulated_at is not None:
         status = "failed"
     else:
         status = "completed"
@@ -969,9 +983,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         **(
             {
                 "frames": [
-                    FrameView(
-                        key=key, workflow=frame.workflow, callNode=frame.call_node, status=_frame_status(frame.status)
-                    )
+                    FrameView(key=key, workflow=frame.workflow, callNode=frame.call_node, status=statuses[key])
                     for key, frame in frames.items()
                 ]
             }
@@ -996,8 +1008,19 @@ def _frame_status(status: str) -> Literal["running", "waiting", "completed", "fa
     return "waiting" if status in {"waiting", "suspended"} else "running"
 
 
+def _incident(status: str, variables: Mapping[str, object]) -> str | None:
+    """The code of the incident a run is held on, or None.
+
+    The runtime opens one for a step it refuses outside a transaction (a loop over more items than its limit, say):
+    it undoes that event's work and holds the run until a person resolves the incident.
+    """
+    code = variables.get("incident")
+    return code if status == "suspended" and isinstance(code, str) else None
+
+
 def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:
-    """Run until the end, the target, or a signal or a person nobody scripted; waits advance by themselves."""
+    """Run until the end, the target, an incident (it waits for a person), or a signal or a person nobody scripted;
+    waits advance by themselves."""
     from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.studio.local_contracts import Blocked
 
@@ -1005,7 +1028,12 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
     for _ in range(ROUNDS):
         view = simulator.continue_until_breakpoint()
         data = simulator.data
-        if view.diagnostics or view.status in terminal or data.paused is not None:
+        if (
+            view.diagnostics
+            or view.status in terminal
+            or data.paused is not None
+            or _incident(view.status, view.variables) is not None
+        ):
             return None
         moved = False
         for key in list(view.active_nodes):

@@ -24,6 +24,7 @@ import { shortId } from "../../format";
 import type { Workflow } from "../../model";
 import { stepOutput, type StepFact } from "../../operate/run-contracts";
 import { evaluate } from "../formula/evaluate";
+import { enclosingLoops } from "../formula/loops";
 import { referencesOf } from "../formula/preview";
 import { findStep } from "../ndv/step-walk";
 import { instanceStep } from "../state/instance-keys";
@@ -58,6 +59,17 @@ const keyOf = (fact: StepFact) => fact.instance_key || fact.node_id;
 const ownBinding = (key: string) => !/[#~]/.test(key);
 /** The first two segments of a JSON pointer: "/steps/fetch/output" gives ["steps", "fetch"]. */
 const head = (pointer: string) => pointer.split("/").slice(1, 3);
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+/** The steps an expression reads, by ID. */
+const stepsRead = (expression: unknown): string[] =>
+  referencesOf(expression)
+    .map(head)
+    .filter(([root]) => root === "steps")
+    .map(([, id]) => id);
 
 export class RunData implements RunDataPort {
   readonly runId: string;
@@ -175,11 +187,14 @@ export class RunData implements RunDataPort {
     return { kind: "none", why: "not-reached" };
   }
 
-  received(stepId: string): Received {
+  received(stepId: string, key?: string): Received {
     if (!this.definition) return { ok: false, reason: NO_VERSION };
     const step = findStep(this.definition.spec.steps, (s) => s.id === stepId);
     if (!step || step["with"] === undefined) return { ok: false, reason: "" };
     const reads = referencesOf(step["with"]).map(head);
+    // One item of a loop: its input reads that item, and the steps of that item.
+    if (key && enclosingLoops(this.definition, stepId).length)
+      return this.receivedIn(step["with"], stepId, key);
     if (reads.some(([root]) => LOOP_ROOTS.has(root)))
       return { ok: false, reason: ONE_ITERATION };
     // Expressions read each step's binding ({output}, or {error} for a
@@ -209,6 +224,69 @@ export class RunData implements RunDataPort {
     const result = evaluate(step["with"], {
       input: this.record.input,
       steps,
+    });
+    return result.ok
+      ? { ok: true, value: result.value }
+      : {
+          ok: false,
+          reason: `Studio couldn't recompute this input: ${result.code}.`,
+        };
+  }
+
+  /**
+   * One item's input: each loop around the step evaluates its list from the
+   * bindings the run recorded before it, outermost first, and the item is
+   * the one the key names. The steps inside read the outputs recorded for
+   * that item; when the run doesn't hold one of those, nor the list, Studio
+   * says it can't recompute it.
+   */
+  private receivedIn(input: unknown, stepId: string, key: string): Received {
+    const cannot: Received = { ok: false, reason: ONE_ITERATION };
+    const around = enclosingLoops(this.definition, stepId).reverse();
+    const iteration = iterationOf(key);
+    if (instanceStep(key) !== stepId || iteration.length !== around.length)
+      return cannot;
+    // The bindings outside every loop: the run keeps them under their step IDs.
+    const steps: Record<string, Json> = {};
+    for (const [name, binding] of Object.entries(this.record.completed))
+      if (!/[[#~]/.test(name)) steps[name] = binding;
+    for (const [name, output] of this.outputs)
+      if (!/[[#~]/.test(name) && output.kind === "value")
+        steps[name] = { output: output.value };
+    const loops: Record<string, { item: Json; index: number }> = {};
+    let scope: Record<string, Json> = {};
+    for (const [depth, loopId] of around.entries()) {
+      const loop = findStep(
+        this.definition!.spec.steps,
+        (s) => s.id === loopId,
+      );
+      if (!loop || stepsRead(loop["items"]).some((id) => !(id in steps)))
+        return cannot;
+      const list = evaluate(loop["items"], {
+        input: this.record.input,
+        steps,
+        ...scope,
+      });
+      const index = iteration[depth];
+      if (!list.ok || !Array.isArray(list.value) || index >= list.value.length)
+        return cannot;
+      loops[loopId] = { item: list.value[index], index };
+      scope = { item: list.value[index], index, loops: { ...loops } };
+      // The steps inside this loop, in this item, from their recorded outputs.
+      const prefix = iteration.slice(0, depth + 1).join(",");
+      for (const [name, output] of this.outputs)
+        if (
+          ownBinding(name) &&
+          output.kind === "value" &&
+          iterationOf(name).join(",") === prefix
+        )
+          steps[instanceStep(name)] = { output: output.value };
+    }
+    if (stepsRead(input).some((id) => !(id in steps))) return cannot;
+    const result = evaluate(input, {
+      input: this.record.input,
+      steps,
+      ...scope,
     });
     return result.ok
       ? { ok: true, value: result.value }

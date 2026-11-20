@@ -904,6 +904,36 @@ weave-issues-indicator {
     min-height: var(--control-touch);
   }
 }
+/* Below 768 px a run's chip and its Item select take their own row under
+   the step arrows and Close, the select as wide as the row allows. */
+@media (max-width: 767px) {
+  .sd-top:has(> .sd-iteration) {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+    padding-bottom: var(--space-2);
+  }
+  .sd-top:has(> .sd-iteration)::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+  }
+  .sd-top:has(> .sd-iteration) > :is(.sd-run-chip, .sd-iteration) {
+    order: 2;
+  }
+  .sd-top > .sd-run-chip {
+    margin-left: 0;
+  }
+  /* Never narrower than its label and a 12em select: where the chip leaves
+     less, it takes the next row whole. */
+  .sd-iteration {
+    flex: 1 0 auto;
+  }
+  .sd-iteration select {
+    flex: 1;
+    min-inline-size: 12em;
+  }
+}
 
 /* On the Runs tab each field reads as its value: no field box, no mode
    switch, no menu, no chevron; the way it is given reads as text. Mapping

@@ -53,6 +53,7 @@ export {
   finalAnnouncement,
   playbackFrames,
   PLAYBACK_STEP_MS,
+  runFailureOf,
 } from "../canvas/trace-playback";
 export { summaryLine } from "./run-summary";
 export { findStep } from "../ndv/step-walk";

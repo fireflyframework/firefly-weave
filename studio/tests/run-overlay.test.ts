@@ -171,6 +171,7 @@ describe("a run's typed record", () => {
       active: ["send"],
       waiting: ["wait-for-reply"],
       incidents: [{ key: "send", code: "SMTP_REJECTED" }],
+      loops: {},
     });
   });
 
