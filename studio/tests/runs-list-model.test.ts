@@ -174,8 +174,9 @@ describe("a run as a list row", () => {
       short: "1c0d7f8a",
       label: "Failed",
       tone: "danger",
-      failedAt: "Failed at send",
-      at: "send",
+      // The fixture's run failed at send in item 4 of a loop.
+      failedAt: "Failed at send, item 4",
+      at: "send, item 4",
       version: "1.3.0",
       duration: "1 min 5 s",
       started: "2 hours ago",
@@ -185,6 +186,24 @@ describe("a run as a list row", () => {
       unavailable: false,
     });
     expect(failed.startedTitle).toContain("7 Oct");
+    // A step inside a loop says the item it failed in, nested ones too.
+    const inLoop = (instance_key: string) =>
+      runRow(
+        {
+          ...summary(fixtureIds.failed),
+          failed_step: {
+            node_id: "send",
+            instance_key,
+            error_code: "SMTP_REJECTED",
+          },
+        },
+        now,
+      );
+    expect(inLoop("send[3]")).toMatchObject({
+      failedAt: "Failed at send, item 4",
+      at: "send, item 4",
+    });
+    expect(inLoop("send[1][0]").at).toBe("send, item 2 › 1");
 
     const retry = runRow(summary(fixtureIds.retry), now);
     expect(retry.link).toBe("Retry of 1c0d7f8a");

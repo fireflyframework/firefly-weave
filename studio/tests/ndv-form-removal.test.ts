@@ -97,6 +97,8 @@ const complete = (kind: Kind): Step => {
       return { ...step, uses: "payment-policy@1.0.0" };
     case "action":
       return { ...step, uses: "get-pet@1.0.0" };
+    case "forEach":
+      return { ...step, items: { ref: "/input/orders" } };
     default:
       return step;
   }
@@ -192,12 +194,14 @@ function pathResultCases(): Case[] {
 
 /**
  * Required by the language, with no value that would be valid to write back: a
- * name, a message, a table, a model and a path's condition are the person's to give.
+ * name, a message, a table, a model, a loop's list and a path's condition are the
+ * person's to give.
  * Resetting them leaves what a new step has.
  */
 const NO_VALID_DEFAULT = [
   "decisionTable:table",
   "fail:message",
+  "forEach:items",
   "llm:model",
   "signal:name",
   "switch:cases",

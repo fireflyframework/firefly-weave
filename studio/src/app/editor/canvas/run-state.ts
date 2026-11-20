@@ -27,13 +27,196 @@ export interface CanvasRun {
   active: readonly string[];
   /** Steps it finished. */
   done: readonly string[];
+  /** A simulation played back: its whole trace, how far the playback is, and each loop's count. */
+  trace?: readonly TraceStep[];
+  /** Entries before it have played; the one at it is playing. */
+  at?: number;
+  /** A loop's instance key (`orders`, `lines[2]`) to how many items it had. */
+  counts?: Readonly<Record<string, number>>;
+  /** The playback ended: the whole trace has played. */
+  ended?: boolean;
+  /**
+   * The loops the answer ended inside, by instance key, with how many items
+   * they finished: Execute previous steps stopped in one of their items, or
+   * the run is blocked there. Read once the playback ended.
+   */
+  paused?: Readonly<Record<string, number>>;
+}
+/** One step of a simulated run's trace, as the playback reads it. */
+export interface TraceStep {
+  nodeId: string;
+  /** "" when it is the step ID. */
+  instanceKey: string;
+  kind: string;
+  status: "running" | "waiting" | "completed" | "failed";
+  /** A loop's entry: how many results its output list holds. */
+  results?: number;
+  /** The incident a failed entry stopped the run with, when the answer says (WV-RUNTIME-LOOP-LIMIT). */
+  code?: string;
+}
+/** One run of a loop at a point of the playback. */
+export interface LoopRun {
+  /** The loop step. */
+  id: string;
+  /** The item of each loop around it, outermost first; [] at the top level. */
+  within: readonly number[];
+  /** Items finished so far. */
+  finished: number;
+  /** How many items it has; null when the simulation doesn't say. */
+  count: number | null;
+  /** "paused": the run ended inside it, before its items finished. */
+  status: "running" | "done" | "failed" | "paused";
+  /** The failed item, one-based; null while none failed. */
+  failedAt: number | null;
+  /** Once done, how many results it returned (Skip empty results leaves some out); null otherwise. */
+  results: number | null;
+  /** It failed before its first item because its list was longer than Up to; absent otherwise. */
+  overLimit?: true;
+}
+/** The incident a loop over more items than its Up to opens. */
+export const LOOP_LIMIT = "WV-RUNTIME-LOOP-LIMIT";
+
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+
+/**
+ * Each run of each loop at a point of the playback: the entries before `at`
+ * have played (all of them once it `ended`). An item is finished once its
+ * last entry in the whole trace has played and completed, and failed once a
+ * step failed in it; a loop is done when every item it has finished.
+ * `loopsAround` names the loops around a step, outermost first. A loop in
+ * `paused` is one the run ended inside: once ended, it is paused with the
+ * items the answer says it finished, never done.
+ */
+export function loopProgress(
+  trace: readonly TraceStep[],
+  at: number,
+  counts: Readonly<Record<string, number>>,
+  loopsAround: (stepId: string) => readonly string[],
+  ended: boolean,
+  paused: Readonly<Record<string, number>> = {},
+): LoopRun[] {
+  const played = ended ? trace.length : Math.min(at, trace.length);
+  // Each loop's runs, in the order they started; each item's last entry,
+  // and the items a step failed in once that failure played.
+  const runs = new Map<
+    string,
+    { id: string; within: number[]; results: number | null }
+  >();
+  const last = new Map<string, Map<number, number>>();
+  const failures = new Map<string, Set<number>>();
+  // A loop the run stopped at, by its own failed entry, and the incident it opened.
+  const stopped = new Map<string, string | null>();
+  const keyOf = (id: string, within: readonly number[]) =>
+    id + within.map((index) => `[${index}]`).join("");
+  trace.forEach((entry, position) => {
+    if (entry.kind === "forEach" && position <= played) {
+      const within = iterationOf(entry.instanceKey);
+      const key = keyOf(entry.nodeId, within);
+      if (!runs.has(key))
+        runs.set(key, {
+          id: entry.nodeId,
+          within,
+          results: entry.results ?? null,
+        });
+      if (
+        entry.status === "failed" &&
+        position < played &&
+        position === trace.length - 1
+      )
+        stopped.set(key, entry.code ?? null);
+    }
+    const iteration = iterationOf(entry.instanceKey);
+    loopsAround(entry.nodeId).forEach((loop, depth) => {
+      if (iteration.length <= depth) return;
+      const key = keyOf(loop, iteration.slice(0, depth));
+      let items = last.get(key);
+      if (!items) last.set(key, (items = new Map()));
+      items.set(iteration[depth], position);
+      // A failure inside an item, nested loops included, fails it.
+      if (entry.status === "failed" && position < played) {
+        let failed = failures.get(key);
+        if (!failed) failures.set(key, (failed = new Set()));
+        failed.add(iteration[depth]);
+      }
+    });
+  });
+  return [...runs].map(([key, run]) => {
+    let finished = 0;
+    for (const position of last.get(key)?.values() ?? [])
+      if (position < played && trace[position].status === "completed")
+        finished++;
+    const failed = [...(failures.get(key) ?? [])];
+    const failedAt = failed.length ? Math.min(...failed) + 1 : null;
+    const count = counts[key] ?? null;
+    // The run stopped at the loop itself, before any of its items ran.
+    const failedItself = stopped.has(key) && !last.get(key)?.size;
+    const stoppedInside = ended && paused[key] !== undefined;
+    const status =
+      failedAt !== null || failedItself
+        ? "failed"
+        : stoppedInside
+          ? "paused"
+          : ended || (count !== null && finished >= count)
+            ? "done"
+            : "running";
+    return {
+      id: run.id,
+      within: run.within,
+      finished: status === "paused" ? paused[key] : finished,
+      count,
+      status,
+      failedAt,
+      results: status === "done" ? run.results : null,
+      ...(failedItself && stopped.get(key) === LOOP_LIMIT
+        ? { overLimit: true as const }
+        : {}),
+    };
+  });
 }
 /**
  * A run that happened, drawn on the Runs tab over the open draft: the steps
  * that differ from the version it used, and why steps failed.
  */
+/** One item of a loop in a recorded run, and what it did. */
+export interface RecordedItem {
+  index: number;
+  /** "stopped": a cancelled run cut it off; "timed-out": the run timed out while it ran. */
+  status:
+    | "finished"
+    | "failed"
+    | "running"
+    | "not-run"
+    | "stopped"
+    | "timed-out";
+  /** A failed item's error code. */
+  code: string | null;
+}
+/** One run of a loop in a recorded run: once, or once per item of the loops around it. */
+export interface RecordedLoop {
+  /** The loop step. */
+  id: string;
+  /** The item of each loop around it, outermost first; [] at the top level. */
+  within: readonly number[];
+  /** How many items it had: the run's count, else the items the run reached. */
+  count: number;
+  /** The count is the run's own. */
+  known: boolean;
+  items: readonly RecordedItem[];
+  /** How many results it returned, when the run kept its output; null otherwise. */
+  results: number | null;
+}
 export interface RecordedRun extends CanvasRun {
   mode: "real";
+  /** Each run of a loop, for the item chip. */
+  loops?: readonly RecordedLoop[];
+  /** Loop step ID to the item its steps show (zero-based); absent: every item at once. */
+  picks?: Readonly<Record<string, number>>;
+  /** Shows another item of a loop (zero-based). */
+  pick?: (loop: string, index: number) => void;
   /** Steps changed since the run's version. */
   changed: readonly string[];
   /** Steps the run's version didn't have. */
@@ -209,6 +392,54 @@ export function frameRun(
       y: axis(outline.y, outline.height, focus.y, focus.height, area.height),
     },
   };
+}
+
+/** The zooms Execute workflow frames at: 100% down to 55%, in 2% steps, then 55%. */
+const EXECUTE_ZOOMS = [
+  ...Array.from({ length: 23 }, (_, i) => (100 - 2 * i) / 100),
+  0.55,
+];
+
+/** The largest zoom of `zooms` at which a box fits the area with 8 px to spare, centered; null when none does. */
+function fitBox(
+  boxAt: (zoom: number) => FrameBox,
+  area: { width: number; height: number },
+  zooms: readonly number[],
+): { zoom: number; pan: { x: number; y: number } } | null {
+  for (const zoom of zooms) {
+    const box = boxAt(zoom);
+    if (
+      box.width * zoom + 16 <= area.width + 1e-6 &&
+      box.height * zoom + 16 <= area.height + 1e-6
+    )
+      return {
+        zoom,
+        pan: {
+          x: (area.width - box.width * zoom) / 2 - box.x * zoom,
+          y: (area.height - box.height * zoom) / 2 - box.y * zoom,
+        },
+      };
+  }
+  return null;
+}
+
+/**
+ * How Execute workflow frames its run in the canvas area the run log
+ * leaves: the whole workflow's outline at 55% or more; else the loop that
+ * holds the step the run failed or is at, at 55% or more; else that step
+ * at 60%, as the Runs tab frames one.
+ */
+export function frameExecuted(
+  workflow: (zoom: number) => FrameBox,
+  loop: FrameBox | null,
+  step: FrameBox | null,
+  area: { width: number; height: number },
+): { zoom: number; pan: { x: number; y: number } } {
+  return (
+    fitBox(workflow, area, EXECUTE_ZOOMS) ??
+    (loop ? fitBox(() => loop, area, EXECUTE_ZOOMS) : null) ??
+    frameRun(workflow, step ?? loop, area)
+  );
 }
 
 /**

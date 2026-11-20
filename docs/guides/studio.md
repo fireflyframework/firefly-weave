@@ -1559,6 +1559,90 @@ sections:
 Before you remove the trigger or turn that setting off, Studio asks, and names
 the published workflows that call this one, whose next activation would fail.
 
+### Loop over items
+
+A **Loop over items** step runs the steps inside it once for each item of a
+list, such as each order a lookup returns, and returns one result per item.
+
+1. Select a **+** and choose **Loop over items** under **Flow**. On a platform
+   that can't run loops, you can't choose the entry, which says "Needs a platform with
+   loops (flow.forEach)". The loop draws as a frame whose header reads
+   "loop-1 For each item in …" until you choose its list, with a Setup needed
+   badge at its top right, and its step details say "Choose the list to loop
+   over."
+1. In **Items**, tagged **List**, map the list: drag it from the Input pane or type a formula
+   such as `steps.lookup.output.rows`. The data picker offers lists first. The
+   header then names it, for example "orders For each item in
+   steps.lookup.output.rows."
+1. Add the steps that run for each item with the frame's **Add a step** slot,
+   or move steps into the frame. The **+** at the end of the body adds after
+   its last step; the **+** after the frame adds after the loop.
+
+**Add option** offers the loop's limits, each with the language's default:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| **At a time** | 1 | How many items run at the same time; with 4, the header ends "· up to 4 at a time." |
+| **Up to** | 1,000 | The most items the list may hold. A longer list fails the run. |
+| **Results** | Keep every result | **Skip empty results** leaves out the items whose result is empty. |
+| **Result per item** | The item itself | What the loop returns for each item. |
+
+**Inside the loop, the Input pane** starts at **Current item** and **Item
+position** ("Number · counts from 0"), then each loop around it ("Loop orders ›
+Current item"), the workflow input, and the steps before. Drag a field of the
+current item to map it as `item.customerEmail`, or one of an outer loop's item
+as `loops.orders.item.customerEmail`. A field of a step outside the loop
+can't read the loop's items: dropping one there says "Only steps inside the
+loop can read its items."
+
+**Pick an item.** Both data panes have a picker under their source row: one
+row per loop around the step, innermost last, with **Previous item**, the
+item button, which reads "Item 3 of 20" and opens **Go to item**, and **Next
+item**. Both panes
+always show the same item. Until the steps before have run, the count isn't
+known and the row says "Execute previous steps to see the items." When the
+list has more items than **Up to**, the row warns: "This list has 2,345 items,
+more than Up to allows (1,000). Raise Up to or shorten the list." A field's
+preview and its Result panel use the picked item; the Result panel holds a
+compact picker of its own.
+
+**Execute and pin one item.** **Execute step** and **Execute previous steps**
+run the picked item inside the loop, and say so in the tooltip and the menu,
+such as "Execute previous steps for item 3." The Output pane then shows that
+item's output, tagged "Simulated · item 3." **Set test output** and
+**Generate sample** pin the picked item only; the banner says "Pinned for item
+3. Other items use their own data, and production runs ignore pins." **Pin for
+every item** in that banner pins the same output for the step, which every
+item without a pin of its own uses, and removes the item's own pin. Its toast
+offers **Undo** for both: "Pinned lookup for every item. Item 3's own pin was
+removed." The loop's own **Execute step** runs every item, and its Output's
+**Table** names the item each result came from in an **Item** column, with a
+note for the items **Skip empty results** left out.
+
+**Execute workflow** follows the items on the frame, which reads "· 7 of 20"
+while they run and "· 20 of 20" at the end, or "· failed at item 4" in red.
+Once the run ends, the frame says how many items it had, such as "20 items, 2
+skipped." The canvas frames the run beside the run log: the whole workflow
+when it fits at 55% or more, else the loop that holds the failed step. Below
+1,600 pixels wide, the run log takes the Workflow panel's place until it
+closes. The run log lists the loop's items, each with the steps it went
+through, and says which items didn't run. The failed item shows open, with
+each step it went through and the error, and every row opens its step on
+that item. A list longer than **Up to** fails the loop before its first item:
+the frame reads "· failed: over Up to," and the run log says "This list has 3
+items, more than Up to allows (2). Raise Up to or shorten the list."
+
+**On the Runs tab**, a recorded loop shows a chip at its frame's top right, "Item 4 of
+20" with the item's status; its list puts the failed items first and offers
+**Go to item**. The steps inside show the chosen item's status, and step
+details open on the same item: their **Item** select and the chip always
+show one item. An item a
+canceled run cut off reads **Stopped**, or **Timed out** when the run timed
+out, and the header says where the run stopped, such as "· canceled at item
+2." In step details, **What it
+received** is recomputed for the item shown from the run's own data, and
+**Debug in editor** opens the editor on the item the run failed at.
+
 ### Read a workflow's runs and debug them
 
 When you are connected, the **Runs** tab of a workflow lists its runs in the

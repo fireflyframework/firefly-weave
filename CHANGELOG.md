@@ -200,6 +200,13 @@ SPDX-License-Identifier: Apache-2.0
   **Download** (plain text), marks a restarted pod's previous lines, and says
   which chosen member couldn't be read; **Follow** asks quietly for a new
   snapshot every 10 seconds while the page is open.
+- Studio edits loops (Loop over items): a loop draws as a frame around the steps it repeats, with its list and
+  limits (At a time, Up to, Results, Result per item) in step details. Inside a loop, one item picker chooses the
+  item that the Input and Output panes, previews, pins and Execute step use; Pin for every item pins one output
+  that every item without a pin of its own uses. Execute workflow follows the items on the frame and lists each
+  item in the run log, the failed one open on its steps and error, and a list longer than Up to fails the loop as
+  a real run does. On the Runs tab, a recorded loop has an item chip, failed items first, and step details open on
+  the same item. Execute workflow also stops at any step where a real run would stop on an incident.
 
 ### Development and testing
 

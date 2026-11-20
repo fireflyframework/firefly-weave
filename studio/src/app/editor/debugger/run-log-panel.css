@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 /* The run log: docked 320 px right of the canvas; a bottom sheet below
    768 px. Rows and controls 32 px, 44 px on touch. */
 :host {
+  /* Rows lay out by the panel's own width: docked or a sheet. */
+  container-type: inline-size;
   position: absolute;
   top: 0;
   right: 0;
@@ -412,4 +414,82 @@ SPDX-License-Identifier: Apache-2.0
     width: 44px;
     height: 44px;
   }
+}
+
+/* A loop's row: how far it got, a 64 px bar; under it, each item it ran,
+   nested loops' items too ("Item 2 › 1"), and the items that didn't run. */
+/* In a panel under 480 px the bar goes under the row's words, full width,
+   so "2 of 4 items finished" keeps its room; beside them from 480 px. */
+.run-log-entry:has(> .run-log-progress) {
+  row-gap: var(--space-1);
+  padding-block-end: var(--space-1);
+}
+.run-log-progress {
+  position: relative;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+}
+@container (min-width: 480px) {
+  .run-log-entry:has(> .run-log-progress) {
+    padding-block-end: 0;
+  }
+  .run-log-progress {
+    grid-column: auto;
+    grid-row: auto;
+    width: 64px;
+    height: 4px;
+  }
+}
+.run-log-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--progress, 0) * 100%);
+  background: var(--success-ink);
+}
+.run-log-entry[data-status="failed"] .run-log-progress::after {
+  background: var(--danger-ink);
+}
+.run-log-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-log-item {
+  padding-inline-start: calc(var(--space-3) + 24px);
+  min-height: 28px;
+}
+/* The failed item, open: its steps 24 px further in, then the error. */
+.run-log-item-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-log-item-step {
+  padding-inline-start: calc(var(--space-3) + 48px);
+  min-height: 28px;
+}
+.run-log-code {
+  font: var(--type-mono);
+}
+.run-log-item-message,
+.run-log-loop-message {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 48px);
+  color: var(--muted);
+  font: var(--type-caption);
+}
+.run-log-loop-message {
+  padding-inline-start: calc(var(--space-3) + 24px);
+}
+.run-log-not-run {
+  padding: var(--space-1) var(--space-3) var(--space-1)
+    calc(var(--space-3) + 24px);
+  color: var(--muted);
+  font: var(--type-caption);
 }

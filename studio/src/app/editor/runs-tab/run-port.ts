@@ -51,8 +51,11 @@ export interface RunDataPort {
   input(): Json;
   /** The recorded output of a step instance (its instance key). */
   output(key: string): RecordedOutput;
-  /** What the step received, recomputed with the version the run used. */
-  received(stepId: string): Received;
+  /**
+   * What the step received, recomputed with the version the run used; for a
+   * step inside a loop, in the item its instance key names.
+   */
+  received(stepId: string, key?: string): Received;
   /** How one step instance went in the run. */
   state(key: string): "failed" | "running" | "finished" | "not-reached";
   /** The step's instance keys, the failing one first. */
