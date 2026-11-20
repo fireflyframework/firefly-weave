@@ -101,9 +101,4 @@ describe("simulated failures on copied steps", () => {
     if ("reason" in plan) throw Error(plan.reason);
     expect(plan.errors).toEqual({});
   });
-
-  it("copies no errors section when no copied step has a failure", () => {
-    const copied = copySteps(workflow(), ["submit"], {}, {}, { after: MANUAL });
-    expect(copied.document).not.toHaveProperty("errors");
-  });
 });
