@@ -19,11 +19,17 @@ SPDX-License-Identifier: Apache-2.0
    Studio sees" beside it, or below the connect command when the page can't
    hold both (720 + 24 + 320 px). Controls are 36 px with a fine pointer and
    44 px on touch or below 768 px. Tokens only. */
+/* Back to Clusters, the poller's error when there is one, and the wizard,
+   16 px apart. */
 .connect {
   container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 .connect-back {
-  margin: 0 0 var(--space-4) calc(-1 * var(--space-2));
+  align-self: flex-start;
+  margin-inline-start: calc(-1 * var(--space-2));
 }
 .connect-wizard {
   display: grid;
@@ -155,9 +161,6 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
 }
 .connect-target-line code {
-  display: inline-block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
   font: 600 13px/20px var(--font-mono);
   color: var(--text);
 }
@@ -173,7 +176,8 @@ SPDX-License-Identifier: Apache-2.0
   background: var(--hover);
 }
 /* A name inside a sentence never breaks at its hyphens: it moves to the next
-   line whole, and only a name longer than the line breaks. */
+   line whole, with the punctuation that follows it, and only a name longer
+   than the line breaks. */
 .connect-name {
   display: inline-block;
   max-width: 100%;
@@ -222,6 +226,7 @@ SPDX-License-Identifier: Apache-2.0
 .connect-changes {
   font: var(--type-small);
   color: var(--muted);
+  text-wrap: pretty;
 }
 
 /* A command wraps between its arguments, each flag with its value; Copy
@@ -260,6 +265,17 @@ SPDX-License-Identifier: Apache-2.0
   padding: 6px 0;
   font: var(--type-small);
   color: var(--muted);
+}
+/* Copy and Copied share one cell, so the button keeps the wider one's width
+   and never grows toward the command while it says Copied. */
+.connect-copy-label {
+  display: inline-grid;
+}
+.connect-copy-label > span {
+  grid-area: 1 / 1;
+}
+.connect-copy-label > .unseen {
+  visibility: hidden;
 }
 .connect-copy.copied {
   border-color: var(--success-bd);

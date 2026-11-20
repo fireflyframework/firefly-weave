@@ -83,6 +83,11 @@ export interface Backend {
   unreachable: boolean;
   /** Hold the next target read until the test releases it. */
   hold: Promise<void> | null;
+  /**
+   * Answer target reads page by page instead of with `targets`: the first
+   * page without a cursor, each next one for the cursor "page-N".
+   */
+  targetPages: Record<string, unknown>[][] | null;
   targetReads: number;
   /** Every request to the platform: method and path with its query. */
   requests: string[];
@@ -99,6 +104,7 @@ export async function openClusters(
     observations: [],
     unreachable: false,
     hold: null,
+    targetPages: null,
     targetReads: 0,
     requests: [],
     ...backend,
@@ -128,6 +134,15 @@ export async function openClusters(
           message: "The platform didn't answer in time.",
         },
       });
+    if (state.targetPages) {
+      const cursor = new URL(route.request().url()).searchParams.get("cursor");
+      const index = cursor ? Number(cursor.replace("page-", "")) : 0;
+      const next =
+        index + 1 < state.targetPages.length ? `page-${index + 1}` : null;
+      return route.fulfill({
+        json: { items: state.targetPages[index], next_cursor: next },
+      });
+    }
     return route.fulfill({
       json: { items: state.targets, next_cursor: null },
     });
@@ -178,6 +193,18 @@ export const settled = (page: Page) =>
     "aria-disabled",
     "true",
   );
+/**
+ * Opens the wizard and waits until its first look has ended, so its next
+ * poll is scheduled before a test moves the page's clock.
+ */
+export async function openWizardAndLook(page: Page) {
+  const read = page.waitForResponse((response) =>
+    response.url().includes("/deployment-targets?"),
+  );
+  await openWizard(page);
+  await read;
+  await settled(page);
+}
 /** Makes a change to the inputs and waits for Studio's read of targets for them. */
 export async function lookedFor(page: Page, change: () => Promise<unknown>) {
   const read = page.waitForResponse((response) =>

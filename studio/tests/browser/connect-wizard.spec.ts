@@ -31,6 +31,7 @@ import {
   observation,
   openClusters,
   openWizard,
+  openWizardAndLook,
   settled,
   shown,
   status,
@@ -194,14 +195,16 @@ test("while a name is invalid Studio isn't looking, so it never claims a fresh l
 }) => {
   await page.clock.install();
   await openClusters(page);
-  await openWizard(page);
-  await settled(page);
+  await openWizardAndLook(page);
   await page.getByRole("textbox", { name: "Cluster name" }).fill("Weave_Test");
   await expect(status(page)).toContainText("Not looking yet");
   await page.clock.fastForward(60_000);
-  await expect(page.locator(".refresh-status .updated")).toHaveText(
-    "Updated 1 min ago",
-  );
+  const updated = page.locator(".refresh-status .updated");
+  await expect(updated).toHaveText("Updated 1 min ago");
+  // Refresh has nothing to read either.
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.clock.fastForward(1_000);
+  await expect(updated).toHaveText("Updated 1 min ago");
 });
 
 test("a namespace Kubernetes uses is refused with the command line's sentence", async ({
@@ -284,9 +287,8 @@ test("Studio notices the new cluster within 15 s of it appearing", async ({
 }) => {
   await page.clock.install();
   const backend = await openClusters(page);
-  await openWizard(page);
+  await openWizardAndLook(page);
   await expect(status(page)).toContainText("Waiting for the cluster");
-  await settled(page);
   // The connect command finishes: the target and its online runner appear.
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
@@ -370,8 +372,7 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
 }) => {
   await page.clock.install();
   const backend = await openClusters(page);
-  await openWizard(page);
-  await settled(page);
+  await openWizardAndLook(page);
   await page.clock.fastForward(15 * 60_000);
   await expect(status(page).getByRole("status")).toContainText("Not seen yet");
   await expect(status(page)).toContainText(
@@ -387,6 +388,10 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
   await status(page).getByRole("button", { name: "Keep waiting" }).click();
   await expect.poll(() => backend.targetReads).toBe(reads + 1);
   await expect(status(page)).toContainText("Waiting for the cluster");
+  // Keep waiting goes away; focus stays in "What Studio sees".
+  await expect(
+    page.getByRole("heading", { name: "What Studio sees" }),
+  ).toBeFocused();
 });
 
 test("an unreachable platform shows the partial state and waiting resumes on the next good poll", async ({
@@ -394,8 +399,7 @@ test("an unreachable platform shows the partial state and waiting resumes on the
 }) => {
   await page.clock.install();
   const backend = await openClusters(page);
-  await openWizard(page);
-  await settled(page);
+  await openWizardAndLook(page);
   backend.unreachable = true;
   await page.clock.fastForward(5_000);
   const problem = page.getByRole("alert").filter({
@@ -443,23 +447,57 @@ test("changing the namespace while a poll runs drops the answer for the old name
   page,
 }) => {
   let release!: () => void;
+  let releaseNext!: () => void;
   const backend = await openClusters(page, {
     targets: [clusterTarget()],
     runners: [clusterRunner(true)],
   });
+  // The Targets tab has read its targets, so the held read is the wizard's.
+  await settled(page);
   backend.hold = new Promise<void>((resolve) => (release = resolve));
   const reads = backend.targetReads;
   await openWizard(page);
   // The wizard's first look, for kind-weave-test, is still on its way.
   await expect.poll(() => backend.targetReads).toBe(reads + 1);
   await page.getByRole("textbox", { name: "Namespace" }).fill("team-a");
+  // The look for team-a waits too, so only the old answer can reach the page.
+  backend.hold = new Promise<void>((resolve) => (releaseNext = resolve));
   release();
-  await settled(page);
+  // The look for team-a starts once the old answer has been handled.
+  await expect.poll(() => backend.targetReads).toBe(reads + 2);
   await expect(status(page)).toContainText(
     "Waiting for kind-weave-test.team-a… Studio checks every 5 s.",
   );
-  await expect(status(page)).not.toContainText("already connected");
+  await expect(status(page)).not.toContainText("Already connected");
+  await expect(
+    status(page).getByRole("button", { name: "Open target" }),
+  ).toHaveCount(0);
   await expect(field(page, "Target")).toHaveText("kind-weave-test.team-a");
+  releaseNext();
+});
+
+test("Studio finds the cluster's target on a later page of targets", async ({
+  page,
+}) => {
+  const others = Array.from({ length: 50 }, (_, index) =>
+    clusterTarget({
+      id: `aaaaaaaa-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `compose-${index}`,
+      adapter: "docker-compose",
+      boundary: `project-${index}`,
+    }),
+  );
+  const backend = await openClusters(page, {
+    targetPages: [others, [clusterTarget()]],
+    runners: [clusterRunner(false)],
+  });
+  await openWizard(page);
+  await expect(status(page).getByRole("status")).toContainText("Registered");
+  expect(
+    backend.requests.some((line) =>
+      line.endsWith("/deployment-targets?limit=50&cursor=page-1"),
+    ),
+  ).toBe(true);
 });
 
 test("Clusters polls every 5 s while the wizard is open and every 15 s after it", async ({
@@ -467,8 +505,7 @@ test("Clusters polls every 5 s while the wizard is open and every 15 s after it"
 }) => {
   await page.clock.install();
   const backend = await openClusters(page);
-  await openWizard(page);
-  await settled(page);
+  await openWizardAndLook(page);
   const count = async (seconds: number) => {
     const before = backend.targetReads;
     for (let step = 0; step < seconds; step++) {

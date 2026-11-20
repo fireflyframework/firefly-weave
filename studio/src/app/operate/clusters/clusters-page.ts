@@ -736,8 +736,14 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   recordAccessHeading() {
     return `You don't have access to this ${this.screen === "change" ? "change request" : this.screen}`;
   }
-  /** Refresh and Try again: a record that could not be read is read again. */
+  /**
+   * Refresh and Try again: a record that could not be read is read again.
+   * The Kubernetes wizard with an invalid name has nothing to read, so a
+   * refresh there loads nothing and claims no fresh look.
+   */
   reload() {
+    if (this.screen === "kubernetes-connect" && this.connect?.idle())
+      return Promise.resolve();
     return this.recordMissing ? this.readLocation() : this.poller.refresh();
   }
   /** Shows a failure above the page with its support code. */

@@ -162,8 +162,11 @@ type Which = "create" | "connect";
             </div>
             @if (name(); as target) {
               <p class="connect-target-line">
-                The target will be named <code>{{ target }}</code
-                >.
+                The target will be named
+                <span class="connect-name"
+                  ><code>{{ target }}</code
+                  >.</span
+                >
               </p>
             }
           </div>
@@ -207,14 +210,14 @@ type Which = "create" | "connect";
               @if (valid()) {
                 Creates the namespaces
                 <span class="connect-name">weave-system</span> and
-                <span class="connect-name">{{ namespace() }}</span
-                >, a runner and a worker deployment at 0 workers, and network
-                rules that let only them reach the platform. Registers the
-                target <span class="connect-name">{{ name() }}</span
-                >. It also joins the platform's containers to the cluster's
-                Docker network and, if no cluster command has run on this
-                computer yet, downloads about 150 MB of kind, k3d and kubectl
-                into the platform folder. Studio never receives your kubeconfig.
+                <span class="connect-name">{{ namespace() }},</span> a runner
+                and a worker deployment at 0 workers, and network rules that let
+                only them reach the platform. Registers the target
+                <span class="connect-name">{{ name() }}.</span> It also joins
+                the platform's containers to the cluster's Docker network and,
+                if no cluster command has run on this computer yet, downloads
+                about 150 MB of kind, k3d and kubectl into the platform folder.
+                Studio never receives your kubeconfig.
               } @else {
                 Fix the {{ problemField() }} to see what connecting changes.
               }
@@ -226,7 +229,7 @@ type Which = "create" | "connect";
           [class.success]="view() === 'connected' || view() === 'already'"
           aria-labelledby="connect-status-title"
         >
-          <h3 id="connect-status-title">What Studio sees</h3>
+          <h3 id="connect-status-title" tabindex="-1">What Studio sees</h3>
           <div class="connect-line" role="status">
             <span class="connect-mark" [attr.data-tone]="tone()"
               ><weave-icon [name]="icon()" [size]="16"
@@ -236,8 +239,9 @@ type Which = "create" | "connect";
               @switch (view()) {
                 @case ("waiting") {
                   <p>
-                    Waiting for <span class="connect-name">{{ name() }}</span
-                    >… Studio checks every 5 s.
+                    Waiting for
+                    <span class="connect-name">{{ name() }}…</span> Studio
+                    checks every 5 s.
                   </p>
                 }
                 @case ("registered") {
@@ -348,8 +352,10 @@ type Which = "create" | "connect";
           <weave-icon
             [name]="copied() === which ? 'check' : 'copy'"
             [size]="16"
-          />{{ copied() === which ? "Copied" : "Copy"
-          }}<span class="sr-only"> {{ which }} command</span>
+          /><span class="connect-copy-label"
+            ><span [class.unseen]="copied() === which">Copy</span
+            ><span [class.unseen]="copied() !== which">Copied</span></span
+          ><span class="sr-only"> {{ which }} command</span>
         </button>
       </div>
       <p class="connect-note" [class.refused]="note()?.refused" role="status">
@@ -506,14 +512,22 @@ export class KubernetesConnect
     if (this.valid()) void this.page.poller.refresh();
   }
 
+  /** Whether there is nothing to look for: a name is invalid. */
+  idle() {
+    return !this.valid();
+  }
   /**
-   * Whether Clusters should skip its scheduled loads: a name is invalid, so
-   * there is nothing to look for, or patience is over.
+   * Whether Clusters should skip its scheduled loads: there is nothing to
+   * look for, or patience is over.
    */
   paused() {
-    return !this.valid() || this.watch().paused;
+    return this.idle() || this.watch().paused;
   }
   keepWaiting() {
+    // Keep waiting goes away with the patience state: focus stays in the card.
+    this.element.nativeElement
+      .querySelector<HTMLElement>("#connect-status-title")
+      ?.focus();
     this.watch.set(keepWaiting(this.watch(), Date.now()));
     void this.page.poller.refresh();
   }
