@@ -58,15 +58,15 @@ export function clusterNameProblem(value: string): string | null {
     : "Use a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and ends with a letter or digit.";
 }
 
-/** Why a workers namespace can't be used, or null. */
+/** Why a workers namespace can't be used, or null; checked in the command line's order. */
 export function namespaceProblem(value: string): string | null {
+  if (!LABEL.test(value))
+    return "Use a namespace of 1 to 63 lowercase letters, digits and hyphens.";
   if (value === "weave-system")
     return "weave-system is used by Weave's runners. Choose another namespace.";
   if (value === "default" || value.startsWith("kube-"))
     return `${value} is used by Kubernetes. Choose another namespace.`;
-  return LABEL.test(value)
-    ? null
-    : "Use a namespace of 1 to 63 lowercase letters, digits and hyphens.";
+  return null;
 }
 
 /** "kind-weave-test", the kubeconfig context the create command adds. */
