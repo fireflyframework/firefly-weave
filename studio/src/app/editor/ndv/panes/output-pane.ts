@@ -249,9 +249,9 @@ import { describeError } from "../../../errors";
           : paths
             ? paths.took
             : event() !== undefined && view() === "table"
-              ? tableCount(event(), query())
+              ? tableCountOf()
               : event() !== undefined && view() !== "schema"
-                ? sampleCount(event())
+                ? sampleCount(event()) + skippedText()
                 : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
       @if (canPin) {
@@ -841,7 +841,19 @@ export class OutputPane {
    * from ("Item"), and a note naming the items Skip empty results left out;
    * null for another step, or when Studio can't tell which item gave which.
    */
-  loopTable(): { value: Json; note: string | null } | null {
+  /** The Table's count: a loop's results, as its Item column shows them, and the items it left out. */
+  tableCountOf(): string {
+    const loop = this.loopTable();
+    return loop
+      ? tableCount(loop.value, this.query()) + this.skippedText()
+      : tableCount(this.event(), this.query());
+  }
+  /** " · 2 skipped": the items Skip empty results left out of a loop's results; "" otherwise. */
+  skippedText(): string {
+    const left = this.loopTable()?.left ?? 0;
+    return left ? ` · ${left.toLocaleString("en-US")} skipped` : "";
+  }
+  loopTable(): { value: Json; note: string | null; left: number } | null {
     const { controller, target } = this.session();
     if (controller.viewingRuns() || controller.step(target)?.kind !== "forEach")
       return null;
@@ -858,6 +870,7 @@ export class OutputPane {
           : { Value: result }),
       })),
       note: leftOutText(placed.left),
+      left: placed.left.length,
     };
   }
   event(): Json | undefined {

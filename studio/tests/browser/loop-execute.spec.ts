@@ -256,6 +256,10 @@ test.describe("one item of a loop at 1440x900", () => {
     const table = output.getByRole("table", { name: "Output data" });
     await expect(table.locator("th")).toHaveText(["Item", "Value"]);
     await expect(table.locator("tbody tr")).toHaveText([/1\s*a/, /3\s*c/]);
+    // The count says how many results, and how many items it left out.
+    await expect(output.locator(".pane-count")).toHaveText(
+      "2 items · 1 skipped",
+    );
     await expect(output.locator(".data-table-note").last()).toHaveText(
       "Item 2 had an empty result. Results is Skip empty results, so it is left out.",
     );
