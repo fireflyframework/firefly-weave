@@ -64,11 +64,11 @@ for (const size of sizes)
       ).toHaveAttribute("aria-pressed", "true");
       await expect(pane.locator(".pane-sub .pill")).toHaveText("Pinned");
       await expect(banner(pane)).toHaveText(
-        "This data is pinned for test runs. Production runs ignore it. Unpin",
+        "This data is pinned for when you execute it in Studio. Real runs ignore it. Unpin",
       );
       // Only the sentence is announced, never the buttons beside it.
       await expect(banner(pane).getByRole("status")).toHaveText(
-        "This data is pinned for test runs. Production runs ignore it.",
+        "This data is pinned for when you execute it in Studio. Real runs ignore it.",
       );
       await expect(
         banner(pane).getByRole("status").getByRole("button"),

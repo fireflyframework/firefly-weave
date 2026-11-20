@@ -99,7 +99,7 @@ for (const size of sizes)
       await details.open("notify");
       pane = await outputPane(details);
       await expect(banner(pane)).toContainText(
-        "This data is pinned for test runs.",
+        "This data is pinned for when you execute it in Studio.",
       );
     });
 
@@ -129,7 +129,7 @@ for (const size of sizes)
       const pane = await outputPane(details);
       await banner(pane).getByRole("button", { name: "Keep pinned" }).click();
       await expect(banner(pane)).toContainText(
-        "This data is pinned for test runs.",
+        "This data is pinned for when you execute it in Studio.",
       );
       await details.close();
       await expect(badgeOf(page, "notify")).toHaveAttribute(

@@ -48,7 +48,7 @@ import type { StaleReason } from "../registry";
         stale()
           ? "Pinned output may be out of date: " + reasonText() + "."
           : item() === null
-            ? "This data is pinned for test runs. Production runs ignore it."
+            ? "This data is pinned for when you execute it in Studio. Real runs ignore it."
             : forEveryItem()
               ? "Pinned for every item. Production runs ignore pins."
               : "Pinned for item " +
