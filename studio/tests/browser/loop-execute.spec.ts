@@ -27,6 +27,7 @@ import {
   openExecuteWorkflow,
 } from "./execute-po";
 import { hasPython } from "./local-authoring";
+import { hostScope } from "./support";
 import { yamlFile, type StepDetailsPage } from "./step-details-po";
 
 /** orders goes through three people (Bo has no note) and keeps only the notes there are. */
@@ -148,6 +149,34 @@ test.describe("one item of a loop at 1440x900", () => {
     await expect(tile).not.toContainText("3 items");
     const log = page.getByRole("region", { name: "Run log" });
     await expect(log).toContainText("1 of 3 items finished");
+  });
+
+  test("the Input pane names the item a step in the same loop ran for", async ({
+    page,
+  }) => {
+    // The Studio host's scope lists the steps a step can read.
+    await hostScope(page);
+    const { details } = await openExecuteWorkflow(page, PINS);
+    await details.open("lookup");
+    // Item 1: a later item would stop at item 1's lookup, which has no test data.
+    await moreWays(details.dialog).click();
+    const answered = page.waitForResponse("**/studio/local/debug/execute");
+    await page
+      .getByRole("menuitem", { name: /^Execute previous steps/ })
+      .click();
+    await answered;
+    const input = pane(details, "input");
+    await input.getByLabel("Input source").selectOption("step:send");
+    await expect(input.locator(".pane-source-tag")).toHaveText(
+      "Simulated · item 1",
+    );
+    // The source select keeps at most 180 px: the count stays on its line.
+    const field = (await input.locator(".pane-source-field").boundingBox())!;
+    const count = (await input.locator(".pane-count").boundingBox())!;
+    expect(field.width).toBeLessThanOrEqual(180);
+    expect(
+      Math.abs(count.y + count.height / 2 - (field.y + field.height / 2)),
+    ).toBeLessThan(field.height / 2);
   });
 
   test("an item's pin says so, and Pin for every item shares it", async ({

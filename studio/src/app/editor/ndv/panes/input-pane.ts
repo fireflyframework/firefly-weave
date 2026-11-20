@@ -41,7 +41,12 @@ import {
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
 import { enclosingLoops, stepPointerOf } from "../../formula/loops";
-import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
+import {
+  IterationPicker,
+  itemPath,
+  loopRows,
+  type PickerLoop,
+} from "./iteration-picker";
 import { DataTable } from "./data-table";
 import { tableCount } from "./table-view";
 import {
@@ -603,14 +608,9 @@ export class InputPane implements OnInit {
   sourceTag(source: string): string {
     const looped = loopSource(source);
     if (looped) {
-      // Which item: as the picker names it.
-      const rows = this.pickerRows();
-      const row = looped.loop
-        ? rows.find((loop) => loop.loopId === looped.loop)
-        : rows.at(-1);
-      return row
-        ? `Simulated · item ${(row.index + 1).toLocaleString("en-US")}`
-        : "";
+      // Which item: as the picker names it, nested ones with the items around.
+      const item = itemPath(this.pickerRows(), looped.loop ?? undefined);
+      return item ? `Simulated · item ${item}` : "";
     }
     const run = this.session().controller.run();
     if (source === "received") return "Recomputed from the run's data";
@@ -620,10 +620,21 @@ export class InputPane implements OnInit {
         this.session().host.execution?.sampleUsed() != null
         ? "Sample"
         : "Test input";
-    const data = source.startsWith("step:")
-      ? this.session().controller.pickedStepData(source.slice(5))
+    const stepId = source.startsWith("step:") ? source.slice(5) : null;
+    const data = stepId
+      ? this.session().controller.pickedStepData(stepId)
       : undefined;
-    return data?.source === "simulated" ? "Simulated" : "Pinned";
+    if (data?.source !== "simulated") return "Pinned";
+    // A step in the same loop: the item it ran for.
+    const key = stepId
+      ? this.session().controller.iterations.instanceKey(stepId)
+      : null;
+    const item = key
+      ? [...key.matchAll(/\[(\d+)\]/g)]
+          .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+          .join(" › ")
+      : "";
+    return item ? `Simulated · item ${item}` : "Simulated";
   }
   rows(source: string, data?: Json): TreeRow[] {
     return withSamples(

@@ -141,6 +141,26 @@ export function loopRows(
   );
 }
 
+/**
+ * The item picked in a loop and the loops around it, as people count it
+ * ("3", nested "1 › 3"): up to the named loop, else the innermost; null when
+ * the loop isn't one of the rows.
+ */
+export function itemPath(
+  rows: readonly PickerLoop[],
+  loopId?: string,
+): string | null {
+  const end =
+    loopId === undefined
+      ? rows.length - 1
+      : rows.findIndex((row) => row.loopId === loopId);
+  if (end < 0) return null;
+  return rows
+    .slice(0, end + 1)
+    .map((row) => (row.index + 1).toLocaleString("en-US"))
+    .join(" › ");
+}
+
 /** Which loop's item a formula reads: the innermost for item and index, the named one for loops; null when none. */
 export function readLoop(
   pointers: readonly string[],

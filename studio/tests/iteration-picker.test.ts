@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   goToItem,
+  itemPath,
   pickerLoops,
   pickerView,
   type PickerLoop,
@@ -164,6 +165,20 @@ describe("the picker's loops", () => {
         () => 1,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("the item a source tag names", () => {
+  it("counts from 1 through the loops around it, the outer item first", () => {
+    const rows = [
+      loop({ loopId: "orders", index: 0 }),
+      loop({ loopId: "lines", index: 2 }),
+    ];
+    expect(itemPath(rows)).toBe("1 › 3");
+    expect(itemPath(rows, "orders")).toBe("1");
+    expect(itemPath(rows, "lines")).toBe("1 › 3");
+    expect(itemPath([])).toBeNull();
+    expect(itemPath(rows, "missing")).toBeNull();
   });
 });
 
