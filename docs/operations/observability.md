@@ -397,6 +397,36 @@ wrote while they ran its steps. Both reads need `run.read`; the
   events, or Weave AI. Workers should log identifiers and counts, never
   payloads, addresses, or names.
 
+## Container logs
+
+Container logs show what a target's worker containers printed, including a
+worker that crashed or failed to sign in before it claimed a task, which no run
+log can show. They are snapshots: Weave never streams them and never stores
+them past an hour.
+
+- **Who.** Asking for and reading a snapshot needs `deployment_log.read` (the
+  `deployment_log_reader` role) and `deployment.read` on the target. A grant
+  limited to some targets reads only those targets' logs.
+- **How.** In **Operate › Logs › Container logs**, choose a target, a worker
+  component, up to five members, how far back (5 minutes to 24 hours), and how
+  many lines (1 to 1,000), then **Fetch logs**. The target's runner reads the
+  lines with a fixed command (see
+  [Read container logs](operations-runner.md#read-container-logs)) and reports
+  them; a snapshot usually arrives within 10 seconds. **Follow** asks for a new
+  snapshot every 10 seconds while the page is open. **Copy** and **Download**
+  give each member's lines as plain text.
+- **When it can't.** A target or runner without `read_logs` can't fetch logs; a
+  runner that hasn't been in touch for 90 seconds can't either, and the page
+  says how long it has been. A target takes at most 10 requests a minute. A
+  runner that doesn't answer within 2 minutes leaves the request failed.
+- **Bounds.** Each line keeps 2 KiB and each snapshot the newest 256 KiB; the
+  page says when lines were cut or left out.
+- **Privacy.** The runner redacts every line before it leaves the target, and
+  the platform redacts it again by pattern. A snapshot expires one hour after
+  the request, and the operations loop then deletes it. Neither the runner nor
+  the platform writes a line it read to its own log, and container logs never
+  reach exported telemetry, alerts, integration events, or Weave AI.
+
 ## Next steps
 
 - Look up the other server settings in [configuration](configuration.md).
