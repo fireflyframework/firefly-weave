@@ -269,6 +269,52 @@ tokens**, **Temperature** and **Reasoning pattern** tune the step's settings, an
 settings, so both use the same model and options. **Timeout** (120 seconds) is
 on **Settings**, and can be changed once a model is chosen.
 
+**Try it without calling a model.** An AI task's test data is its saved
+answer, which **Execute step** replays instead of calling the model. Studio
+keeps the answer alone, not the whole output: the replay fills in the provider
+and model from the step's current settings, so a saved answer still works
+after you choose another model. Until you choose a model, Studio keeps no
+answer and says "Choose a model first."
+
+- **Generate sample**, in the Output pane, makes a sample answer from the
+  step's result fields, such as `text` for a text result, and keeps it as the
+  saved answer. Output shows it at once as what **Execute step** returns,
+  tagged **Simulated**. It isn't a pin, so the pane shows no **Pinned** banner.
+- **Execute step** replays the saved answer on this computer. Without one, the
+  step needs test data, as described in [Execute a step](#execute-a-step).
+- The output has four fields: `result` (the answer), `usage`, `provider`, and
+  `model`. A row under the Output pane's source sums up `usage`:
+  "0 requests · 0 in · 0 out tokens" for a replay, or
+  "1 request · 812 in · 64 out tokens" for a real answer, where _in_ and _out_
+  count the model's input and output tokens.
+- Inside a loop, the saved answer belongs to the item picked in the loops
+  around the step, as a pin does.
+
+**Run it for real.** With Studio connected to an environment, **Execute in
+_environment_** runs the AI task as a test run on the platform. Studio sends
+the step's AI settings, the prompt and context worked out from the data in the
+Input pane, and the connection you chose with the model. Choosing a model also
+keeps that connection as the slot's connection for the current environment, on
+this computer only, and never in test data. The test run gets
+the step's **Timeout**, at most 300 seconds. Output then shows the real answer
+with its usage, under a "From _environment_ · run …" tag. **Pin output** on
+that answer keeps it as the saved answer, with the run it came from, and says
+"Kept this answer as test data for summarize. Execute step replays it."
+Reading test data that came from a run needs permission to read runs in that
+environment, as [Execute in local](studio.md#execute-in-local) explains.
+
+**When Studio asks first.** The connection decides:
+
+| Connection | **Execute in _environment_** |
+| --- | --- |
+| Marked **Local** in **Model**: served over plain HTTP beside the platform, such as Ollama | Runs at once |
+| Any other connection, or one Studio hasn't listed yet | Asks every time, naming the model and the cost: "Execute summarize in Production?" with "This calls qwen3:4b on OpenAI · openai-prod and may incur cost." and **Run it** or **Cancel** |
+
+A step whose slot has no connection in that environment says "Choose a
+connection for slot ai to execute summarize in Production." with **Fix**,
+which opens **Model**. A prompt or context that reads data from earlier steps
+offers **Execute previous steps** until that data is there.
+
 The classic inspector works as follows. Choose **AI task** from the Actions
 palette. The built-in action reference is
 `weave-agentic-generate@1.0.0`; Studio indicates whether that action is available
@@ -538,6 +584,7 @@ Which steps can, and which ask first:
 | Step | Runs for real | Asks first |
 | --- | --- | --- |
 | Call an action, Call an API | Yes | When the action changes data (its side effect is `non_idempotent` or `idempotency_key`) |
+| AI task | Yes | When its connection isn't marked **Local**: the question names the model and the cost (see [AI task](#ai-task)) |
 | Send email, Reply to an email | Yes | Always: they send mail |
 | Write, move or delete a file | Yes | Always: they change files |
 | List, read or download files | Yes | No: they only read |
@@ -1027,7 +1074,7 @@ explains the three ways to execute and the run log. What each kind shows:
 | Step | After Execute step |
 | --- | --- |
 | Call an action, Call an API, email and file steps | The pinned output, otherwise the last result. Without either, "Step *ID* needs test data." with **Set test output** and **Generate sample**. |
-| AI task | Its saved turn, replayed with no model call and a usage of 0. Without one, it needs test data. |
+| AI task | Its saved answer, replayed without calling a model, with "0 requests · 0 in · 0 out tokens" under the source. Without one, it needs test data, and **Generate sample** makes one (see [AI task](#ai-task)). |
 | Transform | What it computes from the data the earlier steps have. |
 | Decision | Each path as **Taken**, **Not taken** or **Not checked**, then the taken path's result. On the canvas, "Path: *condition*". |
 | Wait for time | Advances by itself; the canvas line reads "Waited 5 min". |
@@ -1118,7 +1165,9 @@ code. An opt-in browser test also ran the **New API action** builder against a
 [Studio guide](studio.md#validate-a-source-contribution) describes that test.
 Step details, including Call an API, email and file steps, are covered by the
 same browser tests at desktop and narrow sizes, with keyboard and pointer, against
-a mocked platform API; no test runs them against a real platform yet.
+a mocked platform API; no test runs them against a real platform yet. The
+same browser tests cover the AI task's saved answer, usage row, and cost
+question, at desktop and narrow sizes, against a mocked platform API.
 
 ## Next steps
 
