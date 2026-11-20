@@ -24,7 +24,12 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
-import { canonicalJson, getAt, isJsonObject } from "../../forms/core/json";
+import {
+  canonicalJson,
+  getAt,
+  isJsonObject,
+  parsePointer,
+} from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
 import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
@@ -79,7 +84,11 @@ import {
   withoutPin,
   withScript,
 } from "../state/test-data-ops";
-import { fingerprints, type StepFingerprints } from "../state/fingerprints";
+import {
+  fingerprints,
+  staleReason,
+  type StepFingerprints,
+} from "../state/fingerprints";
 import {
   contractOf,
   keepPinned as keepPin,
@@ -119,6 +128,7 @@ import {
   type NdvContext,
   type ParamSpec,
   type Path,
+  type SampleContext,
   type StaleReason,
   type StepKindDescriptor,
 } from "./registry";
@@ -139,7 +149,9 @@ import {
   type PendingOwner,
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
-import { LoopScopes } from "../formula/loops";
+import { LoopScopes, enclosingLoops } from "../formula/loops";
+import { isRecordedRun, type RecordedRun } from "../canvas/run-state";
+import { Iterations, itemPicks, resultItems } from "../state/iterations";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ActionDraftEntry } from "../state/action-drafts";
@@ -159,6 +171,25 @@ import {
   workflowRows,
   type CallSources,
 } from "../calls/call-sources";
+
+/**
+ * A pin's step as toasts name it: the step, and inside a loop's body the
+ * item as people count it ("send for item 3", "reserve for item 3 › 1"),
+ * never the instance key.
+ */
+export function pinSubject(key: string): string {
+  const item = pinItem(key);
+  return item ? `${instanceStep(key)} for item ${item}` : instanceStep(key);
+}
+/** The item of a pin inside a loop's body, one-based ("3", "3 › 1"); null for a step's pin. */
+function pinItem(key: string): string | null {
+  const items = [...key.slice(instanceStep(key).length).matchAll(/\[(\d+)\]/g)];
+  return items.length
+    ? items
+        .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+        .join(" › ")
+    : null;
+}
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -194,6 +225,9 @@ export type ControllerHost = Pick<
   | "execution"
   | "runAccount"
   | "environmentName"
+  | "runNotice"
+  | "openedItem"
+  | "draftId"
 >;
 /** A diagnostic of one step, located in it. */
 /** Whether a schema marks any value secret, anywhere in it. */
@@ -443,13 +477,23 @@ export class StepDetailsController {
     this.syncTestEvent();
     const service = this.testData;
     service.version();
-    if (this.stale() || !service.data().pins?.[target]) return null;
+    const entry = service.data().pins?.[target];
+    if (this.stale() || !entry) return null;
+    // One item's pin (send[2]): judged against its step's fingerprints.
+    const stepId = instanceStep(target);
+    if (stepId !== target)
+      return {
+        key: target,
+        entry,
+        stale: staleReason(entry, this.prints().get(stepId)),
+      };
     return pinsView(service.data(), this.prints()).get(target) ?? null;
   }
   /** A step's pinned output as previews may read it: secret fields left out. */
-  pinnedOutput(stepId: string): Json | undefined {
-    const pin = this.pinOfTarget(stepId);
+  pinnedOutput(key: string): Json | undefined {
+    const pin = this.pinOfTarget(key);
     if (!pin) return undefined;
+    const stepId = instanceStep(key);
     const schema = this.descriptor(stepId)?.outputSchema(
       this.step(stepId)!,
       this.kindContext(),
@@ -470,14 +514,71 @@ export class StepDetailsController {
   }
   /** Each step's chosen iteration in run mode (its instance key). */
   readonly iteration = signal<Readonly<Record<string, string>>>({});
-  /** The instance key run mode shows for a step: the chosen iteration, else the first (failed first). */
+  /**
+   * The instance key run mode shows for a step: inside loops, the item the
+   * Runs tab's chips show; else the chosen iteration, else the first
+   * (failed first).
+   */
   runKey(target: string): string {
     const run = this.run();
     if (!run || instanceStep(target) !== target) return target;
     run.version();
+    const chip = this.chipKey(target);
+    if (chip !== null) return chip;
     const keys = run.iterations(target);
     const chosen = this.iteration()[target];
     return chosen && keys.includes(chosen) ? chosen : (keys[0] ?? target);
+  }
+  /**
+   * Run mode's Item select: inside loops it moves the Runs tab's chips, so
+   * the canvas and step details show one item; elsewhere it is the step's.
+   */
+  chooseRunIteration(target: string, key: string): void {
+    const pick = this.recordedRun()?.pick;
+    const picks = itemPicks(this.host.model.definition, key);
+    if (pick && picks.length) {
+      for (const { loopId, index } of picks) pick(loopId, index);
+      return;
+    }
+    this.iteration.update((all) => ({ ...all, [target]: key }));
+  }
+  /**
+   * Run mode's Item options for a step inside loops: every item of its
+   * innermost loop, in the items the chips show around it, reached or not;
+   * null outside loops or without the run's loops.
+   */
+  runItems(target: string): { count: number; keys: string[] } | null {
+    const loops = this.recordedRun()?.loops;
+    const chip = this.chipKey(target);
+    if (!loops || chip === null) return null;
+    const within = [...chip.matchAll(/\[(\d+)\]/g)]
+      .map((match) => Number(match[1]))
+      .slice(0, -1);
+    const [innermost] = enclosingLoops(this.host.model.definition, target);
+    const loop = loops.find(
+      (each) => each.id === innermost && each.within.join() === within.join(),
+    );
+    if (!loop) return null;
+    const prefix = target + within.map((index) => `[${index}]`).join("");
+    return {
+      count: loop.count,
+      keys: Array.from({ length: loop.count }, (_, i) => `${prefix}[${i}]`),
+    };
+  }
+  /** The run the Runs tab draws, with the items its chips picked; null elsewhere. */
+  private recordedRun(): RecordedRun | null {
+    const canvas = this.host.runView?.()?.canvas() ?? null;
+    return isRecordedRun(canvas) ? canvas : null;
+  }
+  /** The step in the items the Runs tab's chips show (`send[2]`); null outside loops. */
+  private chipKey(target: string): string | null {
+    const picks = this.recordedRun()?.picks;
+    if (!picks) return null;
+    const loops = enclosingLoops(this.host.model.definition, target).reverse();
+    const indexes = loops.map((loopId) => picks[loopId]);
+    if (!loops.length || indexes.some((index) => index === undefined))
+      return null;
+    return target + indexes.map((index) => `[${index}]`).join("");
   }
   /** What a step returned in the run, read from the platform the first time it's shown. */
   runOutput(target: string): RecordedOutput {
@@ -490,6 +591,65 @@ export class StepDetailsController {
     if (output.kind === "loading") run.read(stepId);
     return output;
   }
+  private debuggedItem: string | null = null;
+  /**
+   * Debug in editor stopped at one item of a loop (send[3]): step details
+   * open on that item, once for each stop; a pick made after stays.
+   */
+  pickRunItem(target: string): void {
+    const notice = this.host.runNotice;
+    if (
+      !notice ||
+      notice.draftId !== this.host.draftId ||
+      notice.key === this.debuggedItem ||
+      instanceStep(notice.key) !== target
+    )
+      return;
+    this.debuggedItem = notice.key;
+    for (const { loopId, index } of itemPicks(
+      this.host.model.definition,
+      notice.key,
+    ))
+      this.iterations.pick(loopId, index);
+  }
+  private openedItem: object | null = null;
+  /**
+   * A run log row opened this step on one item of a loop: step details show
+   * that item, once for each row chosen; a pick made after stays.
+   */
+  pickOpenedItem(
+    opened: { draftId: string; key: string } | null | undefined,
+    target: string,
+  ): void {
+    if (
+      !opened ||
+      opened === this.openedItem ||
+      opened.draftId !== this.host.draftId ||
+      instanceStep(opened.key) !== target
+    )
+      return;
+    this.openedItem = opened;
+    for (const { loopId, index } of itemPicks(
+      this.host.model.definition,
+      opened.key,
+    ))
+      this.iterations.pick(loopId, index);
+  }
+  /** Where a pin of this step goes: the item picked inside a loop's body (send[2]), else the step. */
+  pinKey(target: string): string {
+    return (
+      (!this.viewingRuns() && this.iterations.instanceKey(target)) || target
+    );
+  }
+  /**
+   * A step's data for the item picked in the loops around it: its own run
+   * (`check[1]`, or a pin for that item) first, else the step's (a pin for
+   * every item). Outside loops, and on the Runs tab, the step's.
+   */
+  pickedStepData(id: string): ReturnType<StepDetailsController["stepData"]> {
+    const key = this.viewingRuns() ? null : this.iterations.instanceKey(id);
+    return (key ? this.stepData(key) : undefined) ?? this.stepData(id);
+  }
   /** Try again after a failed read of a step's outputs. */
   retryRunOutput(target: string): void {
     this.run()?.read(instanceStep(target));
@@ -499,7 +659,8 @@ export class StepDetailsController {
     const run = this.run();
     if (!run) return { ok: false, reason: "" };
     run.version();
-    return run.received(instanceStep(target));
+    // Inside a loop: the input of the iteration shown, recomputed from the run.
+    return run.received(instanceStep(target), this.runKey(target));
   }
 
   // --------------------------------------------------- executed data
@@ -570,10 +731,10 @@ export class StepDetailsController {
    */
   async pinReal(target: string): Promise<string | null> {
     const real = this.realResult(target);
-    const data = this.stepData(target);
+    const data = this.pickedStepData(target);
     if (!real || data?.source !== "test-call")
       return "There's no output from a real run to pin.";
-    return this.pin(target, data.value, "test-call", {
+    return this.pin(this.pinKey(target), data.value, "test-call", {
       runId: real.runId,
       runEnvironmentId: real.environmentId,
     });
@@ -675,11 +836,13 @@ export class StepDetailsController {
     source: DataSource,
     provenance: Provenance = {},
   ): Promise<string | null> {
-    const locked = this.readOnlyReason(target);
+    // Inside a loop, the target may be one item (send[2]): the step decides.
+    const stepId = instanceStep(target);
+    const locked = this.readOnlyReason(stepId);
     if (locked) return locked;
-    if (!this.pinnable(target)) return "This step's output can't be pinned.";
+    if (!this.pinnable(stepId)) return "This step's output can't be pinned.";
     if (this.stale()) return "This workflow's test data is still opening.";
-    const now = this.prints().get(target);
+    const now = this.prints().get(stepId);
     if (!now) return "This step's output can't be pinned.";
     const service = this.testData;
     const at = new Date().toISOString();
@@ -696,9 +859,40 @@ export class StepDetailsController {
     if (!outcome.ok) return outcome.message;
     if (replacing)
       this.offerUndo(
-        `Replaced the pinned output of ${target}.`,
+        `Replaced the pinned output of ${pinSubject(target)}.`,
         outcome.previous,
       );
+    return null;
+  }
+  /**
+   * An item's pin, for every item: one change pins it on the step as it is
+   * (its output, source and run) and removes the item's own, so one toast's
+   * Undo puts both pins back. Null when done, else why not.
+   */
+  async pinForEveryItem(item: string): Promise<string | null> {
+    const stepId = instanceStep(item);
+    if (stepId === item) return null;
+    const locked = this.readOnlyReason(stepId);
+    if (locked) return locked;
+    if (this.stale()) return "This workflow's test data is still opening.";
+    const service = this.testData;
+    const entry = service.data().pins?.[item];
+    if (!entry || !this.pinnable(stepId))
+      return "This step's output can't be pinned.";
+    const at = new Date().toISOString();
+    const outcome = await service.change(
+      withoutPin(
+        withPin(service.data(), stepId, { ...entry, pinnedAt: at }, at),
+        item,
+        at,
+      ),
+      [this.pinPointer(stepId)],
+    );
+    if (!outcome.ok) return outcome.message;
+    this.offerUndo(
+      `Pinned ${stepId} for every item. Item ${pinItem(item)}'s own pin was removed.`,
+      outcome.previous,
+    );
     return null;
   }
   /** Unpins the step's output, with an Undo toast. */
@@ -712,7 +906,8 @@ export class StepDetailsController {
     return service
       .change(withoutPin(previous, target, at), [])
       .then((outcome) => {
-        if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+        if (outcome.ok)
+          this.offerUndo(`Unpinned ${pinSubject(target)}.`, outcome.previous);
         return outcome.ok;
       });
   }
@@ -722,16 +917,24 @@ export class StepDetailsController {
   }
   /** Keep pinned: the same output, current again (today's fingerprints). */
   keepPinned(target: string): void {
-    if (this.readOnlyReason(target)) return;
+    // An item's pin (send[2]) is kept against its step's fingerprints.
+    const stepId = instanceStep(target);
+    if (this.readOnlyReason(stepId)) return;
     const service = this.testData;
     const entry = service.data().pins?.[target];
-    const now = this.prints().get(target);
+    const now = this.prints().get(stepId);
     if (!entry || !now) return;
     const at = new Date().toISOString();
     void service
       .change(withPin(service.data(), target, keepPin(entry, now), at), [])
       .then((outcome) => {
-        if (outcome.ok) this.host.notify(`Kept pinned output for ${target}.`);
+        if (!outcome.ok) return;
+        // Inside a loop, the item as people count it.
+        this.host.notify(
+          stepId === target
+            ? `Kept pinned output for ${target}.`
+            : `Kept the pinned output of ${pinSubject(target)}.`,
+        );
       });
   }
   /** Pins a sample made from the step's output fields. */
@@ -750,7 +953,7 @@ export class StepDetailsController {
       // anyOf, allOf, an unknown format or bounds no value meets.
       return CANT_SAMPLE;
     }
-    return this.pin(target, sample, "schema");
+    return this.pin(this.pinKey(target), sample, "schema");
   }
   /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
   private offerUndo(
@@ -770,15 +973,20 @@ export class StepDetailsController {
   /** What formula previews read: the test input and pinned output. */
   previewData(): PreviewData {
     return {
-      input: () => this.testEvent(),
-      // The same precedence as the Output pane: a pin, else the last result.
-      output: (id) => this.stepData(id)?.value,
+      // The same precedence as the Input pane: the test input, else the
+      // sample the last Execute went through (a loop's items come from it).
+      input: () =>
+        this.testEvent() ?? this.host.execution?.sampleUsed() ?? undefined,
+      // The same precedence as the Output pane: a pin, else the last result;
+      // inside a loop, for the item picked.
+      output: (id) => this.pickedStepData(id)?.value,
       stamp: () => [
         this.run()?.version() ?? null,
         this.host.model.revision,
         this.testData.version(),
         this.testData.generation(),
         this.host.execution?.results() ?? null,
+        this.host.execution?.sampleUsed() ?? null,
       ],
     };
   }
@@ -789,6 +997,115 @@ export class StepDetailsController {
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
     () => this.host.refreshView(),
   );
+  private picked: { draft: unknown; iterations: Iterations } | null = null;
+  /** The item picked in each loop of the open draft, for the steps inside its body. */
+  get iterations(): Iterations {
+    const { model } = this.host;
+    const draft = model.opened;
+    if (this.picked?.draft !== draft)
+      this.picked = {
+        draft,
+        iterations: new Iterations({
+          definition: () => model.definition,
+          revision: () => model.revision,
+          items: async (loopId) => {
+            const items = this.step(loopId)?.["items"];
+            if (!items || typeof items !== "object") return null;
+            const ctx = this.ndvContext(loopId);
+            const result = this.previews.preview(
+              items as Expression,
+              ["items"],
+              ctx,
+            );
+            return result?.ok ? result.value : null;
+          },
+          progress: () => this.host.execution?.last()?.loops ?? null,
+        }),
+      };
+    return this.picked.iterations;
+  }
+  /**
+   * The item (one-based) each result of a loop's output came from, and the
+   * items Skip empty results left out; null when Studio can't tell.
+   */
+  loopResults(loopId: string): { items: number[]; left: number[] } | null {
+    const step = this.step(loopId);
+    const results = this.pickedStepData(loopId)?.value;
+    if (step?.kind !== "forEach" || !Array.isArray(results)) return null;
+    return resultItems(step["collect"], results, this.itemResults(step));
+  }
+  /**
+   * What each item of a loop gave, when its result per item reads the item,
+   * its position or a step inside by a plain reference; null otherwise.
+   */
+  private itemResults(step: Step): unknown[] | null {
+    const body = step["body"];
+    const output = isJsonObject(body) ? body["output"] : undefined;
+    const ref =
+      isJsonObject(output) && Object.keys(output).length === 1
+        ? output["ref"]
+        : null;
+    const path = typeof ref === "string" ? parsePointer(ref) : null;
+    if (!path) return null;
+    const items = this.step(step.id)?.["items"];
+    const listed =
+      items && typeof items === "object"
+        ? this.previews.preview(
+            items as Expression,
+            ["items"],
+            this.ndvContext(step.id),
+          )
+        : null;
+    const list =
+      listed?.ok && Array.isArray(listed.value) ? listed.value : null;
+    const counted = this.iterations.counts(step.id);
+    const count = counted.known ? counted.count : list?.length;
+    if (count === undefined) return null;
+    const around = this.iterations
+      .picks(step.id)
+      .map(({ index }) => `[${index}]`)
+      .join("");
+    const gave: unknown[] = [];
+    for (let index = 0; index < count; index++) {
+      let value: unknown;
+      if (path[0] === "index" && path.length === 1) value = index;
+      else if (path[0] === "item" && list)
+        value = getAt(list[index], path.slice(1));
+      else if (path[0] === "steps" && path[2] === "output") {
+        const ran = this.stepData(`${path[1]}${around}[${index}]`);
+        if (!ran) return null;
+        value = getAt(ran.value, path.slice(3));
+      } else return null;
+      gave.push(value === undefined ? null : value);
+    }
+    return gave;
+  }
+  /**
+   * The picked item of each loop around a step, from the loop's Items
+   * evaluated against the current data (an inner loop's with the outer
+   * loop's item); null outside loops or while an item isn't in the data.
+   */
+  loopData(
+    stepId: string,
+  ): Pick<SampleContext, "item" | "index" | "loops"> | null {
+    const picks = this.iterations.picks(stepId);
+    if (!picks.length) return null;
+    const loops: NonNullable<SampleContext["loops"]> = {};
+    for (const { loopId, index } of picks) {
+      const items = this.step(loopId)?.["items"];
+      if (!items || typeof items !== "object") return null;
+      const listed = this.previews.preview(
+        items as Expression,
+        ["items"],
+        this.ndvContext(loopId),
+      );
+      if (!listed?.ok || !Array.isArray(listed.value)) return null;
+      if (index >= listed.value.length) return null;
+      loops[loopId] = { item: listed.value[index] as Json, index };
+    }
+    const innermost = loops[picks[picks.length - 1].loopId];
+    return { item: innermost.item, index: innermost.index, loops };
+  }
   private addedBy = new Map<string, Set<string>>();
   private touchedBy = new Map<string, Set<string>>();
   private burst: { key: string; revision: number; at: number } | null = null;
@@ -1434,6 +1751,8 @@ export class StepDetailsController {
     this.pendingStore().rename(from, to);
     // Test data follows the rename: the step's pins and frames.
     this.testData.rename(from, to);
+    // A renamed loop keeps its picked item and its count.
+    this.iterations.rename(from, to);
   }
   /**
    * Forgets the entries of steps that are gone, so a step made again with
@@ -1882,7 +2201,10 @@ export class StepDetailsController {
       step,
       workflow: host.model.definition,
       readOnly: !!this.readOnlyReason(),
-      instanceKey: null,
+      // Run mode shows the run's own iteration; picks are the draft's.
+      instanceKey: this.viewingRuns()
+        ? null
+        : this.iterations.instanceKey(step.id),
       environment: this.environmentOf(),
       scope: (fieldPath) =>
         referenceScope(
@@ -1913,12 +2235,14 @@ export class StepDetailsController {
             pointer(fieldPath),
             this.scopeOptions(),
           ).steps) {
-            const output = this.stepData(visible.id)?.value;
+            const output = this.pickedStepData(visible.id)?.value;
             if (output !== undefined) steps[visible.id] = { output };
           }
-          return input === undefined && !Object.keys(steps).length
+          // Inside a loop's body: the picked item of each loop around the step.
+          const looped = this.loopData(step.id);
+          return input === undefined && !Object.keys(steps).length && !looped
             ? null
-            : { input: input ?? {}, steps };
+            : { input: input ?? {}, steps, ...looped };
         },
         resolvedInput: () => {
           // What the step received in the last execution (an action's input).
@@ -1951,7 +2275,8 @@ export class StepDetailsController {
           return data ? { state: "available" as const, ...data } : none;
         },
         setPin: async (value) => {
-          const message = await this.pin(target, value, "manual");
+          // Inside a loop's body: for the item picked.
+          const message = await this.pin(this.pinKey(target), value, "manual");
           return message === null ? { ok: true } : { ok: false, message };
         },
         clearPin: () => this.unpin(target),

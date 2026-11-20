@@ -316,6 +316,7 @@ describe("required marks and counts", () => {
       signal: 1,
       humanTask: 3,
       fail: 2,
+      forEach: 1,
     });
   });
 });
@@ -1145,7 +1146,11 @@ describe("removing and resetting", () => {
     const withDefault = (form: FormSpec | undefined, step: Step) =>
       allParams(form, step, context(freshWorkflow()))
         .filter(({ spec }) => spec.whenRemoved === "default")
-        .every(({ spec }) => spec.default !== undefined);
+        .every(
+          // A loop's result per item defaults to a mapping, the item itself.
+          ({ spec }) =>
+            spec.default !== undefined || spec.defaultExpression !== undefined,
+        );
     for (const kind of kinds.filter((k) => k !== "action")) {
       const step = fresh(
         kind,

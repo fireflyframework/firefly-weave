@@ -254,7 +254,11 @@ export function isDefault(subject: FormSubject, spec: ParamSpec): boolean {
   }
   const current = readParam(subject, spec);
   if (current.mode === "absent") return true;
-  if (current.mode === "mapped") return false;
+  if (current.mode === "mapped")
+    return (
+      !!spec.defaultExpression &&
+      jsonEqual(current.expression, spec.defaultExpression)
+    );
   if (spec.default !== undefined) return jsonEqual(current.value, spec.default);
   // An emptied object or list (every row removed) counts as never added.
   return (
@@ -276,7 +280,11 @@ export function resetChanges(
   return writeParam(
     subject,
     spec,
-    keep && spec.default !== undefined ? fixed(spec.default) : ABSENT,
+    keep && spec.defaultExpression
+      ? { mode: "mapped", expression: spec.defaultExpression }
+      : keep && spec.default !== undefined
+        ? fixed(spec.default)
+        : ABSENT,
   );
 }
 

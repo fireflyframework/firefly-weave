@@ -34,7 +34,8 @@ export type Kind =
   | "wait"
   | "signal"
   | "fail"
-  | "humanTask";
+  | "humanTask"
+  | "forEach";
 export interface Step {
   id: string;
   kind: Kind;
@@ -107,6 +108,7 @@ export const kinds: Kind[] = [
   "signal",
   "humanTask",
   "fail",
+  "forEach",
 ];
 /** The readable start of a new step's ID: decision-1, approval-1, call-action-1. */
 export const stepIdPrefix: Record<Kind, string> = {
@@ -120,6 +122,7 @@ export const stepIdPrefix: Record<Kind, string> = {
   signal: "signal",
   humanTask: "approval",
   fail: "fail",
+  forEach: "loop",
 };
 export const freshWorkflow = (): Workflow => ({
   apiVersion: "weave/v1alpha1",
@@ -169,6 +172,13 @@ export function createStep(kind: Kind, id: string): Step {
       formSchema: { type: "object", properties: {} },
       decisions: ["approve", "reject"],
     },
+    // No items until the builder chooses the list; each item is its own result.
+    forEach: {
+      concurrency: 1,
+      maxItems: 1000,
+      collect: "all",
+      body: { steps: [], output: { ref: "/item" } },
+    },
   };
   return { id, kind, ...defaults[kind] };
 }
@@ -183,6 +193,7 @@ function branches(step: Step): [string, Branch][] {
     ];
   if (step.kind === "parallel")
     return Object.entries(step["branches"] as Record<string, Branch>);
+  if (step.kind === "forEach") return [["body", step["body"] as Branch]];
   return [];
 }
 /**
@@ -262,15 +273,16 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
     }
   }
 }
-/** Plain name of a branch: "Case 1", "Otherwise", or a parallel branch's own name. */
+/** Plain name of a branch: "Case 1", "Otherwise", a loop's "For each item", or a parallel branch's own name. */
 export function branchTitle(step: Step, name: string) {
   if (step.kind === "switch")
     return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
+  if (step.kind === "forEach") return "For each item";
   return name;
 }
 /**
  * Where a step sits, in words: "Main sequence", "Case 1 of route",
- * "Otherwise of route" or "first of fulfil".
+ * "Otherwise of route", "For each item of orders" or "first of fulfil".
  */
 export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
   if (owner === "root") return "Main sequence";
@@ -382,6 +394,8 @@ function expressionPaths(step: Step): (string | number)[][] {
       return Object.keys(
         isRecord(step["branches"]) ? step["branches"] : {},
       ).map((name) => ["branches", name, "output"]);
+    case "forEach":
+      return [["items"], ["body", "output"]];
     default:
       // An action's, a decision table's or a call's input, and a call's
       // business key; a step without them reads nothing there.
@@ -944,6 +958,12 @@ export class StructuredCanvasAdapter {
             (step["branches"] ?? {}) as Record<string, Branch>,
           ))
             visit(b.steps ?? [], [...at, "branches", name, "steps"]);
+        else if (step.kind === "forEach")
+          visit((step["body"] as Branch | undefined)?.steps ?? [], [
+            ...at,
+            "body",
+            "steps",
+          ]);
       });
     visit(this.definition.spec.steps, ["spec", "steps"]);
     expressionRefs(this.definition.spec["output"], ["spec", "output"], "", out);
@@ -1135,6 +1155,8 @@ export class StructuredCanvasAdapter {
             step["branches"] as Record<string, Branch>,
           ))
             find(b.steps, [...path, i, "branches", name, "steps"]);
+        else if (step.kind === "forEach")
+          find((step["body"] as Branch).steps, [...path, i, "body", "steps"]);
       });
     find(this.definition.spec.steps, ["spec", "steps"]);
     this.checkpoint();

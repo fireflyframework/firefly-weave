@@ -62,7 +62,7 @@ import { Modal } from "../../dialog";
 import { durationText } from "../../format";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
-import type { Workflow } from "../../model";
+import type { Step, Workflow } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { memo } from "../memo";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
@@ -119,14 +119,25 @@ import {
   tilePaintMargin,
   type Insertion,
   type LtrBounds,
+  type LtrFrame,
   type LtrLayout,
   type LtrTile,
   type Point,
   runOutline,
 } from "./layout-ltr";
+import {
+  drawnSelected,
+  endsAtFrame,
+  frameBadge,
+  frameHeaderHeight,
+  loopFacts,
+  loopHeaderParts,
+  loopResultText,
+  loopRunText,
+} from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
-import { NodeTile, type TileView } from "./node-tile";
+import { NodeTile, type FrameView, type TileView } from "./node-tile";
 import {
   edgeRun,
   groupsEntered,
@@ -135,10 +146,15 @@ import {
   type CanvasRun,
   type TileRun,
   frameRun,
+  frameExecuted,
   framedStep,
   isRecordedRun,
+  loopProgress,
+  type LoopRun,
+  type RecordedLoop,
   type RecordedRun,
 } from "./run-state";
+import { ItemChip } from "./item-chip";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
@@ -186,9 +202,62 @@ const activatedIntent = (intent: TriggerIntent | null) =>
 const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
 const LISTENING = "Listening for test event";
 
+/** What a loop's frame draws around its body, from its layout. */
+function frameView(
+  step: Step,
+  frame: LtrFrame,
+  run: FrameView["run"] = null,
+): FrameView {
+  const { items, suffix } = loopHeaderParts(step);
+  return {
+    height: frame.height,
+    items: items ?? "…",
+    pending: !items,
+    suffix,
+    run,
+  };
+}
+/** A loop's run, as its header says it: its words, its tone and how far it is. */
+function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
+  return {
+    text: loopRunText(loop),
+    // A loop the run ended inside reads quietly: it isn't done.
+    tone:
+      loop.status === "running"
+        ? "live"
+        : loop.status === "failed"
+          ? "failed"
+          : loop.status === "paused"
+            ? "stopped"
+            : "done",
+    progress: loop.count ? Math.min(1, loop.finished / loop.count) : null,
+  };
+}
+/** A loop's tile follows its items: live while they run, failed once one failed. */
+const LOOP_TILE_RUN: Readonly<Record<LoopRun["status"], TileRun>> = {
+  running: "live",
+  failed: "failed",
+  done: "done",
+  paused: null,
+};
+
+const modified = (event: KeyboardEvent) =>
+  event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
+/** A loop's item chip on the Runs tab, at its frame's top right. */
+interface ChipView {
+  id: string;
+  /** The frame's top right corner, in canvas units, less the chip's 6 px gap. */
+  x: number;
+  y: number;
+  /** Drawn at screen size whatever the zoom. */
+  scale: number;
+  loop: RecordedLoop;
+  index: number;
+}
 /** A step's hover toolbar, or a chosen trigger's (one Remove button). */
 interface ToolbarView {
   id: string;
@@ -226,6 +295,7 @@ export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
     CanvasTools,
     SelectionToolbar,
     NotesLayer,
+    ItemChip,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -255,6 +325,16 @@ export class CanvasView implements OnInit, DoCheck {
   /** The step under the pointer, and the one with focus: the hover toolbar's step. */
   hoveredTile = "";
   focusTile = "";
+  /** The loop whose header (or its tooltip) the pointer is on, and the one keyboard focus is on. */
+  private hoveredHeader = "";
+  private focusedHeader = "";
+  /** The canvas's width on screen when a header's tooltip was asked for: the tooltip stays inside it. */
+  private tipRoom = 0;
+  /**
+   * Where a key sent focus, until it lands there a render or two later (a
+   * tile, or an empty loop's slot): the keys pressed meanwhile go on from it.
+   */
+  private pendingFocus: { id: string; slot: boolean } | null = null;
   /** A press on an output handle, a "+" or a step, until it is a click or a drag. */
   private press: {
     kind: "handle" | "tile";
@@ -360,6 +440,22 @@ export class CanvasView implements OnInit, DoCheck {
       },
       { injector: this.injector },
     );
+    // Execute workflow frames the run it plays back: when it starts and
+    // when it ends.
+    effect(() => {
+      const run = this.host().canvasRun();
+      untracked(() => {
+        if (run?.mode !== "simulated" || !run.trace) return;
+        const phase = run.ended ? "end" : run.at === 0 ? "start" : null;
+        const last = this.framedPlay;
+        if (!phase || (last?.trace === run.trace && last.phase === phase))
+          return;
+        this.framedPlay = { trace: run.trace, phase };
+        afterNextRender(() => this.frameExecution(), {
+          injector: this.injector,
+        });
+      });
+    });
     // The Runs tab frames the run it draws: when it is chosen, and when a
     // followed run moves to another step.
     effect(() => {
@@ -441,6 +537,7 @@ export class CanvasView implements OnInit, DoCheck {
       );
     }
     this.syncSelection();
+    this.sayLoopProgress();
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
@@ -569,16 +666,37 @@ export class CanvasView implements OnInit, DoCheck {
       listening: string | null,
     ): TileView[] => {
       const ctx = this.host().kindContext();
-      // A selected group shows every step inside it as selected.
-      const chosen = covered(selection, this.places());
+      const places = this.places();
+      const frames = new Map(layout.frames.map((frame) => [frame.id, frame]));
+      // A selected decision or parallel step shows every step inside it as
+      // selected; a selected loop's frame says its steps come with it.
+      const chosen = drawnSelected(
+        covered(selection, places),
+        selection.ids,
+        (id) => places.get(id)?.parent ?? null,
+        new Set(frames.keys()),
+      );
+      // In a simulation played back, each loop's progress at this frame.
+      const progress = this.loopRuns(layout, run);
       return layout.tiles.map((tile) => {
-        const state = tile.step ? tileRun(tile.id, run) : null;
+        const loopRun = progress?.filter((each) => each.id === tile.id).at(-1);
+        const state = loopRun
+          ? LOOP_TILE_RUN[loopRun.status]
+          : tile.step
+            ? tileRun(tile.id, run)
+            : null;
         return this.tileView(
           tile,
           ctx,
           this.withRealSetup(
             tile,
-            this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+            this.withPasteGaps(
+              tile,
+              // A loop without a list says it needs one on its header.
+              tile.step?.kind === "forEach"
+                ? loopFacts(tile.step, facts.get(tile.id) ?? NO_FACTS)
+                : (facts.get(tile.id) ?? NO_FACTS),
+            ),
           ),
           {
             selected: chosen.has(tile.id),
@@ -596,6 +714,9 @@ export class CanvasView implements OnInit, DoCheck {
             recorded: isRecordedRun(run) ? run : null,
             listening:
               !!listening && tile.id === triggerChoiceTarget(listening),
+            frame: tile.step ? frames.get(tile.id) : undefined,
+            loop: loopRun,
+            ended: !!run?.ended,
           },
         );
       });
@@ -645,6 +766,12 @@ export class CanvasView implements OnInit, DoCheck {
       simulated?: boolean;
       /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
       recorded?: RecordedRun | null;
+      /** A loop's frame: the tile is its header band. */
+      frame?: LtrFrame;
+      /** A loop's progress in the simulation played back. */
+      loop?: LoopRun;
+      /** The simulation's playback has ended: the whole run has played. */
+      ended?: boolean;
     },
   ): TileView {
     const h = this.host();
@@ -687,8 +814,62 @@ export class CanvasView implements OnInit, DoCheck {
     }
     const descriptor = ndvRegistry.kind(tile.kind);
     const kindLabel = descriptor?.label ?? h.label(tile.kind);
-    const summary = descriptor?.summary(tile.step, ctx) ?? "";
+    // A loop's header says what it goes over: "For each item in input.orders".
     const recorded = state.recorded;
+    // A recorded loop keeps the item it failed at in its header, whichever item its chip shows.
+    const recordedRun =
+      recorded && state.frame ? this.recordedLoop(tile.id, recorded) : null;
+    const failedItem = recordedRun?.items.find(
+      (item) => item.status === "failed",
+    );
+    // A cancelled run cut the loop off at this item.
+    const stoppedItem = recordedRun?.items.find(
+      (item) => item.status === "stopped",
+    );
+    const frameRun = state.loop
+      ? frameRunOf(state.loop)
+      : failedItem
+        ? {
+            text: loopRunText({
+              finished: 0,
+              count: null,
+              status: "failed",
+              failedAt: failedItem.index + 1,
+            }),
+            tone: "failed" as const,
+            progress: null,
+          }
+        : stoppedItem
+          ? {
+              text: `canceled at item ${(stoppedItem.index + 1).toLocaleString("en-US")}`,
+              tone: "stopped" as const,
+              progress: null,
+            }
+          : // A recorded loop that finished counts its items, as Execute does.
+            recordedRun && state.run === "done"
+            ? {
+                text: loopRunText({
+                  finished: recordedRun.count,
+                  count: recordedRun.count,
+                  status: "done",
+                  failedAt: null,
+                }),
+                tone: "done" as const,
+                progress: null,
+              }
+            : null;
+    const frame = state.frame
+      ? frameView(tile.step, state.frame, frameRun)
+      : null;
+    const summary = frame
+      ? `For each item in ${frame.items}${
+          frameRun
+            ? ` · ${frameRun.text}`
+            : frame.suffix
+              ? ` ${frame.suffix}`
+              : ""
+        }`
+      : (descriptor?.summary(tile.step, ctx) ?? "");
     // A run that happened shows what it did, not the draft's errors, setup or pins.
     const shown = recorded
       ? {
@@ -714,16 +895,34 @@ export class CanvasView implements OnInit, DoCheck {
           selected: state.selected,
           simulated: !!state.simulated,
         };
-    const badge = tileBadge(shown);
+    // A loop's header shows what the loop needs, not how its items ran.
+    const badge = state.frame ? frameBadge(tileBadge(shown)) : tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
-    const fact = recorded
-      ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-      : null;
+    // A loop the run finished says how many items it had under its frame;
+    // a failed one says it in its header, and its failed step shows the code.
+    // Under the frame once the whole playback has ended, not while later steps play.
+    const finishedLoop =
+      state.loop?.status === "done" && state.ended && state.loop.count !== null
+        ? state.loop
+        : recordedRun && state.run === "done"
+          ? recordedRun
+          : null;
+    const fact = finishedLoop
+      ? {
+          text: loopResultText(finishedLoop.count!, finishedLoop.results),
+          tone: null,
+        }
+      : recordedRun
+        ? null
+        : recorded
+          ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+          : null;
     // The Runs tab draws the run only: nothing from the editor's executions.
+    // A loop's frame says nothing under it while its playback runs.
     const runLine = fact
       ? fact.text
-      : this.viewingRuns()
+      : this.viewingRuns() || (state.frame && state.loop && !state.ended)
         ? ""
         : (h.summaryOf?.(tile.id) ?? "");
     // A call that doesn't wait says so on its own line while no run line shows.
@@ -742,18 +941,28 @@ export class CanvasView implements OnInit, DoCheck {
       name: tileName({
         id: tile.id,
         kindLabel,
-        summary: detached ? `${summary}, doesn't wait` : summary,
+        // A loop's summary under its frame is in its name, whole.
+        summary:
+          state.frame && fact
+            ? `${summary}, ${fact.text}`
+            : detached
+              ? `${summary}, doesn't wait`
+              : summary,
         status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
         place: tile.place,
       }),
-      tooltip: [`${tile.id}, ${kindLabel}`, note || badge?.text]
+      tooltip: [
+        frame ? `${tile.id}: ${summary}` : `${tile.id}, ${kindLabel}`,
+        note || badge?.text,
+      ]
         .filter(Boolean)
         .join(". "),
       badge,
       borders: tileBorders(shown),
       selected: state.selected,
+      frame,
     };
   }
   private intentOf(tileId: string): TriggerIntent | null {
@@ -875,12 +1084,14 @@ export class CanvasView implements OnInit, DoCheck {
       // A run records a decision or parallel step only when it finishes, so
       // the way into one counts once the run is at a step inside it.
       const inside = groupsEntered(run, (id) => places.get(id)?.parent ?? null);
+      const loops = new Set(layout.frames.map((frame) => frame.id));
       return layout.edges.map((edge) => ({
         edge,
         d: edgePath(edge),
         state: edgeRun(edge, run, inside),
         shown: hovered === edge.key,
         plus: locked ? null : (onEdges.get(edge.key) ?? null),
+        arrow: !endsAtFrame(edge, loops),
       }));
     },
   );
@@ -893,6 +1104,119 @@ export class CanvasView implements OnInit, DoCheck {
       this.host().canvasRun(),
       this.places(),
     );
+  }
+  private readonly loopsMemo = memo(
+    (layout: LtrLayout) => new Set(layout.frames.map((frame) => frame.id)),
+  );
+  /** The loops around each step, outermost first, read from the layout. */
+  private loopsAroundOf(layout: LtrLayout) {
+    const loops = this.loopsMemo(layout);
+    const places = this.places();
+    return (id: string): readonly string[] => {
+      const around: string[] = [];
+      for (
+        let parent = places.get(id)?.parent ?? null;
+        parent;
+        parent = places.get(parent)?.parent ?? null
+      )
+        if (loops.has(parent)) around.unshift(parent);
+      return around;
+    };
+  }
+  private readonly loopRunsMemo = memo(
+    (layout: LtrLayout, run: CanvasRun | null): LoopRun[] | null =>
+      run?.trace
+        ? loopProgress(
+            run.trace,
+            run.at ?? 0,
+            run.counts ?? {},
+            this.loopsAroundOf(layout),
+            !!run.ended,
+            run.paused,
+          )
+        : null,
+  );
+  /** Each loop's progress in the simulation played back at this frame; null without one. */
+  private loopRuns(layout: LtrLayout, run: CanvasRun | null): LoopRun[] | null {
+    return this.loopRunsMemo(layout, run);
+  }
+  /** "orders, 7 of 20": the loops' progress, said at most every 2 s while a simulation plays. */
+  loopSaid = "";
+  private loopSaidAt = 0;
+  private sayLoopProgress() {
+    const run = this.viewingRuns() ? null : this.host().canvasRun();
+    const progress =
+      run && !run.ended ? this.loopRuns(this.layout(), run) : null;
+    if (!progress) {
+      this.loopSaid = "";
+      return;
+    }
+    const text = progress
+      .filter((loop) => !loop.within.length)
+      .map((loop) => `${loop.id}, ${loopRunText(loop)}`)
+      .join("; ");
+    const now = Date.now();
+    if (text && text !== this.loopSaid && now - this.loopSaidAt >= 2000) {
+      this.loopSaid = text;
+      this.loopSaidAt = now;
+    }
+  }
+  /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
+  handleOffset(tile: string): number {
+    return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;
+  }
+  /**
+   * A loop's run in a recorded run: the one in the items picked on the
+   * loops around it; null when the run has none.
+   */
+  private recordedLoop(id: string, run: RecordedRun): RecordedLoop | null {
+    const loops = this.loopsMemo(this.layout());
+    const places = this.places();
+    const within: number[] = [];
+    for (
+      let parent = places.get(id)?.parent ?? null;
+      parent;
+      parent = places.get(parent)?.parent ?? null
+    )
+      if (loops.has(parent)) within.unshift(run.picks?.[parent] ?? 0);
+    return (
+      run.loops?.find(
+        (loop) => loop.id === id && loop.within.join() === within.join(),
+      ) ?? null
+    );
+  }
+  private readonly chipsOnFramesMemo = memo(
+    (layout: LtrLayout, run: CanvasRun | null, zoom: number): ChipView[] => {
+      if (!isRecordedRun(run) || !run.picks || !run.loops?.length) return [];
+      return layout.frames.flatMap((frame) => {
+        const loop = this.recordedLoop(frame.id, run);
+        if (!loop) return [];
+        return [
+          {
+            id: frame.id,
+            x: frame.x + frame.width,
+            y: frame.y - 6 / zoom,
+            scale: 1 / zoom,
+            loop,
+            index: run.picks?.[frame.id] ?? 0,
+          },
+        ];
+      });
+    },
+  );
+  /** The item chips above the frames of a recorded run's loops (the Runs tab). */
+  itemChips(): ChipView[] {
+    if (!this.viewingRuns()) return [];
+    return this.chipsOnFramesMemo(
+      this.layout(),
+      this.host().canvasRun(),
+      this.view.zoom,
+    );
+  }
+  /** A chip's item was chosen: the run draws the loop's steps in it. */
+  pickItem(loop: string, index: number): void {
+    const run = this.host().canvasRun();
+    if (isRecordedRun(run)) run.pick?.(loop, index);
   }
   private readonly chipsMemo = memo((layout: LtrLayout): SubNodeView[] => {
     if (!layout.subNodes.length) return [];
@@ -1064,23 +1388,89 @@ export class CanvasView implements OnInit, DoCheck {
       this.hoveredTile = tile;
       this.reached(tile);
     }
+    const header =
+      target.closest?.("[data-frame-tip]")?.getAttribute("data-frame-tip") ??
+      this.headerOf(target);
+    if (header && header !== this.hoveredHeader) this.measureTipRoom();
+    this.hoveredHeader = header;
   }
   unhover() {
     this.hoveredEdge = "";
     this.hoveredTile = "";
+    this.hoveredHeader = "";
   }
   /** Focus on a step, or in its toolbar, shows that step's toolbar. */
   focusIn(event: FocusEvent) {
-    this.focusTile = this.toolbarStep(event.target as Element);
+    const target = event.target as Element;
+    this.focusTile = this.toolbarStep(target);
     this.reached(this.focusTile);
+    // Keyboard focus on a loop's header shows its whole sentence; a click's doesn't.
+    this.focusedHeader = target.matches?.(":focus-visible")
+      ? this.headerOf(target)
+      : "";
+    if (this.focusedHeader) this.measureTipRoom();
+  }
+  private measureTipRoom() {
+    this.tipRoom = this.root().nativeElement.clientWidth;
   }
   /** Focus left the canvas: only the pointer shows a toolbar now, and Space no longer pans. */
   focusOut(event: FocusEvent) {
     const next = event.relatedTarget;
     if (!(next instanceof Node && this.root().nativeElement.contains(next))) {
       this.focusTile = "";
+      this.focusedHeader = "";
       this.space = false;
     }
+  }
+  /** The loop whose header an element is in, or "". */
+  private headerOf(element: Element): string {
+    return (
+      element
+        .closest?.(".frame-header")
+        ?.closest("[data-tile]")
+        ?.getAttribute("data-tile") ?? ""
+    );
+  }
+  /**
+   * The loop header's whole sentence ("orders: For each item in
+   * input.orders · up to 4 at a time"), under its band, at screen size: on
+   * keyboard focus, and while the pointer is on the header or the tooltip.
+   * Escape hides it with the toolbar.
+   */
+  frameTip(): {
+    id: string;
+    x: number;
+    y: number;
+    /** Its widest, in screen pixels. */
+    width: number;
+    text: string;
+    scale: number;
+    pointer: boolean;
+  } | null {
+    if (this.dragging() || this.box || this.viewDragging) return null;
+    const id = [this.focusedHeader, this.hoveredHeader].find(
+      (item) => item && !this.dismissed.includes(item),
+    );
+    const tile = id
+      ? this.tiles().find((item) => item.id === id && item.frame)
+      : undefined;
+    if (!tile) return null;
+    const { zoom, pan } = this.view;
+    // Under the header's left end, moved left and narrowed to stay on the canvas.
+    const width = Math.max(120, Math.min(320, this.tipRoom - 16));
+    const left = Math.max(
+      8,
+      Math.min(tile.position.x * zoom + pan.x, this.tipRoom - width - 8),
+    );
+    return {
+      id: tile.id,
+      x: (left - pan.x) / zoom,
+      y: tile.position.y + frameHeaderHeight(zoom) + 4 / zoom,
+      width,
+      text: tile.tooltip,
+      scale: 1 / zoom,
+      pointer: tile.id !== this.focusedHeader,
+    };
   }
   /** The pointer or focus reached a step: a toolbar Escape hid elsewhere may show again. */
   private reached(id: string) {
@@ -1372,6 +1762,8 @@ export class CanvasView implements OnInit, DoCheck {
   pointerDown(event: PointerEvent) {
     this.downAt = { x: event.clientX, y: event.clientY };
     this.cancelledPointer = null;
+    // The pointer takes over: a focus a key sent elsewhere doesn't land.
+    this.pendingFocus = null;
     this.boxAdditive = event.shiftKey;
     const target = event.target as Element;
     if (
@@ -1693,6 +2085,88 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** The step the drawn run was last framed on, and the run. */
   private framed = "";
+  /** The playback Execute workflow last framed, and when. */
+  private framedPlay: {
+    trace: readonly unknown[];
+    phase: "start" | "end";
+  } | null = null;
+  /**
+   * The canvas area a run is framed in: above the band that holds the canvas
+   * tools, and clear of the run log, which docks over the canvas's right
+   * side (a sheet over its bottom on narrow windows).
+   */
+  private runArea(): { width: number; height: number } {
+    const root = this.root().nativeElement;
+    const frame = root.getBoundingClientRect();
+    const tools = [
+      ...root.querySelectorAll<HTMLElement>(
+        ".canvas-v2-tools, .canvas-v2-tools-menu, .canvas-read-only",
+      ),
+    ].reduce((most, item) => Math.max(most, item.offsetHeight), 0);
+    let width = root.clientWidth;
+    let height = Math.max(1, root.clientHeight - (16 + tools + 8));
+    const log = root.closest(".canvas-panel")?.querySelector("weave-run-log");
+    const box = log?.getBoundingClientRect();
+    if (box?.width && box.height) {
+      if (box.top <= frame.top + 1)
+        width = Math.max(1, Math.min(width, box.left - frame.left));
+      else height = Math.max(1, Math.min(height, box.top - frame.top));
+    }
+    return { width, height };
+  }
+  /**
+   * Frames the run Execute workflow plays back in a workflow with loops: the
+   * whole workflow at 55% or more; else the loop holding the step it failed
+   * or is at (else the last it finished); else that step at 60%.
+   */
+  private frameExecution() {
+    const run = this.host().canvasRun();
+    const root = this.root().nativeElement;
+    if (run?.mode !== "simulated" || !run.trace) return;
+    if (!this.ready || !root.clientWidth) return;
+    const layout = this.layout();
+    // Workflows without loops keep their steps in sight as before (keepRunInView).
+    if (!layout.frames.length) return;
+    const order = layout.tiles.map((tile) => tile.id);
+    const at =
+      run.current.find((id) => order.includes(id)) ??
+      [...order].reverse().find((id) => run.done.includes(id)) ??
+      null;
+    const loopId = at
+      ? layout.frames.some((frame) => frame.id === at)
+        ? at
+        : this.loopsAroundOf(layout)(at).at(-1)
+      : undefined;
+    const loop = layout.frames.find((frame) => frame.id === loopId);
+    const tile = layout.tiles.find((item) => item.id === at);
+    const halves = this.labelTextHalves(layout);
+    const outlineAt = (zoom: number) => {
+      const bounds = runOutline(layout, zoom, (id) => halves.get(id));
+      return {
+        x: bounds.minX,
+        y: bounds.minY,
+        width: bounds.maxX - bounds.minX,
+        height: bounds.maxY - bounds.minY,
+      };
+    };
+    this.framedView = this.frameView(
+      frameExecuted(
+        outlineAt,
+        loop
+          ? { x: loop.x, y: loop.y, width: loop.width, height: loop.height }
+          : null,
+        tile
+          ? {
+              x: tile.x,
+              y: tile.y,
+              width: tile.width,
+              height: tile.labelY + LTR.labelHeight - tile.y,
+            }
+          : null,
+        this.runArea(),
+      ),
+    );
+  }
   /**
    * Frames a run that happened (the Runs tab) in the area the canvas tools
    * leave: the whole workflow from 100% to 60%, else the step that failed,
@@ -1790,6 +2264,7 @@ export class CanvasView implements OnInit, DoCheck {
     if (!this.framedView || this.view !== this.framedView) return;
     this.framed = "";
     this.frameRecorded();
+    this.frameExecution();
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   /**
@@ -1804,6 +2279,8 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
       return;
+    // A run of a workflow with loops is framed as Execute workflow frames it.
+    if (h.canvasRun()?.trace && this.layout().frames.length) return;
     const frame = root.getBoundingClientRect();
     // Tiles as drawn (body, label, summary line), in world units.
     const { zoom, pan } = this.view;
@@ -1959,20 +2436,28 @@ export class CanvasView implements OnInit, DoCheck {
     this.cdr.markForCheck();
   }
   revealTile(id: string, margin = 64) {
-    const tile = this.layout().tiles.find((item) => item.id === id);
+    const layout = this.layout();
+    const tile = layout.tiles.find((item) => item.id === id);
     const root = this.root().nativeElement;
     if (!tile || !root.clientWidth) return;
-    const pan = reveal(
-      this.view,
-      {
-        x: tile.x,
-        y: tile.y,
-        width: tile.width,
-        height: tile.labelY + LTR.labelHeight - tile.y,
-      },
-      { width: root.clientWidth, height: root.clientHeight },
+    const size = { width: root.clientWidth, height: root.clientHeight };
+    // A loop shows its whole frame; where that misses with the usual
+    // margin, with less, and else from its header's start.
+    const frame = layout.frames.find((item) => item.id === id);
+    const rect = frame
+      ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+      : {
+          x: tile.x,
+          y: tile.y,
+          width: tile.width,
+          height: tile.labelY + LTR.labelHeight - tile.y,
+        };
+    const room = Math.min(
       margin,
+      Math.max(0, (size.width - rect.width * this.view.zoom) / 2),
+      Math.max(0, (size.height - rect.height * this.view.zoom) / 2),
     );
+    const pan = reveal(this.view, rect, size, frame ? room : margin);
     if (pan.x !== this.view.pan.x || pan.y !== this.view.pan.y)
       this.setView({ zoom: this.view.zoom, pan });
   }
@@ -2163,10 +2648,35 @@ export class CanvasView implements OnInit, DoCheck {
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
     if (event.defaultPrevented || target.closest("[role=menu]")) return;
+    const pending = this.pendingFocus;
+    const slotFor = pending
+      ? pending.slot
+        ? pending.id
+        : undefined
+      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
+    if (slotFor && this.slotKey(event, slotFor)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // On its way to an empty loop's Add a step, keys act on that slot:
+    // Enter opens it, and the commands about steps wait for it.
+    if (pending?.slot && event.key === "Enter" && !modified(event)) {
+      const slot = this.root().nativeElement.querySelector<HTMLElement>(
+        this.slotSelector(pending.id),
+      );
+      this.pendingFocus = null;
+      if (slot) this.insertAt(slot);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const typing = typingIn(target);
     const onStep =
-      target === this.root().nativeElement ||
-      target.classList.contains("tile-body");
+      !pending?.slot &&
+      (target === this.root().nativeElement ||
+        target.classList.contains("tile-body") ||
+        !!pending);
     const command = canvasCommand(event, {
       platform: this.platform,
       typing,
@@ -2180,8 +2690,11 @@ export class CanvasView implements OnInit, DoCheck {
   run(command: KeymapCommand, target: HTMLElement): boolean {
     const h = this.host();
     const places = this.places();
-    // Focus on a tile acts on it; focus on the canvas, on the selection's focus.
+    // Focus on a tile acts on it, or on the tile a key is sending it to;
+    // focus on the canvas, on the selection's focus.
+    const pending = this.pendingFocus;
     const focus =
+      (pending && !pending.slot ? pending.id : null) ??
       target.closest("[data-tile]")?.getAttribute("data-tile") ??
       this.selection.focus ??
       "";
@@ -2349,8 +2862,19 @@ export class CanvasView implements OnInit, DoCheck {
     else void h.deselect();
   }
   /** Arrow keys: focus (and select) the neighbor in that direction. */
-  private moveFocus(from: string, direction: Direction): boolean {
-    const next = neighbor(this.layout(), from || this.active(), direction);
+  private moveFocus(
+    from: string,
+    direction: Direction,
+    /** From an empty loop's slot: on past the loop. */
+    pastBody = false,
+  ): boolean {
+    const start = from || this.active();
+    // An empty loop's "Add a step" is the way into its body.
+    if (direction === "next" && !pastBody && this.emptyLoop(start)) {
+      this.focusLater(start, this.slotSelector(start), true);
+      return true;
+    }
+    const next = neighbor(this.layout(), start, direction);
     if (!next) return true;
     if (this.places().has(next)) this.choose(only(next));
     this.focusTileLater(next);
@@ -2383,14 +2907,59 @@ export class CanvasView implements OnInit, DoCheck {
     return true;
   }
   private focusTileLater(id: string) {
+    this.focusLater(id, `[data-tile="${CSS.escape(id)}"] .tile-body`);
+  }
+  /** A loop whose body is empty: its frame holds an "Add a step" slot. */
+  private emptyLoop(id: string): boolean {
+    return this.layout().slots.some(
+      (slot) => slot.tile === id && slot.owner === `${id}/body`,
+    );
+  }
+  private slotSelector(loop: string): string {
+    return `.lane-slot[data-slot-for="${CSS.escape(loop)}"]`;
+  }
+  /**
+   * ← and → on an empty loop's "Add a step": back to the loop's header, or
+   * on past the loop, as from a body's last step. Enter is the button's own.
+   */
+  private slotKey(event: KeyboardEvent, loop: string): boolean {
+    if (modified(event)) return false;
+    if (!this.emptyLoop(loop)) return false;
+    if (event.key === "ArrowLeft") {
+      if (this.places().has(loop)) this.choose(only(loop));
+      this.focusTileLater(loop);
+      return true;
+    }
+    if (event.key === "ArrowRight") return this.moveFocus(loop, "next", true);
+    return false;
+  }
+  /**
+   * Focuses an element of a tile's group once the canvas has drawn that
+   * tile in view. A later key that sends focus elsewhere first wins.
+   */
+  private focusLater(id: string, selector: string, slot = false) {
+    const pending = { id, slot };
+    this.pendingFocus = pending;
     this.cdr.markForCheck();
     afterNextRender(
-      () =>
-        this.root()
-          .nativeElement.querySelector<HTMLElement>(
-            `[data-tile="${CSS.escape(id)}"] .tile-body`,
-          )
-          ?.focus(),
+      () => {
+        if (this.pendingFocus !== pending) return;
+        // The canvas moves its own view first, and the step takes focus
+        // once it is drawn there. A focus that scrolled the flow would move
+        // the view again, from where the step was before.
+        this.revealTile(id);
+        this.cdr.markForCheck();
+        afterNextRender(
+          () => {
+            if (this.pendingFocus !== pending) return;
+            this.pendingFocus = null;
+            this.root()
+              .nativeElement.querySelector<HTMLElement>(selector)
+              ?.focus({ preventScroll: true });
+          },
+          { injector: this.injector },
+        );
+      },
       { injector: this.injector },
     );
   }

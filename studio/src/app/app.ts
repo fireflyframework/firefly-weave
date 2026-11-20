@@ -7710,6 +7710,8 @@ export class App implements CanvasHost {
     if (executeAgain && this.lastTarget) await this.executeIn(this.lastTarget);
     return true;
   }
+  /** A run log row opened a step on one item of a loop (`send[2]`). */
+  readonly openedItem = signal<{ draftId: string; key: string } | null>(null);
   /** An entry's step details, on its Input or Output when asked. */
   openEntry(id: string, pane?: "input" | "output"): void {
     void this.openStepDetails(id, {
@@ -7751,7 +7753,12 @@ export class App implements CanvasHost {
         this.playTimer = setTimeout(next, tools.PLAYBACK_STEP_MS);
       else
         this.runAnnouncement.set({
-          text: tools.finalAnnouncement(response),
+          // With the draft: a list over Up to says how many items and Up to.
+          text: tools.finalAnnouncement(
+            response,
+            undefined,
+            this.model.definition,
+          ),
           urgent: response.status === "failed",
         });
     };
@@ -7804,13 +7811,10 @@ export class App implements CanvasHost {
   /** The code and message of the step a simulated run failed at, or null. */
   runFailure(stepId: string): { code?: string; message?: string } | null {
     const last = this.execution?.last();
-    if (!last || last.status !== "failed") return null;
-    const failed = last.trace.find((entry) => entry.status === "failed");
-    if (failed?.nodeId !== stepId) return null;
-    const diagnostic = last.diagnostics?.[0];
-    return diagnostic
-      ? { code: diagnostic.code, message: diagnostic.message }
-      : {};
+    // The tools chunk says why (it made the execution service).
+    return last && this.tools
+      ? this.tools.runFailureOf(last, stepId, this.model.definition)
+      : null;
   }
   /** The place and opening the test data was last opened for. */
   private testDataKey = "";
