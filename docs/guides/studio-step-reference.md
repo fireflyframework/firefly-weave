@@ -276,39 +276,50 @@ and model from the step's current settings, so a saved answer still works
 after you choose another model. Until you choose a model, Studio keeps no
 answer and says "Choose a model first."
 
-- **Generate sample**, in the Output pane, makes a sample answer from the
-  step's result fields, such as `text` for a text result, and keeps it as the
-  saved answer. Output shows it at once as what **Execute step** returns,
-  tagged **Simulated**. It isn't a pin, so the pane shows no **Pinned** banner.
+- **Generate sample**, in the Output pane, keeps a sample answer as the saved
+  answer. For a plain text result, the sample is the result fields' first
+  example, or "Sample answer from summarize." when they give none. Other
+  results get a sample that fits their result fields. Output shows it at once
+  as what **Execute step** returns, tagged **Simulated**. It isn't a pin, so
+  the pane shows no **Pinned** banner.
 - **Execute step** replays the saved answer on this computer. Without one, the
   step needs test data, as described in [Execute a step](#execute-a-step).
 - The output has four fields: `result` (the answer), `usage`, `provider`, and
   `model`. A row under the Output pane's source sums up `usage`:
-  "0 requests · 0 in · 0 out tokens" for a replay, or
+  "No model call · replayed the saved answer" for a replay, or
   "1 request · 812 in · 64 out tokens" for a real answer, where _in_ and _out_
-  count the model's input and output tokens.
-- Inside a loop, the saved answer belongs to the item picked in the loops
-  around the step, as a pin does.
+  count the model's input and output tokens. A text answer shows its first
+  eight lines, and **Show all** shows the rest.
 
 **Run it for real.** With Studio connected to an environment, **Execute in
 _environment_** runs the AI task as a test run on the platform. Studio sends
 the step's AI settings, the prompt and context worked out from the data in the
 Input pane, and the connection you chose with the model. Choosing a model also
 keeps that connection as the slot's connection for the current environment, on
-this computer only, and never in test data. The test run gets
-the step's **Timeout**, at most 300 seconds. Output then shows the real answer
-with its usage, under a "From _environment_ · run …" tag. **Pin output** on
-that answer keeps it as the saved answer, with the run it came from, and says
-"Kept this answer as test data for summarize. Execute step replays it."
-Reading test data that came from a run needs permission to read runs in that
-environment, as [Execute in local](studio.md#execute-in-local) explains.
+this computer only, and never in test data. The test run gets the step's
+**Timeout**, at most 300 seconds. Output then shows the real answer with its
+usage, under a "From _environment_ · run …" tag.
+
+**Keep an answer.** In an AI task's Output pane, the pin button is **Keep as
+test data**. On a real answer, it keeps that answer as the saved answer, with
+the run it came from, and says "Kept this answer as test data for summarize.
+Execute step replays it." Keeping or generating an answer when one is already
+kept says "Replaced the kept answer for summarize." with **Undo** instead.
+While the answer shown is the kept one, including a generated sample, the
+button shows as pressed. Selecting it again removes the kept answer and says
+"Removed the kept answer for summarize." with **Undo**. Inside a loop,
+**Generate sample** and **Keep as test data** keep the answer for the item
+picked in the loops around the step only, and the message names the item, as
+in "Kept this answer as test data for summarize, item 2. Execute step replays
+it." Reading test data that came from a run needs permission to read runs in
+that environment, as [Execute in local](studio.md#execute-in-local) explains.
 
 **When Studio asks first.** The connection decides:
 
 | Connection | **Execute in _environment_** |
 | --- | --- |
 | Marked **Local** in **Model**: served over plain HTTP beside the platform, such as Ollama | Runs at once |
-| Any other connection, or one Studio hasn't listed yet | Asks every time, naming the model and the cost: "Execute summarize in Production?" with "This calls qwen3:4b on OpenAI · openai-prod and may incur cost." and **Run it** or **Cancel** |
+| Any other connection, or one Studio hasn't listed yet | Asks every time, naming the model and the cost: "Execute summarize in Production?" with "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost." and **Run it** or **Cancel** |
 
 A step whose slot has no connection in that environment says "Choose a
 connection for slot ai to execute summarize in Production." with **Fix**,
@@ -1074,7 +1085,7 @@ explains the three ways to execute and the run log. What each kind shows:
 | Step | After Execute step |
 | --- | --- |
 | Call an action, Call an API, email and file steps | The pinned output, otherwise the last result. Without either, "Step *ID* needs test data." with **Set test output** and **Generate sample**. |
-| AI task | Its saved answer, replayed without calling a model, with "0 requests · 0 in · 0 out tokens" under the source. Without one, it needs test data, and **Generate sample** makes one (see [AI task](#ai-task)). |
+| AI task | Its saved answer, replayed without calling a model, with "No model call · replayed the saved answer" under the source. Without one, it needs test data, and **Generate sample** makes one (see [AI task](#ai-task)). |
 | Transform | What it computes from the data the earlier steps have. |
 | Decision | Each path as **Taken**, **Not taken** or **Not checked**, then the taken path's result. On the canvas, "Path: *condition*". |
 | Wait for time | Advances by itself; the canvas line reads "Waited 5 min". |
