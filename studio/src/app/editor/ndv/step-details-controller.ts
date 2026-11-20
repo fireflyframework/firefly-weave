@@ -77,6 +77,7 @@ import {
   CANVAS_MAX_BYTES,
   type AiTurnsEntry,
   type DataSource,
+  type ErrorEntry,
   type HumanEntry,
   type Provenance,
   type SignalEntry,
@@ -92,6 +93,8 @@ import {
 import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
+  failureOf,
+  withFailure,
   withInput,
   withPin,
   withoutInput,
@@ -938,6 +941,38 @@ export class StepDetailsController {
         section === "aiTurns"
           ? `Removed the kept answer for ${answerSubject(key)}.`
           : `Removed the test answer of ${key}.`,
+        outcome.previous,
+      );
+    return { ok: true };
+  }
+
+  /** The failure simulated for one item (`key`), else for its step; null when none is. */
+  failureOf(key: string): ErrorEntry | null {
+    this.testData.version();
+    return failureOf(this.testData.data(), key)?.entry ?? null;
+  }
+  /**
+   * Keeps the failure simulated at `key` (an item's or a step's), set by
+   * hand and checked as all test data is; null removes it, with Undo.
+   */
+  async setFailure(
+    key: string,
+    failure: Omit<ErrorEntry, "source"> | null,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const service = this.testData;
+    const entry: ErrorEntry | null = failure && {
+      ...failure,
+      source: "manual",
+    };
+    const pointer = `/errors/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    const outcome = await service.change(
+      withFailure(service.data(), key, entry, new Date().toISOString()),
+      entry === null ? [] : [pointer],
+    );
+    if (!outcome.ok) return { ok: false, message: outcome.message };
+    if (entry === null)
+      this.offerUndo(
+        `Removed the simulated failure of ${key}.`,
         outcome.previous,
       );
     return { ok: true };
