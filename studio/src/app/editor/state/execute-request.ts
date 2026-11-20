@@ -32,6 +32,7 @@ import type {
   ExecuteTarget,
   FrameView,
   MockKey,
+  ScriptedFailure,
   TraceEntry,
 } from "./execution";
 import { instanceStep } from "./instance-keys";
@@ -145,16 +146,31 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
       ? null
       : new Set(sliceStepIds(workflow, parts.target.stepId) ?? []);
   const sent = (key: string) => !runs || runs.has(instanceStep(key));
+  // A simulated failure takes its key, or every item of its step: the host
+  // takes a key as a failure or a mock, never both, so no pin, replayed
+  // result or AI turns goes there.
+  const failures = testData.errors ?? {};
+  const fails = (key: string) =>
+    Object.hasOwn(failures, key) || Object.hasOwn(failures, instanceStep(key));
+  const errors: Record<MockKey, ScriptedFailure> = {};
+  for (const [key, { code, outcome, attempts }] of Object.entries(failures))
+    if (sent(key))
+      errors[`node:${key}`] = {
+        code,
+        ...(outcome === undefined ? {} : { outcome }),
+        ...(attempts === undefined ? {} : { attempts }),
+      };
   const mocks: Record<MockKey, Json> = {};
   const pins = testData.pins ?? {};
   for (const [key, pin] of Object.entries(pins))
-    if (sent(key) && mocked(steps.get(instanceStep(key))))
+    if (sent(key) && !fails(key) && mocked(steps.get(instanceStep(key))))
       mocks[`node:${key}`] = pin.output;
   for (const [key, result] of Object.entries(results?.steps ?? {})) {
     const step = instanceStep(key);
     if (
       result.output === undefined ||
       !sent(key) ||
+      fails(key) ||
       !replayed(steps.get(step)) ||
       Object.hasOwn(pins, key) ||
       Object.hasOwn(pins, step)
@@ -194,10 +210,14 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
     stubUnresolved: true,
     input: input === undefined ? parts.sampleInput : (input as Json),
     mocks,
+    // Only when some fail: a host that predates failures refuses the field.
+    ...(Object.keys(errors).length ? { errors } : {}),
     scripts: {
       signals: { ...(testData.signals ?? {}) },
       humans: { ...(testData.humans ?? {}) },
-      aiTurns: { ...(testData.aiTurns ?? {}) },
+      aiTurns: Object.fromEntries(
+        Object.entries(testData.aiTurns ?? {}).filter(([key]) => !fails(key)),
+      ),
       autoAdvanceWaits: true,
     },
     target: parts.target,
