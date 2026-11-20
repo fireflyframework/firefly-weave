@@ -179,15 +179,74 @@ export function inputSources(scope: {
     { id: "input", label: "Workflow input", detail: "", icon: "source" },
   ];
 }
+/** An entry of what a step can read: the offline scope's, or the host's inside a loop body, with the loop's item and position. */
+export type PaneEntry = Omit<ScopeEntry, "source"> & {
+  source: string;
+  /** The loop whose item or position this is. */
+  loop?: string;
+};
+const LOOP_WORDS: Record<string, string> = {
+  item: "Current item",
+  index: "Item position",
+};
+/** What a loop's item or position is called: the innermost loop's plainly, another one's with its name. */
+const loopLabel = (entry: PaneEntry): string =>
+  entry.ref.startsWith("/loops/")
+    ? `Loop ${entry.loop} › ${LOOP_WORDS[entry.source]}`
+    : LOOP_WORDS[entry.source];
+
+/**
+ * Inside a loop body: the innermost loop's Current item and Item position,
+ * then those of each loop around it, then the workflow input and the steps
+ * before, nearest first.
+ */
+export function loopSources(
+  entries: readonly PaneEntry[],
+  steps: { id: string; kind: string }[],
+): Source[] {
+  const roots = entries.filter(
+    (entry) => !entry.path.length && entry.loop && entry.source in LOOP_WORDS,
+  );
+  const named = (entry: PaneEntry) => entry.ref.startsWith("/loops/");
+  const loops = [
+    ...roots.filter((entry) => !named(entry)),
+    ...roots.filter(named),
+  ].map((entry) => ({
+    id: named(entry)
+      ? `${entry.source === "item" ? "loop" : "loop-index"}:${entry.loop}`
+      : entry.source,
+    label: loopLabel(entry),
+    detail: "",
+    icon: "forEach",
+  }));
+  const [input, ...before] = [...inputSources({ steps })].reverse();
+  return [...loops, input, ...before.reverse()];
+}
+/** A loop source's parts: whose item (null for the innermost loop) and whether it is the position. */
+export function loopSource(
+  source: string,
+): { loop: string | null; index: boolean } | null {
+  if (source === "item" || source === "index")
+    return { loop: null, index: source === "index" };
+  const named = /^loop(-index)?:(.+)$/.exec(source);
+  return named ? { loop: named[2], index: !!named[1] } : null;
+}
 export const defaultSource = (sources: Source[]): string =>
   sources[0]?.id ?? "input";
 
-export const rootOf = (source: string): string =>
-  source === "input"
-    ? "/input"
-    : `/steps/${source.slice(5).replace(/~/g, "~0").replace(/\//g, "~1")}/output`;
+const escaped = (id: string) => id.replace(/~/g, "~0").replace(/\//g, "~1");
+export function rootOf(source: string): string {
+  if (source === "input") return "/input";
+  if (source === "item" || source === "index") return `/${source}`;
+  const loop = /^loop(-index)?:(.*)$/.exec(source);
+  if (loop) return `/loops/${escaped(loop[2])}/${loop[1] ? "index" : "item"}`;
+  return `/steps/${escaped(source.slice(5))}/output`;
+}
 
-export function sourceRows(entries: ScopeEntry[], source: string): TreeRow[] {
+export function sourceRows(
+  entries: readonly PaneEntry[],
+  source: string,
+): TreeRow[] {
   const root = rootOf(source);
   const descendants = entries.filter((entry) =>
     entry.ref.startsWith(`${root}/`),
@@ -205,7 +264,11 @@ export function sourceRows(entries: ScopeEntry[], source: string): TreeRow[] {
     types: entry.types,
     ref: entry.ref,
     breadcrumb: [
-      entry.source === "input" ? "Input" : entry.stepId,
+      entry.source === "input"
+        ? "Input"
+        : entry.source in LOOP_WORDS
+          ? loopLabel(entry)
+          : entry.stepId,
       ...entry.path,
     ].join(" › "),
     schema: entry.schema,

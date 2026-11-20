@@ -27,18 +27,30 @@ import {
   Component,
   computed,
   afterNextRender,
+  DestroyRef,
   ElementRef,
   inject,
   Injector,
   input,
   signal,
   type Signal,
+  type WritableSignal,
 } from "@angular/core";
 import { Icon } from "../../icon";
 import type { Step, Workflow } from "../../model";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Json } from "../ndv/registry";
-import { allSteps } from "../ndv/step-walk";
+import { allSteps, childLists } from "../ndv/step-walk";
+import { LOOP_LIMIT, loopProgress } from "../canvas/run-state";
+import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
+import { stepPointerOf } from "../formula/loops";
+import { loopLimitText } from "../canvas/loop-frame";
+import {
+  countsOf,
+  overLimitOf,
+  pausedOf,
+  stepsOf,
+} from "../canvas/trace-playback";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
 import type { CalledRuns } from "../state/execute-request";
 import type {
@@ -66,6 +78,14 @@ export interface RunLogHost {
   readonly executeRefusal?: Signal<string | null>;
   readonly breakpoints: Signal<ReadonlySet<string>>;
   lastTarget: ExecuteTarget | null;
+  /** The Workflow panel shows; the run log closes it to make room below 1,600 px. */
+  showInspector: boolean;
+  readonly windowWidth: number;
+  readonly draftId: string;
+  /** Step details open a step on this item of a loop (`send[2]`). */
+  readonly openedItem?: WritableSignal<{ draftId: string; key: string } | null>;
+  /** Draws the editor again after a change the run log made to it. */
+  refreshView(): void;
   toggleRunLog(): void;
   summaryOf(stepId: string): string | null;
   staleEntries(): ReadonlySet<string>;
@@ -94,6 +114,14 @@ export interface RunLogEntry {
   summary: string | null;
   stale: boolean;
   breakpoint: boolean;
+  /** A loop's row: how far it got, its items (nested loops' too), the items that didn't run. */
+  loop?: {
+    progress: number | null;
+    items: LoopLogItem[];
+    notRun: string[];
+    /** A list longer than Up to: what it means and what to do. */
+    message?: string;
+  };
   /** The workflows this step called, with what ran inside them. */
   frames?: FrameLog[];
 }
@@ -105,6 +133,246 @@ const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
   running: "wait",
   current: "play",
 };
+
+/** One item of a loop in the run log: "Item 3", what it went through, where it failed. */
+export interface LoopLogItem {
+  label: string;
+  status: "completed" | "failed" | "running";
+  /** "check, send", "Failed at send", "at send". */
+  text: string;
+  /** The step its row opens, on this item: where it failed, else the last one it reached (`send[2]`). */
+  key: string;
+  /** The failed item: each step it went through, the failed one last; it shows open. */
+  steps?: LoopLogStep[];
+  /** The failed item: the error the run stopped with, when it says. */
+  message?: string;
+}
+/** A step a failed item went through, with what it returned or the code it failed with. */
+export interface LoopLogStep {
+  id: string;
+  /** Opens the step on the item (`check[2]`). */
+  key: string;
+  status: TraceStatus;
+  /** "3 fields", or the failed step's error code; null when there is nothing to say. */
+  text: string | null;
+}
+/** One run of a loop in the run log. */
+export interface LoopLog {
+  id: string;
+  within: readonly number[];
+  /** "20 of 20 items", "3 of 20 items finished", "2 items". */
+  summary: string;
+  /** How far it got, 0 to 1; null without a count. */
+  progress: number | null;
+  items: LoopLogItem[];
+  /** "Items 5 to 20 didn't run."; null when every item ran. */
+  notRun: string | null;
+  /** A list longer than Up to: what it means and what to do. */
+  message?: string;
+}
+/** A Fail step's code and message, from the workflow; undefined for another step. */
+function failCopy(
+  definition: unknown,
+  stepId: string,
+): { code?: string; message?: string } | undefined {
+  const pointer = stepPointerOf(definition, stepId);
+  const step =
+    pointer === null ? null : getAt(definition, parsePointer(pointer)!);
+  if (!isJsonObject(step) || step["kind"] !== "fail") return undefined;
+  const text = (value: unknown) =>
+    typeof value === "string" && value ? value : undefined;
+  return { code: text(step["code"]), message: text(step["message"]) };
+}
+/** What a step in a failed item returned: "3 fields", "2 items"; null for paths, loops and plain values. */
+function outputText(kind: string, output: Json | undefined): string | null {
+  if (output === undefined || ["switch", "parallel", "forEach"].includes(kind))
+    return null;
+  const count = Array.isArray(output)
+    ? { n: output.length, word: "item" }
+    : output !== null && typeof output === "object"
+      ? { n: Object.keys(output).length, word: "field" }
+      : null;
+  return count
+    ? `${count.n.toLocaleString("en-US")} ${count.word}${count.n === 1 ? "" : "s"}`
+    : null;
+}
+const plural = (count: number) =>
+  `${count.toLocaleString("en-US")} ${count === 1 ? "item" : "items"}`;
+/** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
+const iterationOf = (key: string): number[] =>
+  [...key.replace(/[#~].*$/, "").matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+/** "Item 3", or "Item 2 › 1" inside the second item of the loop around it. */
+const itemLabel = (within: readonly number[], index: number) =>
+  `Item ${[...within, index].map((at) => at + 1).join(" › ")}`;
+
+/**
+ * Each run of each loop in an execution, for the run log: how many items
+ * finished, each item with the steps it went through (or where it failed),
+ * and the items that didn't run. `loopsAround` names the loops around a step.
+ * With the workflow, a list longer than Up to says how many items and Up to.
+ */
+export function loopLog(
+  response: ExecuteResponse,
+  loopsAround: (stepId: string) => readonly string[],
+  definition?: unknown,
+): LoopLog[] {
+  const trace = stepsOf(response);
+  const entries = response.trace.filter((entry) => !entry.frame);
+  // The step the run failed at, and its error, said once under its item:
+  // the answer's, else a Fail step's own code and message.
+  const failedAt = entries.find((entry) => entry.status === "failed");
+  const error =
+    response.diagnostics?.[0] ??
+    (failedAt ? failCopy(definition, failedAt.nodeId) : undefined);
+  return loopProgress(
+    trace,
+    trace.length,
+    countsOf(response),
+    loopsAround,
+    true,
+    pausedOf(response),
+  ).map((run) => {
+    const depth = run.within.length;
+    const items = new Map<
+      number,
+      { steps: string[]; last: TraceStatus; key: string; ran: number[] }
+    >();
+    let failure: { index: number; step: string; key: string } | null = null;
+    for (const [position, entry] of trace.entries()) {
+      if (loopsAround(entry.nodeId)[depth] !== run.id) continue;
+      const iteration = iterationOf(entry.instanceKey);
+      if (
+        iteration.length <= depth ||
+        iteration.slice(0, depth).join() !== run.within.join()
+      )
+        continue;
+      const index = iteration[depth];
+      let item = items.get(index);
+      if (!item)
+        items.set(
+          index,
+          (item = { steps: [], last: entry.status, key: "", ran: [] }),
+        );
+      if (!item.steps.includes(entry.nodeId)) item.steps.push(entry.nodeId);
+      item.last = entry.status;
+      item.key = entry.instanceKey || entry.nodeId;
+      // The steps directly in this loop's body, paths included.
+      if (loopsAround(entry.nodeId).length === depth + 1)
+        item.ran.push(position);
+      if (entry.status === "failed" && !failure)
+        failure = {
+          index,
+          step: entry.nodeId,
+          key: entry.instanceKey || entry.nodeId,
+        };
+    }
+    const reached = [...items.keys()].sort((a, b) => a - b);
+    const logged = reached.map((index): LoopLogItem => {
+      const item = items.get(index)!;
+      const last = item.steps[item.steps.length - 1];
+      if (failure?.index === index) {
+        const stopped = entries[item.ran.at(-1) ?? -1] === failedAt;
+        return {
+          label: itemLabel(run.within, index),
+          status: "failed",
+          text: `Failed at ${failure.step}`,
+          key: failure.key,
+          steps: item.ran.map((position): LoopLogStep => {
+            const entry = entries[position];
+            const failed = entry.status === "failed";
+            return {
+              id: entry.nodeId,
+              key: entry.instanceKey || entry.nodeId,
+              // A path it took is done with once a step on it failed.
+              status: failed
+                ? "failed"
+                : entry.status === "running"
+                  ? "completed"
+                  : entry.status,
+              text: failed
+                ? entry === failedAt && error?.code
+                  ? error.code
+                  : null
+                : outputText(entry.kind, entry.output),
+            };
+          }),
+          ...(stopped && error?.message ? { message: error.message } : {}),
+        };
+      }
+      // The run ended inside a paused loop's items after the ones it finished.
+      const running =
+        item.last === "running" ||
+        item.last === "waiting" ||
+        (run.status === "paused" && index >= run.finished);
+      return {
+        label: itemLabel(run.within, index),
+        status: running ? "running" : "completed",
+        text: running ? `at ${last}` : item.steps.join(", "),
+        key: item.key,
+      };
+    });
+    // A list longer than Up to: its loop failed before any item.
+    if (run.overLimit) {
+      const over =
+        definition === undefined
+          ? null
+          : overLimitOf(definition, response, run.id);
+      return {
+        id: run.id,
+        within: run.within,
+        summary: !over
+          ? "more items than Up to"
+          : over.count === null
+            ? `more items than Up to ${over.limit.toLocaleString("en-US")}`
+            : `${plural(over.count)}, Up to ${over.limit.toLocaleString("en-US")}`,
+        progress: null,
+        items: [],
+        notRun: null,
+        ...(over ? { message: loopLimitText(over.count, over.limit) } : {}),
+      };
+    }
+    // Another reason it failed before its first item: the run's own words.
+    const self = entries.find(
+      (entry) =>
+        entry.kind === "forEach" &&
+        entry.nodeId === run.id &&
+        entry === failedAt &&
+        iterationOf(entry.instanceKey).join() === run.within.join(),
+    );
+    if (run.status === "failed" && !reached.length && self && error?.code)
+      return {
+        id: run.id,
+        within: run.within,
+        summary: `Failed: ${error.code}`,
+        progress: null,
+        items: [],
+        notRun: null,
+        ...(error.message ? { message: error.message } : {}),
+      };
+    const count = run.count;
+    const first = reached.length ? reached[reached.length - 1] + 2 : 1;
+    return {
+      id: run.id,
+      within: run.within,
+      summary:
+        count === null
+          ? plural(run.finished)
+          : run.status === "done"
+            ? `${run.finished.toLocaleString("en-US")} of ${plural(count)}`
+            : `${run.finished.toLocaleString("en-US")} of ${plural(count)} finished`,
+      progress: count ? Math.min(1, run.finished / count) : null,
+      items: logged,
+      notRun:
+        count === null || first > count
+          ? null
+          : first === count
+            ? `${itemLabel(run.within, count - 1)} didn't run.`
+            : `Items ${first.toLocaleString("en-US")} to ${count.toLocaleString("en-US")} didn't run.`,
+    };
+  });
+}
 
 // Called workflows: the steps that ran inside one show under the call that
 // ran it, and a call inside it under its own step.
@@ -288,7 +556,18 @@ export function runStatus(
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
     const failed = response.trace.find((entry) => entry.status === "failed");
-    return failed ? `Failed at ${failed.nodeId}` : "Failed";
+    // A loop that failed over its Up to, before any item.
+    if (
+      failed?.kind === "forEach" &&
+      response.diagnostics?.some((problem) => problem.code === LOOP_LIMIT)
+    )
+      return `Failed at ${failed.nodeId}: more items than Up to`;
+    // Inside a loop, the item too: "Failed at send, item 4".
+    const iteration = failed ? iterationOf(failed.instanceKey) : [];
+    const item = iteration.length
+      ? `, item ${iteration.map((at) => at + 1).join(" › ")}`
+      : "";
+    return failed ? `Failed at ${failed.nodeId}${item}` : "Failed";
   }
   if (response.status === "limit") return "Stopped at the simulation's limit";
   if (target?.mode === "before") return `Paused before ${target.stepId}`;
@@ -440,7 +719,89 @@ export function runStatus(
               @if (entry.breakpoint) {
                 <span class="run-log-breakpoint" title="Breakpoint"></span>
               }
+              @if (entry.loop?.progress !== null && entry.loop) {
+                <span
+                  class="run-log-progress"
+                  [style.--progress]="entry.loop.progress"
+                  aria-hidden="true"
+                ></span>
+              }
             </button>
+            @if (entry.loop?.message; as message) {
+              <p class="run-log-loop-message">{{ message }}</p>
+            }
+            @if (entry.loop; as loop) {
+              <ul
+                class="run-log-items"
+                [attr.aria-label]="'Items of ' + entry.id"
+              >
+                @for (item of loop.items; track item.label) {
+                  <li class="run-log-row">
+                    <!-- Opens its step on this item. -->
+                    <button
+                      type="button"
+                      class="run-log-entry run-log-item"
+                      [attr.data-status]="item.status"
+                      [attr.aria-label]="item.label + ': ' + item.text"
+                      (click)="openItem(item.key)"
+                    >
+                      <weave-icon
+                        class="run-log-icon"
+                        [name]="icons[item.status]"
+                        [size]="16"
+                        aria-hidden="true"
+                      />
+                      <strong class="run-log-step">{{ item.label }}</strong>
+                      <span class="run-log-summary">{{ item.text }}</span>
+                    </button>
+                    <!-- The failed item shows open: each step it went through, then the error. -->
+                    @if (item.steps; as steps) {
+                      <ul
+                        class="run-log-item-steps"
+                        [attr.aria-label]="'Steps of ' + item.label"
+                      >
+                        @for (step of steps; track step.key) {
+                          <li>
+                            <button
+                              type="button"
+                              class="run-log-entry run-log-item-step"
+                              [attr.data-status]="step.status"
+                              [attr.aria-label]="
+                                step.id +
+                                (step.status === 'failed' ? ', failed' : '') +
+                                (step.text ? ': ' + step.text : '')
+                              "
+                              (click)="openItem(step.key)"
+                            >
+                              <weave-icon
+                                class="run-log-icon"
+                                [name]="icons[step.status]"
+                                [size]="16"
+                                aria-hidden="true"
+                              />
+                              <strong class="run-log-step">{{
+                                step.id
+                              }}</strong>
+                              <span
+                                class="run-log-summary"
+                                [class.run-log-code]="step.status === 'failed'"
+                                >{{ step.text ?? "" }}</span
+                              >
+                            </button>
+                          </li>
+                        }
+                      </ul>
+                      @if (item.message) {
+                        <p class="run-log-item-message">{{ item.message }}</p>
+                      }
+                    }
+                  </li>
+                }
+                @for (note of loop.notRun; track note) {
+                  <li class="run-log-not-run">{{ note }}</li>
+                }
+              </ul>
+            }
             @if (entry.frames) {
               <ng-container
                 [ngTemplateOutlet]="framesOf"
@@ -613,6 +974,31 @@ export class RunLogPanel {
   private readonly el: ElementRef<HTMLElement> = inject(ElementRef);
   private readonly injector = inject(Injector);
 
+  constructor() {
+    // Below 1,600 px wide the run log takes the Workflow panel's room, so the
+    // canvas keeps enough to show the run; the panel comes back when it closes.
+    let madeRoom: RunLogHost | null = null;
+    afterNextRender(() => {
+      const host = this.host();
+      if (host.windowWidth >= 1600 || !host.showInspector) return;
+      host.showInspector = false;
+      madeRoom = host;
+      host.refreshView();
+    });
+    inject(DestroyRef).onDestroy(() => {
+      if (!madeRoom) return;
+      madeRoom.showInspector = true;
+      madeRoom.refreshView();
+    });
+  }
+  /** A row for one item of a loop (`send[2]`) opens its step on that item. */
+  openItem(key: string): void {
+    const host = this.host();
+    const stepId = instanceStep(key);
+    if (stepId !== key) host.openedItem?.set({ draftId: host.draftId, key });
+    host.openEntry(stepId);
+  }
+
   private steps(): Step[] {
     return allSteps(this.host().model.definition.spec.steps ?? []);
   }
@@ -676,20 +1062,61 @@ export class RunLogPanel {
     }
     const last = host.execution?.last();
     if (!last) return [];
+    // The steps inside a loop show under its row, item by item.
+    const around = this.loopsAround();
+    const loops = loopLog(last, around, host.model.definition);
     const seen = new Map<string, RunLogEntry>();
     for (const entry of last.trace) {
-      if (entry.frame) continue;
+      if (entry.frame || around(entry.nodeId).length) continue;
+      const runs = loops.filter(
+        (loop) =>
+          loop.id === entry.nodeId || around(loop.id)[0] === entry.nodeId,
+      );
+      const own = runs.find((loop) => loop.id === entry.nodeId);
       seen.set(entry.nodeId, {
         id: entry.nodeId,
-        status: entry.status,
-        summary:
-          entry.status === "completed" ? host.summaryOf(entry.nodeId) : null,
+        status:
+          own && entry.status !== "failed"
+            ? own.items.some((item) => item.status === "failed")
+              ? "failed"
+              : entry.status
+            : entry.status,
+        summary: own
+          ? own.summary
+          : entry.status === "completed"
+            ? host.summaryOf(entry.nodeId)
+            : null,
         stale: stale.has(entry.instanceKey || entry.nodeId),
         breakpoint: marks.has(entry.nodeId),
+        ...(own
+          ? {
+              loop: {
+                progress: own.progress,
+                items: runs.flatMap((loop) => loop.items),
+                notRun: runs.flatMap((loop) =>
+                  loop.notRun ? [loop.notRun] : [],
+                ),
+                ...(own.message ? { message: own.message } : {}),
+              },
+            }
+          : {}),
       });
     }
     return withFrames([...seen.values()], this.calls());
   });
+  /** The loops around each step of the workflow, outermost first. */
+  private loopsAround(): (stepId: string) => readonly string[] {
+    const around = new Map<string, readonly string[]>();
+    const walk = (steps: readonly Step[], outer: readonly string[]) => {
+      for (const step of steps) {
+        if (outer.length) around.set(step.id, outer);
+        const inner = step.kind === "forEach" ? [...outer, step.id] : outer;
+        for (const list of childLists(step)) walk(list, inner);
+      }
+    };
+    walk(this.host().model.definition.spec.steps ?? [], []);
+    return (stepId) => around.get(stepId) ?? [];
+  }
 
   // Called workflows: what ran inside them, opened and closed in place.
   readonly frameWords: Record<TraceStatus, string> = {

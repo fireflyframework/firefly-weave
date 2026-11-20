@@ -247,6 +247,8 @@ export class RefPill {
           [preview]="resultPreview()"
           [source]="resultSource()"
           [tip]="resultTip()"
+          [loops]="resultLoops()"
+          (picked)="pickItem($event)"
         />
       }
       <!-- After the Result panel, so Tab from the formula reaches Show all
@@ -612,6 +614,14 @@ export class FormulaField implements OnInit {
       };
     if (read.kind === "empty") return null;
     return this.session().previewOf(this.spec(), read.value);
+  }
+  /** The loop whose item the formula reads, for the Result panel's picker. */
+  resultLoops() {
+    const read = readFieldText(this.shownText(), this.fieldText());
+    return read.kind === "value" ? this.session().previewLoops(read.value) : [];
+  }
+  pickItem({ loopId, index }: { loopId: string; index: number }) {
+    this.session().controller.iterations.pick(loopId, index);
   }
   resultSource(): string {
     const read = readFieldText(this.shownText(), this.fieldText());

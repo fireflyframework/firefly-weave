@@ -25,8 +25,10 @@ import {
   Component,
   computed,
   input,
+  output,
   signal,
 } from "@angular/core";
+import { IterationPicker, type PickerLoop } from "../panes/iteration-picker";
 import {
   SECRET,
   UNAVAILABLE,
@@ -39,6 +41,7 @@ import type { PreviewResult } from "../registry";
 @Component({
   selector: "weave-formula-result",
   standalone: true,
+  imports: [IterationPicker],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `<section
     class="formula-result"
@@ -50,7 +53,14 @@ import type { PreviewResult } from "../registry";
       @if (type(); as type) {
         <span class="formula-result-type">{{ type }}</span>
       }
-      @if (source()) {
+      @if (loops().length) {
+        <weave-iteration-picker
+          class="formula-result-picker"
+          [loops]="loops()"
+          [compact]="true"
+          (picked)="picked.emit($event)"
+        />
+      } @else if (source()) {
         <span class="formula-result-source">{{ source() }}</span>
       }
     </div>
@@ -86,6 +96,9 @@ export class FormulaResult {
   preview = input<PreviewResult | null>(null);
   source = input("");
   tip = input(false);
+  /** Inside a loop's body: the loop whose item the formula reads, picked here. */
+  loops = input<readonly PickerLoop[]>([]);
+  readonly picked = output<{ loopId: string; index: number }>();
   readonly all = signal(false);
   readonly shown = computed(() => {
     const result = this.preview();

@@ -67,6 +67,7 @@ browser bundle does not have them; to see the same screens,
 | Ask a person to decide | **Human task** | `humanTask` | Weave creates an assigned task with a form and allowed decisions |
 | Stop with a business error | **Fail** | `fail` | Weave records the supplied error code and message |
 | Run another workflow | **Call a workflow** | `callWorkflow` | Weave starts a run of an exact published version as a child run, and waits for its result unless the call doesn't wait |
+| Repeat steps for each item of a list | **Loop over items** | `forEach` | Weave runs the steps inside once per item, up to **At a time** at once, and collects one result per item in item order |
 
 Start and End mark the boundaries of the process. They are fixed visual nodes,
 not extra executable steps. **Start** is also a button: select it to open the
@@ -173,6 +174,7 @@ duration in whole seconds." Leave an optional duration empty to remove it.
 | Human task | **Assignment binding**, **Title**, **Context**, **Decisions**, **Due after**, **Expires after**, **Form schema** | Defines who may claim the work and what a valid decision contains |
 | Fail | **Error code**, **Message** | Gives operators and calling products a business failure they can recognize |
 | Call a workflow | **Workflow**, **Input**, **When it runs**, **If it fails**, and **Business key** under **Add option** | Chooses the version to run, what it receives, and whether this workflow waits for it and stops when it fails |
+| Loop over items | **Items**, then **At a time**, **Up to**, **Results**, and **Result per item** under **Add option** | Chooses the list, how many items run at once, the most the list may hold, and what the loop returns for each item |
 
 Every step also has a unique ID. References to earlier step results use that ID;
 moving steps can change what they may read. The compiler checks those
@@ -427,6 +429,18 @@ log shows the called workflow's steps under it. See
 [Call a workflow](studio.md#call-a-workflow) for the whole path, and
 [Let other workflows call this one](studio.md#let-other-workflows-call-this-one)
 for the workflow being called.
+
+### Loop over items
+
+**Items** is required and must be a list; it starts empty, and the step says
+"Choose the list to loop over." until you map one. **At a time** starts at 1
+(the items run one after another), **Up to** at 1,000 (a longer list fails the
+run), **Results** at **Keep every result** (**Skip empty results** leaves out
+empty results), and **Result per item** at the item itself. Removing an option
+writes its default back. The steps inside read the current item as `item`, its
+position as `index`, and an outer loop's item as `loops.<id>.item`. On error
+stays **Stop the run**. See [Loop over items](studio.md#loop-over-items) for the
+whole path.
 
 ### Call an API
 

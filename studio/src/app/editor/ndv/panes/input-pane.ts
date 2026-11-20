@@ -40,6 +40,13 @@ import {
   WORKFLOW,
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
+import { enclosingLoops, stepPointerOf } from "../../formula/loops";
+import {
+  IterationPicker,
+  itemPath,
+  loopRows,
+  type PickerLoop,
+} from "./iteration-picker";
 import { DataTable } from "./data-table";
 import { tableCount } from "./table-view";
 import {
@@ -47,6 +54,8 @@ import {
   defaultSource,
   filterRows,
   inputSources,
+  loopSource,
+  loopSources,
   radioKey,
   rootOf,
   savedView,
@@ -54,6 +63,7 @@ import {
   writeView,
   sourceRows,
   type DataView,
+  type PaneEntry,
   type TreeRow,
 } from "./views";
 import type { FormSession } from "../params/form-session";
@@ -64,7 +74,7 @@ import { instanceStep } from "../../state/instance-keys";
   selector: "weave-input-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, DataTable],
+  imports: [Icon, DataTree, DataTable, IterationPicker],
   host: { "[class.is-compact]": "compact()" },
   template: `@let sources = this.sources();
     @let chosen = selectedSource();
@@ -163,6 +173,12 @@ import { instanceStep } from "../../state/instance-keys";
             : countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
+    @if (!compact()) {
+      @let around = pickerRows();
+      @if (around.length) {
+        <weave-iteration-picker [loops]="around" (picked)="pick($event)" />
+      }
+    }
     <div class="sd-pane-body">
       <div class="pane-content">
         @if (chosen === "received") {
@@ -228,7 +244,7 @@ import { instanceStep } from "../../state/instance-keys";
                   {{ missing }} hasn't run yet. Execute previous steps, or map
                   from the fields below.
                 </p>
-              } @else {
+              } @else if (!pickerSaysExecute()) {
                 <h4>No input data yet</h4>
                 <p>
                   Execute the previous steps to see what this step receives, or
@@ -350,6 +366,60 @@ export class InputPane implements OnInit {
   readonly radioKey = radioKey;
   private readonly lifetime = inject(DestroyRef);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  /** Counts asked of the current data, by loop, until the data changes. */
+  private asked = new Set<string>();
+  private askedFor: readonly unknown[] = [];
+
+  /** A loop's count the last Execute didn't give: asked of the current data, once until that data changes. */
+  private countLoop(loopId: string) {
+    const { controller } = this.session();
+    if (controller.viewingRuns()) return;
+    const stamp = controller.previewData().stamp();
+    if (
+      stamp.length !== this.askedFor.length ||
+      stamp.some((part, i) => part !== this.askedFor[i])
+    ) {
+      this.asked = new Set();
+      this.askedFor = stamp;
+    }
+    const iterations = controller.iterations;
+    if (iterations.counts(loopId).known || this.asked.has(loopId)) return;
+    this.asked.add(loopId);
+    void iterations.evaluate(loopId);
+  }
+
+  /** One picker row per loop around the step, innermost last; none outside loops or on the Runs tab. */
+  pickerRows(): PickerLoop[] {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return [];
+    const rows = loopRows(controller.iterations, target, (id) =>
+      controller.step(id),
+    );
+    // Outside the render: counting writes signals when its answer arrives.
+    for (const row of rows)
+      if (!row.known) queueMicrotask(() => this.countLoop(row.loopId));
+    return rows;
+  }
+  /** The picker row already says "Execute previous steps to see the items.": the empty state keeps only its buttons. */
+  pickerSaysExecute(): boolean {
+    return this.pickerRows().some((row) => !row.known && row.index === 0);
+  }
+  pick({ loopId, index }: { loopId: string; index: number }) {
+    this.session().controller.iterations.pick(loopId, index);
+  }
+  /** What a field inside a loop body can read, from the host, with the loops' items; null elsewhere or while asked. */
+  private hosted(pointer: string): PaneEntry[] | null {
+    const { host, controller, target } = this.session();
+    const definition = host.model.definition;
+    if (target.startsWith("$") || !enclosingLoops(definition, target).length)
+      return null;
+    const step = stepPointerOf(definition, target);
+    if (!step) return null;
+    return controller.loopScopes.entries(
+      definition,
+      `${step}${pointer}`,
+    ) as unknown as PaneEntry[] | null;
+  }
 
   private scope() {
     const session = this.session();
@@ -376,6 +446,24 @@ export class InputPane implements OnInit {
     const pointer =
       "/" +
       field.path.map((segment) => escapeSegment(String(segment))).join("/");
+    const hosted = this.hosted(pointer);
+    if (hosted)
+      return {
+        found: true,
+        evaluated: true,
+        loops: true,
+        steps: hosted
+          .filter((entry) => entry.source === "step" && !entry.path.length)
+          .map((entry) => {
+            const id = entry.ref
+              .split("/")[2]
+              .replace(/~1/g, "/")
+              .replace(/~0/g, "~");
+            return { id, kind: session.controller.step(id)?.kind ?? "action" };
+          }),
+        entries: hosted,
+        truncated: false,
+      };
     return referenceScope(
       session.host.model.definition,
       target,
@@ -389,6 +477,8 @@ export class InputPane implements OnInit {
     run: string | null;
     requested: string | null;
     chosen: string;
+    /** Chosen by default before the person chose any source: it follows the sources as they change. */
+    defaulted: boolean;
   } | null = null;
   selectedSource(): string {
     const session = this.session();
@@ -401,16 +491,29 @@ export class InputPane implements OnInit {
       ? null
       : requested !== this.selection?.requested
         ? requested
-        : this.selection?.chosen;
-    const chosen = sources.some((source) => source.id === desired)
-      ? desired!
-      : defaultSource(sources);
-    this.selection = { session, run, requested, chosen };
+        : this.selection?.defaulted
+          ? null
+          : this.selection?.chosen;
+    const kept = sources.some((source) => source.id === desired);
+    const chosen = kept ? desired! : defaultSource(sources);
+    // Until the person chooses a source, the default follows the sources
+    // (a loop body's items arrive from the host after the step's own).
+    this.selection = {
+      session,
+      run,
+      requested,
+      chosen,
+      defaulted: !kept && requested === null,
+    };
     return chosen;
   }
   sources() {
     const scope = this.scope();
-    const sources = scope.found ? inputSources(scope) : [];
+    const sources = !scope.found
+      ? []
+      : "loops" in scope
+        ? loopSources(scope.entries, scope.steps)
+        : inputSources(scope);
     // In run mode the first source is what the step received in that run.
     const { controller, target } = this.session();
     return controller.run() && !target.startsWith("$") && !this.compact()
@@ -454,6 +557,13 @@ export class InputPane implements OnInit {
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
+    const looped = loopSource(source);
+    if (looped) {
+      // A loop's picked item or its position, from the current data.
+      const data = controller.loopData(this.session().target);
+      const loop = looped.loop ? data?.loops?.[looped.loop] : data;
+      return looped.index ? loop?.index : loop?.item;
+    }
     if (source === "received") {
       const received = controller.runReceived(this.session().target);
       return received.ok ? (received.value as Json) : undefined;
@@ -468,19 +578,20 @@ export class InputPane implements OnInit {
         this.value()
       );
     if (source.startsWith("step:"))
-      return controller.stepData(source.slice(5))?.value ?? this.value();
+      // Inside a loop, the earlier step's data for the item picked.
+      return controller.pickedStepData(source.slice(5))?.value ?? this.value();
     return this.value();
   }
   /** The earlier step chosen as the source, when it has no data yet (it hasn't run). */
   notRun(source: string): string | null {
     if (!source.startsWith("step:")) return null;
     const id = source.slice(5);
-    return this.session().controller.stepData(id) ? null : id;
+    return this.session().controller.pickedStepData(id) ? null : id;
   }
   /** The chosen source's last result is out of date. */
   staleSource(source: string): boolean {
     if (!source.startsWith("step:")) return false;
-    const data = this.session().controller.stepData(source.slice(5));
+    const data = this.session().controller.pickedStepData(source.slice(5));
     return data?.source === "simulated" && data.stale !== null;
   }
   executePrevious() {
@@ -495,6 +606,12 @@ export class InputPane implements OnInit {
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {
+    const looped = loopSource(source);
+    if (looped) {
+      // Which item: as the picker names it, nested ones with the items around.
+      const item = itemPath(this.pickerRows(), looped.loop ?? undefined);
+      return item ? `Simulated · item ${item}` : "";
+    }
     const run = this.session().controller.run();
     if (source === "received") return "Recomputed from the run's data";
     if (run) return `From ${run.label()}`;
@@ -503,10 +620,21 @@ export class InputPane implements OnInit {
         this.session().host.execution?.sampleUsed() != null
         ? "Sample"
         : "Test input";
-    const data = source.startsWith("step:")
-      ? this.session().controller.stepData(source.slice(5))
+    const stepId = source.startsWith("step:") ? source.slice(5) : null;
+    const data = stepId
+      ? this.session().controller.pickedStepData(stepId)
       : undefined;
-    return data?.source === "simulated" ? "Simulated" : "Pinned";
+    if (data?.source !== "simulated") return "Pinned";
+    // A step in the same loop: the item it ran for.
+    const key = stepId
+      ? this.session().controller.iterations.instanceKey(stepId)
+      : null;
+    const item = key
+      ? [...key.matchAll(/\[(\d+)\]/g)]
+          .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+          .join(" › ")
+      : "";
+    return item ? `Simulated · item ${item}` : "Simulated";
   }
   rows(source: string, data?: Json): TreeRow[] {
     return withSamples(

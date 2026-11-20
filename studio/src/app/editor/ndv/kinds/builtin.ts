@@ -32,6 +32,8 @@ import { actionForm, actionSettings } from "./forms/action-forms";
 import { decisionTableForm, transformForm } from "./forms/data-forms";
 import {
   failForm,
+  loopForm,
+  loopSummary,
   parallelForm,
   signalForm,
   signalSettings,
@@ -190,6 +192,30 @@ export const parallelKind: StepKindDescriptor = {
   form: parallelForm,
 };
 
+/** A loop: its steps run once per item of a list, inside its frame. */
+export const forEachKind: StepKindDescriptor = {
+  ...common("forEach", "loop", "flow"),
+  feature: "flow.forEach",
+  summary: (step) => loopSummary(step),
+  fields: () => [
+    {
+      path: ["items"],
+      label: "Items",
+      expectedSchema: () => ({ type: "array" }),
+    },
+    field("Result per item", "body", "output"),
+  ],
+  containers: () => [
+    {
+      path: ["body", "steps"],
+      layout: "frame" as const,
+      label: (owner: Step) => branchTitle(owner, "body"),
+    },
+  ],
+  pinnable: false,
+  form: loopForm,
+};
+
 export const waitKind: StepKindDescriptor = {
   ...common("wait", "wait", "wait"),
   fields: () => [],
@@ -237,6 +263,7 @@ export const builtInKinds: readonly StepKindDescriptor[] = [
   signalKind,
   humanTaskKind,
   failKind,
+  forEachKind,
 ];
 
 export function register(): void {

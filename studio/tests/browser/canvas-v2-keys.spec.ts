@@ -457,3 +457,67 @@ test.describe("the canvas keyboard map", () => {
     );
   });
 });
+
+test("arrow keys pressed in quick succession each move one step", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const canvas = await openWorkflow(page);
+  await canvas.tileBody("$trigger:manual").focus();
+  // No wait between the presses: a key held down repeats as fast.
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(canvas.tileBody("route")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect(canvas.tileBody("prepare-request")).toBeFocused();
+});
+
+test.describe("the canvas keyboard map on a phone", () => {
+  test.use({ viewport: { width: 360, height: 640 } });
+
+  test("arrow keys bring each step whole into the canvas, moving the view once", async ({
+    page,
+  }) => {
+    const ids = ["a1", "a2", "a3", "a4", "a5", "a6"];
+    const canvas = await openWorkflow(page, {
+      name: "chain.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "chain", version: "1.0.0" },
+          spec: {
+            inputSchema: { type: "object" },
+            steps: ids.map((id) => ({
+              id,
+              kind: "transform",
+              value: { literal: {} },
+            })),
+            output: { literal: {} },
+          },
+        }),
+      ),
+    });
+    await canvas.tileBody("a1").focus();
+    for (const id of ids.slice(1)) {
+      await page.keyboard.press("ArrowRight");
+      await expect(canvas.tileBody(id)).toBeFocused();
+      // The canvas pans to the step; the focus that follows doesn't move it again.
+      await expect
+        .poll(async () => {
+          const area = (await canvas.root.boundingBox())!;
+          const card = (await canvas.tileBody(id).boundingBox())!;
+          return (
+            card.x >= area.x &&
+            card.x + card.width <= area.x + area.width &&
+            card.y >= area.y &&
+            card.y + card.height <= area.y + area.height
+          );
+        }, id)
+        .toBe(true);
+    }
+  });
+});
