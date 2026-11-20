@@ -297,11 +297,49 @@ test.describe("the Result panel inside a loop at 1440x900", () => {
     const picker = result.getByRole("group", { name: "Items of orders" });
     const item = picker.getByRole("button", { name: /Choose an item$/ });
     await expect(item).toHaveAccessibleName("Item 1. Choose an item");
-    // Compact: the buttons only, no loop name.
+    // Compact: the buttons only, no loop name, at the head's right end.
     await expect(result.locator(".picker-name")).toHaveCount(0);
+    const head = (await result.locator(".formula-result-head").boundingBox())!;
+    const placed = (await picker.boundingBox())!;
+    expect(
+      Math.abs(placed.x + placed.width - (head.x + head.width)),
+    ).toBeLessThan(2);
     await picker.getByRole("button", { name: "Next item" }).click();
     await expect(item).toHaveAccessibleName("Item 2. Choose an item");
     await expect(result).toBeVisible();
+  });
+});
+
+test.describe("the picker on a phone", () => {
+  test.use({ viewport: { width: 360, height: 740 } });
+
+  test("keeps touch sizes below 768 px wide, whatever the pointer", async ({
+    page,
+  }) => {
+    const details = await open(page);
+    // The phone's canvas opens on the trigger: the keyboard reaches send.
+    await details.openWithKeyboard("send");
+    const pane = await inputPane(details);
+    const picker = pane.locator("weave-iteration-picker");
+    const sizes = await picker.evaluate((element) => {
+      const size = (selector: string) =>
+        [...element.querySelectorAll(selector)].map((each) => {
+          const box = each.getBoundingClientRect();
+          return [Math.round(box.width), Math.round(box.height)];
+        });
+      return {
+        steps: size(".picker-step"),
+        item: size(".picker-item"),
+        row: size(".picker-row"),
+      };
+    });
+    for (const [width, height] of sizes.steps) {
+      expect(width).toBeGreaterThanOrEqual(44);
+      expect(height).toBeGreaterThanOrEqual(44);
+    }
+    expect(sizes.item[0][0]).toBeGreaterThanOrEqual(128);
+    expect(sizes.item[0][1]).toBeGreaterThanOrEqual(44);
+    expect(sizes.row[0][1]).toBeGreaterThanOrEqual(56);
   });
 });
 

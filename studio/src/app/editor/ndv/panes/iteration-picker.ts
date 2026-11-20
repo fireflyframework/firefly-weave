@@ -341,10 +341,15 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
         background: var(--hover);
       }
     }
-    @media (pointer: coarse) {
+    /* On touch, and on any screen under 768 px: 44 px buttons, a 128 px item. */
+    @media (pointer: coarse), (max-width: 767px) {
       .picker-group button {
         min-inline-size: 44px;
         min-block-size: 44px;
+      }
+      /* Past .picker-group button's own minimum. */
+      .picker-group .picker-item {
+        min-inline-size: 128px;
       }
       .picker-row {
         min-block-size: 56px;
@@ -398,6 +403,8 @@ export function goToItem(text: string, loop: PickerLoop): number | null {
     /* The Result panel's source line: the buttons only, 24 px. */
     :host(.compact) {
       display: inline-block;
+      /* At the right end of the Result panel's head, after its type. */
+      margin-inline-start: auto;
       border-bottom: 0;
     }
     :host(.compact) .picker-row {
