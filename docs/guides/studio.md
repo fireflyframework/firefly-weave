@@ -2151,6 +2151,19 @@ are withheld reads "This run's details are withheld." without its text.
   that doesn't serve logs yet says "This platform can't show logs yet." once,
   and Studio asks it no more until you reload the page.
 
+**Read what worker containers printed in Container logs.** The **Container
+logs** tab of **Logs** needs `deployment_log.read` and `deployment.read` on the
+target. Choose a **Target**, a **Component**, up to five **Members**, **Since**
+(the last 5 minutes to 24 hours) and **Last lines** (1 to 1,000 per member),
+then **Fetch logs**. Fetching asks the target's runner for a snapshot and
+changes nothing on the target; the snapshot usually arrives within 10 seconds
+and expires after 1 hour. Each member shows its lines with **Copy** and
+**Download**; a chosen member Weave couldn't read says so, and a restarted pod
+marks where its previous container's lines end. **Follow** asks for a new
+snapshot every 10 seconds while the page is open and visible. [Container
+logs](../operations/observability.md#container-logs) explains who may read
+them, their limits and how they are redacted.
+
 Worker and connector entries are kept for 7 days by default; [Run
 logs](../operations/observability.md#run-logs) explains where entries come from,
 how they are redacted, and their limits.
