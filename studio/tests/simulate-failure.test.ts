@@ -27,6 +27,7 @@ import {
 } from "../src/app/editor/ndv/panes/failure-codes";
 import {
   codeProblem,
+  codeSuggestions,
   failureKey,
   simulateBlock,
 } from "../src/app/editor/ndv/panes/simulate-failure";
@@ -136,5 +137,45 @@ describe("the platform's failure codes a step may return", () => {
     );
     expect(codes("action")).not.toContain("WV-TASK-RECONCILED-FAILURE");
     expect(codes("switch")).toEqual([]);
+  });
+});
+
+describe("the codes Simulate a failure suggests", () => {
+  const contract = (codes: string[]) => ({
+    spec: { definiteFailures: codes },
+  });
+
+  it("lists the action's own failures first, then the platform's that fit the kind", () => {
+    const groups = codeSuggestions(
+      step("action"),
+      contract(["REQUEST_REFUSED", "TIMEOUT"]),
+    );
+    expect(groups.map((group) => group.label)).toEqual([
+      "This action's failures",
+      "Platform failures",
+    ]);
+    expect(groups[0].items).toEqual([
+      {
+        code: "REQUEST_REFUSED",
+        message: "The step failed with code REQUEST_REFUSED.",
+      },
+      { code: "TIMEOUT", message: "The step timed out." },
+    ]);
+    // A code the action lists already is not offered twice.
+    const platform = groups[1].items.map((item) => item.code);
+    expect(platform).toContain("UNAVAILABLE");
+    expect(platform).not.toContain("TIMEOUT");
+  });
+
+  it("offers only the platform's codes when the step has no contract or lists none", () => {
+    const groups = codeSuggestions(step("transform"), null);
+    expect(groups.map((group) => group.label)).toEqual(["Platform failures"]);
+    expect(groups[0].items[0]).toEqual({
+      code: "WV-EXPR-MISSING",
+      message: "A value the step reads is missing.",
+    });
+    expect(codeSuggestions(step("action"), contract([]))[0].label).toBe(
+      "Platform failures",
+    );
   });
 });

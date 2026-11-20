@@ -21,6 +21,9 @@ SPDX-License-Identifier: Apache-2.0
 // contracts/studio_documents.py).
 import type { Step } from "../../../model";
 import { instanceStep } from "../../state/instance-keys";
+import { specOf } from "../kinds/shared";
+import type { Json } from "../registry";
+import { PLATFORM_FAILURES, platformFailures } from "./failure-codes";
 
 /** Kinds that can fail on their own, whatever their On error says. */
 const ALWAYS = new Set(["action", "llm", "agent"]);
@@ -73,4 +76,43 @@ export function codeProblem(code: string): string | null {
   if (!CODE.test(code))
     return "Use capital letters, digits, dots, dashes and underscores, starting with a letter.";
   return code.length > 128 ? "Use at most 128 characters." : null;
+}
+
+export interface CodeSuggestion {
+  code: string;
+  /** The platform's words for the code. */
+  message: string;
+}
+/** The platform's message for a code; any other reads as a generic failure that names it (step_error_message). */
+const messageOf = (code: string) =>
+  PLATFORM_FAILURES.find((item) => item.code === code)?.message ??
+  `The step failed with code ${code}.`;
+
+/**
+ * The codes the Code field suggests: the action's own failures (its
+ * contract's definiteFailures) under "This action's failures", then the
+ * platform's codes its kind may return under "Platform failures". Empty
+ * groups are left out; the first code is the field's starting value.
+ */
+export function codeSuggestions(
+  step: Step,
+  contract: Json | null,
+): { label: string; items: CodeSuggestion[] }[] {
+  const listed = specOf(contract)["definiteFailures"];
+  const own = Array.isArray(listed)
+    ? listed.filter((code): code is string => typeof code === "string")
+    : [];
+  const platform = platformFailures(step.kind).filter(
+    (item) => !own.includes(item.code),
+  );
+  return [
+    {
+      label: "This action's failures",
+      items: own.map((code) => ({ code, message: messageOf(code) })),
+    },
+    {
+      label: "Platform failures",
+      items: platform.map(({ code, message }) => ({ code, message })),
+    },
+  ].filter((group) => group.items.length);
 }
