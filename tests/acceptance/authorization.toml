@@ -206,6 +206,26 @@ identifier = "random"
 capability = "deployment.plan"
 identifier = "random"
 
+# Container log requests need deployment_log.read and deployment.read on the target, both checked before anything is
+# looked up; a permitted request names a random target or request, so it answers 404 and asks no runner.
+[operations."deployment_log_requests.create"]
+capability = "deployment_log.read and deployment.read"
+body = { target_id = "random", component = "fixture-worker", since_seconds = 900, tail_lines = 200 }
+
+[operations."deployment_log_requests.read"]
+capability = "deployment_log.read and deployment.read"
+identifier = "random"
+
+# The runner's own log operations: no person's role holds runner.claim or runner.report, and a random runner answers
+# 404 to a runner that does.
+[operations."deployment_runners.claim_logs"]
+capability = "runner.claim"
+body = { runner_id = "random" }
+
+[operations."deployment_runners.report_logs"]
+capability = "runner.report"
+body = { proof = { request_id = "random", runner_id = "random", token = "random" }, failure = "unreadable" }
+
 [operations."event_triggers.create"]
 capability = "trigger.manage"
 body = { name = "probe", activation_id = "random", events = ["transaction.in_doubt"] }

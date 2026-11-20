@@ -115,6 +115,8 @@ STUDIO_FAMILIES = frozenset(
         "deployment_runners",
         # Change requests re-check every capability and the four-eyes rule server-side.
         "deployment_change_requests",
+        # Container log snapshots; deployment_log.read and deployment.read on the target are checked server-side.
+        "deployment_log_requests",
         "environments",
         "incidents",
         # The environment summary and telemetry settings re-check each section's capability server-side.
@@ -165,6 +167,8 @@ STUDIO_OPERATIONS = frozenset(
         "deliveries.read",
     }
 )
+# Operations of admitted families that never cross: a target runner claims and reports its log requests itself.
+STUDIO_EXCLUDED = frozenset({"deployment_runners.claim_logs", "deployment_runners.report_logs"})
 CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors", "decision-tables"})
 
 
@@ -386,8 +390,10 @@ class StudioService:
         profile = self.options.profile
         assert profile is not None
         for operation in OPERATIONS.values():
-            if operation.method != method or (
-                operation.id.split(".")[0] not in STUDIO_FAMILIES and operation.id not in STUDIO_OPERATIONS
+            if (
+                operation.method != method
+                or operation.id in STUDIO_EXCLUDED
+                or (operation.id.split(".")[0] not in STUDIO_FAMILIES and operation.id not in STUDIO_OPERATIONS)
             ):
                 continue
             names = re.findall(r"\{([^}]+)\}", operation.canonical_path)

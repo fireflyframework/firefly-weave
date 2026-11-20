@@ -81,7 +81,14 @@ CLIENTS = {WORKER_CLIENT: "application", RUNNER_CLIENT: "application", **CLUSTER
 # Workers get this long to finish their tasks when stopped, by Compose and by platform stop alike.
 WORKER_STOP_SECONDS = 240
 STOP_GRACE = f"{WORKER_STOP_SECONDS}s"
-CAPABILITIES: tuple[DeploymentCapability, ...] = ("observe", "deploy", "update", "scale_workers", "restart_workers")
+CAPABILITIES: tuple[DeploymentCapability, ...] = (
+    "observe",
+    "deploy",
+    "update",
+    "scale_workers",
+    "restart_workers",
+    "read_logs",
+)
 STAGES = ("registry", "images", "identities", "release", "workers", "origins", "target", "runner", "ready")
 CONTAINER = "/run/weave-operations"
 SOCKET = "/var/run/docker.sock"
@@ -760,6 +767,31 @@ async def _target(
         save()
 
 
+async def _target_capabilities(
+    client: WeaveClient, value: dict[str, Any], save: Callable[[], None], capabilities: list[DeploymentCapability]
+) -> None:
+    """Give local-docker the capabilities this release's runner offers; `value` records them in
+    `target_capabilities`, so a later up reads no target.
+
+    A target an earlier release registered lacks those added since (read_logs), and the platform refuses a runner that
+    offers more than its target allows."""
+    from firefly_weave.contracts.deployments import TargetUpdate
+
+    if value.get("target_capabilities") == capabilities:
+        return
+    current = await client.invoke("deployment_targets.read", identifier=UUID(value["target_id"]))
+    missing = [item for item in capabilities if item not in current.capabilities]
+    if missing:
+        update = TargetUpdate(
+            runner_principal_id=current.runner_principal_id,
+            capabilities=[*current.capabilities, *missing],
+            disabled=current.disabled,
+        )
+        await client.invoke("deployment_targets.update", identifier=current.id, body=update, revision=current.revision)
+    value["target_capabilities"] = list(capabilities)
+    save()
+
+
 async def _runner_online(client: WeaveClient, value: dict[str, Any], *, seconds: float = RUNNER_SECONDS) -> bool:
     deadline = time.monotonic() + seconds
     while True:
@@ -1000,6 +1032,9 @@ def enable(
 
             async def register(client: WeaveClient) -> None:
                 await _host_planner(client, state, value, save)
+                if value.get("target_id") is None:
+                    # A target this up registers holds what this release's runner offers.
+                    value["target_capabilities"] = list(CAPABILITIES)
                 await _target(
                     client,
                     value,
@@ -1009,6 +1044,7 @@ def enable(
                     deployment=deployment_request(DEPLOYMENT, COMPONENT, value),
                     key=key,
                 )
+                await _target_capabilities(client, value, save, list(CAPABILITIES))
 
             asyncio.run(_api(state, value, register, transport))
             advance("target")

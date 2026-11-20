@@ -90,6 +90,29 @@ SPDX-License-Identifier: Apache-2.0
 - Log entries are kept `WEAVE_EXECUTION_LOG_RETENTION_DAYS` (7 by default, 1 to
   30), go with their run when it is purged, and count toward no usage;
   `operations_retention.read` lists their period.
+- Container logs: a person with the new `deployment_log_reader` role and
+  `deployment.read` on a target asks for a snapshot of what its worker
+  containers printed (`deployment_log_requests.create`, `POST
+  {environment}/deployment-log-requests`, with an `Idempotency-Key`), up to 5
+  members, from 60 seconds to 24 hours back and 1 to 1,000 lines each, and
+  reads it with `deployment_log_requests.read`. The local owner gets
+  `deployment_log_reader`. The target's runner claims the request beside its
+  jobs (`deployment_runners.claim_logs`, `deployment_runners.report_logs`),
+  reads only worker containers or pods it observed itself with a fixed
+  `docker logs` or `kubectl logs` argument list (with `--previous` too for a
+  pod whose container restarted; each member says how often it restarted and
+  how many of its lines came from the previous container), and redacts and
+  cuts each line to 2 KiB and the snapshot to 256 KiB; the platform redacts
+  every line again. A target takes 10 requests a minute (`429 WV-LOG-RATE`), a
+  runner out of touch for 90 seconds answers `409 WV-RUNNER-OFFLINE`, a
+  request no runner answered within 2 minutes reads failed, and a request and
+  its snapshot are deleted an hour after it was made.
+- Deployment targets and runner policies gain the capability `read_logs`
+  (Compose and Kubernetes). local-docker and connected cluster targets hold it;
+  an existing local-docker target gains it on the next `weave platform up`, and
+  a cluster runner's Role may `get` `pods/log` in its workers namespace. A
+  runner whose target lacks `read_logs` registers without it and keeps running
+  its jobs.
 
 ### AI and connections
 
@@ -183,6 +206,12 @@ SPDX-License-Identifier: Apache-2.0
 - In Settings, changing *When Studio opens* quickly with the arrow keys no
   longer loses the last choice: an earlier save's answer no longer checks the
   choice you just left.
+- Operate › Logs has two tabs, Run logs and Container logs. Container logs
+  chooses a target, a worker component, up to five members, Since and Last
+  lines; **Fetch logs** shows each member's lines with **Copy** and
+  **Download** (plain text), marks a restarted pod's previous lines, and says
+  which chosen member couldn't be read; **Follow** asks quietly for a new
+  snapshot every 10 seconds while the page is open.
 - Studio edits loops (Loop over items): a loop draws as a frame around the steps it repeats, with its list and
   limits (At a time, Up to, Results, Result per item) in step details. Inside a loop, one item picker chooses the
   item that the Input and Output panes, previews, pins and Execute step use; Pin for every item pins one output
@@ -226,6 +255,10 @@ SPDX-License-Identifier: Apache-2.0
   `agent_memory_loads`, scoped by row-level security and charged to usage.
   Purging a run deletes its loads and keeps the conversation; deleting an
   environment deletes both.
+- `0046_operations_log_requests` adds the empty `deployment_log_requests` and
+  `deployment_log_snapshots` tables with row-level security and adds the role
+  check again with `deployment_log_reader`. Upgrade the server before runners
+  and CLIs: earlier ones refuse the `read_logs` capability.
 - Security: Studio's development tools update `@angular/cli` and
   `@angular/build` to 22.2.5, which bring the Angular CLI's MCP server to
   2.3.1 (GHSA-46jr-4wx8-v453, GHSA-f897-62hf-6gxq, GHSA-jm63-cq47-j5jp,

@@ -5692,6 +5692,146 @@ spec:
       await shot("193-logs-filters", { end: ".page-content" });
     }
   },
+  // Operate › Logs › Container logs: a snapshot of what the worker containers
+  // printed; then a member that restarted beside one the runner couldn't read.
+  async "container-logs"({ page, shot }) {
+    await page.clock.install({ time: new Date("2026-11-19T10:54:05Z") });
+    await connected(page, {
+      capabilities: [
+        ...allCapabilities,
+        "deployment.read",
+        "deployment_log.read",
+      ],
+      environmentName: "local",
+    });
+    const target = "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const [first, second] = [
+      "weave-worker-7c9f-x2k4",
+      "weave-worker-7c9f-p8sd",
+    ];
+    const line = (at: string, stream: string, text: string) => ({
+      at: `2026-11-19T${at}Z`,
+      stream,
+      text,
+    });
+    const lines = {
+      [first]: [
+        line("10:41:52", "stdout", `Worker ${first} ready: 4 slots`),
+        line("10:41:58", "stdout", "Claimed task fetch for run 1c0d7f8a"),
+        line("10:42:01", "stderr", "WARN smtp-relay answered 550"),
+        line("10:42:01", "stdout", "Reported failure SMTP_REJECTED"),
+      ],
+      [second]: [
+        line("10:40:11", "stdout", `Worker ${second} ready: 4 slots`),
+        line("10:53:48", "stdout", "Claimed task fetch for run 8d2c6a1f"),
+      ],
+    };
+    const snapshot = (members: Record<string, unknown>[]) => ({
+      id: "3f4a5b6c-7d8e-4f90-a1b2-c3d4e5f6a7b8",
+      target_id: target,
+      component: "weave-worker",
+      requested_members: [first, second],
+      since_seconds: 900,
+      tail_lines: 200,
+      state: "ready",
+      created_at: "2026-11-19T10:54:04Z",
+      expires_at: "2026-11-19T11:54:04Z",
+      read_at: "2026-11-19T10:54:05Z",
+      members,
+      truncated: members.length < 2,
+      failure: null,
+    });
+    let created = snapshot([
+      { member: first, lines: lines[first], restarts: 0, previous_lines: 0 },
+      { member: second, lines: lines[second], restarts: 0, previous_lines: 0 },
+    ]);
+    await page.route(`${environment}/deployment-targets?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: target,
+              name: "local-docker",
+              capabilities: ["observe", "read_logs"],
+              disabled: false,
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-runners?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              target_id: target,
+              capabilities: ["observe", "read_logs"],
+              last_seen: "2026-11-19T10:54:00Z",
+              expires_at: "2026-11-19T10:55:30Z",
+              revoked: false,
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-observations?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              target_id: target,
+              observed_at: "2026-11-19T10:50:00Z",
+              complete: true,
+              resources: [
+                {
+                  name: "weave-worker",
+                  kind: "worker",
+                  members: [{ host: first }, { host: second }],
+                },
+              ],
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-log-requests`, (r) =>
+      r.fulfill({ status: 201, json: created }),
+    );
+    await open(page, "Logs");
+    await page.getByRole("tab", { name: "Container logs" }).click();
+    await page
+      .locator(".fetchbar")
+      .getByRole("button", { name: "Fetch logs" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: second }).locator(".line"),
+    ).toHaveCount(2);
+    await shot("260-container-logs-snapshot", { end: ".page-content" });
+    created = snapshot([
+      {
+        member: first,
+        lines: lines[first],
+        restarts: 3,
+        previous_lines: 1,
+      },
+    ]);
+    await page
+      .locator(".fetchbar")
+      .getByRole("button", { name: "Fetch logs" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: first }).locator(".restart"),
+    ).toBeVisible();
+    await expect(page.getByRole("region", { name: second })).toContainText(
+      "Weave couldn't read this member's logs.",
+    );
+    await shot("261-container-logs-restarted-and-unread", {
+      end: ".page-content",
+    });
+  },
   // A run's Logs section, after its Steps: every level, newest at the bottom.
   async "run-logs"({ page, shot }) {
     await openRunsTab(page, {

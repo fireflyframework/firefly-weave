@@ -318,16 +318,17 @@ class OperationsLoop:
         return completed
 
     async def maintain_changes(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
-        """Persist expired change request plans, then prune those that ended 90 days ago, each in its own unit.
+        """Persist expired change request plans, prune those that ended 90 days ago, and delete container log requests
+        whose hour ended with their snapshots, each in its own unit.
 
-        True when both steps completed; a failed step is logged and the other still runs.
+        True when every step completed; a failed step is logged and the others still run.
         """
         if not isinstance(authority, _SchedulerScope):
             raise AccessDenied()
-        from firefly_weave.deployments import change_service
+        from firefly_weave.deployments import change_service, log_requests
 
         completed = True
-        for step in (change_service.persist_expiry, change_service.retention):
+        for step in (change_service.persist_expiry, change_service.retention, log_requests.expire):
             try:
                 async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
                     await change_service.upkeep(tx, step)

@@ -211,8 +211,10 @@ The runner does not accept shell commands, arbitrary Kubernetes manifests, or
 credential values from a plan.
 
 `capabilities` must include `observe`, and every adapter accepts `update` and
-`scale_workers`. A Kubernetes policy may also list `restart_workers`, and a
-Compose policy `deploy` and `restart_workers`; the runner refuses any other.
+`scale_workers`. A Kubernetes policy may also list `restart_workers` and
+`read_logs`, and a Compose policy `deploy`, `restart_workers` and `read_logs`;
+the runner refuses any other. `read_logs` also needs the target to hold it: see
+[Read container logs](#read-container-logs).
 
 The default local ceilings are ten replicas, 4,000 CPU millicores, and 8,192 MiB
 per component. Lower them for smaller destinations. Raising desired capacity in
@@ -349,6 +351,49 @@ Container Apps PATCH has no documented atomic resource-version precondition.
 The runner serializes its own operations and checks for drift immediately before
 writing, but external Azure operators still need to coordinate changes. See the
 [official API contract](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/container-apps/update?view=rest-resource-manager-containerapps-2025-07-01).
+
+### Read container logs
+
+A runner whose policy lists `read_logs`, registered for a target that holds
+`read_logs`, answers container log requests: a person with
+`deployment_log_reader` and `deployment.read` on the target asks for a snapshot
+in **Operate › Logs › Container logs** or through the
+[API](../reference/api.md#deployment-operations-authority), and the runner
+reads it. Log requests have their own queue beside the jobs, so a request is
+answered while a job runs, and a log request never blocks a job.
+
+The runner reads only a worker component its policy binds, and only containers
+or pods it observed itself. A request names up to five members (container ID
+prefixes or pod names, as the observation lists them), from 60 seconds to 24
+hours back and 1 to 1,000 lines each; without members, it reads every member,
+up to five. Each command is a fixed argument list, run without a shell:
+
+| Adapter | Command |
+| --- | --- |
+| Docker Compose | `docker --context <context> logs --timestamps --since <n>s --tail <n> <full container ID>` |
+| Kubernetes | `kubectl --context <context> --namespace <boundary> --request-timeout=20s logs <pod> -c <container> --timestamps --since=<n>s --tail=<n>` |
+
+Compose reads every container of the service, exited ones included, because
+they show why a worker stopped before it claimed a task; it keeps stdout and
+stderr apart. Kubernetes reads running pods of the deployment and reports both
+streams as one `output` stream, as `kubectl logs` prints them. When a pod's
+container has restarted, the runner also reads its previous container (the
+same command with `--previous`), because a crash-looping pod's lines about the
+crash are there; the member then shows the newest lines of both containers,
+oldest first, and reports how many times the container restarted and how many
+of its lines came from the previous one. A member the runner can't read, such as a container removed
+since its inventory, is left out, and the snapshot says lines were left out;
+when no member can be read, the request fails as unreadable. The runner
+redacts each line, cuts it to 2 KiB, keeps the newest 256 KiB of the snapshot,
+and never writes a line it read to its own log. The platform redacts every line
+again, keeps the snapshot for one hour, and then deletes it.
+
+On Kubernetes, the runner's Role needs `get` on `pods/log` in the workers
+namespace. `weave platform cluster connect` grants exactly that, in the
+target's own namespace only. A runner whose policy lists `read_logs` while its
+target doesn't registers without it and keeps running its jobs; add `read_logs`
+to the target (`deployment_targets.update`) and restart the runner to read its
+logs.
 
 ## 7. Review a job's result
 

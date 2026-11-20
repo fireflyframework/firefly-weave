@@ -112,9 +112,10 @@ PERSON_ROLES = (
     "transaction_reconciler",
     "step_tester",
     "alert_manager",
+    "deployment_log_reader",
 )
 # The account `up --username` creates gets every role a local owner needs to set up the demo
-# workspace from Studio: AI connections, Weave AI, executions, workers, deployments and alerts
+# workspace from Studio: AI connections, Weave AI, executions, workers, deployments, container logs and alerts
 # (alert email is sent as the person who sets up the channel, so the owner sends email too),
 # and to test steps in the demo environment. Other accounts keep the defaults above; `user grant` adds
 # roles to any account this platform created.
@@ -132,6 +133,7 @@ LOCAL_OWNER_ROLES = (
     "deployment_planner",
     "deployment_approver",
     "deployment_operator",
+    "deployment_log_reader",
     "transaction_reconciler",
     "step_tester",
     "alert_manager",
