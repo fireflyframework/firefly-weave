@@ -30,13 +30,16 @@ from typing import Any, NamedTuple
 from firefly_weave.contracts.deployments import (
     ComponentSpec,
     DeploymentPlan,
+    MemberLog,
     MemberSelectionError,
     ObservationReport,
     ObservedMember,
     ObservedResource,
+    newest_lines,
     scale_down_members,
 )
-from firefly_weave.deployment_runner.command import run_command
+from firefly_weave.deployment_runner.command import CommandError, CommandOutput, read_output, run_command
+from firefly_weave.deployment_runner.logs import LogRefused, chosen, member_lines
 from firefly_weave.deployment_runner.policy import ComponentBinding, DestinationPolicy
 from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_time
 
@@ -167,10 +170,12 @@ class KubernetesAdapter:
         command: Callable[..., Awaitable[bytes]] = run_command,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        output: Callable[..., Awaitable[CommandOutput]] = read_output,
     ) -> None:
         if policy.adapter != "kubernetes":
             raise RunnerPolicyError()
         self.policy, self.command, self.sleep, self.clock = policy, command, sleep, clock
+        self.output = output
         self._until: float | None = None
 
     async def _run(self, *args: str, stdin: bytes | None = None) -> bytes:
@@ -345,6 +350,52 @@ class KubernetesAdapter:
         return ObservationReport(
             resources=resources, complete=True, settled=all(item.state in {"ready", "stopped"} for item in resources)
         )
+
+    async def read_logs(
+        self, component: str, members: list[str], since_seconds: int, tail_lines: int
+    ) -> tuple[list[MemberLog], bool]:
+        """The last lines of a bound worker deployment's running pods, as `kubectl logs` prints them for the bound
+        container; kubectl gives stdout and stderr as one stream.
+
+        Pods come only from this runner's own listing of the deployment in its pinned namespace.
+        """
+        binding = next((item for item in self.policy.components if item.name == component), None)
+        if binding is None or binding.kind != "worker" or binding.container is None:
+            raise LogRefused("unknown_component")
+        await self._identity()
+        value = await self._deployment(binding)
+        listed = await self._listing(value, binding) if value else []
+        if listed is None:
+            raise LogRefused("unreadable")
+        # A pending pod has printed nothing yet; a running one restarting after a crash still has its lines.
+        hosts, more = chosen([member.host for member, _ in listed if member.state == "running"], members)
+        result, cut = [], more
+        for host in hosts:
+            argv = [
+                self.policy.executable,
+                "--context",
+                self.policy.context,
+                "--namespace",
+                self.policy.boundary,
+                "--request-timeout=20s",
+                "logs",
+                host,
+                "-c",
+                binding.container,
+                "--timestamps",
+                f"--since={since_seconds}s",
+                f"--tail={tail_lines}",
+            ]
+            try:
+                printed = await self.output(argv, timeout=30)
+            except CommandError:
+                raise LogRefused("unreadable") from None
+            # kubectl's own warnings go to stderr; only stdout holds the container's lines.
+            lines, shortened = member_lines(printed.stdout, None, tail=tail_lines)
+            result.append(MemberLog(member=host, lines=lines))
+            cut = cut or shortened or printed.cut
+        kept, older = newest_lines(result)
+        return kept, cut or older
 
     async def _victims(
         self, value: dict[str, Any], binding: ComponentBinding, component: ComponentSpec
