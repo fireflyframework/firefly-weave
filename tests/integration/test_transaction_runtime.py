@@ -585,7 +585,15 @@ async def test_a_held_run_stays_held_when_it_later_records_a_change(platform, mo
 
 async def test_a_held_run_never_stops_the_timeouts_of_runs_after_it(platform, monkeypatch):
     import asyncio
+    from itertools import count
+    from uuid import UUID, uuid4
 
+    from firefly_weave.runtime import service
+
+    # The scan takes due runs in ID order. IDs that grow in start order put the held run first and every other run
+    # after it, whatever random IDs come up, so the three scan rounds always have the same nine runs to reach.
+    base, serial = uuid4().int & ~((1 << 62) - 1), count()
+    monkeypatch.setattr(service, "uuid4", lambda: UUID(int=base | next(serial)))
     lookup = {
         "id": "first",
         "kind": "action",
@@ -597,12 +605,9 @@ async def test_a_held_run_never_stops_the_timeouts_of_runs_after_it(platform, mo
     )
     await platform.complete(await platform.lease("hold"))
     plain = await platform.publish(workflow("look", [lookup], timeout=6))
-    later = []
-    while len(later) < 8:
-        run = await platform.start(plain, move=f"M-{len(later)}")
-        if str(run.id) > str(stuck.id):
-            # Each of these sorts after the held run, so a scan that kept picking it first would never reach them.
-            later.append(run.id)
+    later = [(await platform.start(plain, move=f"M-{index}")).id for index in range(8)]
+    # Each of these sorts after the held run, so a scan that kept picking it first would never reach them.
+    assert stuck.id < min(later)
     too_large(monkeypatch, "state")
     await asyncio.sleep(6.5)
     await platform.scan()

@@ -168,6 +168,9 @@ SPDX-License-Identifier: Apache-2.0
   there instead of failing the test with a server error.
 - On the Runs tab, a call step's Output names the run it started, says how it
   went, and opens it.
+- In Settings, changing *When Studio opens* quickly with the arrow keys no
+  longer loses the last choice: an earlier save's answer no longer checks the
+  choice you just left.
 
 ### Development and testing
 
