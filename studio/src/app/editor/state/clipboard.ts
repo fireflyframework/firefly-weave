@@ -55,7 +55,7 @@ import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
 import { instanceStep } from "./instance-keys";
 // Run data as test data reads it: from a run or a test call, or naming a run.
 import { runDerived } from "./test-data-ops";
-import type { PinEntry } from "./test-data";
+import type { ErrorEntry, PinEntry } from "./test-data";
 
 export const CLIPBOARD_HEADER = "# Firefly Weave steps. Paste into Studio.";
 export const CLIPBOARD_WEB_FORMAT = "web application/x-weave-steps";
@@ -70,6 +70,8 @@ export interface ClipboardDocument {
   pins: Record<string, PinEntry>;
   /** What the actions the steps' workflow owned for them do, by `uses`; only when there are some. */
   actions?: Record<string, OwnedRecipe>;
+  /** Failures simulated by hand on the steps, by instance key; only when there are some. */
+  errors?: Record<string, ErrorEntry>;
 }
 export interface Copied {
   document: ClipboardDocument;
@@ -84,6 +86,8 @@ export interface ClipboardContent {
   llmProfiles: Record<string, unknown>;
   pins: Record<string, unknown>;
   actions: Record<string, unknown>;
+  /** Simulated failures, by instance key (none from an older clipboard). */
+  errors?: Record<string, unknown>;
 }
 export type ClipboardReading =
   | { ok: true; content: ClipboardContent }
@@ -125,6 +129,8 @@ export interface PastePlan {
   renamedSlots: Record<string, string>;
   renamedProfiles: Record<string, string>;
   pins: Record<string, unknown>;
+  /** Simulated failures under the pasted steps' new IDs. */
+  errors: Record<string, unknown>;
   ownedAdds: OwnedAdd[];
   unreadable: Unreadable[];
 }
@@ -238,6 +244,7 @@ const DOCUMENT_FIELDS = new Set([
   "llmProfiles",
   "pins",
   "actions",
+  "errors",
 ]);
 const SLOT_FIELDS = new Set(["connector", "required"]);
 /** Keys that would reach an object's prototype if code ever assigned them. */
@@ -332,6 +339,7 @@ export function copySteps(
   ids: readonly string[],
   pins: Readonly<Record<string, PinEntry>> = {},
   owned: Readonly<Record<string, OwnedRecipe>> = {},
+  errors: Readonly<Record<string, ErrorEntry>> = {},
 ): Copied {
   const sequences = [...sequencesOf(workflow).values()];
   const steps = ids.flatMap((id) => {
@@ -372,19 +380,22 @@ export function copySteps(
     if (recipe) actions.push([uses as string, unpublished(recipe)]);
   }
   const inTree = new Set(tree.map((step) => step.id));
+  // Recorded from a run, test data never leaves on the clipboard.
+  const carried = <T>(entries: Readonly<Record<string, T>>) =>
+    Object.entries(entries)
+      .filter(
+        ([key, entry]) => inTree.has(instanceStep(key)) && !runDerived(entry),
+      )
+      .map(([key, entry]): [string, T] => [key, structuredClone(entry)]);
+  const failures = carried(errors);
   const document: ClipboardDocument = {
     weaveClipboard: 1,
     steps,
     connections: Object.fromEntries(connections),
     llmProfiles: Object.fromEntries(llmProfiles),
-    pins: Object.fromEntries(
-      Object.entries(pins)
-        .filter(
-          ([key, entry]) => inTree.has(instanceStep(key)) && !runDerived(entry),
-        )
-        .map(([key, entry]) => [key, structuredClone(entry)]),
-    ),
+    pins: Object.fromEntries(carried(pins)),
     ...(actions.length ? { actions: Object.fromEntries(actions) } : {}),
+    ...(failures.length ? { errors: Object.fromEntries(failures) } : {}),
   };
   return {
     document,
@@ -474,6 +485,7 @@ export function readClipboard(
     llmProfiles?: unknown;
     pins?: unknown;
     actions?: unknown;
+    errors?: unknown;
   } | null = null;
   if (
     isRecord(value) &&
@@ -492,6 +504,7 @@ export function readClipboard(
       llmProfiles: value["llmProfiles"],
       pins: value["pins"],
       actions: value["actions"],
+      errors: value["errors"],
     };
   } else if (Array.isArray(value)) found = { steps: value };
   else if (
@@ -562,6 +575,7 @@ export function readClipboard(
       llmProfiles: isRecord(found.llmProfiles) ? found.llmProfiles : {},
       pins: isRecord(found.pins) ? found.pins : {},
       actions,
+      errors: isRecord(found.errors) ? found.errors : {},
     },
   };
 }
@@ -845,19 +859,21 @@ export function planPaste(
         reason: present.has(match[1]) ? "later" : "missing",
       });
     }
-  // 5. Pins follow their steps' new IDs; pins recorded from runs never come.
+  // 5. Pins and simulated failures follow their steps' new IDs; those
+  // recorded from runs never come.
   const pastedIds = new Set(steps.flatMap(stepTree).map((step) => step.id));
-  const pins = Object.fromEntries(
-    Object.entries(content.pins).flatMap(
-      ([key, entry]): [string, unknown][] => {
+  const followed = (entries: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(entries).flatMap(([key, entry]): [string, unknown][] => {
         if (!isRecord(entry) || runDerived(entry)) return [];
         const owner = instanceStep(key);
         const next = renamed.get(owner);
         const rekeyed = next ? `${next}${key.slice(owner.length)}` : key;
         return pastedIds.has(instanceStep(rekeyed)) ? [[rekeyed, entry]] : [];
-      },
-    ),
-  );
+      }),
+    );
+  const pins = followed(content.pins);
+  const errors = followed(content.errors ?? {});
   return {
     at,
     steps,
@@ -868,6 +884,7 @@ export function planPaste(
     renamedSlots: connections.rename,
     renamedProfiles: llmProfiles.rename,
     pins,
+    errors,
     ownedAdds,
     unreadable,
   };
