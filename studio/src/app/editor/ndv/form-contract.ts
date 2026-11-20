@@ -122,7 +122,11 @@ export function formProblems(
       problems.add(
         `${kind} offers Fixed and Mapped for "${spec.id}", which isn't an expression.`,
       );
-    if (spec.whenRemoved === "default" && spec.default === undefined)
+    if (
+      spec.whenRemoved === "default" &&
+      spec.default === undefined &&
+      spec.defaultExpression === undefined
+    )
       problems.add(
         `${kind} writes the default of "${spec.id}" when it is removed, but has none.`,
       );

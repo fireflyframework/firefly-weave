@@ -131,6 +131,8 @@ export interface StepDetailsHost {
   readonly runData?: RunDataPort | null;
   /** After Debug in editor: where the run failed, shown on that step's Output. */
   readonly runNotice?: RunNotice | null;
+  /** A run log row opened a step on one item of a loop (`send[2]`): a new value for each row chosen. */
+  readonly openedItem?: Signal<{ draftId: string; key: string } | null>;
   /** The open draft's ID. */
   readonly draftId?: string;
   /** The open platform draft's saved revision; undefined before it's saved to the platform. */

@@ -15,10 +15,12 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Decision, Parallel, Wait, Wait for signal and Stop with error. A
-// decision's paths and its Otherwise sit in one Paths field; a parallel's
-// branches are one list; timeouts live on Settings.
+// Decision, Parallel, Loop over items, Wait, Wait for signal and Stop with
+// error. A decision's paths and its Otherwise sit in one Paths field; a
+// parallel's branches are one list; a loop shows its list and keeps its
+// limits behind Add option; timeouts live on Settings.
 import type { Step } from "../../../../model";
+import { loopHeaderParts } from "../../../canvas/loop-frame";
 import type { FormSpec, Json, ParamSpec } from "../../registry";
 import { durationParam } from "./shared";
 
@@ -144,6 +146,82 @@ export const parallelForm = (): FormSpec => ({
     },
   ],
 });
+
+/**
+ * A loop's list and its limits. The language writes every limit out, so
+ * removing one writes its default back and the option reads as not added.
+ * Bounds above 1 are the platform's: the compiler reports them on the field.
+ */
+export const loopForm = (): FormSpec => ({
+  fields: [
+    {
+      id: "items",
+      path: ["items"],
+      type: "formula",
+      label: "Items",
+      mapping: "mapped",
+      required: true,
+      requiredText: "Choose the list to loop over.",
+      hint: "The list to run the steps for, one item at a time.",
+      typeTag: "List",
+    },
+  ],
+  options: [
+    {
+      id: "concurrency",
+      path: ["concurrency"],
+      type: "number",
+      label: "At a time",
+      min: 1,
+      default: 1,
+      whenRemoved: "default",
+      hint: "How many items run at the same time. 1 runs them one after another.",
+    },
+    {
+      id: "maxItems",
+      path: ["maxItems"],
+      type: "number",
+      label: "Up to",
+      min: 1,
+      default: 1000,
+      whenRemoved: "default",
+      // The platform fails the run when the list holds more; it leaves nothing out.
+      hint: "The most items the list may hold. A longer list fails the run.",
+    },
+    {
+      id: "collect",
+      path: ["collect"],
+      type: "select",
+      label: "Results",
+      choices: [
+        { value: "all", label: "Keep every result" },
+        { value: "nonNull", label: "Skip empty results" },
+      ],
+      default: "all",
+      whenRemoved: "default",
+      hint: "Leave out items whose result is empty, or keep every result.",
+    },
+    {
+      id: "output",
+      path: ["body", "output"],
+      type: "json",
+      label: "Result per item",
+      mapping: "both",
+      // The item itself: a mapping, never the literal object.
+      defaultExpression: { ref: "/item" },
+      whenRemoved: "default",
+      hint: "What the loop returns for each item. Without this option, the item itself.",
+    },
+  ],
+});
+
+/** "input.orders · up to 4 at a time": the frame's header without "For each item in"; empty without a list. */
+export function loopSummary(step: Step): string {
+  const { items, suffix } = loopHeaderParts(step);
+  return items
+    ? [items, suffix.replace(/^· /, "")].filter(Boolean).join(" · ")
+    : "";
+}
 
 export const waitForm = (): FormSpec => ({
   fields: [

@@ -1146,11 +1146,30 @@ export class StepDetails {
   executeLabel(): string {
     return this.runsWorkflow() ? "Execute workflow" : "Execute step";
   }
-  /** The primary button's tooltip: why a call step executes the whole workflow. */
+  /**
+   * The primary button's tooltip: why a call step executes the whole
+   * workflow, the item a step inside a loop executes on, and what a loop's
+   * own Execute step runs.
+   */
   executeTitle(): string {
+    const item = this.pickedItem();
+    const loop =
+      (this.controller().step(this.target())?.kind as string) === "forEach";
     return this.callTarget()
       ? "A call runs only when the whole workflow executes."
-      : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+      : item && !this.runsWorkflow()
+        ? `Execute step on item ${item} (Ctrl/Cmd+Enter)`
+        : loop
+          ? "Execute the steps inside for every item (Ctrl/Cmd+Enter)"
+          : `${this.executeLabel()} (Ctrl/Cmd+Enter)`;
+  }
+  /** Inside a loop's body: the item picked, as people count it ("3", "2 › 1"); null elsewhere. */
+  pickedItem(): string | null {
+    const key = this.controller().iterations.instanceKey(this.target());
+    if (!key) return null;
+    return [...key.matchAll(/\[(\d+)\]/g)]
+      .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+      .join(" › ");
   }
   /** A step that calls a workflow: it runs only when the whole workflow does. */
   callTarget(): boolean {
@@ -1174,24 +1193,34 @@ export class StepDetails {
     const target = this.target();
     if (!run || target.startsWith("$")) return [];
     run.version();
-    const keys = run.iterations(target);
-    if (keys.length < 2) return [];
-    // Numbered in loop order; listed failed first, as iterations() gives them.
-    const ordered = [...keys].sort((a, b) => indexOf(a) - indexOf(b));
     const states = {
       failed: "Failed",
       running: "Running",
       finished: "Finished",
       "not-reached": "Not reached",
     } as const;
+    // Inside a loop: every item of the loop, the failed ones first.
+    const items = this.controller().runItems(target);
+    if (items) {
+      const failed = (key: string) => (run.state(key) === "failed" ? 0 : 1);
+      return [...items.keys]
+        .sort((a, b) => failed(a) - failed(b) || indexOf(a) - indexOf(b))
+        .map((key) => ({
+          key,
+          label: `Item ${(indexOf(key) + 1).toLocaleString("en-US")} of ${items.count.toLocaleString("en-US")} · ${states[run.state(key)]}`,
+        }));
+    }
+    const keys = run.iterations(target);
+    if (keys.length < 2) return [];
+    // Numbered in loop order; listed failed first, as iterations() gives them.
+    const ordered = [...keys].sort((a, b) => indexOf(a) - indexOf(b));
     return keys.map((key) => ({
       key,
       label: `Item ${ordered.indexOf(key) + 1} of ${keys.length} · ${states[run.state(key)]}`,
     }));
   }
   chooseIteration(key: string): void {
-    const target = this.target();
-    this.controller().iteration.update((all) => ({ ...all, [target]: key }));
+    this.controller().chooseRunIteration(this.target(), key);
   }
   backToEditing(): void {
     void this.host().selectTab?.("Designer");
@@ -1258,9 +1287,12 @@ export class StepDetails {
       return [...here, ...(real ? [real] : [])];
     }
     const real = this.realItem();
+    const item = this.pickedItem();
     return [
       {
-        label: "Execute previous steps",
+        label: item
+          ? `Execute previous steps for item ${item}`
+          : "Execute previous steps",
         detail:
           "Runs from the trigger up to this step, reusing pinned and current results",
         run: () => void this.execute("before"),
@@ -1531,6 +1563,19 @@ export class StepDetails {
     const controller = this.controller();
     controller.executeHook = (mode) => void this.execute(mode);
   });
+  /** Debug in editor stopped at one item of a loop: step details open on that item. */
+  private readonly runItem = effect(() => {
+    const target = this.target();
+    const controller = this.controller();
+    untracked(() => controller.pickRunItem(target));
+  });
+  /** A run log row opened a step on one item of a loop: step details show that item. */
+  private readonly openedItem = effect(() => {
+    const opened = this.host().openedItem?.();
+    const target = this.target();
+    const controller = this.controller();
+    untracked(() => controller.pickOpenedItem(opened, target));
+  });
   /**
    * Execute step (or Execute previous steps): asks first about errors in the
    * steps it runs and, for a pinned step, about its pin; then executes on the
@@ -1543,9 +1588,11 @@ export class StepDetails {
     const id = this.target();
     const controller = this.controller();
     const workflow = host.model.definition;
+    // Inside a loop's body, the item picked: Execute runs that one.
+    const item = controller.iterations.instanceKey(id);
     const target: ExecuteTarget = this.runsWorkflow()
       ? { mode: "workflow" }
-      : { mode, stepId: id };
+      : { mode, stepId: id, ...(item ? { instanceKey: item } : {}) };
     // Execute step shows every message of the step, required ones too.
     controller.reveal(id);
     const runs =
@@ -1558,7 +1605,9 @@ export class StepDetails {
     const gate = executeGate(
       issues,
       runs,
-      mode === "step" && target.mode === "step" && !!controller.pinOfTarget(id),
+      mode === "step" &&
+        target.mode === "step" &&
+        !!(controller.pinOfTarget(item ?? id) ?? controller.pinOfTarget(id)),
     );
     if (gate.kind === "fix") {
       this.question.set({ ...gate, issues: gate.issues as ExecuteIssue[] });

@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Connection wizard, saved platforms and startup reconnection against a
 // route-mocked local host that follows the design contract (section 5).
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, type Route } from "@playwright/test";
 import {
   PlatformHost,
   acme,
@@ -170,13 +170,34 @@ test.describe("choosing how to work", () => {
     const ask = choice.getByRole("radio", { name: "Ask how to work" });
     await expect(ask).toBeChecked();
     await expect(ask).toBeFocused();
-    // Quick changes in a row each reach the host; the last one wins.
+    // Quick changes in a row each reach the host; the last one wins, even when
+    // the host answers a change after the next key is pressed. The host holds
+    // the next two saves until the test lets them through, in that order.
+    const held: Route[] = [];
+    await page.route("**/studio/preferences", (route) =>
+      held.length < 2 ? void held.push(route) : route.fallback(),
+    );
     await page.keyboard.press("ArrowDown");
+    await expect.poll(() => held.length).toBe(1);
     await page.keyboard.press("ArrowUp");
+    await held[0]!.fallback();
+    await expect.poll(() => held.length).toBe(2);
+    // Studio has the answer for "local": let it render before the next key.
+    await page.evaluate(
+      () =>
+        new Promise((done) => requestAnimationFrame(() => setTimeout(done))),
+    );
+    await expect(ask).toBeChecked();
     await page.keyboard.press("ArrowDown");
+    await held[1]!.fallback();
     await expect
-      .poll(() => host.requests("/studio/preferences").length)
-      .toBe(4);
+      .poll(() => host.requests("/studio/preferences").map((c) => c.body))
+      .toEqual([
+        { start: "ask" },
+        { start: "local" },
+        { start: "ask" },
+        { start: "local" },
+      ]);
     await expect(choice.getByRole("status")).toHaveText("Saved.");
     expect(host.preferences).toEqual({ start: "local" });
     await expect(

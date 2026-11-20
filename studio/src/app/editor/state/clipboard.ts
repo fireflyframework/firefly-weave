@@ -428,10 +428,16 @@ function checkStep(
   return null;
 }
 
+/**
+ * The step kinds a workflow in Studio holds, as the model reads them: loops
+ * too, which the model reads before Add step offers them.
+ */
+const HELD_KINDS: ReadonlySet<string> = new Set([...kinds, "forEach"]);
+
 /** Text from the clipboard as steps, or why it isn't. */
 export function readClipboard(
   text: string,
-  known: ReadonlySet<string> = new Set(kinds),
+  known: ReadonlySet<string> = HELD_KINDS,
 ): ClipboardReading {
   if (new TextEncoder().encode(text).length > CLIPBOARD_MAX_BYTES)
     return {
@@ -553,7 +559,7 @@ export function readClipboard(
   };
 }
 
-/** Every `{ref}` a step holds outside its paths, with where it sits. */
+/** Every `{ref}` a step holds outside its paths and a loop's body, with where it sits. */
 function refSites(
   step: Step,
 ): { ref: string; path: (string | number)[]; fieldPath: string }[] {
@@ -566,7 +572,11 @@ function refSites(
     (step.kind === "parallel" &&
       path[0] === "branches" &&
       path.length === 3 &&
-      path[2] === "steps");
+      path[2] === "steps") ||
+    (step.kind === "forEach" &&
+      path[0] === "body" &&
+      path.length === 2 &&
+      path[1] === "steps");
   const walk = (value: unknown, path: (string | number)[]) => {
     if (nested(path)) return;
     if (Array.isArray(value)) {

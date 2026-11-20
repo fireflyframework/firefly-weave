@@ -38,6 +38,7 @@ import { describeError } from "../../errors";
 import { durationText, relativeTime, shortId } from "../../format";
 import { Icon } from "../../icon";
 import { liveDuration, runOutcome } from "../../operate/runs/runs-model";
+import { failedStep } from "./runs-list-model";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
 import { DebugRun, debugRefusal } from "./debug-run";
@@ -85,7 +86,7 @@ export class RunHeader {
         ? { label: statusLabel("run", status), tone: statusTone("run", status) }
         : null;
     const failedAt = summary?.failed_step
-      ? `Failed at ${summary.failed_step.node_id}${
+      ? `Failed at ${failedStep(summary.failed_step)}${
           summary.failed_step.error_code
             ? `: ${summary.failed_step.error_code}`
             : ""
