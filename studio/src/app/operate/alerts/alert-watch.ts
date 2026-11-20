@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // grow. The bell rings and the badge turns red exactly while a critical
 // alert fires.
 import { signal } from "@angular/core";
+import { describeError } from "../../errors";
 import {
   Poller,
   browserEnvironment,
@@ -111,17 +112,37 @@ export class AlertWatch {
     this.environment = "";
     this.badge.set(null);
   }
+  /**
+   * Where the platform refused the read (403): a person with alert.read on
+   * some records only. The badge asks again for another person or environment.
+   */
+  private refusal: [string, unknown] | null = null;
   /** Reads the counts again; throws when the read fails, so polling waits longer. */
   async load(): Promise<void> {
     const environment = this.where();
     if (!environment) return this.clear();
+    const scope = this.host.scope?.();
+    if (this.refusal?.[0] === environment && this.refusal[1] === scope) return;
+    this.refusal = null;
     if (environment !== this.environment) this.badge.set(null);
     this.environment = environment;
-    const answer = await this.host.request(
-      `${environment}/alerts?state=firing&limit=1`,
-    );
-    if (environment !== this.environment || environment !== this.where())
+    const current = () =>
+      environment === this.environment &&
+      environment === this.where() &&
+      scope === this.host.scope?.();
+    let answer: unknown;
+    try {
+      answer = await this.host.request(
+        `${environment}/alerts?state=firing&limit=1`,
+      );
+    } catch (error) {
+      if (!current()) return;
+      if (describeError(error).status !== 403) throw error;
+      this.refusal = [environment, scope];
+      this.badge.set(null);
       return;
+    }
+    if (!current()) return;
     try {
       const page = readAlertPage(answer);
       this.badge.set(alertBadge(page.firing, page.critical));

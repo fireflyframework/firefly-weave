@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // red exactly while a critical alert fires; nothing is read without
 // alert.read; and an answer for another environment never lands.
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../src/app/api";
 import {
   AlertWatch,
   alertBadge,
@@ -30,16 +31,27 @@ import * as fixture from "./alerts-fixture";
 function host(readable = true) {
   const asked: string[] = [];
   let answer: (value: unknown) => void = () => {};
-  const where = { environment: "/env/a", readable };
+  let fail: (error: unknown) => void = () => {};
+  const where = { environment: "/env/a", readable, person: "ana" };
   const watchHost: AlertWatchHost = {
     readable: () => where.readable,
     environment: () => where.environment,
+    scope: () => where.person,
     request: (path) => {
       asked.push(path);
-      return new Promise((resolve) => (answer = resolve));
+      return new Promise((resolve, reject) => {
+        answer = resolve;
+        fail = reject;
+      });
     },
   };
-  return { watchHost, asked, where, answer: (value: unknown) => answer(value) };
+  return {
+    watchHost,
+    asked,
+    where,
+    answer: (value: unknown) => answer(value),
+    fail: (error: unknown) => fail(error),
+  };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -84,6 +96,35 @@ describe("the Alerts badge", () => {
     await load;
     await settle();
     expect(watch.badge()).toBeNull();
+  });
+  it("drops an answer for a person who is no longer signed in", async () => {
+    const h = host();
+    const watch = new AlertWatch(h.watchHost);
+    const load = watch.load();
+    h.where.person = "ben";
+    h.answer(fixture.alertPage(fixture.firing(), 2, 1));
+    await load;
+    expect(watch.badge()).toBeNull();
+  });
+  it("after a refusal, reads again only for another person or environment", async () => {
+    const h = host();
+    const watch = new AlertWatch(h.watchHost);
+    const refused = watch.load();
+    h.fail(new ApiError(403, { code: "WV-FORBIDDEN" }));
+    await refused;
+    await watch.load();
+    await watch.load();
+    expect(h.asked).toHaveLength(1);
+    expect(watch.badge()).toBeNull();
+    h.where.environment = "/env/b";
+    const other = watch.load();
+    h.answer(fixture.alertPage(fixture.firing(), 2, 1));
+    await other;
+    expect(h.asked).toEqual([
+      "/env/a/alerts?state=firing&limit=1",
+      "/env/b/alerts?state=firing&limit=1",
+    ]);
+    expect(watch.badge()).toMatchObject({ count: 2 });
   });
   it("throws for an answer it can't read, so polling waits longer", async () => {
     const h = host();
