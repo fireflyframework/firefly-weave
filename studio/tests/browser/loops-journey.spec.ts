@@ -80,7 +80,10 @@ test.describe("a loop built, pinned and executed at 1440x900", () => {
     await details.close();
     // A step inside the loop, its input mapped from the current item by drag.
     await canvas.insertTarget("Add a step to For each item of loop-1").click();
+    // The current item is a source once the host's scope answers.
+    const scoped = page.waitForResponse("**/studio/local/scope");
     await canvas.pick("crm.lookup");
+    await scoped;
     const input = details.dialog.locator("weave-input-pane");
     await expect(input.getByLabel("Input source")).toHaveValue("item");
     const target = details.field("input.customer");

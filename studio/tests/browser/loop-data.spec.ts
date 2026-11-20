@@ -158,7 +158,10 @@ test.describe("data inside a loop at 1440x900", () => {
     page,
   }) => {
     const details = await open(page);
+    // The current item is a source once the host's scope answers.
+    const scoped = page.waitForResponse("**/studio/local/scope");
     await details.open("check");
+    await scoped;
     let pane = await inputPane(details);
     await expect(pane.getByLabel("Input source")).toHaveValue("item");
     let target = details.field("value");
@@ -225,7 +228,10 @@ test.describe("data inside a loop at 1440x900", () => {
     page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
     page.on("pageerror", (error) => errors.push(String(error)));
     const details = await open(page);
+    // The current item is a source once the host's scope answers.
+    const scoped = page.waitForResponse("**/studio/local/scope");
     await details.open("send");
+    await scoped;
     const pane = await inputPane(details);
     const picker = pane.locator("weave-iteration-picker");
     const rows = picker.locator(".picker-row");
