@@ -429,7 +429,8 @@ code {
 .spin {
   animation: spin 1s linear infinite;
 }
-.snapshot-note {
+.snapshot-note,
+.copied:not(:empty) {
   margin-bottom: var(--group-gap);
 }
 :host(.container-logs) :is(.logs-notice, .logs-access, .logs-empty) {

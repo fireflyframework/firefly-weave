@@ -75,6 +75,8 @@ import {
 
 /** How long Studio waits for a snapshot: the platform gives the runner 2 minutes. */
 const WAIT_LIMIT_MS = 130_000;
+/** How long "Copied …" stays before it clears. */
+const COPIED_MS = 4_000;
 const READ = ["deployment_log.read", "deployment.read"];
 
 type Load = "loading" | "ready" | "error" | "refused";
@@ -307,7 +309,8 @@ type Load = "loading" | "ready" | "error" | "refused";
               the snapshot within 256 KiB.
             }
           </p>
-          <p class="sr-only" role="status">{{ copied() }}</p>
+          <!-- Seen and announced alike, and cleared after a few seconds so no stale "Copied" stays. -->
+          <p class="hint copied" role="status">{{ copied() }}</p>
           @for (member of snapshot.members; track member.member) {
             <section class="member" [attr.aria-label]="member.member">
               <div class="member-head">
@@ -396,6 +399,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   /** Bumped by every change of what is shown, so a late answer is dropped. */
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly target = computed(
     () => this.targets().find((item) => item.id === this.targetId()) ?? null,
@@ -459,6 +463,8 @@ export class ContainerLogs implements DoCheck, OnDestroy {
   private clearWait() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.copiedTimer) clearTimeout(this.copiedTimer);
+    this.copiedTimer = null;
   }
   private api(): ContainerLogsApi | null {
     try {
@@ -685,6 +691,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
     return lineTime(at);
   }
   async copy(member: MemberLog) {
+    if (this.copiedTimer) clearTimeout(this.copiedTimer);
     try {
       await navigator.clipboard.writeText(memberText(member));
       this.copied.set(
@@ -695,6 +702,7 @@ export class ContainerLogs implements DoCheck, OnDestroy {
         "Studio couldn't copy the lines. Select them and copy them instead.",
       );
     }
+    this.copiedTimer = setTimeout(() => this.copied.set(""), COPIED_MS);
   }
   download(snapshot: LogRequestView, member: MemberLog) {
     const blob = new Blob([memberText(member)], { type: "text/plain" });

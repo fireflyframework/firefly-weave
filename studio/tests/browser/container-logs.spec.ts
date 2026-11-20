@@ -376,9 +376,15 @@ test.describe("Operate › Logs › Container logs", () => {
     await first
       .getByRole("button", { name: `Copy the lines of ${FIRST}` })
       .click();
-    await expect(
-      page.locator(".container-logs [role=status].sr-only"),
-    ).toHaveText(`Copied 4 lines of ${FIRST}.`);
+    // Seen and announced alike, then cleared so no stale confirmation stays.
+    const copied = page.locator(".container-logs .copied[role=status]");
+    await expect(copied).toBeVisible();
+    await expect(copied).toHaveText(`Copied 4 lines of ${FIRST}.`);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+      "Reported failure SMTP_REJECTED for task send",
+    );
+    await page.clock.runFor(4_000);
+    await expect(copied).toHaveText("");
   });
 
   test("markup in a line shows as text", async ({ page }) => {
