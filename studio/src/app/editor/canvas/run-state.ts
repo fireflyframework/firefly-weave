@@ -35,6 +35,8 @@ export interface CanvasRun {
   counts?: Readonly<Record<string, number>>;
   /** The playback ended: the whole trace has played. */
   ended?: boolean;
+  /** Steps whose failure their On error handled, by step ID: the run went past them. */
+  handled?: Readonly<Record<string, HandledFailure>>;
   /**
    * The loops the answer ended inside, by instance key, with how many items
    * they finished: Execute previous steps stopped in one of their items, or
@@ -228,7 +230,13 @@ export interface RecordedRun extends CanvasRun {
 }
 export const isRecordedRun = (run: CanvasRun | null): run is RecordedRun =>
   !!run && "failures" in run;
-export type TileRun = "live" | "waiting" | "done" | "failed" | null;
+export type TileRun = "live" | "waiting" | "done" | "failed" | "handled" | null;
+/** A failure a step's On error handled: its code and message, and the setting. */
+export interface HandledFailure {
+  code: string;
+  message: string;
+  policy: "continue" | "errorOutput";
+}
 export type EdgeRun = "idle" | "live" | "taken" | "skipped";
 export const ENDED_STATUSES: readonly string[] = [
   "succeeded",
@@ -242,6 +250,7 @@ export const runEnded = (run: CanvasRun): boolean =>
 export function tileRun(id: string, run: CanvasRun | null): TileRun {
   if (!run) return null;
   const finished = run.done.includes(id);
+  if (finished && run.handled?.[id]) return "handled";
   if (run.current.includes(id) || run.active.includes(id)) {
     if (run.status === "failed" || run.status === "timed_out") return "failed";
     // An ended run is nowhere any more; what it finished keeps its check.

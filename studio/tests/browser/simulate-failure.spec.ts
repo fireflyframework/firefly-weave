@@ -22,6 +22,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { openNewWorkflow } from "./canvas-po";
 import { StepDetailsPage } from "./step-details-po";
 import { outputPane } from "./test-data-po";
+import { localAuthoring } from "./local-authoring";
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
@@ -180,4 +181,39 @@ test("inside the error path, the Input pane starts on the failed step's error, s
   ).toBeVisible();
   await pane.getByRole("radio", { name: "JSON" }).click();
   await expect(pane).toContainText("A value the step reads is missing.");
+});
+
+test("Execute workflow fails the step as simulated, and its tile says it failed and continued", async ({
+  page,
+}) => {
+  const canvas = await openNewWorkflow(page);
+  await page.evaluate(
+    (value) => navigator.clipboard.writeText(value),
+    pasted("continue", {
+      submit: { code: "REQUEST_REFUSED", source: "manual" },
+    }),
+  );
+  await canvas.root.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(canvas.tile("submit")).toBeVisible();
+  // The real Python host executes it.
+  const calls = await localAuthoring(page);
+  await page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" })
+    .click();
+  await expect.poll(() => calls.length).toBeGreaterThan(0);
+  expect((calls[0].body as { errors?: object }).errors).toEqual({
+    "node:submit": { code: "REQUEST_REFUSED" },
+  });
+  const badge = canvas
+    .tile("submit")
+    .locator('.tile-badge[data-badge="handled"]');
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveAttribute("data-tone", "warning");
+  // Its tooltip says what failed, and that the run went on.
+  await expect(canvas.tileBody("submit")).toHaveAttribute(
+    "title",
+    "submit, Transform. Failed: REQUEST_REFUSED, The step failed with code REQUEST_REFUSED. The run continued (On error: Continue).",
+  );
 });

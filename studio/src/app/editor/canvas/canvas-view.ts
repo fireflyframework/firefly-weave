@@ -144,6 +144,7 @@ import {
   pulses,
   tileRun,
   type CanvasRun,
+  type HandledFailure,
   type TileRun,
   frameRun,
   frameExecuted,
@@ -712,6 +713,7 @@ export class CanvasView implements OnInit, DoCheck {
                 : "",
             pin: tile.step ? pins.get(tile.id) : undefined,
             simulated: run?.mode === "simulated",
+            handled: run?.handled?.[tile.id],
             recorded: isRecordedRun(run) ? run : null,
             listening:
               !!listening && tile.id === triggerChoiceTarget(listening),
@@ -765,6 +767,8 @@ export class CanvasView implements OnInit, DoCheck {
       pin?: { stale: string | null };
       /** The run drawn is a simulation Studio played back. */
       simulated?: boolean;
+      /** The failure the step's On error handled in that run. */
+      handled?: HandledFailure;
       /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
       recorded?: RecordedRun | null;
       /** A loop's frame: the tile is its header band. */
@@ -890,7 +894,12 @@ export class CanvasView implements OnInit, DoCheck {
           ...facts,
           run: state.run,
           failure:
-            state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
+            state.run === "failed"
+              ? (h.runFailure?.(tile.id) ?? {})
+              : state.run === "handled" && state.handled
+                ? { code: state.handled.code, message: state.handled.message }
+                : null,
+          handled: state.handled?.policy,
           stale: state.pin?.stale ?? null,
           pinned: !!state.pin,
           selected: state.selected,

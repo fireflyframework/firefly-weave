@@ -21,8 +21,9 @@ SPDX-License-Identifier: Apache-2.0
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
 import { loopLimitText } from "./loop-frame";
 import { stepPointerOf } from "../formula/loops";
-import type { ExecuteResponse } from "../state/execution";
+import type { ExecuteResponse, TraceEntry } from "../state/execution";
 import {
+  type HandledFailure,
   LOOP_LIMIT,
   loopProgress,
   type CanvasRun,
@@ -74,8 +75,13 @@ export const pausedOf = (response: ExecuteResponse): Record<string, number> =>
 /** The run as it stands after the whole trace. */
 export function finalRun(response: ExecuteResponse): CanvasRun {
   const top = response.trace.filter((entry) => !entry.frame);
-  const done = top.filter((e) => e.status === "completed").map((e) => e.nodeId);
-  const failed = top.filter((e) => e.status === "failed").map((e) => e.nodeId);
+  // A failure its On error handled: the run went on past the step.
+  const went = (e: TraceEntry) =>
+    e.status === "completed" || (e.status === "failed" && !!e.handled);
+  const done = top.filter(went).map((e) => e.nodeId);
+  const failed = top
+    .filter((e) => e.status === "failed" && !e.handled)
+    .map((e) => e.nodeId);
   const waiting = top
     .filter((e) => e.status === "waiting")
     .map((e) => e.nodeId);
@@ -97,8 +103,24 @@ export function finalRun(response: ExecuteResponse): CanvasRun {
     at: trace.length,
     counts: countsOf(response),
     ended: true,
+    ...handledOf(top),
     paused: pausedOf(response),
   };
+}
+
+/** The steps whose failure their On error handled, with what the trace says of it. */
+function handledOf(top: readonly TraceEntry[]): {
+  handled?: Record<string, HandledFailure>;
+} {
+  const handled: Record<string, HandledFailure> = {};
+  for (const entry of top)
+    if (entry.status === "failed" && entry.handled && entry.error)
+      handled[entry.nodeId] = {
+        code: entry.error.code,
+        message: entry.error.message,
+        policy: entry.handled,
+      };
+  return Object.keys(handled).length ? { handled } : {};
 }
 
 /**
@@ -124,13 +146,18 @@ export function playbackFrames(
       ...new Set(
         top
           .slice(0, index)
-          .filter((e) => e.status === "completed")
+          .filter(
+            (e) =>
+              e.status === "completed" ||
+              (e.status === "failed" && !!e.handled),
+          )
           .map((e) => e.nodeId),
       ),
     ],
     trace,
     at: index,
     counts,
+    ...handledOf(top.slice(0, index)),
   }));
   return [...frames, last];
 }

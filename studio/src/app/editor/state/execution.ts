@@ -105,6 +105,17 @@ export interface TraceEntry {
   output?: Json;
   virtualTime?: string;
   frame?: FrameKey;
+  /** The step's failure: handled by its On error when `handled` says how, else the one that stopped the run. */
+  error?: StepErrorView;
+  handled?: "continue" | "errorOutput";
+}
+/** A step's error as the platform reports it (contracts/step_errors.py StepError). */
+export interface StepErrorView {
+  code: string;
+  message: string;
+  outcome: "not_started" | "failed" | "unknown";
+  attempts: number;
+  instanceKey: string;
 }
 export interface LoopProgress {
   nodeId: string;

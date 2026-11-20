@@ -28,8 +28,10 @@ export interface StepFacts {
 }
 export interface TileFacts extends StepFacts {
   run: TileRun;
-  /** Why the last run failed here. */
+  /** Why the last run failed here (a handled failure too). */
   failure: { code?: string; message?: string } | null;
+  /** The On error setting that handled the failure, when the run went on. */
+  handled?: "continue" | "errorOutput";
   /** Why the step's data is out of date, or null. */
   stale: string | null;
   pinned: boolean;
@@ -43,6 +45,7 @@ export interface TileFacts extends StepFacts {
 }
 export type BadgeKind =
   | "failed"
+  | "handled"
   | "changed"
   | "added"
   | "error"
@@ -63,6 +66,13 @@ export interface TileBadge {
 }
 
 /** The one corner badge: the first match from a failed run down to a finished one. */
+/**
+ * A failure's code as the run gave it (run data: any case, any length),
+ * cut at the 128 characters a code may have.
+ */
+export function failureCodeText(code: string): string {
+  return code.length > 128 ? code.slice(0, 128) : code;
+}
 export function tileBadge(facts: TileFacts): TileBadge | null {
   if (facts.run === "live" || facts.run === "waiting") return null;
   if (facts.run === "failed") {
@@ -74,6 +84,20 @@ export function tileBadge(facts: TileFacts): TileBadge | null {
       tone: "danger",
       icons: ["critical"],
       text: detail ? `Failed: ${detail}` : "Failed",
+    };
+  }
+  if (facts.run === "handled") {
+    const code = failureCodeText(facts.failure?.code ?? "");
+    const detail = [code, facts.failure?.message].filter(Boolean).join(", ");
+    const setting =
+      facts.handled === "errorOutput"
+        ? "Continue with error output"
+        : "Continue";
+    return {
+      kind: "handled",
+      tone: "warning",
+      icons: ["degraded"],
+      text: `Failed: ${detail}${/[.!?]$/.test(detail) ? "" : "."} The run continued (On error: ${setting}).`,
     };
   }
   if (facts.changed)
