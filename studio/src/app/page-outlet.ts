@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // Shows one lazily loaded page in place, with the shell as its host input.
 // The shell's pages need nothing more, so the first page carries this small
 // directive rather than NgComponentOutlet. The same component stays in place
-// across views (the record lists); another one replaces it.
+// across views (the record lists); another one replaces it and starts at the
+// top of the area.
 import {
   Directive,
   Input,
@@ -40,6 +41,8 @@ export class PageOutlet implements OnChanges {
   ngOnChanges() {
     if (this.page?.componentType !== this.weavePage) {
       this.slot.clear();
+      // One area holds every page: another page starts at its top.
+      (this.slot.element.nativeElement as Node).parentElement?.scrollTo(0, 0);
       this.page = this.slot.createComponent(this.weavePage);
     }
     this.page.setInput("host", this.weavePageHost);
