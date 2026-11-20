@@ -594,6 +594,17 @@ for (const size of sizes)
       );
       await expect(pane.locator(".pane-usage")).toHaveText(usage);
       await expect(pane).toContainText(answer.result);
+      // The usage takes a row of its own: the run's source keeps its words,
+      // and Pin and Edit output stay inside the pane.
+      const source = pane.locator(".pane-real-text");
+      expect(
+        await source.evaluate((e) => e.scrollWidth - e.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      const edges = await box(pane);
+      for (const name of ["Pin output", "Edit output"]) {
+        const control = await box(pane.getByRole("button", { name }));
+        expect(control.right, name).toBeLessThanOrEqual(edges.right + 0.5);
+      }
       // Pin output on a real answer keeps it as the turn Execute step replays.
       await pane.getByRole("button", { name: "Pin output" }).click();
       await expect(

@@ -151,6 +151,19 @@ weave-test-event-pane {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* An AI task's model requests and tokens: a row of its own under the source,
+   so the source tag, Pin and Edit output keep their room on every width. */
+.pane-usage {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0;
+  padding: var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 weave-input-pane .pane-count {
   margin-left: auto;
   text-align: right;

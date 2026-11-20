@@ -240,9 +240,6 @@ import { describeError } from "../../../errors";
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
-      @if (usage(); as line) {
-        <span class="pane-count pane-usage">{{ line }}</span>
-      }
       @let paths = this.paths();
       <span class="pane-count">{{
         none ||
@@ -282,6 +279,11 @@ import { describeError } from "../../../errors";
         </button>
       }
     </div>
+    @if (usage(); as line) {
+      <!-- An AI task's model use, on a row of its own: the source and the
+           controls above keep their room. -->
+      <p class="pane-usage">{{ line }}</p>
+    }
     @let around = pickerRows();
     @if (around.length) {
       <weave-iteration-picker [loops]="around" (picked)="pick($event)" />
