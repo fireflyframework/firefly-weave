@@ -213,6 +213,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                       <button
                         type="button"
                         [attr.aria-label]="'Remove ' + domain"
+                        [attr.aria-disabled]="saving() ? 'true' : null"
                         (click)="removeDomain(domain)"
                       >
                         <weave-icon name="close" [size]="16" />
@@ -247,7 +248,12 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                     (keydown.enter)="addDomain()"
                     (keydown.escape)="domainDraft.set(null)"
                   />
-                  <button type="button" class="primary" (click)="addDomain()">
+                  <button
+                    type="button"
+                    class="primary"
+                    [attr.aria-disabled]="saving() ? 'true' : null"
+                    (click)="addDomain()"
+                  >
                     Allow
                   </button>
                   <button
@@ -339,6 +345,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                     <button
                       type="button"
                       class="sm danger"
+                      [attr.aria-disabled]="saving() ? 'true' : null"
                       (click)="revoke(consent)"
                     >
                       Revoke
@@ -410,6 +417,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
               <button
                 type="button"
                 class="primary sm"
+                [attr.aria-disabled]="saving() ? 'true' : null"
                 (click)="saveApprovals()"
               >
                 Save
@@ -497,6 +505,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 <button
                   type="button"
                   class="sm danger"
+                  [attr.aria-disabled]="applying() ? 'true' : null"
                   (click)="apply(current)"
                 >
                   {{ words.apply }}
@@ -682,7 +691,13 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             </p>
           }
           <div class="dialog-actions">
-            <button type="submit" class="primary">Record opt-in</button>
+            <button
+              type="submit"
+              class="primary"
+              [attr.aria-disabled]="saving() ? 'true' : null"
+            >
+              Record opt-in
+            </button>
             <button type="button" class="tertiary" (click)="closeRecord()">
               Cancel
             </button>
@@ -749,6 +764,13 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   readonly plan = signal<RetentionPlan | null>(null);
   readonly planning = signal(false);
   readonly confirmApply = signal(false);
+  /** Apply is on its way: a second click sends nothing. */
+  readonly applying = signal(false);
+  /**
+   * A change to alert email or approvals is on its way: the next one waits,
+   * so it goes out with the revision the first one answers.
+   */
+  readonly saving = signal(false);
   readonly retentionNote = signal("");
   readonly retentionError = signal("");
   readonly domainDraft = signal<string | null>(null);
@@ -1030,10 +1052,13 @@ export class AdministrationPage implements DoCheck, OnDestroy {
     this.focus("#admin-apply");
   }
   async apply(plan: RetentionPlan) {
+    if (this.applying()) return;
+    this.applying.set(true);
     this.retentionError.set("");
     const result = await this.guarded(() =>
       applyRetentionPlan(this.api, plan.id),
     );
+    this.applying.set(false);
     if (!result) return;
     this.confirmApply.set(false);
     if (result.ok) {
@@ -1057,10 +1082,11 @@ export class AdministrationPage implements DoCheck, OnDestroy {
     note: string,
   ): Promise<boolean> {
     const section = this.alerting();
-    if (section.kind !== "ready") return false;
+    if (section.kind !== "ready" || this.saving()) return false;
     const next = change(section.value.settings);
     this.alertingNote.set("");
     this.alertingError.set("");
+    this.saving.set(true);
     const result = await this.guarded(() =>
       saveAlertSettings(
         this.api,
@@ -1071,6 +1097,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
         section.value.settings.revision,
       ),
     );
+    this.saving.set(false);
     if (!result) return false;
     const now = this.alerting();
     if (result.ok && now.kind === "ready") {
@@ -1090,7 +1117,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   }
   async addDomain() {
     const section = this.alerting();
-    if (section.kind !== "ready") return;
+    if (section.kind !== "ready" || this.saving()) return;
     const checked = domainProblem(
       this.domainDraft() ?? "",
       section.value.settings.recipient_domains,
@@ -1149,10 +1176,13 @@ export class AdministrationPage implements DoCheck, OnDestroy {
     if (consent) this.focus(`#revoke-${CSS.escape(consent.id)}`);
   }
   async revoke(consent: RecipientConsent) {
+    if (this.saving()) return;
+    this.saving.set(true);
     this.alertingError.set("");
     const result = await this.guarded(() =>
       revokeConsent(this.api, consent.id),
     );
+    this.saving.set(false);
     if (!result) return;
     this.revoking.set(null);
     const now = this.alerting();
@@ -1186,6 +1216,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   }
   async record(event: Event) {
     event.preventDefault();
+    if (this.saving()) return;
     const address = this.recordAddress().trim();
     const statement = this.recordStatement().trim();
     this.recordAddressError.set(
@@ -1206,9 +1237,11 @@ export class AdministrationPage implements DoCheck, OnDestroy {
     }
     this.recordError.set("");
     const key = this.recordKey;
+    this.saving.set(true);
     const result = await this.guarded(() =>
       recordConsent(this.api, { address, statement }, key),
     );
+    this.saving.set(false);
     if (!result) return;
     if (result.ok) {
       const now = this.alerting();

@@ -157,6 +157,8 @@ export class AlertAddressCard implements DoCheck {
     this.draft.set("");
     this.problem.set("");
     this.note.set("");
+    // A save still out for the last scope never lands, so it can't hold Save.
+    this.busy.set(false);
     if (host.profile && host.identity) void this.read();
   }
   async read() {

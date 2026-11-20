@@ -283,6 +283,94 @@ test.describe("Settings › Administration actions", () => {
     void ENV;
   });
 
+  test("each change goes out once while its answer is on the way", async ({
+    page,
+  }) => {
+    const platform = await open(page);
+    /** Holds the answer to the next change of `part` until released. */
+    const hold = async (part: string) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      await page.route(
+        (url) => url.pathname.endsWith(part),
+        async (route) => {
+          if (route.request().method() !== "GET") await gate;
+          await route.fallback();
+        },
+      );
+      return release;
+    };
+    /** Clicks twice while the answer waits, and checks the button says it's busy. */
+    const twice = async (
+      button: ReturnType<Page["getByRole"]>,
+      part: string,
+    ) => {
+      const release = await hold(part);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-disabled", "true");
+      // A person's second click still reaches the button; Playwright would
+      // wait for aria-disabled to clear, so this click doesn't wait.
+      await button.click({ force: true });
+      release();
+    };
+    const email = card(page, "Alert email");
+
+    await email.getByRole("button", { name: "Record an opt-in" }).click();
+    const dialog = page.getByRole("dialog", { name: "Record an opt-in" });
+    await dialog.getByLabel("Address").fill("pager@vendor.example");
+    await dialog.getByLabel("How did they agree?").fill("Asked by phone.");
+    await twice(
+      dialog.getByRole("button", { name: "Record opt-in" }),
+      "/alert-recipient-consents",
+    );
+    await expect(dialog).toHaveCount(0);
+    expect(sentTo(platform, "/alert-recipient-consents", "POST")).toHaveLength(
+      1,
+    );
+
+    await email
+      .getByRole("button", { name: "Revoke oncall@vendor.example" })
+      .click();
+    await twice(
+      page.getByRole("alertdialog").getByRole("button", { name: "Revoke" }),
+      "/revoke",
+    );
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect(sentTo(platform, "/revoke", "POST")).toHaveLength(1);
+
+    await email.getByRole("button", { name: "Add domain" }).click();
+    await email.getByLabel("Domain to allow").fill("acme.example");
+    await twice(
+      email.getByRole("button", { name: "Allow" }),
+      "/alert-settings",
+    );
+    await expect(email.getByRole("status")).toHaveText(
+      "acme.example is allowed.",
+    );
+    expect(sentTo(platform, "/alert-settings", "PUT")).toHaveLength(1);
+
+    const approvals = card(page, "Approval notifications");
+    await approvals
+      .getByRole("button", { name: "Edit approval notifications" })
+      .click();
+    await approvals.getByLabel("On-call email").check();
+    await twice(
+      approvals.getByRole("button", { name: "Save" }),
+      "/alert-settings",
+    );
+    await expect(approvals).toContainText("Platform team, On-call email");
+    expect(sentTo(platform, "/alert-settings", "PUT")).toHaveLength(2);
+
+    const retention = card(page, "Retention");
+    await retention.getByRole("button", { name: "Make a plan" }).click();
+    await retention.getByRole("button", { name: "Apply" }).click();
+    await twice(page.getByRole("button", { name: "Delete 12" }), "/apply");
+    await expect(retention.getByRole("status")).toHaveText(
+      "Deleted 12 debug sessions.",
+    );
+    expect(sentTo(platform, "/apply", "POST")).toHaveLength(1);
+  });
+
   test("a refused opt-in says why under the address", async ({ page }) => {
     await open(page, administrator, {
       recordConsent: {
