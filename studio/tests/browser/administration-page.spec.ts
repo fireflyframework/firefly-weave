@@ -289,6 +289,29 @@ test.describe("Settings › Administration actions", () => {
     void ENV;
   });
 
+  test("Revoke's and Apply's confirmations open whole in the window", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page);
+    const whole = async () => {
+      const box = (await page.getByRole("alertdialog").boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(900);
+    };
+    await page
+      .getByRole("button", { name: "Revoke oncall@vendor.example" })
+      .click();
+    await expect(page.locator("#admin-revoke-cancel")).toBeFocused();
+    await whole();
+    await page.keyboard.press("Escape");
+    const retention = card(page, "Retention");
+    await retention.getByRole("button", { name: "Make a plan" }).click();
+    await retention.getByRole("button", { name: "Apply" }).click();
+    await expect(page.locator("#admin-apply-cancel")).toBeFocused();
+    await whole();
+  });
+
   test("each change goes out once while its answer is on the way", async ({
     page,
   }) => {

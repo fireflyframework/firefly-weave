@@ -1003,14 +1003,22 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   checked(event: Event) {
     return (event.target as HTMLInputElement).checked;
   }
-  private focus(selector: string) {
+  /**
+   * Focuses `selector` once it renders; with `reveal`, also scrolls the
+   * confirmation around it into view, so its whole question shows.
+   */
+  private focus(selector: string, reveal = false) {
     afterNextRender(
-      () =>
-        (
-          this.element.nativeElement.querySelector(
-            selector,
-          ) as HTMLElement | null
-        )?.focus(),
+      () => {
+        const target = this.element.nativeElement.querySelector(
+          selector,
+        ) as HTMLElement | null;
+        target?.focus();
+        if (reveal)
+          target
+            ?.closest('[role="alertdialog"]')
+            ?.scrollIntoView({ block: "nearest" });
+      },
       { injector: this.injector },
     );
   }
@@ -1058,7 +1066,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   }
   askApply() {
     this.confirmApply.set(true);
-    this.focus("#admin-apply-cancel");
+    this.focus("#admin-apply-cancel", true);
   }
   cancelApply() {
     this.confirmApply.set(false);
@@ -1181,7 +1189,7 @@ export class AdministrationPage implements DoCheck, OnDestroy {
   }
   askRevoke(consent: RecipientConsent) {
     this.revoking.set(consent);
-    this.focus("#admin-revoke-cancel");
+    this.focus("#admin-revoke-cancel", true);
   }
   cancelRevoke() {
     const consent = this.revoking();
