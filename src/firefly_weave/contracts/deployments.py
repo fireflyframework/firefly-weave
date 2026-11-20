@@ -36,7 +36,10 @@ type ImageReference = Annotated[
     str, Field(max_length=512, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[0-9a-f]{64}$")
 ]
 type AdapterKind = Literal["docker-compose", "kubernetes", "azure-container-apps"]
-type DeploymentCapability = Literal["observe", "deploy", "update", "scale_workers", "drain_workers", "restart_workers"]
+# read_logs reads what a target's worker containers printed; it changes nothing on the target and is never a plan.
+type DeploymentCapability = Literal[
+    "observe", "deploy", "update", "scale_workers", "drain_workers", "restart_workers", "read_logs"
+]
 type PlanIntent = Literal["deploy", "update", "scale_workers", "drain_workers", "restart_workers"]
 type JobState = Literal[
     "queued", "claimed", "running", "verifying", "succeeded", "failed", "cancelled", "reconciliation_required"
@@ -59,7 +62,7 @@ class TargetRequest(ContractModel):
     external_identity: ExternalIdentity
     boundary: DeploymentName
     runner_principal_id: UUID
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=7)
     # Left out at its default, so targets stored before policies existed keep their bytes and read as strict.
     approval_policy: ApprovalPolicy = Field(default_factory=ApprovalPolicy, exclude_if=_default_policy)
 
@@ -80,7 +83,7 @@ class DeploymentTarget(TargetRequest):
 
 class TargetUpdate(ContractModel):
     runner_principal_id: UUID
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=7)
     disabled: bool = False
     # None keeps the target's policy; changing it also needs environment.manage.
     approval_policy: ApprovalPolicy | None = Field(default=None, exclude_if=lambda v: v is None)
@@ -314,7 +317,7 @@ class RunnerRegistration(ContractModel):
     # Version 2 runners remove exactly the members `scale_down_members` chooses on a scale-down; only they
     # are offered scale-down apply jobs. Runners of earlier releases register version 1.
     adapter_version: Literal["1", "2"] = "1"
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=7)
 
 
 class DeploymentRunner(RunnerRegistration):
@@ -545,3 +548,151 @@ class ChangeRequestQuery(ContractModel):
         """Cursors are bound to every filter, so a changed filter refuses an old cursor."""
         filters = json.dumps(self.model_dump(mode="json", exclude={"limit", "cursor"}), sort_keys=True)
         return "deployment-change-requests:" + hashlib.sha256(filters.encode()).hexdigest()[:32]
+
+
+# Container log requests: a snapshot of what a target's worker containers printed, which the target's runner reads
+# with a fixed command and reports, kept for one hour.
+LOG_MEMBERS = 5
+# A line keeps at most 2 KiB of UTF-8 text, and a snapshot 256 KiB of line text, the newest lines first.
+LOG_LINE_BYTES = 2048
+LOG_SNAPSHOT_BYTES = 256 * 1024
+# stdout and stderr where the adapter tells them apart (Compose); output where it reads both as one (Kubernetes).
+type LogStream = Literal["stdout", "stderr", "output"]
+type LogRequestState = Literal["pending", "ready", "failed", "expired"]
+# Why a request has no lines: the runner didn't answer in time, the component isn't a worker component the runner may
+# read, none of the members asked for is running, or the runner couldn't read them.
+type RunnerLogFailure = Literal["unknown_component", "no_members", "unreadable"]
+type LogFailure = Literal["no_answer", "unknown_component", "no_members", "unreadable"]
+
+
+def _distinct(values: Sequence[str], what: str) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{what} must be distinct")
+
+
+class LogRequestCreate(ContractModel):
+    """One worker component of a target, some or all of its running members, how far back, and how many lines."""
+
+    target_id: UUID
+    component: DeploymentName
+    # Left empty, the runner reads every running member of the component, up to five.
+    members: list[WorkerHost] = Field(default_factory=list, max_length=LOG_MEMBERS)
+    since_seconds: int = Field(ge=60, le=86400)
+    tail_lines: int = Field(ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def distinct_members(self) -> Self:
+        _distinct(self.members, "Members")
+        return self
+
+
+class LogLine(ContractModel):
+    at: AwareDatetime
+    stream: LogStream
+    text: Annotated[str, Field(max_length=LOG_LINE_BYTES)]
+
+
+class MemberLog(ContractModel):
+    member: WorkerHost
+    lines: list[LogLine] = Field(default_factory=list, max_length=1000)
+
+
+def cut_line(text: str, limit: int = LOG_LINE_BYTES) -> tuple[str, bool]:
+    """`text` within `limit` bytes of UTF-8, cut at a character; True when it was cut."""
+    encoded = text.encode()
+    if len(encoded) <= limit:
+        return text, False
+    return encoded[:limit].decode(errors="ignore"), True
+
+
+def newest_lines(members: Sequence[MemberLog], budget: int = LOG_SNAPSHOT_BYTES) -> tuple[list[MemberLog], bool]:
+    """The newest lines of all members whose text fits `budget` bytes together, each member's in time order; True
+    when older lines were left out.
+
+    The rule is part of what a snapshot means: the runner applies it to what it read, and the server again to what
+    it keeps after its own redaction.
+    """
+    timed = sorted(
+        (
+            (line.at, index, position)
+            for index, member in enumerate(members)
+            for position, line in enumerate(member.lines)
+        ),
+        reverse=True,
+    )
+    spent, kept = 0, set()
+    for _, index, position in timed:
+        size = len(members[index].lines[position].text.encode())
+        if spent + size > budget:
+            break
+        spent += size
+        kept.add((index, position))
+    result = [
+        MemberLog(
+            member=member.member,
+            lines=sorted(
+                (line for position, line in enumerate(member.lines) if (index, position) in kept),
+                key=lambda line: line.at,
+            ),
+        )
+        for index, member in enumerate(members)
+    ]
+    return result, len(kept) < len(timed)
+
+
+class LogRequestView(ContractModel):
+    id: UUID
+    target_id: UUID
+    component: DeploymentName
+    requested_members: list[WorkerHost] = Field(default_factory=list, max_length=LOG_MEMBERS)
+    since_seconds: int = Field(ge=60, le=86400)
+    tail_lines: int = Field(ge=1, le=1000)
+    state: LogRequestState
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    # When the runner read the lines; set once the snapshot is ready.
+    read_at: AwareDatetime | None = None
+    # Each member's lines in time order; empty until the snapshot is ready, and again once it expired.
+    members: list[MemberLog] = Field(default_factory=list, max_length=LOG_MEMBERS)
+    # Lines were cut to their 2 KiB, older lines left out of the 256 KiB snapshot, or members beyond five left out.
+    truncated: bool = False
+    failure: LogFailure | None = None
+
+
+class LogLeaseProof(ContractModel):
+    request_id: UUID
+    runner_id: UUID
+    token: UUID
+
+
+class LogClaim(ContractModel):
+    """A log request as the target's runner reads it: report before `expires_at`, or it may be claimed again."""
+
+    proof: LogLeaseProof
+    expires_at: AwareDatetime
+    target: DeploymentTarget
+    component: DeploymentName
+    members: list[WorkerHost] = Field(default_factory=list, max_length=LOG_MEMBERS)
+    since_seconds: int = Field(ge=60, le=86400)
+    tail_lines: int = Field(ge=1, le=1000)
+
+
+class LogReport(ContractModel):
+    """What the runner read for a claim, already redacted and cut, or why it read nothing."""
+
+    proof: LogLeaseProof
+    members: list[MemberLog] = Field(default_factory=list, max_length=LOG_MEMBERS)
+    truncated: bool = False
+    failure: RunnerLogFailure | None = None
+
+    @model_validator(mode="after")
+    def lines_or_failure(self) -> Self:
+        if self.failure is not None and self.members:
+            raise ValueError("A failed report carries no lines")
+        _distinct([item.member for item in self.members], "Members")
+        return self
+
+
+class LogReportAccepted(ContractModel):
+    request_id: UUID
+    state: Literal["ready", "failed"]

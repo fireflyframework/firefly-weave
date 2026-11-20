@@ -32,6 +32,8 @@ from firefly_weave.contracts.deployments import (
     DeploymentLeaseProof,
     DeploymentRequest,
     JobCancelRequest,
+    LogReport,
+    LogRequestCreate,
     ObserveRequest,
     PlanApprovalRequest,
     PlanRequest,
@@ -42,14 +44,19 @@ from firefly_weave.contracts.deployments import (
     TargetRequest,
     TargetUpdate,
 )
+from firefly_weave.definitions.models import CatalogError
+from firefly_weave.deployments.log_requests import LogRequestService
 from firefly_weave.deployments.service import DeploymentService
+
+# A runner's log report: at most 256 KiB of line text, with room for JSON's quoting and the line records.
+LOG_REPORT_BYTES = 1024 * 1024
 
 
 @rest_controller
 @request_mapping("")
 class DeploymentController:
-    def __init__(self, service: DeploymentService):
-        self.service = service
+    def __init__(self, service: DeploymentService, log_requests: LogRequestService):
+        self.service, self.log_requests = service, log_requests
 
     def authority(self, request: Request) -> dict[str, Any]:
         return dict(
@@ -249,6 +256,37 @@ class DeploymentController:
     async def deployment_runners_revoke(self, request: Request) -> JSONResponse:
         result = await self.service.revoke_runner(UUID(request.path_params["identifier"]), **self.authority(request))
         return JSONResponse(result.model_dump(mode="json") if result is not None else None, status_code=200)
+
+    @operation("deployment_log_requests.create")
+    async def deployment_log_requests_create(self, request: Request) -> JSONResponse:
+        result = await self.log_requests.create(
+            LogRequestCreate.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            **self.authority(request),
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=201)
+
+    @operation("deployment_log_requests.read")
+    async def deployment_log_requests_read(self, request: Request) -> JSONResponse:
+        result = await self.log_requests.read(UUID(request.path_params["identifier"]), **self.authority(request))
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @operation("deployment_runners.claim_logs")
+    async def deployment_runners_claim_logs(self, request: Request) -> JSONResponse:
+        result = await self.log_requests.claim(
+            RunnerClaimRequest.model_validate_json(await request.body()), **self.authority(request)
+        )
+        return JSONResponse(result.model_dump(mode="json") if result is not None else None)
+
+    @operation("deployment_runners.report_logs")
+    async def deployment_runners_report_logs(self, request: Request) -> JSONResponse:
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > LOG_REPORT_BYTES:
+                raise CatalogError(413, "WV-LOG-SIZE", "A log report holds at most 1 MiB")
+            raw.extend(chunk)
+        result = await self.log_requests.report(LogReport.model_validate_json(bytes(raw)), **self.authority(request))
+        return JSONResponse(result.model_dump(mode="json"))
 
     @operation("deployment_jobs.reconcile")
     async def reconcile(self, request: Request) -> JSONResponse:
