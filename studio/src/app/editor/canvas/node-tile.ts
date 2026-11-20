@@ -108,6 +108,7 @@ export interface TileView {
       [class.frame-header]="!!v.frame"
       [class.frame-pending]="!!v.frame?.pending"
       [class.frame-tight]="tight()"
+      [class.frame-crowded]="crowded()"
       [attr.data-shape]="v.shape"
       [attr.aria-label]="v.name"
       [attr.title]="v.frame ? null : v.tooltip"
@@ -265,6 +266,8 @@ export class NodeTile {
    * suffix and the list shorten.
    */
   readonly tight = signal(false);
+  /** Without "For each item in" it still doesn't fit: the suffix leaves too, before the list shortens. */
+  readonly crowded = signal(false);
   private readonly frameTitle =
     viewChild<ElementRef<HTMLElement>>("frameTitle");
 
@@ -276,7 +279,7 @@ export class NodeTile {
         this.view();
         this.zoom();
         const title = this.frameTitle()?.nativeElement;
-        this.tight.set(!!title && headerOverflows(title));
+        this.measure(title);
       },
     });
     let observer: ResizeObserver | null = null;
@@ -285,25 +288,35 @@ export class NodeTile {
       observer?.disconnect();
       observer = null;
       if (!title || typeof ResizeObserver === "undefined") return;
-      observer = new ResizeObserver(() =>
-        this.tight.set(headerOverflows(title)),
-      );
+      observer = new ResizeObserver(() => this.measure(title));
       observer.observe(title);
       for (const part of Array.from(title.children)) observer.observe(part);
     });
     inject(DestroyRef).onDestroy(() => observer?.disconnect());
   }
+  private measure(title: HTMLElement | undefined) {
+    this.tight.set(!!title && headerOverflows(title));
+    this.crowded.set(
+      !!title &&
+        headerOverflows(title, (part) => part.classList.contains("frame-lead")),
+    );
+  }
 }
 
 /**
  * Whether a header's parts at their natural widths (an ellipsis or a hidden
- * "For each item in" never counts) are wider than the room they have. Both
+ * part never counts), all but those `without` names, are wider than the
+ * room they have. Both
  * are in the header's own units, so the canvas's zoom doesn't matter, and
  * the margins stay the same while a part is hidden: the answer never flips
  * because of itself.
  */
-function headerOverflows(title: HTMLElement): boolean {
-  const natural = Array.from(title.children).reduce((sum, part) => {
+function headerOverflows(
+  title: HTMLElement,
+  without: (part: Element) => boolean = () => false,
+): boolean {
+  const parts = Array.from(title.children).filter((part) => !without(part));
+  const natural = parts.reduce((sum, part) => {
     const style = getComputedStyle(part);
     const width =
       part instanceof HTMLElement && style.overflow === "hidden"

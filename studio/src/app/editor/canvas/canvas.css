@@ -399,9 +399,12 @@ weave-canvas-view,
   min-width: 0;
 }
 /* When the whole header doesn't fit (node-tile measures it and marks the
-   header tight), "For each item in" leaves sight first; it stays in the
-   header's accessible name. Its margin stays, so the measure doesn't change. */
-.canvas-v2 .frame-header.frame-tight:not(.frame-pending) .frame-lead {
+   header tight), "For each item in" leaves sight first; when it still
+   doesn't fit without it (crowded), the at-a-time suffix goes too, before
+   the list shows an ellipsis. Both stay in the header's accessible name, and
+   their margins stay, so the measure doesn't change. */
+.canvas-v2 .frame-header.frame-tight:not(.frame-pending) .frame-lead,
+.canvas-v2 .frame-header.frame-crowded:not(.frame-pending) .frame-suffix {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;

@@ -2334,20 +2334,28 @@ export class CanvasView implements OnInit, DoCheck {
     this.cdr.markForCheck();
   }
   revealTile(id: string, margin = 64) {
-    const tile = this.layout().tiles.find((item) => item.id === id);
+    const layout = this.layout();
+    const tile = layout.tiles.find((item) => item.id === id);
     const root = this.root().nativeElement;
     if (!tile || !root.clientWidth) return;
-    const pan = reveal(
-      this.view,
-      {
-        x: tile.x,
-        y: tile.y,
-        width: tile.width,
-        height: tile.labelY + LTR.labelHeight - tile.y,
-      },
-      { width: root.clientWidth, height: root.clientHeight },
+    const size = { width: root.clientWidth, height: root.clientHeight };
+    // A loop shows its whole frame; where that misses with the usual
+    // margin, with less, and else from its header's start.
+    const frame = layout.frames.find((item) => item.id === id);
+    const rect = frame
+      ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+      : {
+          x: tile.x,
+          y: tile.y,
+          width: tile.width,
+          height: tile.labelY + LTR.labelHeight - tile.y,
+        };
+    const room = Math.min(
       margin,
+      Math.max(0, (size.width - rect.width * this.view.zoom) / 2),
+      Math.max(0, (size.height - rect.height * this.view.zoom) / 2),
     );
+    const pan = reveal(this.view, rect, size, frame ? room : margin);
     if (pan.x !== this.view.pan.x || pan.y !== this.view.pan.y)
       this.setView({ zoom: this.view.zoom, pan });
   }

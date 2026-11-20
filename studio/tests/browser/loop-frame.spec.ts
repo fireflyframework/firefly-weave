@@ -547,8 +547,60 @@ test.describe("Editing inside a loop at 1440x900", () => {
   });
 });
 
+test.describe("A long loop header at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("drops the at-a-time suffix before it cuts the list", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, LONG);
+    const head = header(canvas, "orders");
+    // However little room it misses, a cut list never shows the suffix
+    // beside it: the header narrows 6 px at a time, from roomy to cut.
+    const states = await head.evaluate(async (element) => {
+      const title = element.querySelector<HTMLElement>(".frame-title")!;
+      const items = element.querySelector<HTMLElement>(".frame-items")!;
+      const suffix = element.querySelector<HTMLElement>(".frame-suffix")!;
+      const room = title.clientWidth;
+      const found: { cut: boolean; suffix: number }[] = [];
+      for (let width = room + 600; width >= room; width -= 6) {
+        title.style.width = `${width}px`;
+        // Measured after the resize, as the canvas does.
+        await new Promise((done) => setTimeout(done, 50));
+        found.push({
+          cut: items.scrollWidth > items.clientWidth + 0.5,
+          suffix: suffix.getBoundingClientRect().width,
+        });
+      }
+      title.style.width = "";
+      return found;
+    });
+    expect(states.some((state) => state.cut)).toBe(true);
+    expect(states.filter((state) => state.cut && state.suffix > 1)).toEqual([]);
+  });
+});
+
 test.describe("Loop frames on a phone", () => {
   test.use({ viewport: { width: 360, height: 640 } });
+
+  test("keyboard focus on a loop's header brings its whole frame onto the canvas", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, ORDERS);
+    await page.mouse.move(0, 0);
+    // From the step before, the arrow key moves to the loop's header.
+    await canvas.tileBody("fetch").focus();
+    await page.keyboard.press("ArrowRight");
+    const head = header(canvas, "orders");
+    await expect(head).toBeFocused();
+    const area = await box(canvas.root);
+    await expect
+      .poll(async () => {
+        const shown = await box(frame(canvas, "orders"));
+        return shown.left >= area.left && shown.right <= area.right;
+      })
+      .toBe(true);
+  });
 
   test("the header shortens on one line and shows its whole sentence on hover and focus", async ({
     page,
@@ -568,6 +620,7 @@ test.describe("Loop frames on a phone", () => {
       const line = element.querySelector<HTMLElement>(".frame-title")!;
       const items = element.querySelector<HTMLElement>(".frame-items")!;
       const lead = element.querySelector<HTMLElement>(".frame-lead")!;
+      const suffix = element.querySelector<HTMLElement>(".frame-suffix")!;
       return {
         lines: Math.round(
           line.getBoundingClientRect().height /
@@ -576,6 +629,7 @@ test.describe("Loop frames on a phone", () => {
         itemsCut: items.scrollWidth > items.clientWidth,
         leadWidth: lead.getBoundingClientRect().width,
         leadText: lead.textContent,
+        suffixWidth: suffix.getBoundingClientRect().width,
       };
     });
     expect(shape.lines).toBe(1);
@@ -583,6 +637,8 @@ test.describe("Loop frames on a phone", () => {
     // "For each item in" goes first, from sight only.
     expect(shape.leadWidth).toBeLessThanOrEqual(1);
     expect(shape.leadText).toBe("For each item in");
+    // Then the at-a-time suffix: none of it shows while the list is cut.
+    expect(shape.suffixWidth).toBeLessThanOrEqual(1);
     await expect(head).toHaveAccessibleName(
       /^orders, Loop over items, For each item in steps\.fetch\.output\.customer\.openOrders · up to 4 at a time, /,
     );
