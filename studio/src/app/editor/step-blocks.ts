@@ -1,0 +1,137 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// The blocks of a step: the step lists it holds, each with its own `steps`
+// and `output` (the language's Branch). A decision's paths and Otherwise, a
+// parallel step's branches, a loop's body, a transaction's own steps, and the
+// error path any step with On error "Continue with error output" holds. Every
+// walk of a workflow's structure (sequences, IDs, navigation, copy and paste,
+// Execute's slice, scope) reads blocks here, so a new block kind is one entry.
+import type { Branch, Step } from "../model";
+
+/** The field, and the block name, of a step's error path: its owner is "<step>/errorPath". */
+export const ERROR_PATH = "errorPath";
+
+/** The step fields that hold blocks, for pointers into a block a step no longer has. */
+export const BLOCK_FIELDS: ReadonlySet<string> = new Set([
+  "cases",
+  "default",
+  "branches",
+  "body",
+  ERROR_PATH,
+]);
+
+export type BlockKind = "case" | "default" | "branch" | "body" | "errorPath";
+export interface StepBlock {
+  /**
+   * The block's name in its sequence's owner, "<step>/<name>": "case 1" (from
+   * 1), "default", a parallel branch's own name, "body", "steps" (a
+   * transaction's own steps) or "errorPath".
+   */
+  name: string;
+  /** Where the block sits, relative to the step; its steps are at path + "steps". [] is the step itself. */
+  path: (string | number)[];
+  /**
+   * The block as the document holds it. Studio's model only holds valid
+   * branches; a walk of untrusted text checks `steps` before it reads them.
+   */
+  branch: Branch;
+  kind: BlockKind;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+/** A step's own blocks, by kind; a kind without blocks holds none. */
+function ownBlocks(step: Step): StepBlock[] {
+  switch (step.kind as string) {
+    case "switch": {
+      const cases = Array.isArray(step["cases"]) ? step["cases"] : [];
+      return [
+        ...cases.map(
+          (branch, index): StepBlock => ({
+            name: `case ${index + 1}`,
+            path: ["cases", index],
+            branch: branch as Branch,
+            kind: "case",
+          }),
+        ),
+        {
+          name: "default",
+          path: ["default"],
+          branch: step["default"] as Branch,
+          kind: "default",
+        },
+      ];
+    }
+    case "parallel":
+      // Read as entries whatever object holds them, as the model always has.
+      return step["branches"] && typeof step["branches"] === "object"
+        ? Object.entries(step["branches"]).map(
+            ([name, branch]): StepBlock => ({
+              name,
+              path: ["branches", name],
+              branch: branch as Branch,
+              kind: "branch",
+            }),
+          )
+        : [];
+    case "forEach":
+      return [
+        {
+          name: "body",
+          path: ["body"],
+          branch: step["body"] as Branch,
+          kind: "body",
+        },
+      ];
+    case "transaction":
+      // A transaction is a block itself: its own steps and output.
+      return [
+        {
+          name: "steps",
+          path: [],
+          branch: step as unknown as Branch,
+          kind: "body",
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+/**
+ * The blocks of a step in document order: its own blocks, then its error
+ * path, as the platform orders them (the Studio host's `_branches`).
+ */
+export function blocksOf(step: Step): StepBlock[] {
+  const blocks = ownBlocks(step);
+  if (step[ERROR_PATH] !== undefined)
+    blocks.push({
+      name: ERROR_PATH,
+      path: [ERROR_PATH],
+      branch: step[ERROR_PATH] as Branch,
+      kind: "errorPath",
+    });
+  return blocks;
+}
+
+/** The steps of a block, when it holds a list of them; only objects can be steps. */
+export function blockSteps(block: StepBlock): Step[] {
+  const steps = isRecord(block.branch) ? block.branch["steps"] : undefined;
+  return Array.isArray(steps) ? (steps.filter(isRecord) as Step[]) : [];
+}

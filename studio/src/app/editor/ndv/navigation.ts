@@ -16,14 +16,14 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Where a step is and what runs around it, in Outline order (the order steps
-// run in, entering decision paths, parallel branches and loop bodies): the
-// breadcrumb at the top of step details, Previous and Next step, and the
-// neighbor buttons. Lanes come from each kind's registered containers.
+// run in, entering decision paths, parallel branches, loop bodies and error
+// paths): the breadcrumb at the top of step details, Previous and Next step,
+// and the neighbor buttons. Lanes are the blocks of each step.
 import { isTriggerTarget } from "../triggers/trigger-target";
 import { conditionSummary } from "../../designer/conditions";
 import { getAt } from "../../forms/core/json";
-import type { Step, Workflow } from "../../model";
-import { ndvRegistry, type ContainerSpec, type KindContext } from "./registry";
+import { branchTitle, type Step, type Workflow } from "../../model";
+import { blockSteps, blocksOf, type StepBlock } from "../step-blocks";
 
 export interface Place {
   id: string;
@@ -40,6 +40,8 @@ interface Lane {
   label: string;
   /** A decision's Otherwise: it runs when no path applies. */
   otherwise: boolean;
+  /** A step's error path: the step goes on past it whenever it succeeds. */
+  errorPath: boolean;
 }
 
 const isStep = (value: unknown): value is Step =>
@@ -47,42 +49,27 @@ const isStep = (value: unknown): value is Step =>
   typeof value === "object" &&
   typeof (value as Step).id === "string";
 
-function laneLabel(
-  owner: Step,
-  container: ContainerSpec,
-  workflow: Workflow,
-): string {
-  const { path } = container;
-  if (owner.kind === "switch") {
-    if (path[0] === "default") return "Otherwise";
-    const when = getAt(owner, ["cases", path[1], "when"]);
+function laneLabel(owner: Step, block: StepBlock, workflow: Workflow): string {
+  if (block.kind === "default") return "Otherwise";
+  if (block.kind === "case") {
+    const when = getAt(owner, ["cases", block.path[1], "when"]);
     return when === undefined
-      ? `Path ${Number(path[1]) + 1}`
+      ? `Path ${Number(block.path[1]) + 1}`
       : `Path ${conditionSummary(when, workflow)}`;
   }
-  if (owner.kind === "parallel") return `Branch ${String(path[1])}`;
-  const ctx: KindContext = {
-    workflow,
-    features: [],
-    actionContract: () => null,
-    tableContract: () => null,
-    workflowContract: () => null,
-  };
-  return container.label(owner, ctx);
+  if (block.kind === "branch") return `Branch ${block.name}`;
+  return branchTitle(owner, block.name);
 }
 
-/** Every lane of a step, in container order (paths, then Otherwise; branches by name). */
+/** Every lane of a step, in block order (paths, then Otherwise; branches; a body; the error path). */
 function lanesOf(step: Step, workflow: Workflow): Lane[] {
-  const containers = ndvRegistry.kind(step.kind)?.containers?.(step) ?? [];
-  return containers.map((container) => {
-    const inner = getAt(step, container.path);
-    return {
-      steps: Array.isArray(inner) ? inner.filter(isStep) : [],
-      ownerStep: step.id,
-      label: laneLabel(step, container, workflow),
-      otherwise: step.kind === "switch" && container.path[0] === "default",
-    };
-  });
+  return blocksOf(step).map((block) => ({
+    steps: blockSteps(block).filter(isStep),
+    ownerStep: step.id,
+    label: laneLabel(step, block, workflow),
+    otherwise: block.kind === "default",
+    errorPath: block.kind === "errorPath",
+  }));
 }
 
 function walk(
@@ -101,6 +88,7 @@ function walk(
     ownerStep: null,
     label: "Main sequence",
     otherwise: false,
+    errorPath: false,
   });
 }
 
@@ -184,7 +172,8 @@ export function stepsAfter(workflow: Workflow, id: string): string[] {
  * The steps the run can come from when it moves on after `step`: the step
  * itself when it holds nothing, else the last step of each path or branch
  * (the last step of that, again, when it holds paths of its own), plus the
- * step itself when a path is empty and the run can leave it directly.
+ * step itself when a path is empty and the run can leave it directly, or
+ * when it has an error path (the run leaves it directly when it succeeds).
  * Mirrors how the steps after a group fan out into its first steps.
  */
 function endings(step: Step, workflow: Workflow): string[] {
@@ -195,8 +184,9 @@ function endings(step: Step, workflow: Workflow): string[] {
   let direct = false;
   for (const lane of lanes) {
     const last = lane.steps.at(-1);
-    if (!last) direct = true;
-    else (lane.otherwise ? otherwise : paths).push(...endings(last, workflow));
+    if (!last || lane.errorPath) direct = true;
+    if (last)
+      (lane.otherwise ? otherwise : paths).push(...endings(last, workflow));
   }
   return [...new Set([...paths, ...(direct ? [step.id] : []), ...otherwise])];
 }
@@ -218,8 +208,9 @@ export function neighbors(
   let empty = false;
   for (const lane of lanes) {
     const first = lane.steps[0]?.id;
-    if (!first) empty = true;
-    else (lane.otherwise ? otherwise : firsts).push(first);
+    // Past an empty lane, or past an error path when the step succeeds, the run goes on directly.
+    if (!first || lane.errorPath) empty = true;
+    if (first) (lane.otherwise ? otherwise : firsts).push(first);
   }
   const following = empty ? stepsAfter(workflow, id) : [];
   return {

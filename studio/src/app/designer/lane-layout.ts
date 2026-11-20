@@ -24,6 +24,7 @@ import type {
   Target,
   Workflow,
 } from "../model";
+import { blocksOf } from "../editor/step-blocks";
 import { branchName, parseCondition } from "./conditions";
 
 export const laneGeometry = {
@@ -60,22 +61,19 @@ export interface LaneLayout {
   boundaries: { start: Point; end: Point };
 }
 const children = (step: Step): [string, Branch][] =>
-  step.kind === "parallel"
-    ? Object.entries(step["branches"] as Record<string, Branch>)
-    : step.kind === "switch"
-      ? [
-          ...(step["cases"] as Branch[]).map(
-            (branch, index): [string, Branch] => [`case ${index + 1}`, branch],
-          ),
-          ["default", step["default"] as Branch],
-        ]
-      : step.kind === "forEach"
-        ? [["body", step["body"] as Branch]]
-        : [];
+  blocksOf(step).map((block) => [block.name, block.branch]);
+/** True when a block is a step's error path, which runs only after it fails. */
+const isErrorPath = (step: Step, name: string) =>
+  blocksOf(step).some(
+    (block) => block.name === name && block.kind === "errorPath",
+  );
 const completes = (steps: Step[]): boolean =>
   steps.every((step) => {
     if (step.kind === "fail") return false;
-    const branches = children(step);
+    // A step with an error path goes on when it succeeds, whatever its path does.
+    const branches = children(step).filter(
+      ([name]) => !isErrorPath(step, name),
+    );
     return (
       !branches.length ||
       (step.kind === "parallel"
@@ -178,7 +176,9 @@ export function computeLaneLayout(
       for (const [name, branch] of branches) {
         const child = `${step.id}/${name}`;
         const laneWidth = sequenceWidth(branch.steps);
-        const label = branchName(step, name, workflow);
+        const label = isErrorPath(step, name)
+          ? "On error"
+          : branchName(step, name, workflow);
         laneLabels.set(
           child,
           label === "Condition not set" ? `Case ${name.slice(5)}` : label,
@@ -265,6 +265,9 @@ export function computeLaneLayout(
       const split = `$split:${node.step.id}`,
         join = `$join:${node.step.id}`;
       edges.push({ from: node.step.id, to: split });
+      // A step with an error path also goes on directly when it succeeds.
+      if (branches.some(([name]) => isErrorPath(node.step, name)))
+        edges.push({ from: split, to: join });
       for (const [name] of branches) {
         const owner = `${node.step.id}/${name}`;
         const first = owners.get(owner)?.[0];

@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { parseDocument, stringify, isMap, isSeq, isNode, isScalar } from "yaml";
 import { computeLaneLayout } from "./designer/lane-layout";
+import { ERROR_PATH, blocksOf } from "./editor/step-blocks";
 import {
   emptyCanvas,
   pruneCanvas,
@@ -182,19 +183,9 @@ export function createStep(kind: Kind, id: string): Step {
   };
   return { id, kind, ...defaults[kind] };
 }
+/** A step's blocks by their owner name ("case 1", "default", a branch, "body", "errorPath"). */
 function branches(step: Step): [string, Branch][] {
-  if (step.kind === "switch")
-    return [
-      ...(step["cases"] as Branch[]).map((b, i): [string, Branch] => [
-        `case ${i + 1}`,
-        b,
-      ]),
-      ["default", step["default"] as Branch],
-    ];
-  if (step.kind === "parallel")
-    return Object.entries(step["branches"] as Record<string, Branch>);
-  if (step.kind === "forEach") return [["body", step["body"] as Branch]];
-  return [];
+  return blocksOf(step).map((block) => [block.name, block.branch]);
 }
 /**
  * The steps that changed only their ID between two versions of a workflow,
@@ -273,8 +264,12 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
     }
   }
 }
-/** Plain name of a branch: "Case 1", "Otherwise", a loop's "For each item", or a parallel branch's own name. */
+/**
+ * Plain name of a branch: "Case 1", "Otherwise", a loop's "For each item",
+ * a step's "Error path", or a parallel branch's own name.
+ */
 export function branchTitle(step: Step, name: string) {
+  if (name === ERROR_PATH && step.kind !== "parallel") return "Error path";
   if (step.kind === "switch")
     return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
   if (step.kind === "forEach") return "For each item";
@@ -282,7 +277,8 @@ export function branchTitle(step: Step, name: string) {
 }
 /**
  * Where a step sits, in words: "Main sequence", "Case 1 of route",
- * "Otherwise of route", "For each item of orders" or "first of fulfil".
+ * "Otherwise of route", "For each item of orders", "Error path of submit"
+ * or "first of fulfil".
  */
 export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
   if (owner === "root") return "Main sequence";
@@ -296,7 +292,9 @@ export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
       ? `Case ${name.slice(5)}`
       : name === "default"
         ? "Otherwise"
-        : name;
+        : name === ERROR_PATH
+          ? "Error path"
+          : name;
   return `${title} of ${parent}`;
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -371,8 +369,14 @@ function expressionRefs(
       expressionRefs(arg, [...path, "op", "args", i], holder, out),
     );
 }
-/** The expression fields of a step, as paths relative to the step. */
+/** The expression fields of a step, as paths relative to the step; an error path's output too. */
 function expressionPaths(step: Step): (string | number)[][] {
+  return [
+    ...ownExpressionPaths(step),
+    ...(isRecord(step[ERROR_PATH]) ? [[ERROR_PATH, "output"]] : []),
+  ];
+}
+function ownExpressionPaths(step: Step): (string | number)[][] {
   switch (step.kind) {
     case "llm":
       return [["prompt"], ["context"]];
@@ -645,6 +649,12 @@ export class StructuredCanvasAdapter {
           throw Error(
             `Unsupported step ${s.kind}; source is preserved. The last valid graph is read-only.`,
           );
+        if (
+          (s.kind === "switch" && !Array.isArray(s["cases"])) ||
+          (s.kind === "parallel" &&
+            (!s["branches"] || typeof s["branches"] !== "object"))
+        )
+          throw Error(`Invalid branches in ${s.id}.`);
         for (const [, b] of branches(s)) {
           if (!b || !Array.isArray(b.steps))
             throw Error(`Invalid branches in ${s.id}.`);
@@ -767,13 +777,16 @@ export class StructuredCanvasAdapter {
     ];
     for (const node of nodes) {
       if (node.step.kind === "fail") continue;
-      const childBranches = branches(node.step);
-      if (childBranches.length) {
-        for (const [name] of childBranches) {
-          const owner = `${node.step.id}/${name}`;
+      const blocks = blocksOf(node.step);
+      if (blocks.length) {
+        for (const block of blocks) {
+          const owner = `${node.step.id}/${block.name}`;
           const first = owners.get(owner)?.[0]?.step.id;
           if (first) links.push({ from: node.step.id, to: first });
-          else links.push({ from: node.step.id, to: continuation(node) });
+          // A step goes on directly past an empty block, and past its
+          // error path whenever it succeeds.
+          if (!first || block.kind === "errorPath")
+            links.push({ from: node.step.id, to: continuation(node) });
         }
       } else links.push({ from: node.step.id, to: continuation(node) });
     }
@@ -944,26 +957,8 @@ export class StructuredCanvasAdapter {
             step.id,
             out,
           );
-        if (step.kind === "switch") {
-          (Array.isArray(step["cases"])
-            ? (step["cases"] as Branch[])
-            : []
-          ).forEach((b, j) =>
-            visit(b.steps ?? [], [...at, "cases", j, "steps"]),
-          );
-          const fallback = step["default"] as Branch | undefined;
-          visit(fallback?.steps ?? [], [...at, "default", "steps"]);
-        } else if (step.kind === "parallel")
-          for (const [name, b] of Object.entries(
-            (step["branches"] ?? {}) as Record<string, Branch>,
-          ))
-            visit(b.steps ?? [], [...at, "branches", name, "steps"]);
-        else if (step.kind === "forEach")
-          visit((step["body"] as Branch | undefined)?.steps ?? [], [
-            ...at,
-            "body",
-            "steps",
-          ]);
+        for (const block of blocksOf(step))
+          visit(block.branch?.steps ?? [], [...at, ...block.path, "steps"]);
       });
     visit(this.definition.spec.steps, ["spec", "steps"]);
     expressionRefs(this.definition.spec["output"], ["spec", "output"], "", out);
@@ -986,8 +981,9 @@ export class StructuredCanvasAdapter {
   }
   /**
    * Deletes a step. A group is deleted only when its branches are empty,
-   * unless `contents` is set. Steps (or the workflow output) that still read
-   * a deleted step are named and block the deletion.
+   * unless `contents` is set; a step's error path always goes with it.
+   * Steps (or the workflow output) that still read a deleted step are named
+   * and block the deletion.
    */
   remove(id: string, options: { contents?: boolean } = {}) {
     const n = this.nodes().find((n) => n.step.id === id);
@@ -997,7 +993,12 @@ export class StructuredCanvasAdapter {
       this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
       return;
     }
-    if (!options.contents && branches(n.step).some(([, b]) => b.steps.length))
+    if (
+      !options.contents &&
+      blocksOf(n.step).some(
+        (block) => block.kind !== "errorPath" && block.branch.steps.length,
+      )
+    )
       throw Error(
         "Move or delete the contained branch steps before deleting this group.",
       );
@@ -1140,23 +1141,8 @@ export class StructuredCanvasAdapter {
           stepPath = [...path, i];
           return;
         }
-        if (step.kind === "switch") {
-          (step["cases"] as Branch[]).forEach((b, j) =>
-            find(b.steps, [...path, i, "cases", j, "steps"]),
-          );
-          find((step["default"] as Branch).steps, [
-            ...path,
-            i,
-            "default",
-            "steps",
-          ]);
-        } else if (step.kind === "parallel")
-          for (const [name, b] of Object.entries(
-            step["branches"] as Record<string, Branch>,
-          ))
-            find(b.steps, [...path, i, "branches", name, "steps"]);
-        else if (step.kind === "forEach")
-          find((step["body"] as Branch).steps, [...path, i, "body", "steps"]);
+        for (const block of blocksOf(step))
+          find(block.branch.steps, [...path, i, ...block.path, "steps"]);
       });
     find(this.definition.spec.steps, ["spec", "steps"]);
     this.checkpoint();

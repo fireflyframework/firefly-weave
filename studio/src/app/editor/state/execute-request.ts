@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // too). DOM-free.
 import type { Step, Workflow } from "../../model";
 import { calledReferenceSites } from "../activation/callee-pins";
+import { blockSteps, blocksOf } from "../step-blocks";
 import type { Json } from "../ndv/registry";
 import type {
   Blocked,
@@ -38,32 +39,8 @@ import type { StudioTestData } from "./test-data";
 
 type JsonObject = { [key: string]: Json };
 
-/** The step lists a step holds, as the host's slicing walks them (transactions included). */
-function branchesOf(step: Step): Step[][] {
-  const list = (branch: unknown): Step[] =>
-    branch &&
-    typeof branch === "object" &&
-    Array.isArray((branch as { steps?: unknown }).steps)
-      ? (branch as { steps: Step[] }).steps
-      : [];
-  switch (step.kind as string) {
-    case "switch":
-      return [
-        ...(Array.isArray(step["cases"]) ? step["cases"].map(list) : []),
-        list(step["default"]),
-      ];
-    case "parallel":
-      return step["branches"] && typeof step["branches"] === "object"
-        ? Object.values(step["branches"] as Record<string, unknown>).map(list)
-        : [];
-    case "forEach":
-      return [list(step["body"])];
-    case "transaction":
-      return [list(step)];
-    default:
-      return [];
-  }
-}
+/** The step lists a step holds, as the host's slicing walks them (a transaction's own steps and error paths included). */
+const branchesOf = (step: Step): Step[][] => blocksOf(step).map(blockSteps);
 
 /**
  * The IDs of the steps the host keeps to execute `stepId` (the target with

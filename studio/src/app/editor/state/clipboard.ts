@@ -43,6 +43,7 @@ import {
   type Workflow,
 } from "../../model";
 import type { Insertion } from "../canvas/layout-ltr";
+import { ERROR_PATH, blocksOf } from "../step-blocks";
 import {
   nameOfUses,
   ownedName,
@@ -164,13 +165,15 @@ const UNKNOWN_KIND = (kind: string) =>
 export const PASTE_MAX_STEPS = 500;
 /** The longest step, slot or profile name Studio keeps, as elsewhere in Studio. */
 export const NAME_MAX = 128;
+/** What a step's failure does, and the error path that handles it, on the kinds that can fail. */
+const ON_ERROR = ["onError", ERROR_PATH] as const;
 /**
  * The fields each step kind has in the workflow language, which refuses any
  * other; loops and workflow calls too, for platforms whose language has them.
  */
 const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
-  action: new Set(["id", "kind", "uses", "with", "connection"]),
-  decisionTable: new Set(["id", "kind", "uses", "with"]),
+  action: new Set(["id", "kind", "uses", "with", "connection", ...ON_ERROR]),
+  decisionTable: new Set(["id", "kind", "uses", "with", ...ON_ERROR]),
   llm: new Set([
     "id",
     "kind",
@@ -179,12 +182,20 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "prompt",
     "context",
     "connection",
+    ...ON_ERROR,
   ]),
-  transform: new Set(["id", "kind", "value"]),
+  transform: new Set(["id", "kind", "value", ...ON_ERROR]),
   switch: new Set(["id", "kind", "cases", "default"]),
   parallel: new Set(["id", "kind", "branches", "concurrency"]),
   wait: new Set(["id", "kind", "durationSeconds"]),
-  signal: new Set(["id", "kind", "name", "timeoutSeconds", "payloadSchema"]),
+  signal: new Set([
+    "id",
+    "kind",
+    "name",
+    "timeoutSeconds",
+    "payloadSchema",
+    ...ON_ERROR,
+  ]),
   humanTask: new Set([
     "id",
     "kind",
@@ -195,6 +206,7 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "decisions",
     "dueSeconds",
     "expirySeconds",
+    ...ON_ERROR,
   ]),
   fail: new Set(["id", "kind", "code", "message"]),
   forEach: new Set([
@@ -214,6 +226,7 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "mode",
     "onFailure",
     "businessKey",
+    ...ON_ERROR,
   ]),
 };
 const PATH_FIELDS = new Set(["steps", "output"]);
@@ -398,26 +411,20 @@ function checkStep(
   if (unknown) return UNKNOWN_FIELD(step["id"], unknown);
   if (depth > 40)
     return "The pasted steps nest too deeply for the canvas. Paste them in Source.";
-  const lanes: unknown[] = [];
-  if (step["kind"] === "switch") {
-    if (!Array.isArray(step["cases"]) || !isRecord(step["default"]))
-      return PATHLESS(step["id"]);
-    lanes.push(...step["cases"], step["default"]);
-  } else if (step["kind"] === "parallel") {
-    if (!isRecord(step["branches"])) return PATHLESS(step["id"]);
-    lanes.push(...Object.values(step["branches"]));
-  } else if (step["kind"] === "forEach") {
-    if (!isRecord(step["body"])) return PATHLESS(step["id"]);
-    lanes.push(step["body"]);
-  }
-  for (const lane of lanes) {
+  if (
+    (step["kind"] === "switch" &&
+      (!Array.isArray(step["cases"]) || !isRecord(step["default"]))) ||
+    (step["kind"] === "parallel" && !isRecord(step["branches"])) ||
+    (step["kind"] === "forEach" && !isRecord(step["body"]))
+  )
+    return PATHLESS(step["id"]);
+  for (const block of blocksOf(step as Step)) {
+    const lane: unknown = block.branch;
     if (!isRecord(lane) || !Array.isArray(lane["steps"]))
       return PATHLESS(step["id"]);
     const field = unknownKey(
       lane,
-      step["kind"] === "switch" && lane !== step["default"]
-        ? CASE_FIELDS
-        : PATH_FIELDS,
+      block.kind === "case" ? CASE_FIELDS : PATH_FIELDS,
     );
     if (field) return UNKNOWN_FIELD(step["id"], field);
     for (const inner of lane["steps"]) {
@@ -559,24 +566,19 @@ export function readClipboard(
   };
 }
 
-/** Every `{ref}` a step holds outside its paths and a loop's body, with where it sits. */
+/** Every `{ref}` a step holds outside the steps of its blocks (paths, a loop's body, an error path), with where it sits. */
 function refSites(
   step: Step,
 ): { ref: string; path: (string | number)[]; fieldPath: string }[] {
   const sites: { ref: string; path: (string | number)[]; fieldPath: string }[] =
     [];
+  const lists = blocksOf(step).map((block) => [...block.path, "steps"]);
   const nested = (path: readonly (string | number)[]) =>
-    (step.kind === "switch" &&
-      ((path[0] === "cases" && path.length === 3 && path[2] === "steps") ||
-        (path[0] === "default" && path.length === 2 && path[1] === "steps"))) ||
-    (step.kind === "parallel" &&
-      path[0] === "branches" &&
-      path.length === 3 &&
-      path[2] === "steps") ||
-    (step.kind === "forEach" &&
-      path[0] === "body" &&
-      path.length === 2 &&
-      path[1] === "steps");
+    lists.some(
+      (list) =>
+        list.length === path.length &&
+        list.every((segment, i) => String(segment) === String(path[i])),
+    );
   const walk = (value: unknown, path: (string | number)[]) => {
     if (nested(path)) return;
     if (Array.isArray(value)) {

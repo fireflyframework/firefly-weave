@@ -21,6 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // ({op: {name, args}}), so nothing changes in a workflow's source; a
 // condition the rows can't show stays a formula. The summaries label the
 // canvas branches ("Amount > 1000", "Otherwise") and the decision's node.
+import { blocksOf } from "../editor/step-blocks";
+import type { Step } from "../model";
 
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
@@ -343,26 +345,19 @@ export function missingConditions(definition: unknown): MissingCondition[] {
     steps.forEach((step, index) => {
       if (!isRecord(step)) return;
       const here = `${at}/${index}`;
-      if (step["kind"] === "switch") {
-        const cases = Array.isArray(step["cases"]) ? step["cases"] : [];
-        cases.forEach((branch, i) => {
-          if (isRecord(branch) && branch["when"] === undefined)
-            found.push({
-              stepId: String(step["id"] ?? ""),
-              caseIndex: i,
-              stepPointer: here,
-              pointer: `${here}/cases/${i}/when`,
-            });
-          if (isRecord(branch))
-            visit(branch["steps"], `${here}/cases/${i}/steps`);
-        });
-        const fallback = step["default"];
-        if (isRecord(fallback))
-          visit(fallback["steps"], `${here}/default/steps`);
-      } else if (step["kind"] === "parallel" && isRecord(step["branches"]))
-        for (const [name, branch] of Object.entries(step["branches"]))
-          if (isRecord(branch))
-            visit(branch["steps"], `${here}/branches/${escape(name)}/steps`);
+      for (const block of blocksOf(step as Step)) {
+        const branch: unknown = block.branch;
+        if (!isRecord(branch)) continue;
+        const path = block.path.map((segment) => `/${escape(String(segment))}`);
+        if (block.kind === "case" && branch["when"] === undefined)
+          found.push({
+            stepId: String(step["id"] ?? ""),
+            caseIndex: Number(block.path[1]),
+            stepPointer: here,
+            pointer: `${here}${path.join("")}/when`,
+          });
+        visit(branch["steps"], `${here}${path.join("")}/steps`);
+      }
     });
   };
   if (isRecord(definition) && isRecord(definition["spec"]))
