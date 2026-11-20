@@ -35,6 +35,7 @@ from firefly_weave.contracts.definitions import ActionDefinition, load_definitio
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
+    from firefly_weave.compiler.ir import WorkflowIR
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
@@ -510,11 +511,11 @@ def _label(switch: JsonObject, branch: str) -> str:
     return "Otherwise"
 
 
-def _enclosing(document: JsonObject, step_id: str) -> list[JsonObject]:
-    """The decisions holding a step, outermost first."""
-    found: list[JsonObject] = []
+def _enclosing(document: JsonObject, step_id: str) -> list[tuple[JsonObject, Literal["switch", "errorPath"]]]:
+    """The decisions holding a step, and the steps whose error path holds it, outermost first."""
+    found: list[tuple[JsonObject, Literal["switch", "errorPath"]]] = []
 
-    def walk(steps: object, outer: list[JsonObject]) -> bool:
+    def walk(steps: object, outer: list[tuple[JsonObject, Literal["switch", "errorPath"]]]) -> bool:
         if not isinstance(steps, list):
             return False
         for step in steps:
@@ -523,9 +524,16 @@ def _enclosing(document: JsonObject, step_id: str) -> list[JsonObject]:
             if step.get("id") == step_id:
                 found.extend(outer)
                 return True
-            chain = [*outer, step] if step.get("kind") == "switch" else outer
-            if any(walk(branch.get("steps"), chain) for branch in _branches(step)):
-                return True
+            for branch in _branches(step):
+                chain = (
+                    [*outer, (step, "errorPath")]
+                    if branch is step.get("errorPath")
+                    else [*outer, (step, "switch")]
+                    if step.get("kind") == "switch"
+                    else outer
+                )
+                if walk(branch.get("steps"), chain):
+                    return True
         return False
 
     spec = document.get("spec")
@@ -587,8 +595,9 @@ def _dependencies(artifact: Any) -> list[Any]:
     return list(prepare(artifact).ir.dependencies)
 
 
-def _in_slice(document: JsonObject, whole: JsonObject, mocks: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """The mocks for steps the compiled document runs: a later step's pin never blocks executing an earlier one.
+def _in_slice[V](document: JsonObject, whole: JsonObject, mocks: Mapping[str, V]) -> dict[str, V]:
+    """The mocks (or failures) for steps the compiled document runs: a later step's pin never blocks executing an
+    earlier one.
 
     A key that names no step (or action) anywhere in the workflow stays, so the simulator still refuses it.
     """
@@ -608,7 +617,7 @@ def _in_slice(document: JsonObject, whole: JsonObject, mocks: Mapping[str, JsonV
 
     kept_ids, all_ids = ids(document), ids(whole)
     kept_actions, all_actions = actions(document), actions(whole)
-    out: dict[str, JsonValue] = {}
+    out: dict[str, V] = {}
     for key, value in mocks.items():
         if key.startswith("node:"):
             try:
@@ -647,11 +656,12 @@ def simulator_for(
     Test data is checked against the whole workflow before compiling (secrets, and values too large to check);
     mocks for steps the slice doesn't run, and mocks that no longer fit, are left out before the simulator sees
     them (the misfits are returned); called workflows run with the mocks test data holds for their steps; AI tasks
-    replay their saved turns. The simulator is None when the workflow doesn't compile. Raises
-    ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    replay their saved turns; simulated failures apply like mocks, to the steps the document runs. The simulator is
+    None when the workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
+    from firefly_weave.operations.debug.models import ScriptedError
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import CompileSummary
@@ -675,8 +685,14 @@ def simulator_for(
     kept = _in_slice(document, whole, {k: v for k, v in request.mocks.items() if k not in misfits})
     mocks = with_ai_turns(artifact, kept, ai_turns)
     workflows = _called(artifact, request, callees, catalog)
+    errors = {
+        key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts)
+        for key, failure in _in_slice(document, whole, request.errors).items()
+    }
     try:
-        simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows)
+        simulator = Simulator(
+            artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows, errors=errors
+        )
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
         raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
@@ -740,6 +756,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     Raises ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition
     that conflicts with the catalog. Nothing here reads the network, the clock or files.
     """
+    from firefly_weave.compiler.api import import_artifact
     from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
     from firefly_weave.compiler.parser import ParseFailure, parse_source
     from firefly_weave.contracts.diagnostics import Diagnostic
@@ -747,7 +764,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
     from firefly_weave.operations.incident_codes import INCIDENT_CODES
-    from firefly_weave.runtime.kernel import KernelError
+    from firefly_weave.runtime.kernel import KernelError, prepare
     from firefly_weave.studio.local_contracts import (
         Blocked,
         CompileSummary,
@@ -824,6 +841,15 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
     timed_out = view.status in {"timed_out", "cancelled"}
     failed = (view.status == "failed" or timed_out or on_hold) and not view.diagnostics
+
+    @functools.cache
+    def handlers(frame: str | None) -> dict[str, Any]:
+        # The steps of the simulated workflow, or of the called workflow a frame runs, that handle their failures.
+        if frame is None:
+            return _error_handlers(simulator.ir)
+        called = data.workflows.get(frames[frame].workflow) if frame in frames else None
+        return _error_handlers(prepare(import_artifact(called.artifact)).ir) if called and called.artifact else {}
+
     for boundary in data.boundaries:
         if boundary.kind != "node" or boundary.node_id is None:
             continue
@@ -850,6 +876,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             entry["input"] = data.inputs[path]
         if path in data.outputs:
             entry["output"] = data.outputs[path]
+        if path in data.failures:
+            entry |= _handled_entry(handlers(frame), key, data.failures[path], data.outputs, frame)
         trace.append(TraceEntry.model_validate(entry))
     if unsimulated_at is not None:
         failed = True
@@ -857,10 +885,25 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     ended: set[str | None] = {key for key, status in statuses.items() if status == "failed"}
     if failed:
         ended.add(None)
+    # The failure each step of the simulated workflow reported last, and the actions its steps use.
+    reported = {
+        cast(str, event.data.get("node_id")): event.data for event in view.events if event.type == "step_failed"
+    }
+    uses = {
+        cast(str, step["id"]): cast(str, step["uses"])
+        for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))
+        if isinstance(step.get("uses"), str)
+    }
     for frame in ended:
         last_of_run = next((i for i in reversed(range(len(trace))) if trace[i].frame == frame), None)
         if last_of_run is not None and trace[last_of_run].status != "completed":
-            trace[last_of_run] = trace[last_of_run].model_copy(update={"status": "failed"})
+            stopping = trace[last_of_run]
+            update: dict[str, Any] = {"status": "failed"}
+            if frame is None and stopping.handled is None:
+                stopped = _stopping_error(stopping.instanceKey or stopping.nodeId, request.errors, uses, reported)
+                if stopped is not None:
+                    update["error"] = stopped
+            trace[last_of_run] = stopping.model_copy(update=update)
     own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
@@ -928,7 +971,20 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if blocked is None and target.mode != "workflow" and view.status not in {"paused"} and not view.diagnostics:
         step = cast(str, target.stepId)
         if not any(entry.nodeId == step and entry.frame is None for entry in trace):
-            for switch in reversed(_enclosing(whole, step)):
+            for switch, holds in reversed(_enclosing(whole, step)):
+                if holds == "errorPath":
+                    # The step's error path runs only after it fails; one that only succeeded never ran it.
+                    owner = cast(str, switch["id"])
+                    ran = [entry for entry in own if entry.nodeId == owner]
+                    if ran and all(entry.status == "completed" for entry in ran):
+                        blocked = Blocked(
+                            reason="path",
+                            nodeId=step,
+                            instanceKey="",
+                            message=f"With this test data, {owner} succeeds, so {step} isn't reached.",
+                        )
+                        break
+                    continue
                 taken = next(
                     (
                         cast(JsonObject, b)
@@ -997,6 +1053,67 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             *extra,
         ],
     )
+
+
+def _error_handlers(ir: WorkflowIR) -> dict[str, Any]:
+    """The steps of a compiled workflow whose onError setting handles their failures, by step ID."""
+    from firefly_weave.compiler.ir import HandlesErrors
+
+    return {node.id: node for node in ir.graph.nodes if isinstance(node, HandlesErrors) and node.on_error is not None}
+
+
+def _handled_entry(
+    handlers: Mapping[str, Any], key: str, error: JsonObject, outputs: Mapping[str, JsonValue], frame: str | None
+) -> dict[str, Any]:
+    """What a trace entry says about a failure the step's setting handled: failed, its error and the setting, and
+    with an error path, the path's output once the path ended (recorded at the path's join, never at the step)."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.step_errors import StepError
+
+    step = node_of(key)
+    # Validated as the kernel builds it: a called run's ID arrives as text.
+    entry: dict[str, Any] = {"status": "failed", "error": StepError.model_validate(error, strict=False)}
+    handler = handlers.get(step)
+    if handler is None:
+        return entry
+    entry["handled"] = handler.on_error
+    if handler.on_error == "errorOutput" and handler.error_join is not None:
+        # The join is an instance of the same loops as the step: its key ends like the step's.
+        joined = handler.error_join + key[len(step) :]
+        joined = joined if frame is None else f"{frame}/{joined}"
+        if joined in outputs:
+            entry["output"] = outputs[joined]
+    return entry
+
+
+def _error_object(key: str, code: Any, outcome: Any, attempts: Any, child_run_id: Any = None) -> Any:
+    """The error object of a failure of the step instance ``key``, or None when its parts don't make one."""
+    from firefly_weave.contracts.step_errors import StepError, step_error
+
+    try:
+        return StepError.model_validate(
+            step_error(code, outcome, attempts, key, child_run_id=child_run_id), strict=False
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _stopping_error(
+    key: str, errors: Mapping[str, Any], uses: Mapping[str, str], reported: Mapping[str, Mapping[str, Any]]
+) -> Any:
+    """The error of the failure that stopped the run at the step instance ``key``: the simulated failure that applies
+    to it (its instance key, then its step, then its action, as the simulator picks), else the failure it reported."""
+    from firefly_weave.contracts.instance_keys import node_of
+
+    step = node_of(key)
+    for candidate in ("node:" + key, "node:" + step, "action:" + uses.get(step, "")):
+        if (failure := errors.get(candidate)) is not None:
+            return _error_object(key, failure.code, failure.outcome, failure.attempts)
+    report = reported.get(key)
+    if report is None:
+        return None
+    outcome, attempts = report.get("outcome", "unknown"), report.get("attempts", 1)
+    return _error_object(key, report.get("code"), outcome, attempts, report.get("child_run_id"))
 
 
 def _frame_status(status: str) -> Literal["running", "waiting", "completed", "failed"]:
