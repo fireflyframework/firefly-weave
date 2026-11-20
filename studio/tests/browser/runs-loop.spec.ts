@@ -434,6 +434,32 @@ test.describe("A cancelled loop at 1440x900", () => {
 test.describe("A recorded loop on a phone", () => {
   test.use({ viewport: { width: 360, height: 780 } });
 
+  test("step details put the run and its Item select on their own row, readable", async ({
+    page,
+  }) => {
+    const { chip } = await openLoopRun(page, failedRun());
+    // Item 3 from the chip's sheet, then send's step details on it.
+    await chip.getByRole("button", { name: /Choose an item$/ }).click();
+    await page
+      .getByRole("dialog", { name: "Items of orders" })
+      .getByRole("option", { name: /Item 3/ })
+      .click();
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("send");
+    const select = details.dialog.getByRole("combobox", { name: /^Item\b/ });
+    await expect(select.locator("option:checked")).toHaveText(
+      "Item 3 of 5 · Finished",
+    );
+    const shown = (await select.boundingBox())!;
+    const close = (await details.dialog
+      .getByRole("button", { name: "Close", exact: true })
+      .boundingBox())!;
+    // At least 12em wide and a touch target tall, under the step arrows and Close.
+    expect(shown.width).toBeGreaterThanOrEqual(150);
+    expect(shown.height).toBeGreaterThanOrEqual(44);
+    expect(shown.y).toBeGreaterThanOrEqual(close.y + close.height);
+  });
+
   test("the chip is one button that opens the items as a sheet", async ({
     page,
   }) => {
