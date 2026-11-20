@@ -47,6 +47,13 @@ import { branchVariables } from "../../state/last-results";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { FailureBanner } from "./failure-banner";
+import {
+  SimulateFailureDialog,
+  type FailureChoice,
+} from "./simulate-failure-dialog";
+import { codeSuggestions, failureKey, simulateBlock } from "./simulate-failure";
+import { RowMenu, type RowMenuItem } from "../../../row-menu";
+import { actionSideEffect } from "../kinds/forms/action-forms";
 import { failureOf } from "../../state/test-data-ops";
 import type { ErrorEntry } from "../../state/test-data";
 import { OutputEditor } from "./output-editor";
@@ -148,6 +155,8 @@ import { describeError } from "../../../errors";
     PathList,
     PinnedBanner,
     FailureBanner,
+    SimulateFailureDialog,
+    RowMenu,
     OutputEditor,
     ScriptEditor,
     RunStepLogs,
@@ -296,7 +305,27 @@ import { describeError } from "../../../errors";
           <weave-icon name="edit" [size]="16" />
         </button>
       }
+      @if (moreActions(); as actions) {
+        <weave-row-menu
+          class="pane-more"
+          label="More output actions"
+          [items]="actions"
+          [iconSize]="16"
+        />
+      }
     </div>
+    @if (simulating(); as open) {
+      <weave-simulate-failure-dialog
+        [step]="session().target"
+        [suggestions]="open.suggestions"
+        [item]="open.item"
+        [loop]="open.loop"
+        [changesData]="open.changesData"
+        [initial]="open.initial"
+        (chosen)="simulate($event)"
+        (closed)="closeSimulate()"
+      />
+    }
     @if (usage(); as line) {
       <!-- An AI task's model use, on a row of its own: the source and the
            controls above keep their room. -->
@@ -351,6 +380,7 @@ import { describeError } from "../../../errors";
               [scope]="failing.scope"
               [overPin]="!!pin"
               (remove)="removeFailure(failing.key)"
+              (edit)="openSimulate()"
             />
           } @else if (pin) {
             <weave-pinned-banner
@@ -1364,6 +1394,88 @@ export class OutputPane {
     const scope =
       key === target ? "step" : found.key === target ? "every" : "item";
     return { ...found, scope };
+  }
+  /** The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies. */
+  moreActions(): RowMenuItem[] | null {
+    const { controller, target } = this.session();
+    const step = controller.step(target);
+    if (!step || controller.viewingRuns() || target.startsWith("$"))
+      return null;
+    // Step details open this workflow's own steps, never a called one's.
+    const reason = simulateBlock(step, false);
+    if (reason === undefined) return null;
+    return [
+      {
+        label: "Simulate a failure…",
+        detail: reason ?? undefined,
+        disabled: reason !== null,
+        run: () => this.openSimulate(),
+      },
+    ];
+  }
+  /** Open while the dialog is: what it was opened for, kept as it was then. */
+  readonly simulating = signal<{
+    key: string;
+    item: string | null;
+    loop: string;
+    changesData: boolean;
+    suggestions: ReturnType<typeof codeSuggestions>;
+    initial: FailureChoice | null;
+    /** The failure being edited, to replace when Which items changes. */
+    editing: string | null;
+  } | null>(null);
+  openSimulate() {
+    const { controller, target } = this.session();
+    const step = controller.step(target);
+    if (!step) return;
+    const uses = step["uses"];
+    const contract =
+      typeof uses === "string"
+        ? (controller.kindContext().actionContract(uses) ?? null)
+        : null;
+    const current = this.failure();
+    this.simulating.set({
+      key: controller.pinKey(target),
+      item: this.pickedItem(),
+      loop: this.pickerRows().find((row) => row.role === "Loop")?.loopId ?? "",
+      changesData:
+        actionSideEffect(step, controller.kindContext()) === "non_idempotent",
+      suggestions: codeSuggestions(step, contract),
+      initial: current && {
+        code: current.entry.code,
+        outcome: current.entry.outcome === "unknown" ? "unknown" : "failed",
+        every: current.scope === "every",
+      },
+      editing: current?.key ?? null,
+    });
+  }
+  async simulate(choice: FailureChoice) {
+    const open = this.simulating();
+    if (!open) return;
+    const { controller, target } = this.session();
+    // The answer is for the item picked when the dialog opened.
+    if (controller.pinKey(target) !== open.key) {
+      this.problem.set(
+        "The picked item changed while the dialog was open, so nothing was simulated.",
+      );
+      return;
+    }
+    const key = failureKey(open.key, choice.every);
+    const written = await controller.setFailure(key, {
+      code: choice.code,
+      ...(choice.outcome === "unknown" ? { outcome: "unknown" as const } : {}),
+    });
+    if (!written.ok) return this.problem.set(written.message);
+    this.problem.set("");
+    if (open.editing && open.editing !== key)
+      await controller.setFailure(open.editing, null);
+  }
+  closeSimulate() {
+    this.simulating.set(null);
+    // Back to the menu that opened it (its item is gone with the menu).
+    this.element.nativeElement
+      .querySelector<HTMLElement>(".pane-more .row-menu-toggle")
+      ?.focus();
   }
   async removeFailure(key: string) {
     const removed = await this.session().controller.setFailure(key, null);

@@ -48,7 +48,13 @@ const OUTCOMES: Record<string, string> = {
         Remove
       </button>
     </p>
-    <p class="failure-banner-code">{{ codeLine() }}</p>
+    <p class="failure-banner-code">
+      <span class="failure-code">{{ codeLine() }}</span
+      >&ngsp;
+      <button type="button" class="text-link" (click)="edit.emit()">
+        Edit
+      </button>
+    </p>
     @if (overPin()) {
       <p class="pinned-banner-note">
         Its pinned output is kept for when you remove the failure.
@@ -63,6 +69,7 @@ export class FailureBanner {
   /** Pinned output is there too, kept while the failure is. */
   overPin = input(false);
   readonly remove = output<void>();
+  readonly edit = output<void>();
   sentence(): string {
     const who =
       this.scope() === "item"
