@@ -201,6 +201,80 @@ const defaults = (): Record<string, Answer> => ({
     state: "pending",
     at: fixture.NOW,
   },
+  compatibility: {
+    policy: "weave/operations-v1",
+    mode: "ready",
+    complete: true,
+    inspected: 1204,
+    checked_at: "2026-11-18T08:02:00Z",
+    findings: [],
+    findings_truncated: false,
+  },
+  check: {
+    policy: "weave/operations-v1",
+    mode: "restricted",
+    complete: true,
+    inspected: 1210,
+    checked_at: fixture.NOW,
+    findings: [{ kind: "worker", code: "worker_protocol_unsupported" }],
+    findings_truncated: false,
+  },
+  telemetry: {
+    enabled: false,
+    traces: { configured: false, host: null },
+    metrics: { configured: false, host: null, interval_seconds: null },
+    dropped: 0,
+  },
+  plan: {
+    id: "7a000000-0000-4000-8000-000000000001",
+    scope: { tenant_id: "tenant" },
+    principal_id: fixture.ME,
+    created_at: fixture.NOW,
+    cutoff: "2026-11-11T10:54:10Z",
+    expires_at: "2026-11-18T14:32:00Z",
+    complete: true,
+    candidates: [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: `7b000000-0000-4000-8000-0000000000${String(index).padStart(2, "0")}`,
+        revision: 1,
+        reason: "expired_debug",
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        id: `7c000000-0000-4000-8000-0000000000${String(index).padStart(2, "0")}`,
+        revision: 1,
+        reason: "referenced",
+      })),
+    ],
+  },
+  apply: {
+    plan_id: "7a000000-0000-4000-8000-000000000001",
+    deleted: Array.from({ length: 12 }, (_, index) => `7b${index}`),
+    blocked: [],
+  },
+  saveSettings: (request: Request) => ({
+    ...(request.postDataJSON() as object),
+    revision: fixture.settings().revision + 1,
+  }),
+  recordConsent: (request: Request) => {
+    const draft = request.postDataJSON() as { address: string };
+    return {
+      ...fixture.consents()[0],
+      ...draft,
+      id: "e2000000-0000-4000-8000-000000000002",
+      domain: draft.address.split("@")[1],
+      created_by: fixture.ME,
+      created_at: fixture.NOW,
+    };
+  },
+  revoke: {
+    ...fixture.consents()[0],
+    revoked_at: fixture.NOW,
+    revoked_by: fixture.ME,
+  },
+  saveAddress: (request: Request) => ({
+    ...(request.postDataJSON() as object),
+    updated_at: fixture.NOW,
+  }),
 });
 
 /**

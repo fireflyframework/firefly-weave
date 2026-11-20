@@ -1,0 +1,349 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Settings › Administration and the alert address card, in design tokens
+   only: a grid of cards, two columns from 440 px each, one below; cards in a
+   row share their height. Controls are 36 px with a fine pointer and 44 px on
+   touch or below 768 px. */
+:host {
+  --target: var(--control-md);
+  --small-target: var(--control-sm);
+  display: block;
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host {
+    --target: var(--control-touch);
+    --small-target: var(--control-touch);
+  }
+}
+button,
+select,
+input:not([type="checkbox"], [type="radio"]) {
+  min-height: var(--target);
+}
+button.sm {
+  min-height: var(--small-target);
+}
+code {
+  font: 12px/18px var(--font-mono);
+  color: var(--text);
+  background: var(--hover);
+  padding: 1px 3px;
+  border-radius: var(--radius-xs);
+}
+.nb {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.muted {
+  color: var(--muted);
+}
+.intro {
+  margin: var(--space-4) 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.card.full {
+  grid-column: 1 / -1;
+}
+.ch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-3);
+}
+.ch h2,
+.ch h3 {
+  flex: 1;
+  margin: 0;
+  font: var(--type-title-sm);
+}
+.ch .cap {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font: var(--type-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pill[data-tone="success"] {
+  border-color: var(--success-bd);
+  background: var(--success-bg);
+  color: var(--success-ink);
+}
+.pill[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.card dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font: var(--type-small);
+}
+.card dt {
+  color: var(--muted);
+}
+.card dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.hint {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.access {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.access weave-icon,
+.problem weave-icon,
+.done weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--danger-ink);
+}
+.done {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--success-ink);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.field > label,
+.field-label {
+  font: var(--type-label);
+  line-height: 20px;
+}
+.field :is(input, textarea, select) {
+  width: 100%;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font: var(--type-small);
+}
+.chip > span {
+  overflow-wrap: anywhere;
+}
+.chip button {
+  width: var(--target-min);
+  min-width: var(--target-min);
+  height: var(--target-min);
+  min-height: var(--target-min);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+}
+.chip button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.add-domain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.add-domain input {
+  flex: 1 1 200px;
+  width: auto;
+}
+.mini {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.mini > div {
+  display: grid;
+  grid-template-columns: var(--mcols);
+  gap: var(--space-3);
+  align-items: center;
+  min-height: 40px;
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+}
+.mini > div:last-child {
+  border-bottom: 0;
+}
+.mini > div > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mini > .h {
+  min-height: 32px;
+  background: var(--sunken);
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.optins {
+  --mcols: minmax(0, 1.6fr) minmax(0, 1.4fr) minmax(0, 1fr) 80px;
+}
+.periods {
+  --mcols: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* A confirmation in place: what will happen, then the safe choice first. */
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--warning-bd);
+  border-radius: var(--radius-md);
+  background: var(--warning-bg);
+  font: var(--type-small);
+  color: var(--text);
+}
+.confirm > p {
+  display: flex;
+  gap: var(--space-2);
+  flex: 1 1 240px;
+  margin: 0;
+}
+.confirm > p weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning-ink);
+}
+.confirm .acts {
+  margin-left: auto;
+}
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.checks .checkbox-field {
+  min-height: var(--target);
+}
+.findings {
+  margin: 0;
+  padding-left: var(--space-5);
+  font: var(--type-small);
+}
+@media (max-width: 767px) {
+  .card {
+    padding: var(--space-4);
+  }
+  .card dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .card dd {
+    margin-bottom: var(--space-2);
+  }
+  .mini > .h {
+    display: none;
+  }
+  .optins > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 10px var(--space-3);
+  }
+  .optins button {
+    justify-self: start;
+    margin-top: 6px;
+  }
+  .periods > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .chip {
+    min-height: var(--control-touch);
+  }
+  .chip button {
+    width: var(--control-touch);
+    min-width: var(--control-touch);
+    height: var(--control-touch);
+    min-height: var(--control-touch);
+  }
+}
