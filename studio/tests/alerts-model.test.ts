@@ -33,6 +33,7 @@ import {
   alertsPath,
   alertsTab,
   conditionText,
+  domainAllowed,
   domainOf,
   emptyRuleForm,
   formFromRule,
@@ -362,6 +363,16 @@ describe("recipient refusals", () => {
   it("compares an address's domain in lower case, as allowed domains are kept", () => {
     expect(domainOf("Oncall@Vendor.Example")).toBe("vendor.example");
     expect(domainOf("a@b@sub.example.org")).toBe("sub.example.org");
+  });
+  it("allows an address on an allowed domain or a subdomain of one, as the platform does", () => {
+    const domains = ["vendor.example"];
+    expect(domainAllowed("oncall@vendor.example", domains)).toBe(true);
+    expect(domainAllowed("oncall@mail.vendor.example", domains)).toBe(true);
+    expect(domainAllowed("Oncall@Mail.Vendor.Example.", domains)).toBe(true);
+    // A label boundary: badvendor.example isn't vendor.example's subdomain.
+    expect(domainAllowed("oncall@badvendor.example", domains)).toBe(false);
+    expect(domainAllowed("oncall@vendor.example.org", domains)).toBe(false);
+    expect(domainAllowed("oncall@vendor.example", [])).toBe(false);
   });
   it("says why the platform refused an outside address", () => {
     expect(

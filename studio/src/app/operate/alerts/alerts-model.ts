@@ -617,9 +617,27 @@ export function ruleDraft(
 
 // ------------------------------------------------------------------ recipients
 
-/** An address's domain as allowed domains are kept: lower case. */
+/** An address's domain as allowed domains are kept: lower case, no trailing dot. */
 export const domainOf = (address: string) =>
-  address.slice(address.lastIndexOf("@") + 1).toLowerCase();
+  address
+    .slice(address.lastIndexOf("@") + 1)
+    .trim()
+    .replace(/\.+$/, "")
+    .toLowerCase();
+
+/**
+ * Whether the platform accepts an address for alert mail by its domain: an
+ * allowed domain or a subdomain of one, as its recipient check reads them.
+ */
+export function domainAllowed(
+  address: string,
+  domains: readonly string[],
+): boolean {
+  const domain = domainOf(address);
+  return domains.some(
+    (allowed) => domain === allowed || domain.endsWith(`.${allowed}`),
+  );
+}
 
 /** Why the platform refused an outside address (WV-ALERT-RECIPIENT reasons). */
 export function recipientProblem(

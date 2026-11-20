@@ -62,7 +62,7 @@ import {
   alertsTab,
   alertsTabs,
   conditionText,
-  domainOf,
+  domainAllowed,
   nameParts,
   notificationTone,
   recipientProblem,
@@ -1128,16 +1128,14 @@ export class AlertsPage implements DoCheck, OnDestroy {
     const settings = this.store.settings();
     // Delivery skips an address whose domain an administrator removed.
     const allowed =
-      settings.kind === "ready"
-        ? new Set(settings.value.recipient_domains)
-        : null;
+      settings.kind === "ready" ? settings.value.recipient_domains : null;
     return channel.recipients.map((recipient: Recipient, index) => {
       const read = states.get(index) ?? "ok";
       const state =
         read === "ok" &&
         "address" in recipient &&
         allowed &&
-        !allowed.has(domainOf(recipient.address))
+        !domainAllowed(recipient.address, allowed)
           ? "domain_not_allowed"
           : read;
       const key = "member" in recipient ? recipient.member : recipient.address;

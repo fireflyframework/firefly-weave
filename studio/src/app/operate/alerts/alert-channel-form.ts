@@ -46,7 +46,7 @@ import type {
   AlertSettings,
   Recipient,
 } from "./alerts-api";
-import { domainOf, recipientProblem } from "./alerts-model";
+import { domainAllowed, recipientProblem } from "./alerts-model";
 import type { AlertsStore } from "./alerts-store";
 
 /** A mail connection the person may send from. */
@@ -194,7 +194,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         <span class="field-label" id="channel-outside-label"
           >Outside addresses</span
         >
-        @if (!domains().length) {
+        @if (noDomain()) {
           <p class="warnline">
             <weave-icon name="warning" [size]="16" /><span
               >Outside addresses can't be used in {{ environment() }} yet. An
@@ -259,7 +259,7 @@ const mailbox = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             </div>
           }
         }
-        @if (domains().length) {
+        @if (!noDomain()) {
           @if (room()) {
             <button
               type="button"
@@ -360,6 +360,13 @@ export class AlertChannelForm implements OnInit {
     return channel ? `Edit ${channel.name}` : "Add a channel";
   });
   readonly domains = computed(() => this.settings()?.recipient_domains ?? []);
+  /**
+   * No domain is allowed, as the settings say. Unread settings say nothing:
+   * the platform checks each address when the channel is saved.
+   */
+  readonly noDomain = computed(
+    () => this.settings()?.recipient_domains.length === 0,
+  );
   readonly connectionKnown = computed(() =>
     this.connections().some((item) => item.revisionId === this.from()),
   );
@@ -405,7 +412,7 @@ export class AlertChannelForm implements OnInit {
    */
   readonly outsideRows = computed(() => {
     const settings = this.settings();
-    const allowed = settings ? new Set(settings.recipient_domains) : null;
+    const allowed = settings?.recipient_domains ?? null;
     const environment = this.environment();
     let added = 0;
     return this.outside().map((row) => ({
@@ -413,7 +420,7 @@ export class AlertChannelForm implements OnInit {
       label: row.saved ? row.value : `New outside address ${++added}`,
       shown:
         row.problem ||
-        (row.saved && allowed && !allowed.has(domainOf(row.value))
+        (row.saved && allowed && !domainAllowed(row.value, allowed)
           ? `${recipientProblem("domain_not_allowed", row.value, environment)} Remove this address to save the channel. It gets no alert mail until an administrator allows the domain.`
           : ""),
     }));

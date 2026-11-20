@@ -519,6 +519,59 @@ test.describe("Operate › Alerts states", () => {
     await shot(page, "alerts-no-domain-1440");
   });
 
+  test("an address on a subdomain of an allowed domain counts as allowed", async ({
+    page,
+  }) => {
+    // vendor.example is allowed, so mail.vendor.example is too, as the platform checks it.
+    const channels = fixture.channels();
+    const team = channels[1];
+    team.recipients = [
+      ...team.recipients,
+      { address: "pager@mail.vendor.example" },
+    ];
+    team.recipient_states = [
+      ...team.recipient_states,
+      { index: team.recipients.length - 1, state: "ok" },
+    ];
+    const platform = await alertsPlatform(page, {
+      path: "/operate/alerts?tab=channels",
+      answers: { channels: { items: channels, next_cursor: null } },
+    });
+    const row = page
+      .getByRole("table", { name: "Email channels" })
+      .getByRole("row")
+      .filter({ hasText: "Platform team" });
+    await expect(row).toContainText(
+      "pager@mail.vendor.example · outside address",
+    );
+    await page.getByRole("button", { name: "Edit Platform team" }).click();
+    const sheet = page.getByRole("dialog", { name: "Edit Platform team" });
+    await expect(
+      sheet.getByRole("button", { name: "Remove pager@mail.vendor.example" }),
+    ).toHaveAccessibleDescription("");
+    await sheet.getByRole("button", { name: "Save channel" }).click();
+    await expect(sheet).toHaveCount(0);
+    expect(
+      sentTo(platform, `/alert-channels/${fixture.ids.team}`, "PUT"),
+    ).toHaveLength(1);
+  });
+
+  test("when the settings can't be read, the sheet still offers an outside address", async ({
+    page,
+  }) => {
+    // The platform checks each address when the channel is saved.
+    await alertsPlatform(page, {
+      path: "/operate/alerts?tab=channels",
+      answers: { settings: 503 },
+    });
+    await page.getByRole("button", { name: "Add channel" }).click();
+    const sheet = page.getByRole("dialog", { name: "Add a channel" });
+    await expect(
+      sheet.getByRole("button", { name: "Add an outside address" }),
+    ).toBeVisible();
+    await expect(sheet).not.toContainText("can't be used in local yet");
+  });
+
   test("a saved outside address whose domain is no longer allowed says so before Save", async ({
     page,
   }) => {
