@@ -238,6 +238,8 @@ SPDX-License-Identifier: Apache-2.0
   and Execute and saved test data accept a sample platform event as input. A
   project catalog that brings its own schema under that name is still refused
   when the workflow compiles.
+- Studio's first page is smaller: the Operate pages, Settings and the record
+  lists load through one shared page area, and another page opens at the top.
 
 ### Development and testing
 
