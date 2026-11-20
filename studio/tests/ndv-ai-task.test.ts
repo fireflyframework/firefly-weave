@@ -809,6 +809,44 @@ describe("an AI task's kept answer inside a loop", () => {
       "Kept this answer as test data for summarize, item 2. Execute step replays it.",
     );
   });
+  it("removes the kept answer of the item picked only, with Undo", async () => {
+    const { controller, testData, notices, actions } = details(
+      null,
+      false,
+      true,
+    );
+    controller.iterations.pick("tickets", 0);
+    await controller.generateOutput("summarize");
+    controller.iterations.pick("tickets", 1);
+    await controller.generateOutput("summarize");
+    expect(Object.keys(testData.data().aiTurns ?? {}).sort()).toEqual([
+      "summarize[0]",
+      "summarize[1]",
+    ]);
+    expect(await controller.forgetAnswer("summarize")).toBe(true);
+    expect(Object.keys(testData.data().aiTurns ?? {})).toEqual([
+      "summarize[0]",
+    ]);
+    const removed = "Removed the kept answer for summarize, item 2.";
+    expect(notices).toContain(removed);
+    expect(actions.get(removed)?.label).toBe("Undo");
+  });
+  it("removes an answer kept for every item from any item picked", async () => {
+    const { controller, testData, notices } = details(null, false, true);
+    expect(
+      await controller.setScript("summarize", {
+        turns: [{ final: "Sample answer from summarize." }],
+        source: "manual",
+      }),
+    ).toEqual({ ok: true });
+    controller.iterations.pick("tickets", 1);
+    // Item 2 replays the step's answer, so it shows as kept.
+    expect(controller.keptAnswer("summarize")).toBe(true);
+    expect(await controller.forgetAnswer("summarize")).toBe(true);
+    expect(testData.data().aiTurns).toBeUndefined();
+    // Today's words name the step, whose answer it was.
+    expect(notices).toContain("Removed the kept answer for summarize.");
+  });
 });
 
 describe("replacing a kept answer", () => {
