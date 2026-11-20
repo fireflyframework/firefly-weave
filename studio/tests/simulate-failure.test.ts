@@ -18,7 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 // Simulate a failure's rules: which steps offer it and why it is disabled,
 // the key a failure is written under (one item or every item), and the
 // codes the platform accepts.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  PLATFORM_FAILURES,
+  platformFailures,
+} from "../src/app/editor/ndv/panes/failure-codes";
 import {
   codeProblem,
   failureKey,
@@ -102,5 +108,33 @@ describe("the code of a simulated failure", () => {
       expect(codeProblem(code), code).toBe(problem);
     expect(codeProblem("A".repeat(128))).toBeNull();
     expect(codeProblem("A".repeat(129))).toBe("Use at most 128 characters.");
+  });
+});
+
+describe("the platform's failure codes a step may return", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dirname, "fixtures/language/step-errors.json"),
+      "utf8",
+    ),
+  ) as { codes: { code: string; message: string; kinds: string[] }[] };
+
+  it("are the platform's, with its messages and the kinds that return them", () => {
+    expect(PLATFORM_FAILURES).toEqual(fixture.codes);
+  });
+
+  it("are suggested for a step by its kind", () => {
+    const codes = (kind: string) =>
+      platformFailures(kind).map((item) => item.code);
+    expect(codes("transform")).toEqual([
+      "WV-EXPR-MISSING",
+      "WV-EXPR-TYPE",
+      "WV-EXPR-RESOURCE_LIMIT",
+    ]);
+    expect(codes("action")).toEqual(
+      expect.arrayContaining(["WV-TASK-DEADLINE", "TIMEOUT", "UNAVAILABLE"]),
+    );
+    expect(codes("action")).not.toContain("WV-TASK-RECONCILED-FAILURE");
+    expect(codes("switch")).toEqual([]);
   });
 });

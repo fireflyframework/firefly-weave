@@ -49,6 +49,7 @@ def test_committed_fixtures_are_what_the_generator_writes_today():
         "instance-keys.json",
         "manifest.json",
         "scope.json",
+        "step-errors.json",
         "template-segments.json",
         "text-conversion.json",
         "transactions.json",
@@ -114,6 +115,28 @@ def test_transaction_phase_keys_are_canonical_instance_keys():
         assert split_instance(case["key"]).node_id == case["instance_key"].partition("[")[0]
         assert split_phase(case["key"]) == (case["instance_key"], case["phase"])
     assert all(split_phase(key) is None for key in shared["not_phase_keys"])
+
+
+def test_step_error_codes_are_the_platform_messages_with_the_kinds_that_return_them():
+    from firefly_weave.contracts.language_features import ERROR_KINDS
+    from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
+
+    codes = fixture("step-errors.json")["codes"]
+    assert [(item["code"], item["message"]) for item in codes] == list(STEP_ERROR_MESSAGES.items())
+    assert all(set(item["kinds"]) <= set(ERROR_KINDS) for item in codes)
+    kinds = {item["code"]: item["kinds"] for item in codes}
+    assert kinds["TIMEOUT"] == ["action", "llm", "agent"]
+    assert kinds["WV-EXPR-MISSING"] == ["transform", "decisionTable"]
+    assert kinds["WV-CALL-START"] == ["callWorkflow"]
+    assert kinds["LLM_TIMEOUT"] == ["llm", "agent"]
+    # Someone's confirmation, never a step's own failure: nothing suggests it.
+    assert kinds["WV-TASK-RECONCILED-FAILURE"] == []
+
+
+def test_a_platform_code_without_its_kinds_is_refused():
+    generator = runpy.run_path("scripts/language_fixtures.py")
+    with pytest.raises(ValueError, match="NEW_CODE"):
+        generator["code_kinds"]("NEW_CODE")
 
 
 def test_manifest_snapshot_is_the_served_manifest():

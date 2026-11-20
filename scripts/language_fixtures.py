@@ -52,6 +52,8 @@ from firefly_weave.contracts.instance_keys import (
     split_instance,
 )
 from firefly_weave.contracts.language import language_manifest
+from firefly_weave.contracts.language_features import ERROR_KINDS
+from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
 from firefly_weave.contracts.transactions import (
     PARTICIPANT_STATUSES,
     TERMINAL_TRANSACTION_STATES,
@@ -779,6 +781,50 @@ def transaction_cases() -> dict[str, Any]:
     }
 
 
+# The step kinds that may return each platform failure code, by code or code prefix, first match: Studio's Simulate a
+# failure suggests a kind's codes. A new code must be placed here before the fixture is written again.
+CODE_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("WV-EXPR-", ("transform", "decisionTable")),
+    ("WV-DECISION-", ("decisionTable",)),
+    ("WV-SCHEMA-", ("action", "callWorkflow")),
+    # Someone's confirmation that the step had no effect, never a step's own failure.
+    ("WV-TASK-RECONCILED-FAILURE", ()),
+    ("WV-TASK-", ("action",)),
+    ("WV-CALL-", ("callWorkflow",)),
+    ("WV-RUN-", ("callWorkflow",)),
+    ("WV-HUMAN-", ("humanTask",)),
+    ("WV-SIGNAL-", ("signal",)),
+    ("WV-AGENT-", ("agent",)),
+    ("WV-TXN-", ("transaction",)),
+    ("TRANSIENT", ("action", "llm", "agent")),
+    ("UNAVAILABLE", ("action", "llm", "agent")),
+    ("RATE_LIMITED", ("action", "llm", "agent")),
+    ("TIMEOUT", ("action", "llm", "agent")),
+    ("LLM_", ("llm", "agent")),
+)
+
+
+def code_kinds(code: str) -> list[str]:
+    """The kinds that may return ``code``; a code no rule places is refused."""
+    for prefix, kinds in CODE_KINDS:
+        if code == prefix or (prefix.endswith(("-", "_")) and code.startswith(prefix)):
+            if not set(kinds) <= set(ERROR_KINDS):
+                raise ValueError(f"{code}: {kinds} are not all step kinds that handle errors")
+            return list(kinds)
+    raise ValueError(f"place {code} in CODE_KINDS: which step kinds return it?")
+
+
+def step_error_cases() -> dict[str, Any]:
+    return {
+        "generator": GENERATOR,
+        "rule": "the platform's failure codes with their messages and the step kinds that may return them",
+        "codes": [
+            {"code": code, "message": message, "kinds": code_kinds(code)}
+            for code, message in STEP_ERROR_MESSAGES.items()
+        ],
+    }
+
+
 def manifest_snapshot() -> dict[str, Any]:
     return {"generator": GENERATOR, "manifest": language_manifest().model_dump(mode="json")}
 
@@ -791,6 +837,7 @@ def render() -> dict[str, str]:
         "scope.json": scope_cases(),
         "manifest.json": manifest_snapshot(),
         "transactions.json": transaction_cases(),
+        "step-errors.json": step_error_cases(),
     }
     return {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n" for name, value in files.items()}
 
