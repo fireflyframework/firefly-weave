@@ -418,6 +418,24 @@ test.describe("Operate › Logs › Container logs", () => {
     await expect(member(page, FIRST).locator("img, b")).toHaveCount(0);
   });
 
+  test("a snapshot with lines missing says why they may be", async ({
+    page,
+  }) => {
+    const logs = await platform(page);
+    // The runner couldn't read the second member, so only the first is there.
+    logs.reads = [
+      snapshot("ready", { truncated: true }, { [FIRST]: lines[FIRST] }),
+    ];
+    await openContainers(page);
+    await fetchButton(page).click();
+    await page.clock.runFor(1_000);
+    await expect(member(page, FIRST)).toBeVisible();
+    await expect(member(page, SECOND)).toHaveCount(0);
+    await expect(page.locator(".snapshot-note")).toContainText(
+      "Some lines are missing: long lines were cut, older lines were left out to keep the snapshot within 256 KiB, or a member couldn't be read.",
+    );
+  });
+
   test("Follow asks for a new snapshot every 10 seconds", async ({ page }) => {
     const logs = await platform(page);
     await openContainers(page);

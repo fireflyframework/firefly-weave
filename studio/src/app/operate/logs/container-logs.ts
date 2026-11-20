@@ -308,8 +308,9 @@ type Load = "loading" | "ready" | "error" | "refused";
           <p class="hint snapshot-note">
             {{ note(snapshot.readAt) }}
             @if (snapshot.truncated) {
-              Long lines were cut, and older lines or members left out, to keep
-              the snapshot within 256 KiB.
+              Some lines are missing: long lines were cut, older lines were left
+              out to keep the snapshot within 256 KiB, or a member couldn't be
+              read.
             }
           </p>
           <!-- Seen and announced alike, and cleared after a few seconds so no stale "Copied" stays. -->
