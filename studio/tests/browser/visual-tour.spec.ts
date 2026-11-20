@@ -38,6 +38,7 @@ import {
   closeSheet,
   command,
   connected,
+  hostScope,
   newWorkflow,
   offline,
   runSummaries,
@@ -177,6 +178,7 @@ import {
   openRunsTab,
   RUN_IDS,
   RUNS_ACCOUNT,
+  runFixture,
   runsWorkflow,
   WORKER_CATALOG,
   type RunsPage,
@@ -1956,6 +1958,41 @@ function tourAcrossLogs(): (ExecutionLogEntry | Record<string, unknown>)[] {
     ),
   ];
 }
+
+/** orders goes through three orders four at a time: check, then send, for each. */
+const LOOP_SOURCE = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: order-notify, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      orders:
+        type: array
+        items:
+          type: object
+          properties: {name: {type: string}, email: {type: string}}
+        default:
+          - {name: Ada, email: ada@example.test}
+          - {name: Bo, email: bo@example.test}
+          - {name: Cy, email: cy@example.test}
+  outputSchema: {}
+  steps:
+    - id: orders
+      kind: forEach
+      items: {ref: /input/orders}
+      concurrency: 4
+      maxItems: 1000
+      collect: all
+      body:
+        steps:
+          - {id: check, kind: transform, value: {ref: /item}}
+          - {id: send, kind: transform, value: {object: {to: {ref: /item/email}}}}
+        output: {ref: /item}
+    - {id: summarize, kind: transform, value: {literal: done}}
+  output: {literal: null}
+`;
+const LOOP_WORKFLOW = yamlFile("order-notify.yaml", LOOP_SOURCE);
 
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
@@ -5674,6 +5711,78 @@ spec:
     await expect(logs.locator(".entry:not(.head)")).toHaveCount(5);
     await logs.scrollIntoViewIfNeeded();
     await shot("194-run-logs", { end: ".record-detail, .page-content" });
+  },
+  async "loop-frame"({ page, shot }) {
+    await openWorkflow(page, LOOP_WORKFLOW);
+    await expect(
+      page.locator('.canvas-v2 .loop-frame[data-frame="orders"]'),
+    ).toBeVisible();
+    await shot("230-loop-frame");
+  },
+  async "loop-input"({ page, shot }) {
+    await hostScope(page);
+    await openWorkflow(page, LOOP_WORKFLOW);
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("send");
+    const tabs = details.dialog
+      .getByRole("tablist", { name: "Step details panes" })
+      .getByRole("tab", { name: "Input" });
+    if (await tabs.count()) await tabs.click();
+    const pane = details.dialog.locator("weave-input-pane");
+    await expect(pane.getByLabel("Input source")).toHaveValue("item");
+    await shot("231-loop-input", { tabs: 0 });
+  },
+  async "loop-run"({ page, shot }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    await openExecuteWorkflow(page, LOOP_WORKFLOW, async (p) => {
+      await withLanguageFeatures(p, [
+        "text.concat",
+        "text.join",
+        "flow.forEach",
+      ]);
+    });
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    await expect(
+      page.locator('.canvas-v2 .frame-run[data-tone="done"]'),
+    ).toHaveText("· 3 of 3");
+    // The run frames the loop: on a phone the trigger, the first Tab stop, is off-screen.
+    await shot("232-loop-run", { tabs: 0 });
+  },
+  async "loop-recorded"({ page, shot }) {
+    // The recorded loop: three items, the second failed at send.
+    const base = runFixture("loop");
+    const state = base.view["state"] as Record<string, unknown>;
+    const run = {
+      ...base,
+      view: {
+        ...base.view,
+        state: { ...state, loops: { orders: { owner: "orders", count: 3 } } },
+      },
+    };
+    // The runs belong to invoice-approval 1.3.0: the loop is that version here.
+    const workflow = {
+      ...parse(LOOP_SOURCE),
+      metadata: { name: "invoice-approval", version: "1.3.0" },
+    };
+    const opened = await openRunsTab(page, {
+      runs: [run],
+      workflow,
+      before: async () => {
+        await page.route("**/projects/*/workflows/*/export", (route) =>
+          route.fulfill({ json: { id: run.versionId, document: workflow } }),
+        );
+      },
+    });
+    await opened.runs.row(RUN_IDS.loop).click();
+    await expect(
+      page
+        .locator('.item-chip-spot[data-chip="orders"]')
+        .getByRole("button", { name: /Choose an item$/ }),
+    ).toHaveAccessibleName("Item 2 of 3, Failed. Choose an item");
+    await shot("233-loop-recorded");
   },
   async "call-step"({ page, shot }) {
     const details = await openCallStep(page);

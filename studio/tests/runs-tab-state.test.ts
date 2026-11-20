@@ -1009,3 +1009,75 @@ describe("one step's recorded output", () => {
     expect(data.output("send[1]")).toEqual({ kind: "loading" });
   });
 });
+
+describe("a recorded loop's items", () => {
+  const loopDraft: Workflow = {
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "invoice-approval", version: "1.3.0" },
+    spec: {
+      steps: [
+        step("fetch"),
+        {
+          id: "orders",
+          kind: "forEach",
+          items: { ref: "/steps/fetch/output/rows" },
+          concurrency: 1,
+          maxItems: 1000,
+          collect: "all",
+          body: {
+            steps: [step("check"), step("send")],
+            output: { ref: "/item" },
+          },
+        },
+      ],
+    },
+  };
+  const loopFact = (key: string, status: StepFact["status"]): StepFact => ({
+    node_id: key.replace(/\[.*$/, ""),
+    instance_key: key,
+    iteration: [...key.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
+    kind: "action",
+    status,
+    scheduled_at: null,
+    started_at: null,
+    ended_at: null,
+    duration_ms: null,
+    queue_wait_ms: null,
+    attempts: 1,
+    worker_id: null,
+    error_code: status === "failed" ? "SMTP_REJECTED" : null,
+    child_run_id: null,
+    log_entries: 0,
+  });
+
+  it("opens on the first failed item, and a pick draws the steps inside in that item", async () => {
+    const { state, platform, host } = await started();
+    Object.assign(host, { draft: () => loopDraft });
+    const summary = summaryOf(platform.data, fixtureIds.failed);
+    platform.views.set(
+      fixtureIds.failed,
+      viewOf(summary, { loops: { orders: { owner: "orders", count: 3 } } }),
+    );
+    platform.data.steps[fixtureIds.failed] = {
+      complete: true,
+      items: [
+        loopFact("check[0]", "succeeded"),
+        loopFact("send[0]", "succeeded"),
+        loopFact("check[1]", "succeeded"),
+        loopFact("send[1]", "failed"),
+      ],
+    };
+    await state.choose(fixtureIds.failed);
+    const first = state.chosen()!.overlay!;
+    expect(first.canvas.picks).toEqual({ orders: 1 });
+    expect(first.states.get("send")).toBe("failed");
+    first.canvas.pick!("orders", 0);
+    const second = state.chosen()!.overlay!;
+    expect(second.canvas.picks).toEqual({ orders: 0 });
+    expect(second.states.get("send")).toBe("completed");
+    // Choosing the run again opens it on its first failed item again.
+    await state.choose(fixtureIds.failed);
+    expect(state.chosen()!.overlay!.canvas.picks).toEqual({ orders: 1 });
+  });
+});

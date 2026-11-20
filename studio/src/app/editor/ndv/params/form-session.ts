@@ -69,6 +69,8 @@ import {
 import {
   childEntries,
   nearestRoot,
+  OUTSIDE_LOOP,
+  outsideLoop,
   planDrop,
   rowKey,
   dropFit,
@@ -150,7 +152,13 @@ import {
   type HeldFact,
   type StepDetailsRequest,
 } from "../step-details-service";
-import { previewText, sourceLabel } from "../../formula/preview";
+import { previewText, referencesOf, sourceLabel } from "../../formula/preview";
+import {
+  loopRows,
+  pickerView,
+  readLoop,
+  type PickerLoop,
+} from "../panes/iteration-picker";
 import { checkFormula, type CheckScope } from "../../formula/check";
 import type { EditorRequest } from "../../formula/codemirror/formula-editor";
 import type { CompletionScope } from "../../formula/complete";
@@ -630,7 +638,21 @@ export class FormSession {
           : live;
     if (!target) return null;
     const entry = this.scope(target).find((entry) => entry.ref === drag.ref);
-    if (!entry) return null;
+    if (!entry) {
+      // Inside a loop body: a loop's item or position, as the host lists it.
+      const item = this.hostEntries(target)?.find(
+        (hosted) =>
+          hosted.ref === drag.ref &&
+          (hosted.source === "item" || hosted.source === "index"),
+      );
+      return item
+        ? {
+            ref: item.ref,
+            breadcrumb: item.breadcrumb,
+            schema: dragSchema(item.schema as Schema),
+          }
+        : null;
+    }
     return {
       ref: entry.ref,
       breadcrumb: [
@@ -641,6 +663,8 @@ export class FormSession {
     };
   }
   dropFit(spec: ParamSpec, drag: DragRef) {
+    if (outsideLoop(drag.ref, this.formulaOptions(spec).loops))
+      return { fit: "refused" as const, text: OUTSIDE_LOOP };
     if (spec.type === "conditions") {
       const drop = this.conditionDrop(spec, drag);
       return "reason" in drop
@@ -682,6 +706,12 @@ export class FormSession {
     drag: DragRef,
     options: { caret: number | null; shift?: boolean },
   ): boolean {
+    // A loop's item dropped on a step that loop isn't around: refused, and said.
+    if (outsideLoop(drag.ref, this.formulaOptions(spec).loops)) {
+      this.host.notify(OUTSIDE_LOOP);
+      this.announce(OUTSIDE_LOOP);
+      return false;
+    }
     if (spec.type === "conditions") {
       const drop = this.conditionDrop(spec, drag);
       if ("reason" in drop) {
@@ -1236,9 +1266,23 @@ export class FormSession {
   /** Where a value's data comes from, for the Result panel. */
   previewSource(spec: ParamSpec, value: ParamValue): string {
     void spec;
-    return value.mode === "mapped"
-      ? sourceLabel(value.expression, this.controller.previewData())
-      : "";
+    if (value.mode !== "mapped") return "";
+    // Reading a loop's item: the item picked, as the picker names it.
+    const [loop] = this.previewLoops(value);
+    return loop
+      ? pickerView(loop).item
+      : sourceLabel(value.expression, this.controller.previewData());
+  }
+  /** The loop whose item a value reads, as the Result panel's compact picker shows it; none otherwise. */
+  previewLoops(value: ParamValue): PickerLoop[] {
+    if (value.mode !== "mapped") return [];
+    const loop = readLoop(
+      referencesOf(value.expression),
+      loopRows(this.controller.iterations, this.target, (id) =>
+        this.controller.step(id),
+      ),
+    );
+    return loop ? [loop] : [];
   }
 
   /**

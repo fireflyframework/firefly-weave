@@ -47,7 +47,13 @@ import type { StaleReason } from "../registry";
       <span role="status">{{
         stale()
           ? "Pinned output may be out of date: " + reasonText() + "."
-          : "This data is pinned for test runs. Production runs ignore it."
+          : item() === null
+            ? "This data is pinned for test runs. Production runs ignore it."
+            : forEveryItem()
+              ? "Pinned for every item. Production runs ignore pins."
+              : "Pinned for item " +
+                item() +
+                ". Other items use their own data, and production runs ignore pins."
       }}</span
       >&ngsp;
       @if (stale()) {
@@ -58,6 +64,11 @@ import type { StaleReason } from "../registry";
         }
         <button type="button" class="text-link" (click)="keep.emit()">
           Keep pinned
+        </button>
+      }
+      @if (item() !== null && !forEveryItem()) {
+        <button type="button" class="text-link" (click)="everyItem.emit()">
+          Pin for every item
         </button>
       }
       <button type="button" class="text-link" (click)="unpin.emit()">
@@ -73,6 +84,10 @@ import type { StaleReason } from "../registry";
 })
 export class PinnedBanner {
   stale = input(false);
+  /** Inside a loop's body: the item picked ("3", "2 › 1"); null elsewhere. */
+  item = input<string | null>(null);
+  /** The pin is the step's, for every item, not the picked item's own. */
+  forEveryItem = input(false);
   /** Why it may be out of date; "upstream" when not known. */
   reason = input<StaleReason | "elsewhere" | null>(null);
   reasonText(): string {
@@ -95,4 +110,6 @@ export class PinnedBanner {
   readonly execute = output<void>();
   readonly unpin = output<void>();
   readonly keep = output<void>();
+  /** An item's pin becomes the step's: used by every item without a pin of its own. */
+  readonly everyItem = output<void>();
 }

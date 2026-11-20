@@ -28,8 +28,7 @@ import {
   placeOf,
   stepsAfter,
 } from "../src/app/editor/ndv/navigation";
-import { ndvRegistry, registerKind } from "../src/app/editor/ndv/registry";
-import type { Kind, Step, Workflow } from "../src/app/model";
+import type { Step, Workflow } from "../src/app/model";
 
 const workflow = parse(
   readFileSync(
@@ -164,24 +163,10 @@ describe("step details navigation", () => {
     ]);
   });
   it("walks the body of a loop like any other group of steps", () => {
-    const wait = ndvRegistry.kind("wait")!;
-    if (!ndvRegistry.kind("forEach"))
-      registerKind({
-        ...wait,
-        kind: "forEach",
-        idPrefix: "loop",
-        containers: () => [
-          {
-            path: ["body", "steps"],
-            layout: "frame",
-            label: () => "Loop body",
-          },
-        ],
-      });
     const copy = structuredClone(workflow);
     const loop = (id: string, steps: Step[]): Step => ({
       id,
-      kind: "forEach" as Kind,
+      kind: "forEach",
       body: { steps },
     });
     const pause = (id: string): Step => ({
@@ -204,7 +189,7 @@ describe("step details navigation", () => {
       "lookup",
     ]);
     expect(breadcrumb(copy, "last")).toBe(
-      "Loop body of each-order · step 2 of 2",
+      "For each item of each-order · step 2 of 2",
     );
     expect(neighbors(copy, "first").before).toEqual(["each-order"]);
     expect(neighbors(copy, "each-order").after).toEqual(["first"]);

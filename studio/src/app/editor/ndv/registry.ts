@@ -178,10 +178,14 @@ export interface ParamSpec {
   required?: boolean;
   /** The language default: a placeholder or a preselected choice. */
   default?: Json;
+  /** An expression field's default when it is a mapping, such as a loop's result per item, `{ref: "/item"}`. */
+  defaultExpression?: Expression;
   /** An example value, when there is no default. */
   placeholder?: string;
   /** One short sentence under the field. */
   hint?: string;
+  /** What the field takes, said quietly beside its label ("List"), before any error says it. */
+  typeTag?: string;
   /**
    * The label names the group for assistive technology only; its hint shows
    * in the label's place and introduces the group (a decision's paths).

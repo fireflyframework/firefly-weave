@@ -247,7 +247,6 @@ def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
     assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
         "agent",
-        "forEach",
         "transaction",
     }
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
@@ -265,7 +264,7 @@ def test_loop_and_join_entries_match_the_spec_example():
         "label": "Loop over items",
         "blocks": [{"name": "body", "path": "/body", "label": "For each item"}],
         "scope_roots": ["/item", "/index", "/loops"],
-        "studio": "pending",
+        "studio": "ready",
     }
     assert next(entry for entry in dump["operators"] if entry["name"] == "join") == {
         "name": "join",

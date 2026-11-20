@@ -227,13 +227,42 @@ SPDX-License-Identifier: Apache-2.0
               }
             </div>
           }
+          @for (chip of itemChips(); track chip.id) {
+            <div
+              class="item-chip-spot f-drag-blocker"
+              [attr.data-chip]="chip.id"
+              [style.left.px]="chip.x"
+              [style.top.px]="chip.y"
+              [style.--chip-scale]="chip.scale"
+            >
+              <weave-item-chip
+                [loop]="chip.loop"
+                [index]="chip.index"
+                [tabIndex]="0"
+                (picked)="pickItem(chip.id, $event)"
+              />
+            </div>
+          }
+          @if (frameTip(); as tip) {
+            <span
+              class="frame-tip f-drag-blocker"
+              [class.pointer]="tip.pointer"
+              [attr.data-frame-tip]="tip.id"
+              [style.left.px]="tip.x"
+              [style.top.px]="tip.y"
+              [style.max-width.px]="tip.width"
+              [style.--tip-scale]="tip.scale"
+              aria-hidden="true"
+              >{{ tip.text }}</span
+            >
+          }
           <!-- A run that happened connects nothing: no handles. -->
           @for (output of viewingRuns() ? [] : l.handles; track output.key) {
             <span
               class="handle f-drag-blocker"
               [class.connecting]="band?.key === output.key"
               [attr.data-handle]="output.key"
-              [style.left.px]="output.x - 6"
+              [style.left.px]="output.x - 6 + handleOffset(output.tile)"
               [style.top.px]="output.y - 6"
               aria-hidden="true"
             ></span>
@@ -299,6 +328,7 @@ SPDX-License-Identifier: Apache-2.0
               data-insert=""
               [attr.data-insert-owner]="slot.insert.owner"
               [attr.data-insert-index]="slot.insert.index"
+              [attr.data-slot-for]="slot.tile"
               [style.left.px]="slot.x"
               [style.top.px]="slot.y"
               [attr.aria-label]="slot.name"
@@ -412,6 +442,8 @@ SPDX-License-Identifier: Apache-2.0
   <p class="sr-only canvas-run-status" role="status">
     {{ said && !said.urgent ? said.text : "" }}
   </p>
+  <!-- A loop's progress while a simulation plays, at most every 2 s. -->
+  <p class="sr-only canvas-loop-status" role="status">{{ loopSaid }}</p>
   <p class="sr-only canvas-run-alert" role="alert">
     {{ said?.urgent ? said.text : "" }}
   </p>

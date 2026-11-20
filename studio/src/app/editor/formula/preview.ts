@@ -32,9 +32,11 @@ import type {
   NdvContext,
   Path,
   PreviewResult,
+  SampleContext,
 } from "../ndv/registry";
 import type { PreviewHook } from "../ndv/params/preview";
 import { AMBIGUOUS, evaluate, jsonType, type EvalFailure } from "./evaluate";
+import { enclosingLoops } from "./loops";
 import { opName, printFormula, printRef } from "./printer";
 
 export interface PreviewData {
@@ -49,6 +51,10 @@ export interface PreviewAt {
   scope: ReferenceScope;
   inputSchema: Schema;
   data: PreviewData;
+  /** Inside a loop's body: the picked item, its position and every loop around it, those the data has; null outside loops. */
+  loop?: Pick<SampleContext, "item" | "index" | "loops"> | null;
+  /** Inside a loop's body: the item picked in each loop around it (from 0), and the innermost loop. */
+  picked?: { innermost: string; loops: Record<string, number> } | null;
 }
 export const WAITING = "WV-PREVIEW-WAITING";
 export const SECRET = "WV-PREVIEW-SECRET";
@@ -199,6 +205,41 @@ export function sourceLabel(expression: unknown, data: PreviewData): string {
     : "";
 }
 
+/** Why a loop's item can't be previewed: the picked item isn't in the data, or there is no loop around. */
+function missingItem(
+  root: string,
+  id: string | undefined,
+  at: PreviewAt,
+): string {
+  const loop = root === "loops" ? id : at.picked?.innermost;
+  const index = loop === undefined ? undefined : at.picked?.loops[loop];
+  if (!at.loop || index === undefined)
+    return at.loop
+      ? "Can't compute yet: the picked item isn't in the data. Execute previous steps."
+      : "Can't compute yet: the current item exists only while the loop runs.";
+  return `Can't compute yet: item ${(index + 1).toLocaleString("en-US")} isn't in the data. Execute previous steps.`;
+}
+
+/** The item picked in each loop around a step, from its instance key (`send[2][0]`); null outside loops. */
+function pickedItems(
+  definition: unknown,
+  stepId: string,
+  key: string | null,
+): PreviewAt["picked"] {
+  if (!key) return null;
+  const loops = enclosingLoops(definition, stepId);
+  const indices = [...key.matchAll(/\[(\d+)\]/g)].map((match) =>
+    Number(match[1]),
+  );
+  if (!loops.length || indices.length !== loops.length) return null;
+  // Instance keys go outermost first; enclosingLoops innermost first.
+  const outermost = [...loops].reverse();
+  return {
+    innermost: loops[0],
+    loops: Object.fromEntries(outermost.map((loop, i) => [loop, indices[i]])),
+  };
+}
+
 /** What a formula resolves to at a field, or why it can't be shown. */
 export function previewFormula(
   expression: Expression,
@@ -233,13 +274,25 @@ export function previewFormula(
         );
       steps[id] = { output };
     }
-    if (root === "item" || root === "index" || root === "loops")
-      return failed(
-        WAITING,
-        "Can't compute yet: the current item exists only while the loop runs.",
-      );
+    const picked =
+      root === "item"
+        ? at.loop?.item
+        : root === "index"
+          ? at.loop?.index
+          : root === "loops"
+            ? at.loop?.loops?.[id ?? ""]
+            : null;
+    if (
+      (root === "item" || root === "index" || root === "loops") &&
+      picked === undefined
+    )
+      return failed(WAITING, missingItem(root, id, at));
   }
   const context: Record<string, Json> = { input: at.data.input() ?? {}, steps };
+  // Inside a loop's body, the picked item is the current item.
+  if (at.loop?.item !== undefined) context["item"] = at.loop.item;
+  if (at.loop?.index !== undefined) context["index"] = at.loop.index;
+  if (at.loop?.loops) context["loops"] = at.loop.loops as Json;
   const result = evaluate(expression, context);
   return result.ok
     ? { ok: true, value: result.value }
@@ -291,16 +344,28 @@ export function formulaPreviews(
         cache.clear();
       }
       const tree = boundedKey(expression);
+      // The picked item is part of the key: another item previews anew.
       const key =
-        tree === null ? null : `${ctx.step.id}\n${JSON.stringify(at)}\n${tree}`;
+        tree === null
+          ? null
+          : `${ctx.step.id}\n${ctx.instanceKey ?? ""}\n${JSON.stringify(at)}\n${tree}`;
       const cached = key === null ? undefined : cache.get(key);
       if (cached) return cached;
+      const readsItem = referencesOf(expression).some((pointer) =>
+        ["item", "index", "loops"].includes(segmentsOf(pointer)[0]),
+      );
       const result = previewFormula(expression, {
         scope: ctx.scope(at),
         inputSchema: ((ctx.workflow.spec as Record<string, unknown>)[
           "inputSchema"
         ] ?? {}) as Schema,
         data: source,
+        // Inside a loop's body, even without data: the item is picked there.
+        loop:
+          readsItem && ctx.instanceKey ? (ctx.sample.context(at) ?? {}) : null,
+        picked: readsItem
+          ? pickedItems(ctx.workflow, ctx.step.id, ctx.instanceKey)
+          : null,
       });
       if (key === null) return result;
       if (cache.size > 256) cache.clear();

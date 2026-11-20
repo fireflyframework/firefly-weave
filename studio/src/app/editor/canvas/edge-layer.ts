@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The edges: one SVG path each, with a wider invisible path to hover and
-// an arrowhead per run state. The "+" that inserts on an edge (shown on
+// an arrowhead per run state, at steps only: an edge that ends at a loop's
+// frame goes on inside it. The "+" that inserts on an edge (shown on
 // hover or focus, or whenever a step is being placed) is drawn by the
 // canvas after the steps, so Tab reaches it after the step it follows.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
@@ -43,6 +44,8 @@ export interface EdgeView {
   /** The pointer is on the edge: its "+" shows. */
   shown: boolean;
   plus: InsertView | null;
+  /** Draws an arrowhead at its end: false where it ends at a loop's frame. */
+  arrow: boolean;
 }
 
 @Component({
@@ -83,7 +86,7 @@ export interface EdgeView {
         [attr.d]="item.d"
         [attr.data-edge-line]="item.edge.key"
         [attr.marker-end]="
-          item.edge.shape === 'fan'
+          item.edge.shape === 'fan' || !item.arrow
             ? null
             : 'url(#canvas-arrow-' + item.state + ')'
         "
