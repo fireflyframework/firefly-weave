@@ -23,6 +23,8 @@ import { branchName } from "../../designer/conditions";
 import { MIN_ZOOM } from "../../designer/viewport";
 import type { Step, Workflow } from "../../model";
 import type { NodeRole } from "../ndv/registry";
+import { blocksOf, type BlockKind } from "../step-blocks";
+import { errorLane, type ErrorLane } from "./error-lane";
 import { FRAME, loopHeader } from "./loop-frame";
 
 /** Sizes in canvas units: one unit is one CSS pixel at 100% zoom. */
@@ -207,6 +209,8 @@ export interface LtrLaneLabel {
   x: number;
   y: number;
   width: number;
+  /** A step's own outputs: Success in the muted ink, Error in the danger ink. */
+  tone?: "muted" | "danger";
 }
 export interface LtrTerminal {
   step: string;
@@ -284,27 +288,21 @@ const stepsOf = (branch: unknown): Step[] => {
 const isGroup = (step: Step) =>
   step.kind === "switch" || step.kind === "parallel" || step.kind === "forEach";
 
-/** A group's lanes in order: a decision's cases then Otherwise, a parallel step's branches, or a loop's body. */
-export function lanesOf(step: Step): { name: string; steps: Step[] }[] {
-  if (step.kind === "switch")
-    return [
-      ...(Array.isArray(step["cases"]) ? step["cases"] : []).map(
-        (branch: unknown, i) => ({
-          name: `case ${i + 1}`,
-          steps: stepsOf(branch),
-        }),
-      ),
-      { name: "default", steps: stepsOf(step["default"]) },
-    ];
-  if (step.kind === "parallel")
-    return Object.entries(record(step["branches"])).map(([name, branch]) => ({
-      name,
-      steps: stepsOf(branch),
-    }));
-  if (step.kind === "forEach")
-    return [{ name: "body", steps: stepsOf(step["body"]) }];
-  return [];
+/**
+ * A step's lanes in order, its blocks: a decision's cases then Otherwise, a
+ * parallel step's branches, a loop's body, or a step's error path.
+ */
+export function lanesOf(
+  step: Step,
+): { name: string; steps: Step[]; kind: BlockKind }[] {
+  return blocksOf(step).map((block) => ({
+    name: block.name,
+    steps: stepsOf(block.branch),
+    kind: block.kind,
+  }));
 }
+/** The error path a step's Error output leads to; groups have none. */
+const errorPathOf = (step: Step) => (isGroup(step) ? null : errorLane(step));
 
 /** Whether a run can get past these steps: no Fail on the way, and a way through each group. */
 export function completes(steps: readonly Step[]): boolean {
@@ -406,6 +404,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         0,
         ...lanesOf(step).map((lane) => laneWidth(lane.steps)),
       );
+      const errors = errorPathOf(step);
       width =
         step.kind === "parallel"
           ? 2 * (LTR.bar + LTR.edge) + inner
@@ -413,7 +412,10 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
             ? LTR.tile + 2 * LTR.edge + inner
             : step.kind === "forEach"
               ? frameWidth(lanesOf(step)[0].steps) + LTR.edge
-              : (agent(step) ? LTR.agentWidth : LTR.tile) + LTR.edge;
+              : // A step with an error path joins its two outputs after the path.
+                (agent(step) ? LTR.agentWidth : LTR.tile) +
+                LTR.edge +
+                (errors ? LTR.edge + laneWidth(errors.steps) : 0);
       widths.set(step, width);
     }
     return width;
@@ -453,9 +455,17 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           value = Math.max(value!, offset + dropOf(lane.steps));
           offset += laneHeight(lane.steps);
         });
-      } else
+      } else {
         value =
           (agent(step) ? LTR.tile + LTR.subNodeRow : LTR.tile) + FRAME.labels;
+        // Its error path one lane down, after the frames its steps draw above it.
+        const errors = errorPathOf(step);
+        if (errors)
+          value = Math.max(
+            value,
+            LTR.lane + riseOf(errors.steps) + dropOf(errors.steps),
+          );
+      }
       drops.set(step, value);
     }
     return value;
@@ -479,13 +489,15 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
                   0,
                 ),
               )
-            : agent(step)
-              ? LTR.agentLane
-              : LTR.lane;
+            : (agent(step) ? LTR.agentLane : LTR.lane) +
+              guardedHeight(errorPathOf(step));
       heights.set(step, value);
     }
     return value;
   }
+  /** The rows an error path adds under its step's row. */
+  const guardedHeight = (errors: ErrorLane | null): number =>
+    errors ? riseOf(errors.steps) + laneHeight(errors.steps) : 0;
   let order = 0;
 
   function sequence(
@@ -541,12 +553,17 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
             x: x + width + 24,
             y: top + MID,
           });
-        placed.push({
-          id: step.id,
-          in: { x, y: top + MID },
-          out: fail ? null : { x: x + width, y: top + MID },
-          group: false,
-        });
+        const errors = errorPathOf(step);
+        placed.push(
+          errors
+            ? outputs(step, errors, base, x + width, top)
+            : {
+                id: step.id,
+                in: { x, y: top + MID },
+                out: fail ? null : { x: x + width, y: top + MID },
+                group: false,
+              },
+        );
       }
       x += advance(step);
     });
@@ -578,6 +595,178 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         });
     });
     return { placed, end: x };
+  }
+
+  /**
+   * A step that continues with error output: Success on its row, straight
+   * to the join after it, and Error one lane below, leading to its error
+   * path, which merges into the same join. Laid out like a decision's paths.
+   */
+  function outputs(
+    step: Step,
+    errors: ErrorLane,
+    base: TileBase,
+    right: number,
+    top: number,
+  ): Placed {
+    const lanesLeft = right + LTR.edge;
+    const end = lanesLeft + laneWidth(errors.steps);
+    const join: Point = { x: end - 6, y: top + MID };
+    const output = (
+      key: string,
+      y: number,
+      label: string,
+      insert: Insertion,
+      name: string,
+      tone: "muted" | "danger",
+      owner: string,
+      enters: string | null,
+    ): LtrHandle => {
+      const handle: LtrHandle = {
+        key: `${step.id}:path:${key}`,
+        tile: step.id,
+        x: right + LTR.rail,
+        y,
+        insert,
+        label,
+        plus: null,
+        name,
+      };
+      layout.handles.push(handle);
+      layout.edges.push({
+        key: `${step.id}>${handle.key}`,
+        tile: step.id,
+        shape: "fan",
+        a: { x: right, y: top + MID },
+        b: { x: handle.x - 6, y },
+        insert: null,
+        name: null,
+        leaves: null,
+        enters,
+      });
+      layout.labels.push({
+        owner,
+        text: label,
+        x: handle.x - 6,
+        y: y - LTR.pathLabelRise - LTR.line,
+        width: lanesLeft - 8 - (handle.x - 6),
+        tone,
+      });
+      return handle;
+    };
+    const success = output(
+      "success",
+      top + MID,
+      "Success",
+      base.after!,
+      `Add a step after ${step.id}`,
+      "muted",
+      `${step.id}/success`,
+      null,
+    );
+    layout.edges.push({
+      key: `${success.key}>$join:${step.id}`,
+      tile: step.id,
+      shape: "curve",
+      a: { x: success.x + 6, y: success.y },
+      b: join,
+      insert: null,
+      name: null,
+      leaves: step.id,
+      enters: null,
+    });
+    // The error lane makes room for the frames its steps draw above its row.
+    const laneTop = top + LTR.lane + riseOf(errors.steps);
+    const y = laneTop + MID;
+    const first = errors.steps[0]?.id ?? null;
+    const error = output(
+      errors.owner.slice(step.id.length + 1),
+      y,
+      "Error",
+      { owner: errors.owner, index: 0 },
+      errors.handleName,
+      "danger",
+      errors.owner,
+      first,
+    );
+    if (!first) {
+      layout.slots.push({
+        owner: errors.owner,
+        tile: step.id,
+        x: lanesLeft,
+        y: y - LTR.slot / 2,
+        label: "Error",
+        name: errors.handleName,
+        insert: error.insert,
+      });
+      layout.edges.push(
+        {
+          key: `${error.key}>$slot:${errors.owner}`,
+          tile: step.id,
+          shape: "curve",
+          a: { x: error.x + 6, y },
+          b: { x: lanesLeft, y },
+          insert: null,
+          name: null,
+          leaves: null,
+          enters: null,
+        },
+        {
+          key: `$slot:${errors.owner}>$join:${step.id}`,
+          tile: step.id,
+          shape: "merge",
+          a: { x: lanesLeft + LTR.slot, y },
+          b: join,
+          insert: null,
+          name: null,
+          leaves: null,
+          enters: null,
+        },
+      );
+    } else {
+      const inner = sequence(
+        errors.steps,
+        errors.owner,
+        step.id,
+        base.depth + 1,
+        lanesLeft,
+        laneTop,
+        `Error path of ${step.id}`,
+      );
+      layout.edges.push({
+        key: `${error.key}>${first}`,
+        tile: step.id,
+        shape: "curve",
+        a: { x: error.x + 6, y },
+        b: inner.placed[0].in,
+        insert: error.insert,
+        name: `Insert a step between ${step.id} and ${first}`,
+        leaves: null,
+        enters: first,
+      });
+      const last = inner.placed[inner.placed.length - 1];
+      if (last.out && completes(errors.steps))
+        layout.edges.push({
+          key: `${last.id}>$join:${step.id}`,
+          tile: last.id,
+          shape: "merge",
+          a: { x: last.out.x + 6, y: last.out.y },
+          b: join,
+          insert: null,
+          name: null,
+          leaves: last.id,
+          enters: null,
+        });
+    }
+    return {
+      id: step.id,
+      in: {
+        x: right - (agent(step) ? LTR.agentWidth : LTR.tile),
+        y: top + MID,
+      },
+      out: { x: end, y: top + MID },
+      group: true,
+    };
   }
 
   function group(step: Step, base: TileBase, x: number, top: number): Placed {
