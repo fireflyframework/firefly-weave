@@ -355,6 +355,13 @@ _GUARDED_TWICE = {
         "output": {"ref": "/steps/note/output"},
     },
 }
+# A decision whose first path holds a step with an error path.
+_DECIDED = {
+    "id": "route",
+    "kind": "switch",
+    "cases": [{"when": {"literal": True}, "steps": [_GUARDED], "output": {"literal": None}}],
+    "default": {"steps": [], "output": {"literal": None}},
+}
 # A step inside a loop body whose failure for one item runs its error path for that item.
 _CHECKED = _loop(
     "notify",
@@ -495,6 +502,12 @@ SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | No
         _workflow(_CHECKED),
         "/spec/steps/0/body/steps/0/errorPath/steps/0/value",
         [*_INPUT_ROWS, *_ITEM_ROWS, *_error_rows("check")],
+    ),
+    (
+        "an error path inside a decision path sees the failed step's error",
+        _workflow(_DECIDED),
+        "/spec/steps/0/cases/0/steps/0/errorPath/steps/0/value",
+        [*_INPUT_ROWS, *_ERROR_ROWS],
     ),
 )
 
