@@ -46,7 +46,14 @@ let sequence = 0;
       border: 0;
       color: var(--text);
     }
+    /* A scroll over the dialog or its backdrop never reaches the page:
+       the backdrop is made a scroll container that contains it. */
+    dialog.execute-path:modal {
+      overscroll-behavior: contain;
+    }
     dialog.execute-path::backdrop {
+      overflow: hidden;
+      overscroll-behavior: contain;
       background: var(--scrim);
     }
     .execute-path-chips {

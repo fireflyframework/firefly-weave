@@ -322,6 +322,14 @@ test("Execute step inside an error path its step won't take asks to simulate tha
   const answerTop = async (name: string) =>
     (await asked.getByRole("button", { name }).boundingBox())!.y;
   expect(await answerTop("Cancel")).toBe(await answerTop("Simulate a failure"));
+  // A scroll over it or its backdrop never moves the page underneath.
+  expect(
+    await asked.evaluate((node) => [
+      getComputedStyle(node).overscrollBehavior,
+      getComputedStyle(node, "::backdrop").overflow,
+      getComputedStyle(node, "::backdrop").overscrollBehavior,
+    ]),
+  ).toEqual(["contain", "hidden", "contain"]);
   // It changes nothing by itself, so focus starts on it; Escape is Cancel.
   const simulate = asked.getByRole("button", { name: "Simulate a failure" });
   await expect(simulate).toBeFocused();
