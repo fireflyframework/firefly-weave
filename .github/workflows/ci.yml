@@ -23,13 +23,8 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
-    inputs:
-      release:
-        description: Run required real-backend gates on the owned release runner
-        type: boolean
-        default: false
-permissions:
-  contents: read
+# The token can do nothing unless a job asks for more: every job here only reads the repository.
+permissions: {}
 # A new commit on a pull request cancels that pull request's older run. Every
 # other run (main, tags, manual dispatch) gets its own group and is never cancelled.
 concurrency:
@@ -44,6 +39,8 @@ concurrency:
 jobs:
   offline:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # Slowest recent green run: 46 minutes, most of it the unit and contract tests.
     timeout-minutes: 70
     steps:
@@ -65,6 +62,8 @@ jobs:
     # once the suite is split across runners and those tests are fixed.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # No green run to size it from yet: four local workers took about 25 minutes, and the unit tests run up to 2.5
     # times slower on a shared runner than locally.
     timeout-minutes: 90
@@ -155,6 +154,8 @@ jobs:
   studio-checks:
     name: studio checks
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -183,6 +184,8 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -215,6 +218,8 @@ jobs:
   studio-performance:
     name: studio performance
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # The Playwright install fetches its OS packages from the runner's Ubuntu mirror: up to 611 s in a studio job, while
     # the other steps take up to 143 s. At 10 minutes, two runs whose steps had all passed were cancelled.
     timeout-minutes: 20
@@ -246,6 +251,8 @@ jobs:
     if: always()
     needs: [studio-checks, studio-browser, studio-performance]
     runs-on: ubuntu-24.04
+    # It reads no repository content, so its token gets no permission at all.
+    permissions: {}
     # It only reads the results of the jobs it needs.
     timeout-minutes: 5
     steps:
@@ -264,6 +271,8 @@ jobs:
       matrix:
         os: [macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     timeout-minutes: 45
     defaults:
       run:
@@ -298,19 +307,4 @@ jobs:
       - name: Cross-platform Playwright subset
         run: npx playwright test --grep @xplat
         working-directory: studio
-  release:
-    if: github.event_name == 'workflow_dispatch' && inputs.release
-    runs-on: [self-hosted, weave-owned-release]
-    # The 0.1.0a19 release gate ran its stages in about 105 minutes on a local machine.
-    timeout-minutes: 180
-    environment: weave-owned-release
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py --release --docker-context colima-weave-tests
-# The release runner supplies guarded PostgreSQL/Keycloak/Kafka, the retained
-# predecessor artifact/interpreter, and secret environment variables. This job builds
-# the current exact-wheel images and clean installed closures. Missing inputs
-# fail the prerequisite stage; the offline job is never a substitute for release gates.
-# Private stage logs and databases remain on the owned runner, not uploaded to artifacts.
+# The release gate on the owned self-hosted runner is in release-gate.yml, which only a manual run starts.

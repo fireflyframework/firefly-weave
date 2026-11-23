@@ -291,6 +291,17 @@ SPDX-License-Identifier: Apache-2.0
   `tests/browser/cluster-connect-real.spec.ts`: Studio copies the connect
   command for a namespace of the run's cluster, the command runs as copied,
   and Studio must show **Cluster connected** within 15 seconds of its end.
+- A Security scans workflow runs on pull requests and on `main`: gitleaks over
+  the files and the new commits, and trivy over the lockfiles (development
+  dependencies included), Dockerfiles and Kubernetes manifests, both pinned to
+  checksummed releases. A high or critical finding fails it; the reviewed false
+  positives are listed in `.github/gitleaks.toml`, each anchored to its exact
+  block.
+- Every third-party action is pinned by commit, each job gets only the token
+  permissions it needs, and the release gate runs in its own workflow, started by
+  hand.
+- The desktop installer jobs fetch crates again when crates.io breaks off a
+  download.
 
 ### Versions and schema
 
