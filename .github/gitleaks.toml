@@ -41,7 +41,11 @@ description = "Private key blocks the redaction test feeds in and expects back: 
 targetRules = ["private-key"]
 condition = "AND"
 paths = ['''^studio/tests/acceptance-records\.test\.ts$''']
-regexes = ['''^-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----(?:\\n\$\{body\}|\[redacted\]-----END PRIVATE KEY-----)''']
+regexes = [
+  '''^-----BEGIN PRIVATE KEY-----\\n\$\{body\}\\n-----END PRIVATE KEY-----\\nnext`,\s+`\{"privateKey":"-----BEGIN RSA PRIVATE KEY-----$''',
+  '''^-----BEGIN OPENSSH PRIVATE KEY-----\\n\$\{body\}`,\s+\]\) \{[^`]+`-----BEGIN PRIVATE KEY-----$''',
+  '''^-----BEGIN PRIVATE KEY-----\[redacted\]-----END PRIVATE KEY-----\\nnext",\s+\);\s+const publicKey = `-----BEGIN PUBLIC KEY-----$''',
+]
 
 [[allowlists]]
 description = "Prefixes of the throwaway PostgreSQL login names the integration tests make; each password comes from secrets.token_urlsafe when the test runs."

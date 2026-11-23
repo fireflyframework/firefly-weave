@@ -1006,7 +1006,7 @@ def test_every_accepted_secret_finding_names_its_rule_its_files_its_exact_value_
         assert set(entry) == {"description", "targetRules", "condition", "paths", "regexes"}, entry
         assert entry["description"].strip() and entry["targetRules"] and entry["condition"] == "AND"
         assert all(path.startswith("^") and path.endswith("$") for path in entry["paths"]), entry["paths"]
-        assert all(regex.startswith("^") for regex in entry["regexes"]), entry["regexes"]
+        assert all(regex.startswith("^") and regex.endswith("$") for regex in entry["regexes"]), entry["regexes"]
 
 
 def test_the_file_scan_fails_on_high_and_critical_findings_with_its_releases_own_checks():
