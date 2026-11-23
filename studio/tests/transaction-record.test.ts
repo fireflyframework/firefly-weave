@@ -219,6 +219,18 @@ describe("a transaction record's rows", () => {
         word("Not undone", "warning", "warning"),
       );
       expect(row(unknown, "hold").stillApplied, state).toBe(false);
+      // An undone step left nothing applied: it keeps its check and its word.
+      const undoneStep = row(
+        record(
+          state,
+          participant("add", "compensate", "undone"),
+          participant("hold", "reserve", "cancel_stuck"),
+        ),
+        "add",
+      );
+      expect(undoneStep.stillApplied, state).toBe(false);
+      expect(undoneStep.forward, state).toEqual(word("Done", "ok", "success"));
+      expect(undoneStep.undo, state).toEqual(word("Undone", "ok", "warning"));
     }
   });
 
@@ -495,6 +507,10 @@ describe("the Transactions section", () => {
     expect(
       retryOf(participant("add", "compensate", "undone", { attempts: 4 })),
     ).toBe("Retry the undo");
+    // One try is no retry: the label can't name that phase.
+    expect(
+      retryOf(participant("add", "compensate", "undone", { attempts: 1 })),
+    ).toBe("Retry the step");
     expect(
       retryOf(participant("hold", "reserve", "cancelled", { attempts: 11 })),
     ).toBe("Retry the release");

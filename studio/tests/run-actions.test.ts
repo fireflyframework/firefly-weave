@@ -693,6 +693,26 @@ describe("Cancel run on a run with transactions", () => {
     s.calls.notices[0].run!();
     expect(s.calls.opened).toEqual([`/operate/incidents?incident=${incident}`]);
   });
+
+  it("keeps a 409 with another code a plain refusal: no incident, no second read", async () => {
+    const s = shell();
+    s.platform.transactions = [open];
+    const sending = s.actions.cancel();
+    await s.settle();
+    s.refuse(refused(409, "WV-CONFLICT", "The run changed meanwhile."));
+    await sending;
+    expect(s.calls.transactionReads).toHaveLength(1);
+    expect(s.calls.notices).toEqual([]);
+    expect(s.calls.failures).toEqual([
+      {
+        plain: {
+          status: 409,
+          code: "WV-CONFLICT",
+          message: "The run changed meanwhile.",
+        },
+      },
+    ]);
+  });
 });
 
 describe("Cancel without undoing", () => {

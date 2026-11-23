@@ -262,13 +262,18 @@ test("Cancel without undoing lists what stays done and needs the run's short ID"
   ]);
   expect(Math.abs(title!.x - field!.x)).toBeLessThanOrEqual(1);
   await expect(cancel.locator(".reason-count")).toHaveText("0 / 2,000");
-  await reason.fill("The target system is down until tomorrow");
-  await expect(cancel.locator(".reason-count")).toHaveText("40 / 2,000");
   const typed = cancel.getByLabel(`Type ${short} to confirm`);
   await expect(typed).toHaveValue("");
   const confirm = cancel.getByRole("button", {
     name: "Cancel without undoing",
   });
+  // The run's short ID alone doesn't send: a blank reason keeps it disabled.
+  await typed.fill(short);
+  await reason.fill("   ");
+  await expect(confirm).toBeDisabled();
+  await typed.fill("");
+  await reason.fill("The target system is down until tomorrow");
+  await expect(cancel.locator(".reason-count")).toHaveText("40 / 2,000");
   await expect(confirm).toBeDisabled();
   for (const wrong of [short.slice(0, 7), loopRunId, "cancel"]) {
     await typed.fill(wrong);
