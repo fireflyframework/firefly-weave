@@ -694,6 +694,20 @@ describe("moving the trigger", () => {
       id: "t-1",
     });
   });
+
+  it("never reads a lost move as moved once someone stopped the trigger", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    const row = only(planFor(platform, { storedId: "t-1" }));
+    platform.lose.add("POST /event-triggers/t-1/retarget");
+    expect(await apply(platform, row)).toMatchObject({ status: "failed" });
+    // The move landed on the new activation; then someone stopped the trigger.
+    Object.assign(platform.find("t-1")!, { disabled: true, revision: 3 });
+    expect(await apply(platform, row)).toMatchObject({
+      status: "changed",
+      text: "notify-team changed since you opened this. Review it.",
+    });
+  });
 });
 
 describe("replacing the trigger when the version reacts to other events", () => {
@@ -1289,7 +1303,7 @@ describe("every stop reads the trigger again first", () => {
   ];
 
   it.each(cases)(
-    "stops nothing when %s has a newer revision",
+    "stops nothing and owes nothing when %s has a newer revision",
     async (_name, rowOf) => {
       const platform = new FakePlatform();
       const row = rowOf(platform);
@@ -1302,10 +1316,70 @@ describe("every stop reads the trigger again first", () => {
       expect(result.text).toMatch(
         /notify-team changed since you opened this\. Review it\.$/,
       );
+      // The person reviews the changed trigger; Studio no longer owes its stop.
+      expect(result.pendingStop).toBeNull();
       expect(platform.writes()).not.toContain(
         "POST /event-triggers/t-1/disable",
       );
       expect(platform.find("t-1")!["disabled"]).toBe(false);
+    },
+  );
+
+  it.each(cases)(
+    "stops nothing when %s now starts another workflow",
+    async (_name, rowOf) => {
+      const platform = new FakePlatform();
+      const row = rowOf(platform);
+      platform.before.set("GET /event-triggers/t-1", () => {
+        platform.find("t-1")!["workflow_name"] = "sync-references";
+      });
+      expect((await apply(platform, row)).status).toBe("changed");
+      expect(platform.find("t-1")!["disabled"]).toBe(false);
+    },
+  );
+
+  it.each([
+    [
+      "stopped",
+      (platform: FakePlatform) =>
+        Object.assign(platform.find("t-1")!, { disabled: true, revision: 2 }),
+    ],
+    [
+      "removed",
+      (platform: FakePlatform) =>
+        platform.triggers.splice(
+          platform.triggers.indexOf(platform.find("t-1")!),
+          1,
+        ),
+    ],
+  ])(
+    "counts a trigger someone already %s as stopped and clears the owed stop",
+    async (_name, change) => {
+      const platform = new FakePlatform();
+      platform.seed({ id: "t-0", name: "notify-team-2", activation: "a-old" });
+      platform.seed({
+        id: "t-1",
+        name: "notify-team",
+        activation: "a-older",
+        events: ["transaction.completed"],
+      });
+      const owed: PendingStop = {
+        triggerId: "t-1",
+        revision: 1,
+        activationId: "a-older",
+      };
+      const duplicate = planFor(platform, {
+        storedId: "t-0",
+        pendingStops: [owed],
+      })[1]!;
+      expect(duplicate).toMatchObject({ kind: "duplicate", stop: true });
+      platform.before.set("GET /event-triggers/t-1", () => change(platform));
+      expect(await apply(platform, duplicate)).toMatchObject({
+        status: "stopped",
+        text: "Stopped notify-team",
+        pendingStop: null,
+      });
+      expect(platform.writes()).toEqual([]);
     },
   );
 
@@ -1362,4 +1436,37 @@ describe("every stop reads the trigger again first", () => {
       "POST /event-triggers/t-1/disable",
     ]);
   });
+
+  it.each([
+    [
+      "has events waiting to start",
+      (platform: FakePlatform) =>
+        platform.starts.set("t-1", [requested("s-1")]),
+      "waiting",
+    ],
+    [
+      "couldn't be stopped",
+      (platform: FakePlatform) =>
+        platform.refuse.set(
+          "POST /event-triggers/t-1/disable",
+          refusal(500, "WV-INTERNAL", "Request failed"),
+        ),
+      "failed",
+    ],
+  ])(
+    "owes no stop for a trigger left behind that %s",
+    async (_name, fault, status) => {
+      // It reacts to events the new version doesn't, so keeping it starts nothing twice.
+      const platform = new FakePlatform();
+      platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+      const ticked = {
+        ...only(planFor(platform, { declaration: null })),
+        stop: true,
+      } as EventRow;
+      fault(platform);
+      const result = await apply(platform, ticked);
+      expect(result.status).toBe(status);
+      expect(result).not.toHaveProperty("pendingStop");
+    },
+  );
 });
