@@ -216,6 +216,11 @@ function answerSubject(key: string): string {
   const item = pinItem(key);
   return item ? `${instanceStep(key)}, item ${item}` : instanceStep(key);
 }
+/** Whose simulated failure a toast names: "send", or "item 3 of send" for one item. */
+function failureSubject(key: string): string {
+  const item = pinItem(key);
+  return item ? `item ${item} of ${instanceStep(key)}` : instanceStep(key);
+}
 /** The item of a pin inside a loop's body, one-based ("3", "3 › 1"); null for a step's pin. */
 function pinItem(key: string): string | null {
   const items = [...key.slice(instanceStep(key).length).matchAll(/\[(\d+)\]/g)];
@@ -987,25 +992,33 @@ export class StepDetailsController {
   /**
    * Keeps the failure simulated at `key` (an item's or a step's), set by
    * hand and checked as all test data is; null removes it, with Undo.
+   * `replacing` is the failure an edit moves from (an item's, when it now
+   * fails for every item, or back): it goes in the same change, with no
+   * toast, as the edit removed nothing the builder would undo.
    */
   async setFailure(
     key: string,
     failure: Omit<ErrorEntry, "source"> | null,
+    replacing: string | null = null,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     const service = this.testData;
     const entry: ErrorEntry | null = failure && {
       ...failure,
       source: "manual",
     };
+    const now = new Date().toISOString();
+    const written = withFailure(service.data(), key, entry, now);
     const pointer = `/errors/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
     const outcome = await service.change(
-      withFailure(service.data(), key, entry, new Date().toISOString()),
+      replacing !== null && replacing !== key
+        ? withFailure(written, replacing, null, now)
+        : written,
       entry === null ? [] : [pointer],
     );
     if (!outcome.ok) return { ok: false, message: outcome.message };
     if (entry === null)
       this.offerUndo(
-        `Removed the simulated failure of ${key}.`,
+        `Removed the simulated failure of ${failureSubject(key)}.`,
         outcome.previous,
       );
     return { ok: true };

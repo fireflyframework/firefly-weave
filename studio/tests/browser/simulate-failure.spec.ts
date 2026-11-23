@@ -142,6 +142,81 @@ test("Simulate a failure… sets the code, checking it first; a transform's fail
   );
 });
 
+test("an item's failure edited to every item becomes the step's, with nothing to undo", async ({
+  page,
+}) => {
+  const canvas = await openNewWorkflow(page);
+  await page.evaluate(
+    (value) => navigator.clipboard.writeText(value),
+    JSON.stringify({
+      weaveClipboard: 1,
+      steps: [
+        {
+          id: "fetch",
+          kind: "transform",
+          value: { literal: { rows: ["a", "b", "c"] } },
+        },
+        {
+          id: "orders",
+          kind: "forEach",
+          items: { ref: "/steps/fetch/output/rows" },
+          concurrency: 1,
+          maxItems: 1000,
+          collect: "all",
+          body: {
+            steps: [
+              {
+                id: "send",
+                kind: "transform",
+                value: { literal: { sent: true } },
+                onError: "continue",
+              },
+            ],
+            output: { ref: "/item" },
+          },
+        },
+      ],
+      connections: {},
+      llmProfiles: {},
+      pins: {},
+      errors: { "send[2]": { code: "REQUEST_REFUSED", source: "manual" } },
+    }),
+  );
+  await canvas.root.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(canvas.tile("fetch")).toBeVisible();
+  const details = new StepDetailsPage(page);
+  await details.openWithKeyboard("send");
+  const pane = await outputPane(details);
+  const items = pane.getByRole("group", { name: "Items of orders" });
+  for (let i = 0; i < 2; i++)
+    await items.getByRole("button", { name: "Next item" }).click();
+  await expect(
+    items.getByRole("button", { name: /Choose an item$/ }),
+  ).toHaveAccessibleName(/^Item 3\b/);
+  const banner = pane.locator("weave-failure-banner");
+  await expect(banner.getByRole("status")).toHaveText(
+    "This item fails when you execute it in Studio. Real runs ignore it.",
+  );
+  await banner.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Simulate a failure of send",
+  });
+  await dialog.getByRole("radio", { name: "Every item" }).check();
+  await dialog.getByRole("button", { name: "Simulate failure" }).click();
+  await expect(banner.getByRole("status")).toHaveText(
+    "Every item fails when you execute it in Studio. Real runs ignore it.",
+  );
+  // Edit opens on the failure for every item. By then a toast for the edit
+  // would show: there is none, as the edit removed nothing to undo (the
+  // paste's own toast may still be up).
+  await banner.getByRole("button", { name: "Edit" }).click();
+  await expect(dialog.getByRole("radio", { name: "Every item" })).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".toast", { hasText: "Removed" })).toHaveCount(0);
+});
+
 test("a transform that stops the run says why it can't simulate a failure", async ({
   page,
 }) => {

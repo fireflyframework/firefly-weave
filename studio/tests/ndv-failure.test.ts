@@ -139,6 +139,41 @@ describe("a step's simulated failure in step details", () => {
     expect(controller.failureOf("submit")?.code).toBe("TIMEOUT");
   });
 
+  it("names an item as the builder counts it when its failure is removed", async () => {
+    const { controller, toasts } = setup();
+    await controller.setFailure("submit[2]", { code: "TIMEOUT" });
+    await controller.setFailure("submit[2]", null);
+    expect(toasts.at(-1)?.text).toBe(
+      "Removed the simulated failure of item 3 of submit.",
+    );
+    await controller.setFailure("submit[2][0]", { code: "TIMEOUT" });
+    await controller.setFailure("submit[2][0]", null);
+    expect(toasts.at(-1)?.text).toBe(
+      "Removed the simulated failure of item 3 › 1 of submit.",
+    );
+  });
+
+  it("moves with an edit from one item to every item and back, in one change and without a toast", async () => {
+    const { controller, testData, toasts } = setup();
+    await controller.setFailure("submit[2]", { code: "REQUEST_REFUSED" });
+    const before = testData.version();
+    // Edited to Every item: the step's failure replaces item 3's.
+    expect(
+      await controller.setFailure("submit", { code: "TIMEOUT" }, "submit[2]"),
+    ).toEqual({ ok: true });
+    expect(testData.data().errors).toEqual({
+      submit: { code: "TIMEOUT", source: "manual" },
+    });
+    expect(testData.version()).toBe(before + 1);
+    // Edited back to Only item 3: item 3's replaces the step's.
+    await controller.setFailure("submit[2]", { code: "TIMEOUT" }, "submit");
+    expect(testData.data().errors).toEqual({
+      "submit[2]": { code: "TIMEOUT", source: "manual" },
+    });
+    expect(testData.version()).toBe(before + 2);
+    expect(toasts).toEqual([]);
+  });
+
   it("is refused whole when the test data has no room, keeping what was there", async () => {
     const { controller, testData } = setup();
     // Pinned output that leaves less room than the failure needs.

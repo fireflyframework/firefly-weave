@@ -1636,15 +1636,17 @@ export class OutputPane {
       return;
     }
     const key = failureKey(open.key, choice.every);
-    // "failed" is the platform's default: it isn't written.
-    const written = await controller.setFailure(key, {
-      code: choice.code,
-      ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
-    });
-    if (!written.ok) return this.problem.set(written.message);
-    this.problem.set("");
-    if (open.editing && open.editing !== key)
-      await controller.setFailure(open.editing, null);
+    // "failed" is the platform's default: it isn't written. An edit that
+    // changes Which items replaces the failure it opened on, in one change.
+    const written = await controller.setFailure(
+      key,
+      {
+        code: choice.code,
+        ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
+      },
+      open.editing,
+    );
+    this.problem.set(written.ok ? "" : written.message);
   }
   closeSimulate() {
     this.simulating.set(null);
