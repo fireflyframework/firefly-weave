@@ -59,7 +59,8 @@ def validate_ai_reserved(ir: WorkflowIR) -> None:
     """Refuse an IR that runs the model turn task anywhere but as an AI agent's model, on the platform's turn action.
 
     An agent step supplies what keeps a turn safe (the run's token cap, the data notice, the reviewed transcript); any
-    other step would leave that to its author. No agent tool runs a model task either, so a model never starts another
+    other step would leave that to its author. An action step runs no model task at all: only an AI step does, with the
+    profile the AI policy checks. No agent tool runs a model task either, so a model never starts another
     model outside that cap, and no undo action of a transaction step runs one, as an undo has none of an agent's
     guards. This holds with or without an AI policy.
     """
@@ -91,3 +92,8 @@ def validate_ai_reserved(ir: WorkflowIR) -> None:
             reserved = reserved or any(runs_model_task(spec_of(phase.dependency)) for phase in node.txn.phases.values())
         if reserved:
             raise CatalogError(422, "WV-ACTIVATION-AI-RESERVED", "Only an AI agent step runs the platform's model turn")
+        if isinstance(node, ActionNode) and node.llm_profile is None and runs_model_task(spec_of(dependency)):
+            # An action step carries no AI profile, so the AI policy could never check the model it runs.
+            raise CatalogError(
+                422, "WV-ACTIVATION-AI-RESERVED", "Only an AI step runs an AI model, so the AI policy checks it"
+            )

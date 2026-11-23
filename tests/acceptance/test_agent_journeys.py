@@ -974,11 +974,12 @@ def _assert_model_failure(run, step: str, name: str, code: str) -> None:
         ended=final.state.status,
         logs={"lookup": log},
     )
-    # Never retried: one failed turn whose task names the model's code, the run stopped at an incident, and no tool
-    # call reached the fixture.
+    # Never retried: one failed turn whose task names the model's code, the run stopped at an incident first reported
+    # as that code, the turn's row in the agent log names it, and no tool call reached the fixture.
     assert view.state.status == "suspended" and view.state.incident and incident is not None, view.state
     assert failures == [code], failures
-    assert turn_errors(log) == [view.state.incident], log
+    assert (incident.code, incident.origin_code) == (SETTLED_INCIDENT, code), incident
+    assert turn_errors(log) == [code], log
     assert calls(log) == [] and orders_calls(run) == []
     assert final.state.status in SETTLED and final.state.status != "succeeded", final.state
 
@@ -1454,7 +1455,11 @@ def test_j4_14_a_stopped_model_endpoint_fails_with_llm_unreachable_and_the_retry
     # person's retry ran the same turn again and the agent answered from the fixture.
     assert stopped_view.state.status == "suspended" and stopped_view.state.incident, stopped_view.state
     assert failures and set(failures) == {"LLM_UNREACHABLE"}, failures
-    assert turn_errors(stopped_log) == [stopped_view.state.incident], stopped_log
+    assert incident is not None and (incident.code, incident.origin_code) == (
+        SETTLED_INCIDENT,
+        "LLM_UNREACHABLE",
+    ), incident
+    assert turn_errors(stopped_log) == ["LLM_UNREACHABLE"], stopped_log
     assert view.state.status == "succeeded", view.state
     assert TOKEN in json.dumps(view.state.output), view.state.output
     assert ("GET", "/orders/A-17") in orders_calls(run)
