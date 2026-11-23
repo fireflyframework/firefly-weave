@@ -353,13 +353,18 @@ export class RunActions {
   async cancel() {
     const host = this.host();
     const target = this.target();
-    if (!target || isTerminal(this.run()) || !host.can("run.cancel", target.id))
+    if (
+      !target ||
+      host.busy ||
+      isTerminal(this.run()) ||
+      !host.can("run.cancel", target.id)
+    )
       return;
     const named = `Run ${shortId(target.id)}`;
     // What its transactions are now: a transaction in doubt stops the cancel
     // before sending, and one that hasn't settled is undone first. When
     // pages remain unread, one there may not have settled either.
-    const read = await this.readTransactions(target);
+    const read = await this.readWhileBusy(target, "Cancel run");
     if (!this.current(target)) return;
     if (read) this.know(target.id, read.views, read.complete);
     const doubt = read?.views.find((view) => view.state === "in_doubt");
@@ -486,12 +491,13 @@ export class RunActions {
     const target = this.target();
     if (
       !target ||
+      host.busy ||
       isTerminal(this.run()) ||
       !host.can("run.cancel", target.id) ||
       !host.can("transaction.reconcile", target.id)
     )
       return;
-    const read = await this.readTransactions(target);
+    const read = await this.readWhileBusy(target, "Cancel without undoing");
     if (!this.current(target)) return;
     const unread = (what: string) =>
       host.notify(
@@ -609,6 +615,21 @@ export class RunActions {
       return { views, complete: !cursor };
     } catch {
       return null;
+    }
+  }
+  /**
+   * The run's transactions read as `label`: the action row is busy while up
+   * to 10 pages are read, so the press shows, and a second one waits.
+   */
+  private async readWhileBusy(target: RunTarget, label: string) {
+    const host = this.host();
+    host.busy = label;
+    this.changed();
+    try {
+      return await this.readTransactions(target);
+    } finally {
+      if (host.busy === label) host.busy = "";
+      this.changed();
     }
   }
   /**

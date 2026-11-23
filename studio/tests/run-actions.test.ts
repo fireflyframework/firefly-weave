@@ -199,6 +199,8 @@ function shell(open: string | null = first) {
         } as Json)
       : null,
     unknownCommand: false,
+    /** The command running now, as the shell's `busy`. */
+    busy: "",
     workflowVersions: versions,
     exportFallback: null,
     api: {
@@ -713,6 +715,28 @@ describe("Cancel run on a run with transactions", () => {
       },
     ]);
   });
+
+  it("is busy while it reads the transactions, so a second press reads nothing", async () => {
+    const s = shell();
+    s.platform.pages = [[settled], [open]];
+    const busyAtForm: string[] = [];
+    s.host.dialogs.form = async (options: Json) => {
+      s.calls.asked.push(options);
+      busyAtForm.push(s.host.busy);
+      return { reason: "Stop it" };
+    };
+    const sending = s.actions.cancel();
+    expect(s.host.busy).toBe("Cancel run");
+    await s.actions.cancel();
+    await s.settle();
+    expect(s.calls.transactionReads).toHaveLength(2);
+    // The dialog waits for the person: the row isn't busy while it is open.
+    expect(busyAtForm).toEqual([""]);
+    s.answer({});
+    await sending;
+    expect(s.calls.sent).toHaveLength(1);
+    expect(s.host.busy).toBe("");
+  });
 });
 
 describe("Cancel without undoing", () => {
@@ -799,6 +823,19 @@ describe("Cancel without undoing", () => {
       false,
     );
     expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+  });
+
+  it("is busy while it reads every page, so a second press reads nothing", async () => {
+    const s = shell();
+    s.actions.know(first, [open], true);
+    s.platform.pages = [[open], [later]];
+    const pressing = s.actions.cancelWithoutUndoing();
+    expect(s.host.busy).toBe("Cancel without undoing");
+    await s.actions.cancelWithoutUndoing();
+    await pressing;
+    expect(s.calls.transactionReads).toHaveLength(2);
+    expect(s.host.busy).toBe("");
+    expect(s.actions.cancelDialog).toMatchObject({ mode: "without_undo" });
   });
 
   it("reads the transactions again, lists what stays done, and sends skip_undo once", async () => {
