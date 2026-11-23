@@ -586,12 +586,17 @@ for (const size of sizes)
       await page.keyboard.press("Escape");
       if (await details.dialog.count()) await page.keyboard.press("Escape");
       await expect(details.dialog).toHaveCount(0);
+      // A close returns focus to the step's tile after the next render. Wait
+      // for it: a step focused before then loses focus to it, and Enter
+      // opens the step just closed.
+      await expect(details.node("route-by-value")).toBeFocused();
       await details.openWithKeyboard("summarize");
       // Moving between steps left nothing that looks like an unapplied edit.
       await expect(
         page.getByText("Fix the invalid fields before continuing."),
       ).toHaveCount(0);
       await details.close();
+      await expect(details.node("summarize")).toBeFocused();
       if (size.width >= 768) await details.open("wait-for-payment");
       else await details.openWithKeyboard("wait-for-payment");
       // Previous step goes back the same way.
@@ -600,6 +605,7 @@ for (const size of sizes)
         .click();
       await expect(details.dialogFor("score")).toBeVisible();
       await details.close();
+      await expect(details.node("score")).toBeFocused();
       await details.openWithKeyboard("check-customer");
     });
   });
