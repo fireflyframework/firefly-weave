@@ -121,6 +121,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ### AI and connections
 
+- Weave AI reads every attachment of a question as the principal of the
+  credential that asked, so each owning service checks and audits that
+  credential; it no longer substitutes the principal reloaded from storage,
+  whose authorization records named no identity.
+- Weave AI discards a reply when a run attachment's run becomes classified,
+  blocked by policy or purged between the read sent to the model and the read
+  after the reply.
+- Configuring Weave AI reads the provider connection and writes the
+  `lumi.configure` audit record as the credential that asked, so the
+  connection's owning check and the audit name that credential.
 - AI agents can remember a conversation across runs. With
   `memory: {scope: conversation, key: <expression>}`, each run loads what earlier
   runs with the same key remembered (the newest `window` messages, as one data
