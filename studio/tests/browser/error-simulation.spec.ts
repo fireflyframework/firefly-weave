@@ -22,6 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { openNewWorkflow } from "./canvas-po";
 import { hasPython, localAuthoring } from "./local-authoring";
+import { StepDetailsPage } from "./step-details-po";
+import { outputPane } from "./test-data-po";
 
 test.skip(!hasPython, "Create the Python development environment first.");
 test.use({
@@ -165,4 +167,68 @@ test("a loop of three whose second item fails and continues finishes the other t
   await expect(
     items.locator(":scope > li > .run-log-item").nth(2),
   ).toHaveAttribute("data-status", "completed");
+});
+
+test("after Execute workflow, the Output pane says the step failed and continued, in one banner, over the error path's result", async ({
+  page,
+}) => {
+  await executePasted(
+    page,
+    [
+      transform("submit", {
+        onError: "errorOutput",
+        errorPath: {
+          steps: [transform("flag-request")],
+          output: { ref: "/steps/flag-request/output" },
+        },
+      }),
+      transform("lookup", { onError: "continue" }),
+    ],
+    { submit: REFUSED, lookup: REFUSED },
+  );
+  const details = new StepDetailsPage(page);
+  await details.open("submit");
+  const pane = await outputPane(details);
+  await expect(pane.locator(".pane-sub .pill").first()).toHaveText(
+    "Failed, continued",
+  );
+  await expect(pane.locator(".pane-sub .pane-source-tag")).toHaveText(
+    "Simulated · just now",
+  );
+  // One banner: what happened, then that it was simulated; never the setting's banner too.
+  await expect(pane.locator(".pinned-banner")).toHaveCount(1);
+  const banner = pane.locator("weave-error-banner");
+  await expect(banner.locator("p")).toHaveText([
+    "This step failed: REQUEST_REFUSED. The step failed with code REQUEST_REFUSED.",
+    // A transform has no effect: the platform says it didn't start.
+    "Outcome: Didn't start. Attempts: 1.",
+    "The run continued (On error: Continue with error output).",
+    /^\s*You simulated this failure. Real runs ignore it.\s*Remove\s*Edit\s*$/,
+  ]);
+  await expect(pane.locator(".pane-result-caption")).toHaveText(
+    "Result on error · from flag-request",
+  );
+  await pane.getByRole("radio", { name: "JSON" }).click();
+  await expect(pane.getByLabel("Output data")).toContainText(
+    '"from": "flag-request"',
+  );
+  // Remove takes the failure away; the banner then says only what happened.
+  await banner.getByRole("button", { name: "Remove" }).click();
+  await expect(banner.locator(".error-banner-simulated")).toHaveCount(0);
+  await expect(banner.getByRole("status")).toContainText(
+    "This step failed: REQUEST_REFUSED.",
+  );
+
+  // Continue: the output is null, and later steps can read the error.
+  await details.close();
+  await details.open("lookup");
+  const next = await outputPane(details);
+  await expect(next.locator("weave-error-banner p").nth(2)).toHaveText(
+    "The run continued (On error: Continue).",
+  );
+  await expect(next.locator(".pane-result-caption")).toHaveText("Output");
+  await expect(next.getByLabel("Output data")).toHaveText("null");
+  await expect(next.locator(".pane-result-note")).toHaveText(
+    "Later steps read null here and can read lookup's error.",
+  );
 });

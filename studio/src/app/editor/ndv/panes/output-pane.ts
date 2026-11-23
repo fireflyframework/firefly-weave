@@ -47,6 +47,9 @@ import { branchVariables } from "../../state/last-results";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { FailureBanner } from "./failure-banner";
+import { ErrorBanner } from "./error-banner";
+import { relativeTime } from "../../../format";
+import { isJsonObject } from "../../../forms/core/json";
 import {
   SimulateFailureDialog,
   type FailureChoice,
@@ -155,6 +158,7 @@ import { describeError } from "../../../errors";
     PathList,
     PinnedBanner,
     FailureBanner,
+    ErrorBanner,
     SimulateFailureDialog,
     RowMenu,
     OutputEditor,
@@ -165,6 +169,7 @@ import { describeError } from "../../../errors";
   template: `@let none = noOutput();
     @let pin = pinned();
     @let failing = failure();
+    @let went = handledRun();
     @let canPin = pinnable();
     @let kept = !pin && answerKept();
     @let keepsAnswer = !pin && aiTask();
@@ -233,6 +238,14 @@ import { describeError } from "../../../errors";
         <span class="pill pane-source-tag" data-tone="info">{{
           recorded.tag
         }}</span>
+      } @else if (went) {
+        <!-- It failed in the last execution and its On error went on. -->
+        <span class="pill" data-tone="warning"
+          ><weave-icon name="degraded" [size]="16" />Failed, continued</span
+        >
+        <span class="pill pane-source-tag"
+          >{{ simulatedWords() }} · {{ went.when }}</span
+        >
       } @else if (failing) {
         <span class="pill" data-tone="warning">Fails when executed</span>
       } @else if (pin) {
@@ -374,7 +387,15 @@ import { describeError } from "../../../errors";
             <p class="pane-empty-text">Opening the editor…</p>
           }
         } @else {
-          @if (failing) {
+          @if (went) {
+            <!-- One banner: what happened first, then that the failure is simulated. -->
+            <weave-error-banner
+              [failure]="went.failure"
+              [simulated]="!!failing"
+              (remove)="failing && removeFailure(failing.key)"
+              (edit)="openSimulate()"
+            />
+          } @else if (failing) {
             <weave-failure-banner
               [failure]="failing.entry"
               [scope]="failing.scope"
@@ -620,6 +641,12 @@ import { describeError } from "../../../errors";
               </p>
             }
           }
+          @if (went?.failure?.policy === "errorOutput") {
+            <!-- What later steps read: the error path's result. -->
+            <p class="pane-result-caption">
+              Result on error{{ went!.from ? " · from " + went!.from : "" }}
+            </p>
+          }
           @if (loadingRun(); as run) {
             <p class="pane-empty-text pane-loading-run" role="status">
               <span class="loading-spinner small" aria-hidden="true"></span
@@ -631,6 +658,15 @@ import { describeError } from "../../../errors";
             <!-- What the run recorded says it all. -->
           } @else if (none) {
             <p class="pane-empty-text">{{ none }}</p>
+          } @else if (returnedNull() && went?.failure?.policy === "continue") {
+            <p class="pane-result-caption">Output</p>
+            <pre class="pane-json" tabindex="0" aria-label="Output data">
+null</pre
+            >
+            <p class="pane-empty-text pane-result-note">
+              Later steps read null here and can read
+              {{ session().target }}'s error.
+            </p>
           } @else if (returnedNull()) {
             <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
@@ -1244,6 +1280,28 @@ export class OutputPane {
   });
   toggleAnswer(text: string) {
     this.answerOpen.set(this.answerOpen() === text ? null : text);
+  }
+  /**
+   * After an execution in which this step (the item picked, in a loop)
+   * failed and its On error went on: the failure, how long ago, and the
+   * step whose output is the error path's result; null otherwise.
+   */
+  handledRun() {
+    const { controller, target } = this.session();
+    if (target.startsWith("$")) return null;
+    const found = controller.handledResult(target);
+    if (!found) return null;
+    const path = controller.step(target)?.["errorPath"];
+    const output = isJsonObject(path) ? path["output"] : undefined;
+    const ref =
+      isJsonObject(output) && typeof output["ref"] === "string"
+        ? /^\/steps\/([^/]+)\/output$/.exec(output["ref"])
+        : null;
+    return {
+      failure: found.failure,
+      when: relativeTime(found.at),
+      from: ref ? ref[1].replace(/~1/g, "/").replace(/~0/g, "~") : null,
+    };
   }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {

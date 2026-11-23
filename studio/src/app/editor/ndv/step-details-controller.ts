@@ -151,7 +151,11 @@ import {
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
-import type { LastResult, RealResult } from "../state/last-results";
+import type {
+  HandledResult,
+  LastResult,
+  RealResult,
+} from "../state/last-results";
 import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
 import type {
@@ -697,6 +701,18 @@ export class StepDetailsController {
   /** A step's (or an iteration's) last result, from the last execution on this computer, or null. */
   lastResult(key: string): LastResult | null {
     return this.host.execution?.results()?.steps[key] ?? null;
+  }
+  /**
+   * The failure the last execution's On error handled for this step (inside
+   * a loop, for the item picked), and when that execution ran; null when
+   * the step didn't fail and go on there.
+   */
+  handledResult(id: string): { failure: HandledResult; at: string } | null {
+    if (this.viewingRuns()) return null;
+    const results = this.host.execution?.results();
+    const key = this.iterations.instanceKey(id) ?? id;
+    const failure = results?.steps[key]?.handled;
+    return results && failure ? { failure, at: results.at } : null;
   }
   /**
    * What a step's output reads now, the same for the Output pane, the Input

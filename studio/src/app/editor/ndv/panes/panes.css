@@ -637,6 +637,37 @@ weave-input-pane.is-compact .pane-source-field::before {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
+/* A step that failed and went on: what happened, then (under a rule) that
+   the failure was simulated. The code is whole, never cut by the layout. */
+.error-banner .error-banner-failed {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.error-banner p + p {
+  margin-top: var(--space-1);
+}
+.error-banner p.error-banner-setting {
+  color: var(--muted);
+}
+.error-banner p.error-banner-simulated {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--warning-bd);
+}
+.error-banner-simulated > weave-icon {
+  margin-inline-end: var(--space-1);
+  color: var(--warning-ink);
+  vertical-align: -3px;
+}
+/* What later steps read after the failure: the error path's result, or null. */
+.pane-result-caption {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font: var(--type-caption);
+}
+.pane-empty-text.pane-result-note {
+  text-align: start;
+}
 .pane-empty-actions {
   display: flex;
   flex-wrap: wrap;

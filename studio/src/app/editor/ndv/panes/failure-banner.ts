@@ -26,13 +26,7 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import type { ErrorEntry } from "../../state/test-data";
-
-/** What an outcome means, as the dialog offers it. */
-const OUTCOMES: Record<string, string> = {
-  failed: "Didn't happen",
-  unknown: "Unknown",
-  not_started: "Didn't start",
-};
+import { OUTCOME_WORDS as OUTCOMES } from "./error-banner";
 
 @Component({
   selector: "weave-failure-banner",
