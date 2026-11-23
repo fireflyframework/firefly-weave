@@ -117,6 +117,15 @@ function expectAnswers(cancel: Box, main: Box, width: number) {
   }
 }
 
+/** A dialog's content never scrolls sideways: its footer stays inside its padding. */
+async function expectNoSidewaysScroll(dialog: Locator) {
+  const [scroll, width] = await dialog.evaluate((node) => [
+    node.scrollWidth,
+    node.clientWidth,
+  ]);
+  expect(scroll, "the dialog scrolls sideways").toBeLessThanOrEqual(width);
+}
+
 /** The page never scrolls sideways. */
 async function expectNoPageScroll(page: Page) {
   const [scroll, width] = await page.evaluate(() => [
@@ -332,6 +341,7 @@ for (const size of SIZES)
         near(button.height, control, "button height");
       expectAnswers(cancel, simulate, width);
       expect(await clippedText(dialog, "")).toEqual([]);
+      await expectNoSidewaysScroll(dialog);
       await expectNoPageScroll(page);
     });
 
@@ -367,6 +377,7 @@ for (const size of SIZES)
         near(button.height, control, "answer height");
       expectAnswers(cancel, simulate, width);
       expect(await clippedText(asked, "")).toEqual([]);
+      await expectNoSidewaysScroll(asked);
       await expectNoPageScroll(page);
     });
 

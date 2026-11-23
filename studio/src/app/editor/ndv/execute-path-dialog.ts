@@ -100,6 +100,13 @@ let sequence = 0;
         flex: 1;
         min-height: 44px;
       }
+      /* The footer spans the sheet to its 16 px padding, not the panel's 28. */
+      dialog.execute-path .dialog-actions {
+        bottom: calc(-1 * var(--space-4));
+        margin: var(--space-6) calc(-1 * var(--space-4))
+          calc(-1 * var(--space-4));
+        padding-inline: var(--space-4);
+      }
     }
   `,
   template: `<dialog
