@@ -36,6 +36,7 @@ import { Icon } from "../icon";
 import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
 import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
+import { RunTransactions } from "../operate/transactions/run-transactions-section";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
 import { absoluteTime, isoTime, relativeTime, shortId } from "../format";
@@ -64,7 +65,14 @@ const isRecord = (value: unknown): value is Json =>
   selector: "weave-run-detail",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, FFlowModule, RunLogs, StartRunDialog, StepTimeline],
+  imports: [
+    Icon,
+    FFlowModule,
+    RunLogs,
+    RunTransactions,
+    StartRunDialog,
+    StepTimeline,
+  ],
   styleUrl: "./run-detail.css",
   template: `@let h = host();
     @let run = h.selectedRecord!;
@@ -310,6 +318,7 @@ const isRecord = (value: unknown): value is Json =>
         </ol>
       </section>
     }
+    <weave-run-transactions [host]="h" [runId]="id" [live]="live()" />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />
       <weave-run-logs

@@ -54,7 +54,7 @@ export interface RunTransactionView {
   participants: TransactionParticipantView[];
   /** Its in-doubt incident. */
   incident_id?: string;
-  /** How a person resolved that incident; never the values they reconciled. */
+  /** How a person, or a workflow run's resolve step, resolved that incident; never the values reconciled. */
   resolution?: {
     kind: ResolutionKind;
     reason: string;
@@ -62,6 +62,8 @@ export interface RunTransactionView {
     actor_id?: string;
     resolved_at?: string;
     reconciled_as?: "completed" | "compensated";
+    /** The triggered workflow's run whose resolve step applied it. */
+    workflow_run_id?: string;
   };
 }
 export interface RunTransactionPage {

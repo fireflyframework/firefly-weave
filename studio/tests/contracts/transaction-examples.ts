@@ -317,6 +317,32 @@ export const transactionPage: RunTransactionPage = {
         reconciled_as: "compensated",
       },
     },
+    {
+      instance_key: "move[5]",
+      node_id: "move",
+      iteration: [5],
+      state: "completed",
+      opened_at: "2026-11-22T10:31:04Z",
+      decided_at: "2026-11-22T10:31:05Z",
+      ended_at: "2026-11-22T10:40:03Z",
+      participants: [
+        {
+          node_id: "hold",
+          instance_key: "hold[5]",
+          mode: "reserve",
+          status: "confirmed",
+          effect: "none",
+          attempts: 2,
+        },
+      ],
+      incident_id: ids.decided,
+      resolution: {
+        kind: "retry_safe",
+        reason: "Confirm calls that fail with UNAVAILABLE are retried once.",
+        resolved_at: "2026-11-22T10:40:00Z",
+        workflow_run_id: ids.resolvingRun,
+      },
+    },
   ],
   next_cursor: "djI6bW92ZVs0XQ",
 };

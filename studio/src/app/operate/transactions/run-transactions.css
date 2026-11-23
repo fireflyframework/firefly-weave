@@ -1,0 +1,351 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* A run's Transactions section: one block per transaction, its record a
+   table of five columns on a wide record, four on a medium one, and one row
+   per step on a narrow one. */
+:host {
+  display: block;
+}
+.run-transactions {
+  display: grid;
+  gap: var(--space-3);
+  container: run-transactions / inline-size;
+}
+.txn-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+.txn-heading h3 {
+  margin: 0;
+}
+.txn-summary {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-summary .text-link {
+  font: inherit;
+}
+.txn-access {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-problem .support-code {
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+/* A transaction: its title line, then meta, cause, record, timeline and
+   resolution, 12 px apart. In doubt, its border is the danger one. */
+.txn-block {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.txn-block.in-doubt {
+  border-color: var(--danger-bd);
+}
+.txn-block.folded {
+  padding: var(--space-2) var(--space-3);
+}
+.txn-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+.txn-title h4 {
+  margin: 0;
+  font: var(--type-label);
+  color: var(--text);
+}
+.txn-title h4 code,
+.txn-step code,
+.txn-resolution code,
+.mono {
+  font: var(--type-mono);
+}
+.txn-chevron .disclosure {
+  transition: transform 120ms ease;
+}
+.txn-chevron .disclosure.open {
+  transform: rotate(90deg);
+}
+.txn-open-incident {
+  margin-inline-start: auto;
+}
+.txn-folded {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.txn-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-meta strong {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.txn-cause {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text);
+}
+weave-icon[data-tone="success"] {
+  color: var(--success-ink);
+}
+weave-icon[data-tone="info"] {
+  color: var(--info-ink);
+}
+weave-icon[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+weave-icon[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+
+/* The record. Its own width picks the layout: one row per step by default,
+   four columns from 560 px, five from 720 px. */
+.txn-record {
+  container: txn-record / inline-size;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.txn-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "step how"
+    "forward undo"
+    "key key";
+  align-items: start;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  font: var(--type-small);
+  color: var(--text);
+}
+.txn-step + .txn-step {
+  border-top: 1px solid var(--line);
+}
+.txn-step.stuck {
+  background: var(--danger-bg);
+}
+.txn-head {
+  display: none;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.c-step {
+  grid-area: step;
+}
+.c-how {
+  grid-area: how;
+}
+.c-forward {
+  grid-area: forward;
+}
+.c-undo {
+  grid-area: undo;
+}
+.c-key {
+  grid-area: key;
+}
+.c-happened {
+  display: none;
+}
+[role="cell"],
+[role="columnheader"] {
+  min-width: 0;
+}
+.c-step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.c-step strong {
+  font: var(--type-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.c-how,
+.step-word {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.c-how {
+  color: var(--muted);
+}
+.c-forward,
+.c-undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+}
+.step-note {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.c-forward .step-note,
+.c-undo .step-note {
+  flex-basis: 100%;
+}
+.none {
+  color: var(--subtle);
+}
+/* The key wraps at any character; Copy stays beside it. */
+.c-key {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-1) var(--space-2);
+}
+.c-key code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.cell-label {
+  color: var(--muted);
+}
+.c-key .cell-label {
+  grid-column: 1 / -1;
+}
+@container txn-record (min-width: 560px) {
+  .txn-step {
+    grid-template-columns:
+      minmax(96px, 1fr) 118px minmax(140px, 1.4fr)
+      minmax(150px, 1.3fr);
+    grid-template-areas:
+      "step how forward key"
+      "step how undo key";
+    gap: var(--space-1) var(--space-2);
+  }
+  .txn-head {
+    display: grid;
+    grid-template-areas: "step how happened key";
+  }
+  .txn-head .c-forward,
+  .txn-head .c-undo {
+    display: none;
+  }
+  .txn-head .c-happened {
+    display: block;
+    grid-area: happened;
+  }
+  .txn-step:not(.txn-head) .cell-label {
+    display: none;
+  }
+}
+@container txn-record (min-width: 720px) {
+  .txn-step {
+    grid-template-columns:
+      minmax(110px, 1fr) 128px minmax(96px, 0.9fr) minmax(150px, 1.2fr)
+      minmax(170px, 1.4fr);
+    grid-template-areas: "step how forward undo key";
+  }
+  .txn-head {
+    grid-template-areas: "step how forward undo key";
+  }
+  .txn-head .c-forward,
+  .txn-head .c-undo {
+    display: block;
+  }
+  .txn-head .c-happened {
+    display: none;
+  }
+}
+
+.txn-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-timeline time {
+  margin-inline-end: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.txn-resolution {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  font: var(--type-small);
+}
+.txn-resolution dt {
+  color: var(--muted);
+}
+.txn-resolution dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@container run-transactions (max-width: 559px) {
+  .txn-block {
+    padding: var(--space-3);
+  }
+}
+@media (pointer: coarse), (max-width: 767px) {
+  .copy-key,
+  .txn-chevron {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .txn-chevron .disclosure {
+    transition: none;
+  }
+}
