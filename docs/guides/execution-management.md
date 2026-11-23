@@ -337,16 +337,19 @@ receipt = await client.purge_run(
 The API operation is `POST runs/{run_id}/purge` with the same body and header.
 
 **What a purge removes:** the run snapshot, inputs and outputs, event history,
-step results, worker completion data, signals, incidents, and the run's human
-task forms, decisions, and task history.
+step results, worker completion data, signals, incidents, the run's human
+task forms, decisions, and task history, the platform events it emitted as
+stored for event triggers, and the trigger start records that no longer name a
+kept run.
 
 **What it keeps:** a small scoped deletion receipt, the access audit of who
 requested it, and redacted idempotency records. Replaying an earlier start
 request after a purge returns HTTP 410 instead of recreating the run or
 returning its old data. Repeating the same purge returns its recorded receipt.
 
-**What blocks it:** a worker lease that is still active, or a reference kept by
-email, schedules, triggers, or retry relationships. The purge is atomic, so a
+**What blocks it:** a worker lease that is still active, a platform event of the
+run whose trigger start is still waiting to run, or a reference kept by email,
+schedules, triggers, or retry relationships. The purge is atomic, so a
 blocked purge removes nothing. Leave such runs archived; this version does not
 cascade deletion into those separately managed resources.
 
