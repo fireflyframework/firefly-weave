@@ -123,6 +123,11 @@ A reconciler can cancel a run without undoing its open transactions: they end
 weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_undo": true}
 ```
 
+While one of the run's transactions is in doubt, this cancel is refused with
+HTTP 409 `WV-TXN-IN-DOUBT` and changes nothing. Resolve that transaction's
+incident instead: its **Force end** is the one way to end a transaction in doubt
+without deciding how it ended.
+
 ## 6. React to a transaction
 
 A workflow can start when a transaction ends or goes in doubt, for example to

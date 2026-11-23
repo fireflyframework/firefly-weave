@@ -937,10 +937,16 @@ incident for a direct link and sends its revision as the `ETag`, ready for
 
 - Filters: `status` (repeatable: `active`, `closed`, `resolved`; every status
   when omitted), `code`, `workflow`, `node_id`, `opened_after`,
-  `opened_before`, and `include_test`. `node_id` is a static step ID and
-  matches every instance of that step. Opening times follow the run summary
-  rules: RFC 3339 with an offset, `opened_after` earlier than `opened_before`,
-  and a range of at most 400 days.
+  `opened_before`, `include_test`, and `priority`. `node_id` is a static step
+  ID and matches every instance of that step. Opening times follow the run
+  summary rules: RFC 3339 with an offset, `opened_after` earlier than
+  `opened_before`, and a range of at most 400 days.
+- `priority=high` lists only the incidents of transactions in doubt (the
+  `WV-TXN-*` codes whose views carry `priority: "high"`), and `priority=normal`
+  every other incident, so a reader can list the first ahead of the rest, each
+  with its own cursor. Without `priority`, both are listed and cursors issued
+  before the filter existed keep working; any other value answers `422` with
+  `WV-VALIDATION`.
 - Incident lists default to `order=opened_desc` and also accept `opened_asc`
   and `order=id`. Incidents whose opening time is unknown come last. ID order
   without filters keeps the earlier cursors, so send explicit `order=id` to
@@ -955,6 +961,17 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   opening time taken from the run's last recorded event because the incident's
   own opening event was not retained; an unknown opening time is never
   estimated.
+- A caller who holds `incident.read` for the whole environment also gets the
+  incidents of one case. An active `WV-TXN-SETTLE-TIMEOUT` lists in `waits_on`
+  the active in-doubt incidents of the runs its transaction's steps called
+  (the latest call of each step), oldest first, at most 20, with
+  `waits_on_more: true` when there are others: resolve those first. An active
+  in-doubt incident of a called run names in `held_by` its caller's active
+  `WV-TXN-SETTLE-TIMEOUT` that waits for that run. Each link holds `id`,
+  `run_id`, `code`, `status`, `node_id`, `instance_key` and `workflow` as that
+  incident's own view shows them, never a business key, reason or value; a
+  linked incident whose own view is an unavailable placeholder is left out.
+  Both fields are left out while empty.
 - An incident on a control step, a switch or parallel branch output
   (`@branch:…`) or a join (`@join:…`), keeps that control-step ID as `node_id`
   and has no `instance_key`. The `node_id` filter takes author step IDs, so it
@@ -1106,7 +1123,10 @@ section in the same transaction that reloads those grants.
   approve (soonest expiry first), offline workers that still hold active
   leases, active incidents, targets whose runners are all offline, a restricted
   compatibility verdict (`id` is `compatibility`), and runs that failed in the
-  last hour. Within a kind, items come oldest first, then by ID. Each kind
+  last hour. Within a kind, items come oldest first, then by ID, except that
+  incidents of transactions in doubt come before the other incidents, titled
+  `Transaction in doubt: CODE at STEP` (just `Transaction in doubt` when the
+  run's metadata is withheld), never with a business key. Each kind
   needs the capability that reads its records: `deployment.read` on the target
   for jobs and runners, `deployment.read` and `deployment.approve` on the same
   target for approvals, `incident.read` for incidents, and `run.read` for
@@ -1122,6 +1142,12 @@ section in the same transaction that reloads those grants.
   hours: `started`, `succeeded`, `failed` (timed-out runs included) and
   `failure_rate` (a fraction from 0 to 1, or `null` when no run ended), test
   runs left out. Servers without run statistics leave it out.
+- `transactions` needs `run.read`: `in_doubt` (transactions waiting for a
+  person), `undoing` (transactions being undone), and
+  `oldest_undoing_seconds`, how long the oldest transaction still undoing has
+  been open since it opened. That age is left out while nothing is undoing.
+  Transactions of test runs are left out. Servers without transactions leave
+  the section out.
 
 Loop states follow these rules. A loop is `disabled` when its setting turns it
 off (API-only replicas disable every scheduler loop) and `down` while its task
@@ -1200,14 +1226,17 @@ refused (HTTP 409, `WV-TXN-IN-DOUBT`). Its run timeout, or a transaction's own
 deadline (such as a reservation about to expire), fires once and holds the run:
 the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
 `@transactions:0`, with origin `WV-RUNTIME-CAPACITY`. Forward work waits behind
-it, later changes to the run keep it, and a plain cancel stays refused. The
-transaction stays as it is until a reconciler ends it: a cancel with
-`"skip_undo": true`, or **Force end** (`terminate`) on that incident. Both need
-`transaction.reconcile` and end every open transaction `force_ended`.
+it, later changes to the run keep it, and every cancel stays refused, one with
+`"skip_undo": true` included. The transaction stays as it is until a reconciler
+ends it with **Force end** (`terminate`) on that incident, which needs
+`transaction.reconcile` and ends every open transaction `force_ended`.
 
 **Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
 `"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
-end `force_ended` instead of being undone. Without it, a run with an open
+end `force_ended` instead of being undone. While the run holds an active
+in-doubt incident, a cancel with `"skip_undo": true` is refused like any other
+(HTTP 409, `WV-TXN-IN-DOUBT`) and changes nothing, because the incident's
+**Force end** is the one way past a transaction in doubt. Without `skip_undo`, a run with an open
 transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
 finishes at a full byte quota. Only settlement spends it: a confirm whose result
@@ -1216,7 +1245,10 @@ work, and a resolution that ends the run is a stop. `GET …/runs/{identifier}/t
 (`run.read`) pages a run's transactions oldest first as `RunTransactionView`
 (`instance_key`, `node_id`, `iteration`, `state`, `business_key`, `cause`,
 `opened_at`, `decided_at`, `ended_at`, `participants`, `incident_id`,
-`resolution`), never business values. Run summaries carry `transaction_state`
+`resolution`), never business values. A participant that is a called step adds
+`child_run_id`: the run of its latest call, its undo, release, or confirm call
+when one ran, otherwise its own, as incident views' `transaction` does too.
+Run summaries carry `transaction_state`
 (the worst state of the run's transactions) and `run-summaries` filters on up to
 ten `transaction_state` values. Incident views of `WV-TXN-*` codes carry
 `priority: "high"` and `transaction`. `POST …/activations/{identifier}/retire`
@@ -1294,8 +1326,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 [export the OpenAPI document](native-openapi.md).
 
 Some requests need more than their row's capability. Creating, updating, or
-previewing an alert rule on `incidents.active` also needs `incident.read`, and
-a rule on a target signal without a `target_id` needs at least one deployment
+previewing an alert rule on `incidents.active` also needs `incident.read`, a
+rule on `transactions.in_doubt` or `transactions.undo_age_seconds` needs
+`run.read`, and a rule on a target signal without a `target_id` needs at least one deployment
 target you may read (otherwise `422 WV-ALERT-SIGNAL`). An update that only
 switches a rule off needs neither.
 

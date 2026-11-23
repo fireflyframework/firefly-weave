@@ -279,7 +279,10 @@ transaction's key and, for a reconciliation, how it ended.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
-`force_ended`, and answers `external_effects_may_continue: true`. Retiring an
+`force_ended`, and answers `external_effects_may_continue: true`. While the run
+holds an active in-doubt incident, that cancel is refused (HTTP 409
+`WV-TXN-IN-DOUBT`) and changes nothing, because Force end on the incident is
+the way past a transaction in doubt. Retiring an
 activation that a running transaction may still need to undo a step is refused
 (HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
 `reason` in its body (HTTP 422 `WV-RETIRE-REASON` without one), and the caller
@@ -289,9 +292,9 @@ later, its call can't start and the transaction is in doubt for a person.
 A run too large to undo its transactions is held behind one run-level incident,
 `WV-TXN-RUN-OVERSIZED`; its transactions stay `open` and emit no
 `transaction.in_doubt` (a subscriber sees the run's `run.transition` to
-`suspended`). Force end on that incident, or a cancel with `skip_undo`, ends each
-of them `force_ended` and emits `transaction.force_ended`, as for any other
-transaction.
+`suspended`). Force end on that incident ends each of them `force_ended` and
+emits `transaction.force_ended`, as for any other transaction; every cancel of
+the held run is refused, a cancel with `skip_undo` included.
 
 **Several incidents.** Each resolution stores the actor, reason, kind, evidence,
 time, and receipt. Independent incidents on different nodes or generations share a
