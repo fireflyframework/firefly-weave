@@ -557,6 +557,13 @@ weave-input-pane.is-compact .pane-source-field::before {
   height: var(--sd-target);
   min-height: var(--sd-target);
 }
+/* More output actions ends the row at Pin and Edit's size. */
+.step-details .pane-more .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
 .step-details button.pane-pin[aria-pressed="true"] {
   color: var(--info-ink);
   background: var(--info-bg);
