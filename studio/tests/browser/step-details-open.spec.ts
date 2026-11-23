@@ -295,6 +295,8 @@ test.describe("step details and another workflow", () => {
   test("Back from one workflow's step details to another workflow closes them and doesn't open them there", async ({
     page,
   }) => {
+    // The page's clock runs the work Back leaves for later, below.
+    await page.clock.install();
     // The first workflow is kept on this computer, so Back can bring it back.
     await openStoredWorkflow(page, {
       id: "kept-order-intake",
@@ -330,7 +332,9 @@ test.describe("step details and another workflow", () => {
     ).toBeVisible();
     await expect(details.node("lookup")).toBeVisible();
     await expect(details.dialog).toHaveCount(0);
-    await page.waitForTimeout(300);
+    // Every timer Back started, and those they start, within a second: step
+    // details opened by any of them would be on screen now.
+    await page.clock.runFor(1_000);
     await expect(details.dialog).toHaveCount(0);
     // Step details still open on request, for this workflow's step.
     await details.open("lookup");
