@@ -141,6 +141,20 @@ SPDX-License-Identifier: Apache-2.0
   conversation's key hash, version and expiry.
 - The simulator answers a conversation load from the `memory` seed of the
   agent's saved turns, and never reads a stored conversation.
+- The compiler refuses an action step whose Action runs an AI model, such as
+  `weave-agentic-generate` (`WV-COMP-AGENT_ACTION`), as it already refused the
+  AI agent turn: an action step has no AI profile, so activation could never
+  check its model against the AI policy. Activation now refuses a workflow
+  version compiled before this fix (`WV-ACTIVATION-AI-RESERVED`). Activations
+  made earlier keep starting runs, and their action step runs the model without
+  an AI step's guards until it is moved into an AI step and the workflow is
+  activated again; the worker still refuses a model the AI policy doesn't
+  approve (`LLM_POLICY`).
+- An AI agent turn or AI step that fails for good because of its model names
+  the model's own code, such as `LLM_NO_TOOL_SUPPORT`, `LLM_CONTEXT_LIMIT` or
+  `LLM_UNREACHABLE`: it is the incident's `origin_code` ("First reported as" in
+  Studio) and the turn's `error` in the Agent log. The incident's `code` is
+  unchanged.
 
 ### Studio, desktop app, and CLI
 
