@@ -80,3 +80,58 @@ def test_resolution_kinds_include_it_didnt_happen():
     assert recorded.kind == "accept_reconciled_failure"
     with pytest.raises(ValidationError):
         RecordedResolution(receipt_id=uuid4(), kind="accept_reconciled_undo", reason="checked")
+
+
+LINK = {
+    "id": str(uuid4()),
+    "run_id": str(uuid4()),
+    "code": "WV-TXN-UNDO-STUCK",
+    "status": "active",
+    "node_id": "add",
+    "instance_key": "add#undo",
+    "workflow": {"name": "child-move", "version": "1.0.0"},
+}
+
+
+def test_links_never_carry_a_business_key_or_a_reason():
+    parent = {**STORED, "code": "WV-TXN-SETTLE-TIMEOUT", "node_id": "move", "incident_key": "move:0"}
+    view = IncidentView.model_validate_json(json.dumps({**parent, "waits_on": [LINK], "held_by": LINK}))
+    dumped = view.model_dump(mode="json")
+    # Exactly the link's keys, code, status, step and workflow.
+    assert dumped["waits_on"] == [LINK] and dumped["held_by"] == LINK
+    for extra in ({"business_key": "T-1"}, {"reason": "checked"}, {"evidence_reference": "ticket"}, {"output": 1}):
+        with pytest.raises(ValidationError):
+            IncidentView.model_validate_json(json.dumps({**parent, "waits_on": [{**LINK, **extra}]}))
+        with pytest.raises(ValidationError):
+            IncidentView.model_validate_json(json.dumps({**parent, "held_by": {**LINK, **extra}}))
+    # A run-level link has no step; its empty instance key and unknown workflow are left out.
+    bare = {"id": LINK["id"], "run_id": LINK["run_id"], "code": "WV-TXN-RUN-OVERSIZED", "status": "active"}
+    held = IncidentView.model_validate_json(json.dumps({**parent, "held_by": {**bare, "node_id": None}}))
+    assert held.model_dump(mode="json")["held_by"] == {**bare, "node_id": None}
+
+
+def test_incident_pages_without_transactions_keep_their_bytes():
+    from firefly_weave.contracts.run_views import TransactionParticipantView
+
+    earlier = IncidentView.model_validate_json(json.dumps(STORED)).model_dump_json()
+    empty = IncidentView.model_validate_json(
+        json.dumps({**STORED, "waits_on": [], "waits_on_more": False, "held_by": None})
+    )
+    assert empty.model_dump_json() == earlier
+    step = {"node_id": "hold", "instance_key": "hold", "mode": "reserve", "status": "done", "effect": "none"}
+    plain = TransactionParticipantView.model_validate_json(json.dumps({**step, "child_run_id": None}))
+    assert plain.model_dump(mode="json") == step
+
+
+def test_a_case_names_at_most_twenty_incidents_it_waits_on():
+    links = [{**LINK, "id": str(uuid4())} for _ in range(21)]
+    parent = {**STORED, "code": "WV-TXN-SETTLE-TIMEOUT", "node_id": "move", "incident_key": "move:0"}
+    view = IncidentView.model_validate_json(json.dumps({**parent, "waits_on": links[:20], "waits_on_more": True}))
+    dumped = view.model_dump(mode="json")
+    assert (len(dumped["waits_on"]), dumped["waits_on_more"]) == (20, True)
+    with pytest.raises(ValidationError):
+        IncidentView.model_validate_json(json.dumps({**parent, "waits_on": links}))
+    child = IncidentView.model_validate_json(
+        json.dumps({**STORED, "held_by": {**LINK, "code": "WV-TXN-SETTLE-TIMEOUT"}})
+    )
+    assert child.model_dump(mode="json")["held_by"]["code"] == "WV-TXN-SETTLE-TIMEOUT"

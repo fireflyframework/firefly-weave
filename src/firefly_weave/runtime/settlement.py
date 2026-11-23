@@ -566,23 +566,26 @@ async def transaction_page(
     """
     from firefly_weave.contracts.run_views import RunTransactionView
     from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.operations.fact_reads import participants_with_children
     from firefly_weave.persistence.paging import PAGE_BYTES
 
     # The page is chosen first; only the fields it returns count against the byte budget, never the values a
-    # reconciliation record carries.
+    # reconciliation record carries. Each called step names the run of its latest call.
     rows = await repository.rows(
         "WITH page AS (SELECT t.* FROM run_transactions t "
         f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND (cast(:after_at AS timestamptz) IS NULL "
         "OR (t.opened_at,t.instance_key)>(cast(:after_at AS timestamptz),:after_key)) "
         "ORDER BY t.opened_at,t.instance_key LIMIT :limit) "
-        "SELECT p.instance_key,p.node_id,p.state,p.business_key,p.cause,p.participants,p.opened_at,p.decided_at,"
+        "SELECT p.instance_key,p.node_id,p.state,p.business_key,p.cause,s.participants,p.opened_at,p.decided_at,"
         "p.ended_at,i.id AS incident_id,i.actor_id,i.resolved_at,i.resolution->>'kind' AS kind,"
         "i.resolution->>'reason' AS reason,i.resolution->>'evidence_reference' AS evidence_reference,"
         "i.resolution->'output'->>'as' AS reconciled_as,"
-        "octet_length(p.participants::text)+coalesce(octet_length(p.cause::text),0)"
+        "octet_length(s.participants::text)+coalesce(octet_length(p.cause::text),0)"
         "+coalesce(octet_length(i.resolution->>'reason'),0)"
         "+coalesce(octet_length(i.resolution->>'evidence_reference'),0) AS bytes "
-        "FROM page p LEFT JOIN incidents i ON i.tenant_id=p.tenant_id AND i.project_id=p.project_id "
+        "FROM page p CROSS JOIN LATERAL (SELECT "
+        + participants_with_children("p")
+        + " AS participants) s LEFT JOIN incidents i ON i.tenant_id=p.tenant_id AND i.project_id=p.project_id "
         "AND i.environment_id=p.environment_id AND i.run_id=p.run_id AND i.incident_key=p.incident_key "
         "ORDER BY p.opened_at,p.instance_key",
         run=run_id,

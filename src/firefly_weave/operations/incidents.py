@@ -26,6 +26,7 @@ from pyfly.container import service
 from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService, audit
 from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
@@ -44,7 +45,12 @@ from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
-from firefly_weave.operations.fact_reads import FactReadRepository, incident_of, transaction_facts
+from firefly_weave.operations.fact_reads import (
+    FactReadRepository,
+    incident_of,
+    participants_with_children,
+    transaction_facts,
+)
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.agent_tools import reconciled_schema
@@ -62,6 +68,20 @@ SAFE_RETRY_POLICIES = frozenset({"read_only", "idempotent", "idempotency_key"})
 
 def retry_allowed(policy: str, ambiguous: bool) -> bool:
     return policy in SAFE_RETRY_POLICIES
+
+
+# The transaction records an incident view names, each called step with the run of its latest call.
+_RECORDS = (
+    "SELECT t.instance_key,t.state,t.business_key,t.incident_key,"
+    + participants_with_children("t")
+    + " AS participants FROM run_transactions t "
+)
+
+
+def reads_every_incident(authorization: AuthorizationService, principals: tuple[Principal, ...], scope: Scope) -> bool:
+    """Whether every principal holds ``incident.read`` for the whole environment, not only for named incidents: what
+    the incidents linked to an incident (another run's, another workflow's) need before a read shows them."""
+    return all(authorization.allows(principal, scope, "incident.read") for principal in principals)
 
 
 def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None) -> IncidentView:
@@ -124,7 +144,8 @@ class IncidentService:
             records = {
                 row["incident_key"]: row
                 for row in await repository.rows(
-                    f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run AND incident_key IS NOT NULL",
+                    _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                    "AND t.incident_key IS NOT NULL",
                     run=run_id,
                 )
             }
@@ -410,7 +431,7 @@ class IncidentService:
                 resolution=request.recorded().model_dump_json(),
             )
             records = await repository.rows(
-                f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run AND incident_key=:key",
+                _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND t.incident_key=:key",
                 run=previous.id,
                 key=incident["incident_key"],
             )
@@ -459,8 +480,9 @@ class IncidentService:
         """One incident from its facts; the run's classification metadata decides whether it is withheld."""
         self.runtime.require(actor, scope, "incident.read", context)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            await self._require_current(actor, scope, tx, context)
-            rows = await FactReadRepository(tx).incident_details([identifier])
+            current = await self._require_current(actor, scope, tx, context)
+            links = reads_every_incident(self.runtime.definitions.authorization, (actor, current), scope)
+            rows = await FactReadRepository(tx).incident_details([identifier], links=links)
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
             return incident_of(rows[0])
@@ -747,13 +769,16 @@ class IncidentService:
             raise ValueError("Chronological order requires a time position")
         self.runtime.require(actor, scope, "incident.read", context)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            await self._require_current(actor, scope, tx, context)
+            current = await self._require_current(actor, scope, tx, context)
+            links = reads_every_incident(self.runtime.definitions.authorization, (actor, current), scope)
             repository = FactReadRepository(tx)
             if run_id is not None and not await repository.run_exists(run_id):
                 raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
             rows = await repository.incident_rows(query, position, run_id)
             visible = rows[: query.limit]
-            details = {row["id"]: row for row in await repository.incident_details([row["id"] for row in visible])}
+            details = {
+                row["id"]: row for row in await repository.incident_details([row["id"] for row in visible], links=links)
+            }
             items = [incident_of(details[row["id"]]).model_dump(mode="json") for row in visible]
             next_cursor = None
             if len(rows) > query.limit:
@@ -766,6 +791,10 @@ class IncidentService:
                     next_cursor = encode_cursor_v2(scope, collection, at.isoformat() if at else None, str(last["id"]))
             return {"items": items, "next_cursor": next_cursor}
 
-    async def _require_current(self, actor: Principal, scope: Scope, tx: Transaction, context: AuditContext) -> None:
+    async def _require_current(
+        self, actor: Principal, scope: Scope, tx: Transaction, context: AuditContext
+    ) -> Principal:
         """`incident.read` on the principal stored now, in the read transaction; the token was checked first."""
-        self.runtime.require(await self.access.load_principal(actor.id, tx=tx), scope, "incident.read", context)
+        current = await self.access.load_principal(actor.id, tx=tx)
+        self.runtime.require(current, scope, "incident.read", context)
+        return current

@@ -142,6 +142,9 @@ class TransactionParticipantView(ContractModel):
     status: str = Field(min_length=1, max_length=32)
     effect: Literal["none", "unknown"]
     attempts: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+    # A called step: the run of its latest call, its undo, release or confirm call when one ran, else its own. Read
+    # from the run's calls, never stored with the record.
+    child_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunTransactionCause(ContractModel):

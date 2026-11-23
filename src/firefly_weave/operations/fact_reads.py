@@ -32,7 +32,7 @@ from firefly_weave.compiler.ir import accepted_ir_versions
 from firefly_weave.contracts import language_features
 from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import split_instance
-from firefly_weave.contracts.operations import IncidentView
+from firefly_weave.contracts.operations import MAX_WAITS_ON, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import (
     RunListQuery,
@@ -43,6 +43,7 @@ from firefly_weave.contracts.run_views import (
     StepFactWithOutput,
     StepKind,
 )
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, PHASE_SEGMENTS
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.operations.fact_positions import RunPosition, StepPosition
 from firefly_weave.operations.facts import FactRepository, author_instance
@@ -83,18 +84,108 @@ _INCIDENT_FACTS = (
 )
 # Ordering keys only: filters and sorting never read the incident's resolution or its run.
 _INCIDENT_KEYS = "SELECT i.id,f.opened_at FROM incidents i" + _INCIDENT_FACTS + " WHERE " + _INCIDENT_SCOPE
+_SAME = "{a}.tenant_id={b}.tenant_id AND {a}.project_id={b}.project_id AND {a}.environment_id={b}.environment_id"
+
+
+def _call_keys(participant: str) -> str:
+    """The keys the calls of a participant (a JSON element) run under: its own, and its undo, release and confirm."""
+    key = f"({participant}->>'instance_key')"
+    return "ARRAY[" + ",".join([key, *(f"{key}||'#{segment}'" for segment in sorted(PHASE_SEGMENTS.values()))]) + "]"
+
+
+def participants_with_children(record: str) -> str:
+    """SQL for the participants of the transaction record ``record`` (a ``run_transactions`` alias), each called one
+    with ``child_run_id``: the run of its latest call, its undo, release or confirm call when one ran, else its own.
+    A latest call that has not started yet names no run."""
+    return (
+        "(SELECT coalesce(jsonb_agg(CASE WHEN k.child IS NULL THEN e.item ELSE e.item||jsonb_build_object("
+        "'child_run_id',k.child) END ORDER BY e.n),'[]'::jsonb) FROM jsonb_array_elements("
+        f"{record}.participants) WITH ORDINALITY e(item,n) LEFT JOIN LATERAL (SELECT c.child_run_id AS child "
+        f"FROM run_calls c WHERE {_SAME.format(a='c', b=record)} AND c.caller_run_id={record}.run_id "
+        f"AND c.node_id=ANY({_call_keys('e.item')}) ORDER BY c.node_id<>(e.item->>'instance_key') DESC,"
+        "c.requested_at DESC,c.generation DESC LIMIT 1) k ON true)"
+    )
+
+
+def _linked(incident: str, facts: str, run: str) -> str:
+    """A linked incident as a link (its keys, code, status and facts) and its run's classification metadata, which
+    decides whether the link may be shown; only the link counts toward the page budget."""
+    return (
+        f"jsonb_build_object('link',jsonb_build_object('id',{incident}.id,'run_id',{incident}.run_id,'code',"
+        f"{incident}.code,'status',{incident}.status,'node_id',{incident}.node_id,'static_node_id',{facts}.node_id,"
+        f"'instance_key',{facts}.instance_key,'projected',{facts}.incident_id IS NOT NULL,'workflow_name',"
+        f"{facts}.workflow_name,'workflow_version',{facts}.workflow_version),'run',jsonb_build_object("
+        f"'classification_state',{run}.classification_state,'classification_policy',{run}.classification_policy,"
+        f"'pinned_ir_version',{run}.pinned_ir_version,'pinned_features',{run}.pinned_features,'policy_blocked',"
+        f"EXISTS(SELECT 1 FROM run_policy_blocks b WHERE {_SAME.format(a='b', b=incident)} "
+        f"AND b.run_id={incident}.run_id)))"
+    )
+
+
+# An active settle timeout waits on the active in-doubt incidents of the runs its transaction's steps called (the
+# latest call of each key), oldest first; one more than the contract allows is read to tell whether there are more.
+_WAITS_ON = (
+    "LEFT JOIN LATERAL (SELECT jsonb_agg(w.item ORDER BY w.opened_at ASC NULLS LAST,w.id) AS links,count(*) AS found,"
+    "sum(octet_length((w.item->'link')::text)) AS bytes FROM (SELECT ci.id,cf.opened_at,"
+    + _linked("ci", "cf", "cr")
+    + " AS item FROM jsonb_array_elements(t.participants) p CROSS JOIN LATERAL unnest("
+    + _call_keys("p.value")
+    + ") k(node) JOIN LATERAL (SELECT c.child_run_id FROM run_calls c WHERE "
+    + _SAME.format(a="c", b="i")
+    + " AND c.caller_run_id=i.run_id AND c.node_id=k.node ORDER BY c.generation DESC LIMIT 1) c ON true "
+    "JOIN incidents ci ON "
+    + _SAME.format(a="ci", b="i")
+    + " AND ci.run_id=c.child_run_id AND ci.status='active' AND ci.code=ANY(:in_doubt) LEFT JOIN incident_facts cf ON "
+    + _SAME.format(a="cf", b="ci")
+    + " AND cf.incident_id=ci.id LEFT JOIN run_facts cr ON "
+    + _SAME.format(a="cr", b="ci")
+    + " AND cr.run_id=ci.run_id WHERE cast(:links AS boolean) AND i.status='active' "
+    "AND i.code='WV-TXN-SETTLE-TIMEOUT' ORDER BY cf.opened_at ASC NULLS LAST,ci.id LIMIT :waits_limit) w) w ON true "
+)
+# An active in-doubt incident of a called run is held by its caller's active settle timeout, when that timeout's
+# transaction lists the step whose latest call started this run.
+_HELD_BY = (
+    "LEFT JOIN LATERAL (SELECT "
+    + _linked("pi", "pf", "pr")
+    + " AS item FROM run_calls c JOIN incidents pi ON "
+    + _SAME.format(a="pi", b="c")
+    + " AND pi.run_id=c.caller_run_id AND pi.status='active' AND pi.code='WV-TXN-SETTLE-TIMEOUT' "
+    "JOIN run_transactions pt ON "
+    + _SAME.format(a="pt", b="pi")
+    + " AND pt.run_id=pi.run_id AND pt.incident_key=pi.incident_key LEFT JOIN incident_facts pf ON "
+    + _SAME.format(a="pf", b="pi")
+    + " AND pf.incident_id=pi.id LEFT JOIN run_facts pr ON "
+    + _SAME.format(a="pr", b="pi")
+    + " AND pr.run_id=pi.run_id WHERE cast(:links AS boolean) AND i.status='active' AND i.code=ANY(:in_doubt) AND "
+    + _SAME.format(a="c", b="i")
+    + " AND c.child_run_id=i.run_id AND NOT EXISTS(SELECT 1 FROM run_calls l WHERE "
+    + _SAME.format(a="l", b="c")
+    + " AND l.caller_run_id=c.caller_run_id AND l.node_id=c.node_id AND l.generation>c.generation) "
+    "AND EXISTS(SELECT 1 FROM jsonb_array_elements(pt.participants) p WHERE c.node_id=ANY("
+    + _call_keys("p.value")
+    + ")) ORDER BY pf.opened_at DESC NULLS LAST,pi.id LIMIT 1) h ON true "
+)
 # One statement for the selected incidents: their columns, measured together against the page budget before the
 # resolutions are returned, their facts and their run's classification metadata.
 _INCIDENT_DETAILS = (
-    # An in-doubt incident brings the transaction it holds, measured with it.
+    # An in-doubt incident brings the transaction it holds, with the runs its steps called, and the incidents of its
+    # case, all measured with it.
     "WITH page AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
-    "t.participants AS txn_participants,sum(octet_length(to_jsonb(i)::text)"
-    "+coalesce(octet_length(t.participants::text),0)) OVER () AS page_bytes FROM incidents i "
+    "tp.participants AS txn_participants,w.links AS waits_on,w.found AS waits_found,h.item AS held_by,"
+    "sum(octet_length(to_jsonb(i)::text)+coalesce(octet_length(tp.participants::text),0)+coalesce(w.bytes,0)"
+    "+coalesce(octet_length((h.item->'link')::text),0)) OVER () AS page_bytes FROM incidents i "
     "LEFT JOIN run_transactions t ON t.tenant_id=i.tenant_id AND t.project_id=i.project_id "
     "AND t.environment_id=i.environment_id AND t.run_id=i.run_id AND t.incident_key=i.incident_key "
-    "WHERE " + _INCIDENT_SCOPE + " AND i.id=ANY(:ids)) "
+    "LEFT JOIN LATERAL (SELECT "
+    + participants_with_children("t")
+    + " AS participants WHERE t.run_id IS NOT NULL) tp ON true "
+    + _WAITS_ON
+    + _HELD_BY
+    + "WHERE "
+    + _INCIDENT_SCOPE
+    + " AND i.id=ANY(:ids)) "
     "SELECT i.id,i.run_id,i.incident_key,i.node_id,i.generation,i.origin_code,i.code,i.status,i.revision,"
-    "i.txn_key,i.txn_state,i.txn_business_key,i.txn_participants,"
+    "i.txn_key,i.txn_state,i.txn_business_key,i.txn_participants,i.waits_on,i.waits_found,i.held_by,"
     "i.actor_id,i.resolved_at,CASE WHEN i.page_bytes<=:budget THEN i.resolution END AS resolution,"
     "i.page_bytes>:budget AS oversized,f.incident_id IS NOT NULL AS projected,f.node_id AS static_node_id,"
     "f.instance_key,f.opened_at,f.updated_at,f.opened_at_estimated,f.workflow_name,f.workflow_version,f.test,"
@@ -292,6 +383,37 @@ def transaction_facts(row: Mapping[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _link(item: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A linked incident as its own view would name it, or None when that view is withheld: its run's metadata is
+    not available, or its facts are missing or disagree with it."""
+    found, run = item["link"], item["run"]
+    identity = _step_identity(found["node_id"], found["static_node_id"], found["instance_key"])
+    if not found["projected"] or identity is None or not available(run):
+        return None
+    node_id, instance_key = identity
+    workflow = found["workflow_name"]
+    return {
+        "id": found["id"],
+        "run_id": found["run_id"],
+        "code": found["code"],
+        "status": found["status"],
+        "node_id": node_id,
+        "instance_key": instance_key,
+        **({"workflow": {"name": workflow, "version": found["workflow_version"]}} if workflow is not None else {}),
+    }
+
+
+def case_links(row: Mapping[str, Any]) -> dict[str, Any]:
+    """``waits_on``, ``waits_on_more`` and ``held_by`` of an incident, from the linked incidents its read found."""
+    links = [found for item in row.get("waits_on") or () if (found := _link(item)) is not None]
+    held = _link(row["held_by"]) if row.get("held_by") else None
+    return {
+        **({"waits_on": links[:MAX_WAITS_ON]} if links else {}),
+        **({"waits_on_more": True} if (row.get("waits_found") or 0) > MAX_WAITS_ON else {}),
+        **({"held_by": held} if held is not None else {}),
+    }
+
+
 def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
     """An incident from its own columns and its facts; withheld unless its run's metadata is available.
 
@@ -328,6 +450,7 @@ def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
         run_status=row["run_status"],
         test=row["test"],
         **transaction_facts(row),
+        **case_links(row),
     )
     try:
         return IncidentView.model_validate_json(json.dumps(values, default=_json))
@@ -477,8 +600,6 @@ class FactReadRepository(FactRepository):
             clauses.append("i.status=ANY(:statuses)")
             params["statuses"] = query.status
         if query.priority is not None:
-            from firefly_weave.contracts.transactions import IN_DOUBT_CODES
-
             clauses.append("i.code=ANY(:in_doubt)" if query.priority == "high" else "NOT (i.code=ANY(:in_doubt))")
             params["in_doubt"] = sorted(IN_DOUBT_CODES)
         if not query.include_test:
@@ -532,11 +653,22 @@ class FactReadRepository(FactRepository):
             **{**params, **tail},
         )
 
-    async def incident_details(self, ids: list[UUID]) -> list[dict[str, Any]]:
-        """The selected incidents with their facts; a page above the logical byte limit is refused unread."""
+    async def incident_details(self, ids: list[UUID], *, links: bool = False) -> list[dict[str, Any]]:
+        """The selected incidents with their facts; a page above the logical byte limit is refused unread.
+
+        ``links`` reads the incidents of each one's case too; only a caller who reads every incident of the
+        environment may see them.
+        """
         if not ids:
             return []
-        rows = await self.rows(_INCIDENT_DETAILS, ids=ids, budget=PAGE_BYTES)
+        rows = await self.rows(
+            _INCIDENT_DETAILS,
+            ids=ids,
+            budget=PAGE_BYTES,
+            links=links,
+            in_doubt=sorted(IN_DOUBT_CODES),
+            waits_limit=MAX_WAITS_ON + 1,
+        )
         if any(row["oversized"] for row in rows):
             raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
         return rows
