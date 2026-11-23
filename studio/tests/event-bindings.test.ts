@@ -623,6 +623,24 @@ describe("moving the trigger", () => {
     });
   });
 
+  it("moves a stored trigger that reacts to any workflow", async () => {
+    // The platform leaves source_workflows out; the declaration says from: null.
+    const platform = new FakePlatform();
+    platform.seed({
+      id: "t-1",
+      name: "notify-team",
+      activation: "a-old",
+      events: ["transaction.in_doubt", "transaction.compensated"],
+      sources: undefined,
+    });
+    const row = only(
+      planFor(platform, { storedId: "t-1", declaration: WIDER }),
+    );
+    expect(row).toMatchObject({ kind: "retarget", binding: { id: "t-1" } });
+    expect(await apply(platform, row)).toMatchObject({ status: "moved" });
+    expect(platform.writes()).toEqual(["POST /event-triggers/t-1/retarget"]);
+  });
+
   it("says a moved trigger may resolve transactions as the mover", () => {
     const platform = new FakePlatform();
     platform.seed({
