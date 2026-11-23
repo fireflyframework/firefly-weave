@@ -29,6 +29,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { Router } from "@angular/router";
 import { FFlowModule } from "@foblex/flow";
 import type { App } from "../app";
 import { copyText } from "../connection";
@@ -36,6 +37,7 @@ import { Icon } from "../icon";
 import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
 import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
+import { RunCancelDialog } from "../operate/transactions/run-cancel-dialog";
 import { RunTransactions } from "../operate/transactions/run-transactions-section";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
@@ -68,6 +70,7 @@ const isRecord = (value: unknown): value is Json =>
   imports: [
     Icon,
     FFlowModule,
+    RunCancelDialog,
     RunLogs,
     RunTransactions,
     StartRunDialog,
@@ -185,6 +188,20 @@ const isRecord = (value: unknown): value is Json =>
           Cancel run
         </button>
       }
+      @if (actions.withoutUndoing(); as offer) {
+        <!-- While a transaction is in doubt it stays here, focusable, saying why. -->
+        <button
+          class="danger"
+          [attr.aria-disabled]="offer.blocked ? 'true' : null"
+          [attr.aria-describedby]="
+            offer.blocked ? 'cancel-blocked-reason' : null
+          "
+          [disabled]="h.busy !== '' || h.unknownCommand"
+          (click)="offer.blocked ? null : actions.cancelWithoutUndoing()"
+        >
+          Cancel without undoing
+        </button>
+      }
       @if (h.runTerminal() && h.can("run.retry", id)) {
         <button
           [disabled]="h.busy !== '' || h.unknownCommand"
@@ -201,6 +218,37 @@ const isRecord = (value: unknown): value is Json =>
         <weave-icon name="download" [size]="16" />Export history
       </button>
     </div>
+    @if (actions.withoutUndoing()?.blocked; as blocked) {
+      <p class="cancel-blocked">
+        <weave-icon name="warning" [size]="16" /><span
+          id="cancel-blocked-reason"
+          >{{ blocked.text }}</span
+        >
+        @if (blocked.incidentId; as incident) {
+          <button
+            type="button"
+            class="text-link"
+            (click)="actions.openIncident(incident)"
+          >
+            Open incident
+          </button>
+        }
+      </p>
+    }
+    @if (actions.cancelDialog; as cancel) {
+      <weave-run-cancel-dialog
+        [mode]="cancel.mode"
+        [runId]="cancel.target.id"
+        [lines]="cancel.lines"
+        [incidentId]="cancel.incidentId"
+        [sending]="cancel.sending"
+        (confirm)="actions.confirmWithoutUndoing($event)"
+        (dismiss)="actions.closeCancelDialog()"
+        (openIncident)="
+          actions.closeCancelDialog(); actions.openIncident($event)
+        "
+      />
+    }
     @if (actions.retry; as retry) {
       <weave-start-run-dialog
         heading="Retry this run"
@@ -318,7 +366,12 @@ const isRecord = (value: unknown): value is Json =>
         </ol>
       </section>
     }
-    <weave-run-transactions [host]="h" [runId]="id" [live]="live()" />
+    <weave-run-transactions
+      [host]="h"
+      [runId]="id"
+      [live]="live()"
+      (loaded)="actions.know($event.runId, $event.views)"
+    />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />
       <weave-run-logs
@@ -455,10 +508,12 @@ export class RunDetail implements DoCheck, OnDestroy {
   /** The run's step timeline from runs.steps, when the page showing the run reads it. */
   timeline = input<RunStepsView | null>(null);
   private cdr = inject(ChangeDetectorRef);
-  /** Cancel run, Retry run, Send signal and Export history. */
+  private router = inject(Router);
+  /** Cancel run, Cancel without undoing, Retry run, Send signal and Export history. */
   readonly actions = new RunActions(
     () => this.host(),
     () => this.cdr.markForCheck(),
+    (path) => void this.router.navigateByUrl(path),
   );
 
   ngDoCheck() {

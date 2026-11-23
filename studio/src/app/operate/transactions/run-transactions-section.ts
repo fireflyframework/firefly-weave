@@ -30,6 +30,7 @@ import {
   OnDestroy,
   inject,
   input,
+  output,
 } from "@angular/core";
 import { Router } from "@angular/router";
 import type { App } from "../../app";
@@ -362,6 +363,8 @@ export class RunTransactions implements DoCheck, OnDestroy {
   runId = input.required<string>();
   /** The run goes on: its transactions are read again every 2 s. */
   live = input(false);
+  /** The run's transactions each time a read lands, for the run's actions. */
+  loaded = output<{ runId: string; views: RunTransactionView[] }>();
   private cdr = inject(ChangeDetectorRef);
   private element = inject(ElementRef<HTMLElement>);
   private router = inject(Router);
@@ -467,6 +470,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
       this.phase = "ready";
       this.problem = null;
       this.failures = 0;
+      this.loaded.emit({ runId: scope.runId, views: this.views });
     } catch (error) {
       if (!this.current(scope)) return;
       const plain = describeError(error);
@@ -527,6 +531,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
         ...page.views.filter((view) => !known.has(view.instance_key)),
       ];
       this.next = page.next;
+      this.loaded.emit({ runId: scope.runId, views: this.views });
     } catch (error) {
       if (!this.current(scope)) return;
       this.host().notify(

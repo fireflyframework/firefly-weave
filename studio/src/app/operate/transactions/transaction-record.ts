@@ -29,6 +29,7 @@ import {
   type TransactionState,
   type Tone as WordTone,
 } from "../../editor/transactions/transaction-words";
+import { shortId } from "../../format";
 import type { Tone } from "../../status-labels";
 import {
   stepName,
@@ -479,6 +480,15 @@ export function staysDone(records: readonly RecordInput[]): StaysDoneLine[] {
       return [{ step: stepName(participant.instance_key), ...HOW[mode], what }];
     }),
   );
+}
+
+/**
+ * Whether a person typed the run's short ID to confirm, whatever its case and
+ * spaces: a guard against mistakes, never a permission.
+ */
+export function typedConfirmation(runId: string, typed: string): boolean {
+  const wanted = shortId(runId).toLowerCase();
+  return !!wanted && typed.replace(/\s+/g, "").toLowerCase() === wanted;
 }
 
 /** The wait before reading again after `failures` failed reads: 5 s, doubling, at most 60 s. */

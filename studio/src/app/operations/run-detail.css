@@ -101,6 +101,19 @@ h3 {
 .run-controls:empty {
   display: none;
 }
+/* Why Cancel without undoing waits: on the line under the action row. */
+.cancel-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-2) 0 0;
+  font: var(--type-small);
+  color: var(--text);
+}
+.cancel-blocked weave-icon {
+  color: var(--warning-ink);
+}
 
 /* The workflow at 100%, with the live thread: gold where the run is now,
    gold edges for the path taken, a jade check on finished steps. */

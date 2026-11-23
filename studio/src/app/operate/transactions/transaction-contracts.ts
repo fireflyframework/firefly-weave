@@ -78,6 +78,15 @@ export interface TransactionsSection {
   oldest_undoing_seconds?: number;
 }
 
+/** The states of a transaction that hasn't settled: canceling its run undoes it first. */
+export const UNSETTLED: readonly TransactionState[] = [
+  "open",
+  "deciding",
+  "committing",
+  "compensating",
+  "in_doubt",
+];
+
 /** One page of a run's transactions, oldest first: 50 from the start or after `cursor`. */
 export async function readRunTransactions(
   api: Pick<StudioApi, "request">,

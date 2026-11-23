@@ -30,6 +30,8 @@ import {
 } from "../src/app/operate/runs/run-actions";
 import type { App } from "../src/app/app";
 import type { Node } from "../src/app/model";
+import type { RunTransactionView } from "../src/app/operate/transactions/transaction-contracts";
+import { typedConfirmation } from "../src/app/operate/transactions/transaction-record";
 
 const activation = (id: string, version: string, extra = {}) => ({
   id,
@@ -159,10 +161,25 @@ const refused = (status: number, code: string, message: string) =>
 function shell(open: string | null = first) {
   const calls = {
     sent: [] as { path: string; body: unknown }[],
-    notices: [] as { text: string; tone: string | undefined }[],
+    notices: [] as {
+      text: string;
+      tone: string | undefined;
+      action?: string;
+      run?: () => void;
+    }[],
     failures: [] as unknown[],
     reads: 0,
     forms: 0,
+    /** Each form the shell was asked to show. */
+    asked: [] as Json[],
+    /** Each runs.transactions read, by path. */
+    transactionReads: [] as string[],
+    /** Each address the actions opened. */
+    opened: [] as string[],
+  };
+  /** The run's transactions as the next read answers them; null fails the read. */
+  const platform: { transactions: RunTransactionView[] | null } = {
+    transactions: [],
   };
   let answer!: { resolve: (value: Json) => void; reject: (e: unknown) => void };
   const host = {
@@ -188,18 +205,36 @@ function shell(open: string | null = first) {
         items: [],
         next_cursor: null,
       }),
+      request: async <T>(path: string): Promise<T> => {
+        calls.transactionReads.push(path);
+        if (platform.transactions === null)
+          throw refused(503, "WV-UNAVAILABLE", "Down");
+        return {
+          items: structuredClone(platform.transactions),
+          next_cursor: null,
+        } as T;
+      },
     },
-    can: () => true,
+    can: (_capability: string, _resource?: string) => true,
     runNodes: () => [],
-    notify: (text: string, _action?: unknown, tone?: string) =>
-      calls.notices.push({ text, tone }),
+    notify: (
+      text: string,
+      action?: { label: string; run: () => void },
+      tone?: string,
+    ) =>
+      calls.notices.push({
+        text,
+        tone,
+        ...(action ? { action: action.label, run: action.run } : {}),
+      }),
     fail: (error: unknown) => calls.failures.push(error),
     readDetail: async () => void calls.reads++,
     refreshRuns: async () => undefined,
     viewRun: async () => undefined,
     dialogs: {
-      form: async (): Promise<Json | null> => {
+      form: async (options: Json): Promise<Json | null> => {
         calls.forms++;
+        calls.asked.push(options);
         return { reason: "Stop it" };
       },
     },
@@ -213,12 +248,14 @@ function shell(open: string | null = first) {
   const actions = new RunActions(
     () => host as unknown as App,
     () => undefined,
+    (path) => calls.opened.push(path),
   );
   actions.follow(open ?? "");
   const settle = () => new Promise((resolve) => setTimeout(resolve));
   return {
     host,
     calls,
+    platform,
     actions,
     settle,
     answer: (value: Json) => answer.resolve(value),
@@ -491,4 +528,271 @@ describe("reading versions for a retry", () => {
       expect(reads).toBe(1);
       expect(s.actions.retry).toBeNull();
     });
+});
+
+// ------------------------------------------------ a run with transactions
+
+const view = (
+  state: RunTransactionView["state"],
+  participants: RunTransactionView["participants"],
+  extra: Partial<RunTransactionView> = {},
+): RunTransactionView => ({
+  instance_key: "move",
+  node_id: "move",
+  iteration: [],
+  state,
+  opened_at: "2026-11-22T10:31:00Z",
+  participants,
+  ...extra,
+});
+const step = (
+  key: string,
+  mode: "reserve" | "compensate" | "irreversible",
+  status: RunTransactionView["participants"][number]["status"],
+) => ({
+  node_id: key,
+  instance_key: key,
+  mode,
+  status,
+  effect: "none" as const,
+});
+const incident = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+/** A transaction still running: hold reserved, add running. */
+const open = view("open", [
+  step("hold", "reserve", "done"),
+  step("add", "compensate", "dispatched"),
+  step("submit", "irreversible", "pending"),
+]);
+const inDoubt = view(
+  "in_doubt",
+  [step("hold", "reserve", "done"), step("add", "compensate", "undo_stuck")],
+  { instance_key: "move[2]", incident_id: incident },
+);
+const settled = view("completed", [step("hold", "reserve", "confirmed")], {
+  instance_key: "move[1]",
+});
+const UNDO_FIRST =
+  "This run has a transaction that isn't finished. Weave undoes what it did before the run ends. Give a reason for the audit log.";
+const IN_DOUBT_LINE =
+  "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.";
+
+describe("Cancel run on a run with transactions", () => {
+  it("reads the run's transactions first and says Weave undoes them before the run ends", async () => {
+    const s = shell();
+    s.platform.transactions = [settled, open];
+    const sending = s.actions.cancel();
+    await s.settle();
+    expect(s.calls.transactionReads).toEqual([
+      `/env/runs/${first}/transactions?limit=50`,
+    ]);
+    expect(s.calls.asked).toMatchObject([
+      {
+        title: "Cancel this run?",
+        message: UNDO_FIRST,
+        confirmLabel: "Cancel run",
+        cancelLabel: "Keep running",
+      },
+    ]);
+    s.answer({ id: first, pending_undo: true });
+    await sending;
+    expect(s.calls.notices.map((n) => n.text)).toEqual([
+      "Canceling: undoing what this run's transactions did.",
+    ]);
+    expect(s.calls.reads).toBe(1);
+  });
+
+  it("keeps today's words when every transaction has settled, or none could be read", async () => {
+    for (const transactions of [[settled], null]) {
+      const s = shell();
+      s.platform.transactions = transactions;
+      const sending = s.actions.cancel();
+      await s.settle();
+      expect(s.calls.asked[0]?.["message"]).toBe(
+        "Steps that already started may still finish outside Weave. Give a reason for the audit log.",
+      );
+      s.answer({});
+      await sending;
+      expect(s.calls.notices.map((n) => n.text)).toEqual([
+        "Run canceled. Steps that already started may still finish outside Weave.",
+      ]);
+    }
+  });
+
+  it("with a transaction in doubt, says so before sending and sends nothing", async () => {
+    const s = shell();
+    s.platform.transactions = [open, inDoubt];
+    await s.actions.cancel();
+    expect(s.calls.forms).toBe(0);
+    expect(s.calls.sent).toEqual([]);
+    expect(s.actions.cancelDialog).toMatchObject({
+      mode: "in_doubt",
+      incidentId: incident,
+    });
+    s.actions.openIncident(incident);
+    expect(s.calls.opened).toEqual([`/operate/incidents?incident=${incident}`]);
+    s.actions.closeCancelDialog();
+    expect(s.actions.cancelDialog).toBeNull();
+  });
+
+  it("a refusal because a transaction went in doubt meanwhile names it and offers its incident", async () => {
+    const s = shell();
+    s.platform.transactions = [open];
+    const sending = s.actions.cancel();
+    await s.settle();
+    s.platform.transactions = [inDoubt];
+    s.refuse(refused(409, "WV-TXN-IN-DOUBT", "Resolve the transaction first."));
+    await sending;
+    expect(s.calls.failures).toEqual([]);
+    expect(s.calls.notices).toMatchObject([
+      {
+        text: "Run 5e6f7a8b was not canceled. Resolve the transaction first. Support code: WV-TXN-IN-DOUBT.",
+        tone: "danger",
+        action: "Open incident",
+      },
+    ]);
+    s.calls.notices[0].run!();
+    expect(s.calls.opened).toEqual([`/operate/incidents?incident=${incident}`]);
+  });
+});
+
+describe("Cancel without undoing", () => {
+  it("is offered only with run.cancel, transaction.reconcile and a transaction not settled", () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+    s.actions.know(first, [settled]);
+    expect(s.actions.withoutUndoing()).toBeNull();
+    s.actions.know(first, [open]);
+    for (const missing of ["run.cancel", "transaction.reconcile"]) {
+      s.host.can = (capability: string) => capability !== missing;
+      expect(s.actions.withoutUndoing(), missing).toBeNull();
+    }
+    s.host.can = () => true;
+    // Records known for another run say nothing about this one.
+    s.actions.know(second, [open]);
+    expect(s.actions.withoutUndoing()).toBeNull();
+    s.actions.know(first, [open]);
+    s.host.selectedRecord = { id: first, state: { status: "cancelled" } };
+    expect(s.actions.withoutUndoing()).toBeNull();
+  });
+
+  it("stays in the row while a transaction is in doubt, saying why and which incident to resolve", () => {
+    const s = shell();
+    s.actions.know(first, [open, inDoubt]);
+    expect(s.actions.withoutUndoing()).toEqual({
+      blocked: { text: IN_DOUBT_LINE, incidentId: incident },
+    });
+  });
+
+  it("reads the transactions again, lists what stays done, and sends skip_undo once", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    s.platform.transactions = [settled, open];
+    await s.actions.cancelWithoutUndoing();
+    expect(s.calls.transactionReads).toHaveLength(1);
+    expect(s.actions.cancelDialog).toMatchObject({ mode: "without_undo" });
+    expect(
+      s.actions.cancelDialog!.lines.map(
+        (line) => `${line.step} · ${line.how}: ${line.what}`,
+      ),
+    ).toEqual([
+      "hold · Reserved: Weave won't release it",
+      "add · Reversible: still running and may finish; Weave won't undo it",
+    ]);
+    const sending = s.actions.confirmWithoutUndoing(
+      "The target system is down",
+    );
+    void s.actions.confirmWithoutUndoing("The target system is down");
+    await s.settle();
+    expect(s.calls.sent).toEqual([
+      {
+        path: `/env/runs/${first}/cancel`,
+        body: { reason: "The target system is down", skip_undo: true },
+      },
+    ]);
+    expect(s.actions.cancelDialog?.sending).toBe(true);
+    s.answer({ id: first });
+    await sending;
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.reads).toBe(1);
+    expect(s.calls.notices.map((n) => n.text)).toEqual([
+      "Run canceled without undoing. Steps already done stay done in other systems.",
+    ]);
+  });
+
+  it("refuses in Studio when a transaction went in doubt since the row was drawn", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    s.platform.transactions = [inDoubt];
+    await s.actions.cancelWithoutUndoing();
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.sent).toEqual([]);
+    expect(s.calls.notices).toMatchObject([
+      { text: IN_DOUBT_LINE, tone: "danger", action: "Open incident" },
+    ]);
+    // The row now knows it, and says so itself.
+    expect(s.actions.withoutUndoing()?.blocked?.incidentId).toBe(incident);
+  });
+
+  it("names the server's refusal of a transaction in doubt, and keeps a refusal of access as today", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    s.platform.transactions = [open];
+    await s.actions.cancelWithoutUndoing();
+    let sending = s.actions.confirmWithoutUndoing("Down");
+    await s.settle();
+    s.platform.transactions = [inDoubt];
+    s.refuse(refused(409, "WV-TXN-IN-DOUBT", "Resolve the transaction first."));
+    await sending;
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.notices).toMatchObject([
+      {
+        text: "Run 5e6f7a8b was not canceled. Resolve the transaction first. Support code: WV-TXN-IN-DOUBT.",
+        tone: "danger",
+        action: "Open incident",
+      },
+    ]);
+    s.platform.transactions = [open];
+    await s.actions.cancelWithoutUndoing();
+    sending = s.actions.confirmWithoutUndoing("Down");
+    await s.settle();
+    s.refuse(refused(403, "WV-FORBIDDEN", "Forbidden"));
+    await sending;
+    expect(s.calls.failures).toEqual([
+      {
+        plain: {
+          status: 403,
+          code: "WV-FORBIDDEN",
+          message:
+            "You need transaction.reconcile in this environment. Forbidden",
+        },
+      },
+    ]);
+  });
+
+  it("says what happened to a run the person left, and changes nothing on screen", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    s.platform.transactions = [open];
+    await s.actions.cancelWithoutUndoing();
+    const sending = s.actions.confirmWithoutUndoing("Down");
+    await s.settle();
+    s.moveTo(second);
+    expect(s.actions.cancelDialog).toBeNull();
+    s.answer({ id: first });
+    await sending;
+    expect(s.calls.reads).toBe(0);
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.notices.map((n) => n.text)).toEqual([
+      "Run 5e6f7a8b canceled without undoing. Steps already done stay done in other systems.",
+    ]);
+  });
+
+  it("confirms only the run's short ID, whatever its case and spaces", () => {
+    expect(typedConfirmation(first, "5e6f7a8b")).toBe(true);
+    expect(typedConfirmation(first, " 5E6F 7A8B ")).toBe(true);
+    expect(typedConfirmation(first, "5e6f7a8")).toBe(false);
+    expect(typedConfirmation(first, first)).toBe(false);
+    expect(typedConfirmation(first, "")).toBe(false);
+  });
 });

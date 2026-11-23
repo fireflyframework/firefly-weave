@@ -30,7 +30,17 @@ import { sheetWhen } from "../../modal-sheet";
 import type { Node } from "../../model";
 import type { StartRunRequest } from "../../run/start-run-dialog";
 import { MAX_PAGES, REASON_LIMIT, tooLongMessage } from "../operate-limits";
+import { viewPath } from "../operate-routes";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
+import {
+  UNSETTLED,
+  readRunTransactions,
+  type RunTransactionView,
+} from "../transactions/transaction-contracts";
+import {
+  staysDone,
+  type StaysDoneLine,
+} from "../transactions/transaction-record";
 
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
@@ -171,6 +181,28 @@ export interface RunTarget {
   identity: string;
 }
 
+/** What Cancel run says when a transaction of the run hasn't settled. */
+export const UNDO_FIRST =
+  "This run has a transaction that isn't finished. Weave undoes what it did before the run ends. Give a reason for the audit log.";
+/** Why Cancel without undoing waits while a transaction is in doubt. */
+export const IN_DOUBT_LINE =
+  "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.";
+const STAYS = "Steps already done stay done in other systems.";
+
+/**
+ * The cancel dialog the shell's form can't hold: Cancel run while a
+ * transaction is in doubt, or Cancel without undoing with what stays done.
+ */
+export interface CancelDialog {
+  mode: "in_doubt" | "without_undo";
+  target: RunTarget;
+  /** The incident of the transaction in doubt. */
+  incidentId: string | null;
+  /** What stays done in other systems, from the transactions just read. */
+  lines: StaysDoneLine[];
+  sending: boolean;
+}
+
 /** The Retry run dialog while it is open. */
 export interface RetryDialog extends RetryChoices {
   notice: string;
@@ -182,14 +214,19 @@ export interface RetryDialog extends RetryChoices {
 
 export class RunActions {
   retry: RetryDialog | null = null;
+  cancelDialog: CancelDialog | null = null;
   exporting = false;
   /** The run the detail shows, which the Retry run dialog belongs to. */
   private shown = "";
   private alive = true;
+  /** The transactions last read for a run: what the action row offers. */
+  private known: { runId: string; views: RunTransactionView[] } | null = null;
 
   constructor(
     private readonly host: () => App,
     private readonly onChange: () => void,
+    /** Opens a Studio address, such as an incident in the inbox. */
+    private readonly open: (path: string) => void = () => undefined,
   ) {}
 
   /** The detail shows this run now: another run's dialog does not stay. */
@@ -197,6 +234,11 @@ export class RunActions {
     if (id === this.shown) return;
     this.shown = id;
     this.retry = null;
+    this.cancelDialog = null;
+  }
+  /** The run's transactions as the detail or a command just read them. */
+  know(runId: string, views: RunTransactionView[] | null) {
+    this.known = views ? { runId, views } : null;
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
   destroy() {
@@ -283,10 +325,31 @@ export class RunActions {
     if (!target || isTerminal(this.run()) || !host.can("run.cancel", target.id))
       return;
     const named = `Run ${shortId(target.id)}`;
+    // What its transactions are now: a transaction in doubt stops the cancel
+    // before sending, and one that hasn't settled is undone first.
+    const transactions = await this.readTransactions(target);
+    if (!this.current(target)) return;
+    if (transactions) this.know(target.id, transactions);
+    const doubt = transactions?.find((view) => view.state === "in_doubt");
+    if (doubt) {
+      this.cancelDialog = {
+        mode: "in_doubt",
+        target,
+        incidentId: doubt.incident_id ?? null,
+        lines: [],
+        sending: false,
+      };
+      this.changed();
+      return;
+    }
+    const undoFirst = !!transactions?.some((view) =>
+      UNSETTLED.includes(view.state),
+    );
     const values = await host.dialogs.form({
       title: "Cancel this run?",
-      message:
-        "Steps that already started may still finish outside Weave. Give a reason for the audit log.",
+      message: undoFirst
+        ? UNDO_FIRST
+        : "Steps that already started may still finish outside Weave. Give a reason for the audit log.",
       confirmLabel: "Cancel run",
       cancelLabel: "Keep running",
       danger: true,
@@ -307,21 +370,36 @@ export class RunActions {
       return;
     }
     try {
-      await host.safeMutation(
+      const answer: unknown = await host.safeMutation(
         `${target.base}/cancel`,
         "POST",
         { reason: values["reason"] },
         undefined,
         "Cancel run",
       );
+      // A run with transactions to undo ends once they are undone.
+      const draining = isRecord(answer) && answer["pending_undo"] === true;
       const effects =
         "Steps that already started may still finish outside Weave.";
       if (this.current(target)) {
-        host.notify(`Run canceled. ${effects}`);
+        host.notify(
+          draining
+            ? "Canceling: undoing what this run's transactions did."
+            : `Run canceled. ${effects}`,
+        );
         await host.readDetail();
-      } else host.notify(`${named} canceled. ${effects}`);
+      } else
+        host.notify(
+          draining
+            ? `Canceling run ${shortId(target.id)}: undoing what its transactions did.`
+            : `${named} canceled. ${effects}`,
+        );
       void host.refreshRuns();
     } catch (error) {
+      if (
+        await this.inDoubtRefusal(error, target, `${named} was not canceled.`)
+      )
+        return;
       this.refuse(
         error,
         "run.cancel",
@@ -332,6 +410,179 @@ export class RunActions {
     } finally {
       this.changed();
     }
+  }
+
+  /**
+   * Cancel without undoing, offered with run.cancel and transaction.reconcile
+   * while a transaction of the run hasn't settled; `blocked` says why it
+   * waits while one is in doubt. Null when it isn't offered.
+   */
+  withoutUndoing(): {
+    blocked: { text: string; incidentId: string | null } | null;
+  } | null {
+    const host = this.host();
+    const run = this.run();
+    const id = text(run["id"]);
+    const known = this.known;
+    if (!id || isTerminal(run) || known?.runId !== id) return null;
+    if (!host.can("run.cancel", id) || !host.can("transaction.reconcile", id))
+      return null;
+    if (!known.views.some((view) => UNSETTLED.includes(view.state)))
+      return null;
+    const doubt = known.views.find((view) => view.state === "in_doubt");
+    return {
+      blocked: doubt
+        ? { text: IN_DOUBT_LINE, incidentId: doubt.incident_id ?? null }
+        : null,
+    };
+  }
+
+  /**
+   * Opens Cancel without undoing on the transactions read just now, so its
+   * Stays done list is current. A transaction that went in doubt meanwhile
+   * refuses it here; one that settled leaves Cancel run.
+   */
+  async cancelWithoutUndoing() {
+    const host = this.host();
+    const target = this.target();
+    if (
+      !target ||
+      isTerminal(this.run()) ||
+      !host.can("run.cancel", target.id) ||
+      !host.can("transaction.reconcile", target.id)
+    )
+      return;
+    const transactions = await this.readTransactions(target);
+    if (!this.current(target)) return;
+    if (!transactions) {
+      host.notify(
+        `Run ${shortId(target.id)} was not canceled. Studio couldn't read its transactions, so it can't list what stays done.`,
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    this.know(target.id, transactions);
+    const doubt = transactions.find((view) => view.state === "in_doubt");
+    if (doubt) {
+      host.notify(IN_DOUBT_LINE, this.incidentAction(doubt), "danger");
+      this.changed();
+      return;
+    }
+    const unsettled = transactions.filter((view) =>
+      UNSETTLED.includes(view.state),
+    );
+    if (!unsettled.length) return this.cancel();
+    this.cancelDialog = {
+      mode: "without_undo",
+      target,
+      incidentId: null,
+      lines: staysDone(unsettled),
+      sending: false,
+    };
+    this.changed();
+  }
+
+  /** Sends Cancel without undoing once: `skip_undo`, through the shell's guarded command. */
+  async confirmWithoutUndoing(reason: string) {
+    const dialog = this.cancelDialog;
+    if (!dialog || dialog.mode !== "without_undo" || dialog.sending) return;
+    const host = this.host();
+    const target = dialog.target;
+    const named = `Run ${shortId(target.id)}`;
+    if (!this.current(target)) {
+      this.cancelDialog = null;
+      host.notify(`${named} was not canceled: it is no longer open.`);
+      return;
+    }
+    dialog.sending = true;
+    this.changed();
+    try {
+      await host.safeMutation(
+        `${target.base}/cancel`,
+        "POST",
+        { reason, skip_undo: true },
+        undefined,
+        "Cancel without undoing",
+      );
+      if (this.cancelDialog === dialog) this.cancelDialog = null;
+      if (this.current(target)) {
+        host.notify(`Run canceled without undoing. ${STAYS}`);
+        await host.readDetail();
+      } else host.notify(`${named} canceled without undoing. ${STAYS}`);
+      void host.refreshRuns();
+    } catch (error) {
+      if (this.cancelDialog === dialog) this.cancelDialog = null;
+      if (
+        await this.inDoubtRefusal(error, target, `${named} was not canceled.`)
+      )
+        return;
+      this.refuse(
+        error,
+        "transaction.reconcile",
+        target,
+        `${named} was not canceled.`,
+        host.unknownCommand,
+      );
+    } finally {
+      dialog.sending = false;
+      this.changed();
+    }
+  }
+
+  closeCancelDialog() {
+    this.cancelDialog = null;
+    this.changed();
+  }
+  /** Opens the inbox on an incident: the business key never enters the address. */
+  openIncident(id: string) {
+    this.open(`${viewPath("incidents")}?incident=${encodeURIComponent(id)}`);
+  }
+  private incidentAction(view: RunTransactionView | undefined) {
+    const id = view?.incident_id;
+    return id
+      ? { label: "Open incident", run: () => this.openIncident(id) }
+      : undefined;
+  }
+  /** The run's first 50 transactions, or null when they couldn't be read. */
+  private async readTransactions(
+    target: RunTarget,
+  ): Promise<RunTransactionView[] | null> {
+    try {
+      const page = await readRunTransactions(
+        this.host().api,
+        target.environment,
+        target.id,
+        null,
+      );
+      return page.views;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * A cancel refused because a transaction is in doubt (it went in doubt
+   * after Studio read it): the platform's sentence and code, and its incident
+   * to resolve first. False for any other refusal.
+   */
+  private async inDoubtRefusal(
+    error: unknown,
+    target: RunTarget,
+    failed: string,
+  ): Promise<boolean> {
+    const plain = describeError(error);
+    if (plain.status !== 409 || plain.code !== "WV-TXN-IN-DOUBT") return false;
+    const transactions = await this.readTransactions(target);
+    if (transactions && this.current(target))
+      this.know(target.id, transactions);
+    this.host().notify(
+      `${failed} ${sentence(plain.message)} Support code: ${plain.code}.`,
+      this.incidentAction(
+        transactions?.find((view) => view.state === "in_doubt"),
+      ),
+      "danger",
+    );
+    return true;
   }
 
   async signal() {
