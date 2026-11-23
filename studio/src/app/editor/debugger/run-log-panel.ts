@@ -609,9 +609,10 @@ export function runStatus(
     return `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
-    // Where it stopped, past any failure a step's On error handled.
+    // Where it stopped, past any failure a step's On error handled; a
+    // called run's step (its frame) is the call's, which the call reports.
     const failed = response.trace.find(
-      (entry) => entry.status === "failed" && !entry.handled,
+      (entry) => entry.status === "failed" && !entry.handled && !entry.frame,
     );
     // A loop that failed over its Up to, before any item.
     if (

@@ -203,4 +203,44 @@ describe("a run that handled one failure, then stopped at another", () => {
       steps: [{ id: "send", status: "failed", text: "SMTP_REJECTED" }],
     });
   });
+
+  it("names the step that stopped it past a called run's failure its call handled", () => {
+    // As the Studio host answers it: notify's called run failed at send,
+    // notify's On error went on, then stop-here stopped the run.
+    const called = {
+      status: "failed",
+      trace: [
+        {
+          index: 0,
+          nodeId: "notify",
+          instanceKey: "",
+          kind: "callWorkflow",
+          status: "failed",
+          error: { ...error("notify"), code: "SMTP_REJECTED" },
+          handled: "continue",
+        },
+        {
+          index: 1,
+          nodeId: "send",
+          instanceKey: "",
+          kind: "fail",
+          status: "failed",
+          frame: "notify",
+        },
+        {
+          index: 2,
+          nodeId: "stop-here",
+          instanceKey: "",
+          kind: "fail",
+          status: "failed",
+        },
+      ],
+      loops: [],
+      blocked: null,
+      diagnostics: [],
+    } as unknown as ExecuteResponse;
+    expect(runStatus(called, null)).toBe("Failed at stop-here");
+    expect(runFailureOf(called, "stop-here", undefined)).toEqual({});
+    expect(runFailureOf(called, "send", undefined)).toBeNull();
+  });
 });
