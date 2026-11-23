@@ -222,6 +222,25 @@ async def test_purging_the_run_whose_event_started_a_purged_run_takes_that_start
         await assert_usage(connection, ids)
 
 
+async def test_purging_a_run_after_the_run_whose_event_started_it_takes_its_start_and_that_payload(upgraded):
+    engine, ids = upgraded
+    async with engine.begin() as connection:
+        seeded = await history(connection, ids)
+
+    await purge(engine, ids, STARTER)
+
+    # The start that started the source stays while the source is kept; the starter's event no longer holds its facts.
+    assert (seeded["escalate"], seeded["starter"], "started", SOURCE) in await rows(engine, STARTS)
+    assert (seeded["starter"], STARTER, {}) in await payloads(engine)
+
+    await purge(engine, ids, SOURCE)
+
+    assert await rows(engine, STARTS) == [(seeded["notify"], seeded["started"], "started", STARTED)]
+    assert await payloads(engine) == [(seeded["started"], SOURCE, {})]
+    async with engine.begin() as connection:
+        await assert_usage(connection, ids)
+
+
 async def test_a_requested_start_holds_the_purge(upgraded):
     engine, ids = upgraded
     async with engine.begin() as connection:
