@@ -203,6 +203,95 @@ async def test_resolution_receipt_revision_and_audit(client, operation_headers, 
         assert await session.scalar(text("SELECT count(*) FROM access_audit WHERE action='incident.resolve'")) == 1
 
 
+def held_resolution(client, monkeypatch):
+    """Pause the first resolution after its work, inside its transaction, until the test releases it."""
+    import asyncio
+
+    from firefly_weave.operations.incidents import IncidentService
+
+    service = client._transport.app.state.pyfly.context.get_bean(IncidentService)
+    original = service.resolve
+    resolved, release = asyncio.Event(), asyncio.Event()
+
+    async def paused(*args, **kwargs):
+        view = await original(*args, **kwargs)
+        if not resolved.is_set():
+            resolved.set()
+            async with asyncio.timeout(10):
+                await release.wait()
+        return view
+
+    monkeypatch.setattr(service, "resolve", paused)
+    return resolved, release
+
+
+async def waiting_for_a_lock(access_db) -> None:
+    """Return once a session of this test's database waits for an advisory lock."""
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        async with access_db[1]() as session:
+            waiting = await session.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND wait_event_type='Lock' AND wait_event='advisory'"
+                )
+            )
+        if waiting:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("no resolution waited for a lock")
+
+
+async def test_a_resolution_sent_during_a_slow_one_waits_for_it_and_answers_revision_conflict(
+    client, operation_headers, env_url, failed_run, access_db, monkeypatch
+):
+    import asyncio
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    headers = {**operation_headers, "If-Match": str(incident["revision"])}
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(client.post(url, headers=headers, json=body))
+    await asyncio.wait_for(resolved.wait(), 10)
+    second = asyncio.create_task(client.post(url, headers=headers, json={**body, "receipt_id": str(uuid4())}))
+    await waiting_for_a_lock(access_db)
+    # Twice the time a change waits for the project's operation lock: the second request is still waiting.
+    await asyncio.wait({second}, timeout=0.5)
+    release.set()
+    winner, loser = await first, await second
+    assert winner.status_code == 200, winner.text
+    assert loser.status_code == 409 and loser.json()["code"] == "WV-INCIDENT-REVISION", loser.text
+    async with access_db[1]() as session:
+        assert await session.scalar(text("SELECT count(*) FROM run_events WHERE type='incident_resolved'")) == 1
+
+
+async def test_a_resolution_still_refused_for_capacity_when_the_incident_stays_busy(
+    client, operation_headers, env_url, failed_run, access_db, monkeypatch
+):
+    import asyncio
+    import time
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    headers = {**operation_headers, "If-Match": str(incident["revision"])}
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(client.post(url, headers=headers, json=body))
+    await asyncio.wait_for(resolved.wait(), 10)
+    started = time.monotonic()
+    loser = await asyncio.wait_for(client.post(url, headers=headers, json={**body, "receipt_id": str(uuid4())}), 10)
+    waited = time.monotonic() - started
+    release.set()
+    assert (await first).status_code == 200
+    assert loser.status_code == 429 and loser.json()["code"] == "WV-OPERATION-CAPACITY", loser.text
+    # It waited for the incident, well past the project lock's 250 ms, before it gave up.
+    assert waited >= 1.0, waited
+
+
 @pytest.mark.parametrize("worker_runtime_fixture", ["safe"], indirect=True)
 async def test_safe_retry_one_extra_attempt_same_operation_key(
     client, operation_headers, env_url, failed_run, task_service, transaction_factory, worker_ids, access_db

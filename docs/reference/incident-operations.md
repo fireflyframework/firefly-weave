@@ -234,6 +234,9 @@ person resending the same request with the original revision gets the original
 receipt; a different request with that receipt ID conflicts; two competing
 receipts for one revision cannot both win. Authority is checked before a resend
 is honored, so removing a grant also stops resends.
+Two decisions sent at once on one incident queue: the later one waits up to 2
+seconds for the earlier one, then answers HTTP 409 `WV-INCIDENT-REVISION` (or
+429 `WV-OPERATION-CAPACITY` if the wait runs out).
 
 **`retry_safe`** may allow one attempt beyond the exhausted automatic budget, with
 the original operation key and the remaining original action and run deadlines.

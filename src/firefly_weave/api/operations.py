@@ -80,10 +80,12 @@ class OperationsController:
         assert revision is not None
         body = IncidentResolution.model_validate_json(await request.body())
         scope = request_scope(request, environment=True)
-        async with self.runtime.definitions.transaction(scope, None) as tx:
+        incident = UUID(request.path_params["identifier"])
+        # Decisions on one incident queue for each other, so the later one answers a revision conflict.
+        async with self.runtime.definitions.transaction(scope, None, resource=f"incident:{incident}") as tx:
             result = await self.incidents.resolve(
                 tx,
-                UUID(request.path_params["identifier"]),
+                incident,
                 body,
                 revision,
                 actor=request.state.principal,

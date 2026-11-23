@@ -207,12 +207,15 @@ class DefinitionService:
 
     @asynccontextmanager
     async def transaction(
-        self, scope: Scope, supplied: Transaction | None, *, mutation: bool = True
+        self, scope: Scope, supplied: Transaction | None, *, mutation: bool = True, resource: str | None = None
     ) -> AsyncIterator[Transaction]:
         if supplied is None:
-            async with self.uow.open(scope, mutation=mutation) as owned:
+            async with self.uow.open(scope, mutation=mutation, resource=resource) as owned:
                 yield owned
             return
+        if resource is not None:
+            # The owner already holds the project's lock; a record's lock is taken before it, never after.
+            raise ValueError("Only the transaction's owner takes a record's lock")
         current = supplied.session.get_transaction()
         if current is None or not current.is_active:
             raise CatalogError(422, "WV-TRANSACTION", "An active caller-owned transaction is required")
