@@ -922,9 +922,13 @@ class LumiService:
         summary: OperationsSummaryService | None,
     ) -> LumiAnswer:
         """One question. ``summary`` is the lifespan-owned operations summary, or None before it starts; only an
-        environment attachment reads it."""
+        environment attachment reads it.
+
+        ``actor`` stays the principal of the credential that asked: the principal stored now only decides whether
+        Weave AI may be used, and each attachment is read as the caller, so its owning service checks and audits the
+        credential that made the request."""
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
-            actor = await self._require(tx, actor, "lumi.use", context)
+            await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
             if config is None or not config.enabled or not self.gateway.configured:
                 raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
@@ -949,7 +953,7 @@ class LumiService:
                     context_tokens=tokens,
                 )
                 async with self.definitions.transaction(scope, None, mutation=False) as tx:
-                    actor = await self._require(tx, actor, "lumi.use", context)
+                    await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)
                     if current is None or current.revision != config.revision or not current.enabled:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")

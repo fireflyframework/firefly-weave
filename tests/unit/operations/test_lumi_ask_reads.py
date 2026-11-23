@@ -13,9 +13,11 @@
 # limitations under the License.
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
-"""A run attachment that turns unavailable between the read sent to the model and the read after the reply discards
-the reply."""
+"""A Weave AI question reads its attachments as the credential that asked, and a run attachment that turns
+unavailable between the read sent to the model and the read after the reply discards the reply."""
 
+import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -26,7 +28,7 @@ import pytest
 
 import firefly_weave.operations.lumi as module
 from firefly_weave.access.audit import AuditContext
-from firefly_weave.access.authorization import AccessDenied
+from firefly_weave.access.authorization import AccessDenied, AuthorizationService
 from firefly_weave.access.models import CredentialIdentity, Grant, Principal
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.lumi import LumiAskRequest, LumiReply
@@ -34,6 +36,7 @@ from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import RunSummary, StepFactPage
 from firefly_weave.operations.lumi import LumiService
 from firefly_weave.operations.lumi_operations import Explained
+from firefly_weave.operations.run_views import RunViewService
 
 SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
 PRINCIPAL_ID = uuid4()
@@ -150,6 +153,44 @@ def asker(monkeypatch, readers, stored, *, runs=None):
 
 def ask_request(*kinds):
     return LumiAskRequest(message="Explain", attachments=[{"kind": kind, "id": uuid4()} for kind in kinds])
+
+
+@pytest.mark.parametrize(
+    ("kind", "reads"),
+    [
+        ("run", ["run", "run steps"]),
+        ("draft", ["draft"]),
+        ("simulation", ["simulation"]),
+        ("deployment-target", ["deployment-target"]),
+        ("worker", ["worker"]),
+    ],
+)
+async def test_each_attachment_is_read_as_the_credential_that_asked(monkeypatch, kind, reads):
+    # The stored principal is the same person without the credential: an owning service handed it checks, and
+    # audits, an identity that never made the request.
+    token = principal("lumi_user", "viewer", identity=IDENTITY)
+    readers = Readers()
+    service, _ = asker(monkeypatch, readers, stored=principal("lumi_user", "viewer"))
+    answer = await service.ask(token, SCOPE, ask_request(kind), context=AuditContext(), summary=None)
+    assert answer.answer == "An answer"
+    # Both reads, the one sent to the model and the one after the reply, are the caller's.
+    assert readers.principals == [(read, token) for read in reads] * 2
+    assert all(actor.credential_identity == IDENTITY for _, actor in readers.principals)
+
+
+async def test_a_denied_attachment_read_audits_the_credential_that_asked(monkeypatch, caplog):
+    # The run's owning service checks `run.read` on the principal it is handed before it opens a read; its denial
+    # record must name the credential, not an identity-less copy loaded from storage.
+    token = principal("lumi_user", identity=IDENTITY)
+    runs = RunViewService(None, AuthorizationService())
+    service, gateway = asker(monkeypatch, Readers(), stored=principal("lumi_user"), runs=runs)
+    caplog.set_level(logging.INFO, logger="weave.authorization")
+    with pytest.raises(AccessDenied):
+        await service.ask(token, SCOPE, ask_request("run"), context=AuditContext(), summary=None)
+    gateway.ask.assert_not_awaited()
+    records = [json.loads(record.getMessage()) for record in caplog.records if record.name == "weave.authorization"]
+    denials = [record for record in records if record["outcome"] == "deny"]
+    assert [(record["capability"], record["identity"]) for record in denials] == [("run.read", IDENTITY.model_dump())]
 
 
 UNAVAILABLE = UnavailableResource(id=RUN_ID, omissions=[])
