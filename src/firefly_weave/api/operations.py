@@ -81,6 +81,9 @@ class OperationsController:
         body = IncidentResolution.model_validate_json(await request.body())
         scope = request_scope(request, environment=True)
         incident = UUID(request.path_params["identifier"])
+        # Checked before the transaction, so a caller without the permission never waits for a running decision's
+        # locks; the service checks the stored grant again inside it.
+        self.runtime.require(request.state.principal, scope, "incident.resolve", request.state.audit_context)
         # Decisions on one incident queue for each other, so the later one answers a revision conflict.
         async with self.runtime.definitions.transaction(scope, None, resource=f"incident:{incident}") as tx:
             result = await self.incidents.resolve(

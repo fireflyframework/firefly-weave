@@ -292,6 +292,34 @@ async def test_a_resolution_still_refused_for_capacity_when_the_incident_stays_b
     assert waited >= 1.0, waited
 
 
+async def test_a_resolution_without_the_grant_is_refused_before_it_waits_for_a_running_decision(
+    client, operation_headers, other_headers, env_url, failed_run, monkeypatch
+):
+    import asyncio
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    held = asyncio.create_task(
+        client.post(url, headers={**operation_headers, "If-Match": str(incident["revision"])}, json=body)
+    )
+    await asyncio.wait_for(resolved.wait(), 10)
+    # The running decision holds the incident's lock and the project's; a caller with no grant on the project must
+    # not queue for either, or it could delay real decisions and learn that one is running.
+    refused = await asyncio.wait_for(
+        client.post(
+            url,
+            headers={**other_headers, "If-Match": str(incident["revision"])},
+            json={**body, "receipt_id": str(uuid4())},
+        ),
+        10,
+    )
+    release.set()
+    assert (await held).status_code == 200
+    assert refused.status_code == 403 and refused.json()["code"] == "WV-FORBIDDEN", refused.text
+
+
 @pytest.mark.parametrize("worker_runtime_fixture", ["safe"], indirect=True)
 async def test_safe_retry_one_extra_attempt_same_operation_key(
     client, operation_headers, env_url, failed_run, task_service, transaction_factory, worker_ids, access_db

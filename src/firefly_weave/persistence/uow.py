@@ -130,6 +130,8 @@ class UnitOfWork:
         queue for each other before the project's lock, so the later one waits for the earlier one's whole
         transaction and reads its result, instead of being refused for capacity while the earlier one holds the
         project. That wait ends after 2 s; the project's lock keeps its own 250 ms. Either refusal is a 429.
+        A waiting change holds its pooled connection for up to about 2.25 s, so check the caller's permission before
+        opening it: a caller who may not decide must not queue.
         """
         from sqlalchemy.exc import DBAPIError
 
