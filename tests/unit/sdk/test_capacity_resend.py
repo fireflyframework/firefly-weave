@@ -21,6 +21,7 @@ Retry-After, backs off with jitter, and stops after four sends in all or 15 seco
 """
 
 import asyncio
+import logging
 from collections.abc import Callable
 from uuid import UUID, uuid4
 
@@ -104,15 +105,27 @@ async def test_the_pause_waits_for_retry_after_in_seconds_and_otherwise_for_the_
     assert clock.pauses == [pause]
 
 
-async def test_a_change_with_an_idempotency_key_is_sent_again_unchanged(clock):
+async def test_a_change_with_an_idempotency_key_is_sent_again_unchanged(clock, caplog):
+    """The same URL, body, key and token each time, even when the token source has moved on; nothing is logged."""
+    caplog.set_level(logging.DEBUG)
+    tokens = iter(["bearer-first-7f3a", "bearer-second-9c2e", "bearer-third-41d0"])
     sent: list[httpx.Request] = []
-    async with weave(api([refusal(), refusal(), httpx.Response(200, json=PURGED)], sent)) as client:
+    transport = api([refusal(), refusal(), httpx.Response(200, json=PURGED)], sent)
+    async with WeaveClient("https://platform.example", lambda: next(tokens), SCOPE, transport=transport) as client:
         purged = await client.purge_workflow_conversations("support-chat", "purge-support-chat-1")
     assert purged.deleted == 3
     assert len(sent) == 3
+    assert {str(request.url) for request in sent} == {str(sent[0].url)}
+    assert sent[0].url.host == "platform.example"
+    assert {request.headers["Authorization"] for request in sent} == {"Bearer bearer-first-7f3a"}
     assert {request.headers["Idempotency-Key"] for request in sent} == {"purge-support-chat-1"}
     assert len({request.content for request in sent}) == 1
     assert clock.pauses == [1.0, 1.0]
+    assert not [
+        record
+        for record in caplog.records
+        if "bearer-" in record.getMessage() or "purge-support" in record.getMessage()
+    ]
 
 
 async def test_a_post_without_an_idempotency_key_is_never_sent_again(clock):
