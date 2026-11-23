@@ -191,6 +191,37 @@ test.describe("handled failures on the Runs tab at 1440x900", () => {
     );
   });
 
+  test("With handled errors works from the keyboard", async ({ page }) => {
+    const { runs } = await openRuns(page);
+    await expect(runs.row(RUN_IDS.failed)).toBeVisible();
+    await runs.filters.focus();
+    await page.keyboard.press("Enter");
+    const popover = page.getByRole("dialog", { name: "Filters" });
+    const handled = popover.getByRole("checkbox", {
+      name: "With handled errors",
+    });
+    // Focus starts on the first status; then past the other seven, Version
+    // and How it started.
+    await expect(popover.getByRole("checkbox").first()).toBeFocused();
+    for (let i = 0; i < 10; i++) await page.keyboard.press("Tab");
+    await expect(handled).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(handled).toBeChecked();
+    await expect(runs.row(RUN_IDS.failed)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(runs.filters).toBeFocused();
+    // The chip's remove button comes after Filters and Include test runs.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const remove = runs.panel.getByRole("button", {
+      name: "Remove the filter With handled errors",
+    });
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(runs.row(RUN_IDS.failed)).toBeVisible();
+    await expect(runs.filters).toBeFocused();
+  });
+
   test("the canvas shows the step Failed, continued and the way the run took into its error path", async ({
     page,
   }) => {
