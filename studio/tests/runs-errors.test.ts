@@ -55,6 +55,7 @@ import {
   runsTabQuery,
 } from "../src/app/editor/runs-tab/runs-list-model";
 import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
+import { executeRequest } from "../src/app/editor/state/execute-request";
 import { readTestData } from "../src/app/editor/state/test-data-read";
 import {
   emptyTestData,
@@ -559,6 +560,112 @@ describe("Debug in editor carries handled failures", () => {
     expect(leftOutText(leftOut, [])).toBe(
       "Left out 2 values: submit (a code Studio can't simulate), send[0] (more than 1,000 attempts).",
     );
+  });
+
+  it("turns a handled signal timeout into Time out and a handled expiry into Expire", () => {
+    const flow = workflow([
+      {
+        id: "wait-reply",
+        kind: "signal",
+        signal: "reply",
+        timeout: "PT1H",
+        onError: "continue",
+      } as Step,
+      {
+        id: "approve",
+        kind: "humanTask",
+        expires: "P1D",
+        onError: "continue",
+      } as Step,
+      {
+        id: "confirm",
+        kind: "signal",
+        signal: "confirm",
+        timeout: "PT1H",
+        onError: "continue",
+      } as Step,
+      transform("summarize"),
+    ]);
+    const failure = (code: string, key: string) => ({
+      output: null,
+      error: {
+        code,
+        message: "Run text.",
+        outcome: "failed",
+        attempts: 1,
+        instanceKey: key,
+      },
+    });
+    const run = record({
+      steps: {
+        "wait-reply": failure("WV-SIGNAL-TIMEOUT", "wait-reply"),
+        approve: failure("WV-HUMAN-EXPIRED", "approve"),
+        confirm: failure("WV-SIGNAL-REFUSED", "confirm"),
+        summarize: { output: { ok: true } },
+      },
+    });
+    const facts = [
+      fact("wait-reply", "failed", {
+        kind: "signal",
+        error_code: "WV-SIGNAL-TIMEOUT",
+        handled: "continue",
+      }),
+      fact("approve", "failed", {
+        kind: "humanTask",
+        error_code: "WV-HUMAN-EXPIRED",
+        handled: "continue",
+      }),
+      fact("confirm", "failed", {
+        kind: "signal",
+        error_code: "WV-SIGNAL-REFUSED",
+        handled: "continue",
+      }),
+      fact("summarize", "succeeded", { kind: "transform" }),
+    ];
+    const { data, leftOut, pointers } = built(source(run, facts, flow), flow);
+    // Their test data answers: Execute sends no failure for these two kinds.
+    expect(data.signals).toEqual({ "wait-reply": { outcome: "timeout" } });
+    expect(data.humans).toEqual({ approve: { outcome: "expire" } });
+    expect(data.errors).toBeUndefined();
+    expect(pointers).toEqual(
+      expect.arrayContaining(["/signals/wait-reply", "/humans/approve"]),
+    );
+    // Any other code on them is left out: they fail only by running out of time.
+    expect(leftOut).toEqual([
+      {
+        key: "confirm",
+        reason: "code",
+        detail: "Studio can't simulate this failure's code.",
+      },
+    ]);
+    expect(readTestData(data).ok).toBe(true);
+    // The Merge question names them as what they are.
+    expect(
+      mergeQuestion(
+        { data, leftOut, pointers, stopAt: null, recomputed: [], reached: [] },
+        1,
+        "development",
+      ),
+    ).toContain(
+      "Studio copies the run's input, approve's expiry and wait-reply's time out.",
+    );
+    const request = executeRequest({
+      source: "{}",
+      format: "json",
+      workflow: flow,
+      definitions: [],
+      connected: false,
+      testData: data,
+      results: null,
+      sampleInput: {},
+      target: { mode: "workflow" },
+      now: new Date(NOW),
+    });
+    expect(request.scripts.signals["wait-reply"]).toEqual({
+      outcome: "timeout",
+    });
+    expect(request.scripts.humans["approve"]).toEqual({ outcome: "expire" });
+    expect(request).not.toHaveProperty("errors");
   });
 
   it("Merge replaces the failures of steps the run reached and keeps the others", () => {

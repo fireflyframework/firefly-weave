@@ -36,10 +36,10 @@ import type { StepFingerprints } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
 import type {
   ErrorEntry,
-  HumanScript,
+  HumanEntry,
   PinEntry,
   Provenance,
-  SignalScript,
+  SignalEntry,
   StudioTestData,
 } from "../state/test-data";
 import { emptyTestData, fitsTestData } from "../state/test-data-ops";
@@ -100,6 +100,11 @@ const SECTION_LIMIT = 1000;
 const ERROR_CODE = /^[A-Z][A-Z0-9_.-]*$/;
 const MAX_ATTEMPTS = 1000;
 const OUTCOMES = ["not_started", "failed", "unknown"] as const;
+/** The one failure of each kind that waits: it ran out of time. */
+const WAIT_TIMEOUTS: Readonly<Record<string, string>> = {
+  signal: "WV-SIGNAL-TIMEOUT",
+  humanTask: "WV-HUMAN-EXPIRED",
+};
 export const CODE_LEFT_OUT = "Studio can't simulate this failure's code.";
 export const ATTEMPTS_LEFT_OUT =
   "Studio can't simulate a failure after more than 1,000 attempts.";
@@ -138,8 +143,8 @@ export function testDataFromRun(
     allSteps(draft.spec.steps).map((step) => [step.id, step]),
   );
   const pins: Record<string, PinEntry> = {};
-  const humans: Record<string, HumanScript> = {};
-  const signals: Record<string, SignalScript> = {};
+  const humans: Record<string, HumanEntry> = {};
+  const signals: Record<string, SignalEntry> = {};
   const leftOut: LeftOut[] = [];
   const recomputed = new Set<string>();
   const visited = new Set<string>();
@@ -233,12 +238,28 @@ export function testDataFromRun(
   // is left out, so the result is always test data Studio can keep.
   const errors: Record<string, ErrorEntry> = {};
   for (const failure of handledFailures(source.record, source.facts)) {
-    if (!inDraft.has(failure.step)) {
+    const step = inDraft.get(failure.step);
+    if (!step) {
       leftOut.push({
         key: failure.key,
         reason: "not-in-draft",
         detail: "not in this draft",
       });
+      continue;
+    }
+    // A wait's failure is its test data answer, Time out or Expire, which
+    // takes its On error; Execute sends no failure for these kinds.
+    const timeout = WAIT_TIMEOUTS[step.kind];
+    if (timeout) {
+      if (failure.code !== timeout)
+        leftOut.push({
+          key: failure.key,
+          reason: "code",
+          detail: CODE_LEFT_OUT,
+        });
+      else if (step.kind === "signal")
+        signals[failure.key] = { outcome: "timeout" };
+      else humans[failure.key] = { outcome: "expire" };
       continue;
     }
     if (!ERROR_CODE.test(failure.code) || failure.code.length > 128) {
@@ -326,6 +347,17 @@ export function listText(items: readonly string[]): string {
     ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
     : (items[0] ?? "");
 }
+/** A wait's answers, or only the ones where it ran out of time (Time out, Expire). */
+function answers(
+  section: Record<string, HumanEntry | SignalEntry> | undefined,
+  ranOut: boolean,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(section ?? {}).filter(
+      ([, entry]) => !!entry.outcome === ranOut,
+    ),
+  );
+}
 /** "the run's input, fetch's output, approve's answer, wait-for-reply's signal and submit's failure" */
 function copiedText(data: StudioTestData): string {
   const named = (
@@ -341,8 +373,10 @@ function copiedText(data: StudioTestData): string {
   const parts = [
     ...(data.input ? ["the run's input"] : []),
     ...named(data.pins, "output", "outputs"),
-    ...named(data.humans, "answer", "answers"),
-    ...named(data.signals, "signal", "signals"),
+    ...named(answers(data.humans, false), "answer", "answers"),
+    ...named(answers(data.humans, true), "expiry", "expiries"),
+    ...named(answers(data.signals, false), "signal", "signals"),
+    ...named(answers(data.signals, true), "time out", "time outs"),
     ...named(data.errors, "failure", "failures"),
   ];
   // A long run: the first few by name, then how many more.
