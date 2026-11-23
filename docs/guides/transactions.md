@@ -205,7 +205,9 @@ person who moved it, who needs what creating it needs. See
 To ask for other events, disable the trigger with
 `weave triggers events disable "$TRIGGER_ID"` and create another; disabling
 works even when the project's quota is spent, and no run starts after it
-returns.
+returns. Over HTTP, send the revision you read in `If-Match` to stop the trigger
+only if nobody moved it since: otherwise the stop answers `409 WV-REVISION` and
+the trigger keeps running.
 
 ### What a reaction receives
 
