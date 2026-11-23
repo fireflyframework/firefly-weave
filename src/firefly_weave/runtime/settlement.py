@@ -562,7 +562,8 @@ async def transaction_page(
     """One page of a run's transactions, oldest first, from their records only, as ``RunTransactionView`` items.
 
     ``after`` is the opening time and instance key of the last item of the previous page. Each item names its latest
-    in-doubt incident and how a person resolved it, without the values they gave.
+    in-doubt incident and how a person resolved it, without the values they gave, and the workflow run whose resolve
+    step applied the resolution when one did.
     """
     from firefly_weave.contracts.run_views import RunTransactionView
     from firefly_weave.definitions.models import CatalogError
@@ -579,7 +580,7 @@ async def transaction_page(
         "SELECT p.instance_key,p.node_id,p.state,p.business_key,p.cause,s.participants,p.opened_at,p.decided_at,"
         "p.ended_at,i.id AS incident_id,i.actor_id,i.resolved_at,i.resolution->>'kind' AS kind,"
         "i.resolution->>'reason' AS reason,i.resolution->>'evidence_reference' AS evidence_reference,"
-        "i.resolution->'output'->>'as' AS reconciled_as,"
+        "i.resolution->'output'->>'as' AS reconciled_as,i.resolution->>'workflow_run_id' AS workflow_run_id,"
         "octet_length(s.participants::text)+coalesce(octet_length(p.cause::text),0)"
         "+coalesce(octet_length(i.resolution->>'reason'),0)"
         "+coalesce(octet_length(i.resolution->>'evidence_reference'),0) AS bytes "
@@ -611,6 +612,7 @@ async def transaction_page(
                 "reconciled_as": ending
                 if ending in {"completed", "compensated"} and row["state"] == "reconciled"
                 else None,
+                "workflow_run_id": row["workflow_run_id"],
             }
         view = RunTransactionView.model_validate_json(
             json.dumps(

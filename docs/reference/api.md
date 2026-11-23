@@ -1257,7 +1257,8 @@ refuses an activation a running transaction may still need to undo a step
 body, and the caller holds `transaction.reconcile`. A transaction's
 `resolution` shows the resolver's reason, evidence reference and ID to anyone
 with `run.read`, as run history does; write justifications with that audience in
-mind.
+mind. A resolution that a workflow run's resolve step applied adds
+`workflow_run_id`, that run's ID, as the incident's `resolution` does.
 
 ## Move a trigger to another version
 

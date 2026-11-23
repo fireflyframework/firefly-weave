@@ -33,6 +33,16 @@ async def platform(worker_setup, services, access_db, monkeypatch):
     return await build(worker_setup, services, access_db, monkeypatch)
 
 
+@pytest.fixture
+async def reconciler(platform, access_db, provisioned):
+    """The platform's actor, also allowed to force end a transaction in doubt."""
+    from firefly_weave.access.models import Grant
+
+    access = access_db[2]
+    await access.grant(provisioned[0], platform.actor.id, Grant(role="transaction_reconciler", scope=platform.scope))
+    return await access.load_principal(platform.actor.id)
+
+
 async def test_runs_transactions_lists_each_transaction_without_values(platform):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)
@@ -57,6 +67,63 @@ async def test_runs_transactions_lists_each_transaction_without_values(platform)
         ("add", "undo_stuck"),
     ]
     assert "input" not in str(item) and "output" not in str(item) and page["next_cursor"] is None
+
+
+async def test_a_resolution_names_the_workflow_run_that_applied_it_and_a_persons_does_not(platform, reconciler):
+    from firefly_weave.contracts.operations import IncidentResolution
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+
+    async def force_ended(move):
+        run = await platform.start(activation, move)
+        await platform.complete(await platform.lease("hold"))
+        await platform.fail(await platform.lease("add"), "UNAVAILABLE")
+        await platform.scan()
+        await platform.fail(await platform.lease("add#undo"), "REJECTED", outcome="failed")
+        await platform.scan()
+        [incident] = await platform.query(
+            "SELECT id,revision FROM incidents WHERE run_id=:run AND status='active'", run=run.id
+        )
+        request = IncidentResolution.model_validate(
+            {"receipt_id": uuid4(), "kind": "terminate", "reason": "Both systems checked."}
+        )
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.incidents.resolve(
+                tx,
+                incident["id"],
+                request,
+                incident["revision"],
+                actor=reconciler,
+                scope=platform.scope,
+                context=AuditContext(),
+            )
+        return run, incident["id"]
+
+    async def resolution(run):
+        page = await platform.runtime.transactions(platform.actor, platform.scope, run.id, context=AuditContext())
+        [item] = page["items"]
+        return item["resolution"]
+
+    by_person, _ = await force_ended("M-1")
+    by_workflow, incident = await force_ended("M-2")
+    # Only the platform's resolve step names a workflow run: it keeps that run with the incident's resolution.
+    resolver = uuid4()
+    await platform.execute(
+        "UPDATE incidents SET resolution=resolution||jsonb_build_object('workflow_run_id',cast(:by AS text)) "
+        "WHERE id=:id",
+        by=str(resolver),
+        id=incident,
+    )
+    viewed = await platform.incidents.read(platform.actor, platform.scope, incident, context=AuditContext())
+    assert viewed.resolution is not None and viewed.resolution.workflow_run_id == resolver
+    named = await resolution(by_workflow)
+    assert (named["kind"], named["reason"], named["workflow_run_id"]) == (
+        "terminate",
+        "Both systems checked.",
+        str(resolver),
+    )
+    plain = await resolution(by_person)
+    assert (plain["kind"], plain["actor_id"]) == ("terminate", str(reconciler.id)) and "workflow_run_id" not in plain
 
 
 async def test_a_reader_without_run_read_is_refused(platform):
