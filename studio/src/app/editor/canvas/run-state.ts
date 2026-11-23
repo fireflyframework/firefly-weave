@@ -38,6 +38,11 @@ export interface CanvasRun {
   /** Steps whose failure their On error handled, by step ID: the run went past them. */
   handled?: Readonly<Record<string, HandledFailure>>;
   /**
+   * Handled steps that also completed without a failure, in another item of
+   * a loop around them: their Success output was taken too.
+   */
+  alsoCompleted?: readonly string[];
+  /**
    * The loops the answer ended inside, by instance key, with how many items
    * they finished: Execute previous steps stopped in one of their items, or
    * the run is blocked there. Read once the playback ended.
@@ -317,9 +322,12 @@ export function edgeRun(
 ): EdgeRun {
   if (!run) return "idle";
   // A step's Success output: taken when it finished without a failure its
-  // error path handled; when its error path ran, the way it didn't take.
+  // error path handled, in any item of the loops around it; when its error
+  // path ran every time, the way it didn't take.
   if (edge.success !== undefined) {
-    const handled = run.handled?.[edge.success]?.policy === "errorOutput";
+    const handled =
+      run.handled?.[edge.success]?.policy === "errorOutput" &&
+      !run.alsoCompleted?.includes(edge.success);
     if (!handled && run.done.includes(edge.success))
       return runEnded(run) ? "taken" : "live";
     return runEnded(run) && (handled || run.mode === "simulated")

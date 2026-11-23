@@ -111,9 +111,13 @@ export function finalRun(response: ExecuteResponse): CanvasRun {
   };
 }
 
-/** The steps whose failure their On error handled, with what the trace says of it. */
+/**
+ * The steps whose failure their On error handled, with what the trace says
+ * of it, and those of them that completed in another item of a loop.
+ */
 function handledOf(top: readonly TraceEntry[]): {
   handled?: Record<string, HandledFailure>;
+  alsoCompleted?: string[];
 } {
   const handled: Record<string, HandledFailure> = {};
   for (const entry of top)
@@ -123,7 +127,17 @@ function handledOf(top: readonly TraceEntry[]): {
         message: entry.error.message,
         policy: entry.handled,
       };
-  return Object.keys(handled).length ? { handled } : {};
+  if (!Object.keys(handled).length) return {};
+  const alsoCompleted = [
+    ...new Set(
+      top
+        .filter(
+          (entry) => entry.status === "completed" && handled[entry.nodeId],
+        )
+        .map((entry) => entry.nodeId),
+    ),
+  ];
+  return { handled, ...(alsoCompleted.length ? { alsoCompleted } : {}) };
 }
 
 /**

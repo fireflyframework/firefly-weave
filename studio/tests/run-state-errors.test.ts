@@ -320,3 +320,41 @@ describe("a loop whose item failed and continued", () => {
     );
   });
 });
+
+describe("the Success output of a step in a loop whose error path ran for some items", () => {
+  // send continues with error output; `handledItems` are the items whose failure its path handled.
+  const run = (handledItems: number[]) =>
+    finalRun({
+      status: "completed",
+      trace: [
+        ["orders", "", "forEach", "completed"],
+        ...[0, 1, 2].map((item) => [
+          "send",
+          `send[${item}]`,
+          "action",
+          handledItems.includes(item) ? "failed" : "completed",
+        ]),
+      ].map(([nodeId, instanceKey, kind, status], index) => ({
+        index,
+        nodeId,
+        instanceKey,
+        kind,
+        status,
+        ...(status === "failed"
+          ? { error: { ...ERROR, instanceKey }, handled: "errorOutput" }
+          : {}),
+        ...(kind === "forEach" ? { output: [1, 2, 3] } : {}),
+      })),
+      loops: [{ nodeId: "orders", instanceKey: "", count: 3, completed: 3 }],
+      blocked: null,
+    } as unknown as ExecuteResponse);
+  const success = { leaves: "send", enters: null, success: "send" };
+
+  it("is taken when another item completed without a failure", () => {
+    expect(edgeRun(success, run([2]))).toBe("taken");
+  });
+
+  it("is dashed only when every item took the error path", () => {
+    expect(edgeRun(success, run([0, 1, 2]))).toBe("skipped");
+  });
+});
