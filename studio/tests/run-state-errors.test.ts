@@ -29,9 +29,14 @@ import {
 } from "../src/app/editor/canvas/tile-facts";
 import {
   edgeRun,
+  loopProgress,
   tileRun,
   type CanvasRun,
+  type RecordedItem,
+  type RecordedLoop,
 } from "../src/app/editor/canvas/run-state";
+import { loopRunText } from "../src/app/editor/canvas/loop-frame";
+import { chipName, itemGroups } from "../src/app/editor/canvas/item-chip";
 import { layoutLtr } from "../src/app/editor/canvas/layout-ltr";
 import { freshWorkflow, type Step } from "../src/app/model";
 import { finalRun } from "../src/app/editor/canvas/trace-playback";
@@ -220,5 +225,85 @@ describe("the edges around a step whose error path ran", () => {
       "submit>submit:path:errorPath": "skipped",
       "notify-team>$join:submit": "skipped",
     });
+  });
+});
+
+describe("a loop whose item failed and continued", () => {
+  // orders over three items; send failed in the second and its On error handled it.
+  const looped = {
+    status: "completed",
+    trace: [
+      ["orders", "", "forEach", "completed"],
+      ["send", "send[0]", "action", "completed"],
+      ["send", "send[1]", "action", "failed"],
+      ["send", "send[2]", "action", "completed"],
+    ].map(([nodeId, instanceKey, kind, status], index) => ({
+      index,
+      nodeId,
+      instanceKey,
+      kind,
+      status,
+      ...(instanceKey === "send[1]"
+        ? { error: { ...ERROR, instanceKey }, handled: "continue" }
+        : {}),
+      ...(kind === "forEach" ? { output: [1, 2, 3] } : {}),
+    })),
+    loops: [{ nodeId: "orders", instanceKey: "", count: 3, completed: 3 }],
+    blocked: null,
+  } as unknown as ExecuteResponse;
+  const around = (id: string) => (id === "send" ? ["orders"] : []);
+
+  it("finishes every item and counts the handled one in the frame's status", () => {
+    const run = finalRun(looped);
+    const [orders] = loopProgress(
+      run.trace!,
+      run.at!,
+      run.counts!,
+      around,
+      true,
+    );
+    expect(orders).toMatchObject({
+      status: "done",
+      finished: 3,
+      failedAt: null,
+      handled: 1,
+    });
+    expect(loopRunText(orders)).toBe("3 of 3 · 1 error handled");
+    expect(loopRunText({ ...orders, handled: 2 })).toBe(
+      "3 of 3 · 2 errors handled",
+    );
+  });
+
+  it("lists the item in the item chip under Failed, continued", () => {
+    const item = (
+      index: number,
+      status: RecordedItem["status"],
+      code: string | null = null,
+    ): RecordedItem => ({ index, status, code });
+    const loop: RecordedLoop = {
+      id: "orders",
+      within: [],
+      count: 3,
+      known: true,
+      items: [
+        item(0, "finished"),
+        item(1, "handled", "REQUEST_REFUSED"),
+        item(2, "failed", "SMTP_REJECTED"),
+      ],
+      results: null,
+    };
+    expect(
+      itemGroups(loop).map((group) => [
+        group.title,
+        group.items.map((each) => each.index),
+      ]),
+    ).toEqual([
+      ["Failed", [2]],
+      ["Failed, continued", [1]],
+      ["All items", [0, 1, 2]],
+    ]);
+    expect(chipName(1, loop)).toBe(
+      "Item 2 of 3, Failed, continued. Choose an item",
+    );
   });
 });

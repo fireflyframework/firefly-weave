@@ -39,21 +39,24 @@ export function stepsOf(response: ExecuteResponse): TraceStep[] {
   const overLimit = (response.diagnostics ?? []).some(
     (problem) => problem.code === LOOP_LIMIT,
   );
-  return top.map(({ nodeId, instanceKey, kind, status, output }, index) => ({
-    nodeId,
-    instanceKey,
-    kind,
-    status,
-    ...(kind === "forEach" && Array.isArray(output)
-      ? { results: output.length }
-      : {}),
-    ...(overLimit &&
-    kind === "forEach" &&
-    status === "failed" &&
-    index === top.length - 1
-      ? { code: LOOP_LIMIT }
-      : {}),
-  }));
+  return top.map(
+    ({ nodeId, instanceKey, kind, status, output, handled }, index) => ({
+      nodeId,
+      instanceKey,
+      kind,
+      status,
+      ...(status === "failed" && handled ? { handled: true as const } : {}),
+      ...(kind === "forEach" && Array.isArray(output)
+        ? { results: output.length }
+        : {}),
+      ...(overLimit &&
+      kind === "forEach" &&
+      status === "failed" &&
+      index === top.length - 1
+        ? { code: LOOP_LIMIT }
+        : {}),
+    }),
+  );
 }
 /** Each loop instance's count, as the simulator reports it (`orders`, `lines[2]`). */
 export const countsOf = (response: ExecuteResponse): Record<string, number> =>

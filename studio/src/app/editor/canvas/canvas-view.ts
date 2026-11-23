@@ -233,7 +233,9 @@ function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
           ? "failed"
           : loop.status === "paused"
             ? "stopped"
-            : "done",
+            : loop.handled
+              ? "handled"
+              : "done",
     progress: loop.count ? Math.min(1, loop.finished / loop.count) : null,
   };
 }

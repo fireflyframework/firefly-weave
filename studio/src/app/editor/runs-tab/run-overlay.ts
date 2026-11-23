@@ -105,11 +105,13 @@ const iterationOf = (key: string): number[] =>
 const ITEM_RANK: Readonly<Record<RecordedItem["status"], number>> = {
   "not-run": 0,
   finished: 1,
-  running: 2,
+  // A step failed and its On error went on: more than finished, less than at work.
+  handled: 2,
+  running: 3,
   // Cut off by the run's end: above finished, below a failure.
-  stopped: 3,
-  "timed-out": 3,
-  failed: 4,
+  stopped: 4,
+  "timed-out": 4,
+  failed: 5,
 };
 
 /** Each step inside a loop, and the loops around it, outermost first. */

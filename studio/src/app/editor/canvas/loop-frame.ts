@@ -132,7 +132,8 @@ export function loopResultText(count: number, results: number | null): string {
 /**
  * The run status at the end of a loop's header while a run shows: "7 of 20",
  * "20 of 20" once done, "failed at item 4"; "7 finished" when the run
- * doesn't say how many items there are.
+ * doesn't say how many items there are; "20 of 20 · 1 error handled" once
+ * items went on after a failure their step's On error handled.
  */
 export function loopRunText(run: {
   finished: number;
@@ -140,6 +141,7 @@ export function loopRunText(run: {
   status: "running" | "done" | "failed" | "paused";
   failedAt: number | null;
   overLimit?: true;
+  handled?: number;
 }): string {
   if (run.status === "failed")
     return run.failedAt !== null
@@ -149,9 +151,12 @@ export function loopRunText(run: {
         ? "failed: over Up to"
         : "failed";
   const finished = run.finished.toLocaleString("en-US");
+  const handled = run.handled
+    ? ` · ${run.handled.toLocaleString("en-US")} ${run.handled === 1 ? "error" : "errors"} handled`
+    : "";
   return run.count === null
-    ? `${finished} finished`
-    : `${finished} of ${run.count.toLocaleString("en-US")}`;
+    ? `${finished} finished${handled}`
+    : `${finished} of ${run.count.toLocaleString("en-US")}${handled}`;
 }
 
 /**

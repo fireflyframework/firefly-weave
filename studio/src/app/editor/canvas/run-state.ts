@@ -55,6 +55,8 @@ export interface TraceStep {
   results?: number;
   /** The incident a failed entry stopped the run with, when the answer says (WV-RUNTIME-LOOP-LIMIT). */
   code?: string;
+  /** A failed entry its On error handled: the item went on past it. */
+  handled?: true;
 }
 /** One run of a loop at a point of the playback. */
 export interface LoopRun {
@@ -74,6 +76,8 @@ export interface LoopRun {
   results: number | null;
   /** It failed before its first item because its list was longer than Up to; absent otherwise. */
   overLimit?: true;
+  /** Items with a failure their On error handled so far; absent when none. */
+  handled?: number;
 }
 /** The incident a loop over more items than its Up to opens. */
 export const LOOP_LIMIT = "WV-RUNTIME-LOOP-LIMIT";
@@ -110,6 +114,8 @@ export function loopProgress(
   >();
   const last = new Map<string, Map<number, number>>();
   const failures = new Map<string, Set<number>>();
+  // The items a step failed in and went on, its On error handling it.
+  const handledIn = new Map<string, Set<number>>();
   // A loop the run stopped at, by its own failed entry, and the incident it opened.
   const stopped = new Map<string, string | null>();
   const keyOf = (id: string, within: readonly number[]) =>
@@ -138,20 +144,28 @@ export function loopProgress(
       let items = last.get(key);
       if (!items) last.set(key, (items = new Map()));
       items.set(iteration[depth], position);
-      // A failure inside an item, nested loops included, fails it.
+      // A failure inside an item, nested loops included, fails it, unless
+      // its On error handled it: then the item went on.
       if (entry.status === "failed" && position < played) {
-        let failed = failures.get(key);
-        if (!failed) failures.set(key, (failed = new Set()));
-        failed.add(iteration[depth]);
+        const kept = entry.handled ? handledIn : failures;
+        let items = kept.get(key);
+        if (!items) kept.set(key, (items = new Set()));
+        items.add(iteration[depth]);
       }
     });
   });
   return [...runs].map(([key, run]) => {
     let finished = 0;
     for (const position of last.get(key)?.values() ?? [])
-      if (position < played && trace[position].status === "completed")
+      if (
+        position < played &&
+        (trace[position].status === "completed" || trace[position].handled)
+      )
         finished++;
     const failed = [...(failures.get(key) ?? [])];
+    const handled = [...(handledIn.get(key) ?? [])].filter(
+      (index) => !failed.includes(index),
+    ).length;
     const failedAt = failed.length ? Math.min(...failed) + 1 : null;
     const count = counts[key] ?? null;
     // The run stopped at the loop itself, before any of its items ran.
@@ -176,6 +190,7 @@ export function loopProgress(
       ...(failedItself && stopped.get(key) === LOOP_LIMIT
         ? { overLimit: true as const }
         : {}),
+      ...(handled ? { handled } : {}),
     };
   });
 }
@@ -186,15 +201,19 @@ export function loopProgress(
 /** One item of a loop in a recorded run, and what it did. */
 export interface RecordedItem {
   index: number;
-  /** "stopped": a cancelled run cut it off; "timed-out": the run timed out while it ran. */
+  /**
+   * "stopped": a cancelled run cut it off; "timed-out": the run timed out
+   * while it ran; "handled": a step failed in it and its On error went on.
+   */
   status:
     | "finished"
     | "failed"
+    | "handled"
     | "running"
     | "not-run"
     | "stopped"
     | "timed-out";
-  /** A failed item's error code. */
+  /** A failed or handled item's error code. */
   code: string | null;
 }
 /** One run of a loop in a recorded run: once, or once per item of the loops around it. */

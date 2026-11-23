@@ -361,6 +361,10 @@ weave-canvas-view,
 .canvas-v2 .frame-run[data-tone="failed"] {
   color: var(--danger-ink);
 }
+/* "20 of 20 · 1 error handled": items failed and went on. */
+.canvas-v2 .frame-run[data-tone="handled"] {
+  color: var(--warning-ink);
+}
 /* A cancelled run cut the loop off: said quietly, it wasn't a failure. */
 .canvas-v2 .frame-run[data-tone="stopped"] {
   color: var(--muted);
