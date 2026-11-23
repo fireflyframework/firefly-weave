@@ -523,23 +523,36 @@ test("Clusters polls every 5 s while the wizard is open and every 15 s after it"
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
-  // Paused, the clock moves only by runFor: each step of 5 s holds exactly
-  // the polls due in it, so the intervals are checked to the step.
+  // Paused, the clock moves only by runFor. Each poll is timed from the
+  // answer before it, when Studio schedules the next one: none in the first
+  // interval less 100 ms, then exactly one by its end, so an early poll and a
+  // late one both fail.
   await pauseClock(page);
-  const polls = async () => {
-    const seen: number[] = [];
-    for (let step = 0; step < 6; step++) {
+  // The poll due when the clock stopped anchors the rest: it lands within 5 s.
+  const anchor = backend.targetReads;
+  for (let step = 0; step < 50 && backend.targetReads === anchor; step++) {
+    await page.clock.runFor(100);
+    await settledPaused(page);
+  }
+  expect(backend.targetReads).toBe(anchor + 1);
+  const pollsEvery = async (interval: number, times: number) => {
+    for (let poll = 0; poll < times; poll++) {
       const before = backend.targetReads;
-      await page.clock.runFor(5_000);
+      await page.clock.runFor(interval - 100);
       await settledPaused(page);
-      seen.push(backend.targetReads - before);
+      expect(backend.targetReads, `poll ${poll + 1} came early`).toBe(before);
+      await page.clock.runFor(100);
+      await settledPaused(page);
+      expect(backend.targetReads, `poll ${poll + 1} by its interval`).toBe(
+        before + 1,
+      );
     }
-    return seen;
   };
-  expect(await polls()).toEqual([1, 1, 1, 1, 1, 1]);
+  await pollsEvery(5_000, 3);
   await page.getByRole("button", { name: "Back to Clusters" }).click();
-  // Leaving the wizard restarts the wait: the polls come at 15 s and 30 s.
-  expect(await polls()).toEqual([0, 0, 1, 0, 0, 1]);
+  // Leaving the wizard restarts the wait, from the click: every 15 s now.
+  await settledPaused(page);
+  await pollsEvery(15_000, 2);
   await expect(page.getByRole("button", { name: "Add target" })).toBeFocused();
 });
 
