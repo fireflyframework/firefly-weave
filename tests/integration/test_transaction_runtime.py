@@ -536,7 +536,7 @@ async def test_a_run_too_large_for_its_state_that_times_out_holds_its_transactio
     too_large(monkeypatch, limit)
     await asyncio.sleep(5.2)
     await platform.scan()
-    # Nothing is abandoned: the transaction stays open and a person decides, through a force cancel.
+    # Nothing is abandoned: the transaction stays open and a person decides, through the incident's force end.
     await held(platform, run.id)
     # The timeout fired once: a later scan changes nothing.
     await platform.scan()
@@ -558,7 +558,7 @@ async def test_a_held_run_stays_held_when_it_later_records_a_change(platform, mo
     await asyncio.sleep(5.2)
     await platform.scan()
     monkeypatch.setattr(kernel, "STATE_BYTES", limit)
-    # A later change the run records (here a pause) keeps the incident: only a force cancel closes it.
+    # A later change the run records (here a pause) keeps the incident: only a force end closes it.
     revision = (await platform.state(run.id)).get("control_revision", 0)
     await platform.runtime.manual_control(
         platform.actor,
@@ -571,7 +571,7 @@ async def test_a_held_run_stays_held_when_it_later_records_a_change(platform, mo
     )
     assert (await platform.state(run.id))["manual_paused"] is True
     await held(platform, run.id)
-    # A plain cancel never undoes past the hold either: only a force cancel ends the run.
+    # A plain cancel never undoes past the hold either: only the incident's force end ends the run.
     from firefly_weave.definitions.models import CatalogError
 
     with pytest.raises(CatalogError) as refused:

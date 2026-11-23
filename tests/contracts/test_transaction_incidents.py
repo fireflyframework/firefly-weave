@@ -135,3 +135,15 @@ def test_a_case_names_at_most_twenty_incidents_it_waits_on():
         json.dumps({**STORED, "held_by": {**LINK, "code": "WV-TXN-SETTLE-TIMEOUT"}})
     )
     assert child.model_dump(mode="json")["held_by"]["code"] == "WV-TXN-SETTLE-TIMEOUT"
+
+
+def test_the_held_run_sentence_names_force_end_as_its_incident_does():
+    from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+    from firefly_weave.operations.incident_codes import INCIDENT_CODES
+
+    held = TRANSACTION_MESSAGES["WV-TXN-RUN-OVERSIZED"]
+    # Canceling without undoing is refused while the run is held, so the sentence points to the incident's Force end.
+    assert held == "The run grew too large to undo its transactions, so they're held until someone force ends the run."
+    assert "force cancel" not in held
+    assert INCIDENT_CODES["WV-TXN-RUN-OVERSIZED"].decisions == ("terminate",)
+    assert "force ends the run" in INCIDENT_CODES["WV-TXN-RUN-OVERSIZED"].meaning

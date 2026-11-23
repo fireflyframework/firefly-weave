@@ -79,7 +79,9 @@ async def test_skip_undo_needs_the_reconcile_capability(platform, reconciler):
     assert adding.operation_key == f"{run.id}:add"
 
 
-async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
+async def test_skip_undo_is_refused_while_the_step_that_cant_be_undone_is_unknown(platform, reconciler):
+    from firefly_weave.definitions.models import CatalogError
+
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
@@ -87,10 +89,13 @@ async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
     await platform.fail(await platform.lease("submit"), "UNAVAILABLE")
     await platform.scan()
     assert (await platform.record(run.id))["state"] == "in_doubt"
-    view = await cancel(platform, run.id, actor=reconciler, skip_undo=True)
-    assert view.state.status == "cancelled"
-    assert (await platform.record(run.id))["state"] == "force_ended"
-    assert await platform.query("SELECT 1 FROM incidents WHERE run_id=:run AND status='active'", run=run.id) == []
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    # The incident stays open: a person says whether the step happened, or force ends the run from it.
+    assert (await platform.record(run.id))["state"] == "in_doubt"
+    [incident] = await platform.query("SELECT code FROM incidents WHERE run_id=:run AND status='active'", run=run.id)
+    assert incident == {"code": "WV-TXN-PIVOT-UNKNOWN"}
 
 
 async def test_a_rollback_finishes_at_a_full_byte_quota(platform):

@@ -177,7 +177,8 @@ class IncidentView(ContractModel):
 
 class CancelRunRequest(ContractModel):
     reason: str = Field(min_length=1, max_length=2000)
-    # Stop without undoing the run's open transactions: they end force-ended. Needs `transaction.reconcile`.
+    # Stop without undoing the run's open transactions: they end force-ended. Needs `transaction.reconcile`, and is
+    # refused (409 WV-TXN-IN-DOUBT) while the run holds an active in-doubt incident: that incident's Force end decides.
     skip_undo: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("reason")
