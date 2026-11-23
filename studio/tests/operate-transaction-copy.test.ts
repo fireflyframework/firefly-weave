@@ -34,13 +34,15 @@ function tree(dir: string): string[] {
   });
 }
 
+/** An inbox module about transactions, whichever separator the system joins paths with. */
+const inboxTransactionModule = (path: string) =>
+  /[\\/](?:incident-cases|transaction-[a-z-]+)\.ts$/.test(path);
+
 /** The shared words, every Operate transaction module, and the inbox's transaction modules. */
 const sources = () => [
   join(APP, "editor/transactions/transaction-words.ts"),
   ...tree(join(APP, "operate/transactions")),
-  ...tree(join(APP, "operate/incidents")).filter((path) =>
-    /\/(?:incident-cases|transaction-[a-z-]+)\.ts$/.test(path),
-  ),
+  ...tree(join(APP, "operate/incidents")).filter(inboxTransactionModule),
 ];
 
 const BANNED =
@@ -127,6 +129,17 @@ describe("Operate's transaction words", () => {
       "A step after the point of no return couldn't finish.",
     ])
       expect(texts).toContain(known);
+  });
+
+  it("scan the inbox's transaction modules on Windows paths too", () => {
+    for (const separator of ["/", "\\"]) {
+      const path = (name: string) =>
+        ["src", "app", "operate", "incidents", name].join(separator);
+      expect(inboxTransactionModule(path("incident-cases.ts"))).toBe(true);
+      expect(inboxTransactionModule(path("transaction-panel.ts"))).toBe(true);
+      expect(inboxTransactionModule(path("incidents-page.ts"))).toBe(false);
+      expect(inboxTransactionModule(path("my-incident-cases.ts"))).toBe(false);
+    }
   });
 
   it("find a banned word in a label, a template or its title, and leave code alone", () => {

@@ -156,12 +156,19 @@ const STATUS_WORDS: Readonly<
   confirm_stuck: ["Confirm failed", "danger"],
 };
 
+/** "held_open" reads "Held open": a status the platform added after this table. */
+const plainWords = (status: string) => {
+  const words = status.replaceAll("_", " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 /**
  * A step's word, or null while it hasn't started. In a transaction left in
  * doubt or force ended that didn't go ahead, a step still done was never
  * released or undone: it reads "Still reserved" or "Not undone", never the
  * success of "Done". Whether it went ahead comes from `frame.wentAhead` only,
- * never from an incident's code.
+ * never from an incident's code. A status this table doesn't know reads in
+ * plain words, muted: the platform types it as free text.
  */
 export function participantText(
   status: ParticipantStatus,
@@ -178,7 +185,9 @@ export function participantText(
       text: mode === "reserve" ? "Still reserved" : "Not undone",
       tone: "warning",
     };
-  const [text, tone] = STATUS_WORDS[status];
+  const words = STATUS_WORDS[status] as [string, Tone] | undefined;
+  if (!words) return { text: plainWords(status), tone: "muted" };
+  const [text, tone] = words;
   return { text, tone };
 }
 

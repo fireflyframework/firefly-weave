@@ -25,6 +25,7 @@ import {
   readRunTransactions,
   stepName,
 } from "../src/app/operate/transactions/transaction-contracts";
+import { runViewQuery } from "../src/app/operate/run-contracts";
 import * as examples from "./contracts/transaction-examples";
 import {
   python,
@@ -55,13 +56,22 @@ for name, items in records.items():
     written[name] = [adapter.dump_python(adapter.validate_json(json.dumps(item)), mode="json") for item in items]
 print(json.dumps(written))
 `;
-function platformRoundTrip(records: Record<string, unknown[]>) {
+/** A run summary query string as the platform's list reads it: only the values it was given. */
+const queryScript = `
+import json, sys
+from starlette.datastructures import QueryParams
+from firefly_weave.api.transport import parse_query
+from firefly_weave.contracts.run_views import RunSummaryQuery
+query = parse_query(QueryParams(sys.stdin.read()), RunSummaryQuery)
+print(json.dumps(query.model_dump(mode="json", exclude_unset=True)))
+`;
+function runPython(code: string, input: string): unknown {
   return JSON.parse(
-    execFileSync(python, ["-c", script], {
+    execFileSync(python, ["-c", code], {
       cwd: repository,
       encoding: "utf8",
       timeout: 180_000,
-      input: JSON.stringify(records),
+      input,
       env: {
         ...process.env,
         PYTHONPATH: [resolve(repository, "src"), process.env["PYTHONPATH"]]
@@ -69,8 +79,10 @@ function platformRoundTrip(records: Record<string, unknown[]>) {
           .join(delimiter),
       },
     }),
-  ) as Record<string, unknown[]>;
+  );
 }
+const platformRoundTrip = (records: Record<string, unknown[]>) =>
+  runPython(script, JSON.stringify(records)) as Record<string, unknown[]>;
 
 describe("a run's transactions", () => {
   it("reads 50 at a time, and the next page from its cursor", async () => {
@@ -109,6 +121,8 @@ describe("a run's transactions", () => {
     expect(stepName("hold#confirm")).toBe("hold");
     expect(stepName("move")).toBe("move");
     expect(stepName("move[2][1]")).toBe("move[2][1]");
+    // A settle deadline's key keeps its suffix: only the three phases are dropped.
+    expect(stepName("move#settle")).toBe("move#settle");
   });
 });
 
@@ -126,5 +140,14 @@ describe.skipIf(!pythonAvailable)("the platform's transaction answers", () => {
       TransactionsSection: examples.transactionsSections,
     };
     expect(platformRoundTrip(records)).toEqual(records);
+  });
+
+  it("read the Runs filter on transactions as Studio sends it, in the platform's order", () => {
+    const query = runViewQuery(examples.byTransactionState).slice(1);
+    expect(runPython(queryScript, query)).toEqual({
+      transaction_state: [
+        ...(examples.byTransactionState.transaction_state ?? []),
+      ].sort(),
+    });
   });
 });

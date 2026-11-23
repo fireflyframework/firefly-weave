@@ -72,6 +72,19 @@ describe("transaction words", () => {
         );
   });
 
+  it("reads a step status it doesn't know yet in plain words, muted", () => {
+    // The platform types a step's status as free text: a newer one never breaks a record.
+    expect(participantText("paused" as ParticipantStatus, "reserve")).toEqual({
+      text: "Paused",
+      tone: "muted",
+    });
+    expect(
+      participantText("held_open" as ParticipantStatus, "compensate", {
+        state: "in_doubt",
+      }),
+    ).toEqual({ text: "Held open", tone: "muted" });
+  });
+
   it("holds the platform's sentence for every transaction code", () => {
     expect(TRANSACTION_CODE_TEXT).toEqual(corpus.codes);
   });
