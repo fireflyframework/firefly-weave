@@ -1293,6 +1293,25 @@ describe("starts still waiting before a stop", () => {
     expect(platform.writes()).toEqual([]);
   });
 
+  it("finds a start waiting on the first of several pages", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    platform.seed({ id: "t-2", name: "notify-team-2", activation: "a-older" });
+    // Newest first: one start still waiting, then sixty that started.
+    platform.starts.set("t-2", [requested("s-new"), ...startedRuns(60)]);
+    const duplicate = planFor(platform, { storedId: "t-1" })[1]!;
+    expect(await apply(platform, duplicate)).toMatchObject({
+      status: "waiting",
+      text: "notify-team-2 has 1 event waiting to start. Stopping it now skips them.",
+    });
+    expect(
+      platform.sent.filter(
+        (call) => call.key === "GET /event-triggers/t-2/starts",
+      ),
+    ).toHaveLength(1);
+    expect(platform.writes()).toEqual([]);
+  });
+
   it("asks first when ten pages of starts hold none waiting and more remain", async () => {
     const platform = new FakePlatform();
     platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
