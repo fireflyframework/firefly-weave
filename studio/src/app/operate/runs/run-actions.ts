@@ -227,6 +227,8 @@ export class RunActions {
     runId: string;
     views: RunTransactionView[];
     complete: boolean;
+    /** A read of every page is in `views`, though more may have opened since. */
+    everyPage: boolean;
   } | null = null;
 
   constructor(
@@ -247,7 +249,9 @@ export class RunActions {
    * The run's transactions as the detail or a command just read them, and
    * whether that was every page. The detail reads its first page again every
    * 2 s: that page doesn't replace every page a command read, it updates the
-   * records they share, and one they don't share means more may follow it.
+   * records they share, each time. It can't say the list is still whole: the
+   * run lists its oldest transactions first, so a new one lands on a later
+   * page.
    */
   know(runId: string, views: RunTransactionView[] | null, complete: boolean) {
     const held = this.known;
@@ -255,8 +259,8 @@ export class RunActions {
       this.known = null;
       return;
     }
-    if (complete || !held?.complete || held.runId !== runId) {
-      this.known = { runId, views, complete };
+    if (complete || !held?.everyPage || held.runId !== runId) {
+      this.known = { runId, views, complete, everyPage: complete };
       return;
     }
     const newer = new Map(views.map((view) => [view.instance_key, view]));
@@ -268,7 +272,8 @@ export class RunActions {
         ...held.views.map((view) => newer.get(view.instance_key) ?? view),
         ...added,
       ],
-      complete: added.length === 0,
+      complete: false,
+      everyPage: true,
     };
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */

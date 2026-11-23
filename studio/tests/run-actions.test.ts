@@ -797,31 +797,67 @@ describe("Cancel without undoing", () => {
     s.platform.pages = [firstPage, [inDoubt]];
     await s.actions.cancelWithoutUndoing();
     expect(s.actions.withoutUndoing()?.blocked?.incidentId).toBe(incident);
-    // The section reads its first page again: the transaction in doubt on
-    // the second page still holds the button back.
-    s.actions.know(first, firstPage, false);
+    // The section reads its first page again, every 2 s: the transaction in
+    // doubt on the second page still holds the button back.
+    for (const poll of [1, 2]) {
+      s.actions.know(first, firstPage, false);
+      expect(s.actions.withoutUndoing(), `poll ${poll}`).toEqual({
+        blocked: { text: IN_DOUBT_LINE, incidentId: incident },
+      });
+    }
+  });
+
+  it("takes what the first page read again says over every page read before", async () => {
+    const s = shell();
+    // Cancel run reads every page: one transaction, settled. The person
+    // keeps the run running.
+    s.platform.transactions = [settled];
+    s.host.dialogs.form = async () => null;
+    await s.actions.cancel();
+    expect(s.actions.withoutUndoing()).toBeNull();
+    // The run opens 50 more and move[2] goes in doubt: the first page holds
+    // it, and a second page follows.
+    const others = firstPage.slice(0, 48);
+    s.actions.know(first, [settled, inDoubt, ...others], false);
     expect(s.actions.withoutUndoing()).toEqual({
       blocked: { text: IN_DOUBT_LINE, incidentId: incident },
     });
+    // A person resolves its incident; the first page read again says so.
+    const resolved = { ...inDoubt, state: "reconciled" as const };
+    s.actions.know(first, [settled, resolved, ...others], false);
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
   });
 
-  it("takes newer records from the first page, and offers it again once the run has more", async () => {
+  it("is offered again once the first page is read again after every page: a new transaction lands on a later page", async () => {
     const s = shell();
-    const hold = { ...open, instance_key: "move[5]" };
-    s.actions.know(first, [hold], true);
-    s.platform.transactions = [hold, settled];
-    await s.actions.cancelWithoutUndoing();
-    s.actions.closeCancelDialog();
-    // move[5] completed since: nothing the reads know is left unsettled.
-    const done = { ...settled, instance_key: "move[5]" };
-    s.actions.know(first, [done, settled], false);
+    // Cancel run reads every page: 51 transactions, all settled. The person
+    // keeps the run running.
+    s.platform.pages = [firstPage, [{ ...settled, instance_key: "move[150]" }]];
+    s.host.dialogs.form = async () => null;
+    await s.actions.cancel();
+    expect(s.calls.transactionReads).toHaveLength(2);
     expect(s.actions.withoutUndoing()).toBeNull();
-    // A transaction the read of every page didn't hold: more may follow it.
-    s.actions.know(
-      first,
-      [done, settled, { ...settled, instance_key: "move[3]" }],
-      false,
-    );
+    // The run goes on and opens move[151]; oldest first, it lands on the
+    // second page. The section reads its first page again: the same 50
+    // records, and more pages follow.
+    s.actions.know(first, firstPage, false);
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+  });
+
+  it("stays offered when Cancel run leaves pages unread, though every one it read settled", async () => {
+    const s = shell();
+    s.platform.pages = Array.from({ length: 11 }, () => [settled]);
+    s.host.dialogs.form = async () => null;
+    await s.actions.cancel();
+    expect(s.calls.transactionReads).toHaveLength(10);
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+  });
+
+  it("keeps every page read for one run apart from the first page of another", () => {
+    const s = shell();
+    s.actions.know(first, [inDoubt], true);
+    s.actions.know(second, [open], false);
+    s.moveTo(second);
     expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
   });
 
