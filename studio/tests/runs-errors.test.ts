@@ -275,6 +275,36 @@ describe("a step whose failure its On error handled, on the Runs tab", () => {
     });
   });
 
+  it("shows the handled failure of the item picked, never another item's", () => {
+    const loopFlow = workflow([
+      {
+        id: "orders",
+        kind: "forEach",
+        items: { literal: [1, 2, 3] },
+        body: { steps: [action("send", { onError: "continue" })] },
+      } as Step,
+    ]);
+    const run = record({ loops: { orders: { count: 3 } } });
+    const facts = [
+      fact("send[0]", "failed", {
+        error_code: "REQUEST_REFUSED",
+        handled: "continue",
+      }),
+      fact("send[1]", "succeeded"),
+      fact("send[2]", "failed", {
+        error_code: "SMTP_REJECTED",
+        handled: "continue",
+      }),
+    ];
+    const pick = (item: number) =>
+      overlayOf(run, facts, versions(loopFlow), undefined, { orders: item });
+    // Item 2 finished: no failure shows for send.
+    expect(pick(1).states.get("send")).toBe("completed");
+    expect(pick(1).canvas.handled?.["send"]).toBeUndefined();
+    // Item 3 failed with its own code, not item 1's.
+    expect(pick(2).canvas.handled?.["send"]?.code).toBe("SMTP_REJECTED");
+  });
+
   it("lists each handled failure once, with what the binding and the fact say", () => {
     expect(handledFailures(handledRun(), handledFacts())).toEqual([
       {
@@ -666,6 +696,25 @@ describe("Debug in editor carries handled failures", () => {
     });
     expect(request.scripts.humans["approve"]).toEqual({ outcome: "expire" });
     expect(request).not.toHaveProperty("errors");
+  });
+
+  it("leaves out a code in capitals longer than 128 characters", () => {
+    const long = `REQUEST_${"X".repeat(132)}`;
+    const { data, leftOut } = built(
+      source(
+        handledRun({ ...REFUSED, code: long }),
+        handledFacts({ error_code: long }),
+      ),
+    );
+    expect(long).toHaveLength(140);
+    expect(data.errors).toBeUndefined();
+    expect(leftOut).toEqual([
+      {
+        key: "submit",
+        reason: "code",
+        detail: "Studio can't simulate this failure's code.",
+      },
+    ]);
   });
 
   it("Merge replaces the failures of steps the run reached and keeps the others", () => {
