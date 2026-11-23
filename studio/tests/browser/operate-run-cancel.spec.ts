@@ -244,6 +244,14 @@ test("Cancel without undoing lists what stays done and needs the run's short ID"
     /add\[6\]\s*· Reversible: still running and may finish; Weave won't undo it/,
   ]);
   const reason = cancel.getByLabel("Reason");
+  // The fields share the title's left edge.
+  const [title, field] = await Promise.all([
+    cancel
+      .getByRole("heading", { name: "Cancel without undoing?" })
+      .boundingBox(),
+    reason.boundingBox(),
+  ]);
+  expect(Math.abs(title!.x - field!.x)).toBeLessThanOrEqual(1);
   await expect(cancel.locator(".reason-count")).toHaveText("0 / 2,000");
   await reason.fill("The target system is down until tomorrow");
   await expect(cancel.locator(".reason-count")).toHaveText("40 / 2,000");

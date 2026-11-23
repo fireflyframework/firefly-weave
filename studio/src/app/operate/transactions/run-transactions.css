@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 .run-transactions {
   display: grid;
   gap: var(--space-3);
+  margin-top: var(--space-6);
   container: run-transactions / inline-size;
 }
 .txn-heading {

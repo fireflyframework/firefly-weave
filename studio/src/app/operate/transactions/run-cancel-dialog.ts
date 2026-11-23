@@ -49,7 +49,7 @@ import { typedConfirmation, type StaysDoneLine } from "./transaction-record";
     (dismiss)="dismiss.emit()"
   >
     <form class="cancel-form" (submit)="submit($event)">
-      <div class="dialog-body">
+      <div class="cancel-body">
         @if (mode() === "in_doubt") {
           <div class="notice" data-tone="danger" role="alert" [id]="messageId">
             <weave-icon name="failCircle" [size]="16" />
