@@ -40,8 +40,9 @@ let sequence = 0;
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Icon],
   styles: `
+    /* The shared panel's width: at 480 px its answers would stack (they stack
+       below 424 px of content), where they share a row at 520. */
     dialog.execute-path {
-      width: min(480px, calc(100vw - 32px));
       border: 0;
       color: var(--text);
     }

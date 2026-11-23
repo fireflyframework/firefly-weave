@@ -190,7 +190,13 @@ test("after Execute workflow, the Output pane says the step failed and continued
       transform("submit", {
         onError: "errorOutput",
         errorPath: {
-          steps: [transform("flag-request")],
+          steps: [
+            {
+              id: "flag-request",
+              kind: "transform",
+              value: { literal: { flagged: true } },
+            },
+          ],
           output: { ref: "/steps/flag-request/output" },
         },
       }),
@@ -220,10 +226,11 @@ test("after Execute workflow, the Output pane says the step failed and continued
   await expect(pane.locator(".pane-result-caption")).toHaveText(
     "Result on error · from flag-request",
   );
+  // Its fields are the error path's result, not submit's own output.
+  await expect(pane.getByLabel("Output fields")).toContainText("flagged");
+  await expect(pane.getByLabel("Output fields")).not.toContainText("from");
   await pane.getByRole("radio", { name: "JSON" }).click();
-  await expect(pane.getByLabel("Output data")).toContainText(
-    '"from": "flag-request"',
-  );
+  await expect(pane.getByLabel("Output data")).toContainText('"flagged": true');
   // Remove takes the failure away; the banner then says only what happened.
   await banner.getByRole("button", { name: "Remove" }).click();
   await expect(banner.locator(".error-banner-simulated")).toHaveCount(0);
@@ -288,6 +295,10 @@ test("Execute step inside an error path its step won't take asks to simulate tha
       .getByRole("list", { name: "Where notify-team is" })
       .getByRole("listitem"),
   ).toHaveText([/submit/, /Error/, /notify-team/]);
+  // Its two answers share one row, the main one last.
+  const answerTop = async (name: string) =>
+    (await asked.getByRole("button", { name }).boundingBox())!.y;
+  expect(await answerTop("Cancel")).toBe(await answerTop("Simulate a failure"));
   // It changes nothing by itself, so focus starts on it; Escape is Cancel.
   const simulate = asked.getByRole("button", { name: "Simulate a failure" });
   await expect(simulate).toBeFocused();
