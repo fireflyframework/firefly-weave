@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The banner over a step's Output when a failure is simulated for it: that
 // executing it in Studio fails it with this code, that real runs ignore it,
-// and Remove. Over pinned output it says the pin is kept for later.
+// and Remove. Over pinned output it says the pin is kept for later. When the
+// step can no longer take a failure, it says Execute leaves it out, and why.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -70,9 +71,13 @@ export class FailureBanner {
   sessionOnly = input(false);
   /** Pinned output is there too, kept while the failure is. */
   overPin = input(false);
+  /** Why Execute leaves the failure out under the step's current setting; null when it applies. */
+  leftOut = input<string | null>(null);
   readonly remove = output<void>();
   readonly edit = output<void>();
   sentence(): string {
+    const leftOut = this.leftOut();
+    if (leftOut) return leftOut;
     const who =
       this.scope() === "item"
         ? "This item fails"

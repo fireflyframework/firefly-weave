@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // too). DOM-free.
 import type { Step, Workflow } from "../../model";
 import { calledReferenceSites } from "../activation/callee-pins";
+import { simulateBlock } from "../ndv/panes/simulate-failure";
 import { blockSteps } from "../ndv/step-walk";
 import { blocksOf } from "../step-blocks";
 import type { Json } from "../ndv/registry";
@@ -148,8 +149,16 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
   const sent = (key: string) => !runs || runs.has(instanceStep(key));
   // A simulated failure takes its key, or every item of its step: the host
   // takes a key as a failure or a mock, never both, so no pin, replayed
-  // result or AI turns goes there.
-  const failures = testData.errors ?? {};
+  // result or AI turns goes there. A failure of a step that can't take one
+  // any more (its On error went back to Stop the run, a call that no longer
+  // waits) or that left the draft stays in test data and isn't sent: the
+  // host would refuse the whole request for it.
+  const failures = Object.fromEntries(
+    Object.entries(testData.errors ?? {}).filter(([key]) => {
+      const step = steps.get(instanceStep(key));
+      return !!step && simulateBlock(step, false) === null;
+    }),
+  );
   const fails = (key: string) =>
     Object.hasOwn(failures, key) || Object.hasOwn(failures, instanceStep(key));
   const errors: Record<MockKey, ScriptedFailure> = {};

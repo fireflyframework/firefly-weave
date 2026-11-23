@@ -181,6 +181,29 @@ test("a loop of three whose second item fails and continues finishes the other t
   ).toHaveAttribute("data-status", "completed");
 });
 
+test("a failure kept for a step that can't take one any more is left out, and Execute runs", async ({
+  page,
+}) => {
+  // shape's On error stops the run: the host takes no failure for it.
+  const { log } = await executePasted(
+    page,
+    [transform("shape"), transform("summarize")],
+    { shape: REFUSED },
+  );
+  await expect(log.locator(".run-log-status")).toHaveText(
+    "Completed · 2 steps",
+  );
+  const details = new StepDetailsPage(page);
+  await details.open("shape");
+  const pane = await outputPane(details);
+  await expect(pane.locator(".pane-sub .pill").first()).toHaveText(
+    "Failure left out",
+  );
+  await expect(pane.locator("weave-failure-banner [role=status]")).toHaveText(
+    "Execute leaves this failure out. This step's failure would stop the run. Choose Continue or Continue with error output first.",
+  );
+});
+
 test("after Execute workflow, the Output pane says the step failed and continued, in one banner, over the error path's result", async ({
   page,
 }) => {

@@ -298,7 +298,9 @@ export function simulateOpening(
           >{{ simulatedWords() }} · {{ went.when }}</span
         >
       } @else if (failing) {
-        <span class="pill" data-tone="warning">Fails when executed</span>
+        <span class="pill" data-tone="warning">{{
+          failing.leftOut ? "Failure left out" : "Fails when executed"
+        }}</span>
       } @else if (pin) {
         <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
       } @else if (real) {
@@ -453,6 +455,7 @@ export function simulateOpening(
             <weave-failure-banner
               [failure]="failing.entry"
               [scope]="failing.scope"
+              [leftOut]="failing.leftOut"
               [overPin]="!!pin"
               [sessionOnly]="session().controller.testData.failuresInSession()"
               (remove)="removeFailure(failing.key)"
@@ -1504,6 +1507,8 @@ export class OutputPane {
     key: string;
     entry: ErrorEntry;
     scope: "step" | "item" | "every";
+    /** Why Execute leaves it out under the step's current setting; null when it fails the step. */
+    leftOut: string | null;
   } | null {
     const { controller, target } = this.session();
     if (controller.viewingRuns() || target.startsWith("$")) return null;
@@ -1514,7 +1519,15 @@ export class OutputPane {
     if (!found) return null;
     const scope =
       key === target ? "step" : found.key === target ? "every" : "item";
-    return { ...found, scope };
+    // The step changed since (its On error back to Stop the run, a call
+    // that no longer waits): the failure stays, and Execute doesn't send it.
+    const step = controller.step(target);
+    const block = step ? simulateBlock(step, false) : undefined;
+    const leftOut =
+      block === null
+        ? null
+        : `Execute leaves this failure out. ${block ?? "This step can't fail in a simulation."}`;
+    return { ...found, scope, leftOut };
   }
   /** The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies. */
   moreActions(): RowMenuItem[] | null {

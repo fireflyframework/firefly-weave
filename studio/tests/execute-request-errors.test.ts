@@ -129,4 +129,18 @@ describe("an execution with simulated failures", () => {
     expect(request.mocks).toEqual({});
     expect(request.scripts?.aiTurns).toEqual({});
   });
+
+  it("sends no failure for a step that can't take one any more, or that is gone", () => {
+    // after is a transform whose On error stops the run; gone left the draft.
+    const request = executeRequest(
+      parts({
+        errors: {
+          after: { code: "BAD_SHAPE", source: "manual" },
+          gone: { code: "REQUEST_REFUSED", source: "manual" },
+        },
+      }),
+    );
+    // The host would refuse the whole request for them (WV-DEBUG-MOCK-KEY).
+    expect(request).not.toHaveProperty("errors");
+  });
 });
