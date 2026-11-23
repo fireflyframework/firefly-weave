@@ -127,32 +127,20 @@ class FakePlatform implements TriggerApi {
     const [local = "", query = ""] = path.slice(ENV.length).split("?");
     this.handle(`${method} ${local}`);
     const params = new URLSearchParams(query);
-    const limit = Number(params.get("limit") ?? "50");
     if (method !== "GET") throw notFound();
-    if (local === "/event-triggers") {
-      const sorted = [...this.triggers].sort((a, b) =>
-        String(a["id"]).localeCompare(String(b["id"])),
-      );
-      const cursor = params.get("cursor");
-      const start = cursor
-        ? sorted.findIndex((item) => item["id"] === cursor) + 1
-        : 0;
-      const items = sorted.slice(start, start + limit);
-      const more = start + limit < sorted.length;
-      return {
-        items: structuredClone(items),
-        next_cursor: more ? String(items[items.length - 1]!["id"]) : null,
-      } as T;
-    }
+    if (local === "/event-triggers")
+      return paged(
+        [...this.triggers].sort((a, b) =>
+          String(a["id"]).localeCompare(String(b["id"])),
+        ),
+        params,
+      ) as T;
     const [, , id = "", starts] = local.split("/");
     const trigger = this.find(decodeURIComponent(id));
     if (!trigger) throw notFound();
     if (starts !== "starts") return structuredClone(trigger) as T;
     if (!this.capabilities.has("run.read")) throw FORBIDDEN();
-    return {
-      items: structuredClone(this.starts.get(decodeURIComponent(id)) ?? []),
-      next_cursor: null,
-    } as T;
+    return paged(this.starts.get(decodeURIComponent(id)) ?? [], params) as T;
   }
 
   async mutate<T>(
@@ -259,6 +247,23 @@ class FakePlatform implements TriggerApi {
 
 const notFound = () => refusal(404, "WV-NOT-FOUND", "Event trigger not found");
 
+/** One page of `items` in the order given, as the platform pages a list: `limit`, then `cursor` after an item's ID. */
+function paged(items: readonly Wire[], params: URLSearchParams) {
+  const limit = Number(params.get("limit") ?? "50");
+  const cursor = params.get("cursor");
+  const start = cursor
+    ? items.findIndex((item) => item["id"] === cursor) + 1
+    : 0;
+  const page = items.slice(start, start + limit);
+  return {
+    items: structuredClone(page),
+    next_cursor:
+      start + limit < items.length
+        ? String(page[page.length - 1]!["id"])
+        : null,
+  };
+}
+
 /**
  * A trigger as the platform answers it: `source_workflows` left out for any
  * workflow, and `workflow_name` the workflow its activation runs.
@@ -295,6 +300,13 @@ const requested = (id: string): Wire => ({
   status: "requested",
   requested_at: "2026-11-20T09:30:00Z",
 });
+/** `count` starts that each started a run, newest first. */
+const startedRuns = (count: number): Wire[] =>
+  Array.from({ length: count }, (_, index) => ({
+    ...requested(`s-${index}`),
+    status: "started",
+    run_id: `r-${index}`,
+  }));
 
 const ACTIVATIONS: PlanActivation[] = [
   { id: "a-older", workflow: "notify-team", version: "1.0.0" },
@@ -1264,6 +1276,38 @@ describe("starts still waiting before a stop", () => {
       status: "waiting",
       text: "notify-team-2 has 2 events waiting to start. Stopping it now skips them.",
     });
+    expect(platform.writes()).toEqual([]);
+  });
+
+  it("finds a start waiting past the first page of starts", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    platform.seed({ id: "t-2", name: "notify-team-2", activation: "a-older" });
+    // Newest first: fifty starts that started, then an older one still waiting.
+    platform.starts.set("t-2", [...startedRuns(50), requested("s-old")]);
+    const duplicate = planFor(platform, { storedId: "t-1" })[1]!;
+    expect(await apply(platform, duplicate)).toMatchObject({
+      status: "waiting",
+      text: "notify-team-2 has 1 event waiting to start. Stopping it now skips them.",
+    });
+    expect(platform.writes()).toEqual([]);
+  });
+
+  it("asks first when ten pages of starts hold none waiting and more remain", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    platform.seed({ id: "t-2", name: "notify-team-2", activation: "a-older" });
+    platform.starts.set("t-2", startedRuns(501));
+    const duplicate = planFor(platform, { storedId: "t-1" })[1]!;
+    expect(await apply(platform, duplicate)).toMatchObject({
+      status: "waiting",
+      text: "Studio can't check whether notify-team-2 has events waiting to start.",
+    });
+    expect(
+      platform.sent.filter(
+        (call) => call.key === "GET /event-triggers/t-2/starts",
+      ),
+    ).toHaveLength(10);
     expect(platform.writes()).toEqual([]);
   });
 });

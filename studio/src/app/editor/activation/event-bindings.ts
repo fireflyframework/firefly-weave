@@ -453,8 +453,10 @@ function routes(api: TriggerApi) {
         `${base}?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
       ),
     read: (id: string) => api.request<EventTriggerView>(one(id)),
-    starts: (id: string) =>
-      api.request<TriggerPage>(`${one(id)}/starts?limit=50`),
+    starts: (id: string, cursor?: string) =>
+      api.request<TriggerPage>(
+        `${one(id)}/starts?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      ),
     create: (body: EventTriggerRequestBody) =>
       api.mutate<EventTriggerView>(base, "POST", body),
     retarget: (id: string, activationId: string, revision: number) =>
@@ -577,6 +579,29 @@ async function created(
   }
 }
 
+/**
+ * How many of a trigger's starts still wait, newest first. The platform
+ * can't filter them, so it reads page after page while a full page holds
+ * none waiting, at most `MAX_PAGES` pages (500 starts): the count is that of
+ * the first page that holds any. Null when that many pages hold none and
+ * more remain: Studio can't tell, so it asks.
+ */
+async function waitingStarts(
+  route: Routes,
+  id: string,
+): Promise<number | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const answer = await route.starts(id, cursor);
+    const count = answer.items.filter(
+      (start) => start["status"] === "requested",
+    ).length;
+    if (count !== 0 || answer.next_cursor === null) return count;
+    cursor = answer.next_cursor;
+  }
+  return null;
+}
+
 type Stop =
   | { kind: "stopped" }
   | { kind: "changed" }
@@ -597,15 +622,7 @@ async function stopped(
   checkWaiting: boolean,
 ): Promise<Stop> {
   if (checkWaiting) {
-    let count: number | null;
-    try {
-      const page = await route.starts(view.id);
-      count = page.items.filter(
-        (start) => start["status"] === "requested",
-      ).length;
-    } catch {
-      count = null;
-    }
+    const count = await waitingStarts(route, view.id).catch(() => null);
     if (count !== 0) return { kind: "waiting", count };
   }
   let fresh: EventTriggerView;
