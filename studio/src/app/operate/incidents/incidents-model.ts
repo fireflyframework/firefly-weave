@@ -18,14 +18,38 @@ SPDX-License-Identifier: Apache-2.0
 // What the Incidents inbox says about each incident, its filters, the three
 // decisions the Resolve incident dialog offers and how it checks them before
 // sending. Pure: the page renders it, tests check it.
+import type { TransactionState } from "../../editor/transactions/transaction-words";
 import type { Tone } from "../../status-labels";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
+import type { TransactionParticipantView } from "../transactions/transaction-contracts";
 
 export type IncidentStatus = "active" | "closed" | "resolved";
+/** `accept_reconciled_failure` is a transaction's "It didn't happen"; the dialog offers the other three. */
 export type ResolutionKind =
   | "retry_safe"
   | "accept_reconciled_result"
+  | "accept_reconciled_failure"
   | "terminate";
+/** Another incident of the same case: its keys, code and status; never a business key, reason or value. */
+export interface IncidentLink {
+  id: string;
+  run_id: string;
+  code: string;
+  status: IncidentStatus;
+  /** As the linked incident's own view shows it: "add" for its undo stuck at "add#undo". */
+  node_id: string | null;
+  instance_key?: string;
+  workflow?: { name: string; version: string };
+}
+/** The transaction an in-doubt incident holds, without values. */
+export interface IncidentTransaction {
+  instance_key: string;
+  state: TransactionState;
+  business_key?: string;
+  participants: TransactionParticipantView[];
+  /** Instance keys of the steps whose results haven't arrived. */
+  pending: string[];
+}
 
 /** An incident as the platform reports it (`incidents.list`). */
 export interface IncidentView {
@@ -46,6 +70,8 @@ export interface IncidentView {
     reason: string;
     output?: unknown;
     evidence_reference?: string | null;
+    /** The workflow run whose resolve step applied it. */
+    workflow_run_id?: string;
   } | null;
   external_effects_may_continue: boolean;
   /** The full step instance; left out for an incident not tied to one. */
@@ -61,6 +87,18 @@ export interface IncidentView {
   workflow?: { name: string; version: string };
   run_status?: string;
   test?: boolean;
+  /** An in-doubt incident: high priority, and the transaction it holds. */
+  priority?: "high";
+  transaction?: IncidentTransaction;
+  /**
+   * A parent's settle timeout: the in-doubt incidents of the called runs it
+   * waits for, to resolve first (at most 20; `waits_on_more` says there are
+   * others, also when none of them may be shown).
+   */
+  waits_on?: IncidentLink[];
+  waits_on_more?: boolean;
+  /** A called run's in-doubt incident: its caller's settle timeout that waits for it. */
+  held_by?: IncidentLink;
 }
 export interface UnavailableIncident {
   id: string;
@@ -107,6 +145,7 @@ export const resolutions: {
   },
 ];
 export function resolutionLabel(kind: ResolutionKind) {
+  if (kind === "accept_reconciled_failure") return "It didn't happen";
   return resolutions.find((item) => item.kind === kind)?.label ?? kind;
 }
 
@@ -189,10 +228,15 @@ export const defaultIncidentFilters: IncidentFilters = {
   includeTest: false,
   order: "opened_desc",
 };
-/** The `incidents.list` query for the filters, from the start or after `cursor`. */
+/**
+ * The `incidents.list` query for the filters, from the start or after
+ * `cursor`; with a priority, one band: in-doubt incidents ("high") or the
+ * others ("normal"). Bands are Studio's, never an address filter.
+ */
 export function incidentQuery(
   filters: IncidentFilters,
   cursor: string | null,
+  priority?: "high" | "normal",
 ): string {
   const query = new URLSearchParams({
     limit: "50",
@@ -208,6 +252,7 @@ export function incidentQuery(
     ["opened_before", filters.openedBefore],
   ])
     if (value) query.set(key, value);
+  if (priority) query.set("priority", priority);
   if (cursor) query.set("cursor", cursor);
   return query.toString();
 }

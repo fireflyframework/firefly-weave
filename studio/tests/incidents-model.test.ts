@@ -15,6 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   checkResolution,
@@ -66,6 +68,22 @@ describe("incident words", () => {
       "Accept a verified result",
     );
     expect(resolutionLabel("terminate")).toBe("End the run");
+  });
+
+  it("names a recorded It didn't happen as the transaction offers it", () => {
+    const corpus = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "fixtures/transaction-corpus.json"),
+        "utf8",
+      ),
+    ) as { resolutions: Record<string, { kind: string; label: string }> };
+    expect(resolutionLabel("accept_reconciled_failure")).toBe(
+      "It didn't happen",
+    );
+    expect(corpus.resolutions["it_didnt_happen"]).toMatchObject({
+      kind: "accept_reconciled_failure",
+      label: resolutionLabel("accept_reconciled_failure"),
+    });
   });
 });
 
@@ -180,6 +198,26 @@ describe("incident filters", () => {
         "order",
       ),
     ).toBe("opened_desc");
+  });
+
+  it("reads one priority band with the same filters, and both bands without one", () => {
+    const filters = { ...defaultIncidentFilters, workflow: "parent-move" };
+    for (const [cursor, priority] of [
+      [null, "high"],
+      ["next-page", "normal"],
+    ] as const) {
+      const banded = new URLSearchParams(
+        incidentQuery(filters, cursor, priority),
+      );
+      expect(banded.get("priority")).toBe(priority);
+      banded.delete("priority");
+      expect(Object.fromEntries(banded)).toEqual(
+        Object.fromEntries(new URLSearchParams(incidentQuery(filters, cursor))),
+      );
+    }
+    expect(
+      new URLSearchParams(incidentQuery(filters, null)).has("priority"),
+    ).toBe(false);
   });
 
   it("counts the filters that differ from active, newest first", () => {
