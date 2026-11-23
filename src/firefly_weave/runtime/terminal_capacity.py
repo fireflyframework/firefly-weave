@@ -95,9 +95,10 @@ UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
 async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:
     """A run too large for its own state cannot undo its transactions, and a plain cancel or timeout never abandons
     them. A cancel is refused. A timeout, or a transaction's own deadline, fires once and holds the run, its
-    transactions left open, behind an in-doubt incident in the run's own state that only a force end or a force cancel
-    closes, so later changes keep it and forward work waits. It is written in SQL, as the oversized terminal path is,
-    because the kernel cannot take the run any more. True when the deadline was held this way (or the run already was).
+    transactions left open, behind an in-doubt incident in the run's own state that only the incident's Force end
+    closes (a cancel without undoing is refused while it is active), so later changes keep it and forward work waits.
+    It is written in SQL, as the oversized terminal path is, because the kernel cannot take the run any more. True
+    when the deadline was held this way (or the run already was).
     """
     unsettled = await repository.rows(
         f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",

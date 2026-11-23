@@ -205,7 +205,7 @@ def test_a_run_holding_its_transactions_replays_the_hold_and_refuses_to_resolve_
     run.send("incident_opened", **held)
     assert (run.state.status, run.state.incident, run.txn().status) == ("suspended", "WV-TXN-RUN-OVERSIZED", "open")
     assert run.state.incidents["@transactions:0"].origin_code == "WV-RUNTIME-CAPACITY"
-    # Forward work waits behind it; only a force end or a force cancel closes it.
+    # Forward work waits behind it; only the incident's Force end closes it.
     assert tasks(run.done("add", {"id": "a-1"})) == []
     before = run.state.model_copy(deep=True)
     for kind in ("retry_safe", "accept_reconciled_result", "accept_reconciled_failure"):
