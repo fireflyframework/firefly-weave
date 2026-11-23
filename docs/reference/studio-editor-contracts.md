@@ -117,6 +117,12 @@ inserts at `{owner: "<step>/errorPath", index: 0}`. The Settings tab writes
 `onError: errorOutput` and, when the step has none, `errorPath: {steps: [],
 output: {literal: null}}`; Continue writes `onError: continue` and deletes
 `errorPath`; Stop the run deletes both, so `onError: stop` is never written.
+**Result on error** edits `["errorPath", "output"]`. Its `ParamSpec` has
+`mapping: "both"`, `default: null`, `whenRemoved: "default"` and
+`emptyMapped: true`: while the field holds its default, it reads as an empty
+Mapped field that shows its `placeholder` ("Empty (null)") until Fixed is
+chosen, and clearing it writes `{literal: null}` back, since the language needs
+the path's output.
 
 A `forEach` step's descriptor is gated by `flow.forEach`. Its expression fields
 are `["items"]` (expected schema `{type: "array"}`) and `["body", "output"]`;
@@ -294,6 +300,12 @@ from, and counts as run data like a pin from a run. Studio copies a step's
 failures with the step only when their `source` is `manual` or absent. A
 document without `errors` keeps its bytes, and `schemaVersion` stays 1.
 
+Simulate a failure writes `outcome` only when it isn't `failed`. For a
+`transform` or a `decisionTable` it asks no outcome and writes `not_started`:
+such a step changes nothing outside the run, and Execute reports its failure
+as `not_started` whatever the entry holds. Studio's banners read that outcome
+for these kinds, also for an entry pasted with another one.
+
 ### Stored on the platform
 
 When Studio is connected, the document is stored with its draft at
@@ -358,7 +370,10 @@ bodies are camelCase. The Python models are in
   same limits as test data's `errors`. A key in both `mocks` and `errors` is
   refused (`422 WV-DEBUG-MOCK-CONFLICT`), and so is a failure for a step that
   can't fail in a simulation (`422 WV-DEBUG-MOCK-KEY`), such as a Transform
-  without `onError` or a call that doesn't wait. Failures apply
+  without `onError` or a call that doesn't wait. An action, an AI task or a
+  waiting call reports the failure's `outcome` and `attempts`; a Transform or
+  a Decision table takes only its `code`, fails before it is evaluated and
+  reports `not_started`. Failures apply
   only to the simulated workflow, never inside a called one.
   `POST /studio/local/debug/sessions` applies them as Execute does. Studio
   sends `errors` only when it holds some, as `node:<key>`, and leaves out a

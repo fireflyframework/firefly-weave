@@ -205,6 +205,8 @@ keyed the same way (`node:<step>`, `node:<instance key>`, `action:<reference>`):
 {"errors": {"node:verify[2]": {"code": "RATE_LIMITED"}}}
 ```
 
-`outcome` (default `failed`) and `attempts` (default 1) are optional. A key in
+`outcome` (default `failed`) and `attempts` (default 1) are optional. A
+transform or a decision table changes nothing outside the run, so it takes only
+the `code`: it fails before it is evaluated, with outcome `not_started`. A key in
 both `mocks` and `errors` is refused (`WV-DEBUG-MOCK-CONFLICT`). With the local
 simulation, repeat `--error KEY=CODE`. See [Simulation](../reference/simulation.md).

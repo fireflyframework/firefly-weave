@@ -241,7 +241,8 @@ On a platform that can't handle step errors (its language manifest doesn't list
 `flow.onError`), the steps that offer three choices show **Stop the run**
 read-only instead, with "Update the platform to continue after errors."
 **Result on error** is what later steps read as the step's output after its
-error path; it starts empty (null) and takes a Fixed value or a Mapped one.
+error path. It opens as an empty Mapped field that reads "Empty (null)" until
+you map it or choose Fixed. Cleared, it is null again.
 
 ### Manual form trigger
 
@@ -1123,7 +1124,10 @@ explains the three ways to execute and the run log. What each kind shows:
 | Call a workflow that waits | Its pinned output, or the called workflow's own steps with their test data. Without either, it needs test data. |
 
 A step with a simulated failure fails instead, and its **On error** decides
-what comes next; see [Simulate a failure](studio.md#simulate-a-failure).
+what comes next; see [Simulate a failure](studio.md#simulate-a-failure). An
+action, an AI task or a call fails with the outcome you chose; a Transform or a
+Decision table changes nothing outside the run, so its failure always reads
+**Didn't start**.
 
 ## Simulate before publishing
 

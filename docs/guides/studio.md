@@ -1387,9 +1387,10 @@ Otherwise, so *big* isn't reached."
 
 **The run log** opens beside the canvas (as a sheet on narrow windows) after
 you execute, or with **L**. It lists every step that ran with its line,
-"Out of date" when its result is, and a dot for a breakpoint. **Enter** on an
-entry opens its step details; **I** and **O** open them on the Input or
-Output. When the run waits for a signal or a person that the test data doesn't
+"Out of date" when its result is, and a dot for a breakpoint. When the run
+fails at a step, that step's row shows the failure's code under its name.
+**Enter** on an entry opens its step details; **I** and **O** open them on the
+Input or Output. When the run waits for a signal or a person that the test data doesn't
 answer, the log asks ("Send signal order-paid", "Decide for approval"); your
 answer is kept as the step's test answer and the workflow executes again, so
 the next run doesn't ask. Waits finish by themselves.
@@ -1705,9 +1706,10 @@ On a platform that can't handle step errors, it stays **Stop the run** and says
     | **Continue with error output** | "Failures take this step's Error output on the canvas; its steps run, then the run goes on after this step." |
 
 1. For **Continue with error output**, set **Result on error**: "What later
-   steps read as this step's output after the error path." It is empty (null)
-   until you set it, and it can be Fixed or Mapped, such as the result of the
-   path's last step.
+   steps read as this step's output after the error path." It opens as an
+   empty Mapped field that reads "Empty (null)": map it, such as to the
+   result of the path's last step, or choose Fixed to type a value. Cleared,
+   it is null again.
 
 Each choice is one undo step. A note under the choice says when it applies or
 what it can't change. On an action that changes data and is never retried: "If
@@ -1755,9 +1757,19 @@ the data picker lists **Error of submit** first, marked as an error, with the
 fields `code`, `message`, `outcome`, `attempts` and `instanceKey`, and
 `childRunId` for a call. Until you simulate a failure, **Input** says "submit
 has no output here: this path runs only when it fails. Simulate a failure of
-submit to see its error." After a step set to **Continue**, later steps can
-read its error too; it's there only when the step failed.
+submit to see its error." After a step set to **Continue** or **Continue with
+error output**, later steps can read its error too, such as
+`steps.submit.error.code`; it's there only when the step failed.
 [The error object](handle-step-errors.md#the-error-object) describes each field.
+
+A formula reads a step's error in the same places, and its check warns, with
+the reason, where it can't:
+
+- Inside its own error path, `steps.submit.output` warns "`steps.submit` has
+  no output inside its own error path; read `steps.submit.error`."
+- The error of a step set to **Stop the run** warns "`steps.submit` records an
+  error only when its On error setting is Continue or Continue with error
+  output."
 
 #### Simulate a failure
 
@@ -1767,33 +1779,38 @@ you execute it in Studio. Real runs never see a simulated failure.
 1. In the step's **Output** pane, open **More output actions** (⋯) and choose
    **Simulate a failure…**.
 1. In **Code**, type the code the step fails with. The field starts on the
-   first suggestion, selected, so typing replaces it. The suggestions list
-   **This action's failures**, then **Platform failures** for the step's kind.
-   A code starts with a capital letter, holds capital letters, digits, dots,
-   dashes and underscores, and has at most 128 characters.
-1. Choose the **Outcome**: **Didn't happen** ("The step had no effect.") or
-   **Unknown** ("Nobody knows whether the step had an effect."). On a step that
-   changes data, the dialog warns that an unknown outcome stops the run with an
-   incident, whatever **On error** says.
+   first suggestion, selected, so typing replaces it. The suggestions list the
+   action's own failures, then the platform's failures for the step's kind,
+   each with its group and the platform's words for the code, such as
+   "Platform failure · The endpoint refused the request because of its rate
+   limit." A code starts with a capital letter, holds capital letters, digits,
+   dots, dashes and underscores, and has at most 128 characters.
+1. For an action, an AI task or a **Call a workflow**, choose the
+   **Outcome**: **Didn't happen** ("The step had no effect.") or **Unknown**
+   ("Nobody knows whether the step had an effect."). On a step that changes
+   data, the dialog warns that an unknown outcome stops the run with an
+   incident, whatever **On error** says. A Transform or a Decision table
+   changes nothing outside the run, so the dialog has no **Outcome** for it:
+   its failure is saved as **Didn't start**.
 1. Inside a loop, choose **Which items fail**: **Only item 3**, the item you
    picked, or **Every item**.
 1. Select **Simulate failure**.
 
 **Output** then reads **Fails when executed**, with the banner "This step fails
 when you execute it in Studio. Real runs ignore it." ("This item fails…" or
-"Every item fails…" inside a loop), the code and outcome, **Remove** and
-**Edit**. **Remove** offers **Undo**. A failure wins over a pin set for the
-same step or item, and the pin stays: "Its pinned output is kept for when you
-remove the failure." An item's own pin still wins over a failure set for every
-item.
+"Every item fails…" inside a loop), the code and outcome, such as
+"REQUEST_REFUSED · Didn't happen," **Remove** and **Edit**. **Remove** offers
+**Undo**. A failure wins over a pin set for the same step or item, and the pin
+stays: "Its pinned output is kept for when you remove the failure." An item's
+own pin still wins over a failure set for every item.
 
 - **Which steps can fail.** Action steps, AI tasks and a **Call a workflow**
   that waits can fail whatever their **On error** says. A Transform or a
   Decision table can fail only with **Continue** or **Continue with error
   output**; otherwise the menu item says "This step's failure would stop the
-  run. Choose Continue or Continue with error output first." A step that
-  changes nothing, such as a Transform, reports its failure as "Didn't start,"
-  whatever outcome you chose.
+  run. Choose Continue or Continue with error output first." Their failure
+  reads **Didn't start** before Execute and after it, also when a pasted step
+  brings one with another outcome.
 - **Waits run out of time instead.** A **Wait for signal** or a **Human task**
   fails when its time runs out: in its Output pane's **Test answer**, check
   **Let it time out instead** or **Let it expire instead**, and its **On
@@ -1818,15 +1835,23 @@ item.
 - **On the canvas.** The step's tile gets a warning badge and shows its code
   under its name; pointing at the badge gives the code and the message, then
   the setting, such as "The run continued (On error: Continue with error
-  output)." With an error path, the way into it is drawn as taken.
+  output)." With an error path, the way into it is drawn as taken, and the
+  **Success** output dashed, as the way not taken. Inside a loop, **Success**
+  is drawn as taken when another item went on through it.
 - **In Output.** The pane reads **Failed, continued** and shows one banner,
-  line by line: the code and the message ("This step failed: REQUEST_REFUSED."
-  and the platform's words for the code), the outcome and attempts ("Outcome:
-  Didn't happen. Attempts: 1."), the setting ("The run continued (On error:
-  Continue).") and, while your failure is set, "You simulated this failure.
-  Real runs ignore it." with **Remove** and **Edit**. Under the banner is what
-  later steps read: **Result on error** after an error path, or null after
-  **Continue**, with "Later steps read null here and can read submit's error."
+  line by line: the code ("This step failed: REQUEST_REFUSED.") and the
+  platform's words for it, the outcome and attempts ("Outcome: Didn't happen.
+  Attempts: 1."), the setting ("The run continued (On error: Continue).") and,
+  while your failure is set, "You simulated this failure. Real runs ignore
+  it." with **Remove** and **Edit**. When the platform has no words of its own
+  for the code, as for REQUEST_REFUSED, the banner leaves out the message,
+  which would only repeat the code ("The step failed with code
+  REQUEST_REFUSED."); the error's `message` field still holds it. Under the
+  banner is what later steps read: **Result
+  on error** after an error path, or null after **Continue**, with "Later
+  steps read null here and can read submit's error." When the path's result
+  is one step's output, the caption names that step, such as "Result on error
+  · from notify-team."
 - **In the run log.** The status reads, for example, "Succeeded with errors · 4
   steps," followed by "The simulated run succeeded with 1 handled error." The
   step's row reads **Failed, continued** with its code, and the error path's
@@ -1836,11 +1861,17 @@ item.
   "Failed, continued." A **Call a workflow** that waits handles its called
   run's failure the same way, with that run's steps under the call.
 - **An unknown outcome.** On a step that changes data, it still stops the run,
-  whatever **On error** says: the run log reads "Failed at submit."
+  whatever **On error** says: the run log reads "Failed at submit." The step's
+  row shows the code the run stopped with under its name, such as
+  `WV-TASK-AMBIGUOUS`, and says why **On error** didn't apply: "Its outcome
+  is unknown and it changes data, so the run stopped with an incident,
+  whatever On error says."
 
 **Execute a step inside an error path.** When the test data lets submit
-succeed, its error path doesn't run, so **Execute step** on a step inside it
-asks "Simulate a failure of submit first" and shows where the step is
+succeed, its error path doesn't run. The **Output** of a step inside it says
+what to do first: "Execute this step to see its output. It runs only after
+submit fails, so simulate a failure of submit first." **Execute step** on that
+step asks "Simulate a failure of submit first" and shows where the step is
 (submit › Error › notify-team). **Simulate a failure** opens the dialog for
 submit; **Cancel** changes nothing.
 
@@ -1858,7 +1889,10 @@ step as Execute does, with the way into its error path taken. The step's
 details open on Output with the same banner as after Execute, without the
 simulated line: the code and the message, the outcome and attempts as the run
 recorded them ("Outcome: Didn't happen. Attempts: 3."), and the setting. Below
-the banner is the error path's result, or null after **Continue**.
+the banner is the error path's result, or null after **Continue**. Its caption
+names the step the result came from in the run's own version, not in the
+draft, such as "Result on error · from notify-team"; when Studio couldn't read
+that version, it reads **Result on error** alone.
 
 **Debug in editor** is offered for such a run too, and copies each handled
 failure into the draft's test data as a simulated failure: its code, outcome
