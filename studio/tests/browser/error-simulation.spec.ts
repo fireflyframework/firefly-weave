@@ -352,8 +352,9 @@ test("Execute step inside an error path its step won't take asks to simulate tha
   await expect(execute).toBeFocused();
   await execute.click();
   await expect.poll(() => calls.length).toBe(1);
+  // A transform's failure didn't start: it changes nothing outside the run.
   expect((calls[0].body as { errors?: object }).errors).toEqual({
-    "node:submit": { code: "REQUEST_REFUSED" },
+    "node:submit": { code: "REQUEST_REFUSED", outcome: "not_started" },
   });
   const pane = await outputPane(details);
   await pane.getByRole("radio", { name: "JSON" }).click();

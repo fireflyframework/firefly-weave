@@ -69,6 +69,16 @@ export function simulateBlock(
   return null;
 }
 
+/**
+ * The outcome a simulated failure of `step` is saved with, when Simulate a
+ * failure doesn't ask: a transform or a decision table changes nothing
+ * outside the run, so the platform reports its failure as not started.
+ * Null when the dialog asks.
+ */
+export function simulatedOutcome(step: Step): "not_started" | null {
+  return HANDLED_ONLY.has(step.kind) ? "not_started" : null;
+}
+
 /** The test data key of a failure: the item's own, or its step's for every item. */
 export function failureKey(instance: string, every: boolean): string {
   return every ? instanceStep(instance) : instance;

@@ -53,7 +53,12 @@ import {
   SimulateFailureDialog,
   type FailureChoice,
 } from "./simulate-failure-dialog";
-import { codeSuggestions, failureKey, simulateBlock } from "./simulate-failure";
+import {
+  codeSuggestions,
+  failureKey,
+  simulateBlock,
+  simulatedOutcome,
+} from "./simulate-failure";
 import { RowMenu, type RowMenuItem } from "../../../row-menu";
 import { actionSideEffect } from "../kinds/forms/action-forms";
 import { failureOf } from "../../state/test-data-ops";
@@ -165,6 +170,8 @@ export function simulateOpening(
   item: string | null;
   loop: string;
   changesData: boolean;
+  /** The outcome its failure takes without asking; null when the dialog asks. */
+  outcome: "not_started" | null;
   suggestions: ReturnType<typeof codeSuggestions>;
 } | null {
   const step = controller.step(stepId);
@@ -189,6 +196,7 @@ export function simulateOpening(
       )?.loopId ?? "",
     changesData:
       actionSideEffect(step, controller.kindContext()) === "non_idempotent",
+    outcome: simulatedOutcome(step),
     suggestions: codeSuggestions(step, contract),
   };
 }
@@ -400,6 +408,7 @@ export function simulateOpening(
         [item]="open.item"
         [loop]="open.loop"
         [changesData]="open.changesData"
+        [fixedOutcome]="open.outcome"
         [initial]="open.initial"
         (chosen)="simulate($event)"
         (closed)="closeSimulate()"
@@ -1538,7 +1547,29 @@ export class OutputPane {
       block === null
         ? null
         : `Execute leaves this failure out. ${block ?? "This step can't fail in a simulation."}`;
-    return { ...found, scope, leftOut };
+    // A transform's or a decision table's failure didn't start, whatever
+    // outcome the test data holds: the platform reports it so.
+    const fixed = step ? simulatedOutcome(step) : null;
+    const entry = fixed ? { ...found.entry, outcome: fixed } : found.entry;
+    return { ...found, entry, scope, leftOut };
+  }
+  /**
+   * Inside an error path whose step won't fail with this test data: that
+   * step ("submit"), whose failure to simulate first; null otherwise.
+   */
+  untakenOwner(): string | null {
+    const { controller, target, host } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return null;
+    const data = controller.testData;
+    data.version();
+    return (
+      untakenPath(
+        host.model.definition.spec.steps ?? [],
+        target,
+        (owner) => !!failureOf(data.data(), controller.pinKey(owner)),
+        (owner) => simulateBlock(owner, false) === null,
+      )?.owner ?? null
+    );
   }
   /** The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies. */
   moreActions(): RowMenuItem[] | null {
@@ -1564,6 +1595,7 @@ export class OutputPane {
     item: string | null;
     loop: string;
     changesData: boolean;
+    outcome: "not_started" | null;
     suggestions: ReturnType<typeof codeSuggestions>;
     initial: FailureChoice | null;
     /** The failure being edited, to replace when Which items changes. */
@@ -1578,7 +1610,7 @@ export class OutputPane {
       ...opening,
       initial: current && {
         code: current.entry.code,
-        outcome: current.entry.outcome === "unknown" ? "unknown" : "failed",
+        outcome: current.entry.outcome ?? "failed",
         every: current.scope === "every",
       },
       editing: current?.key ?? null,
@@ -1596,9 +1628,10 @@ export class OutputPane {
       return;
     }
     const key = failureKey(open.key, choice.every);
+    // "failed" is the platform's default: it isn't written.
     const written = await controller.setFailure(key, {
       code: choice.code,
-      ...(choice.outcome === "unknown" ? { outcome: "unknown" as const } : {}),
+      ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
     });
     if (!written.ok) return this.problem.set(written.message);
     this.problem.set("");

@@ -1699,9 +1699,7 @@ export class StepDetails {
       failureKey(open.key, choice.every),
       {
         code: choice.code,
-        ...(choice.outcome === "unknown"
-          ? { outcome: "unknown" as const }
-          : {}),
+        ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
       },
     );
     if (this.lifetime.destroyed) return;

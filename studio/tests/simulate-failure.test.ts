@@ -30,6 +30,7 @@ import {
   codeSuggestions,
   failureKey,
   simulateBlock,
+  simulatedOutcome,
 } from "../src/app/editor/ndv/panes/simulate-failure";
 import type { Step } from "../src/app/model";
 
@@ -82,6 +83,16 @@ describe("which steps offer Simulate a failure", () => {
     expect(
       simulateBlock(step("callWorkflow", { mode: "detach" }), false),
     ).toBeUndefined();
+  });
+});
+
+describe("the outcome of a simulated failure", () => {
+  it("is asked for an action, an AI task or a call, and is Didn't start for a step that changes nothing", () => {
+    for (const kind of ["action", "llm", "agent", "callWorkflow"])
+      expect(simulatedOutcome(step(kind)), kind).toBeNull();
+    // The platform reports a transform's or a decision table's failure as not started.
+    for (const kind of ["transform", "decisionTable"])
+      expect(simulatedOutcome(step(kind)), kind).toBe("not_started");
   });
 });
 

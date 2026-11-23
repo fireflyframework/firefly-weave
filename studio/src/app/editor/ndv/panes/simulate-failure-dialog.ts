@@ -35,7 +35,7 @@ import { codeProblem } from "./simulate-failure";
 
 export interface FailureChoice {
   code: string;
-  outcome: "failed" | "unknown";
+  outcome: "failed" | "unknown" | "not_started";
   every: boolean;
 }
 
@@ -98,36 +98,38 @@ let sequence = 0;
       @if (problem()) {
         <p class="error" role="alert" [id]="id + '-error'">{{ problem() }}</p>
       }
-      <fieldset class="failure-choice">
-        <legend class="field-label">Outcome</legend>
-        <label>
-          <input
-            type="radio"
-            [name]="id + '-outcome'"
-            value="failed"
-            [checked]="outcome() === 'failed'"
-            (change)="outcome.set('failed')"
-          />
-          <span><b>Didn't happen</b> The step had no effect.</span>
-        </label>
-        <label>
-          <input
-            type="radio"
-            [name]="id + '-outcome'"
-            value="unknown"
-            [checked]="outcome() === 'unknown'"
-            (change)="outcome.set('unknown')"
-          />
-          <span
-            ><b>Unknown</b> Nobody knows whether the step had an effect.</span
-          >
-        </label>
-      </fieldset>
-      @if (outcome() === "unknown" && changesData()) {
-        <p class="failure-warning" role="status">
-          {{ step() }} changes data, so an unknown outcome stops the run with an
-          incident, whatever On error says.
-        </p>
+      @if (!fixedOutcome()) {
+        <fieldset class="failure-choice">
+          <legend class="field-label">Outcome</legend>
+          <label>
+            <input
+              type="radio"
+              [name]="id + '-outcome'"
+              value="failed"
+              [checked]="outcome() === 'failed'"
+              (change)="outcome.set('failed')"
+            />
+            <span><b>Didn't happen</b> The step had no effect.</span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              [name]="id + '-outcome'"
+              value="unknown"
+              [checked]="outcome() === 'unknown'"
+              (change)="outcome.set('unknown')"
+            />
+            <span
+              ><b>Unknown</b> Nobody knows whether the step had an effect.</span
+            >
+          </label>
+        </fieldset>
+        @if (outcome() === "unknown" && changesData()) {
+          <p class="failure-warning" role="status">
+            {{ step() }} changes data, so an unknown outcome stops the run with
+            an incident, whatever On error says.
+          </p>
+        }
       }
       @if (item(); as picked) {
         <fieldset class="failure-choice failure-items">
@@ -180,6 +182,8 @@ export class SimulateFailureDialog {
   loop = input("");
   /** A step that changes data and is never retried: Unknown stops the run. */
   changesData = input(false);
+  /** The outcome the failure takes without asking (a transform's didn't start); null asks. */
+  fixedOutcome = input<"not_started" | null>(null);
   /** The failure being edited, when there is one. */
   initial = input<FailureChoice | null>(null);
   readonly chosen = output<FailureChoice>();
@@ -197,7 +201,7 @@ export class SimulateFailureDialog {
       this.codeValue.set(
         start?.code ?? this.suggestions()[0]?.items[0]?.code ?? "",
       );
-      this.outcome.set(start?.outcome ?? "failed");
+      this.outcome.set(start?.outcome === "unknown" ? "unknown" : "failed");
       this.every.set(start?.every ?? false);
       this.dialog().nativeElement.showModal();
       // Starts on the first suggestion, selected: typing replaces it.
@@ -219,7 +223,11 @@ export class SimulateFailureDialog {
       this.codeInput().nativeElement.focus();
       return;
     }
-    this.chosen.emit({ code, outcome: this.outcome(), every: this.every() });
+    this.chosen.emit({
+      code,
+      outcome: this.fixedOutcome() ?? this.outcome(),
+      every: this.every(),
+    });
     this.dialog().nativeElement.close();
   }
 }

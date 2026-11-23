@@ -65,8 +65,10 @@ test("a pasted step keeps its simulated failure, shown over its output and remov
   await expect(banner.getByRole("status")).toHaveText(
     "This step fails when you execute it in Studio. Real runs ignore it.",
   );
+  // A transform's failure didn't start, whatever outcome was pasted with it:
+  // the platform reports it so.
   await expect(banner.locator(".failure-code")).toHaveText(
-    "REQUEST_REFUSED · Unknown",
+    "REQUEST_REFUSED · Didn't start",
   );
   await expect(
     pane.locator(".pill", { hasText: "Fails when executed" }),
@@ -78,11 +80,11 @@ test("a pasted step keeps its simulated failure, shown over its output and remov
     .filter({ hasText: "Removed the simulated failure of submit." });
   await toast.getByRole("button", { name: "Undo" }).click();
   await expect(banner.locator(".failure-code")).toHaveText(
-    "REQUEST_REFUSED · Unknown",
+    "REQUEST_REFUSED · Didn't start",
   );
 });
 
-test("Simulate a failure… sets the code and outcome, checking the code first", async ({
+test("Simulate a failure… sets the code, checking it first; a transform's failure didn't start, before Execute and after it", async ({
   page,
 }) => {
   const pane = await pastedStep(page, pasted("continue"));
@@ -97,19 +99,21 @@ test("Simulate a failure… sets the code and outcome, checking the code first",
   // It starts on the first suggestion, selected, so typing replaces it.
   await expect(code).toBeFocused();
   await expect(code).toHaveValue("WV-EXPR-MISSING");
+  // A transform changes nothing outside the run: the platform says its
+  // failure didn't start, so there is no outcome to choose.
+  await expect(dialog.getByRole("group", { name: "Outcome" })).toHaveCount(0);
   await page.keyboard.type("request refused");
   await dialog.getByRole("button", { name: "Simulate failure" }).click();
   await expect(dialog.getByRole("alert")).toHaveText(
     "Use capital letters, digits, dots, dashes and underscores, starting with a letter.",
   );
   await code.fill("REQUEST_REFUSED");
-  await dialog.getByLabel(/^Unknown/).check();
   await dialog.getByRole("button", { name: "Simulate failure" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(more).toBeFocused();
   const banner = pane.locator("weave-failure-banner");
   await expect(banner.locator(".failure-code")).toHaveText(
-    "REQUEST_REFUSED · Unknown",
+    "REQUEST_REFUSED · Didn't start",
   );
   // Edit opens it on the failure as it is; Escape leaves it unchanged.
   await banner.getByRole("button", { name: "Edit" }).click();
@@ -117,7 +121,24 @@ test("Simulate a failure… sets the code and outcome, checking the code first",
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(banner.locator(".failure-code")).toHaveText(
-    "REQUEST_REFUSED · Unknown",
+    "REQUEST_REFUSED · Didn't start",
+  );
+  // Executed by the real Python host, it reads the same after Execute.
+  const details = new StepDetailsPage(page);
+  await details.close();
+  const calls = await localAuthoring(page);
+  await page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" })
+    .click();
+  await expect.poll(() => calls.length).toBeGreaterThan(0);
+  expect((calls[0].body as { errors?: object }).errors).toEqual({
+    "node:submit": { code: "REQUEST_REFUSED", outcome: "not_started" },
+  });
+  await details.open("submit");
+  const after = await outputPane(details);
+  await expect(after.locator("weave-error-banner p").nth(1)).toHaveText(
+    "Outcome: Didn't start. Attempts: 1.",
   );
 });
 

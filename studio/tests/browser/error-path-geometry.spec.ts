@@ -416,8 +416,8 @@ for (const size of SIZES)
       expect(
         await dialog.locator("datalist option").first().getAttribute("label"),
       ).toBe("Platform failure · A value the step reads is missing.");
-      for (const card of await boxes(dialog.locator(".failure-choice label")))
-        expect(card.height, "Outcome").toBeGreaterThanOrEqual(touch ? 52 : 52);
+      // A transform's failure didn't start: no outcome to choose.
+      await expect(dialog.locator(".failure-choice")).toHaveCount(0);
       const [cancel, simulate] = await boxes(
         dialog.locator(".dialog-actions button"),
       );
@@ -427,6 +427,26 @@ for (const size of SIZES)
       expect(await clippedText(dialog, "")).toEqual([]);
       await expectNoSidewaysScroll(dialog);
       await expectNoPageScroll(page);
+    });
+
+    test("the Outcome choices of an action's failure", async ({ page }) => {
+      const details = await openIntake(page);
+      await details.open("submit");
+      const pane = await outputPane(details);
+      await pane.getByRole("button", { name: "More output actions" }).click();
+      await page.getByRole("menuitem", { name: "Simulate a failure…" }).click();
+      const dialog = page.getByRole("dialog", {
+        name: "Simulate a failure of submit",
+      });
+      await expect(dialog.getByLabel("Code")).toBeFocused();
+      const cards = await boxes(
+        dialog.getByRole("group", { name: "Outcome" }).locator("label"),
+      );
+      expect(cards).toHaveLength(2);
+      for (const card of cards)
+        expect(card.height, "Outcome").toBeGreaterThanOrEqual(52);
+      expect(await clippedText(dialog, "")).toEqual([]);
+      await expectNoSidewaysScroll(dialog);
     });
 
     test("More output actions ends the Output toolbar's first row, after Pin and Edit", async ({
