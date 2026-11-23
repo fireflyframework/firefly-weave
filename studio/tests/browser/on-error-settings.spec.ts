@@ -156,6 +156,30 @@ test("Continue with error output writes the setting and an empty error path as o
   await expect.poll(() => stored(page)).toBe(before);
 });
 
+test("Result on error that holds null opens Mapped and empty, and keeps the null", async ({
+  page,
+}) => {
+  await withManifest(page);
+  const details = await openHttpStep(page, undefined, withErrorPath);
+  await details.tab("Settings").click();
+  const result = details.field("resultOnError");
+  await result.scrollIntoViewIfNeeded();
+  // null is the result of an error path nobody mapped yet: nothing to edit.
+  await expect(result.getByRole("radio", { name: "Mapped" })).toBeChecked();
+  const editor = result.locator("weave-formula-editor");
+  await expect(editor).toHaveAttribute("data-text", "");
+  await expect(editor.locator(".cm-placeholder")).toHaveText("Empty (null)");
+  expect((await editor.boundingBox())?.height).toBe(36);
+  // Fixed, then Mapped again: still empty, and the source is unchanged.
+  const before = await stored(page);
+  await result.getByRole("radio", { name: "Fixed" }).click();
+  await expect(result.getByRole("radio", { name: "Fixed" })).toBeChecked();
+  await result.getByRole("radio", { name: "Mapped" }).click();
+  await expect(editor).toHaveAttribute("data-text", "");
+  expect(await stored(page)).toBe(before);
+  expect(before).toContain("output: {literal: null}");
+});
+
 test("leaving Continue with error output removes the error path, named in a toast, and Undo brings it back", async ({
   page,
 }) => {

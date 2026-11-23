@@ -210,6 +210,7 @@ export class RefPill {
               #editor
               mode="formula"
               [multiline]="inDialog()"
+              [placeholder]="emptyText()"
               [controlId]="controlId()"
               [labelledBy]="controlId() + '-label'"
               [describedBy]="describedBy()"
@@ -456,9 +457,24 @@ export class FormulaField implements OnInit {
    * The stored value as the editor's text. Empty Fixed text switched to
    * Mapped is an empty formula, not `""`.
    */
+  /** What the empty editor says: the field's own words when its default reads as empty. */
+  emptyText(): string {
+    const spec = this.spec();
+    return spec.emptyMapped && spec.placeholder
+      ? spec.placeholder
+      : "Type a formula, or drag a field here";
+  }
   private storedText(): string | null {
     const value = this.stored();
     if (value.mode === "fixed" && value.value === "") return "";
+    // A default that reads as nothing mapped yet (Result on error's null).
+    const spec = this.spec();
+    if (
+      spec.emptyMapped &&
+      value.mode === "fixed" &&
+      canonicalJson(value.value) === canonicalJson(spec.default ?? null)
+    )
+      return "";
     return fieldText(value, this.templateMode() ? "template" : "formula");
   }
   shownText(): string {

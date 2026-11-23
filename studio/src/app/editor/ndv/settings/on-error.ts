@@ -273,6 +273,10 @@ export function onErrorFields(step: Step, ctx: OnErrorContext): ParamSpec[] {
       type: "json",
       label: "Result on error",
       mapping: "both",
+      // The language needs the path's output: cleared, it is null again.
+      default: null,
+      whenRemoved: "default",
+      emptyMapped: true,
       placeholder: "Empty (null)",
       hint: RESULT_ON_ERROR_HINT,
       showWhen: (current) =>

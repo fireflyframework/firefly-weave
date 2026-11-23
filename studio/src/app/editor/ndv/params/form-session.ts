@@ -204,6 +204,8 @@ const WHOLE_PATH =
 export class FormSession {
   /** Fields switched to Mapped that hold no mapping yet (the data picker is open). */
   private drafts = new Map<string, Path>();
+  /** Fields with `emptyMapped` switched to Fixed while they hold their default. */
+  private fixedChosen = new Set<string>();
   /** Where a field's editor puts the caret when it next appears (`{{` typed in a Fixed field). */
   private editorRequests = new Map<string, Omit<EditorRequest, "seq">>();
   /**
@@ -501,7 +503,11 @@ export class FormSession {
         ? this.wholeMapping(spec)
         : this.read(spec).mode === "mapped") ||
       this.drafts.has(this.key(spec)) ||
-      isMappedText(this.held(spec)?.kind);
+      isMappedText(this.held(spec)?.kind) ||
+      // Its default reads as nothing mapped yet, until Fixed is chosen.
+      (!!spec.emptyMapped &&
+        !this.fixedChosen.has(this.key(spec)) &&
+        this.atDefault(spec));
     return mapped ? "mapped" : spec.mapping === "both" ? "fixed" : null;
   }
 
@@ -510,6 +516,10 @@ export class FormSession {
       return;
     const entry = this.resolve(spec);
     if (!entry || this.readOnly(entry)) return;
+    if (spec.emptyMapped) {
+      if (mode === "fixed") this.fixedChosen.add(this.key(spec));
+      else this.fixedChosen.delete(this.key(spec));
+    }
     const current = this.read(spec);
     if (mode === "mapped") {
       // Switching to Mapped never asks. A number or JSON that didn't apply
