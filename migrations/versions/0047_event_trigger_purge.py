@@ -28,12 +28,20 @@ purge left both behind. Now ``weave_purge_run``:
   empties the run's other payloads to ``{}``.
 
 A start that started a run still kept stays: the trigger's history shows that run, and the chain's budget of starts
-counts it while the chain may still grow. Its payload row stays because the start's foreign key names it, but holds
-nothing the purged run recorded. Both rows go when the started run is purged.
+counts it. Its payload row stays because the start's foreign key names it, but holds nothing the purged run recorded.
+Both rows go when the started run is purged too; from then on the budget no longer counts that start, so a chain that
+still grows may make more starts than its budget.
+
+Runs purged before this migration left their events and starts behind, and later purges never reach them: a purge
+finds rows by the run it purges. The upgrade applies the same rules once to every event whose source run is gone,
+except an event a start still waits to read, which stays as it is. It works one environment at a time with that scope
+set, so row-level security holds, and takes the project's operations lock, which every write to the trigger tables
+needs for its usage accounting, only in projects with such rows. That lock is held until the upgrade commits, so the
+project's writes wait until then.
 
 The purge finds a run's payloads by their source run and a payload's starts by their event, so two indexes are added;
 the second also serves the foreign key check when a payload is deleted. Building them reads both tables under a SHARE
-lock, so new trigger starts wait for the builds. No column or row changes.
+lock, so new trigger starts wait until the upgrade commits. No column changes.
 """
 
 import sqlalchemy as sa
@@ -65,6 +73,64 @@ PURGE_RULES = f"""IF EXISTS(SELECT 1 FROM public.event_trigger_payloads p JOIN p
           UPDATE public.event_trigger_payloads SET payload='{{}}' WHERE source_run_id=target;
         END;
         """
+# What a run purged before this migration left: its events, in the environment whose scope is set.
+LEFT_BEHIND = (
+    "p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment "
+    "AND NOT EXISTS(SELECT 1 FROM public.runs r WHERE r.id=p.source_run_id)"
+)
+AWAITED = (
+    "EXISTS(SELECT 1 FROM public.event_trigger_starts w WHERE w.tenant_id=p.tenant_id AND w.project_id=p.project_id "
+    "AND w.environment_id=p.environment_id AND w.event_id=p.event_id AND w.status='requested')"
+)
+LEFTOVERS = f"SELECT EXISTS(SELECT 1 FROM public.event_trigger_payloads p WHERE {LEFT_BEHIND})"
+# The purge's rules, for every such event but one a start still waits to read.
+CLEANUP = (
+    f"DELETE FROM public.event_trigger_starts s USING public.event_trigger_payloads p WHERE {LEFT_BEHIND} "
+    f"AND {SAME_EVENT} AND NOT {AWAITED} "
+    "AND (s.run_id IS NULL OR NOT EXISTS(SELECT 1 FROM public.runs r WHERE r.id=s.run_id))",
+    f"DELETE FROM public.event_trigger_payloads p WHERE {LEFT_BEHIND} "
+    f"AND NOT EXISTS(SELECT 1 FROM public.event_trigger_starts s WHERE {SAME_EVENT})",
+    f"UPDATE public.event_trigger_payloads p SET payload='{{}}' WHERE {LEFT_BEHIND} AND payload<>'{{}}' "
+    f"AND NOT {AWAITED}",
+)
+# The project's operations lock, as the application takes it: usage accounting refuses a write to the trigger tables
+# without it.
+FENCE = (
+    "SELECT pg_advisory_xact_lock(hashtextextended('weave.operations:'||cast(cast(:tenant AS uuid) AS text)||':'"
+    "||cast(cast(:project AS uuid) AS text),0))"
+)
+SCOPE_SETTINGS = ("tenant_id", "project_id", "environment_id")
+
+
+def bind(connection: sa.Connection, name: str, value: object) -> None:
+    connection.execute(sa.text("SELECT set_config(:name,:value,true)"), {"name": "weave." + name, "value": str(value)})
+
+
+def fence_leftovers(connection: sa.Connection) -> list[dict[str, object]]:
+    """Find the environments that hold events of runs purged before this migration, one scope at a time so row-level
+    security holds, and take the operations lock of each one's project. Return their scopes."""
+    found = []
+    for tenant in connection.execute(sa.text("SELECT weave_tenant_ids()")).scalars().all():
+        bind(connection, "tenant_id", tenant)
+        projects = connection.execute(
+            sa.text("SELECT id FROM projects WHERE tenant_id=:tenant ORDER BY id"), {"tenant": tenant}
+        )
+        for project in projects.scalars().all():
+            bind(connection, "project_id", project)
+            environments = connection.execute(
+                sa.text("SELECT id FROM environments WHERE tenant_id=:tenant AND project_id=:project ORDER BY id"),
+                {"tenant": tenant, "project": project},
+            )
+            fenced = False
+            for environment in environments.scalars().all():
+                bind(connection, "environment_id", environment)
+                scope = {"tenant": tenant, "project": project, "environment": environment}
+                if connection.scalar(sa.text(LEFTOVERS), scope):
+                    if not fenced:
+                        connection.execute(sa.text(FENCE), scope)
+                        fenced = True
+                    found.append(scope)
+    return found
 
 
 def patch_function(signature: str, anchor: str, replacement: str, *, applied: str) -> None:
@@ -79,6 +145,16 @@ def patch_function(signature: str, anchor: str, replacement: str, *, applied: st
 
 
 def upgrade() -> None:
+    connection = op.get_bind()
+    if not connection.scalar(sa.text("SELECT has_function_privilege(current_user,'weave_tenant_ids()','EXECUTE')")):
+        raise RuntimeError("Migration requires explicit EXECUTE on weave_tenant_ids() for tenant-scoped cleanup")
+    # The scope settings are local to the transaction: a failed upgrade rolls them back, a finished one restores them.
+    previous = {
+        name: connection.scalar(sa.text("SELECT current_setting(:name,true)"), {"name": "weave." + name})
+        for name in SCOPE_SETTINGS
+    }
+    # The operations locks come before the builds' SHARE locks, in the order the application takes them.
+    scopes = fence_leftovers(connection)
     # A run's payloads, by the run whose events they hold.
     op.execute("CREATE INDEX event_trigger_payloads_source ON event_trigger_payloads(source_run_id)")
     # An event's starts: the purge reads them, and deleting a payload checks that none still names it.
@@ -86,6 +162,13 @@ def upgrade() -> None:
     op.execute("GRANT SELECT,DELETE ON event_trigger_starts TO weave_retention_owner")
     op.execute("GRANT SELECT,UPDATE(payload),DELETE ON event_trigger_payloads TO weave_retention_owner")
     patch_function(PURGE, PURGE_ANCHOR, PURGE_RULES + PURGE_ANCHOR, applied="Event trigger start pending")
+    for scope in scopes:
+        for name, key in zip(SCOPE_SETTINGS, ("tenant", "project", "environment"), strict=True):
+            bind(connection, name, scope[key])
+        for statement in CLEANUP:
+            connection.execute(sa.text(statement), scope)
+    for name, value in previous.items():
+        bind(connection, name, value or "")
     op.execute(f"UPDATE weave_schema_version SET version='{revision}'")
 
 

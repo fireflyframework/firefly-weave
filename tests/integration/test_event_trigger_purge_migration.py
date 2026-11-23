@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 import pytest
 from operations_support import assert_usage, identifier, scope_as_app, seed_prior_head
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_event_trigger_migration import PAYLOAD, insert_start, insert_trigger
@@ -34,8 +35,8 @@ from test_incident_migration import upgrade
 pytestmark = pytest.mark.integration
 PATH = Path(__file__).resolve().parents[2] / "migrations/versions/0047_event_trigger_purge.py"
 # Ended runs of seed_prior_head that nothing else links to: the source whose events start workflows, a run one of
-# them started, and the run whose event started the source.
-SOURCE, STARTED, STARTER = identifier(1012), identifier(1013), identifier(1014)
+# them started, the run whose event started the source, and a run whose event a trigger start still waits to read.
+SOURCE, STARTED, STARTER, WAITING = identifier(1012), identifier(1013), identifier(1014), identifier(1015)
 STARTS = "SELECT trigger_id,event_id,status,run_id FROM event_trigger_starts ORDER BY trigger_id,event_id"
 PAYLOADS = "SELECT event_id,source_run_id,payload::text FROM event_trigger_payloads ORDER BY event_id"
 
@@ -146,6 +147,76 @@ async def test_upgrading_keeps_every_trigger_row_and_adds_the_purge_indexes(empt
             assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == HEAD
             await assert_usage(connection, ids)
     finally:
+        await engine.dispose()
+
+
+async def test_upgrading_removes_what_runs_purged_before_it_left_in_the_trigger_tables(empty_settings, retain):
+    """A purge of the previous version left its run's events and trigger starts behind, and later purges never reach
+    them. The upgrade removes them by the purge's rules, run by a login that is no superuser, cannot bypass row-level
+    security, and owns the trigger tables, whose policies it is forced to follow."""
+    engine = create_async_engine(empty_settings.database_url.get_secret_value(), hide_parameters=True)
+    role, password = "weave_purge_migration_" + uuid4().hex, uuid4().hex
+    url = make_url(empty_settings.database_url.get_secret_value()).set(username=role, password=password)
+    migrator = create_async_engine(url, hide_parameters=True)
+    try:
+        async with engine.begin() as connection:
+            await upgrade(connection, "0031_operations_key_collation")
+            ids = await seed_prior_head(connection, count=20)
+            await upgrade(connection, PRIOR_HEAD)
+            seeded = await history(connection, ids)
+            await scope_as_app(connection, ids)
+            waiting = uuid4()
+            await insert_start(connection, ids, seeded["notify"], event=waiting, source_run_id=WAITING)
+            await connection.execute(text("RESET ROLE"))
+        await purge(engine, ids, SOURCE)
+        await purge(engine, ids, WAITING)
+        async with engine.begin() as connection:
+            await connection.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS"))
+            retain("role", role)
+            # As in a deployment, the migration login owns what the migration changes: the two trigger tables and the
+            # purge function.
+            await connection.execute(text(f"ALTER TABLE event_trigger_payloads OWNER TO {role}"))
+            await connection.execute(text(f"ALTER TABLE event_trigger_starts OWNER TO {role}"))
+            await connection.execute(text(f"ALTER FUNCTION weave_purge_run(uuid,integer) OWNER TO {role}"))
+            await connection.execute(text(f"GRANT USAGE,CREATE ON SCHEMA public TO {role}"))
+            await connection.execute(text(f"GRANT SELECT,UPDATE ON weave_schema_version,alembic_version TO {role}"))
+            await connection.execute(text(f"GRANT SELECT ON runs,projects,environments TO {role}"))
+        with pytest.raises(RuntimeError, match="explicit EXECUTE"):
+            async with migrator.begin() as connection:
+                await upgrade(connection, HEAD)
+        async with engine.begin() as connection:
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == PRIOR_HEAD
+            await connection.execute(text(f"GRANT EXECUTE ON FUNCTION weave_tenant_ids() TO {role}"))
+        async with migrator.begin() as connection:
+            assert (
+                await connection.execute(text("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user"))
+            ).one() == (False, False)
+            await upgrade(connection, HEAD)
+        async with engine.begin() as connection:
+            await connection.execute(text("ALTER FUNCTION weave_purge_run(uuid,int) OWNER TO weave_retention_owner"))
+
+        # The source's skip and refusal are gone, and its refused event with them; the start of a run still kept
+        # stays with its event emptied. The waiting start, its event, and the source's own start are untouched.
+        assert sorted(await rows(engine, STARTS)) == sorted(
+            [
+                (seeded["notify"], seeded["started"], "started", STARTED),
+                (seeded["escalate"], seeded["starter"], "started", SOURCE),
+                (seeded["notify"], waiting, "requested", None),
+            ]
+        )
+        assert sorted(await payloads(engine)) == sorted(
+            [(seeded["started"], SOURCE, {}), (seeded["starter"], STARTER, PAYLOAD), (waiting, WAITING, PAYLOAD)]
+        )
+        async with engine.begin() as connection:
+            await assert_usage(connection, ids)
+
+        await purge(engine, ids, STARTED)
+
+        assert sorted(await payloads(engine)) == sorted(
+            [(seeded["starter"], STARTER, PAYLOAD), (waiting, WAITING, PAYLOAD)]
+        )
+    finally:
+        await migrator.dispose()
         await engine.dispose()
 
 
