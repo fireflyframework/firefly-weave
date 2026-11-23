@@ -32,8 +32,8 @@ A handled failure is data, not an incident. Later steps read it at
 `/steps/<id>/error`. Runs with handled failures still end `succeeded`, and their
 run facts count the handled errors.
 
-Studio does not have controls for this setting yet: edit `onError` and
-`errorPath` in the source view.
+In Studio, choose it in a step's **Settings** and try it with a simulated
+failure; see [Handle step errors in Studio](studio.md#handle-step-errors).
 
 ## Before you start
 

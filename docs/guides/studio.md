@@ -60,6 +60,7 @@ happens on the platform and keeps running after you close Studio.
 | Configure steps in the new editor's step details | Studio's local host | [Configure a step in step details](#configure-a-step-in-step-details) |
 | Edit decision tables in a grid and try inputs offline | Studio's local host | [Decision tables in the grid](#decision-tables-in-the-grid) |
 | Call one workflow from another, and test both together | Studio's local host; a platform to call published workflows | [Call a workflow](#call-a-workflow) and [let other workflows call this one](#let-other-workflows-call-this-one) |
+| Let a step's failure continue the run or take an error path, and test it | Studio's local host; a connected platform that handles step errors | [Handle step errors](#handle-step-errors) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
 | Call a REST API from a workflow without writing a connector | Connected Studio; an operator has prepared the built-in HTTP connector | [Call a REST API from a step](#call-a-rest-api-from-a-step) |
@@ -1075,7 +1076,8 @@ actions first, after you confirm; see
 **Settings** holds, in this order, the step's own settings (**Retry on fail**
 and **Timeout** for steps that call actions, **Wait at most** for a **Wait for
 signal**, and the deadlines of a **Human task**), **On error**, **Notes** and
-**About this step**. **On error** reads **Stop the run** for now. **Show on
+**About this step**. **On error** chooses what the step's failure does; see
+[Handle step errors](#handle-step-errors). **Show on
 canvas** puts a note's first line under the step on the canvas. **About this
 step** shows the step's ID, with **Copy step ID**, and where it sits; for an
 action, it also shows what runs it and what it does to data. A dot on the
@@ -1257,10 +1259,10 @@ becomes part of the workflow definition.
   **Generate sample**. Every step that reads the workflow input shows these
   values in its Input pane, and formula previews use them.
 - **Pin output.** A step that calls something outside the workflow, such as an
-  action or an AI task, can keep an output for test runs. In its Output pane,
+  action or an AI task, can keep an output for when you execute it in Studio. In its Output pane,
   select **Set test output** to type or paste JSON, or **Generate sample** to
   fill it from the step's output fields. The pane then shows **Pinned** and
-  "This data is pinned for test runs. Production runs ignore it." **Edit
+  "This data is pinned for when you execute it in Studio. Real runs ignore it." **Edit
   output** opens the JSON again; closing step details with an edit not saved
   asks first. Steps whose output is computed from their input, such as a
   Transform, can't be pinned: pin the steps they read instead. On an AI task,
@@ -1674,6 +1676,199 @@ out, and the header says where the run stopped, such as "· canceled at item
 received** is recomputed for the item shown from the run's own data, and
 **Debug in editor** opens the editor on the item the run failed at.
 
+### Handle step errors
+
+By default, a step that fails stops the run, and someone retries or resolves it
+in Operate. **On error** lets a step handle its own failure instead: the run
+goes on, or it first takes the step's **error path**, steps that run only when
+the step fails. [Handle step errors](handle-step-errors.md) describes what the
+platform does with the setting; this section shows how to set it and test it in
+Studio.
+
+**On error** offers its choices on action steps (Call an action, Call an API,
+email and file steps), AI tasks, Transforms, Decision tables, a **Call a
+workflow** that waits for its result, **Wait for signal** and **Human task**.
+On a platform that can't handle step errors, it stays **Stop the run** and says
+"Update the platform to continue after errors." The step reference lists
+[what each step offers](studio-step-reference.md#on-error-in-settings).
+
+#### Choose what a failure does
+
+1. Open the step's details and select **Settings**.
+1. In **On error**, choose what happens when the step fails for good, after
+   any tries **Retry on fail** allows:
+
+    | Choice | What it says |
+    | --- | --- |
+    | **Stop the run** (default) | "The run stops with an incident you can retry or resolve in Operate." |
+    | **Continue** | "The run goes on. This step's output is empty (null), and later steps can read its error." |
+    | **Continue with error output** | "Failures take this step's Error output on the canvas; its steps run, then the run goes on after this step." |
+
+1. For **Continue with error output**, set **Result on error**: "What later
+   steps read as this step's output after the error path." It is empty (null)
+   until you set it, and it can be Fixed or Mapped, such as the result of the
+   path's last step.
+
+Each choice is one undo step. A note under the choice says when it applies or
+what it can't change. On an action that changes data and is never retried: "If
+its outcome is unknown, the run still stops with an incident until someone
+checks it." On a **Wait for signal**: "Applies when no signal arrives within
+Wait at most." On a **Human task**: "Applies when the task expires (Expires
+after)." On a call whose **If it fails** is **Continue with the result
+status**: "A called run that fails continues with its result status. On error
+handles a call that can't start."
+
+Choosing anything other than **Continue with error output** removes the error
+path with its steps. The message names them, offers **Undo**, and says how
+many: "Removed the error path (2 steps)." Switching a **Call a
+workflow** to **Start it and continue** removes its **On error** and its error
+path the same way: a call that doesn't wait has no failure to handle.
+
+#### Add steps to the error path
+
+A step set to **Continue with error output** has two outputs on the canvas:
+**Success**, which runs straight on, and **Error**, in red with a warning icon,
+which leads to the error path on a row of its own below. The path joins the
+workflow again after the step, so the steps after it run either way. A step set to
+**Continue** keeps one output and reads "Continues on error" under its name.
+
+- **Add a step.** Select an empty path's **Add a step** slot, or the **+** on
+  the Error output, and choose a step. The **+** after the path's last step
+  adds after it.
+- **Drag.** Drag from the Error output: "Add to the error path" follows the
+  pointer, and an empty path's slot lights up as the target.
+- **Keyboard.** Tab reaches an empty path's slot or, once the path has steps,
+  the Error output, named "Add a step to the error path of submit." Enter opens
+  **Add a step** at the start of the path.
+- **Touch.** On a touch screen, and in a window narrower than 768 pixels, the
+  Success and Error outputs and an empty path's **Add a step** slot take a
+  44-pixel tap at any zoom.
+
+A step inside the path says where it sits. Its breadcrumb reads "Error path of
+submit · step 1 of 2," and **Outline** shows "On error of submit" beside it.
+Deleting submit deletes its error path in the same undo step, and the message
+offers **Undo**: "Deleted submit and its error path (2 steps)."
+
+**Read the error.** Inside the error path, the failed step has no output; its
+error takes that place. The **Input** pane starts at **Error of submit**, and
+the data picker lists **Error of submit** first, marked as an error, with the
+fields `code`, `message`, `outcome`, `attempts` and `instanceKey`, and
+`childRunId` for a call. Until you simulate a failure, **Input** says "submit
+has no output here: this path runs only when it fails. Simulate a failure of
+submit to see its error." After a step set to **Continue**, later steps can
+read its error too; it's there only when the step failed.
+[The error object](handle-step-errors.md#the-error-object) describes each field.
+
+#### Simulate a failure
+
+To see what a failure does without calling anything, make the step fail when
+you execute it in Studio. Real runs never see a simulated failure.
+
+1. In the step's **Output** pane, open **More output actions** (⋯) and choose
+   **Simulate a failure…**.
+1. In **Code**, type the code the step fails with. The field starts on the
+   first suggestion, selected, so typing replaces it. The suggestions list
+   **This action's failures**, then **Platform failures** for the step's kind.
+   A code starts with a capital letter, holds capital letters, digits, dots,
+   dashes and underscores, and has at most 128 characters.
+1. Choose the **Outcome**: **Didn't happen** ("The step had no effect.") or
+   **Unknown** ("Nobody knows whether the step had an effect."). On a step that
+   changes data, the dialog warns that an unknown outcome stops the run with an
+   incident, whatever **On error** says.
+1. Inside a loop, choose **Which items fail**: **Only item 3**, the item you
+   picked, or **Every item**.
+1. Select **Simulate failure**.
+
+**Output** then reads **Fails when executed**, with the banner "This step fails
+when you execute it in Studio. Real runs ignore it." ("This item fails…" or
+"Every item fails…" inside a loop), the code and outcome, **Remove** and
+**Edit**. **Remove** offers **Undo**. A failure wins over a pin set for the
+same step or item, and the pin stays: "Its pinned output is kept for when you
+remove the failure." An item's own pin still wins over a failure set for every
+item.
+
+- **Which steps can fail.** Action steps, AI tasks and a **Call a workflow**
+  that waits can fail whatever their **On error** says. A Transform or a
+  Decision table can fail only with **Continue** or **Continue with error
+  output**; otherwise the menu item says "This step's failure would stop the
+  run. Choose Continue or Continue with error output first." A step that
+  changes nothing, such as a Transform, reports its failure as "Didn't start,"
+  whatever outcome you chose.
+- **Waits run out of time instead.** A **Wait for signal** or a **Human task**
+  fails when its time runs out: in its Output pane's **Test answer**, check
+  **Let it time out instead** or **Let it expire instead**, and its **On
+  error** decides what happens next.
+- **Called workflows.** Steps inside a called workflow can't fail in a
+  simulation yet; simulate the failure on the call step instead.
+- **When the step changes.** A failure kept for a step that can no longer take
+  one, such as a Transform set back to **Stop the run**, stays in the test
+  data, but Execute leaves it out: **Output** reads **Failure left out** and
+  says why.
+- **Where it's kept.** With the step's other test data. Copied steps bring
+  their simulated failures, except failures copied from a run. A platform that
+  can't save simulated failures yet saves the rest of the test data and says
+  "This platform can't save simulated failures yet. They last until you close
+  this workflow."
+
+#### Execute with a failure
+
+**Execute step** and **Execute workflow** fail the step with your code, and its
+**On error** decides what happens next:
+
+- **On the canvas.** The step's tile gets a warning badge and shows its code
+  under its name; pointing at the badge gives the code and the message, then
+  the setting, such as "The run continued (On error: Continue with error
+  output)." With an error path, the way into it is drawn as taken.
+- **In Output.** The pane reads **Failed, continued** and shows one banner,
+  line by line: the code and the message ("This step failed: REQUEST_REFUSED."
+  and the platform's words for the code), the outcome and attempts ("Outcome:
+  Didn't happen. Attempts: 1."), the setting ("The run continued (On error:
+  Continue).") and, while your failure is set, "You simulated this failure.
+  Real runs ignore it." with **Remove** and **Edit**. Under the banner is what
+  later steps read: **Result on error** after an error path, or null after
+  **Continue**, with "Later steps read null here and can read submit's error."
+- **In the run log.** The status reads, for example, "Succeeded with errors · 4
+  steps," followed by "The simulated run succeeded with 1 handled error." The
+  step's row reads **Failed, continued** with its code, and the error path's
+  steps follow under **Error path**. Inside a loop, the item reads "Failed,
+  continued at send" and the other items go on. The frame ends, for example,
+  "· 3 of 3 · 1 error handled," and its item chip lists the item under
+  "Failed, continued." A **Call a workflow** that waits handles its called
+  run's failure the same way, with that run's steps under the call.
+- **An unknown outcome.** On a step that changes data, it still stops the run,
+  whatever **On error** says: the run log reads "Failed at submit."
+
+**Execute a step inside an error path.** When the test data lets submit
+succeed, its error path doesn't run, so **Execute step** on a step inside it
+asks "Simulate a failure of submit first" and shows where the step is
+(submit › Error › notify-team). **Simulate a failure** opens the dialog for
+submit; **Cancel** changes nothing.
+
+#### Handled failures in recorded runs
+
+On the [Runs tab](#read-a-workflows-runs-and-debug-them), a run that went on
+after its steps failed reads **Succeeded with errors**, and a run that is still
+going says how many it handled so far, such as "2 errors handled." To list only
+those runs, open **Filters** and check **With handled errors**, under
+**Errors**.
+
+When you choose such a run, its header names the count and the first failure,
+such as "1 error handled · submit: REQUEST_REFUSED," and the canvas marks the
+step as Execute does, with the way into its error path taken. The step's
+details open on Output with the same banner as after Execute, without the
+simulated line: the code and the message, the outcome and attempts as the run
+recorded them ("Outcome: Didn't happen. Attempts: 3."), and the setting. Below
+the banner is the error path's result, or null after **Continue**.
+
+**Debug in editor** is offered for such a run too, and copies each handled
+failure into the draft's test data as a simulated failure: its code, outcome
+and attempts, marked as data from that run, never its message. A **Wait for
+signal** that timed out comes back as **Let it time out instead**, and a
+**Human task** that expired as **Let it expire instead**. Studio leaves out,
+and names, a failure it can't simulate: "Studio can't simulate this failure's
+code." (such as a called workflow's lowercase code) or "Studio can't simulate
+a failure after more than 1,000 attempts."
+
 ### Read a workflow's runs and debug them
 
 When you are connected, the **Runs** tab of a workflow lists its runs in the
@@ -1707,8 +1902,10 @@ the run's data; **Step logs** shows the step's log lines once the platform
 serves them. A value the platform keeps classified shows as "This output is
 classified as secret." and never as its value.
 
-**Debug in editor** (a failed run) and **Copy to editor** (any other run) turn
-the run's data into the draft's test data, then execute the workflow with it:
+**Debug in editor** (a failed run, or one with
+[handled errors](#handled-failures-in-recorded-runs)) and **Copy to editor**
+(any other run) turn the run's data into the draft's test data, then execute
+the workflow with it:
 
 - Studio copies the run's input, the output of each step it can't work out by
   itself (actions, AI tasks, calls to other workflows), the people's answers

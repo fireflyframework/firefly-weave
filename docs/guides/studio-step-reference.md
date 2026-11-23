@@ -187,32 +187,61 @@ In the new editor (on by default), each step opens in
 [step details](studio.md#configure-a-step-in-step-details) with a short form.
 **Parameters** shows the fields a new step starts with, and **Add option** offers
 the rest. **Settings** holds **Notes** and **About this step** for every step
-and the trigger, and **On error** for every step except **Wait for time** and
-**Fail**; End has no **Settings** tab. Labels can
+and the trigger, and **On error** for every step except **Wait for time**,
+**Fail** and a **Call a workflow** that doesn't wait; End has no **Settings**
+tab. **Result on error** joins **On error** while it is **Continue with error
+output**; [On error in Settings](#on-error-in-settings) lists what each step
+offers. Labels can
 differ from the inspector's: the same property may read **Assign to** in step
 details and **Assignment binding** in the inspector.
 
 | Step | Parameters | Add option | Also on Settings |
 | --- | --- | --- | --- |
 | Manual form trigger | **Input fields** | | |
-| Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them. **Change in a new version** starts the action's next version on this computer, where they change (the request of an HTTP action changes with **Edit action as YAML** in the step's **More** menu); **Publish action** publishes it, and the workflow publishes only after it. A worker's action reads "Set by the worker that runs this action." |
-| Call an API | **Connection**, **Method**, **URL**, and **Body** for POST, PUT and PATCH | **Query parameters**, **Headers**, **Response sample**, **Accepted status codes**, **Description** | **Retry on fail**, **Timeout** |
-| Send email | **Connection**, **To**, **Subject**, **Message** | **Cc**, **Bcc**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
-| Reply to an email | **Connection**, **Reply to message**, **Conversation**, **Message** | **Reply to all**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
-| List files | **Connection**, **Folder** | **Page size**, **Continue from** | **Retry on fail**, **Timeout** |
-| Read a file, Download a file, Delete a file | **Connection**, **Path** (**Item ID** on a drive) | | **Retry on fail**, **Timeout** |
-| Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
-| Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
-| Decision table | **Table** (with **Edit table** and **New table**), then the table's required inputs | The table's optional inputs | |
-| AI task | **Model**, chosen from the models of your AI connections, and **Prompt** | **Context**, **Structured result**, **Max output tokens**, **Temperature**, **Reasoning pattern**, **Share settings with other AI steps** | **Timeout** |
-| Transform | **Fields**, or **Text** for a text template | | |
-| Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | |
-| Parallel | **Branches** | **Run at most**, **Branch results** | |
+| Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them. **Change in a new version** starts the action's next version on this computer, where they change (the request of an HTTP action changes with **Edit action as YAML** in the step's **More** menu); **Publish action** publishes it, and the workflow publishes only after it. A worker's action reads "Set by the worker that runs this action." Then **On error** and **Result on error**. |
+| Call an API | **Connection**, **Method**, **URL**, and **Body** for POST, PUT and PATCH | **Query parameters**, **Headers**, **Response sample**, **Accepted status codes**, **Description** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Send email | **Connection**, **To**, **Subject**, **Message** | **Cc**, **Bcc**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Reply to an email | **Connection**, **Reply to message**, **Conversation**, **Message** | **Reply to all**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| List files | **Connection**, **Folder** | **Page size**, **Continue from** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Read a file, Download a file, Delete a file | **Connection**, **Path** (**Item ID** on a drive) | | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
+| Decision table | **Table** (with **Edit table** and **New table**), then the table's required inputs | The table's optional inputs | **On error**, **Result on error** |
+| AI task | **Model**, chosen from the models of your AI connections, and **Prompt** | **Context**, **Structured result**, **Max output tokens**, **Temperature**, **Reasoning pattern**, **Share settings with other AI steps** | **Timeout**, **On error**, **Result on error** |
+| Transform | **Fields**, or **Text** for a text template | | **On error**, **Result on error** |
+| Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | **On error**, read-only **Stop the run** |
+| Parallel | **Branches** | **Run at most**, **Branch results** | **On error**, read-only **Stop the run** |
 | Wait for time | **Wait for** | | |
-| Wait for signal | **Signal name** | **Payload fields** | **Wait at most** |
-| Human task | **Assign to**, **Title**, **Answers** | **Details to show**, **Form fields** | **Due after**, **Expires after** |
+| Wait for signal | **Signal name** | **Payload fields** | **Wait at most**, **On error**, **Result on error** |
+| Human task | **Assign to**, **Title**, **Answers** | **Details to show**, **Form fields** | **Due after**, **Expires after**, **On error**, **Result on error** |
 | Fail | **Error code**, **Message** | | |
+| Call a workflow | **Workflow**, **Input**, **When it runs**, and **If it fails** for a call that waits | **Business key** | **On error** and **Result on error** for a call that waits |
+| Loop over items | **Items** | **At a time**, **Up to**, **Results**, **Result per item** | **On error**, read-only **Stop the run** |
 | End | **Result fields** | **Result schema** | |
+
+#### On error in Settings
+
+**On error** chooses what a step's failure does once its tries are used up:
+**Stop the run** (the default), **Continue**, or **Continue with error output**,
+which adds **Result on error** and gives the step an Error output and an error
+path on the canvas. The [Studio guide](studio.md#handle-step-errors) shows how
+to use them. What the row shows depends on the step:
+
+| Step | On error | Line under it |
+| --- | --- | --- |
+| Call an action, Call an API, email and file steps | The three choices | On an action that changes data and is never retried: "If its outcome is unknown, the run still stops with an incident until someone checks it." |
+| AI task, Transform, Decision table | The three choices | — |
+| Call a workflow that waits | The three choices | With **If it fails** set to **Continue with the result status**: "A called run that fails continues with its result status. On error handles a call that can't start." |
+| Wait for signal | The three choices | "Applies when no signal arrives within Wait at most." |
+| Human task | The three choices | "Applies when the task expires (Expires after)." |
+| Decision, Parallel, Loop over items | **Stop the run**, read-only | "The run fails with this step's error. You can retry it from Operate." |
+| Wait for time, Fail, a Call a workflow that doesn't wait | No row | — |
+
+On a platform that can't handle step errors (its language manifest doesn't list
+`flow.onError`), the steps that offer three choices show **Stop the run**
+read-only instead, with "Update the platform to continue after errors."
+**Result on error** is what later steps read as the step's output after its
+error path; it starts empty (null) and takes a Fixed value or a Mapped one.
 
 ### Manual form trigger
 
@@ -1089,9 +1118,12 @@ explains the three ways to execute and the run log. What each kind shows:
 | Transform | What it computes from the data the earlier steps have. |
 | Decision | Each path as **Taken**, **Not taken** or **Not checked**, then the taken path's result. On the canvas, "Path: *condition*". |
 | Wait for time | Advances by itself; the canvas line reads "Waited 5 min". |
-| Wait for signal | Its **Test answer** (payload, and after how long), or the run log asks "Send signal *name*". Letting it time out fails the run there. |
-| Human task | Its **Test answer** (decision and data), or the run log asks "Decide for *ID*". Letting it expire fails the run there. |
+| Wait for signal | Its **Test answer** (payload, and after how long), or the run log asks "Send signal *name*". Letting it time out fails the run there, unless its **On error** goes on. |
+| Human task | Its **Test answer** (decision and data), or the run log asks "Decide for *ID*". Letting it expire fails the run there, unless its **On error** goes on. |
 | Call a workflow that waits | Its pinned output, or the called workflow's own steps with their test data. Without either, it needs test data. |
+
+A step with a simulated failure fails instead, and its **On error** decides
+what comes next; see [Simulate a failure](studio.md#simulate-a-failure).
 
 ## Simulate before publishing
 
