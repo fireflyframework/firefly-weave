@@ -1,0 +1,208 @@
+{
+  "description": "Platform event types with Studio's words for them, one sample event per type as Studio builds it with a fixed clock and fixed IDs, and the platform's sentence for every reason a platform event trigger started no run; shared by the Python and Studio suites.",
+  "events": [
+    {
+      "type": "transaction.completed",
+      "label": "A transaction completed",
+      "short": "Completed"
+    },
+    {
+      "type": "transaction.compensated",
+      "label": "A transaction was undone",
+      "short": "Undone"
+    },
+    {
+      "type": "transaction.cancelled",
+      "label": "A transaction was canceled",
+      "short": "Canceled"
+    },
+    {
+      "type": "transaction.in_doubt",
+      "label": "A transaction needs attention",
+      "short": "Needs attention"
+    },
+    {
+      "type": "transaction.reconciled",
+      "label": "A transaction was reconciled",
+      "short": "Reconciled"
+    },
+    {
+      "type": "transaction.force_ended",
+      "label": "A transaction was force ended",
+      "short": "Force ended"
+    }
+  ],
+  "samples": {
+    "now": "2026-11-19T10:00:00.000Z",
+    "ids": [
+      "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+      "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+      "a7b9c1d3-e5f7-4a2b-8c4d-6e8f0a1b2c3d"
+    ],
+    "cases": [
+      {
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.completed",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "move-between-systems", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "completed",
+            "steps": {
+              "done": [
+                { "step": "hold", "instance_key": "hold", "how": "reserve" },
+                { "step": "add", "instance_key": "add", "how": "compensate" }
+              ],
+              "undone": [],
+              "pending": []
+            },
+            "test": false
+          }
+        }
+      },
+      {
+        "source": "sync-references",
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.compensated",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "sync-references", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "compensated",
+            "steps": {
+              "done": [],
+              "undone": [
+                { "step": "hold", "instance_key": "hold", "how": "reserve" },
+                { "step": "add", "instance_key": "add", "how": "compensate" }
+              ],
+              "pending": []
+            },
+            "test": false
+          }
+        }
+      },
+      {
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.cancelled",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "move-between-systems", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "cancelled",
+            "steps": {
+              "done": [],
+              "undone": [
+                { "step": "hold", "instance_key": "hold", "how": "reserve" }
+              ],
+              "pending": []
+            },
+            "test": false
+          }
+        }
+      },
+      {
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.in_doubt",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "move-between-systems", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "in_doubt",
+            "cause": { "code": "WV-TXN-UNDO-STUCK", "step": "add" },
+            "steps": {
+              "done": [],
+              "undone": [],
+              "pending": [
+                {
+                  "step": "hold",
+                  "instance_key": "hold",
+                  "how": "reserve",
+                  "phase": "cancel"
+                },
+                {
+                  "step": "add",
+                  "instance_key": "add",
+                  "how": "compensate",
+                  "phase": "undo",
+                  "attempts": 10
+                }
+              ]
+            },
+            "incident_id": "a7b9c1d3-e5f7-4a2b-8c4d-6e8f0a1b2c3d",
+            "test": false
+          }
+        }
+      },
+      {
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.reconciled",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "move-between-systems", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "reconciled",
+            "steps": {
+              "done": [
+                { "step": "hold", "instance_key": "hold", "how": "reserve" },
+                { "step": "add", "instance_key": "add", "how": "compensate" }
+              ],
+              "undone": [],
+              "pending": []
+            },
+            "test": false
+          }
+        }
+      },
+      {
+        "event": {
+          "version": "weave/platform-event-v1",
+          "event_id": "0c4f7a1e-2b3d-4e5f-8a6b-7c8d9e0f1a2b",
+          "type": "transaction.force_ended",
+          "emitted_at": "2026-11-19T10:00:00Z",
+          "transaction": {
+            "workflow": { "name": "move-between-systems", "version": "1.0.0" },
+            "run_id": "6e8a1c3d-5f7b-4d9e-a1c2-b3d4e5f6a7b8",
+            "instance_key": "move",
+            "business_key": "REF-1029",
+            "state": "force_ended",
+            "steps": {
+              "done": [
+                { "step": "hold", "instance_key": "hold", "how": "reserve" }
+              ],
+              "undone": [],
+              "pending": []
+            },
+            "test": false
+          }
+        }
+      }
+    ]
+  },
+  "starts": {
+    "WV-TRIGGER-START": "The triggered workflow couldn't start.",
+    "WV-TRIGGER-DISABLED": "The trigger was disabled before the workflow started.",
+    "WV-TRIGGER-EVENT-DEPTH": "Platform events from a run this deep in a chain of reactions start no workflows.",
+    "WV-TRIGGER-CHAIN-BUDGET": "This chain of reactions already has 64 workflows started or waiting to start, so its events start no more.",
+    "WV-TRIGGER-START-EXPIRED": "The workflow couldn't start within a day of the event, so the event no longer starts it."
+  }
+}
