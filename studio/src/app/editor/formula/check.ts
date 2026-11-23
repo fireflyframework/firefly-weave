@@ -64,6 +64,17 @@ const pointerOf = (segments: string[]) =>
   segments
     .map((segment) => `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`)
     .join("");
+/**
+ * The scope's entry for a step's error, `/steps/<id>/error`, when a formula
+ * may read it here: inside the step's own error path, or after a step that
+ * handles its failures.
+ */
+const errorEntry = (id: string, scope: CheckScope) =>
+  scope.scope.entries.find(
+    (entry) =>
+      entry.source === "error" &&
+      entry.ref === pointerOf(["steps", id, "error"]),
+  );
 const NUMERIC = new Set(["number", "integer"]);
 const label = (types: string[]) => typeLabels[types[0]] ?? "Any value";
 const quoted = (node: unknown) => {
@@ -85,6 +96,9 @@ export function schemaOfRef(
   } else if (segments[0] === "steps" && segments[2] === "output") {
     schema =
       scope.scope.steps.find((step) => step.id === segments[1])?.schema ?? null;
+    rest = segments.slice(3);
+  } else if (segments[0] === "steps" && segments[2] === "error") {
+    schema = errorEntry(segments[1], scope)?.schema ?? null;
     rest = segments.slice(3);
   } else if (scope.loopEntries) {
     for (let length = segments.length; length > 0 && !schema; length--) {
@@ -128,10 +142,21 @@ function referenceWarning(
   scope: CheckScope,
 ): FormulaWarning | null {
   const segments = segmentsOf(node.ref);
+  const part = segments[2] === "error" ? "error" : "output";
   if (segments[0] === "steps" && segments.length >= 2) {
     const id = segments[1];
     const step = printRef(pointerOf(["steps", id]));
-    if (!scope.scope.steps.some((visible) => visible.id === id))
+    const visible = scope.scope.steps.some((item) => item.id === id);
+    const error = errorEntry(id, scope);
+    if (!visible && error) {
+      // Inside its own error path the step has failed: it has an error and no output.
+      if (segments.length >= 3 && part !== "error")
+        return {
+          code: "WV-FORMULA-SCOPE",
+          message: `\`${step}\` has no output inside its own error path; read \`${step}.error\`.`,
+          node,
+        };
+    } else if (!visible)
       return {
         code: "WV-FORMULA-SCOPE",
         message: scope.stepIds.has(id)
@@ -139,7 +164,13 @@ function referenceWarning(
           : `\`${step}\` isn't a step of this workflow.`,
         node,
       };
-    if (segments.length >= 3 && segments[2] !== "output")
+    else if (part === "error" && !error)
+      return {
+        code: "WV-FORMULA-FIELD",
+        message: `\`${step}\` records an error only when its On error setting is Continue or Continue with error output.`,
+        node,
+      };
+    else if (segments.length >= 3 && segments[2] !== part)
       return {
         code: "WV-FORMULA-FIELD",
         message: `\`${printRef(node.ref)}\` isn't part of a step's data; read \`${step}.output\`.`,
@@ -153,10 +184,12 @@ function referenceWarning(
     input: { schema: scope.inputSchema, skip: 1, owner: "the workflow input" },
     steps: {
       schema:
-        scope.scope.steps.find((step) => step.id === segments[1])?.schema ??
-        null,
+        (part === "error"
+          ? errorEntry(segments[1], scope)?.schema
+          : scope.scope.steps.find((step) => step.id === segments[1])
+              ?.schema) ?? null,
       skip: 3,
-      owner: `${segments[1]}'s output`,
+      owner: `${segments[1]}'s ${part}`,
     },
     item: {
       schema:
