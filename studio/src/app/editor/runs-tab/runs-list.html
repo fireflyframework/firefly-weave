@@ -126,6 +126,16 @@ SPDX-License-Identifier: Apache-2.0
           }
         </select>
       </label>
+      <fieldset class="runs-filter-group">
+        <legend>Errors</legend>
+        <label class="runs-check">
+          <input
+            type="checkbox"
+            [checked]="filters().handled === true"
+            (change)="setHandled($any($event.target).checked)"
+          />With handled errors
+        </label>
+      </fieldset>
       <div class="runs-filters-foot">
         <button type="button" class="text-link" (click)="clearFilters()">
           Clear filters
@@ -143,8 +153,8 @@ SPDX-License-Identifier: Apache-2.0
         }}<button
           type="button"
           class="runs-chip-remove"
-          [attr.aria-label]="'Remove ' + chip.label"
-          [attr.title]="'Remove ' + chip.label"
+          [attr.aria-label]="chip.removeLabel ?? 'Remove ' + chip.label"
+          [attr.title]="chip.removeLabel ?? 'Remove ' + chip.label"
           (click)="removeChip(chip)"
         >
           <weave-icon name="close" [size]="16" /></button
@@ -328,6 +338,8 @@ SPDX-License-Identifier: Apache-2.0
                   }}</span>
                   @if (row.at) {
                     <span class="run-at">at {{ row.at }}</span>
+                  } @else if (row.handled) {
+                    <span class="run-at run-handled">{{ row.handled }}</span>
                   }
                   <span class="run-when" [attr.title]="row.startedTitle">{{
                     row.started

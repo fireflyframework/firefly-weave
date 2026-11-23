@@ -155,6 +155,42 @@ async function openRuns(page: Page) {
 test.describe("handled failures on the Runs tab at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("a run that handled a failure reads Succeeded with errors, and the filter lists only such runs", async ({
+    page,
+  }) => {
+    const { runs, platform } = await openRuns(page);
+    const status = (id: string) => runs.row(id).locator(".run-status");
+    await expect(status(HANDLED)).toHaveText("Succeeded with errors");
+    await expect(status(HANDLED)).toHaveAttribute("data-tone", "warning");
+    // A run still going says how many errors it handled so far.
+    await expect(runs.row(RUN_IDS.running).locator(".run-handled")).toHaveText(
+      "2 errors handled",
+    );
+    await expect(runs.row(RUN_IDS.failed)).toBeVisible();
+
+    await runs.filters.click();
+    await page
+      .getByRole("dialog", { name: "Filters" })
+      .getByRole("checkbox", { name: "With handled errors" })
+      .check();
+    await expect(runs.row(RUN_IDS.failed)).toHaveCount(0);
+    await expect(runs.row(HANDLED)).toBeVisible();
+    await expect(runs.row(RUN_IDS.running)).toBeVisible();
+    expect(platform.listQueries().at(-1)?.get("has_handled_errors")).toBe(
+      "true",
+    );
+    await page.getByRole("button", { name: "Done" }).click();
+    const chip = runs.panel.locator(".runs-chip");
+    await expect(chip).toHaveText("With handled errors");
+    await chip
+      .getByRole("button", { name: "Remove the filter With handled errors" })
+      .click();
+    await expect(runs.row(RUN_IDS.failed)).toBeVisible();
+    expect(platform.listQueries().at(-1)?.has("has_handled_errors")).toBe(
+      false,
+    );
+  });
+
   test("the canvas shows the step Failed, continued and the way the run took into its error path", async ({
     page,
   }) => {

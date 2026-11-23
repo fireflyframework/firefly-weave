@@ -46,6 +46,7 @@ const narrowed: RunsTabFilters = {
   version: "1.2.0",
   origin: "webhook",
   includeTest: false,
+  handled: true,
 };
 
 describe("the list's query", () => {
@@ -66,6 +67,7 @@ describe("the list's query", () => {
       status: ["failed", "waiting"],
       version: "1.2.0",
       origin: "webhook",
+      has_handled_errors: true,
       cursor: "c2",
     });
     // The platform reads a version only within one workflow.
@@ -260,6 +262,7 @@ describe("a run as a list row", () => {
       short: "8d7e4afb",
       label: "Unavailable",
       tone: "neutral",
+      handled: "",
       started: "",
       startedTitle: "",
       duration: "",
@@ -305,7 +308,7 @@ describe("a refresh of the first page", () => {
 describe("an empty list", () => {
   it("says why the list is empty", () => {
     expect(filterCount(defaultRunsTabFilters())).toBe(0);
-    expect(filterCount(narrowed)).toBe(4);
+    expect(filterCount(narrowed)).toBe(5);
     expect(emptyText("invoice-approval", defaultRunsTabFilters())).toEqual({
       title: "No runs of invoice-approval yet.",
       detail: "Runs appear here once it's activated and started.",

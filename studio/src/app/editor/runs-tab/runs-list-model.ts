@@ -27,6 +27,7 @@ import {
   type RunSummaryQuery,
 } from "../../operate/run-contracts";
 import {
+  handledText,
   liveDuration,
   originLabel,
   runOutcome,
@@ -39,12 +40,15 @@ export interface RunsTabFilters {
   version: string | null;
   origin: RunOrigin | null;
   includeTest: boolean;
+  /** true: only runs that handled failures (With handled errors); null: any run. */
+  handled: boolean | null;
 }
 export const defaultRunsTabFilters = (): RunsTabFilters => ({
   status: [],
   version: null,
   origin: null,
   includeTest: true,
+  handled: null,
 });
 /** How many filters differ from the defaults. */
 export const filterCount = (filters: RunsTabFilters): number =>
@@ -53,6 +57,7 @@ export const filterCount = (filters: RunsTabFilters): number =>
     filters.version !== null,
     filters.origin !== null,
     !filters.includeTest,
+    filters.handled !== null,
   ].filter(Boolean).length;
 
 /** Why the Runs tab can't list runs yet, or "ready". */
@@ -124,6 +129,9 @@ export function runsTabQuery(
       ? { version: filters.version }
       : {}),
     ...(filters.origin !== null ? { origin: filters.origin } : {}),
+    ...(filters.handled !== null
+      ? { has_handled_errors: filters.handled }
+      : {}),
     ...(cursor ? { cursor } : {}),
   };
 }
@@ -149,6 +157,8 @@ export interface RunRow {
   /** "Failed", "Succeeded with errors", or "Unavailable". */
   label: string;
   tone: Tone;
+  /** "2 errors handled" on a run still going; "" otherwise. */
+  handled: string;
   /** "2 hours ago" */
   started: string;
   /** "Wed 7 Oct, 10:00", for the title. */
@@ -174,6 +184,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
       short: shortId(item.id),
       label: "Unavailable",
       tone: "neutral",
+      handled: "",
       started: "",
       startedTitle: "",
       duration: "",
@@ -191,6 +202,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
     short: shortId(item.id),
     label: outcome.label,
     tone: outcome.tone,
+    handled: handledText(item),
     started: relativeTime(item.started_at, now),
     startedTitle: absoluteTime(item.started_at),
     duration: liveDuration(item, now),
