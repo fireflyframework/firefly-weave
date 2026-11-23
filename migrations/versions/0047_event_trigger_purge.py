@@ -37,7 +37,8 @@ finds rows by the run it purges. The upgrade applies the same rules once to ever
 except an event a start still waits to read, which stays as it is. It works one environment at a time with that scope
 set, so row-level security holds, and takes the project's operations lock, which every write to the trigger tables
 needs for its usage accounting, only in projects with such rows. That lock is held until the upgrade commits, so the
-project's writes wait until then.
+project's writes wait until then. Two cases stay behind: the event of a start that waited at the upgrade and then
+expires or is refused, and the rows of a run purged in another project while the upgrade runs.
 
 The purge finds a run's payloads by their source run and a payload's starts by their event, so two indexes are added;
 the second also serves the foreign key check when a payload is deleted. Building them reads both tables under a SHARE
