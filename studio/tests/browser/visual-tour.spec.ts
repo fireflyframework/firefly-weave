@@ -5653,7 +5653,7 @@ spec:
     await shot("200-execute-release-choice", { tabs: 2 });
     await question.getByRole("button", { name: "Run it" }).click();
     const output = await showOutput(details);
-    await page.clock.fastForward("00:12");
+    await page.clock.runFor("00:12");
     // The clock keeps running during the shots: at least 12 s by now.
     await expect(output).toContainText(
       /Executing crm-lookup in Production · (1[2-9]|[2-9]\d) s/,
