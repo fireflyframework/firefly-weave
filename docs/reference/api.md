@@ -288,7 +288,9 @@ that grows with each change.
 - A stale draft write answers HTTP 412 (`WV-ETAG`). Debug sessions and
   incidents keep their own conflict codes.
 - Triggers carry a revision too: a retarget without `If-Match` answers HTTP 422
-  (`WV-ETAG`), and one from an older revision HTTP 409 (`WV-REVISION`).
+  (`WV-ETAG`), and one from an older revision HTTP 409 (`WV-REVISION`). Stopping
+  a platform-event trigger takes `If-Match` optionally: a stop from an older
+  revision answers HTTP 409 (`WV-REVISION`) and stops nothing.
 - The SDK reports the real status and code instead of converting every
   revision conflict to one error.
 
@@ -1277,6 +1279,21 @@ kind:
   binding) IDs.
 
 Schedules move with `schedules.save` and `If-Match`, as before.
+
+**Stop a platform-event trigger only as you read it.** A stop takes the trigger's
+revision in `If-Match` too, but doesn't require it:
+
+```http
+POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/event-triggers/{identifier}/disable
+If-Match: "3"
+```
+
+With `If-Match`, the stop applies only while the trigger is still that revision.
+A trigger moved since you read it answers HTTP 409 `WV-REVISION` and keeps
+running: read it again before you decide. Without `If-Match`, the stop applies to
+the current revision. A trigger that is already stopped answers HTTP 200 as it
+is, whatever revision you send. The answer sends the stopped trigger's revision
+as the `ETag`, and a malformed `If-Match` answers HTTP 422 `WV-ETAG`.
 
 **Email sources.** `GET …/email/sources` and `GET …/email/sources/{identifier}`
 need `email.read` and show each source's `id`, `connection_revision_id`,

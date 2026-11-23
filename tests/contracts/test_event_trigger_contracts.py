@@ -28,6 +28,7 @@ from pydantic import ValidationError
 from firefly_weave.compiler.catalog import TaskCapability
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.event_triggers import EventTrigger, EventTriggerRequest, EventTriggerStart
+from firefly_weave.contracts.openapi import export_openapi
 from firefly_weave.contracts.operations import IncidentResolution, RecordedResolution
 from firefly_weave.contracts.public import Page
 from firefly_weave.contracts.runtime import RecoveryReport
@@ -238,3 +239,13 @@ def test_event_trigger_operations_are_served_with_their_published_shapes():
         assert actual == expected, identifier
         assert operation.served is True, identifier
         assert operation.page is identifier.endswith((".list", ".starts")), identifier
+
+
+def test_a_stop_may_name_the_revision_it_read_and_answers_the_stopped_one():
+    operation = OPERATIONS["event_triggers.disable"]
+    assert (operation.revision, operation.etag) == ("optional", True)
+    post = export_openapi()["paths"]["/api/v1" + EVENT_TRIGGERS + "/{identifier}/disable"]["post"]
+    [header] = [parameter for parameter in post["parameters"] if parameter["in"] == "header"]
+    assert (header["name"], header["required"]) == ("If-Match", False)
+    assert "ETag" in post["responses"]["200"]["headers"]
+    assert {"409", "422"} <= set(post["responses"])

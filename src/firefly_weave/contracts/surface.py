@@ -2397,12 +2397,15 @@ OPERATIONS = {
             "trigger.manage",
             etag=True,
         ),
+        # If-Match, when sent, names the revision the trigger was read at: a stop applies only to that revision.
         Operation(
             "event_triggers.disable",
             ENVIRONMENT + "/event-triggers/{identifier}/disable",
             "POST",
             EventTrigger,
             "trigger.manage",
+            revision="optional",
+            etag=True,
         ),
         # Reading what a trigger started also needs run.read: runs, event types and refusal causes.
         Operation(
