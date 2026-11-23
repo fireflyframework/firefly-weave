@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
+import { errorData } from "./panes/views";
 import {
   canonicalJson,
   getAt,
@@ -1187,6 +1188,24 @@ export class StepDetailsController {
       // The same precedence as the Output pane: a pin, else the last result;
       // inside a loop, for the item picked.
       output: (id) => this.pickedStepData(id)?.value,
+      // The failure simulated for the item picked, as the Input pane's Error
+      // of <step> shows it, else the failure the last Execute handled. On the
+      // Runs tab only a run's data shows, never the draft's.
+      error: (id) => {
+        if (this.viewingRuns()) return undefined;
+        const key = this.pinKey(id);
+        const simulated = this.failureOf(key);
+        const handled = this.handledResult(id)?.failure;
+        const error: Record<string, Json> | undefined = simulated
+          ? (errorData(simulated) as Record<string, Json>)
+          : handled && {
+              code: handled.code,
+              message: handled.message,
+              outcome: handled.outcome,
+              attempts: handled.attempts,
+            };
+        return error && { ...error, instanceKey: key };
+      },
       stamp: () => [
         this.run()?.version() ?? null,
         this.host.model.revision,

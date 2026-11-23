@@ -62,10 +62,12 @@ const workflow = {
 const data = (
   input: Json | undefined,
   outputs: Record<string, Json> = {},
+  errors: Record<string, Json> = {},
 ): PreviewData => ({
   input: () => input,
   output: (id) => outputs[id],
-  stamp: () => [input, outputs],
+  error: (id) => errors[id],
+  stamp: () => [input, outputs, errors],
 });
 const preview = (text: string, source: PreviewData) => {
   const result = parseFormula(text, {
@@ -330,5 +332,136 @@ describe("formula previews", () => {
       "From pinned output",
     );
     expect(sourceLabel(pinned, data(input))).toBe("");
+  });
+});
+
+describe("formula previews of a step's error", () => {
+  const handling = {
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "handling", version: "1.0.0" },
+    spec: {
+      inputSchema: { type: "object" },
+      outputSchema: {},
+      steps: [
+        {
+          id: "lookup",
+          kind: "transform",
+          value: { literal: 1 },
+          onError: "continue",
+        },
+        {
+          id: "submit",
+          kind: "transform",
+          value: { literal: 1 },
+          onError: "errorOutput",
+          errorPath: {
+            steps: [
+              { id: "notify", kind: "transform", value: { literal: null } },
+            ],
+            output: { literal: null },
+          },
+        },
+        { id: "after", kind: "transform", value: { literal: null } },
+      ],
+      output: { literal: null },
+    },
+  };
+  const timedOut = (instanceKey: string): Json => ({
+    code: "TIMEOUT",
+    message: "The step timed out.",
+    outcome: "unknown",
+    attempts: 3,
+    instanceKey,
+  });
+  const previewAt = (text: string, stepId: string, source: PreviewData) => {
+    const result = parseFormula(text, { features: [], loops: [] });
+    if (result.kind !== "ok") throw new Error(text);
+    return previewFormula(result.expression, {
+      scope: referenceScope(handling, stepId, "/value"),
+      inputSchema: {},
+      data: source,
+    });
+  };
+
+  it("reads the error inside the step's own error path", () => {
+    expect(
+      previewAt(
+        "steps.submit.error.code",
+        "notify",
+        data(input, {}, { submit: timedOut("submit") }),
+      ),
+    ).toEqual({ ok: true, value: "TIMEOUT" });
+  });
+  it("reads the error after a step that continued on failure", () => {
+    expect(
+      previewAt(
+        "steps.lookup.error.attempts",
+        "after",
+        data(input, { lookup: null }, { lookup: timedOut("lookup") }),
+      ),
+    ).toEqual({ ok: true, value: 3 });
+  });
+  it("says the step has no error when the test data records none", () => {
+    // Inside its error path the step has failed, but no failure is recorded yet.
+    expect(previewAt("steps.submit.error.code", "notify", data(input))).toEqual(
+      {
+        ok: false,
+        error: {
+          code: WAITING,
+          message:
+            "Can't compute yet: steps.submit has no error in the test data. Simulate a failure of submit first.",
+        },
+      },
+    );
+    // After it, a step that ran without failing has no error.
+    const succeeded = data(input, { lookup: { id: 7 } });
+    expect(previewAt("steps.lookup.error.code", "after", succeeded)).toEqual({
+      ok: false,
+      error: {
+        code: "WV-EXPR-MISSING",
+        message:
+          "`steps.lookup` has no error: it didn't fail in the test data.",
+      },
+    });
+    expect(previewAt("exists(steps.lookup.error)", "after", succeeded)).toEqual(
+      { ok: true, value: false },
+    );
+  });
+  it("has no output inside the step's own error path", () => {
+    expect(
+      previewAt(
+        "steps.submit.output",
+        "notify",
+        data(input, { submit: 1 }, { submit: timedOut("submit") }),
+      ),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: UNAVAILABLE,
+        message:
+          "`steps.submit` has no output inside its own error path; read `steps.submit.error`.",
+      },
+    });
+  });
+  it("has no error for a step that stops the run when it fails", () => {
+    expect(
+      preview("steps.check.error.code", data(input, { check: { score: 1 } })),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: UNAVAILABLE,
+        message:
+          "`steps.check` records an error only when its On error setting is Continue or Continue with error output.",
+      },
+    });
+  });
+  it("doesn't call a step's error its pinned output", () => {
+    expect(
+      sourceLabel(
+        { ref: "/steps/submit/error/code" },
+        data(input, { submit: 1 }, { submit: timedOut("submit") }),
+      ),
+    ).toBe("");
   });
 });
