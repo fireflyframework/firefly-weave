@@ -119,4 +119,4 @@ jobs:
       - name: Scan the lockfiles, Dockerfiles and Kubernetes manifests
         run: >-
           "$RUNNER_TEMP/trivy/trivy" fs . --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 1
-          --skip-check-update --no-progress
+          --include-dev-deps --skip-check-update --no-progress
