@@ -718,20 +718,30 @@ for line in iter(sys.stdin.readline, ""):
 `;
 /** Longer than any answer takes: a process this slow is stuck, so it is stopped. */
 const SCOPE_ANSWER_MS = 30_000;
+/** How much of the end of stderr an ended process's error quotes: a traceback's last lines. */
+const SCOPE_STDERR_CHARS = 4_000;
 
 /**
  * One Python process per Playwright worker answers the scope questions, one
  * at a time, so a question doesn't wait for Python to start and import the
  * compiler. A process that ends or stops answering is replaced at the next
- * question, and the process ends with the worker.
+ * question, and the process ends with the worker. `command` is the program
+ * and its arguments.
  */
-class ScopeHost {
+export class ScopeHost {
   private child: ChildProcess | null = null;
   private waiting: ((reply: string | Error) => void) | null = null;
   private turn: Promise<unknown> = Promise.resolve();
 
-  constructor() {
+  constructor(
+    private readonly command: readonly string[] = [python, "-c", SCOPE_AT],
+  ) {
     process.on("exit", () => this.child?.kill());
+  }
+
+  /** Ends the current process, if any. */
+  close() {
+    if (this.child) this.stop(this.child);
   }
 
   /** The answer to one question, after the questions asked before it. */
@@ -752,22 +762,36 @@ class ScopeHost {
         clearTimeout(timer);
         this.waiting = null;
         if (reply instanceof Error) return reject(reply);
-        const { scope, error } = JSON.parse(reply) as {
-          scope?: unknown;
-          error?: string;
-        };
-        if (error === undefined) resolve(scope);
-        else reject(new Error(error));
+        let answer: { scope?: unknown; error?: string };
+        try {
+          answer = JSON.parse(reply) as typeof answer;
+        } catch {
+          // Its real answer may still come: a new process keeps the next
+          // question from reading it.
+          this.stop(child);
+          return reject(
+            new Error(
+              `The scope process answered with a line that isn't JSON: ${reply}`,
+            ),
+          );
+        }
+        if (answer.error === undefined) resolve(answer.scope);
+        else reject(new Error(answer.error));
       };
       child.stdin!.write(`${JSON.stringify(question)}\n`);
     });
   }
 
   private start(): ChildProcess {
-    const child = spawn(python, ["-c", SCOPE_AT], {
+    const [program, ...args] = this.command;
+    const child = spawn(program, args, {
       cwd: repository,
       env: { ...process.env, PYTHONPATH: resolvePath(repository, "src") },
-      stdio: ["pipe", "pipe", "ignore"],
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8").on("data", (text: string) => {
+      stderr = (stderr + text).slice(-SCOPE_STDERR_CHARS);
     });
     // Only the current process answers: a stopped one's late line is dropped.
     createInterface({ input: child.stdout! }).on("line", (line) => {
@@ -778,9 +802,13 @@ class ScopeHost {
     const ended = (why: string) => {
       if (this.child !== child) return;
       this.child = null;
-      this.settle(new Error(`The scope process ended: ${why}.`));
+      const said = stderr.trim();
+      this.settle(
+        new Error(`The scope process ended: ${why}.${said && `\n${said}`}`),
+      );
     };
-    child.on("exit", (code, signal) => ended(String(signal ?? code)));
+    // "close", not "exit": by then stderr has been read to its end.
+    child.on("close", (code, signal) => ended(String(signal ?? code)));
     child.on("error", (error) => ended(error.message));
     return child;
   }
