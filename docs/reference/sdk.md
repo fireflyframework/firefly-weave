@@ -325,8 +325,9 @@ workspaces you can use.
   Each pause lasts at least the `Retry-After` seconds, grows from half a second
   up to 5 seconds, and is spread up to a quarter longer. The client stops after
   4 sends in all or 15 seconds, whichever comes first, and at once when
-  `Retry-After` asks for more than 5 seconds; then the last refusal reaches
-  you. A change without a key is never sent again.
+  `Retry-After` asks for more than 5 seconds or holds anything but whole
+  seconds, such as a date; then the last refusal reaches you. A change without
+  a key is never sent again.
 - `WeaveClient(..., resend=None)` sends every request once. To set other
   bounds, pass a `Resend` (`from firefly_weave.sdk.client import Resend`).
 - It always uses the canonical `/api/v1` paths and quoted revisions, validates
@@ -337,7 +338,7 @@ workspaces you can use.
 
 | Exception | Meaning | What to do |
 | --- | --- | --- |
-| `WeaveError` | The platform answered with an error. It exposes `status`, `code`, `request_id`, `diagnostics`, the safe `problem`, and `retry_after`: the seconds of the answer's `Retry-After`, or `None` | Read `code`; the [HTTP API failure table](api.md#when-a-request-fails) lists the common ones |
+| `WeaveError` | The platform answered with an error. It exposes `status`, `code`, `request_id`, `diagnostics`, the safe `problem`, and `retry_after`: the seconds of the answer's `Retry-After`, `None` without one, and `math.inf` when it holds anything but whole seconds, such as a date | Read `code`; the [HTTP API failure table](api.md#when-a-request-fails) lists the common ones |
 | `PreconditionFailed` | A `WeaveError` for HTTP 412: your revision is stale | Read the resource again and resend with the current revision |
 | `TransportError` | The request may or may not have reached the platform | For a change, keep the key and check the resource before retrying |
 | `ContractError` | The answer does not match the expected contract or version | Check that client and server versions match |

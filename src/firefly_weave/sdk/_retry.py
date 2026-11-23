@@ -41,7 +41,8 @@ RETRY_LATER = frozenset({429, 502, 503, 504})
 # A problem code as the platform mints it, such as WV-TRANSPORT or WV-WIRE-VERSION, and how long it may be.
 CODE = re.compile(r"WV-[A-Z0-9]+(?:-[A-Z0-9_]+)*")
 LONGEST_CODE = 64
-# Retry-After as RFC 9110 delay-seconds: whole seconds, here at most six digits. A date is not read.
+# Retry-After as RFC 9110 delay-seconds: whole seconds, here at most six digits. A date or any other value is not
+# read, and counts as a wait without end.
 DELAY_SECONDS = re.compile(r"[0-9]{1,6}")
 # Replaced in tests.
 clock = time.monotonic
@@ -137,11 +138,12 @@ def raise_if_cancelled(error: BaseException) -> None:
 
 
 def retry_after(value: str | None) -> float | None:
-    """The seconds a ``Retry-After`` header asks the caller to wait, or None when it is absent or not whole seconds."""
+    """The seconds a ``Retry-After`` header asks the caller to wait: None without one, and infinity when it holds
+    anything but whole seconds the client reads (a date, for example), so no caller comes back sooner than asked."""
     if value is None:
         return None
     value = value.strip(" \t")
-    return float(value) if DELAY_SECONDS.fullmatch(value) else None
+    return float(value) if DELAY_SECONDS.fullmatch(value) else math.inf
 
 
 def not_admitted(error: BaseException) -> bool:
@@ -156,7 +158,7 @@ class Resend:
     ``sends`` counts every send, the first one included; None allows as many as ``seconds`` does. No pause ends later
     than ``seconds`` after the first send. A pause is never shorter than the API's Retry-After; it starts at ``first``,
     doubles up to ``longest``, and is spread up to a quarter longer so that callers refused together do not all come
-    back at once. A Retry-After longer than ``longest`` lets the refusal stand.
+    back at once. A Retry-After longer than ``longest``, or one the client cannot read, lets the refusal stand.
     """
 
     sends: int | None

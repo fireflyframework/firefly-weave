@@ -26,7 +26,8 @@ class WeaveError(Exception):
         self.code = problem.code
         self.request_id = problem.request_id
         self.diagnostics = tuple(problem.diagnostics)
-        # The seconds the platform's Retry-After asked the caller to wait before sending the request again, if any.
+        # The seconds the platform's Retry-After asked the caller to wait before sending the request again: None without
+        # one, and infinity when the client cannot read it, so that a caller never comes back sooner than asked.
         self.retry_after = retry_after
         super().__init__(f"{self.code} (HTTP {self.status})")
 

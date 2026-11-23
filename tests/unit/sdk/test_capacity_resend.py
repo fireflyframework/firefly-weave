@@ -22,6 +22,7 @@ Retry-After, backs off with jitter, and stops after four sends in all or 15 seco
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 from uuid import UUID, uuid4
 
@@ -95,16 +96,33 @@ async def test_a_read_the_api_refused_for_capacity_is_sent_again(clock, code):
 
 @pytest.mark.parametrize(
     ("retry_after", "pause"),
-    [("2", 2.0), ("5", 5.0), (None, 0.5), ("Sun, 22 Nov 2026 12:00:00 GMT", 0.5), ("-1", 0.5), ("1.5", 0.5)],
+    [("2", 2.0), ("5", 5.0), (None, 0.5)],
 )
 async def test_the_pause_waits_for_retry_after_in_seconds_and_otherwise_for_the_backoff(clock, retry_after, pause):
-    """Retry-After in whole seconds, up to the longest pause of 5 s, is the shortest wait; a date or anything else
-    leaves the backoff's 0.5 s."""
+    """Retry-After in whole seconds, up to the longest pause of 5 s, is the shortest wait; without one the backoff
+    starts at 0.5 s."""
     sent: list[httpx.Request] = []
     answers = [refusal(retry_after=retry_after), httpx.Response(200, json=ENVIRONMENT)]
     async with weave(api(answers, sent)) as client:
         await client.read_environment()
     assert clock.pauses == [pause]
+
+
+@pytest.mark.parametrize("retry_after", ["Sun, 22 Nov 2026 12:00:00 GMT", "-1", "1.5", "1000000", ""])
+async def test_a_retry_after_the_client_cannot_read_lets_the_refusal_stand(clock, retry_after):
+    """The platform asked for a wait the client cannot time, so it never comes back sooner than asked: the refusal
+    reaches the caller at once, and its retry_after is infinite."""
+    sent: list[httpx.Request] = []
+    answers = [refusal(retry_after=retry_after), httpx.Response(200, json=ENVIRONMENT)]
+    async with weave(api(answers, sent)) as client:
+        with pytest.raises(WeaveError) as refused:
+            await client.read_environment()
+    assert (refused.value.status, refused.value.code, refused.value.retry_after) == (
+        429,
+        "WV-OPERATION-CAPACITY",
+        math.inf,
+    )
+    assert len(sent) == 1 and clock.pauses == []
 
 
 async def test_a_change_with_an_idempotency_key_is_sent_again_unchanged(clock, caplog):
