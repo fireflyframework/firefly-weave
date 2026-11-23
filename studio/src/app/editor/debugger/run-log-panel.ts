@@ -644,11 +644,12 @@ export function runStatus(
       <weave-icon name="runHistory" [size]="16" aria-hidden="true" />
       <h2 class="run-log-title">Run log</h2>
       <!-- A long status takes its own line under the title, whole. -->
-      <!-- "Succeeded with errors" reads in the warning tone. -->
+      <!-- "Succeeded with errors" reads in the warning tone, on the title's
+           line: it shortens last, and its tooltip says it whole. -->
       <span
         class="run-log-status"
         role="status"
-        [class.run-log-status-long]="status().length > 26"
+        [class.run-log-status-long]="status().length > 26 && !handledText()"
         [attr.data-tone]="handledText() ? 'warning' : null"
         [title]="status()"
         >{{ status() }}</span

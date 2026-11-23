@@ -95,6 +95,12 @@ test("the run log says the run succeeded with errors, with the error path under 
   const status = log.locator(".run-log-status");
   await expect(status).toHaveText("Succeeded with errors · 4 steps");
   await expect(status).toHaveAttribute("data-tone", "warning");
+  // On the title's line, as the header says it; it shortens last, never wraps.
+  const top = async (selector: string) =>
+    (await log.locator(selector).boundingBox())!.y;
+  expect(
+    Math.abs((await top(".run-log-status")) - (await top(".run-log-title"))),
+  ).toBeLessThan(8);
   await expect(log.locator(".run-log-outcome")).toHaveText(
     "The simulated run succeeded with 1 handled error.",
   );
