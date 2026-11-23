@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Shared route mocks for the integration editor, round-trip and layout specs.
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
-import { promisify } from "node:util";
+import { createInterface } from "node:readline";
 import { python, repository } from "../python-path";
 import { expect, Locator, Page } from "@playwright/test";
 
@@ -683,23 +683,109 @@ export async function registerTarget(page: Page) {
     .click();
 }
 
-/** What a field can read, from the Studio host's own scope_at with the repository's Python. */
+/**
+ * What a field can read, from the Studio host's own scope_at with the
+ * repository's Python: one line of JSON in, one line out. scope_at reads only
+ * the question it is given, so one process can answer every test's questions
+ * without one answer changing another.
+ */
 const SCOPE_AT = `
-import json, sys
+import json, sys, traceback
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.compiler.scope import scope_at
-body = json.loads(sys.stdin.read())
-document = parse_source(body["source"], format=body["format"]).value
-print(json.dumps(scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)))
+for line in iter(sys.stdin.readline, ""):
+    try:
+        body = json.loads(line)
+        document = parse_source(body["source"], format=body["format"]).value
+        answer = {"scope": scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)}
+    except Exception:
+        answer = {"error": traceback.format_exc()}
+    print(json.dumps(answer), flush=True)
 `;
-export async function hostScope(page: Page) {
-  await page.route("**/studio/local/scope", async (route) => {
-    const child = promisify(execFile)(python, ["-c", SCOPE_AT], {
+/** Longer than any answer takes: a process this slow is stuck, so it is stopped. */
+const SCOPE_ANSWER_MS = 30_000;
+
+/**
+ * One Python process per Playwright worker answers the scope questions, one
+ * at a time, so a question doesn't wait for Python to start and import the
+ * compiler. A process that ends or stops answering is replaced at the next
+ * question, and the process ends with the worker.
+ */
+class ScopeHost {
+  private child: ChildProcess | null = null;
+  private waiting: ((reply: string | Error) => void) | null = null;
+  private turn: Promise<unknown> = Promise.resolve();
+
+  constructor() {
+    process.on("exit", () => this.child?.kill());
+  }
+
+  /** The answer to one question, after the questions asked before it. */
+  ask(question: unknown): Promise<unknown> {
+    const answer = this.turn.then(() => this.answer(question));
+    this.turn = answer.catch(() => undefined);
+    return answer;
+  }
+
+  private answer(question: unknown): Promise<unknown> {
+    const child = (this.child ??= this.start());
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.stop(child);
+        this.settle(new Error(`No scope answer in ${SCOPE_ANSWER_MS} ms.`));
+      }, SCOPE_ANSWER_MS);
+      this.waiting = (reply) => {
+        clearTimeout(timer);
+        this.waiting = null;
+        if (reply instanceof Error) return reject(reply);
+        const { scope, error } = JSON.parse(reply) as {
+          scope?: unknown;
+          error?: string;
+        };
+        if (error === undefined) resolve(scope);
+        else reject(new Error(error));
+      };
+      child.stdin!.write(`${JSON.stringify(question)}\n`);
+    });
+  }
+
+  private start(): ChildProcess {
+    const child = spawn(python, ["-c", SCOPE_AT], {
       cwd: repository,
       env: { ...process.env, PYTHONPATH: resolvePath(repository, "src") },
+      stdio: ["pipe", "pipe", "ignore"],
     });
-    child.child.stdin?.end(route.request().postData() ?? "{}");
-    const { stdout } = await child;
-    await route.fulfill({ json: JSON.parse(stdout) }).catch(() => undefined);
+    // Only the current process answers: a stopped one's late line is dropped.
+    createInterface({ input: child.stdout! }).on("line", (line) => {
+      if (this.child === child) this.settle(line);
+    });
+    // Writing to a process that just ended fails here; its exit answers.
+    child.stdin!.on("error", () => undefined);
+    const ended = (why: string) => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.settle(new Error(`The scope process ended: ${why}.`));
+    };
+    child.on("exit", (code, signal) => ended(String(signal ?? code)));
+    child.on("error", (error) => ended(error.message));
+    return child;
+  }
+
+  private stop(child: ChildProcess) {
+    if (this.child === child) this.child = null;
+    child.kill();
+  }
+
+  private settle(reply: string | Error) {
+    this.waiting?.(reply);
+  }
+}
+
+const scopeHost = new ScopeHost();
+
+export async function hostScope(page: Page) {
+  await page.route("**/studio/local/scope", async (route) => {
+    const scope = await scopeHost.ask(route.request().postDataJSON() ?? {});
+    await route.fulfill({ json: scope }).catch(() => undefined);
   });
 }

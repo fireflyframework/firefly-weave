@@ -798,14 +798,17 @@ for (const viewport of [
       await page.goto("/operate/incidents");
       await expect(rows(page)).toHaveCount(1);
       const before = lists();
-      await page.clock.fastForward(15_500);
+      // runFor fires each timer on the way. A fastForward can race the fake
+      // clock's own timer loop, which sets the page's clock back by the jump
+      // and so moves the next reload that far away.
+      await page.clock.runFor(15_500);
       await expect.poll(lists).toBe(before + 1);
       // The revision a decision is sent with never changes under the dialog.
       const dialog = await openDialog(page);
-      await page.clock.fastForward(31_000);
+      await page.clock.runFor(31_000);
       expect(lists()).toBe(before + 1);
       await dialog.getByRole("button", { name: "Cancel" }).click();
-      await page.clock.fastForward(15_500);
+      await page.clock.runFor(15_500);
       await expect.poll(lists).toBe(before + 2);
     });
 

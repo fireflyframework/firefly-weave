@@ -315,6 +315,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
+- Studio's tests no longer fail on a busy machine: page clocks advance with
+  `runFor` instead of `fastForward` in the approvals, connect wizard and
+  incidents specs, canvas tidy is bounded by the work it does instead of
+  wall-clock time, step details and loop data wait for the state they check
+  instead of sleeping, and browser workers answer scope questions from one
+  Python process each.
 - CI has a manual job that runs the PostgreSQL integration tests against
   PostgreSQL 17; it moves to every pull request once the tests that depend on
   timing pass on a hosted runner. The tests that need Kafka, Keycloak, a built
