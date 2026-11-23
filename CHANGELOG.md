@@ -163,6 +163,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- The Python SDK and the typed CLI send a request again when the platform
+  refused it before admitting it (HTTP 429 `WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`): a `GET`, or a change that carries an idempotency key,
+  with the same body, key, and token. Each pause lasts at least `Retry-After`
+  and grows from half a second to 5 seconds; the client stops after 4 sends or
+  15 seconds, and lets the refusal stand at once when `Retry-After` asks for
+  more than 5 seconds or can't be read as whole seconds. A change without a key
+  is never sent again, and a client closed during a pause sends nothing more.
+  `WeaveClient(..., resend=None)` turns this off, and `WeaveError.retry_after`
+  gives the refusal's `Retry-After` in seconds. The `weave platform cluster`
+  commands keep their 60-second window on the same policy.
 - The Studio host bridge forwards webhooks, schedules, Kafka triggers, app
   event sources and draft test activations; every operation is still
   authorized by the server.
