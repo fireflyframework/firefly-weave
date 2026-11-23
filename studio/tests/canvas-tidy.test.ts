@@ -177,24 +177,47 @@ describe("tidy layout's note rule", () => {
     expect(half.y + half.height).toBeGreaterThan(248);
   });
 
-  it("tidies 200 notes over 200 steps quickly", () => {
-    const tiles = Array.from({ length: 200 }, (_, i) => ({
-      x: (i % 20) * 248,
-      y: Math.floor(i / 20) * 224,
-      width: 96,
-      height: 152,
-    }));
-    const notes = Array.from({ length: 200 }, (_, i) =>
-      free(`note-${i}`, {
-        x: (i % 20) * 248,
-        y: Math.floor(i / 20) * 224,
-        width: 240,
-        height: 120,
-      }),
-    );
-    const started = performance.now();
-    const moves = tidyNotes(notes, tiles);
-    expect(performance.now() - started).toBeLessThan(200);
-    expect(moves.size).toBe(200);
+  // Tidy's work is counted, not timed: every comparison reads the positions
+  // of the steps and notes it is given, and the count is the same on any
+  // machine, however busy.
+  it("tidies 200 notes over 200 steps in bounded work that grows less than cubically", () => {
+    const at200 = tidyWork(200);
+    expect(at200.moves).toBe(200);
+    // Today: about 53 reads per note and step pair.
+    expect(at200.reads).toBeLessThan(100 * 200 * 200);
+    // Doubling the notes and steps multiplies the work by about 5.4 today;
+    // by 4 if it were quadratic, by 8 if cubic.
+    expect(at200.reads / tidyWork(100).reads).toBeLessThan(6.5);
   });
 });
+
+/** Tidies `count` notes, each covering one of `count` steps on a grid, and counts the position reads. */
+function tidyWork(count: number): { reads: number; moves: number } {
+  let reads = 0;
+  const counted = <T extends Box>(box: T): T => {
+    const copy = { ...box };
+    for (const key of ["x", "y", "width", "height"] as const) {
+      const value = box[key];
+      Object.defineProperty(copy, key, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return value;
+        },
+      });
+    }
+    return copy;
+  };
+  const cell = (i: number) => ({
+    x: (i % 20) * 248,
+    y: Math.floor(i / 20) * 224,
+  });
+  const tiles = Array.from({ length: count }, (_, i) =>
+    counted({ ...cell(i), width: 96, height: 152 }),
+  );
+  const notes = Array.from({ length: count }, (_, i) =>
+    counted(free(`note-${i}`, { ...cell(i), width: 240, height: 120 })),
+  );
+  const moves = tidyNotes(notes, tiles);
+  return { reads, moves: moves.size };
+}
