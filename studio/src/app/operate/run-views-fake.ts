@@ -104,10 +104,23 @@ const summaryParameters: Record<string, Kind> = {
   has_handled_errors: "boolean",
   include_archived: "boolean",
   activation_id: "string",
+  transaction_state: "array",
   order: "string",
   limit: "integer",
   cursor: "string",
 };
+const transactionStates = [
+  "open",
+  "deciding",
+  "committing",
+  "completed",
+  "compensating",
+  "compensated",
+  "cancelled",
+  "in_doubt",
+  "reconciled",
+  "force_ended",
+];
 const stepParameters: Record<string, Kind> = {
   step: "string",
   include: "string",
@@ -302,6 +315,14 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
   )
     throw invalid("Invalid status");
   const status = [...new Set(raw)].sort();
+  const rawStates = (values["transaction_state"] as string[] | undefined) ?? [];
+  if (
+    rawStates.length > 10 ||
+    rawStates.some((item) => !transactionStates.includes(item))
+  )
+    throw invalid("Invalid transaction_state");
+  // Left out of the cursor binding while empty, as the server does.
+  const states = rawStates.length ? [...new Set(rawStates)].sort() : undefined;
   const filters = {
     workflow: text(values, "workflow", name),
     version: text(values, "version", semver),
@@ -319,6 +340,7 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
     has_handled_errors: values["has_handled_errors"] as boolean | undefined,
     include_archived: values["include_archived"] === true,
     activation_id: uuidOf(values, "activation_id"),
+    transaction_state: states,
   };
   const order = choice(values, "order", runSummaryOrders) ?? "started_desc";
   const limit = limitOf(values, 100, 50);
@@ -376,7 +398,10 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
     (filters.has_handled_errors === undefined ||
       (run.handled_errors ?? 0) > 0 === filters.has_handled_errors) &&
     (filters.activation_id === undefined ||
-      run.activation_id === filters.activation_id);
+      run.activation_id === filters.activation_id) &&
+    (states === undefined ||
+      (run.transaction_state !== undefined &&
+        states.includes(run.transaction_state)));
   const field = order === "updated_desc" ? "updated_at" : "started_at";
   const direction = order === "started_asc" ? 1 : -1;
   const runs = data.runs

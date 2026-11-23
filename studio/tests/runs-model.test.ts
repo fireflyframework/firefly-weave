@@ -15,13 +15,20 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  stateWord,
+  type TransactionState,
+} from "../src/app/editor/transactions/transaction-words";
 import { runViewsFixture } from "../src/app/operate/run-views.fixture";
 import {
   MAX_RANGE_MS,
   defaultRunsFilters,
   handledText,
   liveDuration,
+  needsAttention,
   originLabel,
   rangePresets,
   resolveRunsQuery,
@@ -30,6 +37,10 @@ import {
   runsFiltersFromQuery,
   runsFiltersToQuery,
   runsQuery,
+  transactionPill,
+  transactionStates,
+  withNeedsAttention,
+  withTransactionState,
   type RunsFilters,
 } from "../src/app/operate/runs/runs-model";
 import { classifyQueriesWithPython, pythonAvailable } from "./run-views-oracle";
@@ -300,7 +311,9 @@ describe("Runs model", () => {
           business_key: "INV 1041",
           correlation_key: "c+1",
           order: "updated_desc",
+          transaction_state: [...transactionStates],
         },
+        withNeedsAttention(defaultRunsFilters(), true),
         ...rangePresets.map((preset) => ({
           ...defaultRunsFilters(),
           timeWindow: {
@@ -325,4 +338,149 @@ describe("Runs model", () => {
       );
     },
   );
+});
+
+describe("runs and their transactions", () => {
+  const corpus = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dirname, "fixtures/transaction-corpus.json"),
+      "utf8",
+    ),
+  ) as { stateWords: Record<TransactionState, string> };
+  const attention = withNeedsAttention(defaultRunsFilters(), true);
+
+  it("offers every state as a choice, in the order a transaction goes through them", () => {
+    expect(transactionStates.map(stateWord)).toEqual([
+      "Open",
+      "Deciding",
+      "Finishing",
+      "Completed",
+      "Undoing",
+      "Undone",
+      "Canceled",
+      "In doubt",
+      "Reconciled",
+      "Force ended",
+    ]);
+    expect([...transactionStates].sort()).toEqual(
+      Object.keys(corpus.stateWords).sort(),
+    );
+  });
+
+  it("draws the run's worst transaction as a pill in Operate's tones, and nothing without one", () => {
+    const pills = transactionStates.map((state) =>
+      transactionPill({ ...run, transaction_state: state }),
+    );
+    expect(pills).toEqual([
+      { label: "Open", tone: "neutral" },
+      { label: "Deciding", tone: "info" },
+      { label: "Finishing", tone: "info" },
+      { label: "Completed", tone: "success" },
+      { label: "Undoing", tone: "info" },
+      { label: "Undone", tone: "warning" },
+      { label: "Canceled", tone: "warning" },
+      { label: "In doubt", tone: "danger" },
+      { label: "Reconciled", tone: "neutral" },
+      { label: "Force ended", tone: "danger" },
+    ]);
+    const { transaction_state: _, ...plain } = {
+      ...run,
+      transaction_state: "open" as const,
+    };
+    expect(transactionPill(plain)).toBeNull();
+  });
+
+  it("sends each chosen state to the platform", () => {
+    const filters: RunsFilters = {
+      ...defaultRunsFilters(),
+      transaction_state: ["in_doubt", "compensating"],
+    };
+    const query = new URLSearchParams(
+      runsQuery(resolveRunsQuery(filters, new Date()), null),
+    );
+    expect(query.getAll("transaction_state")).toEqual([
+      "in_doubt",
+      "compensating",
+    ]);
+    expect(
+      new URLSearchParams(
+        runsQuery(resolveRunsQuery(defaultRunsFilters(), new Date()), null),
+      ).has("transaction_state"),
+    ).toBe(false);
+  });
+
+  it("reads Needs attention as the Transaction filter set to In doubt alone", () => {
+    expect(attention.transaction_state).toEqual(["in_doubt"]);
+    expect(needsAttention(attention)).toBe(true);
+    for (const states of [
+      ["in_doubt", "compensating"],
+      ["compensating"],
+      [],
+    ] as TransactionState[][])
+      expect(
+        needsAttention({ ...defaultRunsFilters(), transaction_state: states }),
+        states.join(","),
+      ).toBe(false);
+    expect(needsAttention(defaultRunsFilters())).toBe(false);
+    // Unchecking it clears the filter, whatever else was chosen.
+    const cleared = withNeedsAttention(
+      { ...attention, transaction_state: ["in_doubt", "compensated"] },
+      false,
+    );
+    expect(cleared).toEqual(defaultRunsFilters());
+    // Checking it replaces any other choice.
+    expect(
+      withNeedsAttention(
+        { ...defaultRunsFilters(), transaction_state: ["compensating"] },
+        true,
+      ).transaction_state,
+    ).toEqual(["in_doubt"]);
+  });
+
+  it("pressing another state keeps both choices, so Needs attention reads unchecked", () => {
+    const both = withTransactionState(attention, "compensating");
+    expect(both.transaction_state).toEqual(["compensating", "in_doubt"]);
+    expect(needsAttention(both)).toBe(false);
+    // Pressed again, the choice goes and In doubt alone is left.
+    expect(needsAttention(withTransactionState(both, "compensating"))).toBe(
+      true,
+    );
+    expect(
+      withTransactionState(attention, "in_doubt").transaction_state,
+    ).toBeUndefined();
+  });
+
+  it("keeps the Transaction filter in the address, in order, without duplicates or unknown states", () => {
+    const filters: RunsFilters = {
+      ...defaultRunsFilters(),
+      transaction_state: ["force_ended", "in_doubt"],
+    };
+    const query = runsFiltersToQuery(filters);
+    expect(query).toBe(
+      "?transaction_state=in_doubt&transaction_state=force_ended",
+    );
+    expect(runsFiltersFromQuery(query)).toEqual({
+      ...filters,
+      transaction_state: ["in_doubt", "force_ended"],
+    });
+    expect(
+      runsFiltersFromQuery(
+        "?transaction_state=in_doubt&transaction_state=committed&transaction_state=in_doubt",
+      ).transaction_state,
+    ).toEqual(["in_doubt"]);
+    expect(runsFiltersFromQuery("?transaction_state=done")).toEqual(
+      defaultRunsFilters(),
+    );
+    expect(runsFiltersToQuery(attention)).toBe("?transaction_state=in_doubt");
+  });
+
+  it("counts the Transaction filter once, however many states it holds", () => {
+    expect(runFilterCount(attention)).toBe(1);
+    expect(
+      runFilterCount({
+        ...defaultRunsFilters(),
+        transaction_state: ["in_doubt", "compensating", "force_ended"],
+      }),
+    ).toBe(1);
+  });
 });

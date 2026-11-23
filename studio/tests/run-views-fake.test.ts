@@ -533,6 +533,15 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     "caller_run_id=1C0D7F8A-4D66-4E7C-8B62-5A2C1D3E8F12",
     "order=started_asc&include_archived=true",
     "limit=0100",
+    "transaction_state=in_doubt",
+    "transaction_state=in_doubt&transaction_state=compensating&transaction_state=in_doubt",
+    "open,deciding,committing,completed,compensating,compensated,cancelled,in_doubt,reconciled,force_ended"
+      .split(",")
+      .map((state) => `transaction_state=${state}`)
+      .join("&"),
+    "transaction_state=in_doubt" + "&transaction_state=in_doubt".repeat(10),
+    "transaction_state=committed",
+    "transaction_state=IN_DOUBT",
     ...contradictoryQueries,
     "started_after=2026-10-07T12:00:00.0000004Z&started_before=2026-10-07T12:00:00.0000006Z",
     "started_after=2026-10-07T12:00:00Z&started_before=2026-10-07T12:00:00Z",
@@ -650,6 +659,50 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     expect(
       differences("RunLogQuery", `/runs/${fixtureIds.failed}/logs`, logQueries),
     ).toEqual([]);
+  });
+});
+
+describe("transactions", () => {
+  const fixture = structuredClone(runViewsFixture);
+  const states = {
+    [fixtureIds.failed]: "in_doubt",
+    [fixtureIds.retry]: "compensating",
+    [fixtureIds.succeeded]: "completed",
+  } as const;
+  for (const run of fixture.runs)
+    if (run.summary.id in states)
+      run.summary.transaction_state =
+        states[run.summary.id as keyof typeof states];
+  const withTransactions = fakeRunViewsApi(fixture);
+
+  it("lists only runs whose worst transaction is in a chosen state", async () => {
+    const inDoubt = await listRunSummaries(withTransactions, {
+      transaction_state: ["in_doubt"],
+    });
+    expect(ids(inDoubt)).toEqual([fixtureIds.failed]);
+    const either = await listRunSummaries(withTransactions, {
+      transaction_state: ["compensating", "in_doubt"],
+    });
+    expect(new Set(ids(either))).toEqual(
+      new Set([fixtureIds.failed, fixtureIds.retry]),
+    );
+    expect(
+      ids(
+        await listRunSummaries(withTransactions, {
+          transaction_state: ["force_ended"],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("binds the Transaction filter to the cursor", async () => {
+    const first = await listRunSummaries(withTransactions, { limit: 1 });
+    await expect(
+      listRunSummaries(withTransactions, {
+        cursor: first.next_cursor!,
+        transaction_state: ["in_doubt"],
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "WV-VALIDATION" });
   });
 });
 

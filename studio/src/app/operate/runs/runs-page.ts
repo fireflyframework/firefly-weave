@@ -38,6 +38,10 @@ import { NgTemplateOutlet } from "@angular/common";
 import { NavigationEnd, Router } from "@angular/router";
 import type { App } from "../../app";
 import { copyText } from "../../connection";
+import {
+  stateWord,
+  type TransactionState,
+} from "../../editor/transactions/transaction-words";
 import { describeError, type PlainError } from "../../errors";
 import { shortId } from "../../format";
 import { Icon } from "../../icon";
@@ -79,6 +83,7 @@ import {
   handledText,
   isTerminalRun,
   liveDuration,
+  needsAttention,
   originLabel,
   rangePresets,
   resolveRunsQuery,
@@ -87,6 +92,10 @@ import {
   runsFiltersFromQuery,
   runsFiltersToQuery,
   runsQuery,
+  transactionPill,
+  transactionStates,
+  withNeedsAttention,
+  withTransactionState,
   type RunsFilters,
 } from "./runs-model";
 import { personLearned } from "./person-scope";
@@ -361,6 +370,14 @@ interface BulkResult {
                 (change)="setFilter('include_test', checked($event))"
               />Include test runs</label
             >
+            <label class="checkbox-field"
+              ><input
+                type="checkbox"
+                aria-description="Runs with a transaction in doubt"
+                [checked]="attention()"
+                (change)="setNeedsAttention(checked($event))"
+              />Needs attention</label
+            >
             <button
               type="button"
               class="tertiary"
@@ -472,6 +489,31 @@ interface BulkResult {
                   />Include archived runs</label
                 >
               </div>
+              <div
+                class="transaction-filter"
+                role="group"
+                aria-labelledby="runs-transaction-label"
+                aria-describedby="runs-transaction-hint"
+              >
+                <p class="transaction-filter-label">
+                  <span id="runs-transaction-label">Transaction</span
+                  ><span id="runs-transaction-hint" class="hint"
+                    >Any of these, by the run's worst transaction</span
+                  >
+                </p>
+                <div class="status-filter">
+                  @for (state of transactionStates; track state) {
+                    <button
+                      type="button"
+                      class="status-choice"
+                      [attr.aria-pressed]="hasTransactionState(state)"
+                      (click)="toggleTransactionState(state)"
+                    >
+                      {{ stateWord(state) }}
+                    </button>
+                  }
+                </div>
+              </div>
             </div>
           }
         </div>
@@ -580,7 +622,17 @@ interface BulkResult {
             } @else if (!loaded) {
               <weave-operate-state kind="loading" noun="runs" [rows]="6" />
             } @else if (!runs.length && !startedRuns.length) {
-              @if (filterCount()) {
+              @if (attention() && filterCount() === 1) {
+                <weave-operate-state
+                  kind="empty"
+                  heading="No runs need attention."
+                  text="No run in this environment has a transaction in doubt."
+                >
+                  <button type="button" (click)="clearFilters()">
+                    Clear filters ({{ filterCount() }})
+                  </button>
+                </weave-operate-state>
+              } @else if (filterCount()) {
                 <weave-operate-state
                   kind="empty"
                   heading="No runs match these filters."
@@ -629,6 +681,8 @@ interface BulkResult {
                       role="columnheader"
                       class="cell-incidents numeric-cell"
                       >Incidents</span
+                    ><span role="columnheader" class="cell-transaction"
+                      >Transaction</span
                     ><span role="columnheader" class="cell-key"
                       >Business key</span
                     ><span role="columnheader" class="cell-run">Run</span
@@ -659,7 +713,7 @@ interface BulkResult {
                       ><span
                         role="cell"
                         class="cell-origin cell-explain"
-                        aria-colspan="5"
+                        aria-colspan="6"
                         >Just started. It joins the list once the platform lists
                         it.</span
                       ><span role="cell" class="cell-run"
@@ -691,7 +745,7 @@ interface BulkResult {
                         ><span
                           role="cell"
                           class="cell-origin cell-explain"
-                          aria-colspan="5"
+                          aria-colspan="6"
                           >Studio can't show this run's details.</span
                         ><span role="cell" class="cell-run"
                           ><code [attr.title]="item.id">{{
@@ -802,6 +856,14 @@ interface BulkResult {
                               >—</span
                             >
                           }</span
+                        ><span role="cell" class="cell-transaction">
+                          @if (transactionOf(run); as pill) {
+                            <span
+                              class="status-pill"
+                              [attr.data-tone]="tone(pill.tone)"
+                              >{{ pill.label }}</span
+                            >
+                          }</span
                         ><span
                           role="cell"
                           class="cell-key"
@@ -836,6 +898,13 @@ interface BulkResult {
                             <span>{{
                               incidentsLabel(run.active_incidents)
                             }}</span>
+                          }
+                          @if (transactionOf(run); as pill) {
+                            <span
+                              class="status-pill"
+                              [attr.data-tone]="tone(pill.tone)"
+                              >{{ pill.label }}</span
+                            >
                           }
                           @if (run.business_key) {
                             <span class="meta-key">{{ run.business_key }}</span>
@@ -931,6 +1000,8 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   readonly presets = rangePresets;
   readonly origins = runOrigins;
   readonly statuses = runStatuses;
+  readonly transactionStates = transactionStates;
+  readonly stateWord = stateWord;
   readonly bulkLimit = BULK_LIMIT;
   readonly maxRuns = MAX_PAGES * 50;
   /** The list refreshes by itself every 10 s while this is on. */
@@ -1241,6 +1312,19 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   }
   statusWord(status: string) {
     return statusLabel("run", status);
+  }
+  /** Needs attention: the Transaction filter set to In doubt alone. */
+  attention() {
+    return needsAttention(this.filters);
+  }
+  setNeedsAttention(on: boolean) {
+    this.apply(withNeedsAttention(this.filters, on));
+  }
+  hasTransactionState(state: TransactionState) {
+    return (this.filters.transaction_state ?? []).includes(state);
+  }
+  toggleTransactionState(state: TransactionState) {
+    this.apply(withTransactionState(this.filters, state));
   }
   rangeId() {
     const window = this.filters.timeWindow;
@@ -1871,6 +1955,9 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   }
   outcomeOf(run: RunSummary) {
     return runOutcome(run);
+  }
+  transactionOf(run: RunSummary) {
+    return transactionPill(run);
   }
   tone(tone: Parameters<typeof toneAttribute>[0]) {
     return toneAttribute(tone);

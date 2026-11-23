@@ -2177,6 +2177,177 @@ async function expectNoClipping(page: Page) {
   expect(problems).toEqual([]);
 }
 
+test.describe("transactions", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const needsAttention = (page: Page) =>
+    page.getByRole("checkbox", { name: "Needs attention" });
+  const transactionChoice = (page: Page, name: string) =>
+    page
+      .getByRole("group", { name: "Transaction" })
+      .getByRole("button", { name, exact: true });
+  /** The fixture with the failed run in doubt and the retry undoing. */
+  function withTransactions(): RunViewsFixture {
+    const fixture = data();
+    for (const run of fixture.runs) {
+      if (run.summary.id === fixtureIds.failed)
+        run.summary.transaction_state = "in_doubt";
+      if (run.summary.id === fixtureIds.retry)
+        run.summary.transaction_state = "compensating";
+    }
+    return fixture;
+  }
+
+  test("the Transaction column shows a run's worst transaction, and nothing without one", async ({
+    page,
+  }) => {
+    await platform(page, operator, withTransactions());
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    const headers = table(page).getByRole("columnheader");
+    await expect(headers).toHaveText([
+      "",
+      "Status",
+      "Workflow",
+      "Origin",
+      "Started",
+      "Duration",
+      "Incidents",
+      "Transaction",
+      "Business key",
+      "Run",
+    ]);
+    const cell = (id: string) =>
+      rows(page)
+        .filter({
+          has: page.locator(".cell-run code", { hasText: id.slice(0, 8) }),
+        })
+        .locator(".cell-transaction");
+    const doubt = cell(fixtureIds.failed).locator(".status-pill");
+    await expect(doubt).toHaveText("In doubt");
+    await expect(doubt).toHaveAttribute("data-tone", "danger");
+    await expect(
+      cell(fixtureIds.retry).locator(".status-pill"),
+    ).toHaveAttribute("data-tone", "info");
+    // A run without a transaction leaves its cell empty: no dash.
+    await expect(cell(fixtureIds.succeeded)).toHaveText("");
+    // The column is 104 px and holds the pill only.
+    const width = await cell(fixtureIds.failed).evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    expect(Math.round(width)).toBe(104);
+  });
+
+  test("Needs attention is the Transaction filter set to In doubt alone", async ({
+    page,
+  }) => {
+    const runs = await platform(page, operator, withTransactions());
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    // It sits in the filter's second row, after Include test runs.
+    const secondRow = page.locator(".filter-row").nth(1);
+    const labels = await secondRow
+      .locator(":scope > label.checkbox-field")
+      .allTextContents();
+    expect(labels.map((text) => text.trim())).toEqual([
+      "Include test runs",
+      "Needs attention",
+    ]);
+    await expect(needsAttention(page)).toHaveAccessibleDescription(
+      "Runs with a transaction in doubt",
+    );
+    await needsAttention(page).check();
+    await expect
+      .poll(() => last(runs).getAll("transaction_state"))
+      .toEqual(["in_doubt"]);
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText(
+      fixtureIds.failed.slice(0, 8),
+    );
+    await expect(page).toHaveURL(
+      /\/operate\/runs\?transaction_state=in_doubt$/,
+    );
+    await expect(
+      page.getByRole("button", { name: "Clear filters (1)" }),
+    ).toBeVisible();
+    // More filters shows the same filter: In doubt pressed, the states in order.
+    await page.getByRole("button", { name: "More filters" }).click();
+    const group = page.getByRole("group", { name: "Transaction" });
+    await expect(group).toHaveAccessibleDescription(
+      "Any of these, by the run's worst transaction",
+    );
+    await expect(group.getByRole("button")).toHaveText([
+      "Open",
+      "Deciding",
+      "Finishing",
+      "Completed",
+      "Undoing",
+      "Undone",
+      "Canceled",
+      "In doubt",
+      "Reconciled",
+      "Force ended",
+    ]);
+    await expect(transactionChoice(page, "In doubt")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await shot(page, "runs-transactions-needs-attention");
+    // Another choice keeps both, so Needs attention reads unchecked.
+    await transactionChoice(page, "Undoing").click();
+    await expect
+      .poll(() => last(runs).getAll("transaction_state"))
+      .toEqual(["compensating", "in_doubt"]);
+    await expect(needsAttention(page)).not.toBeChecked();
+    await expect(rows(page)).toHaveCount(2);
+    // Checking it again sets In doubt alone; unchecking clears the filter.
+    await needsAttention(page).check();
+    await expect(transactionChoice(page, "Undoing")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect
+      .poll(() => last(runs).getAll("transaction_state"))
+      .toEqual(["in_doubt"]);
+    await needsAttention(page).uncheck();
+    await expect.poll(() => last(runs).has("transaction_state")).toBe(false);
+    await expect(rows(page)).toHaveCount(6);
+    await expect(page).toHaveURL(/\/operate\/runs$/);
+  });
+
+  test("an address with the filter opens with Needs attention checked", async ({
+    page,
+  }) => {
+    const runs = await platform(page, operator, withTransactions());
+    await page.goto("/operate/runs?transaction_state=in_doubt");
+    await expect(rows(page)).toHaveCount(1);
+    await expect(needsAttention(page)).toBeChecked();
+    expect(last(runs).getAll("transaction_state")).toEqual(["in_doubt"]);
+  });
+
+  test("with nothing in doubt, Needs attention says so and offers Clear filters", async ({
+    page,
+  }) => {
+    await platform(page);
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    await needsAttention(page).check();
+    const empty = page.getByRole("heading", {
+      name: "No runs need attention.",
+    });
+    await expect(empty).toBeVisible();
+    await expect(
+      page.getByText("No run in this environment has a transaction in doubt."),
+    ).toBeVisible();
+    await shot(page, "runs-transactions-nothing-in-doubt");
+    await page
+      .locator(".runs-list")
+      .getByRole("button", { name: "Clear filters (1)", exact: true })
+      .click();
+    await expect(rows(page)).toHaveCount(6);
+    await expect(needsAttention(page)).not.toBeChecked();
+  });
+});
+
 test.describe("layout", () => {
   for (const viewport of [
     { width: 1440, height: 900 },

@@ -22,8 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // once, so Load more continues exactly the list that was first read. Business
 // and correlation keys may carry business data: they reach the platform but
 // never the address. Pure: the page renders it, tests check it.
+import {
+  stateWord,
+  type TransactionState,
+} from "../../editor/transactions/transaction-words";
 import { durationText } from "../../format";
 import { statusLabel, statusTone, type Tone } from "../../status-labels";
+import { stateTone } from "../transactions/transaction-record";
 import {
   runOrigins,
   runStatuses,
@@ -44,6 +49,56 @@ export type RunsFilters = Omit<
   RunSummaryQuery,
   "limit" | "cursor" | "started_after" | "started_before"
 > & { timeWindow: RunTimeWindow };
+
+/** The Transaction filter's choices, in the order a transaction goes through them. */
+export const transactionStates: readonly TransactionState[] = [
+  "open",
+  "deciding",
+  "committing",
+  "completed",
+  "compensating",
+  "compensated",
+  "cancelled",
+  "in_doubt",
+  "reconciled",
+  "force_ended",
+];
+/** These states in the choices' order, each once; none leaves the filter out. */
+function withStates(
+  filters: RunsFilters,
+  states: readonly TransactionState[],
+): RunsFilters {
+  const next = { ...filters };
+  const chosen = transactionStates.filter((state) => states.includes(state));
+  if (chosen.length) next.transaction_state = chosen;
+  else delete next.transaction_state;
+  return next;
+}
+/** Needs attention is the Transaction filter set to In doubt alone. */
+export function needsAttention(filters: RunsFilters): boolean {
+  const states = filters.transaction_state ?? [];
+  return states.length === 1 && states[0] === "in_doubt";
+}
+/** Checking Needs attention sets In doubt alone; unchecking it clears the Transaction filter. */
+export function withNeedsAttention(
+  filters: RunsFilters,
+  on: boolean,
+): RunsFilters {
+  return withStates(filters, on ? ["in_doubt"] : []);
+}
+/** Presses one Transaction choice: on if it was off, off if it was on. */
+export function withTransactionState(
+  filters: RunsFilters,
+  state: TransactionState,
+): RunsFilters {
+  const states = filters.transaction_state ?? [];
+  return withStates(
+    filters,
+    states.includes(state)
+      ? states.filter((item) => item !== state)
+      : [...states, state],
+  );
+}
 
 /** Runs read per page. */
 export const RUNS_PAGE_SIZE = 50;
@@ -180,6 +235,9 @@ export function runsFiltersFromQuery(search: string): RunsFilters {
     (runStatuses as readonly string[]).includes(value),
   ) as RunStatus[];
   filters.status = statuses.slice(0, runStatuses.length);
+  const states = query.getAll("transaction_state");
+  const chosen = transactionStates.filter((state) => states.includes(state));
+  if (chosen.length) filters.transaction_state = chosen;
   const workflow = query.get("workflow");
   if (workflow && name.test(workflow)) {
     filters.workflow = workflow;
@@ -232,6 +290,9 @@ export function runsFiltersToQuery(filters: RunsFilters): string {
   } = filters;
   const query = new URLSearchParams();
   for (const status of shared.status ?? []) query.append("status", status);
+  for (const state of transactionStates)
+    if (shared.transaction_state?.includes(state))
+      query.append("transaction_state", state);
   if (shared.workflow) {
     query.set("workflow", shared.workflow);
     if (shared.version) query.set("version", shared.version);
@@ -270,6 +331,7 @@ export function runFilterCount(filters: RunsFilters): number {
   const window = filters.timeWindow;
   return [
     (filters.status ?? []).length > 0,
+    (filters.transaction_state ?? []).length > 0,
     !!filters.workflow,
     !!filters.origin,
     window.kind !== "relative" || window.milliseconds !== DEFAULT_RANGE_MS,
@@ -295,6 +357,14 @@ export function runOutcome(run: RunSummary): { label: string; tone: Tone } {
     label: statusLabel("run", run.status),
     tone: statusTone("run", run.status),
   };
+}
+
+/** The Transaction column's pill: the run's worst transaction, or nothing without one. */
+export function transactionPill(
+  run: RunSummary,
+): { label: string; tone: Tone } | null {
+  const state = run.transaction_state;
+  return state ? { label: stateWord(state), tone: stateTone(state) } : null;
 }
 
 export function isTerminalRun(run: RunSummary): boolean {
