@@ -169,8 +169,8 @@ const compiler: Record<string, Copy> = {
     hint: "Move the agent before or after the transaction.",
   },
   AGENT_ACTION: {
-    text: "Only an AI agent step can run the platform's model turn, and an undo action can't run an AI model.",
-    hint: "Use an AI agent step, or choose another action.",
+    text: "Only an AI agent step can run the platform's model turn, and an action step or undo action can't run an AI model.",
+    hint: "Use an AI step or an AI agent step, or choose another action.",
   },
   TXN_UNDECLARED: {
     text: "This step changes data. Choose how it's undone.",
