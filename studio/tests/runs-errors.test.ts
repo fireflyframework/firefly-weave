@@ -17,12 +17,21 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A run that happened and went on after a step failed, as the Runs tab reads
 // it: the step's state and its failure from the step facts and the binding
-// that holds its error, the header's caption, step details in run mode, and
-// the list's filter and running rows.
+// that holds its error, the header's caption, the list's filter and running
+// rows, and Debug in editor, which turns each handled failure into a
+// simulated one without its message, leaving out what Studio can't simulate.
 import { describe, expect, it } from "vitest";
 import { edgeRun, tileRun } from "../src/app/editor/canvas/run-state";
 import { layoutLtr } from "../src/app/editor/canvas/layout-ltr";
 import { errorBannerLines } from "../src/app/editor/ndv/panes/error-banner";
+import {
+  leftOutText,
+  mergeQuestion,
+  mergedTestData,
+  testDataFromRun,
+  type RunSource,
+} from "../src/app/editor/runs-tab/debug-from-run";
+import { stopOf } from "../src/app/editor/runs-tab/debug-run";
 import { RunData } from "../src/app/editor/runs-tab/run-data";
 import {
   handledCaption,
@@ -41,6 +50,13 @@ import {
   runRow,
   runsTabQuery,
 } from "../src/app/editor/runs-tab/runs-list-model";
+import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
+import { readTestData } from "../src/app/editor/state/test-data-read";
+import {
+  emptyTestData,
+  fitsTestData,
+} from "../src/app/editor/state/test-data-ops";
+import type { StudioTestData } from "../src/app/editor/state/test-data";
 import type { Step, Workflow } from "../src/app/model";
 import type { RunSummary, StepFact } from "../src/app/operate/run-contracts";
 import {
@@ -405,5 +421,184 @@ describe("the list", () => {
       tone: "warning",
       handled: "",
     });
+  });
+});
+
+describe("Debug in editor carries handled failures", () => {
+  const print = (n: number) =>
+    `fnv1a64:${String(n).padStart(16, "0")}` as const;
+  const prints = new Map<string, StepFingerprints>(
+    ["lookup", "submit", "notify-team", "summarize", "send"].map((id, i) => [
+      id,
+      {
+        config: print(10 + i),
+        contract: print(20 + i),
+        upstream: print(30 + i),
+        execution: print(40 + i),
+      },
+    ]),
+  );
+  const source = (
+    run: RunRecord,
+    facts: StepFact[],
+    definition = workflow(),
+  ): RunSource => ({
+    runId: RUN,
+    environmentId: ENV,
+    status: run.status,
+    record: run,
+    facts,
+    definition,
+    failedStep: null,
+  });
+  const built = (from: RunSource, draft = workflow()) => {
+    const result = testDataFromRun(from, draft, prints, NOW);
+    if ("refused" in result) throw Error(result.refused);
+    return result;
+  };
+
+  it("writes each handled failure's code, outcome and attempts as run data, never its message", () => {
+    const { data, leftOut } = built(source(handledRun(), handledFacts()));
+    expect(data.errors).toEqual({
+      submit: {
+        code: "REQUEST_REFUSED",
+        outcome: "failed",
+        attempts: 3,
+        source: "run",
+        runId: RUN,
+        runEnvironmentId: ENV,
+      },
+    });
+    expect(JSON.stringify(data)).not.toContain("refused the request");
+    // The failed step's output isn't pinned: the failure stands for it.
+    expect(data.pins?.["submit"]).toBeUndefined();
+    expect(Object.keys(data.pins ?? {}).sort()).toEqual([
+      "lookup",
+      "notify-team",
+    ]);
+    expect(leftOut).toEqual([]);
+    expect(readTestData(data).ok).toBe(true);
+  });
+
+  it("leaves out a code Studio can't simulate and more than 1,000 attempts, and keeps every other entry", () => {
+    const loopFlow = workflow([
+      ...steps(),
+      {
+        id: "orders",
+        kind: "forEach",
+        items: { literal: [1, 2] },
+        body: { steps: [action("send", { onError: "continue" })] },
+      } as Step,
+    ]);
+    const run = handledRun({ ...REFUSED, code: "request-refused" });
+    const facts = [
+      ...handledFacts({ kind: "callWorkflow", error_code: "request-refused" }),
+      fact("send[0]", "failed", {
+        error_code: "SMTP_REJECTED",
+        attempts: 1500,
+        handled: "continue",
+      }),
+      fact("send[1]", "failed", {
+        error_code: "SMTP_REJECTED",
+        attempts: 2,
+        handled: "continue",
+      }),
+    ];
+    const { data, leftOut, pointers } = built(
+      source(run, facts, loopFlow),
+      loopFlow,
+    );
+    expect(leftOut).toEqual([
+      {
+        key: "submit",
+        reason: "code",
+        detail: "Studio can't simulate this failure's code.",
+      },
+      {
+        key: "send[0]",
+        reason: "attempts",
+        detail:
+          "Studio can't simulate a failure after more than 1,000 attempts.",
+      },
+    ]);
+    // The item whose binding is gone keeps what its step fact says.
+    expect(data.errors).toEqual({
+      "send[1]": {
+        code: "SMTP_REJECTED",
+        attempts: 2,
+        source: "run",
+        runId: RUN,
+        runEnvironmentId: ENV,
+      },
+    });
+    expect(data.input?.value).toEqual({ customerId: "c-1042" });
+    expect(Object.keys(data.pins ?? {}).sort()).toEqual([
+      "lookup",
+      "notify-team",
+    ]);
+    expect(pointers).toContain("/errors/send[1]");
+    expect(fitsTestData(data)).toBe(true);
+    expect(readTestData(data).ok).toBe(true);
+    expect(leftOutText(leftOut, [])).toBe(
+      "Left out 2 values: submit (a code Studio can't simulate), send[0] (more than 1,000 attempts).",
+    );
+  });
+
+  it("Merge replaces the failures of steps the run reached and keeps the others", () => {
+    const fromRun = built(source(handledRun(), handledFacts()));
+    const current: StudioTestData = {
+      ...emptyTestData(NOW),
+      errors: {
+        submit: { code: "TIMEOUT", source: "manual" },
+        summarize: { code: "BAD_INPUT", source: "manual" },
+        other: { code: "KEPT", source: "manual" },
+      },
+    };
+    const merged = mergedTestData(
+      current,
+      { ...fromRun, reached: [...fromRun.reached] },
+      NOW,
+    );
+    expect(merged.errors?.["submit"]?.code).toBe("REQUEST_REFUSED");
+    expect(merged.errors?.["summarize"]).toBeUndefined();
+    expect(merged.errors?.["other"]).toEqual({
+      code: "KEPT",
+      source: "manual",
+    });
+    expect(mergeQuestion(fromRun, 3, "development")).toContain(
+      "submit's failure",
+    );
+  });
+
+  it("Execute stops where the run failed, never at a failure the run handled", () => {
+    const entry = (nodeId: string, status: string, handled?: string) => ({
+      index: 0,
+      nodeId,
+      instanceKey: "",
+      kind: "action",
+      status,
+      ...(handled ? { handled } : {}),
+    });
+    const outcome = (trace: object[]) =>
+      ({
+        kind: "done",
+        response: { status: "failed", trace, loops: [], blocked: null },
+      }) as unknown as Parameters<typeof stopOf>[0];
+    expect(
+      stopOf(
+        outcome([
+          entry("submit", "failed", "errorOutput"),
+          entry("summarize", "completed"),
+        ]),
+      ),
+    ).toBeNull();
+    expect(
+      stopOf(
+        outcome([
+          entry("submit", "failed", "errorOutput"),
+          entry("send", "failed"),
+        ]),
+      ),
+    ).toBe("send");
   });
 });

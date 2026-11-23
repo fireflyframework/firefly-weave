@@ -293,13 +293,18 @@ function failedStepOf(
   const incident = chosen.record?.incidents[0];
   return incident ? { key: incident.key, code: incident.code } : null;
 }
-/** The instance the simulation stopped at: blocked, or failed. */
-function stopOf(
+/**
+ * The instance the simulation stopped at: blocked, or failed. A failure its
+ * step's On error handled is a failed entry too, and the run went on past it.
+ */
+export function stopOf(
   outcome: Extract<ExecuteOutcome, { kind: "done" }>,
 ): string | null {
   const response = outcome.response;
   if (response.blocked)
     return response.blocked.instanceKey || response.blocked.nodeId;
-  const failed = response.trace.find((entry) => entry.status === "failed");
+  const failed = response.trace.find(
+    (entry) => entry.status === "failed" && !entry.handled,
+  );
   return failed ? failed.instanceKey || failed.nodeId : null;
 }
