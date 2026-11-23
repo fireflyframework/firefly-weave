@@ -34,6 +34,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Runs, incidents, and workers
 
+- Purging a run also removes what its platform events left for event triggers:
+  the stored event and the trigger start records that no longer name a kept run.
+  A start record of a kept run stays, with its event emptied, until that run is
+  purged too. A purge answers `409 WV-RUN-PURGE-BLOCKED`, naming the waiting
+  start, while a trigger start still waits to run with one of the run's events;
+  such a start runs or expires within a day.
 - Workers and native connectors write log entries about the tasks they run.
   In a handler, `task_log().info("Checked the order", code="ORDER.CHECKED",
   items=3)` (from `firefly_weave.sdk.task_log`) writes an entry; the SDK
@@ -319,6 +325,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Versions and schema
 
+- `0047_event_trigger_purge` adds indexes on
+  `event_trigger_payloads(source_run_id)` and `event_trigger_starts(event_id)`
+  and removes, once, the trigger rows left by runs purged before it; like
+  earlier backfills it needs explicit `EXECUTE` on `weave_tenant_ids()`. See the
+  upgrade guide for its locks and run time.
+- `0048_operations_step_fact_keys` adds a partial index on `step_facts` for agent
+  and transaction phase keys, which the agent log reads as key ranges.
 - `0043_operations_logs` adds the empty `execution_logs` and
   `execution_log_days` tables and adds the role check again with the same
   roles; see the upgrade guide. Upgrade CLIs and SDKs with the server:
