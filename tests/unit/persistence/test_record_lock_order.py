@@ -16,6 +16,7 @@
 
 """A record's lock is taken only before the project's operation lock, and never silently skipped."""
 
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
@@ -46,3 +47,24 @@ async def test_an_enlisted_transaction_cannot_take_a_record_lock_after_the_proje
     with pytest.raises(ValueError, match="record's lock"):
         async with service.transaction(Scope(tenant_id=uuid4(), project_id=uuid4()), object(), resource="incident:a"):
             pass
+
+
+async def test_only_a_change_that_names_a_record_hands_it_to_the_unit_of_work():
+    """Every other caller opens its unit of work as before record locks existed, so one without them still works."""
+    opened = []
+
+    class RecordingUnitOfWork:
+        @asynccontextmanager
+        async def open(self, scope, *, mutation=True, **record):
+            opened.append((mutation, record))
+            yield "owned"
+
+    service = DefinitionService.__new__(DefinitionService)
+    service.uow = RecordingUnitOfWork()
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4())
+    async with service.transaction(scope, None, mutation=False) as plain:
+        pass
+    async with service.transaction(scope, None, resource="incident:a") as decided:
+        pass
+    assert (plain, decided) == ("owned", "owned")
+    assert opened == [(False, {}), (True, {"resource": "incident:a"})]

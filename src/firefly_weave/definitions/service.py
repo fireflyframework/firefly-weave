@@ -210,7 +210,14 @@ class DefinitionService:
         self, scope: Scope, supplied: Transaction | None, *, mutation: bool = True, resource: str | None = None
     ) -> AsyncIterator[Transaction]:
         if supplied is None:
-            async with self.uow.open(scope, mutation=mutation, resource=resource) as owned:
+            # Only a change that decides on one record names it; every other caller opens its unit of work exactly as
+            # before record locks existed, so a unit of work that has none keeps working for them.
+            opening = (
+                self.uow.open(scope, mutation=mutation)
+                if resource is None
+                else self.uow.open(scope, mutation=mutation, resource=resource)
+            )
+            async with opening as owned:
                 yield owned
             return
         if resource is not None:
