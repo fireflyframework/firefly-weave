@@ -198,12 +198,15 @@ test("while a name is invalid Studio isn't looking, so it never claims a fresh l
   await openWizardAndLook(page);
   await page.getByRole("textbox", { name: "Cluster name" }).fill("Weave_Test");
   await expect(status(page)).toContainText("Not looking yet");
-  await page.clock.fastForward(60_000);
+  // runFor fires each timer on the way, as real time would. A fastForward
+  // can race the fake clock's own timer loop, which then sets the page's
+  // clock back by the jump, so "Updated" keeps its old text.
+  await page.clock.runFor(60_000);
   const updated = page.locator(".refresh-status .updated");
   await expect(updated).toHaveText("Updated 1 min ago");
   // Refresh has nothing to read either.
   await page.getByRole("button", { name: "Refresh" }).click();
-  await page.clock.fastForward(1_000);
+  await page.clock.runFor(1_000);
   await expect(updated).toHaveText("Updated 1 min ago");
 });
 
@@ -293,7 +296,7 @@ test("Studio notices the new cluster within 15 s of it appearing", async ({
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
   backend.observations = [observation(12_000)];
-  await page.clock.fastForward(5_000);
+  await page.clock.runFor(5_000);
   await expect(status(page).getByRole("status")).toContainText(
     "Cluster connected",
     { timeout: 3_000 },
@@ -373,6 +376,8 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
+  // A jump, not runFor: firing Studio's 1 s ticks one by one for 15 minutes
+  // takes about 15 s of real time.
   await page.clock.fastForward(15 * 60_000);
   await expect(status(page).getByRole("status")).toContainText("Not seen yet");
   await expect(status(page)).toContainText(
@@ -381,7 +386,7 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
   await settled(page);
   const reads = backend.targetReads;
   for (let step = 0; step < 3; step++) {
-    await page.clock.fastForward(5_000);
+    await page.clock.runFor(5_000);
     await settled(page);
   }
   expect(backend.targetReads).toBe(reads);
@@ -401,7 +406,7 @@ test("an unreachable platform shows the partial state and waiting resumes on the
   const backend = await openClusters(page);
   await openWizardAndLook(page);
   backend.unreachable = true;
-  await page.clock.fastForward(5_000);
+  await page.clock.runFor(5_000);
   const problem = page.getByRole("alert").filter({
     hasText: "This section could not be loaded.",
   });
@@ -413,7 +418,7 @@ test("an unreachable platform shows the partial state and waiting resumes on the
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
   // After a failure the next poll waits twice as long.
-  await page.clock.fastForward(10_000);
+  await page.clock.runFor(10_000);
   await expect(problem).toHaveCount(0);
   await expect(status(page).getByRole("status")).toContainText(
     "Cluster connected",
@@ -506,10 +511,13 @@ test("Clusters polls every 5 s while the wizard is open and every 15 s after it"
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
+  // Steps of 5 s, run timer by timer: a jump that fires only a timer or two
+  // can end before the fake clock's own timer loop, which then sets the
+  // page's clock back by the jump and loses that step's poll.
   const count = async (seconds: number) => {
     const before = backend.targetReads;
-    for (let step = 0; step < seconds; step++) {
-      await page.clock.fastForward(1_000);
+    for (let step = 0; step < seconds; step += 5) {
+      await page.clock.runFor(5_000);
       await settled(page);
     }
     return backend.targetReads - before;
