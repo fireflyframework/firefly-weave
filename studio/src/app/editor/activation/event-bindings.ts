@@ -257,6 +257,7 @@ function reaction(declaration: EventDeclaration) {
   );
   const from = declaration.from;
   if (from === null) return `${events} from any workflow in this project`;
+  if (from.length === 0) return `${events} from no workflow`;
   const shown =
     from.length <= NAMED_SOURCES
       ? from

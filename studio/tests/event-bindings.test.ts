@@ -66,6 +66,14 @@ interface Seed {
   disabled?: boolean;
 }
 
+/** Which workflow each activation runs, as the platform knows it. */
+const WORKFLOW_OF = new Map([
+  ["a-older", "notify-team"],
+  ["a-old", "notify-team"],
+  ["a-new", "notify-team"],
+  ["a-other", "sync-references"],
+]);
+
 /** The platform's event trigger routes for one environment, with faults to inject. */
 class FakePlatform implements TriggerApi {
   /** The environment the person has chosen in Studio; the platform serves only ENV. */
@@ -73,13 +81,6 @@ class FakePlatform implements TriggerApi {
   readonly sent: Sent[] = [];
   readonly triggers: Wire[] = [];
   readonly starts = new Map<string, Wire[]>();
-  /** Which workflow each activation runs. */
-  readonly activations = new Map([
-    ["a-older", "notify-team"],
-    ["a-old", "notify-team"],
-    ["a-new", "notify-team"],
-    ["a-other", "sync-references"],
-  ]);
   readonly capabilities = new Set(["trigger.manage", "run.start", "run.read"]);
   /** The next request with this key is applied, then its answer is lost. */
   readonly lose = new Set<string>();
@@ -194,8 +195,7 @@ class FakePlatform implements TriggerApi {
     if (!id) {
       this.require("trigger.manage", "run.start", "run.read");
       if (body["may_reconcile"]) this.require("transaction.reconcile");
-      const workflow = this.activations.get(String(body["activation_id"]));
-      if (!workflow) throw notFound();
+      if (!WORKFLOW_OF.has(String(body["activation_id"]))) throw notFound();
       if (this.enabled().some((trigger) => trigger["name"] === body["name"]))
         throw refusal(409, "WV-TRIGGER-CONFLICT");
       if (this.enabled().length >= 64) throw refusal(409, "WV-TRIGGER-LIMIT");
@@ -247,7 +247,10 @@ class FakePlatform implements TriggerApi {
         "WV-TRIGGER-DISABLED",
         "Create a new trigger; this one is stopped.",
       );
+    const workflow = WORKFLOW_OF.get(String(body["activation_id"]));
+    if (!workflow) throw notFound();
     trigger["activation_id"] = body["activation_id"];
+    trigger["workflow_name"] = workflow;
     trigger["principal_id"] = "p-me";
     trigger["revision"] = Number(trigger["revision"]) + 1;
     return trigger;
@@ -256,8 +259,14 @@ class FakePlatform implements TriggerApi {
 
 const notFound = () => refusal(404, "WV-NOT-FOUND", "Event trigger not found");
 
-/** A trigger as the platform answers it: `source_workflows` left out for any workflow. */
+/**
+ * A trigger as the platform answers it: `source_workflows` left out for any
+ * workflow, and `workflow_name` the workflow its activation runs.
+ */
 function view(seed: Seed & { principal?: string }): Wire {
+  const workflow = WORKFLOW_OF.get(seed.activation);
+  if (!workflow)
+    throw Error(`The platform knows no activation ${seed.activation}`);
   return {
     name: seed.name,
     activation_id: seed.activation,
@@ -267,7 +276,7 @@ function view(seed: Seed & { principal?: string }): Wire {
       ? {}
       : { may_reconcile: seed.mayReconcile }),
     id: seed.id,
-    workflow_name: "notify-team",
+    workflow_name: workflow,
     principal_id: seed.principal ?? "p-owner",
     revision: seed.revision ?? 1,
     disabled: seed.disabled ?? false,
@@ -732,6 +741,20 @@ describe("replacing the trigger when the version reacts to other events", () => 
     expect(platform.enabled().map((trigger) => trigger["id"])).toEqual([
       "t-made-1",
     ]);
+  });
+
+  it("says so when the version names no workflow to react to", () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    const row = only(
+      planFor(platform, {
+        storedId: "t-1",
+        declaration: { events: ["transaction.in_doubt"], from: [] },
+      }),
+    );
+    expect(row.text).toBe(
+      "Replace platform event trigger notify-team: 1.2.0 reacts to Needs attention from no workflow (now: Needs attention from move-between-systems). Studio creates notify-team-2, then stops notify-team.",
+    );
   });
 
   it("finishes in the environment it was activated in when the person chooses another", async () => {
