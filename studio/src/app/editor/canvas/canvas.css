@@ -608,6 +608,24 @@ weave-canvas-view,
   inset: -6px;
   border-radius: 50%;
 }
+/* Below 768 px or with a coarse pointer, an output and an empty path's slot
+   take a 44 px tap on screen at any zoom (--zoom is the canvas's). An
+   output's area starts at its step's card, 20 units left of its center, and
+   grows right, up and down; it is placed from inside the output's 2 px
+   border. */
+@media (max-width: 767px), (pointer: coarse) {
+  .canvas-v2 .handle::before {
+    --hit: max(24px, calc(44px / var(--zoom, 1)));
+    inset: calc(4px - var(--hit) / 2) calc(24px - var(--hit))
+      calc(4px - var(--hit) / 2) -16px;
+    border-radius: 0;
+  }
+  .canvas-v2 .lane-slot::before {
+    content: "";
+    position: absolute;
+    inset: min(0px, calc(32px - 22px / var(--zoom, 1)));
+  }
+}
 .canvas-v2 .handle-in {
   left: -6px;
   top: calc(50% - 6px);
