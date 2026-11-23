@@ -151,6 +151,37 @@ weave-test-event-pane {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* The Output pane's sub-row: what the data is (the pills and the count)
+   wraps in its own group; Pin, Edit and More output actions never wrap and
+   end the first row. Each line of pills is centered on the buttons' height,
+   so the first one sits level with them, and a single row stays centered in
+   the bar. */
+.pane-output-sub {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-block: calc(
+    (var(--control-touch) - var(--sd-target, var(--control-touch))) / 2
+  );
+}
+.pane-sub-info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  min-height: var(--sd-target, var(--control-touch));
+  padding-block: calc((var(--sd-target, var(--control-touch)) - 24px) / 2);
+}
+.pane-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
 /* An AI task's model requests and tokens: a row of its own under the source,
    so the source tag, Pin and Edit output keep their room on every width. */
 .pane-usage {
@@ -474,10 +505,10 @@ weave-input-pane.is-compact .pane-source-field::before {
    opens the run in Operate. Its target reaches 44 px tall without the pill
    growing, and it shortens (the run ID first) before the count, Pin or Edit
    leave the row. */
-.pane-sub:has(> .pane-real-tag) {
+.pane-sub-info:has(> .pane-real-tag) {
   flex-wrap: nowrap;
 }
-.pane-sub:has(> .pane-real-tag) > .pane-count {
+.pane-sub-info:has(> .pane-real-tag) > .pane-count {
   flex: none;
   white-space: nowrap;
 }
@@ -551,7 +582,6 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 .step-details button.pane-pin {
   flex: none;
-  margin-left: auto;
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);

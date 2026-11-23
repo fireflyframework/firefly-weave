@@ -267,117 +267,130 @@ export function simulateOpening(
     @let recorded = runView();
     @let real = recorded ? null : realOf();
     @let stop = recorded ? null : stoppedHere();
-    <div class="pane-sub">
-      @if (stop) {
-        <span class="pill" data-tone="warning"
-          ><weave-icon name="schedule" [size]="16" />Stopped here</span
-        >
-        @if (stop.missing) {
-          <span class="pane-stopped-why">{{ stop.step }} needs test data</span>
-        }
-      } @else if (recorded) {
-        <span class="pill" [attr.data-tone]="recorded.tone">
-          @if (recorded.handled) {
-            <weave-icon name="degraded" [size]="16" />
+    <!-- What the data is (pills and the count) wraps; Pin, Edit and More
+         output actions stay together at the end of the first row. -->
+    <div class="pane-sub pane-output-sub">
+      <div class="pane-sub-info">
+        @if (stop) {
+          <span class="pill" data-tone="warning"
+            ><weave-icon name="schedule" [size]="16" />Stopped here</span
+          >
+          @if (stop.missing) {
+            <span class="pane-stopped-why"
+              >{{ stop.step }} needs test data</span
+            >
           }
-          {{
-            calledRunFailed(recorded)
-              ? "Finished · the called run failed"
-              : recorded.pill
-          }}</span
-        >
-        <span class="pill pane-source-tag" data-tone="info">{{
-          recorded.tag
+        } @else if (recorded) {
+          <span class="pill" [attr.data-tone]="recorded.tone">
+            @if (recorded.handled) {
+              <weave-icon name="degraded" [size]="16" />
+            }
+            {{
+              calledRunFailed(recorded)
+                ? "Finished · the called run failed"
+                : recorded.pill
+            }}</span
+          >
+          <span class="pill pane-source-tag" data-tone="info">{{
+            recorded.tag
+          }}</span>
+        } @else if (went) {
+          <!-- It failed in the last execution and its On error went on. -->
+          <span class="pill" data-tone="warning"
+            ><weave-icon name="degraded" [size]="16" />Failed, continued</span
+          >
+          <span class="pill pane-source-tag"
+            >{{ simulatedWords() }} · {{ went.when }}</span
+          >
+        } @else if (failing) {
+          <span class="pill" data-tone="warning">{{
+            failing.leftOut ? "Failure left out" : "Fails when executed"
+          }}</span>
+        } @else if (pin) {
+          <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
+        } @else if (real) {
+          <button
+            type="button"
+            class="pill pane-source-tag pane-real-tag"
+            data-tone="info"
+            [attr.aria-label]="
+              'From ' +
+              real.environmentName +
+              ', run ' +
+              real.runId +
+              '. Open it in Operate'
+            "
+            (click)="openRun(real.runId)"
+          >
+            <span class="pane-real-text"
+              >From {{ real.environmentName }} · run
+              <span class="pane-real-run">{{ short(real.runId) }}</span></span
+            ><weave-icon name="external" [size]="16" />
+          </button>
+        } @else if (ran) {
+          <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
+        } @else if (event() !== undefined && value() === undefined) {
+          <span class="pill" data-tone="info">Sample</span>
+        }
+        @let paths = this.paths();
+        <span class="pane-count">{{
+          none ||
+          stop ||
+          detachedCall() ||
+          (recorded && recorded.output.kind !== "value")
+            ? ""
+            : paths
+              ? paths.took
+              : event() !== undefined && view() === "table"
+                ? tableCountOf()
+                : event() !== undefined && view() !== "schema"
+                  ? sampleCount(event()) + skippedText()
+                  : countLabel(rows.length, query() ? shown.length : undefined)
         }}</span>
-      } @else if (went) {
-        <!-- It failed in the last execution and its On error went on. -->
-        <span class="pill" data-tone="warning"
-          ><weave-icon name="degraded" [size]="16" />Failed, continued</span
-        >
-        <span class="pill pane-source-tag"
-          >{{ simulatedWords() }} · {{ went.when }}</span
-        >
-      } @else if (failing) {
-        <span class="pill" data-tone="warning">{{
-          failing.leftOut ? "Failure left out" : "Fails when executed"
-        }}</span>
-      } @else if (pin) {
-        <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
-      } @else if (real) {
-        <button
-          type="button"
-          class="pill pane-source-tag pane-real-tag"
-          data-tone="info"
-          [attr.aria-label]="
-            'From ' +
-            real.environmentName +
-            ', run ' +
-            real.runId +
-            '. Open it in Operate'
-          "
-          (click)="openRun(real.runId)"
-        >
-          <span class="pane-real-text"
-            >From {{ real.environmentName }} · run
-            <span class="pane-real-run">{{ short(real.runId) }}</span></span
-          ><weave-icon name="external" [size]="16" />
-        </button>
-      } @else if (ran) {
-        <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
-      } @else if (event() !== undefined && value() === undefined) {
-        <span class="pill" data-tone="info">Sample</span>
-      }
-      @let paths = this.paths();
-      <span class="pane-count">{{
-        none ||
-        stop ||
-        detachedCall() ||
-        (recorded && recorded.output.kind !== "value")
-          ? ""
-          : paths
-            ? paths.took
-            : event() !== undefined && view() === "table"
-              ? tableCountOf()
-              : event() !== undefined && view() !== "schema"
-                ? sampleCount(event()) + skippedText()
-                : countLabel(rows.length, query() ? shown.length : undefined)
-      }}</span>
-      @if (canPin) {
-        <button
-          type="button"
-          class="icon-button pane-pin"
-          [attr.aria-pressed]="!!pin || kept"
-          [attr.aria-label]="
-            keepsAnswer
-              ? 'Keep as test data'
-              : pin
-                ? 'Unpin output'
-                : 'Pin output'
-          "
-          [attr.aria-disabled]="pin || kept || realPinnable() ? null : 'true'"
-          [title]="pinTitle(!!pin)"
-          (click)="togglePin()"
-        >
-          <weave-icon [name]="pin || kept ? 'unpin' : 'pin'" [size]="16" />
-        </button>
-        <button
-          type="button"
-          class="icon-button pane-edit"
-          aria-label="Edit output"
-          title="Edit output"
-          [attr.aria-pressed]="editing()"
-          (click)="setOutput()"
-        >
-          <weave-icon name="edit" [size]="16" />
-        </button>
-      }
-      @if (moreActions(); as actions) {
-        <weave-row-menu
-          class="pane-more"
-          label="More output actions"
-          [items]="actions"
-          [iconSize]="16"
-        />
+      </div>
+      @let actions = moreActions();
+      @if (canPin || actions) {
+        <div class="pane-actions" role="group" aria-label="Output actions">
+          @if (canPin) {
+            <button
+              type="button"
+              class="icon-button pane-pin"
+              [attr.aria-pressed]="!!pin || kept"
+              [attr.aria-label]="
+                keepsAnswer
+                  ? 'Keep as test data'
+                  : pin
+                    ? 'Unpin output'
+                    : 'Pin output'
+              "
+              [attr.aria-disabled]="
+                pin || kept || realPinnable() ? null : 'true'
+              "
+              [title]="pinTitle(!!pin)"
+              (click)="togglePin()"
+            >
+              <weave-icon [name]="pin || kept ? 'unpin' : 'pin'" [size]="16" />
+            </button>
+            <button
+              type="button"
+              class="icon-button pane-edit"
+              aria-label="Edit output"
+              title="Edit output"
+              [attr.aria-pressed]="editing()"
+              (click)="setOutput()"
+            >
+              <weave-icon name="edit" [size]="16" />
+            </button>
+          }
+          @if (actions) {
+            <weave-row-menu
+              class="pane-more"
+              label="More output actions"
+              [items]="actions"
+              [iconSize]="16"
+            />
+          }
+        </div>
       }
     </div>
     @if (simulating(); as open) {

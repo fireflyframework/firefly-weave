@@ -27,7 +27,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repository } from "../python-path";
 import { openWorkflow, type CanvasPage } from "./canvas-po";
-import { StepDetailsPage, yamlFile } from "./step-details-po";
+import {
+  StepDetailsPage,
+  openStepFixture,
+  withLanguageFeatures,
+  yamlFile,
+} from "./step-details-po";
+import { connected, defaultCatalog } from "./support";
 import {
   box,
   boxes,
@@ -36,7 +42,7 @@ import {
   showParameters,
   type Box,
 } from "./step-geometry";
-import { outputPane } from "./test-data-po";
+import { PROJECT, TENANT, outputPane } from "./test-data-po";
 
 const SIZES = [
   { tag: "1440x900", use: { viewport: { width: 1440, height: 900 } } },
@@ -93,6 +99,52 @@ spec:
   output: {literal: null}
 `,
 );
+
+/** An action that changes data: its output can be pinned and its failure simulated. */
+const SUBMIT = {
+  apiVersion: "weave/v1alpha1",
+  kind: "Action",
+  metadata: { name: "requests.submit", version: "1.0.0" },
+  spec: {
+    implementation: {
+      kind: "worker",
+      taskType: "requests.submit",
+      taskVersion: "1.0.0",
+    },
+    sideEffect: "non_idempotent",
+    timeoutSeconds: 30,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object", properties: { id: { type: "string" } } },
+  },
+};
+const INTAKE = yamlFile(
+  "request-intake.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: request-intake, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: submit
+      kind: action
+      uses: requests.submit@1.0.0
+      with: {literal: {}}
+      onError: continue
+  output: {literal: null}
+`,
+);
+/** request-intake, its action in the catalog, with step details open. */
+const openIntake = (page: Page) =>
+  openStepFixture(page, INTAKE, async (p) => {
+    const result = await connected(p, {
+      catalog: [...defaultCatalog, { id: "a9", document: SUBMIT }],
+      tenantId: TENANT,
+      projectId: PROJECT,
+    });
+    await withLanguageFeatures(p, ["text.concat", "text.join", "flow.onError"]);
+    return result;
+  });
 
 async function open(page: Page): Promise<CanvasPage> {
   await page.route(
@@ -342,6 +394,47 @@ for (const size of SIZES)
       expectAnswers(cancel, simulate, width);
       expect(await clippedText(dialog, "")).toEqual([]);
       await expectNoSidewaysScroll(dialog);
+      await expectNoPageScroll(page);
+    });
+
+    test("More output actions ends the Output toolbar's first row, after Pin and Edit", async ({
+      page,
+    }) => {
+      const details = await openIntake(page);
+      await details.open("submit");
+      const pane = await outputPane(details);
+      // Pinned output, then a simulated failure over it: a pill and the count before the actions.
+      await pane.getByRole("button", { name: "Set test output" }).click();
+      await pane
+        .locator(".output-editor")
+        .getByRole("textbox")
+        .first()
+        .fill(JSON.stringify({ id: "PINNED-42", checked: true }));
+      await pane.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(pane.locator(".pinned-banner")).toBeVisible();
+      const more = pane.getByRole("button", { name: "More output actions" });
+      await more.click();
+      await page.getByRole("menuitem", { name: "Simulate a failure…" }).click();
+      await page
+        .getByRole("dialog", { name: "Simulate a failure of submit" })
+        .getByRole("button", { name: "Simulate failure" })
+        .click();
+      await expect(pane.locator("weave-failure-banner")).toBeVisible();
+      const pin = await box(pane.getByRole("button", { name: "Unpin output" }));
+      const edit = await box(pane.getByRole("button", { name: "Edit output" }));
+      const last = await box(more);
+      const pill = await box(pane.locator(".pane-sub .pill").first());
+      const sub = await box(pane.locator(".pane-sub"));
+      // Pin, Edit, then More output actions, on the first row with the first pill.
+      expect(edit.x).toBeGreaterThan(pin.x);
+      expect(last.x).toBeGreaterThan(edit.x);
+      for (const button of [pin, edit, last])
+        near(button.y + button.height / 2, pill.y + pill.height / 2, "row", 1);
+      near(last.right, sub.right - 16, "the row's end", 1);
+      // One group for the three, named for a screen reader.
+      await expect(
+        pane.getByRole("group", { name: "Output actions" }).getByRole("button"),
+      ).toHaveText(["", "", ""]);
       await expectNoPageScroll(page);
     });
 

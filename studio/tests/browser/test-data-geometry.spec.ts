@@ -71,23 +71,29 @@ for (const size of sizes)
       const count = await box(pane.locator(".pane-count"));
       const edit = await box(pane.locator(".pane-edit"));
       const pin = await box(pane.locator(".pane-pin"));
-      for (const button of [edit, pin])
+      const more = await box(
+        pane.getByRole("button", { name: "More output actions" }),
+      );
+      for (const button of [edit, pin, more])
         expect(Math.round(button.height)).toBe(target);
       expectAligned(
-        [tag.middle, count.middle, edit.middle, pin.middle],
+        [tag.middle, count.middle, edit.middle, pin.middle, more.middle],
         "sub-row",
         2,
       );
-      // Pin, then Edit (the design's order); one right edge per pane: Edit ends where the header's search ends.
+      // Pin, Edit, then More output actions (the design's order); one right
+      // edge per pane: the last of them ends where the header's search ends.
       const search = await box(pane.locator(".pane-search-toggle"));
-      expectAligned([edit.right, search.right], "pane right edge");
+      expectAligned([more.right, search.right], "pane right edge");
       const content = await box(pane.locator(".pane-content"));
-      expect(edit.right).toBeLessThanOrEqual(content.right + 1);
+      expect(more.right).toBeLessThanOrEqual(content.right + 1);
       expect(pin.right).toBeLessThanOrEqual(edit.x);
+      expect(edit.right).toBeLessThanOrEqual(more.x);
       for (const [a, b] of [
         [tag, count],
         [count, pin],
         [pin, edit],
+        [edit, more],
       ])
         expect(intersects(a, b)).toBe(false);
       expect(await clippedText(details.dialog)).toEqual([]);
