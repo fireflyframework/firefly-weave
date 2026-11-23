@@ -476,6 +476,11 @@ class FactReadRepository(FactRepository):
         if query.status:
             clauses.append("i.status=ANY(:statuses)")
             params["statuses"] = query.status
+        if query.priority is not None:
+            from firefly_weave.contracts.transactions import IN_DOUBT_CODES
+
+            clauses.append("i.code=ANY(:in_doubt)" if query.priority == "high" else "NOT (i.code=ANY(:in_doubt))")
+            params["in_doubt"] = sorted(IN_DOUBT_CODES)
         if not query.include_test:
             clauses.append("NOT coalesce(f.test,false)")
         for name, operator in (("opened_after", ">="), ("opened_before", "<")):

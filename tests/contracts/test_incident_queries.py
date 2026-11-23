@@ -130,10 +130,12 @@ def test_query_defaults_list_every_status_newest_opened_first():
         "opened_after",
         "opened_before",
         "include_test",
+        "priority",
         "order",
         "limit",
         "cursor",
     ]
+    assert default.priority is None
 
 
 @pytest.mark.parametrize(
@@ -232,6 +234,79 @@ def test_cursor_collection_keeps_id_cursors_and_binds_filters_order_and_run():
         query(IncidentQuery, {"status": ["resolved", "active"], "limit": 3}).cursor_collection()
         == query(IncidentQuery, {"status": ["active", "resolved", "active"]}).cursor_collection()
     )
+
+
+# Collections main issued cursors for before incidents could be filtered by priority, worked out on that version.
+EARLIER_COLLECTIONS = [
+    ({}, None, "incidents:7e013fbeaa6d17c4648d7cd7543279832a5baecb29f235641c310d16d19d9d20:opened_desc"),
+    (
+        {"status": ["active"], "code": "WV-TXN-UNDO-STUCK"},
+        "5a7e2c44-91b3-4c0e-8f6d-2d3c4b5a6e7f",
+        "incidents.run/5a7e2c44-91b3-4c0e-8f6d-2d3c4b5a6e7f:"
+        "3f5e81b3c28f622ddcabe4f10a1a81775181e7905b039131023e506330e72ec5:opened_desc",
+    ),
+    (
+        {"order": "id", "status": ["active"]},
+        None,
+        "incidents:5203565f1523cff6edcef6be7f799e71f73bf6728129a62c9ce6fa05952571b4:id",
+    ),
+]
+
+
+@pytest.mark.parametrize("values,run,collection", EARLIER_COLLECTIONS)
+def test_a_cursor_from_before_the_priority_filter_still_continues_its_page(values, run, collection):
+    from uuid import UUID
+
+    from firefly_weave.api.transport import decode_cursor_v2, encode_cursor_v2
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.incident_queries import IncidentQuery
+
+    owner = None if run is None else UUID(run)
+    parsed = query(IncidentQuery, values)
+    assert parsed.cursor_collection(owner) == collection
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    issued = encode_cursor_v2(scope, collection, "2026-10-07T11:00:00+00:00", str(uuid4()))
+    assert decode_cursor_v2(issued, scope, parsed.cursor_collection(owner)) is not None
+    # The same listing narrowed to one priority is another collection: the earlier cursor never continues it.
+    banded = query(IncidentQuery, {**values, "priority": "high"}).cursor_collection(owner)
+    with pytest.raises(ValueError):
+        decode_cursor_v2(issued, scope, banded)
+
+
+def test_priority_is_part_of_the_cursor_digest():
+    from firefly_weave.api.transport import decode_cursor_v2, encode_cursor_v2
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.incident_queries import IncidentQuery
+
+    high, normal, both = (
+        IncidentQuery(priority="high"),
+        IncidentQuery(priority="normal"),
+        IncidentQuery(),
+    )
+    collections = {high.cursor_collection(), normal.cursor_collection(), both.cursor_collection()}
+    assert len(collections) == 3
+    assert len({IncidentQuery(order="id", priority=value).cursor_collection() for value in ("high", "normal")}) == 2
+    # ID order with a priority is filtered, so it never continues the unfiltered raw ID cursors.
+    assert IncidentQuery(order="id", priority="high").cursor_collection() != "incidents"
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    issued = encode_cursor_v2(scope, high.cursor_collection(), "2026-10-07T11:00:00+00:00", str(uuid4()))
+    assert decode_cursor_v2(issued, scope, high.cursor_collection()) is not None
+    with pytest.raises(ValueError):
+        decode_cursor_v2(issued, scope, normal.cursor_collection())
+
+
+def test_priority_is_read_from_the_address_and_an_unknown_one_is_refused():
+    from firefly_weave.api.transport import parse_query
+    from firefly_weave.contracts.incident_queries import IncidentQuery
+
+    assert parse_query(QueryParams("priority=high&status=active"), IncidentQuery).priority == "high"
+    assert parse_query(QueryParams("priority=normal"), IncidentQuery).priority == "normal"
+    for raw in ("priority=urgent", "priority=HIGH", "priority=", "priority=high&priority=normal"):
+        with pytest.raises(ValueError) as failure:
+            parse_query(QueryParams(raw), IncidentQuery)
+        # A closed value like order: a validation error, never a filter combination error.
+        errors = failure.value.errors() if isinstance(failure.value, ValidationError) else []
+        assert "weave_filter" not in {item["type"] for item in errors}
 
 
 def test_incident_operations_declare_the_query_and_the_direct_read():
