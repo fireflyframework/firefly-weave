@@ -596,6 +596,24 @@ def test_a_failure_a_step_continues_after_is_reported_as_handled_and_the_run_goe
     assert entries(answer)["note"]["status"] == "completed"
 
 
+@pytest.mark.parametrize("outcome", ["failed", "unknown"])
+def test_an_action_reports_the_outcome_and_attempts_its_failure_was_simulated_with(outcome: str):
+    # check only reads data, so an unknown outcome is handled like any other.
+    answer = run(
+        workflow(CHECK | {"onError": "continue"}, NOTE),
+        errors={"node:check": REFUSED | {"outcome": outcome, "attempts": 2}},
+    )
+    check = entries(answer)["check"]
+    assert (check["handled"], check["error"]["outcome"], check["error"]["attempts"]) == ("continue", outcome, 2)
+
+
+def test_a_transform_reports_its_simulated_failure_as_not_started_whatever_the_outcome():
+    # A transform does nothing outside the run, so it fails before it does anything.
+    for outcome in ("failed", "unknown", "not_started"):
+        answer = run(workflow(NOTE | {"onError": "continue"}), errors={"node:note": REFUSED | {"outcome": outcome}})
+        assert entries(answer)["note"]["error"]["outcome"] == "not_started", outcome
+
+
 def test_a_failure_an_error_path_handles_runs_the_path_and_gives_the_step_the_path_output():
     path = {"steps": [NOTIFY_TEAM], "output": {"ref": "/steps/notify-team/output"}}
     answer = run(workflow(CHECK | {"onError": "errorOutput", "errorPath": path}), errors={"node:check": REFUSED})
