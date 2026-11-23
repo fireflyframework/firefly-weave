@@ -221,6 +221,26 @@ SPDX-License-Identifier: Apache-2.0
   overflow-wrap: anywhere;
   font: var(--type-mono);
 }
+/* Where the run stopped: the code under the step's name in the danger tone,
+   as a handled step's is in the warning tone, then why its On error didn't
+   go on. */
+.run-log-entry[data-status="failed"]:has(.run-log-handled-code) {
+  padding-block: var(--space-1);
+}
+.run-log-entry[data-status="failed"] .run-log-handled-code {
+  color: var(--danger-ink);
+}
+.run-log-stop-reason {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 24px);
+  color: var(--text);
+  font: var(--type-caption);
+}
+.run-log-in-path > .run-log-stop-reason {
+  padding-inline-start: calc(
+    var(--space-3) + 24px + var(--path-depth, 1) * 24px
+  );
+}
 /* An error path: "Error path", then its steps, 24 px further in for each path around them. */
 .run-log-path {
   display: flex;

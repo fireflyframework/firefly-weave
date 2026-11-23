@@ -25,6 +25,7 @@ import {
   handledSentence,
   loopLog,
   runStatus,
+  stoppedRow,
 } from "../src/app/editor/debugger/run-log-panel";
 import { errorPathsAround } from "../src/app/editor/state/execute-gate";
 import { runFailureOf } from "../src/app/editor/canvas/trace-playback";
@@ -242,5 +243,74 @@ describe("a run that handled one failure, then stopped at another", () => {
     expect(runStatus(called, null)).toBe("Failed at stop-here");
     expect(runFailureOf(called, "stop-here", undefined)).toEqual({});
     expect(runFailureOf(called, "send", undefined)).toBeNull();
+  });
+});
+
+describe("the row of the step a run stopped at", () => {
+  // submit failed with an unknown outcome; it changes data, so the run stopped with an incident.
+  const unknown = {
+    status: "failed",
+    trace: [
+      {
+        index: 0,
+        nodeId: "submit",
+        instanceKey: "",
+        kind: "action",
+        status: "failed",
+        error: { ...error("submit"), outcome: "unknown" },
+      },
+    ],
+    loops: [],
+    blocked: null,
+    diagnostics: [
+      {
+        code: "WV-TASK-AMBIGUOUS",
+        message: "Whether it applied is unknown.",
+        path: "",
+      },
+    ],
+  } as unknown as ExecuteResponse;
+  const workflow = (onError?: string) => ({
+    spec: {
+      steps: [
+        {
+          id: "submit",
+          kind: "action",
+          uses: "requests.submit@1.0.0",
+          ...(onError ? { onError } : {}),
+        },
+      ],
+    },
+  });
+
+  it("gives its code and says why its On error didn't apply when the outcome is unknown", () => {
+    expect(stoppedRow(unknown, workflow("continue"))).toEqual({
+      step: "submit",
+      code: "WV-TASK-AMBIGUOUS",
+      reason:
+        "Its outcome is unknown and it changes data, so the run stopped with an incident, whatever On error says.",
+    });
+  });
+
+  it("gives its code alone when its On error stops the run anyway", () => {
+    expect(stoppedRow(unknown, workflow())).toEqual({
+      step: "submit",
+      code: "WV-TASK-AMBIGUOUS",
+      reason: null,
+    });
+  });
+
+  it("gives the step's own code when the answer has no incident", () => {
+    const plain = {
+      ...unknown,
+      trace: [{ ...unknown.trace[0], error: error("submit") }],
+      diagnostics: [],
+    } as unknown as ExecuteResponse;
+    expect(stoppedRow(plain, workflow())).toEqual({
+      step: "submit",
+      code: "REQUEST_REFUSED",
+      reason: null,
+    });
+    expect(stoppedRow(HANDLED, workflow("errorOutput"))).toBeNull();
   });
 });

@@ -439,9 +439,15 @@ test("an unknown outcome of a step that changes data stops the run with an incid
   const log = page.getByRole("region", { name: "Run log" });
   await expect(log.locator(".run-log-status")).toHaveText("Failed at submit");
   await expect(log.locator(".run-log-outcome")).toHaveCount(0);
-  await expect(log.locator('[data-entry="submit"]')).toHaveAttribute(
-    "data-status",
-    "failed",
+  const row = log.locator('[data-entry="submit"]');
+  await expect(row).toHaveAttribute("data-status", "failed");
+  // Under the row, as a handled step's: the code, then why Continue didn't apply.
+  await expect(row.locator(".run-log-handled-code")).toHaveText(
+    "WV-TASK-AMBIGUOUS",
+  );
+  await expect(row).toHaveAccessibleName("submit, failed, WV-TASK-AMBIGUOUS");
+  await expect(row).toHaveAccessibleDescription(
+    "Its outcome is unknown and it changes data, so the run stopped with an incident, whatever On error says.",
   );
   await expect(log.locator('[data-entry="summarize"]')).toHaveCount(0);
   const canvas = new CanvasPage(page);
