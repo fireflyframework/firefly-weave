@@ -38,8 +38,8 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/desktop.yml'
-permissions:
-  contents: read
+# The token can do nothing unless a job asks for more: the installer job only reads the repository.
+permissions: {}
 # A new commit on a pull request cancels that pull request's older run, as in Checks. Every other run (main,
 # tags, manual dispatch) gets its own group, so no build of a main commit or a tag is cancelled or replaced.
 concurrency:
@@ -70,6 +70,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     # About 1.5 times the slowest recent green build (28 minutes, the Intel macOS installers).
     timeout-minutes: 45
+    permissions:
+      contents: read
     env:
       # crates.io's index broke off over HTTP/2 (curl error 16, "Error in the HTTP2 framing layer"); with
       # multiplexing off, cargo asks for HTTP/1.1, which cannot fail that way.

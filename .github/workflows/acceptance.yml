@@ -33,8 +33,8 @@ on:
         type: choice
         options: [cluster, k3d]
         default: cluster
-permissions:
-  contents: read
+# The token can do nothing unless a job asks for more: every job here only reads the repository.
+permissions: {}
 concurrency:
   # One run per pull request commit, as in Checks; each push to main keeps its own run.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
@@ -45,6 +45,8 @@ jobs:
     if: github.event.pull_request.draft == false # drafts wait for ready_for_review
     runs-on: ubuntu-24.04
     timeout-minutes: 110
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

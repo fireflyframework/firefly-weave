@@ -25,8 +25,8 @@ on:
         required: true
         default: false
 
-permissions:
-  contents: read
+# The token can do nothing unless a job asks for more: the signing job only reads the repository.
+permissions: {}
 
 jobs:
   macos:
@@ -44,6 +44,8 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    permissions:
+      contents: read
     env:
       # The same cargo network settings as the unsigned installers in desktop.yml, which say why.
       CARGO_HTTP_MULTIPLEXING: 'false'

@@ -144,6 +144,66 @@ def test_desktop_installers_cancel_only_a_pull_requests_older_run():
     assert workflow("desktop.yml")["concurrency"] == workflow("ci.yml")["concurrency"]
 
 
+# The only jobs whose token may write, and what it writes: the documentation site goes to GitHub Pages, which
+# takes it with the job's OIDC token.
+WRITERS = {("docs.yml", "deploy"): {"pages": "write", "id-token": "write"}}
+
+
+def test_every_token_starts_with_no_permission_and_each_job_asks_only_for_what_it_uses():
+    # A job added without a permissions block gets a token that can do nothing; a job that checks out the repository
+    # reads it, and no other job asks for more unless WRITERS names it.
+    granted = {}
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        document = workflow(path.name)
+        assert document["permissions"] == {}, path.name
+        for name, job in document["jobs"].items():
+            checks_out = any(step.get("uses", "").startswith("actions/checkout@") for step in job.get("steps", []))
+            expected = WRITERS.get((path.name, name), {"contents": "read"} if checks_out else {})
+            if job.get("permissions") != expected:
+                granted[(path.name, name)] = job.get("permissions")
+    assert granted == {}
+
+
+def self_hosted_jobs():
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in jobs(path.name).items():
+            labels = job["runs-on"] if isinstance(job["runs-on"], list) else [job["runs-on"]]
+            if "self-hosted" in labels:
+                found.append((path.name, name))
+    return found
+
+
+def test_only_a_manual_run_of_the_release_gate_reaches_the_owned_self_hosted_runner():
+    # Its workflow has no pull request, push or tag trigger, so no change to another job's condition can send a
+    # pull request's code to that runner through it.
+    assert self_hosted_jobs() == [("release-gate.yml", "release")]
+    document = workflow("release-gate.yml")
+    assert list(document["on"]) == ["workflow_dispatch"]
+    job = document["jobs"]["release"]
+    assert job["runs-on"] == ["self-hosted", "weave-owned-release"]
+    assert job["environment"] == "weave-owned-release"
+    (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+    assert checkout["with"]["persist-credentials"] is False
+    assert [step["run"] for step in job["steps"] if "run" in step] == [
+        "uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python "
+        "scripts/check.py --release --docker-context colima-weave-tests"
+    ]
+
+
+def test_the_accepted_self_hosted_runner_finding_names_the_line_the_runner_is_on():
+    # zizmor ignores a finding by file and line: once the job moves, a stale entry ignores nothing and the reviewed
+    # finding comes back in every auditor run, so the entry must follow the runs-on line.
+    config = yaml.safe_load((ROOT / ".github/zizmor.yml").read_text(encoding="utf-8"))
+    lines = (WORKFLOWS / "release-gate.yml").read_text(encoding="utf-8").splitlines()
+    (number,) = [
+        index
+        for index, line in enumerate(lines, start=1)
+        if line.strip().startswith("runs-on:") and "self-hosted" in line
+    ]
+    assert config["rules"]["self-hosted-runner"]["ignore"] == [f"release-gate.yml:{number}"]
+
+
 def test_every_job_has_a_timeout_below_githubs_six_hour_default():
     missing = [
         (path.name, name)
@@ -489,7 +549,8 @@ def test_the_acceptance_workflow_reads_only_and_never_keeps_or_names_credentials
     # It runs for fork pull requests, so it gets no write token, keeps no checkout credentials and uses no secret.
     text = (WORKFLOWS / "acceptance.yml").read_text(encoding="utf-8")
     document = workflow("acceptance.yml")
-    assert document["permissions"] == {"contents": "read"}
+    assert document["permissions"] == {}
+    assert [job["permissions"] for job in document["jobs"].values()] == [{"contents": "read"}] * len(document["jobs"])
     assert "pull_request_target" not in document["on"]
     checkouts = {
         name: [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout")]
