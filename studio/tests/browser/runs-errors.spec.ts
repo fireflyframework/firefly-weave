@@ -238,6 +238,25 @@ test.describe("handled failures on the Runs tab at 1440x900", () => {
     ).toHaveAttribute("data-badge", "done");
   });
 
+  test("a run still going says in its header how many errors it handled", async ({
+    page,
+  }) => {
+    const { runs } = await openRuns(page);
+    await runs.row(RUN_IDS.running).click();
+    const caption = runs.canvas.locator(".run-header .run-caption");
+    await expect(caption.locator(".run-handled")).toHaveText(
+      "2 errors handled",
+    );
+    // It leads the caption: no separator before it while "Following this
+    // run" sits on the title line.
+    await expect(caption.locator(".run-follow-caption")).toBeHidden();
+    expect(
+      await caption
+        .locator(".run-handled")
+        .evaluate((node) => getComputedStyle(node, "::before").content),
+    ).toBe("none");
+  });
+
   test("step details in run mode open on the error banner, then the error path's result", async ({
     page,
   }) => {

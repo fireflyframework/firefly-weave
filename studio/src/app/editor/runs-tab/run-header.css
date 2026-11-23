@@ -149,6 +149,15 @@ button.icon-button.run-copy {
   margin-right: 4px;
   color: var(--subtle);
 }
+/* "Following this run" leads the caption only below 480 px; above, what
+   follows it leads, with no separator before it. */
+@media (min-width: 480px) {
+  .run-caption
+    > span.run-follow-caption
+    + span:not(.run-version, .run-test)::before {
+    content: none;
+  }
+}
 .run-failed-at {
   color: var(--danger-ink);
 }
