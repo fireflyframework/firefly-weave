@@ -35,9 +35,9 @@ const ALWAYS = new Set(["action", "llm", "agent"]);
 const HANDLED_ONLY = new Set(["transform", "decisionTable"]);
 const ANSWERED: Record<string, string> = {
   signal:
-    "Choose Time out as this step's answer in its test data; On error decides what happens next.",
+    "In its Test answer, check Let it time out instead; On error decides what happens next.",
   humanTask:
-    "Choose Expire as this step's answer in its test data; On error decides what happens next.",
+    "In its Test answer, check Let it expire instead; On error decides what happens next.",
 };
 
 /**

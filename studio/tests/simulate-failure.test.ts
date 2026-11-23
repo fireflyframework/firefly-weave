@@ -68,10 +68,10 @@ describe("which steps offer Simulate a failure", () => {
 
   it("points a wait for a signal and a human task to their own answers", () => {
     expect(simulateBlock(step("signal"), false)).toBe(
-      "Choose Time out as this step's answer in its test data; On error decides what happens next.",
+      "In its Test answer, check Let it time out instead; On error decides what happens next.",
     );
     expect(simulateBlock(step("humanTask"), false)).toBe(
-      "Choose Expire as this step's answer in its test data; On error decides what happens next.",
+      "In its Test answer, check Let it expire instead; On error decides what happens next.",
     );
   });
 
