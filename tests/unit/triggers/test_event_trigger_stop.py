@@ -111,10 +111,11 @@ def service(monkeypatch, database: Database, *capabilities: str) -> EventTrigger
     return EventTriggerService(runtime, SimpleNamespace(load_principal=load_principal))
 
 
-async def test_a_stop_that_names_an_older_revision_is_refused_and_changes_nothing(monkeypatch):
+@pytest.mark.parametrize("named", [2, 4])
+async def test_a_stop_that_names_another_revision_is_refused_and_changes_nothing(monkeypatch, named):
     database = Database(stored(revision=3))
     with pytest.raises(CatalogError) as refused:
-        await service(monkeypatch, database).disable(PERSON, SCOPE, database.row["id"], 2, context=AuditContext())
+        await service(monkeypatch, database).disable(PERSON, SCOPE, database.row["id"], named, context=AuditContext())
     assert (refused.value.status, refused.value.code) == (409, "WV-REVISION")
     assert refused.value.message == "The trigger changed; read it again before stopping it"
     # Only the row lock: no reserve spent, no update, no audit record.
@@ -122,9 +123,12 @@ async def test_a_stop_that_names_an_older_revision_is_refused_and_changes_nothin
     assert (database.row["revision"], database.row["disabled"]) == (3, False)
 
 
-async def test_a_stop_that_names_the_current_revision_stops_the_trigger(monkeypatch):
+@pytest.mark.parametrize("named", [3, None])
+async def test_a_stop_that_names_the_current_revision_or_none_stops_the_trigger(monkeypatch, named):
     database = Database(stored(revision=3))
-    stopped = await service(monkeypatch, database).disable(PERSON, SCOPE, database.row["id"], 3, context=AuditContext())
+    stopped = await service(monkeypatch, database).disable(
+        PERSON, SCOPE, database.row["id"], named, context=AuditContext()
+    )
     assert database.statements == ["lock", "reserve", "update"]
     assert database.audits == ["event_trigger.disable"]
     assert (stopped.id, stopped.revision, stopped.disabled) == (database.row["id"], 4, True)
