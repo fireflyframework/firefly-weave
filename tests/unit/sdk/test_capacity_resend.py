@@ -29,6 +29,7 @@ import httpx
 import pytest
 
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.deployments import TargetUpdate
 from firefly_weave.sdk import _retry
 from firefly_weave.sdk.client import WeaveClient
 from firefly_weave.sdk.errors import Problem, WeaveError
@@ -94,10 +95,11 @@ async def test_a_read_the_api_refused_for_capacity_is_sent_again(clock, code):
 
 @pytest.mark.parametrize(
     ("retry_after", "pause"),
-    [("2", 2.0), (None, 0.5), ("Sun, 22 Nov 2026 12:00:00 GMT", 0.5), ("-1", 0.5), ("1.5", 0.5)],
+    [("2", 2.0), ("5", 5.0), (None, 0.5), ("Sun, 22 Nov 2026 12:00:00 GMT", 0.5), ("-1", 0.5), ("1.5", 0.5)],
 )
 async def test_the_pause_waits_for_retry_after_in_seconds_and_otherwise_for_the_backoff(clock, retry_after, pause):
-    """Retry-After in whole seconds is the shortest wait; a date or anything else leaves the backoff's 0.5 s."""
+    """Retry-After in whole seconds, up to the longest pause of 5 s, is the shortest wait; a date or anything else
+    leaves the backoff's 0.5 s."""
     sent: list[httpx.Request] = []
     answers = [refusal(retry_after=retry_after), httpx.Response(200, json=ENVIRONMENT)]
     async with weave(api(answers, sent)) as client:
@@ -138,6 +140,17 @@ async def test_a_post_without_an_idempotency_key_is_never_sent_again(clock):
     assert len(sent) == 1 and clock.pauses == []
 
 
+async def test_a_put_without_an_idempotency_key_is_never_sent_again(clock):
+    """A target update is conditioned on its revision but carries no key, so its refusal reaches the caller."""
+    sent: list[httpx.Request] = []
+    update = TargetUpdate(runner_principal_id=uuid4(), capabilities=["observe"], disabled=True)
+    async with weave(api([refusal(), httpx.Response(200, json={})], sent)) as client:
+        with pytest.raises(WeaveError) as refused:
+            await client.invoke("deployment_targets.update", identifier=uuid4(), body=update, revision=3)
+    assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+    assert [request.method for request in sent] == ["PUT"] and clock.pauses == []
+
+
 async def test_the_refusal_stands_after_four_sends_with_a_growing_spread_pause(clock, monkeypatch):
     """Without Retry-After the pause doubles from 0.5 s; the jitter adds up to a quarter of it."""
     monkeypatch.setattr(_retry, "jitter", lambda: 0.8)
@@ -160,11 +173,12 @@ async def test_a_retry_after_longer_than_the_longest_pause_lets_the_refusal_stan
 
 
 async def test_no_pause_ends_after_the_15_second_window(clock):
-    """Each refused request takes 6 s here: after the third send a 2 s pause would end at 21.5 s, past the window."""
+    """Each refused request takes 4 s here: the third refusal comes 13.5 s after the first send, inside the window, but
+    a 2 s pause would end at 15.5 s, past it."""
     sent: list[httpx.Request] = []
 
     def slow() -> None:
-        clock.now += 6
+        clock.now += 4
 
     async with weave(api([refusal(retry_after=None)], sent, slow)) as client:
         with pytest.raises(WeaveError):
