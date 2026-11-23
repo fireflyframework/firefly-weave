@@ -427,6 +427,12 @@ test("a run with more than 50 transactions shows the first 50 and reads more on 
   await expect(section(page).getByRole("article")).toHaveCount(50);
   await section(page)
     .getByRole("button", { name: "Show more transactions" })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${captures}/run-transactions-more-than-50.png`,
+  });
+  await section(page)
+    .getByRole("button", { name: "Show more transactions" })
     .click();
   await expect(section(page).getByRole("article")).toHaveCount(51);
   expect(runs.reads.at(-1)).toEqual({
@@ -486,5 +492,69 @@ test("J16: a paused rollback counts its undone steps, and a cancel waits for the
   await page.screenshot({
     path: `${captures}/run-transactions-j16.png`,
     fullPage: true,
+  });
+});
+
+test("a transaction in doubt after going ahead keeps Done with its check on every done step", async ({
+  page,
+}) => {
+  const ahead: RunTransactionView = {
+    ...inDoubt,
+    participants: [
+      { ...inDoubt.participants[0], status: "confirm_stuck", attempts: 10 },
+      { ...inDoubt.participants[1], status: "done", attempts: undefined },
+      { ...inDoubt.participants[2], status: "done" },
+    ],
+  };
+  await platform(page, { [loopRunId]: [ahead] });
+  await openRun(page);
+  for (const step of ["add[3]", "submit[3]"]) {
+    const row = stepRow(page, "move[3]", step);
+    await expect(row.locator(".c-forward")).toContainText("Done");
+    await expect(
+      row.locator('.c-forward weave-icon[data-tone="success"]'),
+    ).toHaveCount(1);
+  }
+  await expect(
+    stepRow(page, "move[3]", "hold[3]").locator(".c-undo"),
+  ).toContainText("Confirm failed");
+  await expect(block(page, "move[3]").locator(".txn-cause")).toHaveText(
+    "In doubt: A reservation couldn't be confirmed after the transaction went ahead.",
+  );
+  await page.screenshot({
+    path: `${captures}/run-transactions-went-ahead.png`,
+  });
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 360, height: 640 } });
+
+  test("the run detail's transactions are one step row per step, and nothing is wider than the screen", async ({
+    page,
+  }) => {
+    await platform(page);
+    await openRun(page);
+    await expect(record(page, "move[3]")).toBeVisible();
+    const add = stepRow(page, "move[3]", "add[3]");
+    expect(
+      await add.evaluate(
+        (element) =>
+          getComputedStyle(element).gridTemplateColumns.split(" ").length,
+      ),
+    ).toBe(2);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      ),
+    ).toBeLessThanOrEqual(0);
+    // A step with nothing to undo shows no Undo or confirm line, as the phone mockup draws it.
+    await expect(
+      stepRow(page, "move[3]", "submit[3]").locator(".c-undo"),
+    ).toBeHidden();
+    await expect(add.locator(".c-undo")).toBeVisible();
+    await section(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `${captures}/run-transactions-phone-360.png`,
+    });
   });
 });

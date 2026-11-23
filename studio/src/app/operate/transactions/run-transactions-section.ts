@@ -261,7 +261,7 @@ interface Scope {
                       @if (!row.undo && row.attempts) {
                         <span class="step-note">{{ row.attempts }}</span>
                       }</span
-                    ><span role="cell" class="c-undo"
+                    ><span role="cell" class="c-undo" [class.empty]="!row.undo"
                       ><span class="cell-label">Undo or confirm</span>
                       @if (row.undo; as undo) {
                         <span class="step-word">

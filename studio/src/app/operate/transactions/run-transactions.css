@@ -235,6 +235,10 @@ weave-icon[data-tone="danger"] {
 .none {
   color: var(--subtle);
 }
+/* One row per step leaves out an Undo or confirm with nothing in it. */
+.c-undo.empty {
+  display: none;
+}
 /* The key wraps at any character; Copy stays beside it. */
 .c-key {
   display: grid;
@@ -277,6 +281,9 @@ weave-icon[data-tone="danger"] {
   }
   .txn-step:not(.txn-head) .cell-label {
     display: none;
+  }
+  .c-undo.empty {
+    display: flex;
   }
 }
 @container txn-record (min-width: 720px) {

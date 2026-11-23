@@ -2299,6 +2299,7 @@ test.describe("transactions", () => {
       .toEqual(["compensating", "in_doubt"]);
     await expect(needsAttention(page)).not.toBeChecked();
     await expect(rows(page)).toHaveCount(2);
+    await shot(page, "runs-transactions-another-choice");
     // Checking it again sets In doubt alone; unchecking clears the filter.
     await needsAttention(page).check();
     await expect(transactionChoice(page, "Undoing")).toHaveAttribute(
