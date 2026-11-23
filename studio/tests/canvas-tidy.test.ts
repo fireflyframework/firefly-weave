@@ -183,7 +183,10 @@ describe("tidy layout's note rule", () => {
   it("tidies 200 notes over 200 steps in bounded work that grows less than cubically", () => {
     const at200 = tidyWork(200);
     expect(at200.moves).toBe(200);
-    // Today: about 53 reads per note and step pair.
+    // Today: about 53 reads per note and step pair. The floor keeps the count
+    // honest: if tidy copied its inputs first, the counted boxes would go
+    // unread and any algorithm would pass the ceiling.
+    expect(at200.reads).toBeGreaterThan(200 * 200);
     expect(at200.reads).toBeLessThan(100 * 200 * 200);
     // Doubling the notes and steps multiplies the work by about 5.4 today;
     // by 4 if it were quadratic, by 8 if cubic.
