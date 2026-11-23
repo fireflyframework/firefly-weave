@@ -526,7 +526,7 @@ def template_cases() -> dict[str, Any]:
 
 def scope_cases() -> dict[str, Any]:
     cases = []
-    for name, document, path, expected in SCOPE_CASES:
+    for name, document, path, expected in (*SCOPE_CASES, *UNDO_SCOPE_CASES):
         result = scope_at(document, path).model_dump(mode="json", by_alias=True)
         actual = [(e["ref"], e["source"], e.get("loop"), e["typeLabel"]) for e in result["entries"]]
         if result["found"] is (expected is None) or (expected is not None and actual != expected):
@@ -579,6 +579,61 @@ def _txn_workflow(*steps: dict[str, Any]) -> dict[str, Any]:
 
 _RESERVE = {"confirm": _undo("confirm-hold@1.0.0"), "cancel": _undo("release-hold@1.0.0")}
 _REVERSE = {"compensate": _undo("remove-quantity@1.0.0")}
+# hold, then add, in a transaction; a step after it reads its result.
+_MOVE = _txn_workflow(
+    _transaction(_participant("hold", **_RESERVE), _participant("add", **_REVERSE)),
+    {"id": "notify", "kind": "transform", "value": {"ref": "/steps/move/output"}},
+)
+_TXN_INPUT_ROWS = [("/input", "input", None, "Group"), ("/input/items", "input", None, "List of text")]
+
+
+def _undo_rows() -> list[tuple[str, str, str | None, str]]:
+    return [
+        ("/participant/operationKey", "undo", None, "Text"),
+        ("/participant/outcome", "undo", None, "Choice"),
+        ("/transaction/id", "undo", None, "Text"),
+        ("/transaction/businessKey", "undo", None, "Text or empty"),
+    ]
+
+
+# Scope cases inside and around undo steps, in the shape of SCOPE_CASES.
+UNDO_SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | None, str]] | None], ...] = (
+    (
+        "a reverse step reads its step's operation key, outcome and transaction, then its step's output, maybe empty",
+        _MOVE,
+        "/spec/steps/0/steps/1/compensate/with",
+        [
+            *_TXN_INPUT_ROWS,
+            *_undo_rows(),
+            ("/steps/hold/output", "step", None, "Any value"),
+            ("/steps/add/output", "step", None, "Any value"),
+        ],
+    ),
+    (
+        "a release step never reads its step's output",
+        _MOVE,
+        "/spec/steps/0/steps/0/cancel/with",
+        [*_TXN_INPUT_ROWS, *_undo_rows()],
+    ),
+    (
+        "a confirm step reads its step's output, which is always there",
+        _MOVE,
+        "/spec/steps/0/steps/0/confirm/with",
+        [*_TXN_INPUT_ROWS, *_undo_rows(), ("/steps/hold/output", "step", None, "Any value")],
+    ),
+    (
+        "a step of a transaction reads no undo values",
+        _MOVE,
+        "/spec/steps/0/steps/1/with",
+        [*_TXN_INPUT_ROWS, ("/steps/hold/output", "step", None, "Any value")],
+    ),
+    (
+        "after a transaction only its result is visible",
+        _MOVE,
+        "/spec/steps/1/value",
+        [*_TXN_INPUT_ROWS, ("/steps/move/output", "step", None, "Fixed value")],
+    ),
+)
 # (name, document, expected (code, path, severity) without WV-COMP- and without catalog notes)
 TRANSACTION_CASES: tuple[tuple[str, dict[str, Any], list[tuple[str, str, str]]], ...] = (
     (

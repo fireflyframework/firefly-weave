@@ -16,6 +16,10 @@
 
 """Scope suggestions come from the compiler's own dominance, loop scope and type analysis."""
 
+from pathlib import Path
+
+import yaml
+
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.scope import MAX_ENTRIES, scope_at
 from firefly_weave.contracts.definitions import load_definition
@@ -260,3 +264,122 @@ def test_large_inputs_are_truncated_at_the_entry_budget():
     wide = {"type": "object", "properties": {f"field{n:03}": {"type": "string"} for n in range(250)}}
     result = scope_at(workflow(transform("t", ref("/input")), input_schema=wide), "/spec/steps/0/value")
     assert result.truncated and len(result.entries) == MAX_ENTRIES
+
+
+def transaction_catalog():
+    fixture = yaml.safe_load(Path("tests/fixtures/transactions/catalog.yaml").read_text(encoding="utf-8"))
+    return CatalogSnapshot.from_definitions(
+        [load_definition(item) for item in fixture["definitions"]], tasks=fixture["tasks"]
+    )
+
+
+MOVE_INPUT = {
+    "type": "object",
+    "properties": {"moveId": {"type": "string"}, "quantity": {"type": "integer", "minimum": 1}},
+    "required": ["moveId", "quantity"],
+    "additionalProperties": False,
+}
+ACTION_INPUT = {"object": {"quantity": ref("/input/quantity"), "reference": ref("/input/moveId")}}
+HOLD = {
+    "id": "hold",
+    "kind": "action",
+    "uses": "source-system.hold-quantity@1.0.0",
+    "with": ACTION_INPUT,
+    "confirm": {
+        "kind": "action",
+        "uses": "source-system.confirm-hold@1.0.0",
+        "with": {"object": {"holdId": ref("/steps/hold/output/holdId")}},
+    },
+    "cancel": {
+        "kind": "action",
+        "uses": "source-system.release-hold@1.0.0",
+        "with": {"object": {"reference": ref("/input/moveId"), "holdOperation": ref("/participant/operationKey")}},
+    },
+}
+ADD = {
+    "id": "add",
+    "kind": "action",
+    "uses": "target-system.add-quantity@1.0.0",
+    "with": ACTION_INPUT,
+    "compensate": {
+        "kind": "action",
+        "uses": "target-system.remove-quantity@1.0.0",
+        "with": {"object": {"reference": ref("/input/moveId"), "addOperation": ref("/participant/operationKey")}},
+    },
+}
+SUBMIT = {
+    "id": "submit",
+    "kind": "action",
+    "uses": "orders.submit-order@1.0.0",
+    "with": {"object": {"reference": ref("/input/moveId")}},
+    "irreversible": True,
+}
+# A reference read first, then hold, add and submit. Scope outside undo steps and after the transaction is pinned by
+# the shared scope cases (scripts/language_fixtures.py), which Studio's offline scope runs too.
+MOVE_DOCUMENT = workflow(
+    {
+        "id": "move",
+        "kind": "transaction",
+        "businessKey": ref("/input/moveId"),
+        "steps": [transform("reference", ref("/input/moveId")), HOLD, ADD, SUBMIT],
+        "output": ref("/steps/submit/output"),
+    },
+    input_schema=MOVE_INPUT,
+)
+INPUT_ROWS = [
+    ("/input", "input", None, None, "Workflow input", "Workflow input", False),
+    ("/input/moveId", "input", None, None, "moveId", "Workflow input › moveId", False),
+    ("/input/quantity", "input", None, None, "quantity", "Workflow input › quantity", False),
+]
+
+
+def undo_rows(step):
+    return [
+        ("/participant/operationKey", "undo", None, None, "Operation key", "This step's undo › Operation key", False),
+        (
+            "/participant/outcome",
+            "undo",
+            None,
+            None,
+            f"Outcome of {step}",
+            f"This step's undo › Outcome of {step}",
+            False,
+        ),
+        ("/transaction/id", "undo", None, None, "Transaction ID", "This step's undo › Transaction ID", False),
+        ("/transaction/businessKey", "undo", None, None, "Business key", "This step's undo › Business key", False),
+    ]
+
+
+def test_scope_inside_a_reverse_step_lists_the_undo_roots():
+    path = "/spec/steps/0/steps/2/compensate/with/object/addOperation"
+    result = scope_at(MOVE_DOCUMENT, path, catalog=transaction_catalog())
+    assert (result.found, result.evaluated) == (True, True)
+    assert rows(result) == [
+        *INPUT_ROWS,
+        *undo_rows("add"),
+        ("/steps/reference/output", "step", None, "reference", "reference", "reference", False),
+        ("/steps/hold/output", "step", None, "hold", "hold", "hold", False),
+        ("/steps/hold/output/holdId", "step", None, "hold", "holdId", "hold › holdId", False),
+        ("/steps/add/output", "step", None, "add", "add", "add", True),
+    ]
+    outcome = entry(result, "/participant/outcome")
+    assert (outcome.schema_value, outcome.types, outcome.type_label) == (
+        {"type": "string", "enum": ["done", "unknown"]},
+        ["string"],
+        "Choice",
+    )
+    key = entry(result, "/transaction/businessKey")
+    assert (key.types, key.type_label) == (["string", "null"], "Text or empty")
+    # The step it undoes may have no output: its outcome may be unknown.
+    own = entry(result, "/steps/add/output")
+    assert own.types == ["object", "null"] and own.type_label == "Group or empty"
+
+
+def test_scope_inside_a_release_step_never_offers_its_own_output():
+    path = "/spec/steps/0/steps/1/cancel/with/object/holdOperation"
+    result = scope_at(MOVE_DOCUMENT, path, catalog=transaction_catalog())
+    assert rows(result) == [
+        *INPUT_ROWS,
+        *undo_rows("hold"),
+        ("/steps/reference/output", "step", None, "reference", "reference", "reference", False),
+    ]
