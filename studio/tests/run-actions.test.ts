@@ -177,8 +177,14 @@ function shell(open: string | null = first) {
     /** Each address the actions opened. */
     opened: [] as string[],
   };
-  /** The run's transactions as the next read answers them; null fails the read. */
-  const platform: { transactions: RunTransactionView[] | null } = {
+  /**
+   * The run's transactions as the next read answers them; null fails the
+   * read. With pages, each read answers the page its cursor names.
+   */
+  const platform: {
+    transactions: RunTransactionView[] | null;
+    pages?: RunTransactionView[][];
+  } = {
     transactions: [],
   };
   let answer!: { resolve: (value: Json) => void; reject: (e: unknown) => void };
@@ -209,9 +215,14 @@ function shell(open: string | null = first) {
         calls.transactionReads.push(path);
         if (platform.transactions === null)
           throw refused(503, "WV-UNAVAILABLE", "Down");
+        const pages = platform.pages ?? [platform.transactions];
+        const cursor = new URL(path, "http://studio").searchParams.get(
+          "cursor",
+        );
+        const at = cursor ? Number(cursor.replace("page-", "")) : 0;
         return {
-          items: structuredClone(platform.transactions),
-          next_cursor: null,
+          items: structuredClone(pages[at]),
+          next_cursor: at + 1 < pages.length ? `page-${at + 1}` : null,
         } as T;
       },
     },
@@ -634,6 +645,35 @@ describe("Cancel run on a run with transactions", () => {
     expect(s.actions.cancelDialog).toBeNull();
   });
 
+  it("finds a transaction in doubt on a later page, and sends nothing", async () => {
+    const s = shell();
+    s.platform.pages = [Array(50).fill(settled), [inDoubt]];
+    const sending = s.actions.cancel();
+    await s.settle();
+    expect(s.calls.transactionReads).toEqual([
+      `/env/runs/${first}/transactions?limit=50`,
+      `/env/runs/${first}/transactions?limit=50&cursor=page-1`,
+    ]);
+    expect(s.calls.forms).toBe(0);
+    expect(s.calls.sent).toEqual([]);
+    expect(s.actions.cancelDialog).toMatchObject({
+      mode: "in_doubt",
+      incidentId: incident,
+    });
+    await sending;
+  });
+
+  it("says Weave undoes first when pages remain past the ones it reads", async () => {
+    const s = shell();
+    s.platform.pages = Array.from({ length: 11 }, () => [settled]);
+    const sending = s.actions.cancel();
+    await s.settle();
+    expect(s.calls.transactionReads).toHaveLength(10);
+    expect(s.calls.asked[0]?.["message"]).toBe(UNDO_FIRST);
+    s.answer({});
+    await sending;
+  });
+
   it("a refusal because a transaction went in doubt meanwhile names it and offers its incident", async () => {
     const s = shell();
     s.platform.transactions = [open];
@@ -720,6 +760,43 @@ describe("Cancel without undoing", () => {
     ]);
   });
 
+  it("lists what stays done from every page of the run's transactions", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    const later = view("open", [step("ship", "compensate", "done")], {
+      instance_key: "move[3]",
+    });
+    s.platform.pages = [[open], [later]];
+    await s.actions.cancelWithoutUndoing();
+    expect(s.calls.transactionReads).toHaveLength(2);
+    expect(
+      s.actions.cancelDialog!.lines.map(
+        (line) => `${line.step} · ${line.how}: ${line.what}`,
+      ),
+    ).toEqual([
+      "hold · Reserved: Weave won't release it",
+      "add · Reversible: still running and may finish; Weave won't undo it",
+      "ship · Reversible: Weave won't undo it",
+    ]);
+  });
+
+  it("refuses in Studio when pages remain past the ones it reads, and sends nothing", async () => {
+    const s = shell();
+    s.actions.know(first, [open]);
+    s.platform.pages = Array.from({ length: 11 }, () => [open]);
+    await s.actions.cancelWithoutUndoing();
+    expect(s.calls.transactionReads).toHaveLength(10);
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.forms).toBe(0);
+    expect(s.calls.sent).toEqual([]);
+    expect(s.calls.notices).toEqual([
+      {
+        text: "Run 5e6f7a8b was not canceled. Studio couldn't read all of its transactions, so it can't list what stays done.",
+        tone: "danger",
+      },
+    ]);
+  });
+
   it("refuses in Studio when a transaction went in doubt since the row was drawn", async () => {
     const s = shell();
     s.actions.know(first, [open]);
@@ -764,7 +841,7 @@ describe("Cancel without undoing", () => {
           status: 403,
           code: "WV-FORBIDDEN",
           message:
-            "You need transaction.reconcile in this environment. Forbidden",
+            "You need run.cancel and transaction.reconcile in this environment. Forbidden",
         },
       },
     ]);

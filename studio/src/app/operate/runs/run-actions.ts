@@ -326,11 +326,12 @@ export class RunActions {
       return;
     const named = `Run ${shortId(target.id)}`;
     // What its transactions are now: a transaction in doubt stops the cancel
-    // before sending, and one that hasn't settled is undone first.
-    const transactions = await this.readTransactions(target);
+    // before sending, and one that hasn't settled is undone first. When
+    // pages remain unread, one there may not have settled either.
+    const read = await this.readTransactions(target);
     if (!this.current(target)) return;
-    if (transactions) this.know(target.id, transactions);
-    const doubt = transactions?.find((view) => view.state === "in_doubt");
+    if (read) this.know(target.id, read.views);
+    const doubt = read?.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       this.cancelDialog = {
         mode: "in_doubt",
@@ -342,9 +343,10 @@ export class RunActions {
       this.changed();
       return;
     }
-    const undoFirst = !!transactions?.some((view) =>
-      UNSETTLED.includes(view.state),
-    );
+    const undoFirst =
+      !!read &&
+      (!read.complete ||
+        read.views.some((view) => UNSETTLED.includes(view.state)));
     const values = await host.dialogs.form({
       title: "Cancel this run?",
       message: undoFirst
@@ -440,7 +442,8 @@ export class RunActions {
   /**
    * Opens Cancel without undoing on the transactions read just now, so its
    * Stays done list is current. A transaction that went in doubt meanwhile
-   * refuses it here; one that settled leaves Cancel run.
+   * refuses it here, and so do pages left unread, since the list would miss
+   * what they hold; when every one settled, Cancel run takes over.
    */
   async cancelWithoutUndoing() {
     const host = this.host();
@@ -452,24 +455,24 @@ export class RunActions {
       !host.can("transaction.reconcile", target.id)
     )
       return;
-    const transactions = await this.readTransactions(target);
+    const read = await this.readTransactions(target);
     if (!this.current(target)) return;
-    if (!transactions) {
+    const unread = (what: string) =>
       host.notify(
-        `Run ${shortId(target.id)} was not canceled. Studio couldn't read its transactions, so it can't list what stays done.`,
+        `Run ${shortId(target.id)} was not canceled. Studio couldn't read ${what}, so it can't list what stays done.`,
         undefined,
         "danger",
       );
-      return;
-    }
-    this.know(target.id, transactions);
-    const doubt = transactions.find((view) => view.state === "in_doubt");
+    if (!read) return unread("its transactions");
+    this.know(target.id, read.views);
+    const doubt = read.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       host.notify(IN_DOUBT_LINE, this.incidentAction(doubt), "danger");
       this.changed();
       return;
     }
-    const unsettled = transactions.filter((view) =>
+    if (!read.complete) return unread("all of its transactions");
+    const unsettled = read.views.filter((view) =>
       UNSETTLED.includes(view.state),
     );
     if (!unsettled.length) return this.cancel();
@@ -517,9 +520,10 @@ export class RunActions {
         await this.inDoubtRefusal(error, target, `${named} was not canceled.`)
       )
         return;
+      // The platform checks run.cancel first, then transaction.reconcile.
       this.refuse(
         error,
-        "transaction.reconcile",
+        "run.cancel and transaction.reconcile",
         target,
         `${named} was not canceled.`,
         host.unknownCommand,
@@ -544,18 +548,29 @@ export class RunActions {
       ? { label: "Open incident", run: () => this.openIncident(id) }
       : undefined;
   }
-  /** The run's first 50 transactions, or null when they couldn't be read. */
+  /**
+   * The run's transactions, page after page up to MAX_PAGES (500), and
+   * whether that was all of them; null when they couldn't be read. Its
+   * newest transactions, the likeliest unsettled, come last.
+   */
   private async readTransactions(
     target: RunTarget,
-  ): Promise<RunTransactionView[] | null> {
+  ): Promise<{ views: RunTransactionView[]; complete: boolean } | null> {
     try {
-      const page = await readRunTransactions(
-        this.host().api,
-        target.environment,
-        target.id,
-        null,
-      );
-      return page.views;
+      const views: RunTransactionView[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const read = await readRunTransactions(
+          this.host().api,
+          target.environment,
+          target.id,
+          cursor,
+        );
+        views.push(...read.views);
+        cursor = read.next;
+        if (!cursor) break;
+      }
+      return { views, complete: !cursor };
     } catch {
       return null;
     }
@@ -572,13 +587,12 @@ export class RunActions {
   ): Promise<boolean> {
     const plain = describeError(error);
     if (plain.status !== 409 || plain.code !== "WV-TXN-IN-DOUBT") return false;
-    const transactions = await this.readTransactions(target);
-    if (transactions && this.current(target))
-      this.know(target.id, transactions);
+    const read = await this.readTransactions(target);
+    if (read && this.current(target)) this.know(target.id, read.views);
     this.host().notify(
       `${failed} ${sentence(plain.message)} Support code: ${plain.code}.`,
       this.incidentAction(
-        transactions?.find((view) => view.state === "in_doubt"),
+        read?.views.find((view) => view.state === "in_doubt"),
       ),
       "danger",
     );
