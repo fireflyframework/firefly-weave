@@ -711,13 +711,27 @@ export class StepDetailsController {
     if (this.viewingRuns()) return null;
     const results = this.host.execution?.results();
     const key = this.iterations.instanceKey(id) ?? id;
-    const failure = results?.steps[key]?.handled;
+    const failure = this.handledHere(key)?.handled;
     return results && failure ? { failure, at: results.at } : null;
+  }
+  /**
+   * The last result at `key` when the last execution failed the step there
+   * and its On error went on: what later steps read (null, or the error
+   * path's result), over a pin the failure stood in for. Once that failure
+   * is removed, the pin stands for the step again; null then, and when the
+   * step didn't fail and go on.
+   */
+  private handledHere(key: string): LastResult | null {
+    const result = this.lastResult(key);
+    if (!result?.handled) return null;
+    const pinned = this.pinOfTarget(key) ?? this.pinOfTarget(instanceStep(key));
+    return pinned && !this.failureOf(key) ? null : result;
   }
   /**
    * What a step's output reads now, the same for the Output pane, the Input
    * pane and formula previews: its pin, else its last result (still used when
-   * out of date), else nothing. Secret fields are left out.
+   * out of date), else nothing; a result whose failure was handled while
+   * its failure is still set comes before the pin. Secret fields are left out.
    */
   stepData(key: string):
     | {
@@ -735,7 +749,9 @@ export class StepDetailsController {
         : undefined;
     }
     const stepId = instanceStep(key);
-    const pin = this.pinOfTarget(key) ?? this.pinOfTarget(stepId);
+    const pin = this.handledHere(key)
+      ? null
+      : (this.pinOfTarget(key) ?? this.pinOfTarget(stepId));
     if (pin)
       return {
         value: this.pinnedOutput(pin.key) ?? {},

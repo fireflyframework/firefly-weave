@@ -448,6 +448,7 @@ export function simulateOpening(
             <weave-error-banner
               [failure]="went.failure"
               [simulated]="!!failing"
+              [overPin]="!!failing && !!pin"
               (remove)="failing && removeFailure(failing.key)"
               (edit)="openSimulate()"
             />

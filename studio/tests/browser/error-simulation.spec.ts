@@ -547,3 +547,53 @@ test("a call step handles its called run's failure with its own error path", asy
     new CanvasPage(page).tile("notify").locator(".tile-badge"),
   ).toHaveAttribute("data-badge", "handled");
 });
+
+test("a pinned step that failed and continued shows what the run read, and keeps its pin for later", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const details = await openStepFixture(page, INTAKE, async (p) => {
+    const result = await connected(p, {
+      catalog: [...defaultCatalog, { id: "a9", document: SUBMIT }],
+      tenantId: TENANT,
+      projectId: PROJECT,
+    });
+    await withLanguageFeatures(p);
+    return result;
+  });
+  await details.open("submit");
+  let pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Set test output" }).click();
+  await pane
+    .locator(".output-editor")
+    .getByRole("textbox")
+    .first()
+    .fill(JSON.stringify({ id: "PINNED-42" }));
+  await pane.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(pane.locator(".pinned-banner")).toBeVisible();
+  await pane.getByRole("button", { name: "More output actions" }).click();
+  await page.getByRole("menuitem", { name: "Simulate a failure…" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Simulate a failure of submit",
+  });
+  await dialog.getByLabel("Code").fill("REQUEST_REFUSED");
+  await dialog.getByRole("button", { name: "Simulate failure" }).click();
+  await details.close();
+  const calls = await localAuthoring(page);
+  await page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" })
+    .click();
+  await expect.poll(() => calls.length).toBeGreaterThan(0);
+  await expect(
+    page.getByRole("region", { name: "Run log" }).locator(".run-log-status"),
+  ).toHaveText(/^Succeeded with errors/);
+  await details.open("submit");
+  pane = await outputPane(details);
+  // Continue: the run read null here, not the pin the failure stood in for.
+  await expect(pane.locator(".pane-result-caption")).toHaveText("Output");
+  await expect(pane.getByLabel("Output data")).toHaveText("null");
+  await expect(pane.locator("weave-error-banner")).toContainText(
+    "Its pinned output is kept for when you remove the failure.",
+  );
+});

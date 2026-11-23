@@ -99,6 +99,11 @@ export function errorBannerLines(failure: HandledFailureView): {
             Edit
           </button>
         </p>
+        @if (overPin()) {
+          <p class="pinned-banner-note">
+            Its pinned output is kept for when you remove the failure.
+          </p>
+        }
       }
     </div>`,
 })
@@ -106,6 +111,8 @@ export class ErrorBanner {
   readonly failure = input.required<HandledFailureView>();
   /** The failure was simulated and is still set: say so, with Remove and Edit. */
   readonly simulated = input(false);
+  /** Pinned output is there too, kept for when the simulated failure is removed. */
+  readonly overPin = input(false);
   readonly remove = output<void>();
   readonly edit = output<void>();
   lines() {
