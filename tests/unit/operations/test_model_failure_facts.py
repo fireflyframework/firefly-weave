@@ -77,3 +77,20 @@ def test_a_turn_the_model_cant_run_names_the_models_code(code, attempts):
     [turn] = log.turns
     assert (turn.error.code, turn.final, turn.calls) == (code, None, [])
     assert (log.status, log.error) == ("running", None)
+
+
+def test_an_origin_the_kernel_refuses_never_names_the_turn():
+    run = Recorded()
+    run.send("started", NOW, admission_policy="classified-v1")
+    at = NOW + SECONDS
+    run.send(
+        "task_failed", at, node_id="support#1", generation=1, output={"code": "LLM_POLICY", "outcome": "not_started"}
+    )
+
+    # An origin that isn't a model code: the kernel keeps no origin on the incident, so the turn names the incident's
+    # own code, never the event's text.
+    run.send("incident_opened", at + SECONDS, node_id="support#1", generation=1, code=SETTLED, origin_code="HTTP_500")
+
+    assert all(incident.origin_code is None for incident in run.state.incidents.values())
+    [turn] = run.log().turns
+    assert turn.error.code != "HTTP_500"
