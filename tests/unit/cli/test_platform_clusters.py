@@ -552,8 +552,10 @@ def world(platform, monkeypatch):
     }
     monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: operations)
 
-    async def api(state, value, work, transport):
+    async def api(state, value, work, transport, *, resend):
         assert value["scope"] == SCOPE
+        # The commands send a refused request again themselves; the client's own resend would stack under theirs.
+        assert resend is None
         return await work(cluster)
 
     async def keycloak(state, named, transport):

@@ -20,12 +20,14 @@ from firefly_weave.contracts.public import Problem
 
 
 class WeaveError(Exception):
-    def __init__(self, problem: Problem) -> None:
+    def __init__(self, problem: Problem, *, retry_after: float | None = None) -> None:
         self.problem = problem
         self.status = problem.status
         self.code = problem.code
         self.request_id = problem.request_id
         self.diagnostics = tuple(problem.diagnostics)
+        # The seconds the platform's Retry-After asked the caller to wait before sending the request again, if any.
+        self.retry_after = retry_after
         super().__init__(f"{self.code} (HTTP {self.status})")
 
 

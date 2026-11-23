@@ -299,7 +299,9 @@ transport you supplied, and it cannot be reused.
 **Token sources.** The client accepts either kind:
 
 - a synchronous function, called once per request, so your host can rotate
-  tokens without creating a new client (an `async` function is rejected here);
+  tokens without creating a new client (an `async` function is rejected here).
+  A request sent again after a capacity refusal keeps the token of its first
+  send;
 - an object with `async get_access_token(target)`, which receives the exact API
   origin. `OAuthSession` and the session of a saved platform are such objects.
 
@@ -314,8 +316,19 @@ workspaces you can use.
   (`localhost`, `127.0.0.1`, `::1`) for local development.
 - Requests have bounded timeouts and response sizes.
 - The client never follows redirects, inherits proxy settings from the
-  environment, accepts compressed responses, or retries on its own. A
-  transport error during a change leaves its outcome unknown.
+  environment, or accepts compressed responses. A transport error during a
+  change leaves its outcome unknown, and the client never sends it again.
+- The client sends a request again only when the platform refused it before
+  admitting it, which is what HTTP 429 with `WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY` means. It sends again a `GET`, or a change that
+  carries an idempotency key; the body, the key, and the token stay the same.
+  Each pause lasts at least the `Retry-After` seconds, grows from half a second
+  up to 5 seconds, and is spread up to a quarter longer. The client stops after
+  4 sends in all or 15 seconds, whichever comes first, and at once when
+  `Retry-After` asks for more than 5 seconds; then the last refusal reaches
+  you. A change without a key is never sent again.
+- `WeaveClient(..., resend=None)` sends every request once. To set other
+  bounds, pass a `Resend` (`from firefly_weave.sdk.client import Resend`).
 - It always uses the canonical `/api/v1` paths and quoted revisions, validates
   request and response models exactly, and rejects unsupported wire or
   artifact versions.
@@ -324,7 +337,7 @@ workspaces you can use.
 
 | Exception | Meaning | What to do |
 | --- | --- | --- |
-| `WeaveError` | The platform answered with an error. It exposes `status`, `code`, `request_id`, `diagnostics`, and the safe `problem` | Read `code`; the [HTTP API failure table](api.md#when-a-request-fails) lists the common ones |
+| `WeaveError` | The platform answered with an error. It exposes `status`, `code`, `request_id`, `diagnostics`, the safe `problem`, and `retry_after`: the seconds of the answer's `Retry-After`, or `None` | Read `code`; the [HTTP API failure table](api.md#when-a-request-fails) lists the common ones |
 | `PreconditionFailed` | A `WeaveError` for HTTP 412: your revision is stale | Read the resource again and resend with the current revision |
 | `TransportError` | The request may or may not have reached the platform | For a change, keep the key and check the resource before retrying |
 | `ContractError` | The answer does not match the expected contract or version | Check that client and server versions match |
