@@ -23,7 +23,11 @@ import type { Step } from "../../../model";
 import { instanceStep } from "../../state/instance-keys";
 import { specOf } from "../kinds/shared";
 import type { Json } from "../registry";
-import { PLATFORM_FAILURES, platformFailures } from "../../state/failure-codes";
+import {
+  PLATFORM_FAILURES,
+  genericFailureMessage,
+  platformFailures,
+} from "../../state/failure-codes";
 
 /** Kinds that can fail on their own, whatever their On error says. */
 const ALWAYS = new Set(["action", "llm", "agent"]);
@@ -86,7 +90,7 @@ export interface CodeSuggestion {
 /** The platform's message for a code; any other reads as a generic failure that names it (step_error_message). */
 const messageOf = (code: string) =>
   PLATFORM_FAILURES.find((item) => item.code === code)?.message ??
-  `The step failed with code ${code}.`;
+  genericFailureMessage(code);
 
 /**
  * The codes the Code field suggests: the action's own failures (its

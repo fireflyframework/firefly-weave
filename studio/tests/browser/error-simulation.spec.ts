@@ -240,7 +240,8 @@ test("after Execute workflow, the Output pane says the step failed and continued
   await expect(pane.locator(".pinned-banner")).toHaveCount(1);
   const banner = pane.locator("weave-error-banner");
   await expect(banner.locator("p")).toHaveText([
-    "This step failed: REQUEST_REFUSED. The step failed with code REQUEST_REFUSED.",
+    // The platform has no words of its own for this code: it is said once.
+    "This step failed: REQUEST_REFUSED.",
     // A transform has no effect: the platform says it didn't start.
     "Outcome: Didn't start. Attempts: 1.",
     "The run continued (On error: Continue with error output).",

@@ -270,3 +270,7 @@ export const PLATFORM_FAILURES: readonly PlatformFailure[] = [
 export function platformFailures(kind: string): PlatformFailure[] {
   return PLATFORM_FAILURES.filter((item) => item.kinds.includes(kind));
 }
+
+/** The platform's words for a code it has no message of its own for (step_error_message). */
+export const genericFailureMessage = (code: string): string =>
+  `The step failed with code ${code}.`;

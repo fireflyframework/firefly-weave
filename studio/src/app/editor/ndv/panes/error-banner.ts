@@ -28,6 +28,7 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { failureCodeText, failureMessageText } from "../../canvas/tile-facts";
+import { genericFailureMessage } from "../../state/failure-codes";
 
 /** What an outcome means, as the dialog offers it and the banners say it. */
 export const OUTCOME_WORDS: Readonly<Record<string, string>> = {
@@ -46,7 +47,11 @@ export interface HandledFailureView {
   policy: "continue" | "errorOutput";
 }
 
-/** The banner's lines: "This step failed: CODE.", the message, the outcome and attempts, the setting. */
+/**
+ * The banner's lines: "This step failed: CODE.", the message, the outcome
+ * and attempts, the setting. A message that only repeats the code is left
+ * out; the data picker's error fields still hold it.
+ */
 export function errorBannerLines(failure: HandledFailureView): {
   failed: string;
   message: string;
@@ -60,7 +65,10 @@ export function errorBannerLines(failure: HandledFailureView): {
       : (OUTCOME_WORDS[failure.outcome] ?? OUTCOME_WORDS["failed"]);
   return {
     failed: `This step failed: ${failureCodeText(failure.code)}.`,
-    message: failureMessageText(failure.message),
+    message:
+      failure.message === genericFailureMessage(failure.code)
+        ? ""
+        : failureMessageText(failure.message),
     outcome: outcome ? `Outcome: ${outcome}. ${attempts}` : attempts,
     setting: `The run continued (On error: ${
       failure.policy === "errorOutput"
@@ -79,8 +87,10 @@ export function errorBannerLines(failure: HandledFailureView): {
     <div class="pinned-banner error-banner" data-tone="warning">
       <weave-icon name="degraded" [size]="16" aria-hidden="true" />
       <p role="status">
-        <strong class="error-banner-failed">{{ said.failed }}</strong
-        >&ngsp;{{ said.message }}
+        <strong class="error-banner-failed">{{ said.failed }}</strong>
+        @if (said.message) {
+          &ngsp;{{ said.message }}
+        }
       </p>
       <p>{{ said.outcome }}</p>
       <p class="error-banner-setting">{{ said.setting }}</p>

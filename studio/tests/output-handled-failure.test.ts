@@ -118,4 +118,14 @@ describe("the banner of a step that failed and continued", () => {
         .outcome,
     ).toBe("Outcome: Didn't start. Attempts: 1.");
   });
+
+  it("says the code once when the message only repeats it", () => {
+    const lines = errorBannerLines({
+      ...ERROR,
+      message: "The step failed with code REQUEST_REFUSED.",
+      policy: "errorOutput",
+    });
+    expect(lines.failed).toBe("This step failed: REQUEST_REFUSED.");
+    expect(lines.message).toBe("");
+  });
 });
