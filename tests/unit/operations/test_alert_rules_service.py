@@ -108,7 +108,7 @@ def test_every_preset_is_a_valid_rule_with_a_unique_id_and_no_channel():
         assert preset.installed_rule_id is None
 
 
-def test_the_one_default_preset_watches_degraded_platform_components():
+def test_the_default_presets_watch_degraded_components_and_transactions_in_doubt():
     defaults = [
         (preset.id, preset.version, preset.name, preset.rule.signal, preset.rule.comparator, preset.rule.threshold)
         + (preset.rule.for_seconds, preset.rule.severity)
@@ -116,10 +116,27 @@ def test_the_one_default_preset_watches_degraded_platform_components():
         if preset.install == "default"
     ]
     assert defaults == [
-        ("platform-degraded", 1, "A platform component is degraded", "health.degraded", "gt", 0, 300, "warning")
+        ("platform-degraded", 1, "A platform component is degraded", "health.degraded", "gt", 0, 300, "warning"),
+        # Every transaction in doubt waits for a person, so it alerts at once.
+        ("transactions-in-doubt", 1, "Transactions in doubt", "transactions.in_doubt", "gt", 0, 0, "critical"),
     ]
     suggested = {preset.id: preset.rule for preset in ALERT_PRESETS if preset.install == "suggested"}
-    assert set(suggested) == {"run-failure-rate", "tasks-waiting", "no-workers", "runner-offline", "incidents-open"}
+    assert set(suggested) == {
+        "run-failure-rate",
+        "tasks-waiting",
+        "no-workers",
+        "runner-offline",
+        "incidents-open",
+        "transactions-undoing-long",
+    }
+    undoing = suggested["transactions-undoing-long"]
+    assert (undoing.name, undoing.signal, undoing.comparator, undoing.threshold) == (
+        "A transaction has been undoing over 1 hour",
+        "transactions.undo_age_seconds",
+        "gt",
+        3600,
+    )
+    assert (undoing.for_seconds, undoing.severity) == (300, "warning")
     rate = suggested["run-failure-rate"]
     assert (rate.signal, rate.threshold, rate.window_seconds, rate.min_samples) == ("run.failure_rate", 0.1, 900, 10)
     assert (suggested["no-workers"].comparator, suggested["no-workers"].severity) == ("lt", "critical")

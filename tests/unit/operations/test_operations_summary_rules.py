@@ -252,6 +252,26 @@ def test_attention_is_ranked_by_priority_then_time_then_id_and_capped_at_twenty(
     assert [entry.id for entry in ranked_many[1:]] == [UUID(int=index) for index in range(1, 20)]
 
 
+def test_an_in_doubt_incident_comes_first_among_attention_incidents():
+    plain, doubt, later = UUID(int=1), UUID(int=2), UUID(int=3)
+    candidates = [
+        item("incident", plain, AT),
+        item("incident", doubt, AT + timedelta(hours=1), first=True),
+        item("incident", later, None, first=True),
+        item("worker", plain, AT + timedelta(hours=2)),
+        item("run", plain, AT - timedelta(hours=1)),
+    ]
+    ranked = [(entry.kind, entry.id) for entry in attention_order(candidates)]
+    # Transactions in doubt lead the incidents, oldest first, without passing the kinds ranked before incidents.
+    assert ranked == [
+        ("worker", plain),
+        ("incident", doubt),
+        ("incident", later),
+        ("incident", plain),
+        ("run", plain),
+    ]
+
+
 def test_long_titles_are_cut_to_the_contract_bound():
     [entry] = attention_order([Candidate("run", UUID(int=1), "A run of " + "w" * 300 + " failed", AT)])
     assert len(entry.title) == 200 and entry.title.endswith("…")

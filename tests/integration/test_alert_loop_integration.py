@@ -247,14 +247,22 @@ async def test_a_revoked_target_grant_stops_the_rule(evaluator):
 async def test_the_default_preset_is_installed_once_and_never_again_after_deletion(evaluator):
     case = evaluator
     await at(case, 0)
-    (installed,) = await rows(case, "SELECT id,name,preset_id,updated_by FROM alert_rules WHERE tenant_id=:tenant")
+    installed, doubt = await rows(
+        case, "SELECT id,name,preset_id,updated_by FROM alert_rules WHERE tenant_id=:tenant ORDER BY name"
+    )
     assert (installed["name"], installed["preset_id"], installed["updated_by"]) == (
         "A platform component is degraded",
         "platform-degraded",
         None,
     )
-    assert await rows(case, "SELECT preset_id,version,rule_id FROM alert_preset_installs") == [
-        {"preset_id": "platform-degraded", "version": 1, "rule_id": installed["id"]}
+    assert (doubt["name"], doubt["preset_id"], doubt["updated_by"]) == (
+        "Transactions in doubt",
+        "transactions-in-doubt",
+        None,
+    )
+    assert await rows(case, "SELECT preset_id,version,rule_id FROM alert_preset_installs ORDER BY preset_id") == [
+        {"preset_id": "platform-degraded", "version": 1, "rule_id": installed["id"]},
+        {"preset_id": "transactions-in-doubt", "version": 1, "rule_id": doubt["id"]},
     ]
     # Installed after the first visit's reads, it is read from the next visit on.
     await at(case, 30)
@@ -262,7 +270,9 @@ async def test_the_default_preset_is_installed_once_and_never_again_after_deleti
     assert (view.state.state, view.state.value, view.updated_by) == ("ok", 0.0, None)
     await case.rules.delete(case.manager, case.scope, installed["id"], 1, context=CONTEXT)
     await at(case, 60)
-    assert await rows(case, "SELECT id FROM alert_rules WHERE tenant_id=:tenant") == []
+    assert await rows(case, "SELECT preset_id FROM alert_rules WHERE tenant_id=:tenant") == [
+        {"preset_id": "transactions-in-doubt"}
+    ]
 
 
 async def test_test_runs_never_fire_a_rule(evaluator):

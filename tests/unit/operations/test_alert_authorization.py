@@ -193,6 +193,7 @@ def test_the_rule_operations_say_what_a_signal_also_needs():
     for name in ("alert_rules.create", "alert_rules.update", "alert_rules.preview"):
         description = OPERATIONS[name].native().description
         assert "A rule on incidents.active also needs incident.read" in description, name
+        assert "a rule on transactions.in_doubt or transactions.undo_age_seconds needs run.read" in description, name
         assert "at least one deployment target the caller may read" in description, name
     assert (
         "An update that only switches a rule off needs neither" in OPERATIONS["alert_rules.update"].native().description
@@ -256,6 +257,20 @@ async def test_a_rule_on_open_incidents_needs_incident_read_as_the_summary_does(
         await save(person("alert_manager", "viewer"))
     with pytest.raises(Passed):
         await save(person("alert_manager", "viewer", "operator"))
+
+
+@pytest.mark.parametrize("way", ["create", "update", "preview"])
+@pytest.mark.parametrize("signal", ["transactions.in_doubt", "transactions.undo_age_seconds"])
+async def test_a_rule_on_transactions_needs_run_read_as_the_summary_does(way, signal):
+    rule = AlertRuleDraft.model_validate_json(
+        json.dumps({"name": "Transactions", "signal": signal, "comparator": "gt", "threshold": 0, "severity": "info"})
+    )
+    save = saving(rule)[way]
+    # status.read without run.read: the summary shows this caller no transactions, so no rule reads them either.
+    with pytest.raises(AccessDenied):
+        await save(person("alert_manager", "worker_operator"))
+    with pytest.raises(Passed):
+        await save(person("alert_manager", "viewer"))
 
 
 @pytest.mark.parametrize("way", ["create", "update", "preview"])

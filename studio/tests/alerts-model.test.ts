@@ -93,6 +93,20 @@ describe("signal words", () => {
     });
     expect(SIGNAL_WORDS["targets.runner_offline"].selector).toBe("target_id");
     expect(SIGNAL_WORDS["health.degraded"].window).toBe(false);
+    expect(SIGNAL_WORDS["transactions.in_doubt"]).toMatchObject({
+      name: "Transactions in doubt",
+      hint: "Transactions waiting for a person to resolve them.",
+      unit: "count",
+      window: false,
+      selector: null,
+    });
+    expect(SIGNAL_WORDS["transactions.undo_age_seconds"]).toMatchObject({
+      name: "Oldest transaction undoing",
+      hint: "How long the oldest transaction still undoing has been open.",
+      unit: "seconds",
+      window: false,
+      selector: null,
+    });
   });
   it.skipIf(!pythonAvailable)(
     "every server signal has words, and the fixture keeps the contract",

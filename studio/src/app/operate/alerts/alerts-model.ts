@@ -133,6 +133,15 @@ export const SIGNAL_WORDS: Record<AlertSignal, SignalWords> = {
     "Platform components degraded",
     "Platform components that are degraded or down, apart from the alert checker.",
   ),
+  "transactions.in_doubt": gauge(
+    "Transactions in doubt",
+    "Transactions waiting for a person to resolve them.",
+  ),
+  "transactions.undo_age_seconds": gauge(
+    "Oldest transaction undoing",
+    "How long the oldest transaction still undoing has been open.",
+    "seconds",
+  ),
 };
 const isKnown = (signal: string): signal is AlertSignal =>
   (alertSignals as readonly string[]).includes(signal);

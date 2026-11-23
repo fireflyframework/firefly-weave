@@ -64,10 +64,12 @@ from firefly_weave.contracts.operations_summary import (
     TargetsSection,
     TelemetryEndpoint,
     TelemetryMetricEndpoint,
+    TransactionsSection,
     UnavailableSection,
     WorkersSection,
 )
 from firefly_weave.contracts.telemetry import TelemetryOptions
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES
 from firefly_weave.observability import TelemetryDrops
 from firefly_weave.operations import capacity_reads
 from firefly_weave.operations.compatibility import CompatibilityService
@@ -299,21 +301,25 @@ def health_components(
 
 @dataclass(frozen=True)
 class Candidate:
-    """An attention item before ranking: `at` orders items of one kind, and is the expiry for approvals."""
+    """An attention item before ranking: `at` orders items of one kind, and is the expiry for approvals. `first`
+    puts an item ahead of the others of its kind, as a transaction in doubt among incidents."""
 
     kind: AttentionKind
     id: UUID | Literal["compatibility"]
     title: str
     at: datetime | None = None
     expires_at: datetime | None = None
+    first: bool = False
 
 
 def attention_order(candidates: Iterable[Candidate]) -> list[AttentionItem]:
-    """At most 20 items: by priority, then soonest time (unknown last), then ID, deterministically."""
+    """At most 20 items: by priority, the items of a kind that come first, then soonest time (unknown last), then ID,
+    deterministically."""
 
-    def key(item: Candidate) -> tuple[int, bool, datetime, int]:
+    def key(item: Candidate) -> tuple[int, bool, bool, datetime, int]:
         identifier = item.id.int if isinstance(item.id, UUID) else 0
-        return PRIORITY[item.kind], item.at is None, item.at or datetime.min.replace(tzinfo=UTC), identifier
+        at = item.at or datetime.min.replace(tzinfo=UTC)
+        return PRIORITY[item.kind], not item.first, item.at is None, at, identifier
 
     return [
         AttentionItem(kind=item.kind, id=item.id, title=_title(item.title), expires_at=item.expires_at)
@@ -481,6 +487,34 @@ async def read_incidents(reader: SectionReader) -> IncidentsSection:
     return IncidentsSection(active=int(active["active"]), opened_24h=int(opened["opened"]))
 
 
+async def read_transactions(reader: SectionReader) -> TransactionsSection:
+    """Transactions in doubt and transactions being undone, from their records; test runs are left out. The oldest
+    one undoing is counted from when it opened, at the read's clock."""
+    row = await reader.row(
+        "SELECT count(*) FILTER (WHERE t.state='in_doubt') AS in_doubt,"
+        "count(*) FILTER (WHERE t.state='compensating') AS undoing,"
+        f"extract(epoch FROM ({NOW}-min(t.opened_at) FILTER (WHERE t.state='compensating'))) AS oldest "
+        f"FROM run_transactions t JOIN run_facts f ON {_SAME_SCOPE.format(a='f', b='t')} AND f.run_id=t.run_id "
+        f"WHERE {_SCOPE.format(alias='t.')} AND t.state IN ('in_doubt','compensating') AND NOT f.test"
+    )
+    return TransactionsSection(
+        in_doubt=int(row["in_doubt"]), undoing=int(row["undoing"]), oldest_undoing_seconds=_seconds(row["oldest"])
+    )
+
+
+def _incident_title(row: dict[str, Any]) -> str:
+    """An incident's attention title: a transaction in doubt names its code and step, never its business key; any
+    other incident its workflow. Both only while the run's metadata may be shown."""
+    shown = available(row)
+    if row["code"] in IN_DOUBT_CODES:
+        if shown and row["node_id"]:
+            return f"Transaction in doubt: {row['code']} at {row['node_id']}"
+        return "Transaction in doubt"
+    if shown and row["workflow_name"] is not None:
+        return f"Active incident in {row['workflow_name']}"
+    return "Active incident"
+
+
 class OperationsSummaryService:
     """Lifespan-owned: one instance ID, one health registry and the exporters' own drop counter per process."""
 
@@ -540,6 +574,9 @@ class OperationsSummaryService:
             attention = await section(lambda reader: self._attention(reader, reach))
             # The last day's runs from run statistics: status.read is all it needs.
             runs_24h = await section(lambda reader: last_day(reader.tx, observed_at))
+            transactions: TransactionsSection | ForbiddenSection | UnavailableSection = (
+                await section(read_transactions) if reach.runs else ForbiddenSection(state="forbidden")
+            )
         summary = OperationsSummary(
             observed_at=observed_at,
             api=self._api(scope),
@@ -551,6 +588,7 @@ class OperationsSummaryService:
             attention=attention,
             runs_24h=runs_24h,
             alerts=alerts,
+            transactions=transactions,
         )
         return SummaryFacts(summary, reach.grants())
 
@@ -690,17 +728,18 @@ class OperationsSummaryService:
             title = f"Offline worker still holds {_plural(leases, 'active lease')}"
             candidates.append(Candidate("worker", row["id"], title, row["at"]))
         if reach.incidents:
+            # Transactions in doubt first, so twenty older incidents never push them out.
             for row in await reader.rows(
-                f"SELECT i.id,f.opened_at,f.workflow_name,{_RUN_CLASSIFICATION} FROM incidents i "
+                f"SELECT i.id,i.code,f.node_id,f.opened_at,f.workflow_name,{_RUN_CLASSIFICATION} FROM incidents i "
                 f"LEFT JOIN incident_facts f ON {_SAME_SCOPE.format(a='f', b='i')} AND f.incident_id=i.id "
                 f"LEFT JOIN run_facts r ON {_SAME_SCOPE.format(a='r', b='i')} AND r.run_id=i.run_id "
                 f"WHERE {_SCOPE.format(alias='i.')} AND i.status='active' AND NOT coalesce(f.test,false) "
-                "ORDER BY f.opened_at ASC NULLS LAST,i.id LIMIT :limit",
+                "ORDER BY i.code=ANY(:in_doubt) DESC,f.opened_at ASC NULLS LAST,i.id LIMIT :limit",
                 limit=limit,
+                in_doubt=sorted(IN_DOUBT_CODES),
             ):
-                named = row["workflow_name"] is not None and available(row)
-                title = f"Active incident in {row['workflow_name']}" if named else "Active incident"
-                candidates.append(Candidate("incident", row["id"], title, row["opened_at"]))
+                first = row["code"] in IN_DOUBT_CODES
+                candidates.append(Candidate("incident", row["id"], _incident_title(row), row["opened_at"], first=first))
         if reach.targets != ():
             for row in await reader.rows(
                 "SELECT * FROM (SELECT DISTINCT ON (r.target_id) r.id,t.payload->>'name' AS target_name,"

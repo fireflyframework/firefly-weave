@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from firefly_weave.contracts import operations_summary
 from firefly_weave.contracts.alerts import AlertRuleDraft
 from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
 from firefly_weave.operations import statistics
@@ -60,8 +61,10 @@ def rule(signal: str, **changes: Any) -> AlertRuleDraft:
 class Source:
     """Answers each read from fixed figures and records what was asked."""
 
-    def __init__(self, *, recent: Outcomes | None = None, buckets: Outcomes | None = None):
-        self.recent, self.buckets = recent, buckets or Outcomes()
+    def __init__(
+        self, *, recent: Outcomes | None = None, buckets: Outcomes | None = None, oldest_undoing: float | None = 754.5
+    ):
+        self.recent, self.buckets, self.oldest_undoing = recent, buckets or Outcomes(), oldest_undoing
         self.asked: list[tuple[Any, ...]] = []
 
     async def recent_runs(self, workflow: str | None, since: datetime, until: datetime) -> Outcomes | None:
@@ -92,6 +95,12 @@ class Source:
 
     async def incidents(self) -> IncidentsSection:
         return IncidentsSection(active=4, opened_24h=9)
+
+    async def transactions(self) -> Any:
+        undoing = 0 if self.oldest_undoing is None else 1
+        return operations_summary.TransactionsSection(
+            in_doubt=2, undoing=undoing, oldest_undoing_seconds=self.oldest_undoing
+        )
 
     async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection:
         self.asked.append(("targets", targets))
@@ -209,6 +218,19 @@ async def test_gauges_read_the_environment_summary_figures():
     assert await read("workers.free_slots") == Value(3.0)
     assert await read("deployments.reconciliation_required") == Value(2.0)
     assert await read("targets.runner_offline") == Value(1.0)
+
+
+async def test_transactions_in_doubt_signal_reads_the_count():
+    assert ALERT_SIGNALS["transactions.in_doubt"].unit == "count"
+    assert await read("transactions.in_doubt") == Value(2.0)
+
+
+async def test_undo_age_signal_has_no_data_when_nothing_is_undoing():
+    spec = ALERT_SIGNALS["transactions.undo_age_seconds"]
+    assert (spec.unit, spec.kind, spec.selectors) == ("seconds", "gauge", frozenset())
+    assert await read("transactions.undo_age_seconds") == Value(754.5)
+    # Nothing undoing is no data, never an age of zero: a rule on it neither fires nor resolves on a guess.
+    assert await read("transactions.undo_age_seconds", Source(oldest_undoing=None)) == Value(None)
 
 
 async def test_queue_signals_read_ready_tasks_of_the_task_type():

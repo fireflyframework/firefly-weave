@@ -48,7 +48,13 @@ from firefly_weave.access.roles import ROLE_CAPABILITIES
 from firefly_weave.access.scheduler import _SchedulerScope, due_alert_scopes, tenant_page
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.alerts import AlertRuleDraft
-from firefly_weave.contracts.operations_summary import IncidentsSection, LoadSection, TargetsSection, WorkersSection
+from firefly_weave.contracts.operations_summary import (
+    IncidentsSection,
+    LoadSection,
+    TargetsSection,
+    TransactionsSection,
+    WorkersSection,
+)
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.operations.alert_channels import SERVICE_ROLES, principal_here
 from firefly_weave.operations.alert_notifications import AlertNotifier, scan_approvals
@@ -182,6 +188,9 @@ class SharedReads:
 
     async def incidents(self) -> IncidentsSection:
         return cast(IncidentsSection, await self._once(("incidents",), self.source.incidents))
+
+    async def transactions(self) -> TransactionsSection:
+        return cast(TransactionsSection, await self._once(("transactions",), self.source.transactions))
 
     async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection:
         return cast(TargetsSection, await self._once(("targets", targets), lambda: self.source.targets(targets)))
@@ -624,9 +633,9 @@ class AlertLoop:
         """Whether the person who last set the rule may still read what it watches; if not, it stores unauthorized.
 
         A rule's values are operations figures, so its last editor needs status.read, as a preview does, and a rule on
-        open incidents also needs incident.read, as the environment summary does. A rule on one target needs
-        deployment.read on that target, and a rule on targets needs some target its editor may read, or it would read
-        zero. Rules Weave installs have no editor and need none of these.
+        open incidents also needs incident.read and one on transactions run.read, as the environment summary does. A
+        rule on one target needs deployment.read on that target, and a rule on targets needs some target its editor
+        may read, or it would read zero. Rules Weave installs have no editor and need none of these.
         """
         if row["updated_by"] is not None:
             extra = SIGNAL_CAPABILITIES.get(rule.signal)
