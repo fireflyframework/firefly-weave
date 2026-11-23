@@ -762,21 +762,31 @@ export class ScopeHost {
         clearTimeout(timer);
         this.waiting = null;
         if (reply instanceof Error) return reject(reply);
-        let answer: { scope?: unknown; error?: string };
-        try {
-          answer = JSON.parse(reply) as typeof answer;
-        } catch {
-          // Its real answer may still come: a new process keeps the next
-          // question from reading it.
+        // A stray line: its real answer may still come, so a new process
+        // keeps the next question from reading it.
+        const stray = (what: string) => {
           this.stop(child);
-          return reject(
+          reject(
             new Error(
-              `The scope process answered with a line that isn't JSON: ${reply}`,
+              `The scope process answered with a line that isn't ${what}: ${reply}`,
             ),
           );
+        };
+        let answer: unknown;
+        try {
+          answer = JSON.parse(reply);
+        } catch {
+          return stray("JSON");
         }
-        if (answer.error === undefined) resolve(answer.scope);
-        else reject(new Error(answer.error));
+        if (
+          typeof answer !== "object" ||
+          answer === null ||
+          !("scope" in answer || "error" in answer)
+        )
+          return stray("an answer");
+        const { scope, error } = answer as { scope?: unknown; error?: string };
+        if (error === undefined) resolve(scope);
+        else reject(new Error(error));
       };
       child.stdin!.write(`${JSON.stringify(question)}\n`);
     });

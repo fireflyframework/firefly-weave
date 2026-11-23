@@ -325,8 +325,9 @@ SPDX-License-Identifier: Apache-2.0
   it: the approvals countdown, the connect wizard's polls and the incidents
   reload are checked to the interval, and a reload every 20 s no longer
   passes a check of every 15 s. A scope process that answers with a line that
-  isn't JSON fails that one question instead of every later one, and a scope
-  process that ends quotes the end of its stderr.
+  isn't an answer (not JSON, or JSON without a scope or an error) fails that
+  one question instead of every later one, and a scope process that ends
+  quotes the end of its stderr.
 - CI has a manual job that runs the PostgreSQL integration tests against
   PostgreSQL 17; it moves to every pull request once the tests that depend on
   timing pass on a hosted runner. The tests that need Kafka, Keycloak, a built

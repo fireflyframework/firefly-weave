@@ -15,7 +15,6 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Clusters › Approvals: plans waiting for an approval, a countdown to each
 // The process that answers hostScope's questions, with a small Node program
 // in place of Python: what a bad answer or an ended process does to the
 // question that gets it and to the questions after it.
@@ -61,6 +60,18 @@ test("an answer that isn't JSON fails its question, and the next gets its own an
     path: "steps.charge",
   });
 });
+
+// JSON that isn't an object with "scope" or "error": a stray print, not an answer.
+for (const line of ["42", "[1, 2]", '"loading"', "null"]) {
+  test(`a JSON line that isn't an answer (${line}) fails its question, and the next gets its own answer`, async () => {
+    await expect(host.ask({ say: line })).rejects.toThrow(
+      `The scope process answered with a line that isn't an answer: ${line}`,
+    );
+    await expect(host.ask({ path: "steps.charge" })).resolves.toEqual({
+      path: "steps.charge",
+    });
+  });
+}
 
 test("a process that ends says what it wrote to stderr", async () => {
   await expect(
