@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // connect command registers while it stays open. It only reads; the routes
 // here stand in for the platform.
 import { expect, test } from "@playwright/test";
+import { pauseClock } from "./support";
 import {
   CONNECT,
   CREATE,
@@ -33,6 +34,7 @@ import {
   openWizard,
   openWizardAndLook,
   settled,
+  settledPaused,
   shown,
   status,
   targetId,
@@ -198,9 +200,9 @@ test("while a name is invalid Studio isn't looking, so it never claims a fresh l
   await openWizardAndLook(page);
   await page.getByRole("textbox", { name: "Cluster name" }).fill("Weave_Test");
   await expect(status(page)).toContainText("Not looking yet");
-  // runFor fires each timer on the way, as real time would. A fastForward
-  // can race the fake clock's own timer loop, which then sets the page's
-  // clock back by the jump, so "Updated" keeps its old text.
+  // Paused, the clock moves only by runFor, which fires each timer on the
+  // way as real time would; a running one can step back after it.
+  await pauseClock(page);
   await page.clock.runFor(60_000);
   const updated = page.locator(".refresh-status .updated");
   await expect(updated).toHaveText("Updated 1 min ago");
@@ -376,20 +378,23 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
+  await pauseClock(page);
   // A jump, not runFor: firing Studio's 1 s ticks one by one for 15 minutes
   // takes about 15 s of real time.
   await page.clock.fastForward(15 * 60_000);
+  await settledPaused(page);
   await expect(status(page).getByRole("status")).toContainText("Not seen yet");
   await expect(status(page)).toContainText(
     "Studio hasn't seen kind-weave-test yet. Check the command's output in your terminal.",
   );
-  await settled(page);
   const reads = backend.targetReads;
   for (let step = 0; step < 3; step++) {
     await page.clock.runFor(5_000);
-    await settled(page);
+    await settledPaused(page);
   }
   expect(backend.targetReads).toBe(reads);
+  // Studio draws on its timers, so the clock runs again for the clicks.
+  await page.clock.resume();
   await status(page).getByRole("button", { name: "Keep waiting" }).click();
   await expect.poll(() => backend.targetReads).toBe(reads + 1);
   await expect(status(page)).toContainText("Waiting for the cluster");
@@ -406,19 +411,26 @@ test("an unreachable platform shows the partial state and waiting resumes on the
   const backend = await openClusters(page);
   await openWizardAndLook(page);
   backend.unreachable = true;
-  await page.clock.runFor(5_000);
+  // Paused, the clock moves only by runFor, and Refresh restarts the wait,
+  // so the poll after this failure is due exactly 10 s on.
+  await pauseClock(page);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await settledPaused(page);
   const problem = page.getByRole("alert").filter({
     hasText: "This section could not be loaded.",
   });
   await expect(problem).toContainText("The platform didn't answer in time.");
   await expect(problem).toContainText("Support code: WV-UNAVAILABLE");
   await expect(status(page)).toContainText("Waiting for the cluster");
-  await settled(page);
   backend.unreachable = false;
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
   // After a failure the next poll waits twice as long.
-  await page.clock.runFor(10_000);
+  await page.clock.runFor(9_500);
+  await settledPaused(page);
+  await expect(problem).toHaveCount(1);
+  await page.clock.runFor(500);
+  await settledPaused(page);
   await expect(problem).toHaveCount(0);
   await expect(status(page).getByRole("status")).toContainText(
     "Cluster connected",
@@ -511,22 +523,24 @@ test("Clusters polls every 5 s while the wizard is open and every 15 s after it"
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
-  // Steps of 5 s, run timer by timer: a jump that fires only a timer or two
-  // can end before the fake clock's own timer loop, which then sets the
-  // page's clock back by the jump and loses that step's poll.
-  const count = async (seconds: number) => {
-    const before = backend.targetReads;
-    for (let step = 0; step < seconds; step += 5) {
+  // Paused, the clock moves only by runFor: each step of 5 s holds exactly
+  // the polls due in it, so the intervals are checked to the step.
+  await pauseClock(page);
+  const polls = async () => {
+    const seen: number[] = [];
+    for (let step = 0; step < 6; step++) {
+      const before = backend.targetReads;
       await page.clock.runFor(5_000);
-      await settled(page);
+      await settledPaused(page);
+      seen.push(backend.targetReads - before);
     }
-    return backend.targetReads - before;
+    return seen;
   };
-  expect(await count(30)).toBeGreaterThanOrEqual(5);
+  expect(await polls()).toEqual([1, 1, 1, 1, 1, 1]);
   await page.getByRole("button", { name: "Back to Clusters" }).click();
+  // Leaving the wizard restarts the wait: the polls come at 15 s and 30 s.
+  expect(await polls()).toEqual([0, 0, 1, 0, 0, 1]);
   await expect(page.getByRole("button", { name: "Add target" })).toBeFocused();
-  await settled(page);
-  expect(await count(30)).toBeLessThanOrEqual(3);
 });
 
 test("the wizard reads targets, and the new target's runners and observations, and sends nothing", async ({

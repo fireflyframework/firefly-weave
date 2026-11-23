@@ -164,6 +164,20 @@ export interface Recorder {
   catalogPages: number;
   exports: string[];
 }
+/**
+ * Stops the page's fake clock where it is, so from here time moves only by
+ * `runFor` and `fastForward`. A running fake clock also follows real time in
+ * a loop of its own, which can step it back after a `runFor` and adds the
+ * seconds a slow runner takes, so a check of "every 15 seconds" passes at 20.
+ * Call it after `page.clock.install()` and the first screen: Studio needs its
+ * timers to start.
+ */
+export async function pauseClock(page: Page) {
+  const now = await page.evaluate(() => Date.now());
+  // A little ahead: the clock still runs until pauseAt reaches the page.
+  await page.clock.pauseAt(now + 1_000);
+}
+
 export async function connected(
   page: Page,
   options: ConnectedOptions = {},

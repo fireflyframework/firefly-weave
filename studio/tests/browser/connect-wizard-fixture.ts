@@ -194,6 +194,18 @@ export const settled = (page: Page) =>
     "true",
   );
 /**
+ * `settled` under a paused clock: Studio draws on animation frames, so an
+ * answer that lands after a `runFor` shows only once a frame runs. Each try
+ * runs one frame, 16 ms of the page's time.
+ */
+export const settledPaused = (page: Page) =>
+  expect(async () => {
+    await page.clock.runFor(16);
+    await expect(
+      page.getByRole("button", { name: "Refresh" }),
+    ).not.toHaveAttribute("aria-disabled", "true", { timeout: 200 });
+  }).toPass();
+/**
  * Opens the wizard and waits until its first look has ended, so its next
  * poll is scheduled before a test moves the page's clock.
  */
