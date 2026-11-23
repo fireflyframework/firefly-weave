@@ -152,6 +152,10 @@ button.icon-button.run-copy {
 .run-failed-at {
   color: var(--danger-ink);
 }
+/* Failures the run's steps handled: a warning, never the failure's danger. */
+.run-handled {
+  color: var(--warning-ink);
+}
 .run-version,
 .run-test {
   display: inline-flex;

@@ -32,6 +32,17 @@ export type RecordedOutput =
   | { kind: "error"; message: string }
   | { kind: "too-large" };
 
+/** A failure a step's On error handled in a run, as its banner reads it. */
+export interface HandledRecord {
+  code: string;
+  /** "" when the run no longer holds it. */
+  message: string;
+  /** null when the run no longer holds it (an item of a loop that ended). */
+  outcome: string | null;
+  attempts: number;
+  policy: "continue" | "errorOutput";
+}
+
 /** What a step received, recomputed from the run's data, or why it can't be. */
 export type Received =
   | { ok: true; value: Json }
@@ -56,12 +67,16 @@ export interface RunDataPort {
    * step inside a loop, in the item its instance key names.
    */
   received(stepId: string, key?: string): Received;
-  /** How one step instance went in the run. */
-  state(key: string): "failed" | "running" | "finished" | "not-reached";
-  /** The step's instance keys, the failing one first. */
+  /** How one step instance went in the run; "handled": it failed and its On error went on. */
+  state(
+    key: string,
+  ): "failed" | "handled" | "running" | "finished" | "not-reached";
+  /** The step's instance keys, the one the run stopped at first. */
   iterations(stepId: string): readonly string[];
-  /** The error code the step failed with in this run; null when it didn't fail. */
+  /** The error code the run stopped at this step with; null when it didn't stop there. */
   failure(stepId: string): string | null;
+  /** The failure this step instance's On error handled in the run; null when none. */
+  handled(key: string): HandledRecord | null;
   /** The run a call step started; null when none. */
   childRun(key: string): string | null;
   /** "run 3f2a…" */

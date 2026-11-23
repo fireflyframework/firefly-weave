@@ -1206,6 +1206,7 @@ export class StepDetails {
     run.version();
     const states = {
       failed: "Failed",
+      handled: "Failed, continued",
       running: "Running",
       finished: "Finished",
       "not-reached": "Not reached",

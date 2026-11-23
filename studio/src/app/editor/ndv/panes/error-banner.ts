@@ -40,7 +40,8 @@ export const OUTCOME_WORDS: Readonly<Record<string, string>> = {
 export interface HandledFailureView {
   code: string;
   message: string;
-  outcome: string;
+  /** null when a recorded run no longer holds it: the banner then gives the attempts alone. */
+  outcome: string | null;
   attempts: number;
   policy: "continue" | "errorOutput";
 }
@@ -55,11 +56,15 @@ export function errorBannerLines(failure: HandledFailureView): {
   outcome: string;
   setting: string;
 } {
-  const outcome = OUTCOME_WORDS[failure.outcome] ?? OUTCOME_WORDS["failed"];
+  const attempts = `Attempts: ${failure.attempts.toLocaleString("en-US")}.`;
+  const outcome =
+    failure.outcome === null
+      ? null
+      : (OUTCOME_WORDS[failure.outcome] ?? OUTCOME_WORDS["failed"]);
   return {
     failed: `This step failed: ${failureCodeText(failure.code)}.`,
     message: failure.message.slice(0, MESSAGE_LIMIT),
-    outcome: `Outcome: ${outcome}. Attempts: ${failure.attempts.toLocaleString("en-US")}.`,
+    outcome: outcome ? `Outcome: ${outcome}. ${attempts}` : attempts,
     setting: `The run continued (On error: ${
       failure.policy === "errorOutput"
         ? "Continue with error output"

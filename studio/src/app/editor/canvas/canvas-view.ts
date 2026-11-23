@@ -887,7 +887,10 @@ export class CanvasView implements OnInit, DoCheck {
           failure:
             state.run === "failed"
               ? { code: recorded.failures[tile.id] }
-              : null,
+              : state.run === "handled" && state.handled
+                ? { code: state.handled.code, message: state.handled.message }
+                : null,
+          handled: state.handled?.policy,
           stale: null,
           pinned: false,
           selected: state.selected,

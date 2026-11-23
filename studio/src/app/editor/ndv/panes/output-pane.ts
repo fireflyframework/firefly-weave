@@ -276,11 +276,16 @@ export function simulateOpening(
           <span class="pane-stopped-why">{{ stop.step }} needs test data</span>
         }
       } @else if (recorded) {
-        <span class="pill" [attr.data-tone]="recorded.tone">{{
-          calledRunFailed(recorded)
-            ? "Finished · the called run failed"
-            : recorded.pill
-        }}</span>
+        <span class="pill" [attr.data-tone]="recorded.tone">
+          @if (recorded.handled) {
+            <weave-icon name="degraded" [size]="16" />
+          }
+          {{
+            calledRunFailed(recorded)
+              ? "Finished · the called run failed"
+              : recorded.pill
+          }}</span
+        >
         <span class="pill pane-source-tag" data-tone="info">{{
           recorded.tag
         }}</span>
@@ -433,7 +438,10 @@ export function simulateOpening(
             <p class="pane-empty-text">Opening the editor…</p>
           }
         } @else {
-          @if (went) {
+          @if (recorded?.handled; as failed) {
+            <!-- A run that happened: what failed and how the run went on. -->
+            <weave-error-banner [failure]="failed" />
+          } @else if (went) {
             <!-- One banner: what happened first, then that the failure is simulated. -->
             <weave-error-banner
               [failure]="went.failure"
@@ -687,10 +695,12 @@ export function simulateOpening(
               </p>
             }
           }
-          @if (went?.failure?.policy === "errorOutput") {
+          @let handling = went?.failure?.policy ?? recorded?.handled?.policy;
+          @if (handling === "errorOutput") {
             <!-- What later steps read: the error path's result. -->
+            @let from = resultFrom();
             <p class="pane-result-caption">
-              Result on error{{ went!.from ? " · from " + went!.from : "" }}
+              Result on error{{ from ? " · from " + from : "" }}
             </p>
           }
           @if (loadingRun(); as run) {
@@ -704,7 +714,7 @@ export function simulateOpening(
             <!-- What the run recorded says it all. -->
           } @else if (none) {
             <p class="pane-empty-text">{{ none }}</p>
-          } @else if (returnedNull() && went?.failure?.policy === "continue") {
+          } @else if (returnedNull() && handling === "continue") {
             <p class="pane-result-caption">Output</p>
             <pre class="pane-json" tabindex="0" aria-label="Output data">
 null</pre
@@ -1111,6 +1121,8 @@ export class OutputPane {
     const several = run.iterations(target).length > 1;
     const state = run.state(key);
     const code = state === "failed" ? run.failure(target) : null;
+    // It failed and its On error went on: the banner says how, over its result.
+    const handled = state === "handled" ? run.handled(key) : null;
     const canvas = host.canvasRun?.() ?? null;
     const item = /\[(\d+)\]$/.exec(key);
     return {
@@ -1119,8 +1131,10 @@ export class OutputPane {
       iteration: several ? key : null,
       scope: `${host.stepDataScope ?? ""}|${host.profile?.environmentId ?? ""}`,
       tag: `From ${run.label()}${several && item ? `, item ${Number(item[1]) + 1}` : ""}`,
-      pill:
-        state === "failed"
+      handled,
+      pill: handled
+        ? "Failed, continued"
+        : state === "failed"
           ? "Failed in this run"
           : output.kind === "omitted"
             ? "Not shown"
@@ -1129,8 +1143,9 @@ export class OutputPane {
               : state === "not-reached"
                 ? "Not reached"
                 : "Finished in this run",
-      tone:
-        state === "failed"
+      tone: handled
+        ? "warning"
+        : state === "failed"
           ? "danger"
           : output.kind === "omitted" || state === "not-reached"
             ? null
@@ -1337,17 +1352,18 @@ export class OutputPane {
     if (target.startsWith("$")) return null;
     const found = controller.handledResult(target);
     if (!found) return null;
+    return { failure: found.failure, when: relativeTime(found.at) };
+  }
+  /** The step whose output is the error path's result ("flag-request"); null when it reads none. */
+  resultFrom(): string | null {
+    const { controller, target } = this.session();
     const path = controller.step(target)?.["errorPath"];
     const output = isJsonObject(path) ? path["output"] : undefined;
     const ref =
       isJsonObject(output) && typeof output["ref"] === "string"
         ? /^\/steps\/([^/]+)\/output$/.exec(output["ref"])
         : null;
-    return {
-      failure: found.failure,
-      when: relativeTime(found.at),
-      from: ref ? ref[1].replace(/~1/g, "/").replace(/~0/g, "~") : null,
-    };
+    return ref ? ref[1].replace(/~1/g, "/").replace(/~0/g, "~") : null;
   }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {
@@ -1696,12 +1712,15 @@ export class OutputPane {
     if (target === "$end")
       return schemaRows(session.host.model.definition.spec["outputSchema"]);
     // After its error path ran, the step's output is the path's result: the
-    // fields of the step that result reads, never the step's own.
-    const went = this.handledRun();
+    // fields of the step that result reads, never the step's own; in a run
+    // that happened as in one Studio executed.
+    const policy =
+      this.handledRun()?.failure.policy ?? this.runView()?.handled?.policy;
+    const from = policy === "errorOutput" ? this.resultFrom() : null;
     const step =
-      went?.failure.policy === "errorOutput"
-        ? went.from
-          ? session.controller.step(went.from)
+      policy === "errorOutput"
+        ? from
+          ? session.controller.step(from)
           : null
         : session.controller.step(target);
     const schema = step
