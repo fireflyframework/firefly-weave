@@ -27,6 +27,7 @@ import {
   runStatus,
 } from "../src/app/editor/debugger/run-log-panel";
 import { errorPathsAround } from "../src/app/editor/state/execute-gate";
+import { runFailureOf } from "../src/app/editor/canvas/trace-playback";
 import type { Step } from "../src/app/model";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
 
@@ -152,5 +153,54 @@ describe("the run log of a run that handled a failure", () => {
       { label: "Item 3", status: "completed", text: "send", key: "send[2]" },
     ]);
     expect(orders.summary).toBe("3 items");
+  });
+});
+
+describe("a run that handled one failure, then stopped at another", () => {
+  // submit failed and went on; summarize then failed and stopped the run.
+  const stopped = {
+    ...answer(
+      [
+        ["submit", "", "action", "failed"],
+        ["summarize", "", "transform", "failed"],
+      ],
+      ["submit"],
+    ),
+    status: "failed",
+    diagnostics: [
+      { code: "WV-EXPR-MISSING", message: "A value is missing.", path: "" },
+    ],
+  } as unknown as ExecuteResponse;
+
+  it("names the step that stopped it, not the one that went on", () => {
+    expect(runStatus(stopped, null)).toBe("Failed at summarize");
+    expect(runFailureOf(stopped, "summarize", undefined)).toEqual({
+      code: "WV-EXPR-MISSING",
+      message: "A value is missing.",
+    });
+    expect(runFailureOf(stopped, "submit", undefined)).toBeNull();
+  });
+
+  it("gives the stopping failure's code to the item it stopped in, past an item that went on", () => {
+    const looped = {
+      ...answer(
+        [
+          ["orders", "", "forEach", "running"],
+          ["send", "send[0]", "action", "failed"],
+          ["send", "send[1]", "action", "failed"],
+        ],
+        ["send[0]"],
+      ),
+      status: "failed",
+      diagnostics: [{ code: "SMTP_REJECTED", message: "Rejected.", path: "" }],
+    } as unknown as ExecuteResponse;
+    const [orders] = loopLog(looped, (id) => (id === "send" ? ["orders"] : []));
+    expect(orders.items[0]).toMatchObject({ status: "handled" });
+    expect(orders.items[1]).toMatchObject({
+      status: "failed",
+      text: "Failed at send",
+      message: "Rejected.",
+      steps: [{ id: "send", status: "failed", text: "SMTP_REJECTED" }],
+    });
   });
 });

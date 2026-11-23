@@ -235,8 +235,11 @@ export function loopLog(
   const trace = stepsOf(response);
   const entries = response.trace.filter((entry) => !entry.frame);
   // The step the run failed at, and its error, said once under its item:
-  // the answer's, else a Fail step's own code and message.
-  const failedAt = entries.find((entry) => entry.status === "failed");
+  // the answer's, else a Fail step's own code and message. A failure a
+  // step's On error handled went on: it isn't where the run stopped.
+  const failedAt = entries.find(
+    (entry) => entry.status === "failed" && !entry.handled,
+  );
   const error =
     response.diagnostics?.[0] ??
     (failedAt ? failCopy(definition, failedAt.nodeId) : undefined);
@@ -321,7 +324,9 @@ export function loopLog(
       const went = handled.get(index);
       if (went && item.last !== "running" && item.last !== "waiting") {
         const code = entries.find(
-          (entry) => (entry.instanceKey || entry.nodeId) === went.key,
+          (entry) =>
+            entry.status === "failed" &&
+            (entry.instanceKey || entry.nodeId) === went.key,
         )?.error?.code;
         return {
           label: itemLabel(run.within, index),
@@ -604,7 +609,10 @@ export function runStatus(
     return `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
-    const failed = response.trace.find((entry) => entry.status === "failed");
+    // Where it stopped, past any failure a step's On error handled.
+    const failed = response.trace.find(
+      (entry) => entry.status === "failed" && !entry.handled,
+    );
     // A loop that failed over its Up to, before any item.
     if (
       failed?.kind === "forEach" &&

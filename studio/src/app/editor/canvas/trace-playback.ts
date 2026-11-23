@@ -294,7 +294,10 @@ export function runFailureOf(
   definition: unknown,
 ): { code?: string; message?: string } | null {
   if (response.status !== "failed") return null;
-  const failed = response.trace.find((entry) => entry.status === "failed");
+  // A failure a step's On error handled went on: the run stopped later.
+  const failed = response.trace.find(
+    (entry) => entry.status === "failed" && !entry.handled,
+  );
   if (failed?.nodeId !== stepId) return null;
   const diagnostic = response.diagnostics?.[0];
   if (!diagnostic) return {};
