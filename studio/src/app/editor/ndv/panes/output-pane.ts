@@ -49,7 +49,6 @@ import { PinnedBanner } from "./pinned-banner";
 import { FailureBanner } from "./failure-banner";
 import { ErrorBanner } from "./error-banner";
 import { relativeTime } from "../../../format";
-import { isJsonObject } from "../../../forms/core/json";
 import {
   SimulateFailureDialog,
   type FailureChoice,
@@ -58,6 +57,7 @@ import { codeSuggestions, failureKey, simulateBlock } from "./simulate-failure";
 import { RowMenu, type RowMenuItem } from "../../../row-menu";
 import { actionSideEffect } from "../kinds/forms/action-forms";
 import { failureOf } from "../../state/test-data-ops";
+import { errorResultSource } from "../../step-blocks";
 import type { ErrorEntry } from "../../state/test-data";
 import { OutputEditor } from "./output-editor";
 import {
@@ -1361,13 +1361,10 @@ export class OutputPane {
   /** The step whose output is the error path's result ("flag-request"); null when it reads none. */
   resultFrom(): string | null {
     const { controller, target } = this.session();
-    const path = controller.step(target)?.["errorPath"];
-    const output = isJsonObject(path) ? path["output"] : undefined;
-    const ref =
-      isJsonObject(output) && typeof output["ref"] === "string"
-        ? /^\/steps\/([^/]+)\/output$/.exec(output["ref"])
-        : null;
-    return ref ? ref[1].replace(/~1/g, "/").replace(/~0/g, "~") : null;
+    // A run shows the result its own version took, never the draft's.
+    const recorded = this.runView();
+    if (recorded) return recorded.handled?.from ?? null;
+    return errorResultSource(controller.step(target));
   }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {

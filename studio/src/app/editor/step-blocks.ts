@@ -26,6 +26,27 @@ import type { Branch, Step } from "../model";
 /** The field, and the block name, of a step's error path: its owner is "<step>/errorPath". */
 export const ERROR_PATH = "errorPath";
 
+/**
+ * The step whose output a step's error path gives as its result ("Result on
+ * error · from flag-request"); null when the result isn't one step's output.
+ */
+export function errorResultSource(
+  step: Step | null | undefined,
+): string | null {
+  const path = step?.[ERROR_PATH];
+  const output =
+    path && typeof path === "object" && !Array.isArray(path)
+      ? (path as Record<string, unknown>)["output"]
+      : undefined;
+  const ref =
+    output && typeof output === "object" && !Array.isArray(output)
+      ? (output as Record<string, unknown>)["ref"]
+      : undefined;
+  const found =
+    typeof ref === "string" ? /^\/steps\/([^/]+)\/output$/.exec(ref) : null;
+  return found ? found[1].replace(/~1/g, "/").replace(/~0/g, "~") : null;
+}
+
 export type BlockKind = "case" | "default" | "branch" | "body" | "errorPath";
 export interface StepBlock {
   /**

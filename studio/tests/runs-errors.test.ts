@@ -376,8 +376,19 @@ describe("step details in run mode", () => {
       outcome: "failed",
       attempts: 3,
       policy: "errorOutput",
+      from: "notify-team",
     });
     expect(data.handled("lookup")).toBeNull();
+  });
+
+  it("names the step the error path's result comes from in the run's own version, or none without it", () => {
+    // The run's version took notify-team's output; Studio couldn't read the version of another run.
+    const read = new RunData(handledRun(), ENV, workflow());
+    read.setFacts(handledFacts());
+    expect(read.handled("submit")?.from).toBe("notify-team");
+    const unread = new RunData(handledRun(), ENV, null);
+    unread.setFacts(handledFacts());
+    expect(unread.handled("submit")?.from).toBeNull();
   });
 
   it("the banner says the outcome in words, and only the attempts when the run doesn't say", () => {

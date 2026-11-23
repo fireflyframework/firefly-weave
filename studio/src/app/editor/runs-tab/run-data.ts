@@ -28,6 +28,7 @@ import { enclosingLoops } from "../formula/loops";
 import { referencesOf } from "../formula/preview";
 import { findStep } from "../ndv/step-walk";
 import { instanceStep } from "../state/instance-keys";
+import { errorResultSource } from "../step-blocks";
 import {
   handledFailures,
   handledPolicy,
@@ -371,6 +372,11 @@ export class RunData implements RunDataPort {
       outcome: failure.outcome,
       attempts: failure.attempts,
       policy: handledPolicy(failure, this.definition),
+      from: this.definition
+        ? errorResultSource(
+            findStep(this.definition.spec.steps, (s) => s.id === failure.step),
+          )
+        : null,
     };
   }
 

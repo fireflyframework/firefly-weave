@@ -41,6 +41,12 @@ export interface HandledRecord {
   outcome: string | null;
   attempts: number;
   policy: "continue" | "errorOutput";
+  /**
+   * The step whose output its error path gave as the result, in the run's
+   * own version; null when that version isn't loaded or the result isn't one
+   * step's output.
+   */
+  from: string | null;
 }
 
 /** What a step received, recomputed from the run's data, or why it can't be. */
