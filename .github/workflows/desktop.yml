@@ -70,6 +70,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     # About 1.5 times the slowest recent green build (28 minutes, the Intel macOS installers).
     timeout-minutes: 45
+    env:
+      # crates.io's index broke off over HTTP/2 (curl error 16, "Error in the HTTP2 framing layer"); with
+      # multiplexing off, cargo asks for HTTP/1.1, which cannot fail that way.
+      CARGO_HTTP_MULTIPLEXING: 'false'
+      # cargo retries a crate download that breaks off three times by default; ten times here. It never retries an
+      # index request that breaks off, whatever this says: the "Fetch locked crates" step covers those.
+      CARGO_NET_RETRY: '10'
     defaults:
       run:
         shell: bash
@@ -95,6 +102,24 @@ jobs:
           toolchain: '1.96.0'
           components: rustfmt,clippy
           targets: ${{ matrix.target }}
+      # cargo 1.96 fails at once when a crates.io index request breaks off (curl error 16 on Linux, 18 on Intel
+      # macOS), so this step fetches every crate the lockfile names for the target before any other cargo command,
+      # and fetches again only after a network failure, three attempts at most. The cargo commands after it find
+      # everything on disk and send no request. The target is also the runner's own platform, so build scripts and
+      # procedural macros are fetched too.
+      - name: Fetch locked crates
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked --target "$TARGET" --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | tee "$RUNNER_TEMP/cargo-fetch.log"; then
+              exit 0
+            fi
+            grep -qE "curl failed|failed to get successful HTTP response" "$RUNNER_TEMP/cargo-fetch.log" || exit 1
+            [ "$attempt" -lt 3 ] || exit 1
+            echo "::warning::Fetching crates failed on attempt $attempt of 3 with a network error; fetching again"
+            sleep $((attempt * 10))
+          done
       - name: Linux native dependencies
         if: runner.os == 'Linux'
         run: |
