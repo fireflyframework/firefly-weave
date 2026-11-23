@@ -30,7 +30,7 @@ SPDX-License-Identifier: Apache-2.0
 import { selectChoice, withClassicDesigner } from "./support";
 import { test, expect, Locator, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import {
@@ -182,6 +182,7 @@ import {
   runFixture,
   runsWorkflow,
   WORKER_CATALOG,
+  type RunFixture,
   type RunsPage,
 } from "./runs-po";
 import {
@@ -480,8 +481,11 @@ function auditPage(overlays: string): Audit {
     })
     .map(describe);
 
+  // A native <dialog> opened with showModal() is modal without aria-modal.
   const modals = [
-    ...document.querySelectorAll<HTMLElement>('[aria-modal="true"]'),
+    ...document.querySelectorAll<HTMLElement>(
+      '[aria-modal="true"], dialog:modal',
+    ),
   ].filter((e) => !hidden(e));
   const scope: Element = modals.at(-1) ?? document.body;
   const graph = ".canvas, .run-graph";
@@ -1014,7 +1018,9 @@ class Tour {
           // The named scroller, or else the largest one in the open modal or
           // on the page.
           const modal = [
-            ...document.querySelectorAll<HTMLElement>('[aria-modal="true"]'),
+            ...document.querySelectorAll<HTMLElement>(
+              '[aria-modal="true"], dialog:modal',
+            ),
           ].at(-1);
           const scroller =
             [...document.querySelectorAll<HTMLElement>(selector)].find(tall) ??
@@ -1994,6 +2000,65 @@ spec:
   output: {literal: null}
 `;
 const LOOP_WORKFLOW = yamlFile("order-notify.yaml", LOOP_SOURCE);
+/** review continues with error output into an empty path; submit's path holds notify-team. */
+const ERROR_SOURCE = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: request-intake, version: 1.3.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: review
+      kind: transform
+      value: {object: {checked: {literal: true}}}
+      onError: errorOutput
+      errorPath:
+        steps: []
+        output: {literal: null}
+    - id: submit
+      kind: transform
+      value: {object: {sent: {literal: true}}}
+      onError: errorOutput
+      errorPath:
+        steps:
+          - id: notify-team
+            kind: transform
+            value: {object: {code: {ref: /steps/submit/error/code}}}
+        output: {ref: /steps/notify-team/output}
+    - id: summarize
+      kind: transform
+      value: {literal: done}
+  output: {literal: null}
+`;
+const ERROR_WORKFLOW = yamlFile("request-intake.yaml", ERROR_SOURCE);
+/** The language manifest the Studio host serves, as the repository's Python writes it. */
+const LANGUAGE_MANIFEST = JSON.parse(
+  readFileSync(
+    join(repository, "studio/tests/fixtures/language/manifest.json"),
+    "utf8",
+  ),
+).manifest as { features: string[] };
+/** Opens the error path workflow on a platform that continues after errors. */
+async function openErrorWorkflow(page: Page) {
+  await page.route(
+    /\/studio\/(?:contracts\/language|api\/api\/v1\/tenants\/[^/]+\/projects\/[^/]+\/language)$/,
+    (route) => route.fulfill({ json: LANGUAGE_MANIFEST }),
+  );
+  return openWorkflow(page, ERROR_WORKFLOW);
+}
+/** Simulates a failure of a step from its Output pane, with this code. */
+async function simulateFailure(
+  page: Page,
+  details: StepDetailsPage,
+  code: string,
+) {
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "More output actions" }).click();
+  await page.getByRole("menuitem", { name: "Simulate a failure…" }).click();
+  const dialog = page.getByRole("dialog", { name: /^Simulate a failure of / });
+  await dialog.getByLabel("Code").fill(code);
+  return { pane, dialog };
+}
 
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
@@ -6076,6 +6141,148 @@ spec:
         .getByRole("button", { name: /Choose an item$/ }),
     ).toHaveAccessibleName("Item 2 of 3, Failed. Choose an item");
     await shot("233-loop-recorded");
+  },
+  // Settings › On error on a step that continues with error output, with
+  // Result on error under it.
+  async "error-settings"({ page, shot }) {
+    await openErrorWorkflow(page);
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("submit");
+    await showParameters(page, details.dialog);
+    await details.tab("Settings").click();
+    const field = details.field("onError");
+    await expect(field.getByRole("combobox", { name: "On error" })).toHaveValue(
+      "Continue with error output",
+    );
+    await field.scrollIntoViewIfNeeded();
+    await shot("234-error-settings", { tabs: 0 });
+  },
+  // The canvas: review's empty error path with its slot, submit's with a step.
+  async "error-lane"({ page, shot }) {
+    const canvas = await openErrorWorkflow(page);
+    await expect(
+      canvas.insertTarget("Add a step to the error path of review"),
+    ).toBeAttached();
+    await expect(canvas.tile("notify-team")).toBeAttached();
+    await leaveCanvas(page);
+    await shot("235-error-lane", { tabs: 0 });
+  },
+  // Simulate a failure, then the Output pane's banner for it.
+  async "error-dialog"({ page, shot }) {
+    await openErrorWorkflow(page);
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("submit");
+    const { pane, dialog } = await simulateFailure(
+      page,
+      details,
+      "REQUEST_REFUSED",
+    );
+    await shot("236-simulate-failure", { tabs: 2 });
+    await dialog.getByRole("button", { name: "Simulate failure" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(pane.locator("weave-failure-banner")).toBeVisible();
+    await shot("237-failure-banner", { tabs: 0 });
+  },
+  // Execute workflow with that failure: submit failed and continued, its
+  // error path ran, and the run log says so.
+  async "error-run"({ page, shot, size }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    // At 500 px of height or less the run log leaves the canvas a strip
+    // under its View menu, whatever the workflow (an open point).
+    only(size, "360x740", "768x1024", "1280x720", "1440x900", "1920x1080");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openErrorWorkflow(page);
+    await localAuthoring(page);
+    const details = new StepDetailsPage(page);
+    await details.openWithKeyboard("submit");
+    const { dialog } = await simulateFailure(page, details, "REQUEST_REFUSED");
+    await dialog.getByRole("button", { name: "Simulate failure" }).click();
+    await details.close();
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    const log = page.getByRole("region", { name: "Run log" });
+    await expect(log.locator(".run-log-status")).toHaveText(
+      /^Succeeded with errors/,
+    );
+    await expect(
+      new CanvasPage(page).tile("submit").locator(".tile-badge"),
+    ).toHaveAttribute("data-badge", "handled");
+    await shot("238-error-run", { tabs: 0 });
+  },
+  // The Runs tab: a run that handled submit's failure, on its canvas.
+  async "error-recorded"({ page, shot }) {
+    const workflow = {
+      ...parse(ERROR_SOURCE),
+      metadata: { name: "invoice-approval", version: "1.3.0" },
+    };
+    const base = runFixture("succeeded");
+    const state = base.view["state"] as Record<string, unknown>;
+    const id = "4e2a91c7-5b7d-4e8f-9a0b-1c2d3e4f5a6b";
+    const fact = (node_id: string, status: string, extra = {}) => ({
+      ...base.facts[0],
+      node_id,
+      instance_key: "",
+      iteration: [],
+      kind: "transform",
+      status,
+      attempts: 1,
+      error_code: null,
+      ...extra,
+    });
+    const run = {
+      summary: { ...base.summary, id, handled_errors: 1 },
+      view: {
+        ...base.view,
+        id,
+        state: {
+          ...state,
+          steps: {
+            review: { output: { checked: true } },
+            submit: {
+              output: { code: "REQUEST_REFUSED" },
+              error: {
+                code: "REQUEST_REFUSED",
+                message: "The service refused the request.",
+                outcome: "failed",
+                attempts: 1,
+                instanceKey: "submit",
+              },
+            },
+            "notify-team": { output: { code: "REQUEST_REFUSED" } },
+            summarize: { output: "done" },
+          },
+        },
+      },
+      facts: [
+        fact("review", "succeeded", { output: { checked: true } }),
+        fact("submit", "failed", {
+          error_code: "REQUEST_REFUSED",
+          handled: "errorOutput",
+          output: { code: "REQUEST_REFUSED" },
+        }),
+        fact("notify-team", "succeeded", {
+          output: { code: "REQUEST_REFUSED" },
+        }),
+        fact("summarize", "succeeded", { output: "done" }),
+      ],
+      versionId: base.versionId,
+    } as RunFixture;
+    const opened = await openRunsTab(page, {
+      runs: [run, runFixture("failed")],
+      workflow,
+      before: async () => {
+        await page.route("**/projects/*/workflows/*/export", (route) =>
+          route.fulfill({ json: { id: "version", document: workflow } }),
+        );
+      },
+    });
+    await opened.runs.row(id).click();
+    await expect(
+      new CanvasPage(page).tile("submit").locator(".tile-badge"),
+    ).toHaveAttribute("data-badge", "handled");
+    await shot("239-error-recorded", { tabs: 0 });
   },
   async "call-step"({ page, shot }) {
     const details = await openCallStep(page);
