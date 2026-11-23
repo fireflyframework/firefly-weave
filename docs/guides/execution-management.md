@@ -366,7 +366,7 @@ by a connected product. Plan retention for those systems separately.
 | `WV-RUN-LIFECYCLE-STATE` (HTTP 409) | The run is already archived, or already restored | Nothing to do; refresh the list |
 | `WV-RUN-NOT-ARCHIVED` (HTTP 409) | You tried to purge a run that is not archived | Archive it first |
 | `WV-RUN-PURGE-CONFIRM` (HTTP 422) | `confirm_run_id` does not match the run | Type the exact run ID |
-| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired |
+| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease, a trigger start still waiting to run with one of the run's platform events, or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired; a waiting trigger start runs or expires within a day, so try the purge again later |
 | `WV-RUN-PURGED` (HTTP 410) | You replayed a request for a run that was purged | Start a new run with a new idempotency key if you need one |
 | HTTP 403, or the run has no **Archive** section or no **Delete run data** button | Your roles do not include `run.archive` or `run.purge` in this workspace | Ask an administrator; see [People and access](people-and-access.md) |
 | A search returns several runs | Business keys are not unique | Filter by status or correlation key, then choose one run ID |
