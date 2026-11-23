@@ -483,7 +483,8 @@ export function frameExecuted(
 
 /**
  * The step a run is framed on: where it failed, else where it is, else the
- * last step it finished, else the trigger. `tiles` are in the canvas's order.
+ * first step that failed and continued, else the last step it finished,
+ * else the trigger. `tiles` are in the canvas's order.
  */
 export function framedStep(
   run: RecordedRun,
@@ -498,6 +499,8 @@ export function framedStep(
   return (
     at((state) => state === "failed") ??
     at((state) => state === "live" || state === "waiting") ??
+    // A step that failed and continued: the run went on, but that's the why.
+    at((state) => state === "handled") ??
     (lastDone >= 0 ? tiles[lastDone] : null) ??
     tiles.find((id) => id.startsWith("$trigger")) ??
     null

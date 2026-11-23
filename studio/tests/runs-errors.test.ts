@@ -21,7 +21,11 @@ SPDX-License-Identifier: Apache-2.0
 // rows, and Debug in editor, which turns each handled failure into a
 // simulated one without its message, leaving out what Studio can't simulate.
 import { describe, expect, it } from "vitest";
-import { edgeRun, tileRun } from "../src/app/editor/canvas/run-state";
+import {
+  edgeRun,
+  framedStep,
+  tileRun,
+} from "../src/app/editor/canvas/run-state";
 import { layoutLtr } from "../src/app/editor/canvas/layout-ltr";
 import { errorBannerLines } from "../src/app/editor/ndv/panes/error-banner";
 import {
@@ -302,6 +306,19 @@ describe("a step whose failure its On error handled, on the Runs tab", () => {
         policy: "continue",
       },
     ]);
+  });
+
+  it("frames the run on the step that failed and continued, where nothing failed or runs", () => {
+    const tiles = ["lookup", "submit", "notify-team", "summarize"];
+    const { canvas } = overlayOf(handledRun(), handledFacts(), versions());
+    expect(framedStep(canvas, tiles)).toBe("submit");
+    // A step the run stopped at still comes first.
+    expect(
+      framedStep(
+        { ...canvas, current: ["summarize"], status: "failed" },
+        tiles,
+      ),
+    ).toBe("summarize");
   });
 
   it("says in the header how many failures were handled and the first one", () => {
