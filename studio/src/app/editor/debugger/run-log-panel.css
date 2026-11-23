@@ -187,6 +187,54 @@ SPDX-License-Identifier: Apache-2.0
 .run-log-entry[data-status="failed"] .run-log-summary {
   color: var(--danger-ink);
 }
+/* A step that failed and went on: warning, never danger; its code whole on a
+   second line, 24 px in, under its name. */
+.run-log-status[data-tone="warning"] {
+  color: var(--warning-ink);
+  font: var(--type-caption);
+}
+.run-log-outcome {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+}
+.run-log-outcome weave-icon,
+.run-log-entry[data-status="handled"] .run-log-icon,
+.run-log-entry[data-status="handled"] .run-log-summary,
+.run-log-handled-code {
+  color: var(--warning-ink);
+}
+.run-log-outcome weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.run-log-entry[data-status="handled"] {
+  background: var(--warning-bg);
+  padding-block: var(--space-1);
+}
+.run-log-handled-code {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  overflow-wrap: anywhere;
+  font: var(--type-mono);
+}
+/* An error path: "Error path", then its steps, 24 px further in for each path around them. */
+.run-log-path {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding-inline: calc(var(--space-3) + var(--path-depth, 1) * 24px)
+    var(--space-3);
+  color: var(--muted);
+  font: var(--type-small);
+}
+.run-log-in-path > .run-log-entry {
+  padding-inline-start: calc(var(--space-3) + var(--path-depth, 1) * 24px);
+}
 /* Called workflows: a raised row under the call, then its steps in a group
    with a rule on the left; each level inside goes 22 px further in. */
 .run-log-frames,
