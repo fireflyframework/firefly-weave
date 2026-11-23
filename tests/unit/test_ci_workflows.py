@@ -16,12 +16,15 @@
 
 """CI pins its Linux image and its actions, and runs a cross-platform tier on macOS and Windows (acceptance spec §4)."""
 
+import hashlib
 import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -807,3 +810,209 @@ def test_the_changes_and_cluster_jobs_use_only_the_actions_the_pr_job_pins():
     for name in ("changes", "cluster"):
         used = {step["uses"] for step in acceptance[name]["steps"] if "uses" in step}
         assert used and used <= pinned, name
+
+
+SCANS = "security-scans.yml"
+# Each scan job, the tool it installs, and where that tool's releases are published.
+SCANNERS = {
+    "secrets": ("gitleaks", "https://github.com/gitleaks/gitleaks/releases/download/"),
+    "files": ("trivy", "https://github.com/aquasecurity/trivy/releases/download/"),
+}
+
+
+def install_step(job_name):
+    (step,) = [step for step in jobs(SCANS)[job_name]["steps"] if step.get("name", "").startswith("Install ")]
+    return step
+
+
+def test_the_security_scans_run_for_every_pull_request_and_push_to_main_with_no_secret():
+    # Fork pull requests run them too: the jobs read only, keep no checkout credentials and name no secret, and no
+    # trigger that runs with the repository's secrets (pull_request_target, workflow_run) starts them.
+    document = workflow(SCANS)
+    assert document["on"] == {"pull_request": None, "push": {"branches": ["main"]}, "workflow_dispatch": None}
+    assert "secrets." not in (WORKFLOWS / SCANS).read_text(encoding="utf-8")
+    assert set(document["jobs"]) == set(SCANNERS)
+    for name, job in document["jobs"].items():
+        assert job["runs-on"] == "ubuntu-24.04", name
+        (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+        assert checkout["with"]["persist-credentials"] is False, name
+
+
+# Stands in for curl: copies $RELEASE to the --output path and records the URL it was asked for.
+FAKE_CURL = """#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) output=$2; shift 2 ;;
+    https://*) echo "$1" >> "$URLS"; shift ;;
+    *) shift ;;
+  esac
+done
+cp "$RELEASE" "$output"
+"""
+
+
+def run_install(tmp_path, job_name, pinned=None):
+    """The job's install step, as GitHub's bash runs it, against a release archive holding a stand-in for the tool.
+    Only curl is stubbed: sha256sum, cut and tar are the real ones. Without `pinned`, the step's SHA-256 is the
+    archive's own."""
+    tool, _ = SCANNERS[job_name]
+    step = install_step(job_name)
+    staging, tools, runner = tmp_path / "staging", tmp_path / "bin", tmp_path / "runner"
+    for folder in (staging, tools, runner):
+        folder.mkdir()
+    (staging / tool).write_text(f'#!/usr/bin/env bash\necho "{tool} ran: $*"\n', encoding="utf-8")
+    (staging / "LICENSE").write_text("license\n", encoding="utf-8")
+    (staging / tool).chmod(0o755)
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        for name in ("LICENSE", tool):
+            bundle.add(staging / name, arcname=name)
+    (tools / "curl").write_text(FAKE_CURL, encoding="utf-8")
+    (tools / "curl").chmod(0o755)
+    environment = {
+        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+        "RUNNER_TEMP": runner.as_posix(),
+        "RELEASE": archive.as_posix(),
+        "URLS": (tmp_path / "urls").as_posix(),
+        "VERSION": step["env"]["VERSION"],
+        "SHA256": pinned or hashlib.sha256(archive.read_bytes()).hexdigest(),
+    }
+    bash = shutil.which("bash")
+    assert bash is not None
+    process = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    urls = (tmp_path / "urls").read_text(encoding="utf-8").splitlines() if (tmp_path / "urls").exists() else []
+    return process, runner / tool / tool, urls
+
+
+@pytest.mark.parametrize("job_name", sorted(SCANNERS))
+def test_each_scanner_is_one_pinned_release_with_its_sha256(job_name):
+    step = install_step(job_name)
+    assert re.fullmatch(r"\d+\.\d+\.\d+", step["env"]["VERSION"])
+    assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["SHA256"])
+
+
+@POSIX_ONLY
+@pytest.mark.parametrize("job_name", sorted(SCANNERS))
+def test_a_scanner_whose_download_matches_its_pinned_sha256_is_installed_and_run(tmp_path, job_name):
+    tool, releases = SCANNERS[job_name]
+    process, binary, urls = run_install(tmp_path, job_name)
+    assert process.returncode == 0, process.stderr
+    assert binary.is_file() and f"{tool} ran:" in process.stdout
+    (url,) = urls
+    assert url.startswith(f"{releases}v{install_step(job_name)['env']['VERSION']}/")
+
+
+@POSIX_ONLY
+@pytest.mark.parametrize("job_name", sorted(SCANNERS))
+def test_a_scanner_whose_download_differs_from_its_pinned_sha256_is_never_unpacked(tmp_path, job_name):
+    tool, _ = SCANNERS[job_name]
+    process, binary, _ = run_install(tmp_path, job_name, pinned="0" * 64)
+    assert process.returncode != 0
+    assert not binary.exists() and f"{tool} ran:" not in process.stdout
+    assert "not the pinned" in process.stdout
+
+
+def test_the_secret_scan_checks_the_files_and_each_new_commit_against_the_reviewed_baseline():
+    job = jobs(SCANS)["secrets"]
+    (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+    # The whole history, so that both ends of a pull request's or a push's commits are there.
+    assert checkout["with"]["fetch-depth"] == 0
+    (files,) = [step for step in job["steps"] if '/gitleaks" dir ' in step.get("run", "")]
+    (commits,) = [step for step in job["steps"] if '/gitleaks" git ' in step.get("run", "")]
+    for step in (files, commits):
+        assert "--config .github/gitleaks.toml" in step["run"] and "--redact" in step["run"]
+    assert commits["if"] == "github.event_name != 'workflow_dispatch'"
+    pull_request = "${{ github.event_name == 'pull_request' && github.event.pull_request"
+    assert commits["env"] == {
+        "BASE": f"{pull_request}.base.sha || github.event.before }}}}",
+        "HEAD": f"{pull_request}.head.sha || github.sha }}}}",
+    }
+    # The commits reach the script through the environment, never pasted into it.
+    assert '--log-opts="$BASE..$HEAD"' in commits["run"] and "${{" not in commits["run"]
+
+
+def run_commit_scan(tmp_path, base=None, head=None):
+    """The commit scan step, as GitHub's bash runs it, in a repository of three commits and with a stand-in gitleaks
+    that records its arguments. Without `base` and `head`, it scans the last two commits."""
+    (step,) = [step for step in jobs(SCANS)["secrets"]["steps"] if '/gitleaks" git ' in step.get("run", "")]
+    repo, runner = tmp_path / "repo", tmp_path / "runner"
+    repo.mkdir()
+    (runner / "gitleaks").mkdir(parents=True)
+    (runner / "gitleaks/gitleaks").write_text('#!/usr/bin/env bash\necho "$*" >> "$CALLS"\n', encoding="utf-8")
+    (runner / "gitleaks/gitleaks").chmod(0o755)
+
+    def git(*args):
+        command = ["git", "-c", "user.name=Scan", "-c", "user.email=scan@example.com", *args]
+        return subprocess.run(command, cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    for number in range(3):
+        (repo / "file.txt").write_text(f"{number}\n", encoding="utf-8")
+        git("add", "file.txt")
+        git("commit", "-q", "-m", f"commit {number}")
+    environment = {
+        "PATH": os.environ["PATH"],
+        "HOME": tmp_path.as_posix(),
+        "RUNNER_TEMP": runner.as_posix(),
+        "CALLS": (tmp_path / "calls").as_posix(),
+        "BASE": base or git("rev-parse", "HEAD~2"),
+        "HEAD": head or git("rev-parse", "HEAD"),
+    }
+    bash = shutil.which("bash")
+    assert bash is not None
+    process = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines() if (tmp_path / "calls").exists() else []
+    return process, calls, environment
+
+
+@POSIX_ONLY
+def test_the_commit_scan_scans_exactly_the_new_commits(tmp_path):
+    process, calls, environment = run_commit_scan(tmp_path)
+    assert process.returncode == 0, process.stderr
+    assert "2 new commit(s) to scan" in process.stdout
+    (call,) = calls
+    assert call.endswith(f"--log-opts={environment['BASE']}..{environment['HEAD']}")
+
+
+@POSIX_ONLY
+@pytest.mark.parametrize("missing", ["BASE", "HEAD"])
+def test_the_commit_scan_fails_when_either_end_is_not_in_the_checkout(tmp_path, missing):
+    # gitleaks scans nothing and still passes when git cannot read the range, as with a base commit the checkout lacks.
+    unknown = "0123456789abcdef0123456789abcdef01234567"
+    process, calls, _ = run_commit_scan(tmp_path, **{missing.lower(): unknown})
+    assert process.returncode != 0
+    assert calls == []
+    assert f"::error::The {missing.lower()} commit {unknown} is not in the checkout" in process.stdout
+
+
+def test_every_accepted_secret_finding_names_its_rule_its_files_its_exact_value_and_why():
+    # An entry that left out the value would accept any secret in the file; one that left out the file would accept
+    # the value anywhere.
+    config = tomllib.loads((ROOT / ".github/gitleaks.toml").read_text(encoding="utf-8"))
+    assert config["extend"] == {"useDefault": True}
+    assert set(config) == {"title", "extend", "allowlists"}
+    for entry in config["allowlists"]:
+        assert set(entry) == {"description", "targetRules", "condition", "paths", "regexes"}, entry
+        assert entry["description"].strip() and entry["targetRules"] and entry["condition"] == "AND"
+        assert all(path.startswith("^") and path.endswith("$") for path in entry["paths"]), entry["paths"]
+        assert all(regex.startswith("^") for regex in entry["regexes"]), entry["regexes"]
+
+
+def test_the_file_scan_fails_on_high_and_critical_findings_with_its_releases_own_checks():
+    (scan,) = [step for step in jobs(SCANS)["files"]["steps"] if '/trivy" fs ' in step.get("run", "")]
+    words = scan["run"].split()
+    for flag, value in (("--scanners", "vuln,misconfig"), ("--severity", "HIGH,CRITICAL"), ("--exit-code", "1")):
+        assert words[words.index(flag) + 1] == value, flag
+    # The infrastructure checks built into the pinned release, not the newest ones it would download.
+    assert "--skip-check-update" in words

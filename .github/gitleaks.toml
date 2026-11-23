@@ -1,0 +1,58 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# The secret scan in .github/workflows/security-scans.yml: gitleaks's own rules, and the findings that were reviewed
+# and accepted because they are not credentials. Each entry accepts one rule's match in one file, and only the exact
+# value that was reviewed, so another secret in the same file, or the same text anywhere else, is still reported.
+title = "Firefly Weave secret scan"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Example business identifiers in the execution guide: a correlation key and an idempotency key."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^docs/guides/execution-management\.md$''']
+regexes = ['''^(?:fulfillment-2026-1042|purge-order-1042-attempt-1)$''']
+
+[[allowlists]]
+description = "A made-up token the redaction test feeds in: its header and payload are {\"alg\":\"RS256\"} and {\"sub\":\"builder\"}, and its signature is the word signature."
+targetRules = ["jwt"]
+condition = "AND"
+paths = ['''^studio/tests/acceptance-records\.test\.ts$''']
+regexes = ['''^eyJhbGciOiJSUzI1NiJ9\.eyJzdWIiOiJidWlsZGVyIn0\.c2lnbmF0dXJl$''']
+
+[[allowlists]]
+description = "Private key blocks the redaction test feeds in and expects back: their body is the placeholder ${body}, a 32-character key prefix, or the [redacted] marker, never key material."
+targetRules = ["private-key"]
+condition = "AND"
+paths = ['''^studio/tests/acceptance-records\.test\.ts$''']
+regexes = ['''^-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----(?:\\n\$\{body\}|\[redacted\]-----END PRIVATE KEY-----)''']
+
+[[allowlists]]
+description = "Prefixes of the throwaway PostgreSQL login names the integration tests make; each password comes from secrets.token_urlsafe when the test runs."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tests/integration/(?:conftest|test_operations)\.py$''']
+regexes = ['''^(?:weave_b7_scheduler_|weave_d4_column_)$''']
+
+[[allowlists]]
+description = "The SHA-256 digest a compiler test expects for its fixture named secret-output."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tests/unit/compiler/test_authoring_validation\.py$''']
+regexes = ['''^915f0941ae351355b24cd8b4a7ce77c1eca2d2c438fa81a092fe6fd3eeb80d1e$''']
