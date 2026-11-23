@@ -363,8 +363,15 @@ export class RunTransactions implements DoCheck, OnDestroy {
   runId = input.required<string>();
   /** The run goes on: its transactions are read again every 2 s. */
   live = input(false);
-  /** The run's transactions each time a read lands, for the run's actions. */
-  loaded = output<{ runId: string; views: RunTransactionView[] }>();
+  /**
+   * The run's transactions each time a read lands, for the run's actions,
+   * and whether they are all of them: no page is left to read.
+   */
+  loaded = output<{
+    runId: string;
+    views: RunTransactionView[];
+    complete: boolean;
+  }>();
   private cdr = inject(ChangeDetectorRef);
   private element = inject(ElementRef<HTMLElement>);
   private router = inject(Router);
@@ -470,7 +477,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
       this.phase = "ready";
       this.problem = null;
       this.failures = 0;
-      this.loaded.emit({ runId: scope.runId, views: this.views });
+      this.emitLoaded(scope);
     } catch (error) {
       if (!this.current(scope)) return;
       const plain = describeError(error);
@@ -531,7 +538,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
         ...page.views.filter((view) => !known.has(view.instance_key)),
       ];
       this.next = page.next;
-      this.loaded.emit({ runId: scope.runId, views: this.views });
+      this.emitLoaded(scope);
     } catch (error) {
       if (!this.current(scope)) return;
       this.host().notify(
@@ -543,6 +550,13 @@ export class RunTransactions implements DoCheck, OnDestroy {
         this.changed();
       }
     }
+  }
+  private emitLoaded(scope: Scope) {
+    this.loaded.emit({
+      runId: scope.runId,
+      views: this.views,
+      complete: this.next === null,
+    });
   }
   private changed() {
     if (this.alive) this.cdr.markForCheck();

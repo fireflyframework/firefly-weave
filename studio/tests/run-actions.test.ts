@@ -698,35 +698,92 @@ describe("Cancel run on a run with transactions", () => {
 describe("Cancel without undoing", () => {
   it("is offered only with run.cancel, transaction.reconcile and a transaction not settled", () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
-    s.actions.know(first, [settled]);
+    s.actions.know(first, [settled], true);
     expect(s.actions.withoutUndoing()).toBeNull();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     for (const missing of ["run.cancel", "transaction.reconcile"]) {
       s.host.can = (capability: string) => capability !== missing;
       expect(s.actions.withoutUndoing(), missing).toBeNull();
     }
     s.host.can = () => true;
     // Records known for another run say nothing about this one.
-    s.actions.know(second, [open]);
+    s.actions.know(second, [open], true);
     expect(s.actions.withoutUndoing()).toBeNull();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.host.selectedRecord = { id: first, state: { status: "cancelled" } };
     expect(s.actions.withoutUndoing()).toBeNull();
   });
 
   it("stays in the row while a transaction is in doubt, saying why and which incident to resolve", () => {
     const s = shell();
-    s.actions.know(first, [open, inDoubt]);
+    s.actions.know(first, [open, inDoubt], true);
     expect(s.actions.withoutUndoing()).toEqual({
       blocked: { text: IN_DOUBT_LINE, incidentId: incident },
     });
   });
 
+  /** The section's first page: 50 transactions that completed. */
+  const firstPage = Array.from({ length: 50 }, (_, index) => ({
+    ...settled,
+    instance_key: `move[${index + 100}]`,
+  }));
+  const later = view("open", [step("ship", "compensate", "done")], {
+    instance_key: "move[155]",
+  });
+
+  it("is offered while only the first page is known, and the read of every page decides", async () => {
+    const s = shell();
+    s.actions.know(first, firstPage, false);
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+    s.platform.pages = [firstPage, [later]];
+    await s.actions.cancelWithoutUndoing();
+    expect(s.calls.transactionReads).toHaveLength(2);
+    expect(
+      s.actions.cancelDialog!.lines.map(
+        (line) => `${line.step} · ${line.how}: ${line.what}`,
+      ),
+    ).toEqual(["ship · Reversible: Weave won't undo it"]);
+  });
+
+  it("keeps what a read of every page found over the first page read again", async () => {
+    const s = shell();
+    s.actions.know(first, firstPage, false);
+    s.platform.pages = [firstPage, [inDoubt]];
+    await s.actions.cancelWithoutUndoing();
+    expect(s.actions.withoutUndoing()?.blocked?.incidentId).toBe(incident);
+    // The section reads its first page again: the transaction in doubt on
+    // the second page still holds the button back.
+    s.actions.know(first, firstPage, false);
+    expect(s.actions.withoutUndoing()).toEqual({
+      blocked: { text: IN_DOUBT_LINE, incidentId: incident },
+    });
+  });
+
+  it("takes newer records from the first page, and offers it again once the run has more", async () => {
+    const s = shell();
+    const hold = { ...open, instance_key: "move[5]" };
+    s.actions.know(first, [hold], true);
+    s.platform.transactions = [hold, settled];
+    await s.actions.cancelWithoutUndoing();
+    s.actions.closeCancelDialog();
+    // move[5] completed since: nothing the reads know is left unsettled.
+    const done = { ...settled, instance_key: "move[5]" };
+    s.actions.know(first, [done, settled], false);
+    expect(s.actions.withoutUndoing()).toBeNull();
+    // A transaction the read of every page didn't hold: more may follow it.
+    s.actions.know(
+      first,
+      [done, settled, { ...settled, instance_key: "move[3]" }],
+      false,
+    );
+    expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+  });
+
   it("reads the transactions again, lists what stays done, and sends skip_undo once", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.platform.transactions = [settled, open];
     await s.actions.cancelWithoutUndoing();
     expect(s.calls.transactionReads).toHaveLength(1);
@@ -762,7 +819,7 @@ describe("Cancel without undoing", () => {
 
   it("lists what stays done from every page of the run's transactions", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     const later = view("open", [step("ship", "compensate", "done")], {
       instance_key: "move[3]",
     });
@@ -782,7 +839,7 @@ describe("Cancel without undoing", () => {
 
   it("refuses in Studio when pages remain past the ones it reads, and sends nothing", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.platform.pages = Array.from({ length: 11 }, () => [open]);
     await s.actions.cancelWithoutUndoing();
     expect(s.calls.transactionReads).toHaveLength(10);
@@ -799,7 +856,7 @@ describe("Cancel without undoing", () => {
 
   it("refuses in Studio when a transaction went in doubt since the row was drawn", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.platform.transactions = [inDoubt];
     await s.actions.cancelWithoutUndoing();
     expect(s.actions.cancelDialog).toBeNull();
@@ -813,7 +870,7 @@ describe("Cancel without undoing", () => {
 
   it("names the server's refusal of a transaction in doubt, and keeps a refusal of access as today", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.platform.transactions = [open];
     await s.actions.cancelWithoutUndoing();
     let sending = s.actions.confirmWithoutUndoing("Down");
@@ -849,7 +906,7 @@ describe("Cancel without undoing", () => {
 
   it("says what happened to a run the person left, and changes nothing on screen", async () => {
     const s = shell();
-    s.actions.know(first, [open]);
+    s.actions.know(first, [open], true);
     s.platform.transactions = [open];
     await s.actions.cancelWithoutUndoing();
     const sending = s.actions.confirmWithoutUndoing("Down");

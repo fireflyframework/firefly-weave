@@ -99,9 +99,18 @@ async function platform(
   await page.route(`${environment}/runs/*/history?*`, (route) =>
     route.fulfill({ json: { events: [], next_cursor: null } }),
   );
-  await page.route(`${environment}/runs/*/transactions?*`, (route) =>
-    route.fulfill({ json: { items: result.transactions, next_cursor: null } }),
-  );
+  // Pages of 50, as Studio asks for them; the cursor is where the next starts.
+  await page.route(`${environment}/runs/*/transactions?*`, (route) => {
+    const url = new URL(route.request().url());
+    const at = Number(url.searchParams.get("cursor") ?? 0);
+    const end = at + 50;
+    return route.fulfill({
+      json: {
+        items: result.transactions.slice(at, end),
+        next_cursor: end < result.transactions.length ? String(end) : null,
+      },
+    });
+  });
   await page.route(`${environment}/runs/*/cancel`, async (route) => {
     result.posts.push(route.request().postDataJSON());
     await result.cancel(route);
@@ -276,6 +285,28 @@ test("Cancel without undoing lists what stays done and needs the run's short ID"
   );
   expect(runs.posts).toEqual([
     { reason: "The target system is down until tomorrow", skip_undo: true },
+  ]);
+});
+
+test("Cancel without undoing is offered past the first 50 transactions, and lists what stays done there", async ({
+  page,
+}) => {
+  const earlier = Array.from({ length: 50 }, (_, index) => ({
+    ...completed,
+    instance_key: `move[${index + 100}]`,
+  }));
+  await platform(page, reconciler, [...earlier, running]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  const button = actionRow(page).getByRole("button", {
+    name: "Cancel without undoing",
+  });
+  await expect(button).not.toHaveAttribute("aria-disabled", "true");
+  await button.click();
+  await expect(
+    dialog(page, "Cancel without undoing?").locator(".stays-done li"),
+  ).toHaveText([
+    /hold\[6\]\s*· Reserved: Weave won't release it/,
+    /add\[6\]\s*· Reversible: still running and may finish; Weave won't undo it/,
   ]);
 });
 

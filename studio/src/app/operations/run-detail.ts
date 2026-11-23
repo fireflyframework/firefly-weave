@@ -370,7 +370,7 @@ const isRecord = (value: unknown): value is Json =>
       [host]="h"
       [runId]="id"
       [live]="live()"
-      (loaded)="actions.know($event.runId, $event.views)"
+      (loaded)="actions.know($event.runId, $event.views, $event.complete)"
     />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />

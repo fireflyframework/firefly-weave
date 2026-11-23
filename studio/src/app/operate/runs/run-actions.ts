@@ -219,8 +219,15 @@ export class RunActions {
   /** The run the detail shows, which the Retry run dialog belongs to. */
   private shown = "";
   private alive = true;
-  /** The transactions last read for a run: what the action row offers. */
-  private known: { runId: string; views: RunTransactionView[] } | null = null;
+  /**
+   * The transactions last read for a run, and whether they are all of them:
+   * what the action row offers.
+   */
+  private known: {
+    runId: string;
+    views: RunTransactionView[];
+    complete: boolean;
+  } | null = null;
 
   constructor(
     private readonly host: () => App,
@@ -236,9 +243,33 @@ export class RunActions {
     this.retry = null;
     this.cancelDialog = null;
   }
-  /** The run's transactions as the detail or a command just read them. */
-  know(runId: string, views: RunTransactionView[] | null) {
-    this.known = views ? { runId, views } : null;
+  /**
+   * The run's transactions as the detail or a command just read them, and
+   * whether that was every page. The detail reads its first page again every
+   * 2 s: that page doesn't replace every page a command read, it updates the
+   * records they share, and one they don't share means more may follow it.
+   */
+  know(runId: string, views: RunTransactionView[] | null, complete: boolean) {
+    const held = this.known;
+    if (!views) {
+      this.known = null;
+      return;
+    }
+    if (complete || !held?.complete || held.runId !== runId) {
+      this.known = { runId, views, complete };
+      return;
+    }
+    const newer = new Map(views.map((view) => [view.instance_key, view]));
+    const keys = new Set(held.views.map((view) => view.instance_key));
+    const added = views.filter((view) => !keys.has(view.instance_key));
+    this.known = {
+      runId,
+      views: [
+        ...held.views.map((view) => newer.get(view.instance_key) ?? view),
+        ...added,
+      ],
+      complete: added.length === 0,
+    };
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
   destroy() {
@@ -330,7 +361,7 @@ export class RunActions {
     // pages remain unread, one there may not have settled either.
     const read = await this.readTransactions(target);
     if (!this.current(target)) return;
-    if (read) this.know(target.id, read.views);
+    if (read) this.know(target.id, read.views, read.complete);
     const doubt = read?.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       this.cancelDialog = {
@@ -416,8 +447,10 @@ export class RunActions {
 
   /**
    * Cancel without undoing, offered with run.cancel and transaction.reconcile
-   * while a transaction of the run hasn't settled; `blocked` says why it
-   * waits while one is in doubt. Null when it isn't offered.
+   * while a transaction of the run hasn't settled, or while some of its
+   * transactions are unread, where one may not have: pressing it reads every
+   * page, which decides. `blocked` says why it waits while one is in doubt.
+   * Null when it isn't offered.
    */
   withoutUndoing(): {
     blocked: { text: string; incidentId: string | null } | null;
@@ -429,7 +462,10 @@ export class RunActions {
     if (!id || isTerminal(run) || known?.runId !== id) return null;
     if (!host.can("run.cancel", id) || !host.can("transaction.reconcile", id))
       return null;
-    if (!known.views.some((view) => UNSETTLED.includes(view.state)))
+    if (
+      known.complete &&
+      !known.views.some((view) => UNSETTLED.includes(view.state))
+    )
       return null;
     const doubt = known.views.find((view) => view.state === "in_doubt");
     return {
@@ -464,7 +500,7 @@ export class RunActions {
         "danger",
       );
     if (!read) return unread("its transactions");
-    this.know(target.id, read.views);
+    this.know(target.id, read.views, read.complete);
     const doubt = read.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       host.notify(IN_DOUBT_LINE, this.incidentAction(doubt), "danger");
@@ -588,7 +624,8 @@ export class RunActions {
     const plain = describeError(error);
     if (plain.status !== 409 || plain.code !== "WV-TXN-IN-DOUBT") return false;
     const read = await this.readTransactions(target);
-    if (read && this.current(target)) this.know(target.id, read.views);
+    if (read && this.current(target))
+      this.know(target.id, read.views, read.complete);
     this.host().notify(
       `${failed} ${sentence(plain.message)} Support code: ${plain.code}.`,
       this.incidentAction(
