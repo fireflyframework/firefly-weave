@@ -1695,7 +1695,15 @@ export class OutputPane {
       return schemaRows(session.host.model.definition.spec["inputSchema"]);
     if (target === "$end")
       return schemaRows(session.host.model.definition.spec["outputSchema"]);
-    const step = session.controller.step(target);
+    // After its error path ran, the step's output is the path's result: the
+    // fields of the step that result reads, never the step's own.
+    const went = this.handledRun();
+    const step =
+      went?.failure.policy === "errorOutput"
+        ? went.from
+          ? session.controller.step(went.from)
+          : null
+        : session.controller.step(target);
     const schema = step
       ? ndvRegistry
           .kind(step.kind)
