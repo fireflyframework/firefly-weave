@@ -458,7 +458,12 @@ class FactRepository:
                 add(node, "succeeded")
             if isinstance(node, str) and event.type in {"task_failed", "incident_opened", "recovery_scheduled"}:
                 output = event.data.get("output")
-                code = output.get("code") if isinstance(output, dict) else event.data.get("code")
+                # An incident first reported as the model's own code names that code on the step, as the task did.
+                code = (
+                    output.get("code")
+                    if isinstance(output, dict)
+                    else event.data.get("origin_code") or event.data.get("code")
+                )
                 add(
                     node,
                     "scheduled" if event.type == "recovery_scheduled" else "failed",

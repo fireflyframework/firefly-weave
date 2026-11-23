@@ -201,7 +201,7 @@ activation's key, such as `support[2]` inside a loop.
 | `stop` | `final` or `forced_final` for an agent that answered; otherwise null. |
 | `error` | The code of a failed agent, such as `WV-AGENT-BUDGET`. |
 | `memory` | The memory `scope` and how many remembered messages the first turn `loaded`. With conversation memory, `conversation` has the `key_hash`, the `version` loaded, whether it had `expired`, and `test` for a test run. |
-| `turns` | Each turn: `turn`, `forced` (the forced final turn), `input_tokens`, `output_tokens`, `started_at`, `ended_at`, `final` (the answer of the turn that answered), `calls`, `dropped_tool_calls` and `error`. |
+| `turns` | Each turn: `turn`, `forced` (the forced final turn), `input_tokens`, `output_tokens`, `started_at`, `ended_at`, `final` (the answer of the turn that answered), `calls`, `dropped_tool_calls` and `error`: a turn the model couldn't run names the model's own code, such as `LLM_NO_TOOL_SUPPORT`. |
 | `totals` | `turns`, `tool_calls`, `input_tokens`, `output_tokens` and `duration_ms` (null while the agent runs). |
 
 Each call has its `instance_key` (`support#1.2`), the `name` the model wrote, its `target`, `status`, times,
