@@ -173,9 +173,17 @@ export interface Recorder {
  * timers to start.
  */
 export async function pauseClock(page: Page) {
-  const now = await page.evaluate(() => Date.now());
   // A little ahead: the clock still runs until pauseAt reaches the page.
-  await page.clock.pauseAt(now + 1_000);
+  const pause = async () =>
+    page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  try {
+    await pause();
+  } catch (error) {
+    // A stall of over 1 s carried the clock past that moment. Playwright
+    // stops the clock before it refuses, so the time read again holds.
+    if (!String(error).includes("Cannot fast-forward to the past")) throw error;
+    await pause();
+  }
 }
 
 export async function connected(
