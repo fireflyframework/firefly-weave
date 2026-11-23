@@ -703,12 +703,13 @@ class LumiService:
         self.deployments = deployments
         self.policy, self.runs, self.operations = policy, runs, operations
 
-    async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
+    async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> None:
+        """Check ``capability`` on the principal stored now. It returns nothing on purpose: the reloaded principal
+        carries no credential identity, so callers keep ``actor`` for every owning check and audit record."""
         if tx.scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Weave AI requires an environment")
         current = await load_principal(tx.session, actor.id)
         self.definitions.require(current, tx.scope, capability, context)
-        return current
 
     @staticmethod
     async def _read(tx: Transaction) -> LumiConfiguration | None:
@@ -746,7 +747,7 @@ class LumiService:
         context: AuditContext,
     ) -> LumiConfiguration:
         async with self.definitions.transaction(scope, None) as tx:
-            actor = await self._require(tx, actor, "lumi.manage", context)
+            await self._require(tx, actor, "lumi.manage", context)
             prior = await self._read(tx)
             if (prior.revision if prior else None) != expected:
                 raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reload it")
