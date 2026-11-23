@@ -657,7 +657,9 @@ class FactReadRepository(FactRepository):
         """The selected incidents with their facts; a page above the logical byte limit is refused unread.
 
         ``links`` reads the incidents of each one's case too; only a caller who reads every incident of the
-        environment may see them.
+        environment may see them. Both reads that pass it (one incident, and the list) already require
+        ``incident.read`` for the whole environment, so it is always true there; it stays as defense in depth, so a
+        read that ever admits a narrower grant shows no links.
         """
         if not ids:
             return []

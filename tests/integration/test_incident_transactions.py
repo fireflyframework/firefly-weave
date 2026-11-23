@@ -352,7 +352,65 @@ async def plain_run(platform, scope=None, actor=None):
     return start
 
 
-async def seed_case(platform, scope, parent, children, *, opened=datetime(2026, 10, 1, tzinfo=UTC)):
+OPENED = datetime(2026, 10, 1, tzinfo=UTC)
+
+
+async def open_incident(platform, scope, row, *, opened=OPENED):
+    """An active incident and its facts: ``(id, run, incident key, node, code, static step, instance key, order)``,
+    opened ``order`` seconds after ``opened``."""
+    keys = {"tenant": scope.tenant_id, "project": scope.project_id, "environment": scope.environment_id}
+    identifier, run_id, key, node, code, static, instance, order = row
+    await platform.execute(
+        "INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,generation,"
+        "origin_code,code,status,revision) VALUES(:id,:tenant,:project,:environment,:run,:key,:node,1,"
+        "'WV-TASK-FAILED',:code,'active',1)",
+        id=identifier,
+        run=run_id,
+        key=key,
+        node=node,
+        code=code,
+        **keys,
+    )
+    await platform.execute(
+        "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,opened_at,"
+        "updated_at,workflow_name,workflow_version,test,opened_at_estimated) SELECT tenant_id,project_id,"
+        "environment_id,:id,:static,:instance,cast(:opened AS timestamptz)+cast(:order AS integer)*interval "
+        "'1 second',cast(:opened AS timestamptz),workflow_name,workflow_version,false,false FROM run_facts "
+        "WHERE run_id=:run",
+        id=identifier,
+        static=static,
+        instance=instance,
+        opened=opened,
+        order=order,
+        run=run_id,
+    )
+
+
+def undo_stuck(run_id, order) -> tuple:
+    """The row of a called run's undo that failed for good, so its run is in doubt."""
+    return (uuid4(), run_id, "add#undo:1", "add#undo", "WV-TXN-UNDO-STUCK", "add", "add#undo", order)
+
+
+async def call_child(platform, scope, caller, step, child, *, generation=0):
+    """The call row of a caller's step that started ``child``; a later generation is the step's retried call."""
+    await platform.execute(
+        "INSERT INTO run_calls(tenant_id,project_id,environment_id,id,caller_run_id,node_id,generation,mode,"
+        "on_failure,workflow_reference,activation_id,input,depth,status,child_run_id,requested_at,started_at,"
+        "settlement) VALUES(:tenant,:project,:environment,:id,:caller,:node,:generation,'wait','stop',"
+        "'child-move@1.0.0',:activation,'{}',1,'started',:child,clock_timestamp(),clock_timestamp(),true)",
+        tenant=scope.tenant_id,
+        project=scope.project_id,
+        environment=scope.environment_id,
+        id=uuid4(),
+        caller=caller,
+        node=step,
+        generation=generation,
+        activation=uuid4(),
+        child=child,
+    )
+
+
+async def seed_case(platform, scope, parent, children, *, opened=OPENED):
     """The rows the kernel writes for a parent's settle timeout: its transaction with one called step per child run,
     the step's call, and an in-doubt incident in each child, opened a second apart in the given order."""
     keys = {"tenant": scope.tenant_id, "project": scope.project_id, "environment": scope.environment_id}
@@ -362,7 +420,6 @@ async def seed_case(platform, scope, parent, children, *, opened=datetime(2026, 
         for step in steps
     ]
     settle = uuid4()
-    held = [uuid4() for _ in children]
     await platform.execute(
         "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
         "business_key,participants,revision,opened_at,incident_key) VALUES(:tenant,:project,:environment,:run,'move',"
@@ -372,49 +429,12 @@ async def seed_case(platform, scope, parent, children, *, opened=datetime(2026, 
         **keys,
     )
     rows = [(settle, parent, "move:0", "move", "WV-TXN-SETTLE-TIMEOUT", "move", "", 0)]
-    rows += [
-        (identifier, child, "add#undo:1", "add#undo", "WV-TXN-UNDO-STUCK", "add", "add#undo", index + 1)
-        for index, (identifier, child) in enumerate(zip(held, children, strict=True))
-    ]
-    for identifier, run_id, key, node, code, static, instance, order in rows:
-        await platform.execute(
-            "INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,generation,"
-            "origin_code,code,status,revision) VALUES(:id,:tenant,:project,:environment,:run,:key,:node,1,"
-            "'WV-TASK-FAILED',:code,'active',1)",
-            id=identifier,
-            run=run_id,
-            key=key,
-            node=node,
-            code=code,
-            **keys,
-        )
-        await platform.execute(
-            "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,opened_at,"
-            "updated_at,workflow_name,workflow_version,test,opened_at_estimated) SELECT tenant_id,project_id,"
-            "environment_id,:id,:static,:instance,cast(:opened AS timestamptz)+cast(:order AS integer)*interval "
-            "'1 second',cast(:opened AS timestamptz),workflow_name,workflow_version,false,false FROM run_facts "
-            "WHERE run_id=:run",
-            id=identifier,
-            static=static,
-            instance=instance,
-            opened=opened,
-            order=order,
-            run=run_id,
-        )
+    rows += [undo_stuck(child, index + 1) for index, child in enumerate(children)]
+    for row in rows:
+        await open_incident(platform, scope, row, opened=opened)
     for step, child in zip(steps, children, strict=True):
-        await platform.execute(
-            "INSERT INTO run_calls(tenant_id,project_id,environment_id,id,caller_run_id,node_id,generation,mode,"
-            "on_failure,workflow_reference,activation_id,input,depth,status,child_run_id,requested_at,started_at,"
-            "settlement) VALUES(:tenant,:project,:environment,:id,:caller,:node,0,'wait','stop','child-move@1.0.0',"
-            ":activation,'{}',1,'started',:child,clock_timestamp(),clock_timestamp(),true)",
-            id=uuid4(),
-            caller=parent,
-            node=step,
-            activation=uuid4(),
-            child=child,
-            **keys,
-        )
-    return settle, held
+        await call_child(platform, scope, parent, step, child)
+    return settle, [row[0] for row in rows[1:]]
 
 
 async def test_more_than_twenty_children_in_doubt_sets_waits_on_more(platform):
@@ -427,6 +447,70 @@ async def test_more_than_twenty_children_in_doubt_sets_waits_on_more(platform):
     assert waiting["waits_on_more"] is True
     assert {item["run_id"] for item in waiting["waits_on"]} == {str(child) for child in children[:20]}
     assert (await read(platform, held[20]))["held_by"]["id"] == str(settle)
+
+
+async def test_a_link_to_an_incident_whose_run_is_withheld_is_left_out(platform):
+    start = await plain_run(platform)
+    parent, child = await start(), await start()
+    settle, [held] = await seed_case(platform, platform.scope, parent, [child])
+    assert [item["id"] for item in (await read(platform, settle))["waits_on"]] == [str(held)]
+    assert (await read(platform, held))["held_by"]["id"] == str(settle)
+    withhold = "UPDATE run_facts SET classification_state=:state WHERE run_id=:run"
+    # The child's run metadata is withheld, so is its incident's view: the parent names nothing it waits on.
+    await platform.execute(withhold, state="unavailable", run=child)
+    waiting = await read(platform, settle)
+    assert waiting["status"] == "active" and "waits_on" not in waiting and "waits_on_more" not in waiting
+    # The parent's withheld instead: the child's incident names no holder.
+    await platform.execute(withhold, state="available", run=child)
+    await platform.execute(withhold, state="unavailable", run=parent)
+    holding = await read(platform, held)
+    assert holding["status"] == "active" and "held_by" not in holding
+
+
+async def test_a_retried_call_leaves_its_earlier_run_in_doubt_out_of_the_case(platform):
+    start = await plain_run(platform)
+    parent, earlier, retried = await start(), await start(), await start()
+    settle, [stale] = await seed_case(platform, platform.scope, parent, [earlier])
+    assert (await read(platform, stale))["held_by"]["id"] == str(settle)
+    # The step's call is retried in a new run, which is in doubt too; the earlier run's incident stays active.
+    await call_child(platform, platform.scope, parent, "call0", retried, generation=1)
+    current = undo_stuck(retried, 2)
+    await open_incident(platform, platform.scope, current)
+    assert [item["id"] for item in (await read(platform, settle))["waits_on"]] == [str(current[0])]
+    assert (await read(platform, current[0]))["held_by"]["id"] == str(settle)
+    earlier_view = await read(platform, stale)
+    assert earlier_view["status"] == "active" and "held_by" not in earlier_view
+
+
+async def test_a_called_step_names_its_undo_run_once_its_undo_is_called(platform):
+    child = await platform.publish(workflow("child-move", [], callable_=True, timeout=300))
+    # A called step undone by calling the reversal workflow.
+    elsewhere = {**called("elsewhere", "child-move@1.0.0"), "compensate": add(by_call=True)["compensate"]}
+    parent = await platform.publish(
+        workflow("parent-move", [transaction(elsewhere, hold())]),
+        **{"child-move": child.id, "reverse-target-addition": platform.reverse.id},
+    )
+    run = await platform.start(parent)
+    await platform.scan()
+
+    async def child_run(node: str) -> str:
+        [call] = await platform.query(
+            "SELECT child_run_id FROM run_calls WHERE caller_run_id=:run AND node_id=:node", run=run.id, node=node
+        )
+        return str(call["child_run_id"])
+
+    async def named() -> str:
+        page = await platform.runtime.transactions(platform.actor, platform.scope, run.id, context=AuditContext())
+        return {item["instance_key"]: item for item in page["items"][0]["participants"]}["elsewhere"]["child_run_id"]
+
+    own = await child_run("elsewhere")
+    assert await named() == own
+    # The next step fails with nothing applied, so the transaction undoes the called step by its own call.
+    await platform.fail(await platform.lease("hold"), "REFUSED", outcome="failed", effect="none")
+    await platform.scan()
+    undo = await child_run("elsewhere#undo")
+    assert undo not in ("None", own)
+    assert await named() == undo
 
 
 async def test_links_stay_within_the_environment(platform, access_db, provisioned):
@@ -470,7 +554,7 @@ async def test_links_stay_within_the_environment(platform, access_db, provisione
     assert "waits_on" not in await read(platform, foreign, actor=actor, scope=other)
 
 
-async def test_a_caller_whose_grant_names_only_this_incident_gets_no_links(platform, access_db, provisioned):
+async def test_a_grant_that_names_only_the_incidents_is_refused_their_read(platform, access_db, provisioned):
     from firefly_weave.access.models import Grant
 
     admin, _ = provisioned
