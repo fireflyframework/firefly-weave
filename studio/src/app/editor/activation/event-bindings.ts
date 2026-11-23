@@ -22,13 +22,14 @@ SPDX-License-Identifier: Apache-2.0
 // replaces it when they changed: it creates the new trigger first and stops
 // the old one only after that worked, so something always reacts.
 //
-// The platform's stop checks only that the person may manage triggers in the
-// environment, so Studio's own checks are the only guard on which trigger it
-// stops: it counts only enabled triggers of this workflow whose activation
-// belongs to this workflow, replaces only the one it stored, reads a trigger
-// again right before each stop and stops it only when nothing changed since
-// the dialog read it, and asks before a stop that would skip events still
-// waiting to start. A create whose answer was lost is adopted rather than
+// The platform's stop checks that the person may manage triggers in the
+// environment and, with If-Match, that the trigger is still the revision
+// Studio read; it never checks the workflow, so Studio's own checks guard
+// which trigger it stops: it counts only enabled triggers of this workflow
+// whose activation belongs to this workflow, replaces only the one it stored,
+// reads a trigger again right before each stop and stops it only at the
+// revision the dialog read, and asks before a stop that would skip events
+// still waiting to start. A create whose answer was lost is adopted rather than
 // made twice, and a stop it couldn't make is kept as owed, so two triggers
 // never react to the same events unseen.
 import { ApiError } from "../../api";
@@ -462,8 +463,13 @@ function routes(api: TriggerApi) {
         { activation_id: activationId },
         revision,
       ),
-    disable: (id: string) =>
-      api.mutate<EventTriggerView>(`${one(id)}/disable`, "POST", undefined),
+    disable: (id: string, revision: number) =>
+      api.mutate<EventTriggerView>(
+        `${one(id)}/disable`,
+        "POST",
+        undefined,
+        revision,
+      ),
   };
 }
 type Routes = ReturnType<typeof routes>;
@@ -580,8 +586,9 @@ type Stop =
  * Stops a trigger only as the dialog showed it: first, unless the person
  * chose Stop now, it checks that no event waits to start (a stop skips
  * them); then it reads the trigger again and stops it only when its revision
- * and activation are unchanged. A trigger already stopped or gone counts as
- * stopped.
+ * and activation are unchanged. The stop sends the revision the dialog read as
+ * If-Match, so a trigger moved between that read and the stop keeps running
+ * and counts as changed. A trigger already stopped or gone counts as stopped.
  */
 async function stopped(
   route: Routes,
@@ -616,9 +623,11 @@ async function stopped(
   )
     return { kind: "changed" };
   try {
-    await route.disable(view.id);
+    await route.disable(view.id, view.revision);
     return { kind: "stopped" };
   } catch (error) {
+    if (error instanceof ApiError && error.code === "WV-REVISION")
+      return { kind: "changed" };
     return { kind: "failed", error };
   }
 }

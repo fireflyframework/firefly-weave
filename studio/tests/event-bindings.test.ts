@@ -220,6 +220,12 @@ class FakePlatform implements TriggerApi {
     if (action === "disable") {
       this.require("trigger.manage");
       if (!trigger["disabled"]) {
+        if (revision !== undefined && revision !== trigger["revision"])
+          throw refusal(
+            409,
+            "WV-REVISION",
+            "The trigger changed; read it again before stopping it",
+          );
         trigger["disabled"] = true;
         trigger["revision"] = Number(trigger["revision"]) + 1;
       }
@@ -718,6 +724,11 @@ describe("replacing the trigger when the version reacts to other events", () => 
       "POST /event-triggers",
       "POST /event-triggers/t-1/disable",
     ]);
+    expect(
+      platform.sent
+        .filter((call) => call.key === "POST /event-triggers/t-1/disable")
+        .map((call) => call.revision),
+    ).toEqual([2]);
     expect(platform.enabled().map((trigger) => trigger["id"])).toEqual([
       "t-made-1",
     ]);
@@ -1287,6 +1298,27 @@ describe("every stop reads the trigger again first", () => {
       expect(platform.writes()).not.toContain(
         "POST /event-triggers/t-1/disable",
       );
+    },
+  );
+
+  it.each(cases)(
+    "stops nothing when %s moves between the read and the stop",
+    async (_name, rowOf) => {
+      const platform = new FakePlatform();
+      const row = rowOf(platform);
+      // Someone moved it after Studio read it again, before the stop.
+      platform.before.set("POST /event-triggers/t-1/disable", () => {
+        const trigger = platform.find("t-1")!;
+        trigger["activation_id"] = "a-older";
+        trigger["revision"] = 2;
+      });
+      const result = await apply(platform, row);
+      expect(result.status).toBe("changed");
+      expect(result.text).toMatch(
+        /notify-team changed since you opened this\. Review it\.$/,
+      );
+      expect(result.retry).toBeUndefined();
+      expect(platform.find("t-1")!["disabled"]).toBe(false);
     },
   );
 
