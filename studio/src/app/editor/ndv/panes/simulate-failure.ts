@@ -86,6 +86,8 @@ export interface CodeSuggestion {
   code: string;
   /** The platform's words for the code. */
   message: string;
+  /** The option's label: its group, then its words ("Platform failure · …"). */
+  label: string;
 }
 /** The platform's message for a code; any other reads as a generic failure that names it (step_error_message). */
 const messageOf = (code: string) =>
@@ -109,14 +111,24 @@ export function codeSuggestions(
   const platform = platformFailures(step.kind).filter(
     (item) => !own.includes(item.code),
   );
+  // The browser's list of suggestions shows no groups: each label names its own.
+  const item = (code: string, message: string, group: string) => ({
+    code,
+    message,
+    label: `${group} · ${message}`,
+  });
   return [
     {
       label: "This action's failures",
-      items: own.map((code) => ({ code, message: messageOf(code) })),
+      items: own.map((code) =>
+        item(code, messageOf(code), "This action's failure"),
+      ),
     },
     {
       label: "Platform failures",
-      items: platform.map(({ code, message }) => ({ code, message })),
+      items: platform.map(({ code, message }) =>
+        item(code, message, "Platform failure"),
+      ),
     },
   ].filter((group) => group.items.length);
 }

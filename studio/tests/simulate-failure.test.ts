@@ -154,23 +154,38 @@ describe("the codes Simulate a failure suggests", () => {
       "This action's failures",
       "Platform failures",
     ]);
-    expect(groups[0].items).toEqual([
-      {
-        code: "REQUEST_REFUSED",
-        message: "The step failed with code REQUEST_REFUSED.",
-      },
-      { code: "TIMEOUT", message: "The step timed out." },
-    ]);
+    expect(groups[0].items.map(({ code, message }) => [code, message])).toEqual(
+      [
+        ["REQUEST_REFUSED", "The step failed with code REQUEST_REFUSED."],
+        ["TIMEOUT", "The step timed out."],
+      ],
+    );
     // A code the action lists already is not offered twice.
     const platform = groups[1].items.map((item) => item.code);
     expect(platform).toContain("UNAVAILABLE");
     expect(platform).not.toContain("TIMEOUT");
   });
 
+  it("names each code's group in its label, since the browser's list shows no groups", () => {
+    const groups = codeSuggestions(
+      step("action"),
+      contract(["REQUEST_REFUSED"]),
+    );
+    expect(groups[0].items[0].label).toBe(
+      "This action's failure · The step failed with code REQUEST_REFUSED.",
+    );
+    const unavailable = groups[1].items.find(
+      (item) => item.code === "UNAVAILABLE",
+    );
+    expect(unavailable?.label).toBe(
+      `Platform failure · ${unavailable?.message}`,
+    );
+  });
+
   it("offers only the platform's codes when the step has no contract or lists none", () => {
     const groups = codeSuggestions(step("transform"), null);
     expect(groups.map((group) => group.label)).toEqual(["Platform failures"]);
-    expect(groups[0].items[0]).toEqual({
+    expect(groups[0].items[0]).toMatchObject({
       code: "WV-EXPR-MISSING",
       message: "A value the step reads is missing.",
     });

@@ -384,6 +384,38 @@ for (const size of SIZES)
         expect(panel.bottom).toBeLessThanOrEqual(height);
       }
       near((await box(dialog.getByLabel("Code"))).height, control, "Code");
+      // Studio's chevron ends the Code field, in place of the browser's
+      // triangle: the field looks the same with the triangle taken out.
+      const code = dialog.getByLabel("Code");
+      await page.addStyleTag({
+        content:
+          ".failure-code-chevron { visibility: hidden } .failure-code-field > input { caret-color: transparent }",
+      });
+      const kept = await code.screenshot();
+      await page.addStyleTag({
+        content:
+          ".failure-code-field > input::-webkit-calendar-picker-indicator { display: none !important }",
+      });
+      expect(
+        (await code.screenshot()).equals(kept),
+        "the browser's triangle",
+      ).toBe(true);
+      await page.addStyleTag({
+        content: ".failure-code-chevron { visibility: visible }",
+      });
+      const field = await box(code);
+      const chevron = await box(dialog.locator(".failure-code-chevron"));
+      near(field.right - chevron.right, 8, "chevron at the field's end", 1);
+      near(
+        chevron.y + chevron.height / 2,
+        field.y + field.height / 2,
+        "chevron centered",
+        1,
+      );
+      // Each suggestion names its group: the browser's list shows none.
+      expect(
+        await dialog.locator("datalist option").first().getAttribute("label"),
+      ).toBe("Platform failure · A value the step reads is missing.");
       for (const card of await boxes(dialog.locator(".failure-choice label")))
         expect(card.height, "Outcome").toBeGreaterThanOrEqual(touch ? 52 : 52);
       const [cancel, simulate] = await boxes(

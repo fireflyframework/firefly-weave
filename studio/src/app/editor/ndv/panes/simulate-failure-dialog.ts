@@ -29,6 +29,7 @@ import {
   signal,
   viewChild,
 } from "@angular/core";
+import { Icon } from "../../../icon";
 import type { CodeSuggestion } from "./simulate-failure";
 import { codeProblem } from "./simulate-failure";
 
@@ -44,6 +45,7 @@ let sequence = 0;
   selector: "weave-simulate-failure-dialog",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [Icon],
   template: `<dialog
     #dialog
     class="modal-panel simulate-failure"
@@ -57,26 +59,35 @@ let sequence = 0;
         error setting decides what happens next. Real runs ignore it.
       </p>
       <label class="field-label" [for]="id + '-code'">Code</label>
-      <input
-        #code
-        [id]="id + '-code'"
-        type="text"
-        autofocus
-        autocomplete="off"
-        spellcheck="false"
-        maxlength="128"
-        [attr.list]="id + '-codes'"
-        [attr.aria-describedby]="
-          id + '-hint' + (problem() ? ' ' + id + '-error' : '')
-        "
-        [attr.aria-invalid]="problem() ? 'true' : null"
-        [value]="codeValue()"
-        (input)="typed($event)"
-      />
+      <!-- The browser's list of suggestions, opened from Studio's chevron. -->
+      <div class="failure-code-field">
+        <input
+          #code
+          [id]="id + '-code'"
+          type="text"
+          autofocus
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="128"
+          [attr.list]="id + '-codes'"
+          [attr.aria-describedby]="
+            id + '-hint' + (problem() ? ' ' + id + '-error' : '')
+          "
+          [attr.aria-invalid]="problem() ? 'true' : null"
+          [value]="codeValue()"
+          (input)="typed($event)"
+        />
+        <weave-icon
+          class="failure-code-chevron"
+          name="chevronDown"
+          [size]="16"
+          aria-hidden="true"
+        />
+      </div>
       <datalist [id]="id + '-codes'">
         @for (group of suggestions(); track group.label) {
           @for (item of group.items; track item.code) {
-            <option [value]="item.code" [label]="item.message"></option>
+            <option [value]="item.code" [label]="item.label"></option>
           }
         }
       </datalist>

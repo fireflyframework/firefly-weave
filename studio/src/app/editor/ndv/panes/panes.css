@@ -1155,6 +1155,29 @@ dialog.simulate-failure::backdrop {
   min-height: 36px;
   font-family: var(--font-mono);
 }
+/* Code keeps the browser's list of suggestions (free entry, read by screen
+   readers) behind Studio's chevron instead of the browser's own triangle.
+   The triangle turns transparent, not display: none (Chrome shows it again
+   on focus over any rule short of !important): it keeps its room and stays
+   the click target that opens the list, under the chevron, which lets
+   clicks through. */
+.failure-code-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.failure-code-field > input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+.failure-code-field > input::-webkit-list-button {
+  opacity: 0;
+}
+.failure-code-chevron {
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  color: var(--muted);
+  pointer-events: none;
+}
 .simulate-failure .failure-choice {
   display: grid;
   gap: var(--space-2);
