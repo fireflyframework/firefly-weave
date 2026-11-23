@@ -77,6 +77,11 @@ SPDX-License-Identifier: Apache-2.0
   PostgreSQL connector now records a cancel or undo of an `idempotent-command`
   step, so a request for that step that arrives later fails `SQL_ALREADY_UNDONE`
   and changes nothing; the operation table keeps its shape.
+- Stopping a platform-event trigger (`POST …/event-triggers/{identifier}/disable`)
+  accepts an optional `If-Match`: a stop sent with an older revision answers
+  `409 WV-REVISION` and leaves the trigger running, and the answer carries the
+  stopped trigger's revision as its `ETag`. A stop without `If-Match` works as
+  before.
 
 ### Operations
 
