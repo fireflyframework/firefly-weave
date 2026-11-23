@@ -113,7 +113,7 @@ export type EventRow =
       after: EventDeclaration;
       text: string;
     }
-  /** Another trigger reacting to the same events, or one Studio owes a stop; Stop it is on. */
+  /** Another trigger reacting as declared, or one Studio owes a stop; Stop it is on. */
   | {
       kind: "duplicate";
       binding: EventTriggerView;
@@ -197,9 +197,6 @@ const sameSources = (
   left: readonly string[] | null | undefined,
   right: readonly string[] | null | undefined,
 ) => (left == null || right == null ? left == right : sameSet(left, right));
-const sameReaction = (left: EventTriggerView, right: EventTriggerView) =>
-  sameSet(left.events, right.events) &&
-  sameSources(left.source_workflows, right.source_workflows);
 const reactsAs = (view: EventTriggerView, declaration: EventDeclaration) =>
   sameSet(view.events, declaration.events) &&
   sameSources(view.source_workflows, declaration.from);
@@ -295,7 +292,17 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
 
   if (declaration !== null) {
     const stored = live.find((view) => view.id === input.storedId);
-    found = stored ?? live.find((view) => view.name === workflow);
+    // Without the stored ID, a trigger with a name Studio gives that reacts as
+    // declared is the one to move, the workflow's own name first; then the
+    // trigger named after the workflow, whatever it reacts to.
+    const named = live.find((view) => view.name === workflow);
+    const reacting = [named, ...live].find(
+      (view) =>
+        view !== undefined &&
+        studioName(view.name, workflow) &&
+        reactsAs(view, declaration),
+    );
+    found = stored ?? reacting ?? named;
     if (!found) {
       const name = bindingName(workflow, taken);
       rows.push({
@@ -370,6 +377,15 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
     }
   }
 
+  // Another trigger reacting as declared starts the workflow a second time for
+  // every event, so it is a duplicate, but only while a trigger reacting as
+  // declared stays: a blocked row changes nothing, so beside it only a
+  // trigger it already reacts as counts.
+  const covered =
+    rows[0]?.kind !== "blocked" ||
+    (found !== undefined &&
+      declaration !== null &&
+      reactsAs(found, declaration));
   // An owed stop counts only while the trigger is as it was when the stop was owed.
   const owed = new Set(
     input.pendingStops
@@ -388,7 +404,7 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
     const from = fromOf(view);
     const duplicate =
       declaration !== null &&
-      (owed.has(view.id) || (found !== undefined && sameReaction(view, found)));
+      (owed.has(view.id) || (covered && reactsAs(view, declaration)));
     rows.push(
       duplicate
         ? {
@@ -490,7 +506,7 @@ const waitingText = (name: string, count: number | null) =>
     : `${name} has ${count} ${count === 1 ? "event" : "events"} waiting to start. Stopping it now skips them.`;
 
 /** Whether `name` is one Studio gives this workflow's triggers: its own, or with a number. */
-function studioName(name: string, workflow: string, planned: string) {
+function studioName(name: string, workflow: string, planned = workflow) {
   if (name === planned || name === workflow) return true;
   const number = name.startsWith(`${workflow}-`)
     ? name.slice(workflow.length + 1)

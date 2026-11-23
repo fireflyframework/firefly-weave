@@ -840,6 +840,64 @@ describe("which triggers are this workflow's", () => {
     });
   });
 
+  it("moves a Studio-named trigger equal to the declaration when no ID is stored", async () => {
+    // A replace made notify-team-2 and stopped notify-team on another computer.
+    const platform = new FakePlatform();
+    platform.seed({
+      id: "t-1",
+      name: "notify-team",
+      activation: "a-older",
+      disabled: true,
+    });
+    platform.seed({ id: "t-2", name: "notify-team-2", activation: "a-old" });
+    const row = only(planFor(platform));
+    expect(row).toMatchObject({
+      kind: "retarget",
+      byName: true,
+      binding: { id: "t-2" },
+      text: "Move platform event trigger notify-team-2 from 1.1.0 to 1.2.0. Runs start as you after the move, including events waiting to start.",
+    });
+    expect(await apply(platform, row)).toMatchObject({
+      status: "moved",
+      id: "t-2",
+    });
+    expect(platform.enabled()).toMatchObject([
+      { id: "t-2", activation_id: "a-new" },
+    ]);
+  });
+
+  it("moves the trigger named after the workflow first when two react as declared", () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team-2", activation: "a-older" });
+    platform.seed({ id: "t-2", name: "notify-team", activation: "a-old" });
+    expect(planFor(platform)).toMatchObject([
+      { kind: "retarget", binding: { id: "t-2" } },
+      { kind: "duplicate", binding: { id: "t-1" }, stop: true },
+    ]);
+  });
+
+  it("moves the Studio-named trigger equal to the declaration before the one named after the workflow", () => {
+    // notify-team's stop is owed on another computer; notify-team-2 replaced it there.
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-older" });
+    platform.seed({
+      id: "t-2",
+      name: "notify-team-2",
+      activation: "a-old",
+      events: ["transaction.compensated", "transaction.in_doubt"],
+      sources: undefined,
+    });
+    expect(planFor(platform, { declaration: WIDER })).toMatchObject([
+      { kind: "retarget", byName: true, binding: { id: "t-2" } },
+      {
+        kind: "left-behind",
+        binding: { id: "t-1" },
+        stop: false,
+        text: "Platform event trigger notify-team keeps running on 1.0.0",
+      },
+    ]);
+  });
+
   it("leaves every trigger behind, off, for a version without eventTrigger", () => {
     const platform = new FakePlatform();
     platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
@@ -907,6 +965,21 @@ describe("a trigger whose authority to resolve is unknown", () => {
       expect(platform.sent).toEqual([]);
     },
   );
+
+  it("still shows a second trigger reacting as it does as a duplicate, on", () => {
+    const platform = new FakePlatform();
+    platform.seed({
+      id: "t-1",
+      name: "notify-team",
+      activation: "a-old",
+      mayReconcile: null,
+    });
+    platform.seed({ id: "t-2", name: "notify-team-2", activation: "a-older" });
+    expect(planFor(platform, { storedId: "t-1" })).toMatchObject([
+      { kind: "blocked", reason: "unknown-reconcile" },
+      { kind: "duplicate", binding: { id: "t-2" }, stop: true },
+    ]);
+  });
 });
 
 describe("two triggers reacting to the same events", () => {
@@ -923,6 +996,59 @@ describe("two triggers reacting to the same events", () => {
         stop: true,
         text: "Two triggers start notify-team for the same events. Stop notify-team-2",
       },
+    ]);
+  });
+
+  it("shows a trigger already equal to the new declaration as a duplicate, on, during a replace", async () => {
+    // An earlier replace made notify-team-2, but its answer was lost and nobody pressed Retry.
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    platform.seed({
+      id: "t-2",
+      name: "notify-team-2",
+      activation: "a-old",
+      events: ["transaction.compensated", "transaction.in_doubt"],
+      sources: undefined,
+    });
+    const rows = planFor(platform, { storedId: "t-1", declaration: WIDER });
+    expect(rows).toMatchObject([
+      { kind: "replace", binding: { id: "t-1" }, name: "notify-team-3" },
+      {
+        kind: "duplicate",
+        binding: { id: "t-2" },
+        from: "1.1.0",
+        stop: true,
+        text: "Two triggers start notify-team for the same events. Stop notify-team-2",
+      },
+    ]);
+    for (const row of rows) await apply(platform, row);
+    expect(platform.enabled()).toMatchObject([
+      { name: "notify-team-3", activation_id: "a-new" },
+    ]);
+  });
+
+  it("offers to stop a trigger Studio didn't name that equals the declaration it creates", () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-ops", name: "ops-alerts", activation: "a-old" });
+    expect(planFor(platform)).toMatchObject([
+      { kind: "create", name: "notify-team" },
+      { kind: "duplicate", binding: { id: "t-ops" }, stop: true },
+    ]);
+  });
+
+  it("never offers to stop the only trigger reacting as declared", () => {
+    // Studio leaves notify-team as it is, so ops-alerts is the one that reacts as declared.
+    const platform = new FakePlatform();
+    platform.seed({
+      id: "t-cli",
+      name: "notify-team",
+      activation: "a-old",
+      events: ["transaction.completed"],
+    });
+    platform.seed({ id: "t-ops", name: "ops-alerts", activation: "a-older" });
+    expect(planFor(platform)).toMatchObject([
+      { kind: "blocked", reason: "outside-studio", binding: { id: "t-cli" } },
+      { kind: "left-behind", binding: { id: "t-ops" }, stop: false },
     ]);
   });
 
