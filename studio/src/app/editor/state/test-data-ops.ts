@@ -126,15 +126,21 @@ export function withScript(
     now,
   );
 }
-/** The simulated failure for one item: its own key first, then its step's. */
+/**
+ * The simulated failure for one item: its own key first, then its step's.
+ * The most specific key wins, as the simulator reads them: an item's own pin
+ * comes before its step's failure for every item.
+ */
 export function failureOf(
   data: StudioTestData,
   key: string,
 ): { key: string; entry: ErrorEntry } | null {
   const errors = data.errors ?? {};
-  for (const candidate of [key, instanceStep(key)])
+  for (const candidate of [key, instanceStep(key)]) {
     if (Object.hasOwn(errors, candidate))
       return { key: candidate, entry: errors[candidate] };
+    if (Object.hasOwn(data.pins ?? {}, candidate)) return null;
+  }
   return null;
 }
 /** Sets (or, with null, removes) the simulated failure at `key`; every other section stays. */

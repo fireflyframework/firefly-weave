@@ -91,6 +91,25 @@ describe("a simulated failure in test data", () => {
     expect(failureOf(data, "after")).toBeNull();
   });
 
+  it("gives way to an item's own pin over its step's failure for every item", () => {
+    const data: StudioTestData = {
+      ...withFailure(emptyTestData(AT), "submit-item", REFUSED, AT),
+      pins: {
+        "submit-item[2]": {
+          output: { id: "kept" },
+          source: "manual",
+          pinnedAt: AT,
+          configHash: "fnv1a64:0000000000000001",
+          contractHash: "fnv1a64:0000000000000002",
+          upstreamHash: "fnv1a64:0000000000000003",
+        },
+      },
+    };
+    // The most specific key wins, as the simulator reads them.
+    expect(failureOf(data, "submit-item[2]")).toBeNull();
+    expect(failureOf(data, "submit-item[3]")?.key).toBe("submit-item");
+  });
+
   it("follows its step when it is renamed, and goes when the step does", () => {
     const data = withFailure(others(), "submit", REFUSED, AT);
     const renamed = renameEntries(data, "submit", "send", LATER);

@@ -143,4 +143,17 @@ describe("an execution with simulated failures", () => {
     // The host would refuse the whole request for them (WV-DEBUG-MOCK-KEY).
     expect(request).not.toHaveProperty("errors");
   });
+
+  it("sends an item's own pin with its step's failure for every item: the item's pin wins there", () => {
+    const request = executeRequest(
+      parts({
+        pins: { "submit[2]": { ...PIN, output: { kept: true } } },
+        errors: { submit: { code: "REQUEST_REFUSED" } },
+      }),
+    );
+    expect(request.mocks).toEqual({ "node:submit[2]": { kept: true } });
+    expect(request.errors).toEqual({
+      "node:submit": { code: "REQUEST_REFUSED" },
+    });
+  });
 });

@@ -171,8 +171,15 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
       };
   const mocks: Record<MockKey, Json> = {};
   const pins = testData.pins ?? {};
+  // A pin gives way only to a failure at its own key: an item's pin under
+  // its step's failure for every item is the more specific key, and the
+  // host takes it for that item.
   for (const [key, pin] of Object.entries(pins))
-    if (sent(key) && !fails(key) && mocked(steps.get(instanceStep(key))))
+    if (
+      sent(key) &&
+      !Object.hasOwn(failures, key) &&
+      mocked(steps.get(instanceStep(key)))
+    )
       mocks[`node:${key}`] = pin.output;
   for (const [key, result] of Object.entries(results?.steps ?? {})) {
     const step = instanceStep(key);
