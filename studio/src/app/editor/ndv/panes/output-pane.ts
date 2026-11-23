@@ -75,7 +75,10 @@ import {
 } from "./views";
 import type { FormSession } from "../params/form-session";
 import { usageLine } from "../kinds/ai-task-model";
-import { CANT_SAMPLE } from "../step-details-controller";
+import {
+  CANT_SAMPLE,
+  type StepDetailsController,
+} from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import {
   asRunViewsApi,
@@ -146,6 +149,49 @@ import {
 import { downloadFile } from "../../../forms/core/file-transfer";
 import { fileValue } from "./file-value";
 import { describeError } from "../../../errors";
+
+/**
+ * What Simulate a failure opens with for a step: the key it writes (the
+ * item picked inside a loop's body), that item ("3") and the innermost loop
+ * for its words, whether the step changes data, and the codes it suggests;
+ * null when the step is gone. Execute step's "Simulate a failure of submit
+ * first" opens it for another step than the one shown.
+ */
+export function simulateOpening(
+  controller: StepDetailsController,
+  stepId: string,
+): {
+  key: string;
+  item: string | null;
+  loop: string;
+  changesData: boolean;
+  suggestions: ReturnType<typeof codeSuggestions>;
+} | null {
+  const step = controller.step(stepId);
+  if (!step) return null;
+  const uses = step["uses"];
+  const contract =
+    typeof uses === "string"
+      ? (controller.kindContext().actionContract(uses) ?? null)
+      : null;
+  const key = controller.pinKey(stepId);
+  return {
+    key,
+    item:
+      key === stepId
+        ? null
+        : [...key.matchAll(/\[(\d+)\]/g)]
+            .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+            .join(" › "),
+    loop:
+      loopRows(controller.iterations, stepId, (id) => controller.step(id)).find(
+        (row) => row.role === "Loop",
+      )?.loopId ?? "",
+    changesData:
+      actionSideEffect(step, controller.kindContext()) === "non_idempotent",
+    suggestions: codeSuggestions(step, contract),
+  };
+}
 
 @Component({
   selector: "weave-output-pane",
@@ -1485,21 +1531,11 @@ export class OutputPane {
   } | null>(null);
   openSimulate() {
     const { controller, target } = this.session();
-    const step = controller.step(target);
-    if (!step) return;
-    const uses = step["uses"];
-    const contract =
-      typeof uses === "string"
-        ? (controller.kindContext().actionContract(uses) ?? null)
-        : null;
+    const opening = simulateOpening(controller, target);
+    if (!opening) return;
     const current = this.failure();
     this.simulating.set({
-      key: controller.pinKey(target),
-      item: this.pickedItem(),
-      loop: this.pickerRows().find((row) => row.role === "Loop")?.loopId ?? "",
-      changesData:
-        actionSideEffect(step, controller.kindContext()) === "non_idempotent",
-      suggestions: codeSuggestions(step, contract),
+      ...opening,
       initial: current && {
         code: current.entry.code,
         outcome: current.entry.outcome === "unknown" ? "unknown" : "failed",

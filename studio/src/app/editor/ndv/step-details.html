@@ -610,6 +610,26 @@ SPDX-License-Identifier: Apache-2.0
     </div>
   </weave-modal>
 }
+@if (pathAsked(); as asked) {
+  <weave-execute-path-dialog
+    [owner]="asked.owner"
+    [ownerIcon]="asked.ownerIcon"
+    [stepId]="asked.stepId"
+    [stepIcon]="asked.stepIcon"
+    (closed)="pathAnswered($event)"
+  />
+}
+@if (pathSimulating(); as open) {
+  <weave-simulate-failure-dialog
+    [step]="open.owner"
+    [suggestions]="open.suggestions"
+    [item]="open.item"
+    [loop]="open.loop"
+    [changesData]="open.changesData"
+    (chosen)="pathFailureChosen($event)"
+    (closed)="closePathSimulate()"
+  />
+}
 @if (question(); as asked) {
   <weave-execute-dialog
     [question]="asked"

@@ -232,3 +232,77 @@ test("after Execute workflow, the Output pane says the step failed and continued
     "Later steps read null here and can read lookup's error.",
   );
 });
+
+test("Execute step inside an error path its step won't take asks to simulate that step's failure first", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const canvas = await openNewWorkflow(page);
+  await page.evaluate(
+    (value) => navigator.clipboard.writeText(value),
+    JSON.stringify({
+      weaveClipboard: 1,
+      steps: [
+        transform("submit", {
+          onError: "errorOutput",
+          errorPath: {
+            steps: [transform("notify-team")],
+            output: { ref: "/steps/notify-team/output" },
+          },
+        }),
+      ],
+      connections: {},
+      llmProfiles: {},
+      pins: {},
+    }),
+  );
+  await canvas.root.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(canvas.tile("notify-team")).toBeVisible();
+  const calls = await localAuthoring(page);
+  const details = new StepDetailsPage(page);
+  await details.open("notify-team");
+  const execute = details.dialog.locator(".sd-execute > button").first();
+  await execute.click();
+  const asked = page.getByRole("dialog", {
+    name: "Simulate a failure of submit first",
+  });
+  await expect(asked).toBeVisible();
+  await expect(asked).toHaveAccessibleDescription(
+    "notify-team runs only when submit fails. With this test data submit succeeds, so notify-team isn't reached.",
+  );
+  await expect(
+    asked
+      .getByRole("list", { name: "Where notify-team is" })
+      .getByRole("listitem"),
+  ).toHaveText([/submit/, /Error/, /notify-team/]);
+  // It changes nothing by itself, so focus starts on it; Escape is Cancel.
+  const simulate = asked.getByRole("button", { name: "Simulate a failure" });
+  await expect(simulate).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(asked).toHaveCount(0);
+  await expect(execute).toBeFocused();
+  expect(calls).toHaveLength(0);
+
+  // Simulate a failure opens its dialog for submit; then the path runs.
+  await execute.click();
+  await simulate.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Simulate a failure of submit",
+  });
+  await expect(dialog.getByLabel("Code")).toBeFocused();
+  await dialog.getByLabel("Code").fill("REQUEST_REFUSED");
+  await dialog.getByRole("button", { name: "Simulate failure" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(execute).toBeFocused();
+  await execute.click();
+  await expect.poll(() => calls.length).toBe(1);
+  expect((calls[0].body as { errors?: object }).errors).toEqual({
+    "node:submit": { code: "REQUEST_REFUSED" },
+  });
+  const pane = await outputPane(details);
+  await pane.getByRole("radio", { name: "JSON" }).click();
+  await expect(pane.getByLabel("Output data")).toContainText(
+    '"from": "notify-team"',
+  );
+});

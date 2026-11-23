@@ -75,7 +75,15 @@ import {
   type ExecuteIssue,
   type ExecuteQuestion,
 } from "./execute-dialogs";
-import { executeGate } from "../state/execute-gate";
+import { executeGate, untakenPath } from "../state/execute-gate";
+import { ExecutePathDialog } from "./execute-path-dialog";
+import {
+  SimulateFailureDialog,
+  type FailureChoice,
+} from "./panes/simulate-failure-dialog";
+import { failureKey, simulateBlock } from "./panes/simulate-failure";
+import { simulateOpening } from "./panes/output-pane";
+import { failureOf } from "../state/test-data-ops";
 import { connectionsPort } from "../connections/connections-port";
 import type {
   RunningStepTest,
@@ -301,6 +309,8 @@ const visible = (element: HTMLElement): boolean =>
     TriggerSetup,
     CloseGuard,
     ExecuteDialog,
+    ExecutePathDialog,
+    SimulateFailureDialog,
     SettingsTab,
     IssuesIndicator,
   ],
@@ -1624,11 +1634,85 @@ export class StepDetails {
       this.question.set({ ...gate, issues: gate.issues as ExecuteIssue[] });
       return;
     }
+    // Inside an error path its step won't take: simulate that step's failure first.
+    const data = controller.testData.data();
+    const untaken =
+      target.mode === "workflow"
+        ? null
+        : untakenPath(
+            workflow.spec.steps,
+            id,
+            (owner) => !!failureOf(data, controller.pinKey(owner)),
+            (owner) => simulateBlock(owner, false) === null,
+          );
+    if (untaken) {
+      this.pathAsked.set({
+        ...untaken,
+        ownerIcon: this.iconOf(untaken.owner),
+        stepIcon: this.iconOf(id),
+      });
+      return;
+    }
     if (gate.kind === "unpin") {
       this.question.set({ ...gate, stepId: id });
       return;
     }
     await this.executeNow(target);
+  }
+  /** "Simulate a failure of submit first", while it is asked. */
+  readonly pathAsked = signal<{
+    owner: string;
+    stepId: string;
+    ownerIcon: string;
+    stepIcon: string;
+  } | null>(null);
+  /** Simulate a failure of the step whose error path holds this one, while its dialog is open. */
+  readonly pathSimulating = signal<
+    (NonNullable<ReturnType<typeof simulateOpening>> & { owner: string }) | null
+  >(null);
+  /** The question closed: Simulate a failure opens its dialog for that step; Cancel goes back to Execute step. */
+  pathAnswered(simulate: boolean) {
+    const asked = this.pathAsked();
+    this.pathAsked.set(null);
+    const opening =
+      simulate && asked
+        ? simulateOpening(this.controller(), asked.owner)
+        : null;
+    if (asked && opening)
+      this.pathSimulating.set({ ...opening, owner: asked.owner });
+    else setTimeout(() => this.focusExecute());
+  }
+  /** Writes the failure chosen for the step whose path holds this one, for the item picked when it opened. */
+  async pathFailureChosen(choice: FailureChoice) {
+    const open = this.pathSimulating();
+    if (!open) return;
+    const controller = this.controller();
+    const id = this.target();
+    if (controller.pinKey(open.owner) !== open.key) {
+      this.say(
+        "The picked item changed while the dialog was open, so nothing was simulated.",
+      );
+      return;
+    }
+    const written = await controller.setFailure(
+      failureKey(open.key, choice.every),
+      {
+        code: choice.code,
+        ...(choice.outcome === "unknown"
+          ? { outcome: "unknown" as const }
+          : {}),
+      },
+    );
+    if (this.lifetime.destroyed) return;
+    this.say(
+      written.ok
+        ? `Simulated a failure of ${open.owner}: Execute step now reaches ${id}.`
+        : written.message,
+    );
+  }
+  closePathSimulate() {
+    this.pathSimulating.set(null);
+    setTimeout(() => this.focusExecute());
   }
   /** The errors in the steps an execution runs: the host's check, and this step's own. */
   private blockingIssues(runs: readonly string[]): ExecuteIssue[] {

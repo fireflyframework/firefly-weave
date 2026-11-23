@@ -41,7 +41,7 @@ import type { Step, Workflow } from "../../model";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Json } from "../ndv/registry";
 import { allSteps, childLists } from "../ndv/step-walk";
-import { blocksOf } from "../step-blocks";
+import { errorPathsAround } from "../state/execute-gate";
 import { LOOP_LIMIT, loopProgress } from "../canvas/run-state";
 import { failureCodeText } from "../canvas/tile-facts";
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
@@ -566,29 +566,6 @@ export function handledSentence(response: ExecuteResponse): string | null {
   const count = handledCount(response);
   if (response.status !== "completed" || !count) return null;
   return `The simulated run succeeded with ${count.toLocaleString("en-US")} handled ${count === 1 ? "error" : "errors"}.`;
-}
-
-/**
- * The steps whose error paths hold each step, outermost first: a decision
- * or a loop inside a path keeps its steps in that path.
- */
-export function errorPathsAround(
-  steps: readonly Step[],
-): (stepId: string) => readonly string[] {
-  const around = new Map<string, readonly string[]>();
-  const walk = (list: readonly Step[], owners: readonly string[]) => {
-    for (const step of list) {
-      if (owners.length) around.set(step.id, owners);
-      for (const block of blocksOf(step)) {
-        const inner =
-          block.kind === "errorPath" ? [...owners, step.id] : owners;
-        const blockSteps = block.branch?.steps;
-        if (Array.isArray(blockSteps)) walk(blockSteps, inner);
-      }
-    }
-  };
-  walk(steps, []);
-  return (stepId) => around.get(stepId) ?? [];
 }
 
 /** The header's words for an execution's answer. */

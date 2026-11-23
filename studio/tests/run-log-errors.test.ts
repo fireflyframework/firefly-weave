@@ -22,11 +22,11 @@ SPDX-License-Identifier: Apache-2.0
 import "@angular/compiler";
 import { describe, expect, it } from "vitest";
 import {
-  errorPathsAround,
   handledSentence,
   loopLog,
   runStatus,
 } from "../src/app/editor/debugger/run-log-panel";
+import { errorPathsAround } from "../src/app/editor/state/execute-gate";
 import type { Step } from "../src/app/model";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
 
