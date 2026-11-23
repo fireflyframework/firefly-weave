@@ -132,6 +132,27 @@ async def failed_run(queued_task, task_service, transaction_factory, worker_ids,
     return queued_task
 
 
+@pytest.fixture
+async def other_failed_run(
+    failed_run, worker_setup, task_service, transaction_factory, worker_ids, services, access_db
+):
+    """A second run of the same workflow in the same environment, failed after the first, with its own incident."""
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.contracts.workers import TaskError
+    from firefly_weave.runtime.recovery import RecoveryService
+
+    _, runtime, _, actor, scope, activation, _ = worker_setup
+    run = await runtime.start(
+        actor, scope, StartRunRequest(activation_id=activation.id, input=4), "other run", context=AuditContext()
+    )
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[1], 1))[0]
+        await task_service.fail(tx, lease.proof, TaskError(completion_id=uuid4(), code="BUSINESS_REJECTED"))
+    await services(access_db[0]).resolve(RecoveryService).scan(scope, 100, actor=actor, context=AuditContext())
+    return run
+
+
 async def incident_for(client, headers, env_url, run):
     response = await client.get(f"{env_url}/runs/{run.id}/incidents", headers=headers)
     assert response.status_code == 200, response.text
@@ -261,8 +282,10 @@ async def test_a_resolution_sent_during_a_slow_one_waits_for_it_and_answers_revi
     await waiting_for_a_lock(access_db)
     # Twice the time a change waits for the project's operation lock: the second request is still waiting.
     await asyncio.wait({second}, timeout=0.5)
+    still_waiting = not second.done()
     release.set()
     winner, loser = await first, await second
+    assert still_waiting, loser.text
     assert winner.status_code == 200, winner.text
     assert loser.status_code == 409 and loser.json()["code"] == "WV-INCIDENT-REVISION", loser.text
     async with access_db[1]() as session:
@@ -288,8 +311,43 @@ async def test_a_resolution_still_refused_for_capacity_when_the_incident_stays_b
     release.set()
     assert (await first).status_code == 200
     assert loser.status_code == 429 and loser.json()["code"] == "WV-OPERATION-CAPACITY", loser.text
-    # It waited for the incident, well past the project lock's 250 ms, before it gave up.
-    assert waited >= 1.0, waited
+    # It waited out the incident's 2 s, well past the project lock's 250 ms, before it gave up.
+    assert waited >= 1.9, waited
+
+
+async def test_a_decision_on_another_incident_waits_only_for_the_project_lock(
+    client, operation_headers, env_url, failed_run, other_failed_run, monkeypatch
+):
+    import asyncio
+    import time
+
+    held = await incident_for(client, operation_headers, env_url, failed_run)
+    other = await incident_for(client, operation_headers, env_url, other_failed_run)
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(
+        client.post(
+            f"{env_url}/incidents/{held['id']}/resolve",
+            headers={**operation_headers, "If-Match": str(held["revision"])},
+            json=body,
+        )
+    )
+    await asyncio.wait_for(resolved.wait(), 10)
+    started = time.monotonic()
+    refused = await asyncio.wait_for(
+        client.post(
+            f"{env_url}/incidents/{other['id']}/resolve",
+            headers={**operation_headers, "If-Match": str(other["revision"])},
+            json={**body, "receipt_id": str(uuid4())},
+        ),
+        10,
+    )
+    waited = time.monotonic() - started
+    release.set()
+    assert (await first).status_code == 200
+    assert refused.status_code == 429 and refused.json()["code"] == "WV-OPERATION-CAPACITY", refused.text
+    # Another incident has its own lock, so the decision waits only for the project's 250 ms, not an incident's 2 s.
+    assert waited < 1.0, waited
 
 
 async def test_a_resolution_without_the_grant_is_refused_before_it_waits_for_a_running_decision(
