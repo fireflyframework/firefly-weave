@@ -63,6 +63,7 @@ import { RowMenu, type RowMenuItem } from "../../../row-menu";
 import { actionSideEffect } from "../kinds/forms/action-forms";
 import { failureOf } from "../../state/test-data-ops";
 import { errorResultSource } from "../../step-blocks";
+import { untakenPath } from "../../state/execute-gate";
 import type { ErrorEntry } from "../../state/test-data";
 import { OutputEditor } from "./output-editor";
 import {
@@ -807,15 +808,22 @@ null</pre
                     ><weave-icon name="execute" [size]="20"
                   /></span>
                   <h4>No output yet</h4>
+                  @let owner = untakenOwner();
                   <p>
                     {{
                       callStep()
                         ? "Execute the workflow to see this step's output."
                         : "Execute this step to see its output."
                     }}{{
-                      canPin
-                        ? " You can also set test output, or generate a sample."
-                        : ""
+                      owner
+                        ? " It runs only after " +
+                          owner +
+                          " fails, so simulate a failure of " +
+                          owner +
+                          " first."
+                        : canPin
+                          ? " You can also set test output, or generate a sample."
+                          : ""
                     }}
                   </p>
                   <div class="pane-empty-actions">

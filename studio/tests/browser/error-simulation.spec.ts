@@ -305,6 +305,11 @@ test("Execute step inside an error path its step won't take asks to simulate tha
   const calls = await localAuthoring(page);
   const details = new StepDetailsPage(page);
   await details.open("notify-team");
+  // Its Output says why it has nothing yet, and what to do first.
+  const empty = (await outputPane(details)).locator(".pane-empty p");
+  await expect(empty).toHaveText(
+    "Execute this step to see its output. It runs only after submit fails, so simulate a failure of submit first.",
+  );
   const execute = details.dialog.locator(".sd-execute > button").first();
   await execute.click();
   const asked = page.getByRole("dialog", {
@@ -350,6 +355,8 @@ test("Execute step inside an error path its step won't take asks to simulate tha
   await dialog.getByRole("button", { name: "Simulate failure" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(execute).toBeFocused();
+  // With submit's failure simulated, the path runs: nothing more to do first.
+  await expect(empty).toHaveText("Execute this step to see its output.");
   await execute.click();
   await expect.poll(() => calls.length).toBe(1);
   // A transform's failure didn't start: it changes nothing outside the run.
