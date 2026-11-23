@@ -29,6 +29,7 @@ import {
   inDoubt,
   inDoubtIncident,
   loopRunId,
+  loopSummary,
 } from "../run-transactions-fixture";
 import { connected } from "./support";
 
@@ -98,6 +99,15 @@ async function platform(
   );
   await page.route(`${environment}/runs/*/history?*`, (route) =>
     route.fulfill({ json: { events: [], next_cursor: null } }),
+  );
+  // The Runs list beside the detail lists the run it shows.
+  await page.route("**/run-summaries?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [loopSummary("running", result.transactions)],
+        next_cursor: null,
+      },
+    }),
   );
   // Pages of 50, as Studio asks for them; the cursor is where the next starts.
   await page.route(`${environment}/runs/*/transactions?*`, (route) => {

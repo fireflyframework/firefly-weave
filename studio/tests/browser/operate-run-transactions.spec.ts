@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, type Page, type Route } from "@playwright/test";
+import type { RunStatus } from "../../src/app/operate/run-contracts";
 import type { RunTransactionView } from "../../src/app/operate/transactions/transaction-contracts";
 import {
   completed,
@@ -30,6 +31,7 @@ import {
   inDoubtIncident,
   loop,
   loopRunId,
+  loopSummary,
   resolvingRun,
 } from "../run-transactions-fixture";
 import { connected } from "./support";
@@ -85,6 +87,17 @@ async function platform(
   );
   await page.route(`${environment}/runs/*/history?*`, (route) =>
     route.fulfill({ json: { events: [], next_cursor: null } }),
+  );
+  // The Runs list beside the detail lists the run it shows.
+  await page.route("**/run-summaries?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          loopSummary(result.status as RunStatus, records[loopRunId] ?? []),
+        ],
+        next_cursor: null,
+      },
+    }),
   );
   await page.route(`${environment}/runs/*/transactions?*`, async (route) => {
     const url = new URL(route.request().url());

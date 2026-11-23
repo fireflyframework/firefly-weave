@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // them: one completed plainly, one undone, one in doubt with a reservation
 // still held, one a person marked as reconciled, and one that completed after
 // its confirm was retried. Unit and browser tests read the same records.
+import type { RunStatus, RunSummary } from "../src/app/operate/run-contracts";
 import type {
   RunTransactionView,
   TransactionParticipantView,
@@ -158,3 +159,43 @@ export const loop: RunTransactionView[] = [
   reconciled,
   retried,
 ];
+
+/**
+ * The open run as the Runs list shows it beside its detail, with its worst
+ * transaction's state: the list names the run the detail shows.
+ */
+export function loopSummary(
+  status: RunStatus,
+  transactions: readonly RunTransactionView[],
+): RunSummary {
+  const worst =
+    (["in_doubt", "open", "compensating", "completed"] as const).find((state) =>
+      transactions.some((view) => view.state === state),
+    ) ?? transactions[0]?.state;
+  return {
+    id: loopRunId,
+    workflow: {
+      name: "move-each",
+      version: "1.0.0",
+      definition_version_id: "6d7e8f90-a1b2-4c3d-8e4f-5a6b7c8d9e0f",
+    },
+    activation_id: "act",
+    activation: { name: "move-each", revision: 1 },
+    status,
+    paused: false,
+    test: false,
+    origin: "manual",
+    caller: null,
+    retried_from_run_id: null,
+    started_at: "2026-11-22T10:31:00Z",
+    updated_at: "2026-11-22T10:48:17Z",
+    ended_at: null,
+    duration_ms: null,
+    business_key: null,
+    correlation_key: null,
+    failed_step: null,
+    active_incidents: worst === "in_doubt" ? 1 : 0,
+    archived: false,
+    ...(worst ? { transaction_state: worst } : {}),
+  };
+}
