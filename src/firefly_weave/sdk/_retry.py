@@ -192,11 +192,13 @@ async def send_admitted[T](
     *,
     monotonic: Callable[[], float] | None = None,
     sleep: Callable[[float], Awaitable[object]] | None = None,
+    stopped: Callable[[], bool] | None = None,
 ) -> T:
     """Await ``send()``, and send it again while the API refuses it for capacity, as ``policy`` allows.
 
     The last refusal reaches the caller. Only a request that is safe to send twice belongs here: a read, or a change
-    the API deduplicates. ``monotonic`` and ``sleep`` default to this module's clock and wait.
+    the API deduplicates. ``monotonic`` and ``sleep`` default to this module's clock and wait. ``stopped`` is asked
+    after each pause, for example whether the client was closed meanwhile: once it is true, the last refusal stands.
     """
     now = monotonic or clock
     pause = sleep or wait
@@ -213,4 +215,7 @@ async def send_admitted[T](
             delay = policy.pause(refusals, error.retry_after, jitter())
             if delay is None or now() + delay > deadline:
                 raise
+            refused = error
         await pause(delay)
+        if stopped is not None and stopped():
+            raise refused

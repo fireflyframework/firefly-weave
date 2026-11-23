@@ -224,6 +224,30 @@ async def test_resend_none_turns_sending_again_off(clock):
     assert len(sent) == 1
 
 
+async def test_a_client_closed_during_the_pause_sends_nothing_again(monkeypatch):
+    """Another task closes the shared client while a read waits to be sent again: the read's refusal reaches its
+    caller, and nothing more is sent."""
+    paused, release = asyncio.Event(), asyncio.Event()
+
+    async def wait(seconds: float) -> None:
+        paused.set()
+        await release.wait()
+
+    monkeypatch.setattr(_retry, "wait", wait)
+    monkeypatch.setattr(_retry, "jitter", lambda: 0.0)
+    sent: list[httpx.Request] = []
+    client = weave(api([refusal(), httpx.Response(200, json=ENVIRONMENT)], sent))
+    await client.__aenter__()
+    read = asyncio.create_task(client.read_environment())
+    await paused.wait()
+    await client.aclose()
+    release.set()
+    with pytest.raises(WeaveError) as refused:
+        await read
+    assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+    assert len(sent) == 1
+
+
 async def test_a_cancellation_that_the_send_turned_into_a_refusal_is_never_sent_again(clock):
     """A library that closes its connection when cancelled can raise its own error in place of CancelledError."""
     sends: list[UUID] = []

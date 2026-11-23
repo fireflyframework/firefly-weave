@@ -365,7 +365,8 @@ class WeaveClient:
 
         # The API lets a client send again a read, or a change it deduplicates by key, that it refused before admitting.
         if self.resend is not None and (spec.method == "GET" or "Idempotency-Key" in headers):
-            return await send_admitted(send, self.resend)
+            # A client closed during a pause sends nothing more: the refusal stands.
+            return await send_admitted(send, self.resend, stopped=lambda: self.closed)
         return await send()
 
     async def _send(
