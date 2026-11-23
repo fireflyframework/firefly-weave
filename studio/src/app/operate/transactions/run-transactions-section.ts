@@ -218,7 +218,10 @@ interface Scope {
                   ><span role="columnheader" class="c-forward">Forward</span
                   ><span role="columnheader" class="c-undo"
                     >Undo or confirm</span
-                  ><span role="columnheader" class="c-happened"
+                  ><span
+                    role="columnheader"
+                    class="c-happened"
+                    aria-hidden="true"
                     >What happened</span
                   ><span role="columnheader" class="c-key">Operation key</span>
                 </div>

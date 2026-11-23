@@ -265,11 +265,28 @@ test("the record has five columns from 720 px, four below, and step rows under 5
     record(page, "move[3]").getByRole("columnheader", { name: "Forward" }),
   ).toBeVisible();
   expect(await columns(600)).toEqual({ columns: 4, overflow: 0 });
+  // What happened stands over Forward and Undo or confirm on screen only: a
+  // screen reader hears each of the five cells under its own header.
   await expect(
-    record(page, "move[3]").getByRole("columnheader", {
-      name: "What happened",
-    }),
+    record(page, "move[3]").locator(".txn-head .c-happened"),
   ).toBeVisible();
+  await expect(record(page, "move[3]")).toMatchAriaSnapshot(`
+    - table "Steps of transaction move[3]":
+      - row:
+        - /children: equal
+        - columnheader "Step"
+        - columnheader "How it's undone"
+        - columnheader "Forward"
+        - columnheader "Undo or confirm"
+        - columnheader "Operation key"
+      - row /^add\\[3\\]/:
+        - /children: equal
+        - cell /^add\\[3\\]/
+        - cell "Reversible"
+        - cell "Done"
+        - cell "Undo failed 3 tries"
+        - cell /add\\[3\\]#undo/
+  `);
   await page.screenshot({ path: `${captures}/run-transactions-600.png` });
   const rows = await columns(360);
   expect(rows.columns).toBe(2);
