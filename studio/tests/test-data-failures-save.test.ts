@@ -158,4 +158,18 @@ describe("simulated failures on a platform that can't save them", () => {
     expect(plain.sent).toHaveLength(1);
     expect(plain.testData.failuresInSession()).toBe(false);
   });
+
+  it("tries nothing more for a schema refusal that names its paths: a value is wrong, not the section", async () => {
+    const named = fixture(() => ({
+      status: 422,
+      detail: {
+        code: "WV-STUDIO-DOCUMENT-SCHEMA",
+        result: { paths: ["/pins/lookup/output"] },
+      },
+    }));
+    await named.testData.change(failing, []);
+    expect(await named.save(named.testData.toPlatform().document)).toBe(false);
+    expect(named.sent).toHaveLength(1);
+    expect(named.testData.failuresInSession()).toBe(false);
+  });
 });

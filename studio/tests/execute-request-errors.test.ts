@@ -144,6 +144,21 @@ describe("an execution with simulated failures", () => {
     expect(request).not.toHaveProperty("errors");
   });
 
+  it("sends only the failures of the steps Execute step runs", () => {
+    const request = executeRequest({
+      ...parts({
+        errors: {
+          submit: { code: "REQUEST_REFUSED" },
+          summarize: { code: "LLM_TIMEOUT" },
+        },
+      }),
+      target: { mode: "step", stepId: "submit" },
+    });
+    expect(request.errors).toEqual({
+      "node:submit": { code: "REQUEST_REFUSED" },
+    });
+  });
+
   it("sends an item's own pin with its step's failure for every item: the item's pin wins there", () => {
     const request = executeRequest(
       parts({
