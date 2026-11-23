@@ -63,7 +63,8 @@ PURGE_RULES = f"""IF EXISTS(SELECT 1 FROM public.event_trigger_payloads p JOIN p
           DELETE FROM public.event_trigger_starts s USING public.event_trigger_payloads p
             WHERE p.source_run_id=target AND {SAME_EVENT}
             AND (s.run_id IS NULL OR NOT EXISTS(SELECT 1 FROM public.runs r WHERE r.id=s.run_id));
-          DELETE FROM public.event_trigger_starts s WHERE s.run_id=target
+          DELETE FROM public.event_trigger_starts s WHERE s.tenant_id=tenant AND s.project_id=project
+            AND s.environment_id=environment AND s.run_id=target
             AND NOT EXISTS(SELECT 1 FROM public.runs r WHERE r.id=s.source_run_id) RETURNING s.event_id INTO started_by;
           DELETE FROM public.event_trigger_payloads p WHERE p.source_run_id=target
             AND NOT EXISTS(SELECT 1 FROM public.event_trigger_starts s WHERE {SAME_EVENT});
