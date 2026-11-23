@@ -168,8 +168,13 @@ JSON Pointer of an expression in the definition. It returns
 document stops before flow analysis), `evaluated` (false when every path to it
 fails), `truncated`, and `entries`. Entries list the workflow input, then the
 current loop's item (`/item`, `source: item`) and position (`/index`, `source:
-index`), then enclosing loops by ID (`/loops/<id>/item`), then the visible step
-outputs in run order, each followed by its fields up to four levels deep and at
+index`), then enclosing loops by ID (`/loops/<id>/item`), then, inside a step's
+`confirm`, `cancel` or `compensate`, the step's operation key and outcome and its
+transaction (`/participant/operationKey`, `/participant/outcome`,
+`/transaction/id`, `/transaction/businessKey`, `source: undo`), then the visible
+step outputs in run order (the entries leave out the step's own output inside a
+`cancel` and mark it optional inside a `compensate`, because the step's outcome
+may be unknown), each followed by its fields up to four levels deep and at
 most 200 entries in all. Each entry carries `ref`, `source`, `loop` or `stepId`
 and `stepKind`, `path`, `label`, `breadcrumb`, `schema`, `types`, `typeLabel`, and
 `optional`. Without a catalog, outputs of actions and decision tables stay
