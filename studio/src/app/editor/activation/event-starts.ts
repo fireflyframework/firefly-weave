@@ -20,8 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 // started none, never the event's values. Studio words each start with the
 // platform's own sentences and reads the list page by page, newest first.
 // Rendering may ask for it, so a failed read waits before it is tried again
-// (5 s, doubling to a minute), and an answer that arrives after the person
-// chose another environment or trigger is dropped.
+// (5 s, doubling to a minute, from 5 s again after an answer or a refusal), a
+// read with no environment chosen fails without asking the platform, and an
+// answer that arrives after the person chose another environment or trigger
+// is dropped.
 import { ApiError } from "../../api";
 import { describeError } from "../../errors";
 import {
@@ -176,7 +178,16 @@ export async function readStarts(
   options: StartsOptions = {},
 ): Promise<StartsAnswer> {
   const now = options.now ?? (() => Date.now());
-  const environment = api.environment;
+  let environment: string;
+  try {
+    environment = api.environment;
+  } catch (error) {
+    // No environment chosen: there is nothing to ask the platform yet.
+    return {
+      failed: describeError(error).message,
+      retryAt: now() + STARTS_RETRY_MS,
+    };
+  }
   const key = `${environment}\n${triggerId}`;
   let failed = failures.get(api);
   if (!failed) failures.set(api, (failed = new Map()));
@@ -196,17 +207,22 @@ export async function readStarts(
     (options.current && options.current() !== triggerId)
   )
     return { dropped: true };
-  if (answer) {
-    failed.delete(key);
+  const refused =
+    error instanceof ApiError
+      ? error.status === 403
+        ? "forbidden"
+        : error.status === 404
+          ? "missing"
+          : null
+      : null;
+  // An answer or a refusal ends the pause: the next failure waits 5 s again.
+  if (answer || refused) failed.delete(key);
+  if (answer)
     return {
       rows: answer.items.map((item) => startRow(item as EventStart)),
       next: answer.next_cursor,
     };
-  }
-  if (error instanceof ApiError && error.status === 403)
-    return { refused: "forbidden" };
-  if (error instanceof ApiError && error.status === 404)
-    return { refused: "missing" };
+  if (refused) return { refused };
   const pause = kept
     ? Math.min(kept.pause * 2, STARTS_RETRY_MAX_MS)
     : STARTS_RETRY_MS;

@@ -251,6 +251,40 @@ describe("reading what a trigger started", () => {
     expect(api.asked).toHaveLength(4);
   });
 
+  it.each([
+    [403, "WV-FORBIDDEN"],
+    [404, "WV-NOT-FOUND"],
+  ])("starts the pause over after a %i answer", async (status, code) => {
+    const api = new FakeStarts([
+      busy(),
+      new ApiError(status, { code, message: "Refused" }),
+      busy(),
+    ]);
+    let now = 1_000;
+    const clock = { now: () => now };
+    await readStarts(api, "t-1", undefined, clock);
+    now = 6_000;
+    expect(await readStarts(api, "t-1", undefined, clock)).toHaveProperty(
+      "refused",
+    );
+    expect(await readStarts(api, "t-1", undefined, clock)).toMatchObject({
+      retryAt: 11_000,
+    });
+  });
+
+  it("fails without asking the platform when no environment is chosen", async () => {
+    const api = new FakeStarts([]);
+    Object.defineProperty(api, "environment", {
+      get: () => {
+        throw Error("Choose an environment.");
+      },
+    });
+    expect(
+      await readStarts(api, "t-1", undefined, { now: () => 1_000 }),
+    ).toEqual({ failed: "Choose an environment.", retryAt: 6_000 });
+    expect(api.asked).toEqual([]);
+  });
+
   it("waits for each trigger on its own", async () => {
     const api = new FakeStarts([busy(), { items: [], next_cursor: null }]);
     const clock = { now: () => 0 };
