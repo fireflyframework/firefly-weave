@@ -73,6 +73,13 @@ export interface TileBadge {
 export function failureCodeText(code: string): string {
   return code.length > 128 ? code.slice(0, 128) : code;
 }
+/**
+ * A handled failure's message (platform copy, or a called workflow's own
+ * words), cut at the 512 characters a message may have.
+ */
+export function failureMessageText(message: string): string {
+  return message.length > 512 ? message.slice(0, 512) : message;
+}
 /** The line under a handled tile: its code alone, in the warning tone (D28). */
 export function runFact(
   facts: TileFacts,
@@ -105,7 +112,8 @@ export function tileBadge(facts: TileFacts): TileBadge | null {
   }
   if (facts.run === "handled") {
     const code = failureCodeText(facts.failure?.code ?? "");
-    const detail = [code, facts.failure?.message].filter(Boolean).join(", ");
+    const message = failureMessageText(facts.failure?.message ?? "");
+    const detail = [code, message].filter(Boolean).join(", ");
     const setting =
       facts.handled === "errorOutput"
         ? "Continue with error output"

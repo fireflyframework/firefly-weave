@@ -134,6 +134,19 @@ describe("a handled failure in a simulated run", () => {
     expect(failureCodeText("request-refused")).toBe("request-refused");
     expect(failureCodeText("A".repeat(140))).toBe("A".repeat(128));
   });
+
+  it("cuts a handled failure's message at 512 characters in the tooltip, as the banner does", () => {
+    const text = tileBadge(
+      facts({
+        run: "handled",
+        failure: { code: "CALL_FAILED", message: "m".repeat(600) },
+        handled: "continue",
+      }),
+    )?.text;
+    expect(text).toBe(
+      `Failed: CALL_FAILED, ${"m".repeat(512)}. The run continued (On error: Continue).`,
+    );
+  });
 });
 
 describe("a handled tile's lines", () => {

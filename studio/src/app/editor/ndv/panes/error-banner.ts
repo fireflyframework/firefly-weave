@@ -27,7 +27,7 @@ import {
   output,
 } from "@angular/core";
 import { Icon } from "../../../icon";
-import { failureCodeText } from "../../canvas/tile-facts";
+import { failureCodeText, failureMessageText } from "../../canvas/tile-facts";
 
 /** What an outcome means, as the dialog offers it and the banners say it. */
 export const OUTCOME_WORDS: Readonly<Record<string, string>> = {
@@ -46,9 +46,6 @@ export interface HandledFailureView {
   policy: "continue" | "errorOutput";
 }
 
-/** Platform copy, or a called workflow's own words, shown as text and never longer than this. */
-const MESSAGE_LIMIT = 512;
-
 /** The banner's lines: "This step failed: CODE.", the message, the outcome and attempts, the setting. */
 export function errorBannerLines(failure: HandledFailureView): {
   failed: string;
@@ -63,7 +60,7 @@ export function errorBannerLines(failure: HandledFailureView): {
       : (OUTCOME_WORDS[failure.outcome] ?? OUTCOME_WORDS["failed"]);
   return {
     failed: `This step failed: ${failureCodeText(failure.code)}.`,
-    message: failure.message.slice(0, MESSAGE_LIMIT),
+    message: failureMessageText(failure.message),
     outcome: outcome ? `Outcome: ${outcome}. ${attempts}` : attempts,
     setting: `The run continued (On error: ${
       failure.policy === "errorOutput"
