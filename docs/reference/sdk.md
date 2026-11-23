@@ -321,13 +321,15 @@ workspaces you can use.
 - The client sends a request again only when the platform refused it before
   admitting it, which is what HTTP 429 with `WV-OPERATION-CAPACITY` or
   `WV-REQUEST-CAPACITY` means. It sends again a `GET`, or a change that
-  carries an idempotency key; the body, the key, and the token stay the same.
-  Each pause lasts at least the `Retry-After` seconds, grows from half a second
-  up to 5 seconds, and is spread up to a quarter longer. The client stops after
-  4 sends in all or 15 seconds, whichever comes first, and at once when
-  `Retry-After` asks for more than 5 seconds or holds anything but whole
-  seconds, such as a date; then the last refusal reaches you. A change without
-  a key is never sent again.
+  carries an idempotency key; the body, the key, and the token stay the same,
+  so a token that expires meanwhile ends the call with HTTP 401. Each pause
+  lasts at least the `Retry-After` seconds, grows from half a second up to 5
+  seconds, and is spread up to a quarter longer. The client stops after 4 sends
+  in all, or when the next pause would end more than 15 seconds after the first
+  send, and at once when `Retry-After` asks for more than 5 seconds or holds
+  anything but whole seconds, such as a date; then the last refusal reaches
+  you. Each send keeps its own timeout, so a call can last longer than 15
+  seconds. A change without a key is never sent again.
 - `WeaveClient(..., resend=None)` sends every request once. To set other
   bounds, pass a `Resend` (`from firefly_weave.sdk.client import Resend`).
 - It always uses the canonical `/api/v1` paths and quoted revisions, validates
