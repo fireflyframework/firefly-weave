@@ -81,7 +81,14 @@ from firefly_weave.runtime.models import (
     Transition,
 )
 from firefly_weave.runtime.step_failures import continuation_steps
-from firefly_weave.runtime.transactions import HELD_CODE, HELD_NODE, in_transaction, shapes, split_deadline
+from firefly_weave.runtime.transactions import (
+    HELD_CODE,
+    HELD_NODE,
+    in_transaction,
+    leftover,
+    shapes,
+    split_deadline,
+)
 
 MAX_EVENTS = 10_000
 MAX_BYTES = 64 * 1024 * 1024
@@ -236,6 +243,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 if phase is not None
                 else isinstance(node, ActionNode) or completes == "task_completed"
             )
+            closes = False
             receipt_id = UUID(str(event.data["receipt_id"])) if event.type == "incident_resolved" else event.id
             require(receipt_id not in accepted_receipts, "WV-REPLAY-DUPLICATE-RECEIPT")
             # An agent's turn and tool failures go to the agent, as the kernel's error policy says.
@@ -389,6 +397,8 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 # Dispatched on the incident's code first, as the service does: in doubt, accept_reconciled_failure is
                 # "It didn't happen" and the kernel decides it; otherwise it confirms a step's unknown outcome.
                 doubt = prior is not None and prior.code in IN_DOUBT_CODES
+                # A retry of what an earlier decision left runs nothing again: no new attempt and no new call.
+                closes = prior is not None and transactions is not None and leftover(transactions, state, prior)
                 if kind == "accept_reconciled_failure" and not doubt:
                     # Only a step that handles its failures goes on after its effect was confirmed not to happen.
                     attempted = event.data.get("attempts")
@@ -415,7 +425,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     or (prior is not None and event.data.get("code") == prior.code),
                     "WV-REPLAY-EVENT",
                 )
-                if doubt:
+                if closes:
+                    pass
+                elif doubt:
                     # The kernel decides a resolution of a transaction in doubt; replay compares its transition.
                     assert prior is not None
                     if kind == "retry_safe" and runs_call:
@@ -445,7 +457,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     assert isinstance(generation, int)
                     attempts[node_id] = (generation, "retired")
                     eligible_at[node_id] = event.timestamp
-                if doubt:
+                if doubt or closes:
                     pass
                 elif kind == "accept_reconciled_result" and isinstance(node, CallWorkflowNode):
                     require("output" in event.data, "WV-REPLAY-EVENT")
@@ -529,7 +541,8 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             expected = [
                 (c.node_id, 0, c.mode, c.workflow_reference) for c in result.commands if isinstance(c, CallIntent)
             ]
-            if event.type == "incident_resolved" and event.data.get("kind") == "retry_safe" and runs_call:
+            retried = event.type == "incident_resolved" and event.data.get("kind") == "retry_safe" and not closes
+            if retried and runs_call:
                 prior_call = calls[node_id]
                 expected.append((node_id, prior_call.generation + 1, prior_call.mode, prior_call.workflow_reference))
             issued_calls = evidence.issued_calls

@@ -41,7 +41,7 @@ from loop_transactions import (
     states,
     undo_stuck,
 )
-from transaction_platform import add, build, hold, submit, workflow
+from transaction_platform import add, build, hold, submit, workflow, writes_as_an_earlier_version
 
 pytestmark = pytest.mark.integration
 BODY = [move(hold(), add(), submit(), onError="continue")]
@@ -291,6 +291,23 @@ async def test_a_repaired_record_says_what_the_run_would_have_recorded(platform,
     accepted = {row["created_at"] for row in history}
     assert all(row["ended_at"] in accepted for row in after.values())
     assert all(row["decided_at"] in accepted for row in after.values() if row["decided_at"] is not None)
+
+
+async def test_the_records_of_a_run_with_the_transaction_rules_of_an_earlier_version_are_repaired(
+    platform, reconciler, earlier, monkeypatch
+):
+    with monkeypatch.context() as before:
+        writes_as_an_earlier_version(before)
+        run = await start(platform, BODY, 2)
+        await go_back(platform, "[0]")
+        incident = await undo_stuck(platform, "[1]")
+        await resolve(platform, incident, "retry_safe", reconciler)
+        await platform.complete(await platform.lease("add[1]#undo"))
+        await platform.complete(await platform.lease("hold[1]#cancel"))
+    assert "transaction_rules" not in await platform.state(run.id)
+    found, repaired = await repair(platform, run.id)
+    assert (repaired, found.left) == (["move[0]", "move[1]"], {})
+    assert await states(platform, run.id) == {"move[0]": "compensated", "move[1]": "compensated"}
 
 
 async def test_a_second_pass_finds_nothing_and_writes_nothing(platform, reconciler, earlier):

@@ -158,6 +158,20 @@ def resolved_by_an_earlier_version(monkeypatch) -> None:
     monkeypatch.setattr(incidents, "transition", earlier)
 
 
+def writes_as_an_earlier_version(monkeypatch) -> None:
+    """Runs started and decided meanwhile have the events an earlier version wrote: none says anything of rules."""
+    from firefly_weave.operations import incidents
+    from firefly_weave.runtime import service
+    from firefly_weave.runtime.models import RuntimeEvent
+
+    def earlier(*, data: dict[str, Any], **fields: Any) -> RuntimeEvent:
+        said = {key: value for key, value in data.items() if key not in {"transaction_rules", "transaction"}}
+        return RuntimeEvent(data=said, **fields)
+
+    monkeypatch.setattr(incidents, "RuntimeEvent", earlier)
+    monkeypatch.setattr(service, "RuntimeEvent", earlier)
+
+
 OUTPUTS = {
     "source-system-hold-quantity@1.0.0": {"holdId": "h-1"},
     "target-system-add-quantity@1.0.0": {"id": "a-1"},
