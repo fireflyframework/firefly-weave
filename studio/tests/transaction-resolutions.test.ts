@@ -434,6 +434,21 @@ describe("the checklist", () => {
         `Unknown · ${key("add")}`,
       ],
     ]);
+    // A step that failed ended after its tries.
+    expect(
+      said(
+        about("WV-TXN-AFTER-PIVOT-STUCK", "notify", [
+          step("submit", "irreversible", "done"),
+          step("notify", "irreversible", "failed", 3),
+        ]),
+        "completed",
+      ),
+    ).toEqual([
+      [
+        "I confirmed notify finished in the other system.",
+        `Failed after 3 tries · ${key("notify")}`,
+      ],
+    ]);
     // What went ahead is done, whatever the transaction's state.
     expect(said(afterPivot("failed"), "compensated").slice(0, 2)).toEqual([
       [
@@ -708,6 +723,20 @@ describe("Mark as reconciled", () => {
       ],
     ] as const)("has another checklist once %s", (_why, read) => {
       expect(checklistChanged(undoStuck, read)).toBe(true);
+    });
+
+    it("has another checklist once a step listed only when undone ran", () => {
+      const note = (status: Step["status"]): IncidentView => ({
+        ...undoStuck,
+        transaction: {
+          ...undoStuck.transaction!,
+          participants: [
+            ...undoStuck.transaction!.participants,
+            step("note", "compensate", status),
+          ],
+        },
+      });
+      expect(checklistChanged(note("pending"), note("done"))).toBe(true);
     });
 
     it("has the same checklist while what it lists is the same", () => {
