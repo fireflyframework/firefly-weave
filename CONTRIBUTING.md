@@ -48,11 +48,11 @@ summary are in a new `build/checks-…` directory.
 
 A unit or contract test that takes more than 10 minutes counts as hung and ends
 the run. The gate names it as `FAILED` and prints where each of its threads
-waits: source files, lines, and functions, never output. An `async` test's thread
-shows only the event loop. To find the `await` it is stuck on, run that test alone
-with `uv run pytest --full-trace <node id>` and press Ctrl+C. A test that has
-already failed and then hangs in its teardown has no such limit: pytest stops its
-timer when a test fails, so that run ends at the stage's one-hour limit.
+waits: only source files, lines, and functions. An `async` test's thread shows only
+the event loop. To find the `await` it is stuck on, run that test alone with
+`uv run pytest --full-trace <node id>` and press Ctrl+C. A test that has already
+failed and then hangs in its teardown has no such limit: pytest stops its timer when
+a test fails, so that run ends at the stage's one-hour limit.
 
 The unit and contract stage also fails when a pytest worker stops early or no test
 passes, even if pytest itself exits 0. A crash or a leaked thread after the last
