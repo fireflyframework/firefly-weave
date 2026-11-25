@@ -189,6 +189,17 @@ def test_a_stepped_cpu_clock_refuses_no_valid_search(monkeypatch):
     machine.cpu = TICK - 0.000_5
     assert run(machine, monkeypatch) == []
 
+    # A search of 9 ms is interrupted twice, for 7 ms in all, and both ticks of those 16 ms land on it.
+    machine = Machine(0.009, step=TICK)
+
+    def ticked_twice(value: str, *, timeout: float, concurrent: bool | None = None) -> object:
+        machine.elapsed += 0.016
+        machine.cpu += 2 * TICK
+        return value
+
+    machine.search = ticked_twice  # type: ignore[method-assign]
+    assert run(machine, monkeypatch) == []
+
     # 20 searches of 0.1 ms, and a whole tick lands on every one: 2 ms really spent, 312 ms on the stepped clock.
     machine = Machine(0.0001, step=TICK)
 
@@ -216,7 +227,7 @@ def test_a_stepped_cpu_clock_still_bounds_the_cpu_time_of_all_searches(cost, mon
 
 
 def test_a_tick_that_another_thread_spent_refuses_no_valid_document(monkeypatch):
-    # 32 searches of 3 ms show seven ticks, 109 ms, and the eighth one lands on a search that only waited: 96 ms spent.
+    # 33 searches of 3 ms spend 99 ms and show seven ticks, 109 ms, and an eighth one lands on a search that waited.
     machine = Machine(0.003, step=TICK)
     machine.cpu = TICK - 0.001
     calls = 0
@@ -231,7 +242,7 @@ def test_a_tick_that_another_thread_spent_refuses_no_valid_document(monkeypatch)
         return search(value, timeout=timeout, concurrent=concurrent)
 
     machine.search = interrupted  # type: ignore[method-assign]
-    assert run(machine, monkeypatch, searches=32) == []
+    assert run(machine, monkeypatch, searches=33) == []
 
 
 def test_a_runaway_search_spends_little_cpu_time_and_never_waits_for_the_interpreter():
