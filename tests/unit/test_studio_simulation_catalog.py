@@ -123,3 +123,28 @@ def test_a_decision_table_is_never_stubbed():
     catalog, stubs = simulation_catalog(document, [], None, stub_unresolved=True)
     assert stubs == []
     assert not any(reference == "payment-policy@1.2.0" for _, reference in catalog.resources)
+
+
+def test_only_what_confirms_releases_or_undoes_a_step_gets_a_stub_that_changes_data_safely():
+    def operation(uses, kind="action"):
+        return {"kind": kind, "uses": uses, "with": {"literal": {}}}
+
+    step = {"id": "hold", **operation("crm.hold@1.0.0")}
+    phases = {"confirm": operation("crm.confirm@1.0.0"), "cancel": operation("release@1.0.0", "callWorkflow")}
+    call = {"id": "notify", **operation("notify@1.0.0", "callWorkflow"), "compensate": operation("crm.undo@1.0.0")}
+    transaction = {"id": "move", "kind": "transaction", "steps": [step | phases, call], "output": {"literal": None}}
+    catalog, stubs = simulation_catalog({"spec": {"steps": [transaction]}}, [], None, stub_unresolved=True)
+    assert stubs == ["crm.confirm@1.0.0", "crm.hold@1.0.0", "crm.undo@1.0.0", "notify@1.0.0", "release@1.0.0"]
+
+    def spec(kind, reference):
+        return catalog.resources[(kind, reference)].definition.value["spec"]
+
+    forward = spec("Action", "crm.hold@1.0.0")
+    assert (forward["sideEffect"], forward["implementation"]["taskType"]) == ("read_only", "studio.stub")
+    for reference in ("crm.confirm@1.0.0", "crm.undo@1.0.0"):
+        undo = spec("Action", reference)
+        assert (undo["sideEffect"], undo["implementation"]["taskType"]) == ("idempotent", "studio.undo-stub")
+    assert spec("Workflow", "release@1.0.0")["timeoutSeconds"] == 300
+    assert "timeoutSeconds" not in spec("Workflow", "notify@1.0.0")
+    tasks = {reference for kind, reference in catalog.resources if kind == "TaskCapability" and "stub" in reference}
+    assert tasks == {"studio.stub@0.0.0", "studio.undo-stub@0.0.0"}

@@ -141,7 +141,11 @@ def slice_for_target(document: JsonObject, step_id: str) -> JsonObject | None:
 # --- the catalog a simulation compiles against ------------------------------------------------------------------
 
 STUB_TASK = "studio.stub"
+# What a stub of a confirm, release or undo runs: one of those changes data, and may run again.
+UNDO_STUB_TASK = "studio.undo-stub"
 STUB_VERSION = "0.0.0"
+# The time limit of a stubbed called confirm, release or undo, which must have one.
+UNDO_STUB_SECONDS = 300
 
 
 class CatalogConflict(ValueError):
@@ -208,16 +212,21 @@ def _task_of(action: ActionDefinition) -> JsonObject | None:
     }
 
 
-def _stub_action(reference: str) -> JsonObject:
+def _stub_action(reference: str, capability: JsonObject) -> JsonObject:
     name, _, version = reference.partition("@")
+    implementation = {
+        "kind": "worker",
+        "taskType": capability["taskType"],
+        "taskVersion": capability["taskVersion"],
+    }
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Action",
         "metadata": {"name": name, "version": version},
         "spec": {
-            "implementation": {"kind": "worker", "taskType": STUB_TASK, "taskVersion": STUB_VERSION},
-            "sideEffect": "read_only",
-            "timeoutSeconds": 60,
+            "implementation": implementation,
+            "sideEffect": capability["sideEffect"],
+            "timeoutSeconds": capability["timeoutSeconds"],
             "inputSchema": {},
             "outputSchema": {},
         },
@@ -232,16 +241,25 @@ STUB_CAPABILITY: JsonObject = {
     "sideEffect": "read_only",
     "timeoutSeconds": 60,
 }
+UNDO_STUB_CAPABILITY: JsonObject = {**STUB_CAPABILITY, "taskType": UNDO_STUB_TASK, "sideEffect": "idempotent"}
 
 
-def _stub_workflow(reference: str) -> JsonObject:
+def _stub_workflow(reference: str, timeout: int | None) -> JsonObject:
     """A called workflow nobody has, as an interface any workflow may call; its output comes from a pin."""
     name, _, version = reference.partition("@")
+    limit: JsonObject = {"timeoutSeconds": timeout} if timeout is not None else {}
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": name, "version": version},
-        "spec": {"inputSchema": {}, "outputSchema": {}, "steps": [], "output": {"literal": None}, "callable": {}},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [],
+            "output": {"literal": None},
+            "callable": {},
+            **limit,
+        },
     }
 
 
@@ -254,11 +272,14 @@ def simulation_catalog(
 ) -> tuple[CatalogSnapshot, list[str]]:
     """The union of the project catalog (when connected), what ships with Weave and the local definitions Studio
     sent, plus, with ``stub_unresolved``, a read-only stub for each action the workflow uses that none of them has and
-    an interface for each called workflow none of them has. Decision tables are never stubbed.
+    an interface for each called workflow none of them has. What confirms, releases or undoes a step gets a stub that
+    is safe to run again, or an interface with a time limit. Decision tables are never stubbed.
 
     Returns the catalog and the stubbed references, sorted. A local definition that doesn't load is left out, so the
     steps that use it are stubbed or fail to compile, never accepted on a guess.
     """
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
+
     local = []
     tasks: list[JsonObject] = []
     for value in definitions:
@@ -282,31 +303,42 @@ def simulation_catalog(
         merged = _union([merged, CatalogSnapshot.from_definitions([], tasks=missing_tasks)])
     if not stub_unresolved:
         return merged, []
-    actions: set[str] = set()
-    callees: set[str] = set()
+    # What confirms, releases or undoes a step, wherever else the workflow uses it.
+    undos: set[tuple[str, str]] = set()
+    missing: set[tuple[str, str]] = set()
     spec = document.get("spec")
     for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None):
-        uses = step.get("uses")
-        if not isinstance(uses, str):
-            continue
-        if step.get("kind") == "action" and ("Action", uses) not in merged.resources:
-            actions.add(uses)
-        elif step.get("kind") == "callWorkflow" and ("Workflow", uses) not in merged.resources:
-            callees.add(uses)
-    if actions or callees:
+        for phase, operation in ((None, step), *((name, step.get(name)) for name in PHASE_SEGMENTS)):
+            if not isinstance(operation, dict) or not isinstance(operation.get("uses"), str):
+                continue
+            kind = {"action": "Action", "callWorkflow": "Workflow"}.get(cast(str, operation.get("kind")))
+            used = (cast(str, kind), cast(str, operation["uses"]))
+            if kind is None or used in merged.resources:
+                continue
+            missing.add(used)
+            if phase is not None:
+                undos.add(used)
+    if missing:
+        actions = {
+            reference: UNDO_STUB_CAPABILITY if (kind, reference) in undos else STUB_CAPABILITY
+            for kind, reference in sorted(missing)
+            if kind == "Action"
+        }
+        callees = [reference for kind, reference in sorted(missing) if kind == "Workflow"]
+        limits = {reference: UNDO_STUB_SECONDS for kind, reference in undos if kind == "Workflow"}
         merged = _union(
             [
                 merged,
                 CatalogSnapshot.from_definitions(
                     [
-                        *(load_definition(_stub_action(reference)) for reference in sorted(actions)),
-                        *(load_definition(_stub_workflow(reference)) for reference in sorted(callees)),
+                        *(load_definition(_stub_action(name, task)) for name, task in actions.items()),
+                        *(load_definition(_stub_workflow(name, limits.get(name))) for name in callees),
                     ],
-                    tasks=[STUB_CAPABILITY] if actions else [],
+                    tasks=[task for task in (STUB_CAPABILITY, UNDO_STUB_CAPABILITY) if task in actions.values()],
                 ),
             ]
         )
-    return merged, sorted(actions | callees)
+    return merged, sorted({reference for _, reference in missing})
 
 
 # --- the simulated run -------------------------------------------------------------------------------------------

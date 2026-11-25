@@ -1258,3 +1258,35 @@ def test_a_failure_code_over_the_route_is_answered_as_a_cause(tmp_path):
     answer = over_the_route(tmp_path, body.model_dump_json(by_alias=True, exclude_unset=True))
     assert answer.status_code == 200
     assert answer.json()["transactions"][0]["cause"]["code"] == coded(101)
+
+
+# --- stubs of confirms, releases and undos ----------------------------------------------------------------------
+
+def without(*names: str) -> list[dict[str, Any]]:
+    return [item for item in fixture()["definitions"] if item["metadata"]["name"] not in names]
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["target-system.remove-quantity"], ["source-system.confirm-hold", "source-system.release-hold"], None],
+    ids=["an undo", "a confirm and a release", "every action"],
+)
+def test_confirms_releases_and_undos_nobody_has_run_on_stubs(names):
+    definitions = without(*names) if names is not None else []
+    workflow = move()
+    undone = run_move(workflow, definitions=definitions, stubUnresolved=True, errors=REFUSED)
+    assert undone["compile"]["ok"], undone["compile"]["diagnostics"]
+    assert states(undone)["move"][0] == "compensated"
+    assert keys(undone) == ["add#undo", "hold#cancel"]
+    confirmed = run_move(workflow, definitions=definitions, stubUnresolved=True)
+    assert (confirmed["status"], keys(confirmed)) == ("completed", ["hold#confirm"])
+    expected = [f"{name}@1.0.0" for name in names] if names is not None else None
+    assert expected is None or undone["compile"]["stubs"] == sorted(expected)
+
+
+def test_a_called_undo_nobody_has_runs_on_a_stub():
+    workflow = move(hold(), reverse_by_call(), submit())
+    answer = run_move(workflow, definitions=without(UNDO), stubUnresolved=True, errors=REFUSED)
+    assert answer["compile"]["ok"], answer["compile"]["diagnostics"]
+    assert answer["compile"]["stubs"] == [f"{UNDO}@1.0.0"]
+    assert (states(answer)["move"][0], keys(answer)) == ("compensated", ["add#undo", "hold#cancel"])
