@@ -36,6 +36,8 @@ from firefly_weave.contracts.definitions import ActionDefinition, load_definitio
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from firefly_weave.compiler.api import CompiledArtifact
     from firefly_weave.compiler.ir import WorkflowIR
     from firefly_weave.contracts.transactions import TransactionState, UndoPhase
@@ -1100,6 +1102,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     shown = {key: frame for key, frame in frames.items() if _called_phase(key) is None}
     phases: list[JsonObject] = []
     recorded = iter(view.events)
+    reduced: UUID | None = None
     # A run held on an incident (a step the runtime refused) stops there until a person ends it: it failed there. So
     # does a run left waiting on a called run held that way.
     held = _incident(view.status, view.variables)
@@ -1126,9 +1129,11 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
 
     for boundary in data.boundaries:
         if boundary.kind == "event" and boundary.frame is None:
-            # The simulated workflow's event boundaries are its recorded events, in order.
+            # The simulated workflow's event boundaries are its recorded events, in order. One that led to a step that
+            # couldn't be evaluated is reduced again with that step failing, and recorded again: the same event.
             event = next(recorded, None)
-            result = event.data.get("node_id") if event is not None else None
+            result = event.data.get("node_id") if event is not None and event.id != reduced else None
+            reduced = event.id if event is not None else None
             if isinstance(result, str) and _phase_of(result) is not None:
                 outcome: Literal["completed", "failed"] = "completed" if result in data.outputs else "failed"
                 phases.append(_phase_entry(result, len(trace) - 1, outcome, data))

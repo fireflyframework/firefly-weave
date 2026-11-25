@@ -1029,6 +1029,34 @@ def test_a_step_that_failed_in_a_transaction_a_called_workflow_handles_failed_th
     assert failures(answer, "call") == {"move[0]": "WV-TXN-ROLLED-BACK", "note[0]": "WV-EXPR-MISSING"}
 
 
+MISSING = {"id": "missing", "kind": "transform", "value": {"ref": "/input/items/5"}}
+
+
+@pytest.mark.parametrize(
+    "workflow, errors, expected, after",
+    [
+        (source(transaction([hold(), submit()]), {**MISSING, "onError": "continue"}), {}, ["hold#confirm"], "submit"),
+        (
+            source(transaction([hold(), add(), submit()], onError="continue"), {**MISSING, "onError": "continue"}),
+            REFUSED,
+            ["add#undo", "hold#cancel"],
+            "submit",
+        ),
+        # The step is reached, and waits, before the reservation is confirmed.
+        (move(hold(), submit(), MISSING), {}, ["hold#confirm"], "missing"),
+    ],
+    ids=["after a completed transaction", "after an undone transaction", "after the point of no return"],
+)
+def test_a_phase_is_listed_once_when_the_step_its_result_leads_to_fails(workflow, errors, expected, after):
+    # The simulator reduces the event that carries the phase's result again, with that step failing.
+    answer = run_move(workflow, errors=errors)
+    assert failures(answer)["missing"] == "WV-EXPR-MISSING"
+    assert keys(answer) == expected
+    # In the place of its result, not of the step that failed because of it.
+    index = next(entry["index"] for entry in answer["trace"] if entry["nodeId"] == after)
+    assert [phase["afterIndex"] for phase in answer["phases"]] == [index] * len(expected)
+
+
 # --- Execute step and Before a step, inside a transaction -------------------------------------------------------
 
 
