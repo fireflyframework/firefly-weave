@@ -134,7 +134,11 @@ const isRecord = (value: unknown): value is Json =>
         <weave-icon name="failCircle" [size]="20" />
         <div>
           <p>
-            <strong>This run stopped at {{ incident.step }}.</strong>
+            <strong
+              >This run stopped{{
+                incident.step ? " at " + incident.step : ""
+              }}.</strong
+            >
           </p>
           @if (incident.text) {
             <p class="incident-text">{{ incident.text }}</p>

@@ -207,6 +207,61 @@ describe("run detail", () => {
     expect(runIncident(run())).toBeNull();
   });
 
+  it.each([
+    [
+      "add#undo",
+      "WV-TXN-UNDO-STUCK",
+      "add",
+      "A step's undo couldn't finish, so the transaction is in doubt. Support code: WV-TXN-UNDO-STUCK.",
+    ],
+    [
+      "hold[3]#cancel",
+      "WV-TXN-CANCEL-STUCK",
+      "hold[3]",
+      "A reservation couldn't be released, so the transaction is in doubt. Support code: WV-TXN-CANCEL-STUCK.",
+    ],
+    [
+      "hold#confirm",
+      "WV-TXN-CONFIRM-STUCK",
+      "hold",
+      "A reservation couldn't be confirmed after the transaction went ahead. Support code: WV-TXN-CONFIRM-STUCK.",
+    ],
+    [
+      "move",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "move",
+      "Steps still running didn't finish in time, so nothing can be undone safely yet. Support code: WV-TXN-SETTLE-TIMEOUT.",
+    ],
+    // A run held whole is stopped at no step of its own.
+    [
+      "@transactions",
+      "WV-TXN-RUN-OVERSIZED",
+      null,
+      "The run grew too large to undo its transactions, so they're held until someone force ends the run. Support code: WV-TXN-RUN-OVERSIZED.",
+    ],
+    [
+      "charge",
+      "WV-TASK-AMBIGUOUS",
+      "charge",
+      "Support code: WV-TASK-AMBIGUOUS",
+    ],
+  ])(
+    "says a run stopped at %s (%s) in words, by its step",
+    (key, code, step, text) => {
+      expect(
+        runIncident(
+          run({
+            state: {
+              status: "suspended",
+              active: [key],
+              incidents: { [`${key}:0`]: { node_id: key, code } },
+            },
+          }),
+        ),
+      ).toEqual({ step, text });
+    },
+  );
+
   it("marks the live step, finished steps and the rest", () => {
     const history = {
       events: [

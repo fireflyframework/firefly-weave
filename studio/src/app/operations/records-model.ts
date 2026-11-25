@@ -18,8 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 // What each operations list shows: its columns, a row's title and secondary
 // line, its status pill, and the run detail's "Now", timeline and step list.
 // Pure functions: the records view renders them, tests check them.
+import { TRANSACTION_CODE_TEXT } from "../editor/transactions/transaction-words";
 import { durationText, relativeTime, shortId, toDate } from "../format";
 import { localKeepLabel } from "../local-drafts";
+import { incidentStep } from "../operate/incidents/incidents-model";
 import {
   runStatus,
   statusLabel,
@@ -333,8 +335,13 @@ export function runNow(
       : { lead: "Waiting", subject: "", rest: "", action: "" };
 }
 
-/** "This run stopped at {step}." and the incident text, or null. */
-export function runIncident(run: Json): { step: string; text: string } | null {
+/**
+ * "This run stopped at {step}." and why, or null. The step is null when the
+ * run is stopped whole, at no step of its workflow.
+ */
+export function runIncident(
+  run: Json,
+): { step: string | null; text: string } | null {
   const state = isRecord(run["state"]) ? run["state"] : {};
   const incidents = isRecord(state["incidents"])
     ? Object.values(state["incidents"]).filter(isRecord)
@@ -342,15 +349,14 @@ export function runIncident(run: Json): { step: string; text: string } | null {
   const message = text(state["incident"]);
   if (!message && !incidents.length) return null;
   const active = Array.isArray(state["active"]) ? state["active"] : [];
-  const step =
+  const key =
     text(incidents[0]?.["node_id"]) || text(active[0]) || "an unknown step";
+  const code = text(incidents[0]?.["code"]);
+  const sentence = TRANSACTION_CODE_TEXT[code];
+  const support = code && `Support code: ${code}`;
   return {
-    step,
-    text:
-      message ||
-      (incidents[0]?.["code"]
-        ? `Support code: ${text(incidents[0]["code"])}`
-        : ""),
+    step: incidentStep(key),
+    text: message || (sentence ? `${sentence} ${support}.` : support),
   };
 }
 
