@@ -67,10 +67,11 @@ def retry_allowed(policy: str, ambiguous: bool) -> bool:
 
 def failure_in_progress(ir: WorkflowIR, state: RunState, transaction: str) -> bool:
     """Whether a step, confirm, cancel or undo of the transaction instance has a failed attempt that recovery hasn't
-    decided yet: its interim incident closes only when recovery tries the step again or reports it failed for good."""
+    decided yet: its interim incident closes only when recovery tries the step again or reports it failed for good.
+    Recovery never decides a step the run no longer waits for, so its incident doesn't count."""
     facts = shapes(ir)
     return facts is not None and any(
-        item.code == "WV-TASK-FAILED" and facts.owner_key(item.node_id) == transaction
+        item.code == "WV-TASK-FAILED" and item.node_id in state.active and facts.owner_key(item.node_id) == transaction
         for item in state.incidents.values()
     )
 

@@ -35,6 +35,12 @@ from firefly_weave.operations.telemetry import TelemetryService, WeaveMetricsRec
 pytestmark = pytest.mark.integration
 
 PAUSE = {"id": "pause", "kind": "wait", "durationSeconds": 3600}
+LOOKUP = {
+    "id": "lookup",
+    "kind": "action",
+    "uses": "reports.lookup@1.0.0",
+    "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+}
 
 
 @pytest.fixture
@@ -130,6 +136,13 @@ async def completed(platform, found, actor, **outcomes: str) -> None:
     await resolve(platform, found, "accept_reconciled_result", actor, output=record, evidence_reference="ticket-17")
 
 
+async def compensated(platform, found, actor, *undone: str) -> None:
+    """A person says the transaction was undone, with the steps undone by hand."""
+    steps = [{"instance_key": key, "outcome": "undone"} for key in undone]
+    record = {"as": "compensated", "participants": steps}
+    await resolve(platform, found, "accept_reconciled_result", actor, output=record, evidence_reference="ticket-17")
+
+
 async def refused_for_now(platform, run_id, found, actor, **outcomes: str) -> None:
     """The record is refused while a failed attempt of its transaction is handled, and nothing changes."""
     before = await platform.state(run_id)
@@ -182,6 +195,44 @@ async def recovery_reaches_another_run(platform) -> None:
     await platform.expire(await platform.lease("hold"))
     await platform.scan()
     assert await attempts(platform, other.id, "hold") == ["recovered"]
+
+
+async def cancel(platform, run_id) -> None:
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx, run_id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+
+
+async def ended(platform, run_id, status: str) -> None:
+    """The run ended with its transaction as a person recorded it, and left no incident open."""
+    state = await platform.state(run_id)
+    assert (state["status"], state["incidents"]) == (status, {})
+    assert await platform.query("SELECT id FROM incidents WHERE run_id=:run AND status='active'", run=run_id) == []
+    assert (await platform.record(run_id))["state"] == "reconciled"
+
+
+async def lookup_stopped(platform, *, by: str):
+    """The read failed and the rollback, which the ``hold`` time or a ``cancel`` of the run started, stopped it before
+    recovery handled that failure; then the reservation's cancel got stuck."""
+    run = await platform.start(
+        await platform.publish(workflow("move", [transaction(hold(holdSeconds=600), LOOKUP, add()), PAUSE]))
+    )
+    await platform.complete(await platform.lease("hold"))
+    await platform.fail(await platform.lease("lookup"), "UNAVAILABLE")
+    if by == "hold":
+        await due(platform, run.id, "hold")
+    else:
+        await cancel(platform, run.id)
+    await platform.fail(await platform.lease("hold#cancel"), "REJECTED", outcome="failed")
+    await platform.scan()
+    open_incidents = await platform.query(
+        "SELECT * FROM incidents WHERE run_id=:run AND status='active' ORDER BY incident_key", run=run.id
+    )
+    assert [found["code"] for found in open_incidents] == ["WV-TXN-CANCEL-STUCK", "WV-TASK-FAILED"]
+    assert (await platform.state(run.id))["active"] == []
+    stuck, failed = open_incidents
+    return run, stuck, failed
 
 
 def beside_another_transaction() -> dict[str, Any]:
@@ -427,6 +478,45 @@ async def test_a_force_end_never_waits_for_a_failure_to_be_handled(platform, rec
     await resolve(platform, stuck, "terminate", reconciler)
     assert (await platform.state(run.id))["status"] == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_a_reconcile_as_compensated_never_waits_for_a_failed_step_that_the_hold_deadline_stopped(
+    platform, reconciler
+):
+    run, stuck, _ = await lookup_stopped(platform, by="hold")
+    await compensated(platform, stuck, reconciler, "hold")
+    await ended(platform, run.id, "failed")
+
+
+@pytest.mark.parametrize("ended_by", ["terminate", "cancel"])
+async def test_a_reconcile_as_completed_never_waits_for_a_failed_step_that_the_hold_deadline_stopped(
+    platform, reconciler, ended_by
+):
+    run, stuck, failed = await lookup_stopped(platform, by="hold")
+    await completed(platform, stuck, reconciler, hold="confirmed")
+    assert (await platform.record(run.id))["state"] == "reconciled"
+    # The stopped step's incident still holds the run, and only ending the run closes it.
+    state = await platform.state(run.id)
+    assert (state["status"], list(state["incidents"])) == ("suspended", ["lookup:1"])
+    for kind, code, record in (
+        ("retry_safe", "WV-RUNTIME-STATE", {}),
+        ("accept_reconciled_result", "WV-RUNTIME-STATE", {"output": {"count": 1}, "evidence_reference": "ticket-17"}),
+        ("accept_reconciled_failure", "WV-RUNTIME-RECONCILIATION_REQUIRED", {"evidence_reference": "ticket-17"}),
+    ):
+        with pytest.raises(CatalogError) as refused:
+            await resolve(platform, failed, kind, reconciler, **record)
+        assert (refused.value.status, refused.value.code) == (409, code)
+    if ended_by == "terminate":
+        await resolve(platform, failed, "terminate", reconciler)
+    else:
+        await cancel(platform, run.id)
+    await ended(platform, run.id, "cancelled")
+
+
+async def test_a_reconcile_never_waits_for_a_failed_step_that_a_run_cancel_stopped(platform, reconciler):
+    run, stuck, _ = await lookup_stopped(platform, by="cancel")
+    await compensated(platform, stuck, reconciler, "hold")
+    await ended(platform, run.id, "cancelled")
 
 
 async def test_recovery_retires_and_counts_the_attempt_an_earlier_version_left_running(
