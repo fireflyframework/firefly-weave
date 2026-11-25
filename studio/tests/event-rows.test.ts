@@ -653,6 +653,26 @@ describe("a row after activating", () => {
     });
   });
 
+  it("creates and stops nothing in a replace beside a trigger someone else made meanwhile", async () => {
+    const platform = seeded(STORED);
+    const replace = row(
+      planned(platform, { storedId: "t-1", declaration: WIDER }),
+      "replace",
+    );
+    platform.seed({
+      ...STORED,
+      id: "t-theirs",
+      name: "notify-team-2",
+      events: WIDER.events,
+      sources: undefined,
+    });
+    expect(await shown(platform, replace)).toMatchObject({
+      lead: "notify-team-2 was created since you opened this. Review it.",
+      detail:
+        "Studio created nothing. Close this and activate again to see what it is now.",
+    });
+  });
+
   it("gives every result of another kind of trigger its icon", () => {
     expect(
       (["created", "moved", "stopped", "failed", "changed"] as const).map(

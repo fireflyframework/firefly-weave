@@ -1049,11 +1049,33 @@ describe("a platform event trigger after an activation", () => {
       ]);
       expect(platform.writes()).toEqual(["POST /event-triggers/t-1/retarget"]);
       expect(attention(results)).toBe("1 trigger needs attention.");
+      // Both still react: the stop Studio didn't get to is owed.
       expect(keep(intents, results, rows)).toMatchObject({
         resources: { "env-1": "t-1" },
+        pendingStops: {
+          "env-1": [{ triggerId: "t-2", revision: 1, activationId: "a-older" }],
+        },
       });
     },
   );
+  it("owes no stop of a trigger left behind it didn't get to", async () => {
+    const platform = seeded(OLD_ONE, {
+      ...SECOND,
+      events: ["transaction.completed"],
+    });
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents).map((row) =>
+      row.kind === "left-behind" ? withStop(row, true) : row,
+    );
+    const results = await syncTriggers(rows, within(platform, intents), () => {
+      platform.person = "person-2";
+    });
+    expect(results.map((result) => result.status)).toEqual([
+      "moved",
+      "changed",
+    ]);
+    expect(keep(intents, results, rows)).not.toHaveProperty("pendingStops");
+  });
 
   it("owes the stop of a duplicate the person unticked, and drops the stops that no longer count", async () => {
     const platform = seeded(OLD_ONE, SECOND);

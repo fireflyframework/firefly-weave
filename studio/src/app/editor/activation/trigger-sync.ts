@@ -39,6 +39,7 @@ export { settingsKey };
 import {
   applyEventRow,
   eventRowActionable,
+  owedStop,
   type EventResult,
   type EventRow,
   type EventStatus,
@@ -293,7 +294,7 @@ function subject(row: TriggerRow, context: SyncContext): string {
   const noun = kind ? NOUNS[kind] : "this trigger";
   return name ? `${noun} ${name}` : `the ${noun}`;
 }
-/** Nothing is sent from elsewhere: what the row made and owes stays as it was. */
+/** Nothing is sent from elsewhere: what the row made and owes stays as it was, and a duplicate not stopped yet is owed. */
 function leftResult(
   row: TriggerRow,
   context: SyncContext,
@@ -301,7 +302,11 @@ function leftResult(
 ): SyncResult {
   const said = `Studio did nothing to ${subject(row, context)}: the environment or the account changed since you opened this.`;
   if (!row.event) return { row, status: "changed", text: said };
-  const { id, made, pendingStop } = before ?? {};
+  const { id, made, pendingStop } =
+    before ??
+    (row.event.kind === "duplicate"
+      ? { pendingStop: owedStop(row.event.binding) }
+      : {});
   return eventResult(row, {
     status: "changed",
     text: said,
