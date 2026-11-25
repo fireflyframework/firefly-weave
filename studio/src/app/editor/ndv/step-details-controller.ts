@@ -77,7 +77,6 @@ import {
 } from "../triggers/trigger-forms";
 import {
   eventProblem,
-  isPlatformEvent,
   withSampleIds,
   type ReplacedId,
 } from "../triggers/event-sample";
@@ -547,7 +546,7 @@ export class StepDetailsController {
   }
   /**
    * What a person entered, whichever pane they entered it in: test data is
-   * shared, so a platform event never keeps the IDs of a real event, run or
+   * shared, so no platform event in it keeps the IDs of a real event, run or
    * incident, nor, in a workflow whose input it is, a field that could hold
    * one.
    */
@@ -561,9 +560,7 @@ export class StepDetailsController {
       const problem = eventProblem(value, this.eventFields());
       if (problem) return { value, problem };
     }
-    return isPlatformEvent(value)
-      ? (withSampleIds(value) as { value: Json; replaced: ReplacedId[] })
-      : { value };
+    return value === undefined ? { value } : withSampleIds(value);
   }
   /** The IDs the last write of the test event replaced. */
   private readonly replaced = signal<{

@@ -374,6 +374,33 @@ test.describe("a real platform event entered in another Test event pane", () => 
     for (const id of Object.values(REAL))
       expect(sent.filter((body) => body.includes(id))).toEqual([]);
   });
+
+  test("a Kafka message trigger's, in a field of a workflow's own input", async ({
+    page,
+  }) => {
+    const details = await openNotifyTeam(page, {
+      spec: { inputSchema: { type: "object" } },
+    });
+    const sent: string[] = [];
+    page.on("request", (request) => sent.push(request.postData() ?? ""));
+    await addCommonStep(page, "Kafka message", "Add a step after send");
+    const pane = page.getByRole("region", { name: "Input data" });
+    await pane.getByRole("button", { name: "Paste a sample message" }).click();
+    await pane
+      .getByRole("textbox", { name: "Sample message (JSON)" })
+      .fill(JSON.stringify({ body: { events: [pastedEvent()] } }));
+    await pane.getByRole("button", { name: "Use this sample" }).click();
+    await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    const json = pane.getByLabel("Test event", { exact: true });
+    await expect(json).toContainText("REF-4410");
+    expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
+    const drawn = await page.content();
+    for (const id of Object.values(REAL)) {
+      expect(sent.filter((body) => body.includes(id))).toEqual([]);
+      expect(drawn).not.toContain(id);
+    }
+    await details.close();
+  });
 });
 
 test.describe("a later step of a workflow a platform event starts", () => {

@@ -296,34 +296,58 @@ export function pastedEvent(
   return problem ? { problem } : { value: event as Json };
 }
 
-/** Whether a value says it is a platform event, whatever else it holds. */
-export const isPlatformEvent = (value: unknown): value is JsonObject =>
-  isJsonObject(value) && value["version"] === VERSION;
+/** What a transaction in an event always has: an event of any version is known by it. */
+const FACTS = ["run_id", "state", "instance_key"];
+/** Whether an object is a platform event: it says so, or its transaction, or one it lists, is an event's. */
+function isEvent(value: JsonObject): boolean {
+  const held = value["transaction"];
+  return (
+    value["version"] === VERSION ||
+    (Array.isArray(held) ? held : [held]).some(
+      (facts) =>
+        isJsonObject(facts) && FACTS.every((key) => hasOwn(facts, key)),
+    )
+  );
+}
+const EVENT_IDS: Readonly<Record<string, ReplacedId>> = { event_id: "event" };
+const FACTS_IDS: Readonly<Record<string, ReplacedId>> = {
+  run_id: "run",
+  incident_id: "incident",
+};
+const REPLACED_ORDER: readonly ReplacedId[] = ["event", "run", "incident"];
 
 /**
- * The event with sample IDs in place of its event, run and incident IDs, and
- * which it replaced; IDs that are samples already stay, and so do the rest.
+ * The value with sample IDs in place of the event, run and incident IDs of
+ * every platform event in it, at any depth, and which it replaced; IDs that
+ * are samples already stay, and so does the rest.
  */
-export function withSampleIds(
-  event: JsonObject,
+export function withSampleIds<T extends Json>(
+  value: T,
   id: () => string = sampleId,
-): { value: JsonObject; replaced: ReplacedId[] } {
-  const replaced: ReplacedId[] = [];
-  const sampled = (holder: JsonObject, key: string, name: ReplacedId) => {
-    const held = holder[key];
-    if (held === undefined || held === null || isSampleId(held)) return holder;
-    replaced.push(name);
-    return { ...holder, [key]: id() };
+): { value: T; replaced: ReplacedId[] } {
+  const replaced = new Set<ReplacedId>();
+  const visit = (node: Json, inEvent: boolean): Json => {
+    if (Array.isArray(node)) return node.map((item) => visit(item, inEvent));
+    if (!isJsonObject(node)) return node;
+    const event = isEvent(node);
+    const ids = {
+      ...(event ? EVENT_IDS : {}),
+      ...(inEvent ? FACTS_IDS : {}),
+    };
+    return Object.fromEntries(
+      Object.entries(node).map(([key, held]) => {
+        if (!hasOwn(ids, key))
+          return [key, visit(held, event && key === "transaction")];
+        if (held === null || isSampleId(held)) return [key, held];
+        replaced.add(ids[key]!);
+        return [key, id()];
+      }),
+    );
   };
-  const value = sampled(event, "event_id", "event");
-  const facts = value["transaction"];
-  if (!isJsonObject(facts)) return { value, replaced };
-  const transaction = sampled(
-    sampled(facts, "run_id", "run"),
-    "incident_id",
-    "incident",
-  );
-  return { value: { ...value, transaction }, replaced };
+  return {
+    value: visit(value, false) as T,
+    replaced: REPLACED_ORDER.filter((name) => replaced.has(name)),
+  };
 }
 
 /** "Studio replaced the event and run IDs with sample IDs."; "" when it replaced none. */

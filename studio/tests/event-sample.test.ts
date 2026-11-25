@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import type { JsonObject } from "../src/app/forms/core/json";
+import type { Json, JsonObject } from "../src/app/forms/core/json";
 import {
   eventProblem,
   pastedEvent,
@@ -91,6 +91,71 @@ describe("the IDs of an event entered as test data", () => {
     expect((empty.value["transaction"] as JsonObject)["incident_id"]).toBe(
       null,
     );
+  });
+
+  const { version: _version, ...unversioned } = event();
+  it.each<[string, Json, (value: Json) => Json]>([
+    [
+      "in a field",
+      { event: event() },
+      (value) => (value as JsonObject)["event"]!,
+    ],
+    [
+      "two levels deep",
+      { body: { event: event(), note: "x" } },
+      (value) =>
+        ((value as JsonObject)["body"] as JsonObject)["event"] as JsonObject,
+    ],
+    ["in a list", [{ note: "x" }, event()], (value) => (value as Json[])[1]!],
+    ["without its version", unversioned, (value) => value],
+    [
+      "with another version",
+      { ...event(), version: "weave/platform-event-v1 " },
+      (value) => value,
+    ],
+  ])("are replaced in an event %s", (_where, entered, at) => {
+    const { value, replaced } = withSampleIds<Json>(entered);
+    expect(replaced).toEqual(["event", "run", "incident"]);
+    expect(JSON.stringify(value)).not.toContain(REAL_ID);
+    const held = at(value) as JsonObject;
+    const facts = held["transaction"] as JsonObject;
+    for (const id of [held["event_id"], facts["run_id"], facts["incident_id"]])
+      expect(id).toMatch(SAMPLE_ID);
+    expect(facts["business_key"]).toBe("REF-1029");
+  });
+
+  it("are replaced in every event a list holds, each kind named once", () => {
+    const { value, replaced } = withSampleIds([
+      event("transaction.compensated"),
+      event(),
+    ]);
+    expect(replaced).toEqual(["event", "run", "incident"]);
+    expect(JSON.stringify(value)).not.toContain(REAL_ID);
+  });
+
+  it("are replaced in an event that lists its transactions, and in an event it holds", () => {
+    const { value, replaced } = withSampleIds({
+      ...unversioned,
+      transaction: [unversioned["transaction"] as Json],
+      earlier: { items: [event("transaction.compensated")] },
+    });
+    expect(replaced).toEqual(["event", "run", "incident"]);
+    expect(JSON.stringify(value)).not.toContain(REAL_ID);
+  });
+
+  it("are no event's without a run, a state and an instance key: the rest of a value stays", () => {
+    const facts = event().transaction;
+    for (const key of ["run_id", "state", "instance_key"]) {
+      const { [key]: _missing, ...some } = facts;
+      const value = { event_id: REAL_ID, transaction: some as JsonObject };
+      expect(withSampleIds(value)).toEqual({ value, replaced: [] });
+    }
+    const value = {
+      event_id: REAL_ID,
+      run_id: REAL_ID,
+      items: [null, 1, "x", { transaction: "T-1" }],
+    };
+    expect(withSampleIds(value)).toEqual({ value, replaced: [] });
   });
 
   it("are named in the note, only the ones replaced", () => {

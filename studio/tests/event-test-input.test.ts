@@ -321,3 +321,50 @@ describe("what isn't a platform event", () => {
     expect(kept(f.controller).transaction.run_id).toMatch(SAMPLE_ID);
   });
 });
+
+describe("a real platform event inside what a person enters", () => {
+  const { version: _version, ...unversioned } = realEvent();
+  const INSIDE: [where: string, value: Json, type?: string][] = [
+    ["in a field", { event: realEvent() }],
+    ["two levels deep", { body: { event: realEvent() } }],
+    ["in a list", [realEvent()], "array"],
+    ["without its version", unversioned],
+  ];
+
+  it.each(INSIDE)(
+    "%s keeps no real ID in a workflow with an input of its own, and the pane says so",
+    async (_where, value, type = "object") => {
+      const f = setup({ type });
+      const { pane, enter } = kafkaPane(f);
+      await enter(value);
+      const kept = JSON.stringify(f.controller.testData.data().input);
+      expect(kept).toContain("REF-4410");
+      for (const id of Object.values(REAL)) expect(kept).not.toContain(id);
+      expect(pane.replaced()).toBe(
+        "Studio replaced the event, run and incident IDs with sample IDs. Test data is shared with everyone who can test this workflow. Use a made-up business key.",
+      );
+    },
+  );
+
+  it("keeps none under a schema that marks its version secret", async () => {
+    const f = setup({
+      type: "object",
+      properties: { version: { type: "string", "x-secret": true } },
+    });
+    await kafkaPane(f).enter(realEvent());
+    const kept = JSON.stringify(f.controller.testData.data().input);
+    expect(kept).toContain("REF-4410");
+    for (const id of Object.values(REAL)) expect(kept).not.toContain(id);
+  });
+
+  it.each(INSIDE)(
+    "%s is refused where the input is the platform event",
+    async (_where, value) => {
+      const f = setup();
+      const { pane, enter } = kafkaPane(f);
+      await enter(value);
+      expect(f.controller.testEvent()).toBeUndefined();
+      expect(pane.problem()).not.toBe("");
+    },
+  );
+});
