@@ -109,7 +109,13 @@ but a person's decision moves it. Check the other systems first, then choose:
 
 Mark as reconciled is refused (HTTP 409 `WV-RUNTIME-STATE`) while an attempt of
 one of the transaction's steps has just failed and Weave still handles that
-failure: wait a moment and send it again.
+failure: wait a moment and send it again. Only a failure that Weave still
+handles is refused. When the rollback stops a failed step first (for example,
+the hold time passes or the run is canceled), that step is never tried again, so
+it doesn't delay your decision, but its `WV-TASK-FAILED` incident stays open
+until the run ends. After a `completed` record, a run that isn't already ending
+stays suspended behind that incident, and you can only end it: cancel the run,
+or resolve the incident with `terminate`.
 
 Once a person ends a transaction, a late result of its work changes nothing: a
 worker's report is refused with HTTP 409 `WV-LEASE` (or, when the run ended

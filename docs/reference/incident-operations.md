@@ -281,9 +281,18 @@ them (their leases are revoked and their child runs asked to stop), they don't
 wait for them. Mark as reconciled is also refused (HTTP 409 `WV-RUNTIME-STATE`)
 while an attempt of any step, confirm, cancel, or undo of the transaction has
 failed and recovery hasn't decided what follows; send it again after the next
-recovery scan. Force end doesn't wait. A record that doesn't fit the
-transaction answers HTTP 422 `WV-RUNTIME-OUTPUT`. The audit record adds the
-transaction's key and, for a reconciliation, how it ended.
+recovery scan. Only a failure that recovery still handles is refused. Force end
+doesn't wait. A record that doesn't fit the transaction answers HTTP 422
+`WV-RUNTIME-OUTPUT`. The audit record adds the transaction's key and, for a
+reconciliation, how it ended.
+
+When the rollback stops a failed step before recovery decides what follows (for
+example, the hold time passes or the run is canceled), recovery no longer
+handles that failure. It never refuses a record, but its `WV-TASK-FAILED`
+incident stays open until the run ends. After a `completed` record, a run that
+isn't already ending stays `suspended` behind that incident: `terminate` is the
+only decision it takes, and the others answer HTTP 409. Such a run can only be
+ended: resolve the incident with `terminate`, or cancel the run.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
