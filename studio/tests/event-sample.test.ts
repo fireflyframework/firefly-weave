@@ -334,6 +334,55 @@ describe.runIf(available)(
       );
     });
 
+    it("knows every field the platform event has, and replaces every ID it holds", () => {
+      const all = changed(
+        "transaction.steps",
+        Object.fromEntries(
+          ["done", "undone", "pending"].map((key) => [
+            key,
+            [{ ...step, phase: "undo", attempts: 1 }],
+          ]),
+        ),
+      );
+      const facts = all["transaction"] as JsonObject;
+      facts["cause"] = { code: "WV-X", step: "add", origin_code: "FAILED" };
+      expect(platformTakes([all])).toEqual([true]);
+      expect([problem(all), eventProblem(all, null)]).toEqual([null, null]);
+      // The platform's fields, and those that hold an ID, by their paths.
+      const paths: string[] = [];
+      const ids: string[] = [];
+      const visit = (schema: JsonObject, path: string) => {
+        if (schema["format"] === "uuid") ids.push(path);
+        for (const part of (schema["anyOf"] ?? []) as JsonObject[])
+          visit(part, path);
+        if (schema["items"]) visit(schema["items"] as JsonObject, path);
+        for (const [key, field] of Object.entries(schema["properties"] ?? {})) {
+          paths.push(path ? `${path}.${key}` : key);
+          visit(field as JsonObject, path ? `${path}.${key}` : key);
+        }
+      };
+      visit(platformView(), "");
+      const held: string[] = [];
+      const walk = (value: unknown, path: string) => {
+        if (Array.isArray(value))
+          return value.forEach((item) => walk(item, path));
+        if (!value || typeof value !== "object") return;
+        for (const [key, item] of Object.entries(value)) {
+          held.push(path ? `${path}.${key}` : key);
+          walk(item, path ? `${path}.${key}` : key);
+        }
+      };
+      walk(all, "");
+      expect([...new Set(held)].sort()).toEqual(paths.sort());
+      const { value } = withSampleIds(all);
+      const at = (path: string) =>
+        path
+          .split(".")
+          .reduce<unknown>((node, key) => (node as JsonObject)[key], value);
+      expect(ids).toHaveLength(3);
+      for (const path of ids) expect(at(path), path).toMatch(SAMPLE_ID);
+    });
+
     it("is a state that isn't the event's, which no event the platform sends has", () => {
       for (const known of [fields, null]) {
         expect(eventProblem(changed("transaction.state", "open"), known)).toBe(
