@@ -190,6 +190,11 @@ from the child's end to the caller's receipt of its result. A growing
 `call.dispatch` age is the sign of a call backlog; there is no separate gauge
 of pending calls.
 
+**Recovery.** `weave.recoveries` counts, with `operation: recovery.retired` and
+`status: cancelled`, each attempt that recovery retires because its run no longer
+waits for the step. A steady count without transactions that a person ended needs
+a look.
+
 **Only three attributes.** Metrics carry `operation`, `status`, and
 `error_code`. Operations come from the public operation manifest plus a few fixed
 internal names; statuses and error codes come from short allowlists, and any

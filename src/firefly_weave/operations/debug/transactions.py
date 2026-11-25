@@ -17,7 +17,7 @@
 """Pure facts a simulation needs to run transactions: which keys answer a confirm, cancel or undo, and what each
 of them returns. Nothing here starts a run, calls a worker or reads a database."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, Literal, cast
@@ -38,7 +38,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
-from firefly_weave.runtime.models import Deadline, RunState, TransactionCause
+from firefly_weave.runtime.models import Deadline, RunState, TransactionCause, TransactionRecord
 from firefly_weave.runtime.transactions import split_deadline
 
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
@@ -94,25 +94,32 @@ def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:
     return RunTransactionCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
 
 
-def transaction_views(state: RunState) -> list[TransactionDebugView]:
-    """Each transaction of a simulated run, in the order it opened: its state, cause, in-doubt incident and steps,
-    as the run views show them. No values: no input, output or undo scope, and no withheld business key."""
-    return [
-        TransactionDebugView(
-            instance_key=key,
-            node_id=node_of(key),
-            state=record.status,
-            cause=_cause(record.cause),
-            pending_abort=_cause(record.pending_abort),
-            incident_key=record.incident,
-            business_key=None if record.business_key_withheld else record.business_key,
-            reconciled_as=record.reconciled_as,
-            participants=[
-                TransactionParticipantView.model_validate(item) for item in participants_view(record.participants)
-            ],
-        )
-        for key, record in state.transactions.items()
-    ]
+def transaction_view(key: str, record: TransactionRecord) -> TransactionDebugView:
+    """One transaction: its state, cause, in-doubt incident and steps, as the run views show them. No values: no input,
+    output or undo scope, and no withheld business key."""
+    return TransactionDebugView(
+        instance_key=key,
+        node_id=node_of(key),
+        state=record.status,
+        cause=_cause(record.cause),
+        pending_abort=_cause(record.pending_abort),
+        incident_key=record.incident,
+        business_key=None if record.business_key_withheld else record.business_key,
+        reconciled_as=record.reconciled_as,
+        participants=[
+            TransactionParticipantView.model_validate(item) for item in participants_view(record.participants)
+        ],
+    )
+
+
+def transaction_views(
+    state: RunState, ended: Mapping[str, TransactionDebugView] | None = None, opened: Iterable[str] = ()
+) -> list[TransactionDebugView]:
+    """Each transaction of a simulated run: the state's, and those that ``ended`` with their loop iteration. They are
+    listed in the order they opened, the order of ``opened``."""
+    views = {**(ended or {}), **{key: transaction_view(key, record) for key, record in state.transactions.items()}}
+    order = {key: index for index, key in enumerate(opened)}
+    return sorted(views.values(), key=lambda view: order.get(view.instance_key, len(order)))
 
 
 def due_deadline(state: RunState, deadline: Deadline) -> bool:

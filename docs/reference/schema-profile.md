@@ -194,12 +194,35 @@ fuzzy matching, and engine-specific escapes.
 
 Patterns run with the timeout-enabled `regex` engine, never Python's unbounded
 matcher; this also applies when `additionalProperties` decides which names
-`patternProperties` already matched. Each match has a timeout, and all matches in
-one validation share a time budget. The compile cost of counted repetitions is
-estimated conservatively (pattern length times the maxima of every counted
-repetition), so some complex patterns are rejected even though their real cost is
-lower. Costs add up across a schema's patterns and are charged again when a
-pattern is compiled at run time.
+`patternProperties` already matched. Each match has a CPU-time limit, and all
+matches in one validation share a CPU-time budget. The compile cost of counted
+repetitions is estimated conservatively (pattern length times the maxima of every
+counted repetition), so some complex patterns are rejected even though their real
+cost is lower. Costs add up across a schema's patterns and are charged again when
+a pattern is compiled at run time.
+
+A match that spends more than its limit is refused.
+
+Only the CPU time of the thread that validates counts, so waiting for the
+processor makes a validation slower but doesn't spend its budget. A match that
+stops before it spends its limit is tried again, up to 8 times with twice the time
+each try. Stopped tries aren't charged to the budget. Together, the stopped tries
+of one validation may last 100 times its CPU-time budget (10 seconds by default)
+before it's refused. A payload is checked twice, once for classified secrets and
+once against its schema, and each check has its own budget and its own wait.
+
+A match holds Python's interpreter lock when the length of its pattern times the
+length of its string is at most 262,144. A larger match lets the other threads of
+the process run meanwhile. When those threads are busy running Python, a larger
+match can wait for them so often that it uses up its tries, and a valid string is
+refused.
+
+On Windows, the CPU clock moves by 15.6 milliseconds at a time, so a match may
+spend that much past its limit. All the matches of a validation usually spend at
+most about twice their budget, and up to several times it when matches near
+their limit are stopped and tried again. A validation near its budget can be
+refused on a busy Windows machine. A match near its limit can still pass on a
+fast processor and fail on a slow one.
 
 ## Durable secret classification
 
@@ -267,8 +290,8 @@ argument. Definitions cannot raise it, and it is separate from
 | `max_depth` | 32 | Container nesting in the value |
 | `max_diagnostics` | 100 | Returned diagnostics, including any overflow marker |
 | `max_pattern_length` | 1,024 | Unicode code points in one pattern |
-| `regex_timeout_seconds` | 0.01 | Time for one match |
-| `max_regex_seconds` | 0.1 | Total matching time for one validation |
+| `regex_timeout_seconds` | 0.01 | CPU time of one match |
+| `max_regex_seconds` | 0.1 | CPU time of all matches in one validation |
 
 **Generated platform contracts get more work budget.** Weave's own outer
 contracts use the public `DEFAULT_CONTRACT_LIMITS`: the same values except

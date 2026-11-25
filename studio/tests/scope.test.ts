@@ -532,9 +532,6 @@ except ImportError:
     from firefly_weave.compiler.api import validate_source as check
     mode = "source"
 documents = json.load(sys.stdin)
-# This oracle tests reference semantics, not production timing admission. Keep
-# structural/work limits and a bounded regex deadline, allowing runner contention.
-parity_limits = replace(DEFAULT_CONTRACT_LIMITS, regex_timeout_seconds=1, max_regex_seconds=5)
 # A document probes every position of a fixture, so it reports more than the
 # default 100 diagnostics; every one of them must reach the comparison.
 probe_limits = Limits(max_diagnostics=10_000)
@@ -552,7 +549,7 @@ def export_snapshot():
 schemas.export_schemas = export_snapshot
 results = []
 for document in documents:
-    result = check(json.dumps(document), format="json", limits=probe_limits, contract_limits=parity_limits)
+    result = check(json.dumps(document), format="json", limits=probe_limits)
     results.append({
         "validationOk": result.validation_ok,
         "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in result.diagnostics],
@@ -560,17 +557,17 @@ for document in documents:
 budget_result = check(json.dumps(documents[0]), format="json", contract_limits=replace(
     DEFAULT_CONTRACT_LIMITS, max_regex_seconds=1e-12,
 ))
-def with_scheduling_pause(limits):
+def with_scheduling_pause():
     calls = 0
     def clock():
         nonlocal calls
         calls += 1
         # One 200 ms descheduling interval inside the first regex measurement.
-        return time.monotonic() + (0.2 if calls > 1 else 0)
-    with patch.object(schemas, "time", SimpleNamespace(monotonic=clock)):
-        return check(json.dumps(documents[0]), format="json", limits=probe_limits, contract_limits=limits)
-paused_default = with_scheduling_pause(DEFAULT_CONTRACT_LIMITS)
-paused_parity = with_scheduling_pause(parity_limits)
+        return time.perf_counter() + (0.2 if calls > 1 else 0)
+    paused = SimpleNamespace(perf_counter=clock, thread_time=time.thread_time)
+    with patch.object(schemas, "time", paused):
+        return check(json.dumps(documents[0]), format="json", limits=probe_limits)
+paused_result = with_scheduling_pause()
 owned_copy = export_snapshot()
 owned_copy["workflow"].clear()
 snapshot_unchanged = export_snapshot()["workflow"] == json.loads(schema_snapshot)["workflow"]
@@ -578,8 +575,7 @@ print(json.dumps({"mode": mode, "schemaExports": schema_exports,
 "schemaSnapshotUnchanged": snapshot_unchanged, "results": results, "budgetResult": {
     "validationOk": budget_result.validation_ok,
     "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in budget_result.diagnostics],
-}, "pausedDefaultCodes": [d.code for d in paused_default.diagnostics],
-"pausedParityDiagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in paused_parity.diagnostics]}))
+}, "pausedDiagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in paused_result.diagnostics]}))
 `;
 interface CompilerResult {
   validationOk: boolean;
@@ -721,8 +717,7 @@ describe.skipIf(!available)("scope parity with the Python compiler", () => {
     schemaSnapshotUnchanged: boolean;
     results: CompilerResult[];
     budgetResult: CompilerResult;
-    pausedDefaultCodes: string[];
-    pausedParityDiagnostics: CompilerResult["diagnostics"];
+    pausedDiagnostics: CompilerResult["diagnostics"];
   };
   // In a hook, not at module load: when the compiler fails or runs out of
   // time, only these tests fail, not the whole file.
@@ -746,11 +741,8 @@ describe.skipIf(!available)("scope parity with the Python compiler", () => {
     expect(compiled.schemaExports).toBe(1);
     expect(compiled.schemaSnapshotUnchanged).toBe(true);
   });
-  it("isolates scope parity from a bounded runner scheduling pause", () => {
-    expect(compiled.pausedDefaultCodes).toContain("WV-SCHEMA-RESOURCE_LIMIT");
-    expect(compiled.pausedParityDiagnostics).toEqual(
-      compiled.results[0].diagnostics,
-    );
+  it("answers the same when the machine pauses the compiler", () => {
+    expect(compiled.pausedDiagnostics).toEqual(compiled.results[0].diagnostics);
   });
   it("never treats a compiler resource-budget rejection as accepted references", () => {
     const result = compiled.budgetResult;

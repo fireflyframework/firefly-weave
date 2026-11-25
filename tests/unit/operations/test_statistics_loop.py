@@ -80,9 +80,10 @@ def quiet(monkeypatch, loop: OperationsLoop, calls: list) -> None:
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintain)
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
-    # Log pruning and the conversation sweep have their own tests; here there is nothing to prune.
+    # Log pruning, the conversation sweep and the repair of records have their own tests; here there is nothing to do.
     monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "forget_conversations", swept)
+    monkeypatch.setattr(loop, "repair_records", swept)
 
 
 def units(monkeypatch, loop: OperationsLoop, opened: list) -> None:
