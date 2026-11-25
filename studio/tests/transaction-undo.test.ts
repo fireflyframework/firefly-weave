@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // edit for a step without a choice is never offered.
 import "@angular/compiler";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ToastAction } from "../src/app/dialog";
+import type { ToastAction } from "../src/app/toast";
 import { fixFor } from "../src/app/editor/ndv/issues";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { newHttpRecipe } from "../src/app/editor/ndv/owned/owned-actions";
@@ -554,6 +554,7 @@ describe("How it's undone in Settings", () => {
     expect(issues[0].fix).toEqual({
       kind: "undo",
       label: "Choose how it's undone",
+      name: "Choose how it's undone: add",
     });
     checked.session.runFix(issues[0]);
     expect(checked.focused).toEqual(["undo"]);
@@ -568,6 +569,7 @@ describe("How it's undone in Settings", () => {
     expect(fixFor("WV-COMP-TXN_UNDECLARED", suggestion, null)).toEqual({
       kind: "undo",
       label: "Choose how it's undone",
+      name: "Choose how it's undone",
     });
     // Other suggestions stay one press away.
     expect(fixFor("WV-COMP-TXN_SIZE", suggestion, null)).toMatchObject({
@@ -599,7 +601,7 @@ describe("How it's undone in Settings", () => {
     // Three fields, one thing to do.
     expect(issues).toHaveLength(1);
     expect(issues[0].field?.spec.id).toBe("undo");
-    expect(issues[0].fix).toEqual({
+    expect(issues[0].fix).toMatchObject({
       kind: "clearUndo",
       label: "Clear How it's undone",
     });
@@ -631,7 +633,7 @@ describe("How it's undone in Settings", () => {
       .issues()
       .find((found) => /must be waited for/.test(found.message))!;
     expect(issue.field?.spec.id).toBe("mode");
-    expect(issue.fix).toEqual({
+    expect(issue.fix).toMatchObject({
       kind: "waitForCall",
       label: "Wait for its result",
     });

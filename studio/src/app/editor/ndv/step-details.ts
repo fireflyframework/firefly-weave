@@ -356,13 +356,13 @@ export class StepDetails {
           {
             confirm: (options) => this.dialogs.confirm(options),
             prompt: (options) => this.dialogs.prompt(options),
-            focusField: (field, open) => {
+            focusField: (field, open, press) => {
               if (
                 !this.lifetime.destroyed &&
                 this.details.request() === request &&
                 this.details.opening() === opening
               )
-                this.focusField(field, open);
+                this.focusField(field, open, press);
             },
             announce: (text) => {
               this.announcement.set("");
@@ -1841,19 +1841,20 @@ export class StepDetails {
   }
   /**
    * Focuses a field's control, switching pane and tab first when needed;
-   * `open` also opens its choices (a connection's list, the data picker).
+   * `open` also opens its choices (a connection's list, the data picker), and
+   * `press` presses a button of the field (its document's Open).
    */
-  focusField(field: PlacedSpec, open = false): void {
+  focusField(field: PlacedSpec, open = false, press = ""): void {
     if (this.layout() === "sheet" && this.pane() !== "parameters") {
       this.pane.set("parameters");
-      afterNextRender(() => this.focusField(field, open), {
+      afterNextRender(() => this.focusField(field, open, press), {
         injector: this.injector,
       });
       return;
     }
     if (this.tab() !== field.tab) {
       this.tab.set(field.tab);
-      afterNextRender(() => this.focusField(field, open), {
+      afterNextRender(() => this.focusField(field, open, press), {
         injector: this.injector,
       });
       return;
@@ -1886,6 +1887,51 @@ export class StepDetails {
     if (!inView(control))
       control.scrollIntoView({ block: "center", inline: "nearest" });
     if (open) this.openChoices(host, control);
+    if (press) this.pressInside(host, press);
+  }
+  /**
+   * A setting the target's manifest decides (How it's undone) isn't there
+   * until the manifest loads: focus goes to it then, unless the person moved.
+   */
+  private focusOnceLoaded(focus: Extract<FocusTarget, { kind: "path" }>): void {
+    if (this.controller().manifest()) return;
+    const opening = this.details.opening();
+    const dialog = this.dialog().nativeElement;
+    const person = new AbortController();
+    for (const event of ["keydown", "pointerdown"])
+      dialog.addEventListener(event, () => person.abort(), {
+        capture: true,
+        signal: person.signal,
+      });
+    void this.controller()
+      .loadFeatures()
+      .then(() =>
+        afterNextRender(
+          () => {
+            if (
+              !person.signal.aborted &&
+              !this.lifetime.destroyed &&
+              this.details.opening() === opening &&
+              this.controller().manifest()
+            )
+              this.applyFocus(focus);
+            person.abort();
+          },
+          { injector: this.injector },
+        ),
+      );
+  }
+  /**
+   * Presses a field's button once it is there: its document may still be
+   * loading. Nothing is pressed once the person left the field.
+   */
+  private pressInside(host: HTMLElement, selector: string, tries = 40): void {
+    const button = host.querySelector<HTMLElement>(selector);
+    if (button) return button.click();
+    setTimeout(() => {
+      if (tries > 0 && host.contains(document.activeElement))
+        this.pressInside(host, selector, tries - 1);
+    }, 50);
   }
   /**
    * Opens a field's list: a dropdown opens on a click; the data picker
@@ -2281,8 +2327,16 @@ export class StepDetails {
             ? (session.issues().find((issue) => issue.key === focus.key)
                 ?.field ?? null)
             : null;
+      if (focus.kind === "path" && !reported) this.focusOnceLoaded(focus);
       const field = reported ?? firstIssueField(session.issues());
-      if (field) return this.focusField(field);
+      if (field) {
+        const open = focus.kind === "path" ? focus.open : undefined;
+        return this.focusField(
+          field,
+          open === "choices",
+          open === "document" ? ".param-open" : "",
+        );
+      }
     }
     const region = focus.kind === "region" ? focus.region : "parameters";
     if (this.layout() === "sheet") {

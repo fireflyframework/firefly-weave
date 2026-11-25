@@ -33,8 +33,11 @@ export type FocusTarget =
   | { kind: "region"; region: Region }
   /** The field of the step's first issue (a tile badge). */
   | { kind: "firstIssue" }
-  /** The field that holds a diagnostic's path (`["with"]`, `["cases", 0, "when"]`). */
-  | { kind: "path"; path: Path }
+  /**
+   * The field that holds a diagnostic's path (`["with"]`, `["cases", 0, "when"]`),
+   * with its choices (the data picker) or its document opened.
+   */
+  | { kind: "path"; path: Path; open?: "choices" | "document" }
   /** The field of one of the step's issues, by its key (an entry not applied yet). */
   | { kind: "issue"; key: string };
 export interface StepDetailsRequest {

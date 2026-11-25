@@ -148,8 +148,9 @@ const PROPER = new Set([
   "Map",
   // A decision's default path is named Otherwise ("Took Otherwise").
   "Otherwise",
-  // The setting How it's undone, where a command names it.
+  // The settings How it's undone and Hold for, where a command names them.
   "How",
+  "Hold",
 ]);
 
 describe("Words in step details", () => {

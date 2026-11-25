@@ -362,15 +362,25 @@ export class ResourceField {
       this.draft = null;
   }
   document(): Json | null {
+    const path = this.spec().path;
     if (
       !this.current() ||
       !this.value() ||
-      this.spec().path[0] !== "uses" ||
+      path[path.length - 1] !== "uses" ||
       (this.session().host.profile && !this.session().host.can("catalog.read"))
     )
       return null;
     const session = this.session(),
       context = session.controller.kindContext();
+    // An undo step's action; its workflow opens as a workflow.
+    if (path.length > 1) {
+      const operation = session.controller.step(session.target)?.[
+        String(path[0])
+      ] as { kind?: unknown } | undefined;
+      return operation?.kind === "action"
+        ? (context.undoContract?.(this.value(), "action") ?? null)
+        : null;
+    }
     return session.controller.step(session.target)?.kind === "decisionTable"
       ? context.tableContract(this.value())
       : context.actionContract(this.value());

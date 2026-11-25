@@ -25,6 +25,7 @@ import {
   Component,
   type DoCheck,
   type OnDestroy,
+  computed,
   inject,
   input,
   viewChild,
@@ -42,7 +43,10 @@ import { DecisionInspector } from "./decision-inspector";
 import { LlmInspector } from "./llm-inspector";
 import { HumanInspector } from "./human-inspector";
 import { PathInspector } from "./path-inspector";
-import { DiagnosticsList } from "./diagnostics-list";
+import { DiagnosticsList, type ChosenFix } from "./diagnostics-list";
+import { PublishDialog } from "../editor/transactions/publish-dialog";
+import { publishSummary } from "../editor/transactions/publish-summary";
+import { runProblemFix } from "../editor/transactions/run-fix";
 import { SimulationPanel } from "./simulation/simulation-panel";
 import { RunLogPanel } from "../editor/debugger/run-log-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
@@ -78,6 +82,7 @@ const SPLIT_MIN_WIDTH = 1024;
     PathInspector,
     ConnectionSlotList,
     DiagnosticsList,
+    PublishDialog,
     SimulationPanel,
     RunLogPanel,
     CanvasView,
@@ -1489,6 +1494,7 @@ const SPLIT_MIN_WIDTH = 1024;
               [readonly]="h.model.readonly"
               (locate)="h.openDiagnostic($event)"
               (apply)="h.applySuggestion($event)"
+              (fixed)="fix($event)"
             />
           }
         </div>
@@ -1496,6 +1502,15 @@ const SPLIT_MIN_WIDTH = 1024;
     </section>
     @if (h.stepDetailsOn()) {
       <weave-step-details-mount [host]="h" [canvas]="canvas()" />
+    }
+    <!-- Publish… stopped at a transaction: its problems, each with its fix. -->
+    @if (unsafe()(); as summary) {
+      @defer (on immediate) {
+        <weave-publish-dialog
+          [summary]="summary"
+          (closed)="unsafe().set(null); $event && fix($event)"
+        />
+      }
     }`,
 })
 export class DesignerView implements DoCheck, OnDestroy {
@@ -1505,6 +1520,12 @@ export class DesignerView implements DoCheck, OnDestroy {
   }
   /** The editor shell. */
   host = input.required<App>();
+  /** What stopped Publish… on the workflow's transactions, or null. */
+  readonly unsafe = computed(() => publishSummary(this.host()));
+  /** Runs the fix of a transaction's problem, from its row or before publishing. */
+  fix({ fix, location }: ChosenFix) {
+    void runProblemFix(this.host(), fix, location);
+  }
   /**
    * A link to the workflow's Runs tab (?tab=runs, from a reload, a link or
    * Back) is taken once the workflow is open: the tab shows, and it reads

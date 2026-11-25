@@ -139,10 +139,27 @@ function operationParams(
   const uses = isRecord(operation) ? operation["uses"] : undefined;
   if (!isRecord(operation) || typeof uses !== "string" || !uses)
     return [picker];
+  // A workflow opens in the editor; an action's document, beside its list.
+  const chosen: ParamSpec =
+    operation["kind"] === "callWorkflow"
+      ? {
+          ...picker,
+          actions: [
+            {
+              id: "open-workflow",
+              label: "Open workflow",
+              icon: "external",
+              run: (ndv) => ndv.openWorkflow?.(uses),
+              whileReadOnly: true,
+            },
+          ],
+          actionsBeside: true,
+        }
+      : picker;
   const target = operationInput(operation, ctx);
-  if (!target && ctx.viewingRun) return [picker];
+  if (!target && ctx.viewingRun) return [chosen];
   return [
-    picker,
+    chosen,
     ...inputParams(
       {
         id: `${name}.input`,

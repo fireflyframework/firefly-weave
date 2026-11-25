@@ -39,7 +39,7 @@ import {
 } from "../../transactions/undo";
 import { UNDO_OPTIONS } from "../../transactions/undo-fields";
 import type { FieldEntry } from "../params/form-model";
-import type { FormSession } from "../params/form-session";
+import type { FieldLine, FormSession } from "../params/form-session";
 import { ParamField } from "../params/param-field";
 
 let sequence = 0;
@@ -123,6 +123,15 @@ const OPTIONS: SelectOption[] = UNDO_OPTIONS.map(
             <weave-icon name="warning" [size]="16" />
           }
           {{ line.text }}
+          @if (line.fix) {
+            <button
+              type="button"
+              class="text-link param-fix"
+              (click)="line.fix()"
+            >
+              {{ line.fixLabel }}
+            </button>
+          }
         </p>
       }
       @if (fields().length) {
@@ -174,7 +183,7 @@ export class UndoSection {
     return UNDO_OPTIONS.find(({ value }) => value === choice)?.label ?? null;
   }
   /** Why it can't change, or what is wrong with it. */
-  line(): { kind: string; text: string } | null {
+  line(): Pick<FieldLine, "kind" | "text" | "fix" | "fixLabel"> | null {
     const reason = this.reason();
     if (reason) return { kind: "reason", text: reason };
     const line = this.session().line(this.entry().spec, this.entry());

@@ -155,6 +155,7 @@ export class RefPill {
           [value]="replacing ? '' : loneRef()"
           [options]="session().scope(spec())"
           [target]="session().expected(spec())"
+          [undo]="session().undoPlace(spec())"
           [focusOnMount]="picking()"
           [disabled]="!!readOnly()"
           [describedByIds]="describedBy()"
@@ -793,7 +794,11 @@ export class FormulaField implements OnInit {
     const entry = this.session()
       .formulaScope(this.spec())
       .entries.find((item) => item.ref === ref);
-    return entry?.source === "step" ? (entry.stepKind ?? "action") : "source";
+    return entry?.source === "step"
+      ? (entry.stepKind ?? "action")
+      : entry?.source === "undo"
+        ? "undo"
+        : "source";
   }
   readonly look = (pointer: string): PillLook => {
     const breadcrumb = this.breadcrumbOf(pointer);
@@ -826,7 +831,12 @@ export class FormulaField implements OnInit {
       owner.session !== this.session() ||
       owner.descriptor !== canonicalJson(this.spec()) ||
       !owner.owns() ||
-      !/^\/(input|steps|item|index|loops)(\/|$)/.test(ref)
+      !(
+        /^\/(input|steps|item|index|loops)(\/|$)/.test(ref) ||
+        // Only a step's undo reads its own key and its transaction.
+        (/^\/(participant|transaction)(\/|$)/.test(ref) &&
+          this.session().undoPlace(this.spec()))
+      )
     )
       return;
     const focused = document.activeElement?.id === this.controlId();

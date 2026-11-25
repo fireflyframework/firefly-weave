@@ -20,6 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 // it. The header counts them in words; its tone is danger when any is an
 // error.
 import type { SuggestedChange } from "../../designer/diagnostics-list";
+import {
+  transactionFix,
+  type FindingPlace,
+  type TransactionFix,
+} from "../transactions/fixes";
 import { pathStartsWith } from "./params/paths";
 import type { ParamSpec, Path } from "./registry";
 import type { StepDetailsTab } from "./step-details-service";
@@ -27,13 +32,6 @@ import type { StepDetailsTab } from "./step-details-service";
 export const UPDATE_URL =
   "https://fireflyframework.github.io/firefly-weave/guides/platform-overview/";
 const UNDECLARED_CODE = "WV-COMP-TXN_UNDECLARED";
-/** Fixes of a transaction's findings, by code. */
-const TRANSACTION_FIXES: Readonly<Record<string, IssueFix>> = {
-  // Never the compiler's own answer: only the builder says a step can't be undone.
-  [UNDECLARED_CODE]: { kind: "undo", label: "Choose how it's undone" },
-  "WV-COMP-TXN_OUTSIDE": { kind: "clearUndo", label: "Clear How it's undone" },
-  "WV-COMP-TXN_DETACH": { kind: "waitForCall", label: "Wait for its result" },
-};
 /** What a field shows while what it holds isn't in the workflow. */
 export const NOT_APPLIED = "Not applied";
 /** What Notes show while their text isn't saved. */
@@ -49,9 +47,7 @@ export type IssueFix =
       change: SuggestedChange;
     }
   | { kind: "answers"; label: "Add paths for answers" }
-  | { kind: "undo"; label: "Choose how it's undone" }
-  | { kind: "clearUndo"; label: "Clear How it's undone" }
-  | { kind: "waitForCall"; label: "Wait for its result" }
+  | TransactionFix
   | { kind: "update"; label: "Update the platform"; href: string };
 
 export interface PlacedSpec {
@@ -118,9 +114,10 @@ export function fixFor(
   code: string,
   suggestion: SuggestedChange | null,
   field: PlacedSpec | null,
+  place: FindingPlace | null = null,
 ): IssueFix | null {
-  const transaction = TRANSACTION_FIXES[code];
-  if (transaction) return transaction;
+  const transaction = transactionFix(code, suggestion, place);
+  if (transaction !== undefined) return transaction;
   if (suggestion)
     return {
       kind: "suggestion",
@@ -135,7 +132,7 @@ export function fixFor(
   if (/(UNAVAILABLE|MISSING)_REFERENCE$/.test(code))
     return { kind: "picker", label: "Use data…" };
   if (code === "required" && field.spec.id === "undo")
-    return TRANSACTION_FIXES[UNDECLARED_CODE];
+    return transactionFix(UNDECLARED_CODE, null, place) ?? null;
   if (code === "required")
     return takesData(field.spec)
       ? { kind: "picker", label: "Use data…" }

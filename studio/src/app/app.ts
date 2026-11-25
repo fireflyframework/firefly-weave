@@ -8475,17 +8475,9 @@ export class App implements CanvasHost {
       if (e instanceof ApiError && e.code === "WV-COMPILE" && result) {
         this.shownResult = result;
         this.showDiagnostics(result);
-        const { countDiagnostics, countLine } = await import(
-          "./designer/validation"
-        );
-        const counts = countLine({
-          ...countDiagnostics(result.diagnostics),
-          errors: Math.max(
-            1,
-            result.errorCount,
-            countDiagnostics(result.diagnostics).errors,
-          ),
-        });
+        const counts = (
+          await import("./editor/ndv/owned/owned-commands")
+        ).publishRefused(this, result);
         this.validationView = {
           tone: "errors",
           headline: `${counts}. Fix the errors to publish.`,

@@ -31,7 +31,13 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
-import { connected, offline, sourceText, type CatalogEntry } from "./support";
+import {
+  allCapabilities,
+  connected,
+  offline,
+  sourceText,
+  type CatalogEntry,
+} from "./support";
 
 /** The language manifest the Studio host serves, as the repository's Python writes it. */
 export const manifest = JSON.parse(
@@ -157,8 +163,12 @@ const actions = catalog.definitions.filter(({ kind }) => kind === "Action");
  * A platform whose project publishes that catalog. Its own compiler checks a
  * workflow, and so does the Studio host while it is edited.
  */
-export async function connectedCatalog(page: Page) {
+export async function connectedCatalog(
+  page: Page,
+  capabilities: string[] = [...allCapabilities, "compile"],
+) {
   await connected(page, {
+    capabilities,
     catalog: actions.map((document, index) => ({
       id: `a${index}`,
       document: document as unknown as CatalogEntry["document"],
@@ -193,10 +203,8 @@ export const openConnectedMove = (
   page: Page,
   source: string,
 ): Promise<StepDetailsPage> =>
-  openStepFixture(
-    page,
-    yamlFile("move-between-systems.yaml", source),
-    connectedCatalog,
+  openStepFixture(page, yamlFile("move-between-systems.yaml", source), (p) =>
+    connectedCatalog(p),
   );
 
 /** A step of move, as YAML; its other fields one per line. */
@@ -231,7 +239,7 @@ export async function openMove(
 
 /** Step details on a step inside move, reached from move's as a person does: Next step. */
 export async function openInside(details: StepDetailsPage, id: string) {
-  await details.open("move");
+  if (!(await details.dialog.count())) await details.open("move");
   for (let step = 0; step < 10; step++) {
     if (await details.dialogFor(id).count()) return;
     const shown = await details.dialog.getAttribute("aria-label");
