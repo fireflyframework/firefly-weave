@@ -882,6 +882,26 @@ test.describe("how each step is undone at 1440x900", () => {
     ]);
   });
 
+  test("N and / on a refused place say why, as Enter does", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await startMove(canvas, "add");
+    for (const key of ["n", "/"]) {
+      await canvas
+        .insertTarget("Move add at the end of transaction move")
+        .focus();
+      await page.keyboard.press(key);
+      const toast = page.locator(".toast", { hasText: REASON });
+      await expect(toast).toBeVisible();
+      await toast.getByRole("button", { name: "Dismiss notification" }).click();
+      await expect(page.locator(".add-step-panel")).toHaveCount(0);
+      // Still moving.
+      await expect(canvas.root).toHaveClass(/\brevealing\b/);
+    }
+  });
+
   test("a transaction can't be moved or pasted into another, and the reason says so", async ({
     page,
   }) => {

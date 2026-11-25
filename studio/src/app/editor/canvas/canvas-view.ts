@@ -3421,7 +3421,10 @@ export class CanvasView implements OnInit, DoCheck {
     const h = this.host();
     const reason = this.lockedReason();
     if (reason) return h.notify(reason);
-    const control = target.closest<HTMLElement>("[data-insert]");
+    // A place refused to the step being moved says why, as a click on it does.
+    const control = target.closest<HTMLElement>(
+      "[data-insert], [data-refused]",
+    );
     if (control) return this.insertAt(control);
     const root = this.root().nativeElement;
     if (!h.model.definition.spec.steps.length) {
@@ -3757,7 +3760,8 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** At the focused "+", else after the focused or selected step, else at the end. */
   private pastePlace(target: HTMLElement): Insertion {
-    const control = target.closest?.("[data-insert]");
+    // One refused to the step being moved takes other steps as any does.
+    const control = target.closest?.("[data-insert], [data-refused]");
     const insert = control ? this.insertOf(control) : null;
     if (insert) return insert;
     const id =
