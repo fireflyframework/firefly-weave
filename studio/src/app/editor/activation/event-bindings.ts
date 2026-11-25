@@ -633,9 +633,9 @@ export function isStudioName(
  * Creates the trigger, adopting one an earlier attempt already made. It
  * lists first, so a create whose answer was lost is never made twice; on a
  * name conflict it lists again, adopts an equal trigger, or takes the next
- * free name and creates at most once more. A trigger that reacts as this one
- * would and wasn't there when the dialog read them is someone else's: a second
- * one would start the workflow twice, so nothing is created.
+ * free name and creates at most once more. A trigger one event would
+ * start beside this one, and that wasn't there when the dialog read them, is
+ * someone else's: the workflow would start twice, so nothing is created.
  */
 async function created(
   route: Routes,
@@ -672,7 +672,7 @@ async function created(
         !view.disabled &&
         view.workflow_name === workflow &&
         !known.includes(view.id) &&
-        reactsAs(view, {
+        overlap(declarationOf(view), {
           events: ask.events,
           from: ask.source_workflows ?? null,
         }),

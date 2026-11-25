@@ -391,6 +391,18 @@ describe("someone who sets the trigger up at the same time", () => {
     expect(platform.writes()).toEqual([]);
   });
 
+  it("creates nothing beside a trigger one event would also start", async () => {
+    const platform = new FakePlatform();
+    const row = only(planFor(platform));
+    platform.seed({
+      ...THEIRS,
+      events: ["transaction.completed", "transaction.in_doubt"],
+      sources: undefined,
+    });
+    expect(await apply(platform, row)).toEqual(changed);
+    expect(platform.writes()).toEqual([]);
+  });
+
   it("creates nothing beside one made just before, once its name is taken", async () => {
     const platform = new FakePlatform();
     const row = only(planFor(platform));
@@ -400,24 +412,25 @@ describe("someone who sets the trigger up at the same time", () => {
     expect(platform.writes()).toEqual(["POST /event-triggers"]);
   });
 
-  it("replaces nothing beside one, and stops nothing", async () => {
-    const platform = new FakePlatform();
-    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
-    const row = only(
-      planFor(platform, { declaration: WIDER, storedId: "t-1" }),
-    );
-    platform.seed({
-      ...THEIRS,
-      name: "notify-team-2",
-      events: WIDER.events,
-      sources: undefined,
-    });
-    expect(await apply(platform, row)).toEqual({
-      status: "changed",
-      text: "notify-team-2 was created since you opened this. Review it.",
-    });
-    expect(platform.writes()).toEqual([]);
-  });
+  it.each<[string, Partial<Seed>]>([
+    ["reacts as declared", { events: WIDER.events, sources: undefined }],
+    ["one event would also start", {}],
+  ])(
+    "replaces nothing beside one that %s, and stops nothing",
+    async (_what, other) => {
+      const platform = new FakePlatform();
+      platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+      const row = only(
+        planFor(platform, { declaration: WIDER, storedId: "t-1" }),
+      );
+      platform.seed({ ...THEIRS, name: "notify-team-2", ...other });
+      expect(await apply(platform, row)).toEqual({
+        status: "changed",
+        text: "notify-team-2 was created since you opened this. Review it.",
+      });
+      expect(platform.writes()).toEqual([]);
+    },
+  );
 
   it.each<[string, Partial<Seed>]>([
     ["reacts to other events", { events: ["transaction.completed"] }],
