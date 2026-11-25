@@ -38,7 +38,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 if TYPE_CHECKING:
     from firefly_weave.compiler.api import CompiledArtifact
     from firefly_weave.compiler.ir import WorkflowIR
-    from firefly_weave.contracts.transactions import UndoPhase
+    from firefly_weave.contracts.transactions import TransactionState, UndoPhase
     from firefly_weave.operations.debug.models import DebugState, TransactionDebugView
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.operations.debug.transactions import PhaseTarget
@@ -671,14 +671,16 @@ def simulator_for(
     *,
     whole: JsonObject,
     sliced: bool,
+    target: str | None = None,
 ) -> tuple[CompileSummary, Simulator | None, set[str]]:
     """Compile ``document`` (the workflow, or its slice) for a simulation and start it with the request's test data.
 
     Test data is checked against the whole workflow before compiling (secrets, and values too large to check);
     mocks for steps the slice doesn't run, and mocks that no longer fit, are left out before the simulator sees
     them (the misfits are returned); called workflows run with the mocks test data holds for their steps; AI tasks
-    replay their saved turns; simulated failures apply like mocks, to the steps the document runs. The simulator is
-    None when the workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    replay their saved turns; simulated failures apply like mocks, to the steps the document runs. ``target`` is the
+    step the document is cut after. The simulator is None when the workflow doesn't compile. Raises
+    ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
@@ -711,7 +713,13 @@ def simulator_for(
     }
     try:
         simulator = _watching_simulator()(
-            artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows, errors=errors
+            artifact,
+            target=target,
+            mocks=mocks,
+            input=request.input,
+            now=request.now,
+            workflows=workflows,
+            errors=errors,
         )
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
@@ -721,18 +729,42 @@ def simulator_for(
 
 @functools.cache
 def _watching_simulator() -> Any:
-    """The simulator the host runs, which keeps the last record of each transaction of each run.
+    """The simulator the host runs, which keeps the last record of each transaction of each run and stops the
+    transaction a target is in at the target.
 
-    The runtime deletes a transaction's record from the run's state when its loop iteration is released, in the same
-    event that ends it, and reports the final record nowhere else. This is the one place that works around it: once
-    the runtime reports the final record, the debug view lists it and the host can run a plain ``Simulator``.
+    **Records.** The runtime deletes a transaction's record from the run's state when its loop iteration is released,
+    in the same event that ends it, and reports the final record nowhere else. This is the one place that works
+    around it: once the runtime reports the final record, the debug view lists it and the host can run a plain
+    ``Simulator``.
+
+    **Targets.** Execute step and Before a step cut the workflow after the target, so a transaction whose body holds
+    it ends there, half done. It never settles: a run that reaches the target, or ends the body another way, leaves
+    it open with its steps done, sends no confirm and asks for no confirm's test data. A failure at or before the
+    target is undone, or left in doubt, as in a whole run. A target after the step that can't be undone is past the
+    point of no return: the confirms that come before it run, and the transaction stays committing. In a loop each
+    item stops at the target, and a sequential loop goes on to its next item. A target that is the transaction, comes
+    after it or is in its error path, and every transaction before the target's, settles as in a whole run.
+
+    The kernel settles a transaction when its body ends or when its step that can't be undone succeeds. Right before
+    either, the reservations to confirm are marked confirmed in the simulated run, so it has none left to confirm and
+    ends the transaction, and the answer shows the record as it was.
     """
+    from firefly_weave.compiler.ir import JoinNode
+    from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.runtime.control import loop_suffix
+    from firefly_weave.runtime.kernel import _advance_owned, begin
 
     class WatchingSimulator(Simulator):
-        def __init__(self, artifact: CompiledArtifact, **options: Any) -> None:
+        def __init__(self, artifact: CompiledArtifact, *, target: str | None = None, **options: Any) -> None:
             super().__init__(artifact, **options)
             self._records: dict[str, dict[str, TransactionRecord]] = {}
+            self._target = target
+            shapes = self._prepared.transactions
+            # The transaction whose body holds the target.
+            self._cut = shapes.owners.get(target) if shapes is not None and target is not None else None
+            # The transactions that stopped at the target: the state they show, and the reservations not confirmed.
+            self._stopped: dict[str, tuple[TransactionState, frozenset[str]]] = {}
 
         def prepared_of(self, frame: str) -> PreparedWorkflow:
             """The workflow a run executes: the simulated one ("") or a called run's."""
@@ -742,13 +774,69 @@ def _watching_simulator() -> Any:
             """The last record of each transaction of a run, by instance key, in the order they opened."""
             run = self._run(frame)
             state = run.cursor.result.state if run.cursor is not None else cast("RunState", run.state)
-            return {**self._records.get(frame, {}), **state.transactions}
+            found = {**self._records.get(frame, {}), **state.transactions}
+            if not frame:
+                found |= {key: self._shown(key, record) for key, record in found.items() if key in self._stopped}
+            return found
+
+        def stopped(self) -> set[str]:
+            """The transactions that stopped at the target, by instance key."""
+            return set(self._stopped)
+
+        def _shown(self, key: str, record: TransactionRecord) -> TransactionRecord:
+            state, held = self._stopped[key]
+            participants = [
+                item.model_copy(update={"status": "done"}) if item.key in held and item.status == "confirmed" else item
+                for item in record.participants
+            ]
+            if record.status in {"committing", "completed"}:
+                record = record.model_copy(update={"status": state})
+            return record.model_copy(update={"participants": participants})
 
         def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
+            if not key and self._cut is not None:
+                self._stop_at_target(run, event)
             moved = super()._step_run(key, run, event)
             state = run.cursor.result.state if run.cursor is not None else run.state
             self._records.setdefault(key, {}).update(state.transactions)
             return moved
+
+        def _stop_at_target(self, run: Any, event: RuntimeEvent | None) -> None:
+            if event is not None:
+                # The target may be the step that can't be undone: its success decides the transaction.
+                name = event.data.get("node_id")
+                if event.type not in {"task_completed", "call_completed"} or node_of(cast(str, name)) != self._target:
+                    return
+                owner = cast("TransactionShapes", self._prepared.transactions).owner_key(cast(str, name))
+                records = run.state.transactions
+                if owner is None or owner not in records or records[owner].status != "deciding":
+                    return
+                accepted = event.model_copy(update={"sequence": run.state.accepted_sequence + 1})
+                ahead = _advance_owned(begin(run.state, accepted, self.artifact), self._prepared)
+                if ahead.result.state.transactions[owner].decided_at_sequence is not None:
+                    self._hold_confirms(records, owner, "open")
+                return
+            cursor = run.cursor
+            if not cursor.admitted or not cursor.ready:
+                return
+            # The body ended: its join settles the transaction.
+            node = self._prepared.nodes[node_of(cursor.ready[0])]
+            if isinstance(node, JoinNode) and node.mode == "transaction" and node.owner == self._cut:
+                state = cursor.result.state
+                owner = node.owner + loop_suffix(cursor.ready[0])
+                status = state.transactions[owner].status
+                if status in {"open", "committing"}:
+                    self._hold_confirms(state.transactions, owner, status)
+
+        def _hold_confirms(self, records: dict[str, TransactionRecord], key: str, state: TransactionState) -> None:
+            shown, held = self._stopped.get(key, (state, frozenset()))
+            waiting = {p.key for p in records[key].participants if p.mode == "reserve" and p.status == "done"}
+            participants = [
+                item.model_copy(update={"status": "confirmed"}) if item.key in waiting else item
+                for item in records[key].participants
+            ]
+            records[key] = records[key].model_copy(update={"participants": participants})
+            self._stopped[key] = (shown, held | waiting)
 
     return WatchingSimulator
 
@@ -859,8 +947,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         return ExecuteResponse(status="failed", compile=unparsed, trace=[])
     whole = document
     sliced = False
-    if target.mode != "workflow":
-        part = slice_for_target(document, cast(str, target.stepId))
+    target_step = cast(str, target.stepId) if target.mode != "workflow" else None
+    if target_step is not None:
+        part = slice_for_target(document, target_step)
         if part is None:
             raise SimulationRefused(422, "WV-STUDIO-REQUEST", "That step isn't in this workflow")
         document, sliced = part, True
@@ -868,7 +957,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     summary: CompileSummary | None = None
     unsimulated_at: str | None = None
     try:
-        summary, simulator, misfits = simulator_for(request, project, document, whole=whole, sliced=sliced)
+        summary, simulator, misfits = simulator_for(
+            request, project, document, whole=whole, sliced=sliced, target=target_step
+        )
         if simulator is None:
             return ExecuteResponse(status="failed", compile=summary, trace=[])
         if target.mode == "before":
@@ -884,7 +975,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         except (DebugError, SimulationRefused):
             raise
         except Exception as error:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
-            _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced)
+            _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced, target=target_step)
             if fresh is None:
                 raise
             place, simulator = stuck_at(fresh, scripts)
@@ -900,6 +991,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     data = simulator.data
     steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
     trace: list[TraceEntry] = []
+    stopped_at_target = cast(Any, simulator).stopped()
     seen: set[tuple[str | None, str]] = set()
     # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing. A called
     # confirm, release or undo is one of the phases: its own steps stay out of the trace, and its run out of the frames.
@@ -950,7 +1042,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         seen.add((frame, key))
         path = key if frame is None else f"{frame}/{key}"
         active = view.active_nodes if frame is None else frames[frame].active_nodes
-        reached = "completed" if path in data.outputs else "waiting" if key in active else "running"
+        # A transaction that stopped at the target ended in the simulation only, so the rest of its loop could run.
+        ended_here = path in data.outputs and path not in stopped_at_target
+        reached = "completed" if ended_here else "waiting" if key in active else "running"
         entry: dict[str, Any] = {
             "index": len(trace),
             "nodeId": node_of(key),
@@ -962,7 +1056,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             entry["frame"] = frame
         if path in data.inputs:
             entry["input"] = data.inputs[path]
-        if path in data.outputs:
+        if ended_here:
             entry["output"] = data.outputs[path]
         if path in data.failures:
             entry |= _handled_entry(handlers(frame), key, data.failures[path], data.outputs, frame)

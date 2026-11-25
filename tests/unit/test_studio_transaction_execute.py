@@ -932,3 +932,235 @@ def test_a_step_that_failed_in_a_transaction_a_called_workflow_handles_failed_th
     )
     assert answer["status"] == "completed", answer
     assert failures(answer, "call") == {"move[0]": "WV-TXN-ROLLED-BACK", "note[0]": "WV-EXPR-MISSING"}
+
+
+# --- Execute step and Before a step, inside a transaction -------------------------------------------------------
+
+
+def to(step: str, *, mode: str = "step", **instance: str) -> dict[str, Any]:
+    return {"mode": mode, "stepId": step, **instance}
+
+
+def states(answer: dict[str, Any]) -> dict[str, tuple[str, dict[str, str]]]:
+    """Each transaction's state and its steps' statuses, by instance key."""
+    return {
+        record["instanceKey"]: (record["state"], {p["instanceKey"]: p["status"] for p in record["participants"]})
+        for record in answer["transactions"]
+    }
+
+
+@pytest.mark.parametrize("step", ["hold", "add", "submit"])
+def test_executing_a_step_of_a_transaction_runs_up_to_it_and_leaves_the_transaction_open(step):
+    # No confirm is sent, so the confirm that needs test data never asks for any, the point of no return included.
+    answer = run_move(move(), definitions=STRICT_CONFIRM, target=to(step))
+    assert answer["status"] == "completed"
+    steps = ["hold", "add", "submit"][: ["hold", "add", "submit"].index(step) + 1]
+    assert states(answer) == {"move": ("open", dict.fromkeys(steps, "done"))}
+    assert "phases" not in answer
+    assert entries(answer) == [(None, "move", "running"), *((None, name, "completed") for name in steps)]
+    assert "output" not in answer["trace"][0]
+    assert not [item for item in answer["transactions"][0]["participants"] if item.get("attempts")]
+
+
+@pytest.mark.parametrize("concurrency", [1, 3], ids=["one at a time", "at once"])
+@pytest.mark.parametrize("step", ["add", "submit"])
+def test_each_item_of_a_loop_stops_at_the_target(step, concurrency):
+    answer = run_move(
+        looped(concurrency=concurrency),
+        definitions=STRICT_CONFIRM,
+        input=THREE,
+        mocks=EVERY_ITEM,
+        target=to(step),
+    )
+    assert answer["status"] == "completed"
+    steps = ["hold", "add", "submit"][: 2 if step == "add" else 3]
+    assert states(answer) == {
+        f"move[{item}]": ("open", {f"{name}[{item}]": "done" for name in steps}) for item in range(3)
+    }
+    assert "phases" not in answer
+    assert {key: status for _, key, status in entries(answer) if key.startswith(("move", step))} == {
+        **{f"move[{item}]": "running" for item in range(3)},
+        **{f"{step}[{item}]": "completed" for item in range(3)},
+    }
+
+
+def test_only_a_failing_target_plays_the_undo():
+    assert states(run_move(move(), target=to("submit")))["move"][0] == "open"
+    answer = run_move(move(), target=to("submit"), errors=REFUSED)
+    assert answer["status"] == "failed"
+    assert states(answer) == {"move": ("compensated", {"hold": "cancelled", "add": "undone", "submit": "failed"})}
+    assert keys(answer) == ["add#undo", "hold#cancel"]
+    assert failures(answer) == {"submit": "REFUSED"}
+    earlier = run_move(move(), target=to("submit"), errors={"node:add": {"code": "UNAVAILABLE"}})
+    assert (states(earlier)["move"][0], keys(earlier)) == ("compensated", ["add#undo", "hold#cancel"])
+    unknown = run_move(move(), target=to("submit"), errors={"node:submit": {"code": "DOWN", "outcome": "unknown"}})
+    assert (unknown["status"], states(unknown)["move"][0]) == ("failed", "in_doubt")
+
+
+def test_a_failing_target_called_by_a_transaction_plays_the_whole_undo():
+    call = {**called_step(irreversible=True), "onFailure": "stop"}
+    del call["compensate"]
+    answer = run_calling(move(hold(), add(), call), STOP, target=to("call"))
+    assert states(answer) == {"move": ("compensated", {"hold": "cancelled", "add": "undone", "call": "failed"})}
+    succeeded = run_calling(move(hold(), add(), call), DONE, target=to("call"))
+    assert states(succeeded) == {"move": ("open", {"hold": "done", "add": "done", "call": "done"})}
+
+
+def test_an_item_whose_target_fails_is_undone_while_the_others_stop_at_it():
+    answer = run_move(
+        looped(concurrency=1, onError="continue"),
+        definitions=STRICT_CONFIRM,
+        input=THREE,
+        mocks=EVERY_ITEM,
+        errors=SECOND_REFUSED,
+        target=to("submit"),
+    )
+    assert answer["status"] == "completed"
+    assert {key: state for key, (state, _) in states(answer).items()} == {
+        "move[0]": "open",
+        "move[1]": "compensated",
+        "move[2]": "open",
+    }
+    assert keys(answer) == ["add[1]#undo", "hold[1]#cancel"]
+
+
+def test_the_items_that_reach_the_target_stop_at_it_while_another_is_in_doubt():
+    answer = run_move(
+        looped(),
+        definitions=STRICT_CONFIRM,
+        input=THREE,
+        mocks=EVERY_ITEM,
+        errors={"node:submit[0]": {"code": "DOWN", "outcome": "unknown"}},
+        target=to("submit"),
+    )
+    assert answer["status"] == "failed"
+    assert {key: state for key, (state, _) in states(answer).items()} == {
+        "move[0]": "in_doubt",
+        "move[1]": "open",
+        "move[2]": "open",
+    }
+    assert states(answer)["move[1]"][1] == {"hold[1]": "done", "add[1]": "done", "submit[1]": "done"}
+    assert (keys(answer), failures(answer)) == ([], {"submit[0]": "DOWN"})
+
+
+AFTER = {"id": "after", "kind": "transform", "value": {"literal": 1}}
+
+
+def test_a_target_outside_of_a_transactions_body_settles_it():
+    whole = ("completed", {"hold": "confirmed", "add": "done", "submit": "done"})
+    for target, expected in (
+        (to("submit"), ("open", {"hold": "done", "add": "done", "submit": "done"})),
+        (to("move"), whole),
+        (to("after"), whole),
+        (to("after", mode="before"), whole),
+    ):
+        answer = run_move(source(transaction([hold(), add(), submit()]), AFTER), target=target)
+        assert (answer["status"], states(answer)) == ("completed", {"move": expected})
+        assert keys(answer) == (["hold#confirm"] if expected is whole else [])
+
+
+def test_a_target_in_a_transactions_error_path_settles_it():
+    assert states(run_move(move(**ERROR_PATH), target=to("add")))["move"][0] == "open"
+    answer = run_move(move(**ERROR_PATH), errors=REFUSED, target=to("note"))
+    assert states(answer)["move"][0] == "compensated"
+    assert (keys(answer), entries(answer)[-1]) == (["add#undo", "hold#cancel"], (None, "note", "completed"))
+    # One that succeeds is settled too, and the step isn't reached.
+    reached = run_move(move(**ERROR_PATH), target=to("note"))
+    assert (reached["blocked"]["reason"], states(reached)["move"][0]) == ("path", "completed")
+
+
+def test_a_transaction_before_the_targets_settles():
+    first = transaction([hold("held"), add("added")], identifier="first")
+    answer = run_move(
+        source(first, transaction([hold(), add(), submit()])),
+        mocks={"node:held": {"holdId": "h-0"}, "node:added": {"id": "a-0"}},
+        target=to("add"),
+    )
+    assert {key: state for key, (state, _) in states(answer).items()} == {"first": "completed", "move": "open"}
+    assert keys(answer) == ["held#confirm"]
+
+
+def test_before_a_step_of_one_item_stops_the_items_before_it_at_the_step():
+    answer = run_move(
+        looped(concurrency=1),
+        definitions=STRICT_CONFIRM,
+        input=THREE,
+        mocks=EVERY_ITEM,
+        target=to("submit", mode="before", instanceKey="submit[1]"),
+    )
+    assert answer["status"] == "completed"
+    assert states(answer) == {
+        "move[0]": ("open", {"hold[0]": "done", "add[0]": "done", "submit[0]": "done"}),
+        "move[1]": ("open", {"hold[1]": "done", "add[1]": "done"}),
+    }
+    assert "phases" not in answer
+
+
+def test_a_target_after_the_point_of_no_return_runs_the_confirms_that_come_before_it():
+    nt = {
+        "id": "tell",
+        "kind": "action",
+        "uses": "notify.send-message@1.0.0",
+        "with": {"object": {"text": {"ref": "/input/moveId"}}},
+        "irreversible": True,
+    }
+    workflow, mocks = move(hold(), submit(), nt), {"node:tell": {}}
+    answer = run_move(workflow, mocks=mocks, target=to("tell"))
+    assert answer["status"] == "completed"
+    assert states(answer) == {"move": ("committing", {"hold": "confirmed", "submit": "done", "tell": "done"})}
+    assert (keys(answer), entries(answer)[0]) == (["hold#confirm"], (None, "move", "running"))
+    asks = run_move(workflow, mocks=mocks, definitions=STRICT_CONFIRM, target=to("tell"))
+    assert (asks["status"], asks["blocked"]["instanceKey"]) == ("blocked", "hold#confirm")
+
+
+def test_a_target_in_a_loop_inside_a_transaction_runs_every_item():
+    inner = {**each([add()], concurrency=2), "maxItems": 5}
+    answer = run_move(
+        move(hold(), inner, submit()),
+        definitions=STRICT_CONFIRM,
+        input=THREE,
+        mocks={"node:add": {"id": "a-1"}},
+        target=to("add"),
+    )
+    assert answer["status"] == "completed"
+    assert states(answer) == {"move": ("open", {"hold": "done", **{f"add[{item}]": "done" for item in range(3)}})}
+    assert "phases" not in answer
+
+
+def test_a_target_on_a_path_not_taken_leaves_the_transaction_open():
+    choice = {
+        "id": "choice",
+        "kind": "switch",
+        "cases": [{"when": {"literal": False}, "steps": [add()], "output": {"literal": None}}],
+        "default": {"steps": [], "output": {"literal": None}},
+    }
+    answer = run_move(move(hold(), choice, submit()), definitions=STRICT_CONFIRM, target=to("add"))
+    assert (answer["status"], answer["blocked"]["reason"]) == ("blocked", "path")
+    assert states(answer) == {"move": ("open", {"hold": "done"})}
+    assert "phases" not in answer
+
+
+def test_an_item_that_stopped_at_the_target_never_expires_while_the_next_ones_wait():
+    # Each item waits ten minutes before the target; a reservation lasts fifteen.
+    answer = run_move(
+        looped(hold(), wait(600), add(), concurrency=1),
+        input=THREE,
+        mocks={key: value for key, value in EVERY_ITEM.items() if key != "node:submit"},
+        target=to("add"),
+    )
+    assert {state for state, _ in states(answer).values()} == {"open"}
+    assert len(states(answer)) == 3
+
+
+def test_a_confirm_that_couldnt_be_sent_never_puts_a_transaction_in_doubt_at_the_target():
+    # The confirm reads what add may leave out; the transaction's own end would find that out, not the target.
+    definitions = fixture()["definitions"]
+    held = definition(definitions, "source-system.hold-quantity")["spec"]["outputSchema"]
+    held["properties"]["ticket"] = {"type": "string"}
+    step = hold()
+    step["confirm"]["with"] = {"object": {"holdId": {"ref": "/steps/hold/output/ticket"}}}
+    workflow = move(step, add(), submit())
+    assert incidents(run_move(workflow, definitions=definitions))[0][0] == "WV-TXN-CONFIRM-STUCK"
+    for name in ("add", "submit"):
+        answer = run_move(workflow, definitions=definitions, target=to(name))
+        assert (answer["status"], states(answer)["move"][0]) == ("completed", "open")
