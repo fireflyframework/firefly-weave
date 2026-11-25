@@ -468,8 +468,9 @@ export function staysDone(records: readonly RecordInput[]): StaysDoneLine[] {
         status === "undone"
       )
         return [];
+      // A status Studio doesn't know says nothing of what the step did.
       const what =
-        status === "unknown"
+        status === "unknown" || !(FORWARD[status] || PHASES[status])
           ? "it may or may not have happened"
           : status === "dispatched"
             ? RUNNING_STAYS[mode]

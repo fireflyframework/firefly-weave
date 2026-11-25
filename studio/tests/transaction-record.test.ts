@@ -285,6 +285,24 @@ describe("what stays done in other systems", () => {
       (item) => `${item.step} · ${item.how}: ${item.what}`,
     );
 
+  it("says of a status it doesn't know that the step may or may not have happened, never that it stays done", () => {
+    const newer = "held_open" as ParticipantStatus;
+    expect(
+      line(
+        record(
+          "in_doubt",
+          participant("hold", "reserve", newer),
+          participant("add", "compensate", newer),
+          participant("submit", "irreversible", newer),
+        ),
+      ),
+    ).toEqual([
+      "hold · Reserved: it may or may not have happened",
+      "add · Reversible: it may or may not have happened",
+      "submit · Can't be undone: it may or may not have happened",
+    ]);
+  });
+
   it("lists each step still applied with what Weave won't do about it", () => {
     // Cancel without undoing a run while hold is reserved and add still runs.
     expect(

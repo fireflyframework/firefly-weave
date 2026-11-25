@@ -106,7 +106,9 @@ import type { RecordRow } from "./transaction-record";
               <span class="step-note">{{ row.attempts }}</span>
             }
           } @else {
-            <span class="none" aria-label="Nothing to undo">—</span>
+            <!-- Whatever the step's status: it may still be undone, or not. -->
+            <span class="none" aria-hidden="true">—</span
+            ><span class="sr-only">None</span>
           }</span
         ><span role="cell" class="c-key"
           ><span class="cell-label">Operation key</span

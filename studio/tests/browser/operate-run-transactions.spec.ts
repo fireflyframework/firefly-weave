@@ -538,6 +538,49 @@ test("a paused rollback counts its undone steps, and a cancel waits for the step
   });
 });
 
+test("a step with no undo or confirm yet claims nothing about one, whatever its status", async ({
+  page,
+}) => {
+  const [hold, add, submit] = inDoubt.participants;
+  const status = (value: string) =>
+    value as (typeof inDoubt.participants)[number]["status"];
+  await platform(page, {
+    [loopRunId]: [
+      {
+        ...inDoubt,
+        participants: [
+          { ...hold, status: "dispatched" },
+          { ...add, status: status("held_open"), attempts: undefined },
+          { ...submit, status: "unknown" },
+        ],
+      },
+    ],
+  });
+  await openRun(page);
+  await expect(record(page, "move[3]")).toMatchAriaSnapshot(`
+    - table "Steps of transaction move[3]":
+      - row "Step How it's undone Forward Undo or confirm Operation key"
+      - row:
+        - cell "hold[3]"
+        - cell "Reserved"
+        - cell "Running"
+        - cell "None"
+        - cell /hold/
+      - row:
+        - cell /^add/
+        - cell "Reversible"
+        - cell "Held open"
+        - cell "None"
+        - cell /add/
+      - row:
+        - cell "submit[3]"
+        - cell "Can't be undone"
+        - cell "Unknown"
+        - cell "None"
+        - cell /submit/
+  `);
+});
+
 test("a transaction in doubt after going ahead keeps Done with its check on every done step", async ({
   page,
 }) => {
