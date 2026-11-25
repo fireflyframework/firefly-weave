@@ -675,6 +675,36 @@ def test_the_host_route_answers_a_called_undo_in_the_request(tmp_path):
         assert [phase["instanceKey"] for phase in answer.json()["phases"]] == ["add#undo", "hold#cancel"]
 
 
+def test_the_records_the_host_keeps_of_transactions_hold_no_values():
+    # An undo that reads what add returned: the runtime's records hold that output, and the business key.
+    workflow, definitions = undo_from_output()
+    loop = {**each([json.loads(workflow)["spec"]["steps"][0]], concurrency=1), "maxItems": 5}
+    body = move_request(
+        source(loop),
+        definitions=definitions,
+        input={"moveId": "customer-7421", "quantity": 2, "items": [1]},
+        mocks={"node:add": {"id": "returned-9", "undo": {}}, "node:submit": {"orderId": "o-1"}},
+    )
+    document = json.loads(body.source)
+    _, simulator, _ = simulator_for(body, None, document, whole=document, sliced=False)
+    assert simulator is not None
+    simulator.set_breakpoints({"submit[0]"})
+    simulator.continue_until_breakpoint()
+    [open_one] = simulator.data.cursor.result.state.transactions.values()
+    assert "returned-9" in open_one.model_dump_json() and open_one.business_key == "customer-7421"
+    while_open = simulator.transactions_of("")
+    simulator.continue_until_breakpoint()
+    # The loop released its record; the host kept the last one.
+    assert simulator.data.state.transactions == {}
+    for records in (while_open, simulator.transactions_of("")):
+        assert [item.status for item in records["move[0]"].participants][:2] in (
+            ["done", "done"],
+            ["confirmed", "done"],
+        )
+        kept = records["move[0]"].model_dump_json()
+        assert "returned-9" not in kept and "customer-7421" not in kept
+
+
 # --- the clock: waits of called workflows, and what a transaction needs to end ----------------------------------
 
 PERSON = {

@@ -771,13 +771,21 @@ def _watching_simulator() -> Any:
             return self._workflow(frame).prepared
 
         def transactions_of(self, frame: str) -> dict[str, TransactionRecord]:
-            """The last record of each transaction of a run, by instance key, in the order they opened."""
-            run = self._run(frame)
-            state = run.cursor.result.state if run.cursor is not None else cast("RunState", run.state)
-            found = {**self._records.get(frame, {}), **state.transactions}
+            """The last record of each transaction of a run, by instance key, in the order they opened; no values."""
+            self._watch(frame, self._run(frame))
+            found = dict(self._records[frame])
             if not frame:
                 found |= {key: self._shown(key, record) for key, record in found.items() if key in self._stopped}
             return found
+
+        def _watch(self, frame: str, run: Any) -> None:
+            kept = self._records.setdefault(frame, {})
+            state = run.cursor.result.state if run.cursor is not None else run.state
+            for key, record in state.transactions.items():
+                if key not in kept or kept[key].revision != record.revision:
+                    # Neither what its undos read nor its business key: a run's records would grow with its values.
+                    participants = [item.model_copy(update={"scope": {}}) for item in record.participants]
+                    kept[key] = record.model_copy(update={"business_key": None, "participants": participants})
 
         def stopped(self) -> set[str]:
             """The transactions that stopped at the target, by instance key."""
@@ -797,8 +805,7 @@ def _watching_simulator() -> Any:
             if not key and self._cut is not None:
                 self._stop_at_target(run, event)
             moved = super()._step_run(key, run, event)
-            state = run.cursor.result.state if run.cursor is not None else run.state
-            self._records.setdefault(key, {}).update(state.transactions)
+            self._watch(key, run)
             return moved
 
         def _stop_at_target(self, run: Any, event: RuntimeEvent | None) -> None:
