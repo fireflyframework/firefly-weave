@@ -1249,7 +1249,11 @@ export class CanvasView implements OnInit, DoCheck {
         ?.refused ?? ""
     );
   }
-  /** Follows the pointer or focus onto a refused place, or off it. */
+  /**
+   * Follows the pointer or focus onto a refused place, or off it. Only a
+   * place there reads what moves: the canvas's first events may come before
+   * its data does.
+   */
   private markRefused(element: Element | null) {
     const control = element?.closest?.("[data-refused]");
     const insert = control ? this.insertOf(control) : null;
@@ -1644,7 +1648,7 @@ export class CanvasView implements OnInit, DoCheck {
   }
   hover(event: PointerEvent) {
     const target = event.target as Element;
-    if (this.moving()) this.markRefused(target);
+    this.markRefused(target);
     const edge =
       target.closest?.("[data-edge]")?.getAttribute("data-edge") ?? "";
     if (edge !== this.hoveredEdge) this.hoveredEdge = edge;
@@ -1668,7 +1672,7 @@ export class CanvasView implements OnInit, DoCheck {
   /** Focus on a step, or in its toolbar, shows that step's toolbar. */
   focusIn(event: FocusEvent) {
     const target = event.target as Element;
-    if (this.moving()) this.markRefused(target);
+    this.markRefused(target);
     this.focusTile = this.toolbarStep(target);
     this.reached(this.focusTile);
     // Keyboard focus on a loop's header shows its whole sentence; a click's doesn't.

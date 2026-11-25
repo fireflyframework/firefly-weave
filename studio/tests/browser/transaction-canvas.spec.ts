@@ -747,6 +747,29 @@ test.describe("how each step is undone at 1440x900", () => {
     await expect(page.locator(".add-step-panel")).toBeVisible();
   });
 
+  test("the canvas opens under a moving pointer without an error", async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") errors.push(message.text());
+    });
+    // Its first event may come before its data: more than one opening, as
+    // none is sure to.
+    for (let opening = 0; opening < 5; opening++) {
+      let moving = true;
+      const pointer = (async () => {
+        for (let at = 0; moving; at++)
+          await page.mouse.move(500 + (at % 60) * 4, 450 + (at % 40) * 3);
+      })();
+      const canvas = await openWorkflow(page, UNDO);
+      await expect(canvas.tileBody("add")).toBeVisible();
+      moving = false;
+      await pointer;
+    }
+    expect(errors).toEqual([]);
+  });
+
   test("a step that can be undone can't be dragged past the point of no return", async ({
     page,
   }) => {
