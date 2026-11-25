@@ -392,6 +392,46 @@ def test_a_person_s_task_that_expires_fails_the_step_and_the_run():
     assert [d["message"] for d in answer["diagnostics"]] == ["The task approval expired before anyone decided."]
 
 
+HANDLED_WAITS = [
+    (
+        PAID,
+        {"signals": {"paid": {"outcome": "timeout"}}},
+        "WV-SIGNAL-TIMEOUT",
+        "The signal did not arrive in time.",
+    ),
+    (
+        APPROVAL | {"expirySeconds": 3600},
+        {"humans": {"approval": {"outcome": "expire"}}},
+        "WV-HUMAN-EXPIRED",
+        "Nobody completed the human task before it expired.",
+    ),
+]
+
+
+@pytest.mark.parametrize(("step", "scripts", "code", "message"), HANDLED_WAITS, ids=["signal", "person"])
+@pytest.mark.parametrize("policy", ["continue", "errorOutput"])
+def test_a_wait_that_times_out_or_expires_is_handled_by_its_on_error_and_the_run_goes_on(
+    policy: str, step: dict[str, Any], scripts: dict[str, Any], code: str, message: str
+):
+    path = {"errorPath": {"steps": [], "output": {"literal": "late"}}} if policy == "errorOutput" else {}
+    answer = run(workflow(step | {"onError": policy} | path, AFTER), scripts=scripts)
+    assert (answer["status"], answer["diagnostics"]) == ("completed", [])
+    waited = entries(answer)[step["id"]]
+    assert (waited["status"], waited["handled"], waited.get("output")) == (
+        "failed",
+        policy,
+        "late" if path else None,
+    )
+    assert waited["error"] == {
+        "code": code,
+        "message": message,
+        "outcome": "not_started",
+        "attempts": 1,
+        "instanceKey": step["id"],
+    }
+    assert entries(answer)["after"]["status"] == "completed"
+
+
 CALL = {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}}
 
 
