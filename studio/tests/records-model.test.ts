@@ -239,12 +239,8 @@ describe("run detail", () => {
       null,
       "The run grew too large to undo its transactions, so they're held until someone force ends the run. Support code: WV-TXN-RUN-OVERSIZED.",
     ],
-    [
-      "charge",
-      "WV-TASK-AMBIGUOUS",
-      "charge",
-      "Support code: WV-TASK-AMBIGUOUS",
-    ],
+    // Studio has no sentence for a code of a step's own; its step is still named.
+    ["add#undo", "WV-TASK-AMBIGUOUS", "add", "Support code: WV-TASK-AMBIGUOUS"],
   ])(
     "says a run stopped at %s (%s) in words, by its step",
     (key, code, step, text) => {
