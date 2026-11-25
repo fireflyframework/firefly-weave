@@ -130,11 +130,12 @@ export function connectionNeed(intent: TriggerIntent): ConnectionNeed | null {
 /**
  * The environment Studio works in and who is signed in, right now; null
  * without one. A row's requests go there, so none is sent once it isn't where
- * the version was activated.
+ * the version was activated. The account is the person's, whatever a newer
+ * sign-in check says they may do; one that couldn't be read is another.
  */
 export function placeOf(api: TriggerApi): string | null {
   try {
-    return JSON.stringify([api.environment, api.replayGuard?.scope() ?? null]);
+    return JSON.stringify([api.environment, api.expectedPrincipal?.() ?? null]);
   } catch {
     return null;
   }

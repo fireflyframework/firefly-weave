@@ -47,7 +47,7 @@ export type RetargetKind = Exclude<SetUpKind, "schedule">;
 /** What this client needs from `StudioApi`. */
 export type TriggerApi = Pick<
   StudioApi,
-  "environment" | "page" | "request" | "mutate" | "replayGuard"
+  "environment" | "page" | "request" | "mutate" | "expectedPrincipal"
 >;
 
 /** `triggers.read`. */

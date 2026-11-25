@@ -53,7 +53,7 @@ const ENV = "/studio/api/api/v1/tenants/t/projects/p/environments/e";
 
 class FakeApi implements TriggerApi {
   environment = ENV;
-  readonly replayGuard = null;
+  readonly expectedPrincipal = null;
   readonly calls: {
     method: string;
     path: string;
@@ -995,6 +995,7 @@ describe("a platform event trigger after an activation", () => {
       (platform) => (platform.environment = `${ENV}-other`),
     ],
     ["another account", (platform) => (platform.person = "person-2")],
+    ["no account", (platform) => (platform.person = null)],
     [
       "no environment",
       (platform) =>
@@ -1058,6 +1059,18 @@ describe("a platform event trigger after an activation", () => {
       });
     },
   );
+  it("goes on when the same account is read again with one more grant", async () => {
+    const platform = seeded(OLD_ONE, SECOND);
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents);
+    const results = await syncTriggers(rows, within(platform, intents), () =>
+      platform.grants.push("run.read"),
+    );
+    expect(results.map((result) => result.status)).toEqual([
+      "moved",
+      "stopped",
+    ]);
+  });
   it("owes no stop of a trigger left behind it didn't get to", async () => {
     const platform = seeded(OLD_ONE, {
       ...SECOND,
@@ -1181,7 +1194,7 @@ describe("a platform event trigger after an activation", () => {
     const intents = [stored(), HOOK];
     const api: SyncContext["api"] = {
       environment: platform.environment,
-      replayGuard: platform.replayGuard,
+      expectedPrincipal: platform.expectedPrincipal,
       page: () => platform.page(),
       request: (path, method) => platform.request(path, method),
       mutate: async <T>(
@@ -1222,7 +1235,7 @@ describe("a platform event trigger after an activation", () => {
     const hook = view("w-new", "orders-in", 1, "a-new");
     const api: SyncContext["api"] = {
       environment: platform.environment,
-      replayGuard: platform.replayGuard,
+      expectedPrincipal: platform.expectedPrincipal,
       page: () => platform.page(),
       request: (path, method) => platform.request(path, method),
       mutate: async <T>(
