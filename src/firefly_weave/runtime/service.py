@@ -199,12 +199,12 @@ async def record_stop(
 ) -> dict[str, JsonValue]:
     """Record a stop on the incidents in doubt it closed, each with whether an earlier decision had left it; returns
     what the stop's audit row says of them."""
-    closed: list[str] = []
+    closed: list[JsonValue] = []
     for left in (False, True):
         keys = [key for key, was in decided.items() if was is left]
         resolution = stopped_resolution(event, reason, left=left)
         closed += await repository.resolve_incidents(run_id, keys, actor_id, event.timestamp, resolution)
-    return {"closed": sorted(closed)} if closed else {}
+    return {"closed": sorted(closed, key=str)} if closed else {}
 
 
 async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:

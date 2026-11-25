@@ -1045,9 +1045,9 @@ def _advance_owned(
         queue[:] = [name for name in queue if not within_body(transaction, suffix, node_of(name), loop_suffix(name))]
         if rules_2():
             # No transaction owns its own join, so nothing above takes it: it is queued again once this one has ended.
-            join = transaction.join + suffix
-            queue[:] = [name for name in queue if name != join]
-            current_state.parked[:] = [name for name in current_state.parked if name != join]
+            own = transaction.join + suffix
+            queue[:] = [name for name in queue if name != own]
+            current_state.parked[:] = [name for name in current_state.parked if name != own]
 
     def abort(key: str, why: TransactionCause) -> None:
         transaction = record(key)
