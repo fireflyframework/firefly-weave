@@ -522,25 +522,37 @@ for (const size of SIZES)
       }
       near((await box(dialog.getByLabel("Code"))).height, control, "Code");
       // Studio's chevron ends the Code field, in place of the browser's
-      // triangle: the field looks the same with the triangle taken out.
+      // triangle: the field's end looks the same with the triangle taken
+      // out. The comparison stays inside the border and clear of the rounded
+      // corners, which Linux Chromium repaints a shade apart after any style
+      // change.
       const code = dialog.getByLabel("Code");
       await page.addStyleTag({
         content:
           ".failure-code-chevron { visibility: hidden } .failure-code-field > input { caret-color: transparent }",
       });
-      const kept = await code.screenshot();
+      const field = await box(code);
+      const corner = await code.evaluate(
+        (e) => parseFloat(getComputedStyle(e).borderTopRightRadius) + 1,
+      );
+      const end = {
+        x: field.right - 64,
+        y: field.y + corner,
+        width: 64 - corner,
+        height: field.height - 2 * corner,
+      };
+      const kept = await page.screenshot({ clip: end });
       await page.addStyleTag({
         content:
           ".failure-code-field > input::-webkit-calendar-picker-indicator { display: none !important }",
       });
       expect(
-        (await code.screenshot()).equals(kept),
+        (await page.screenshot({ clip: end })).equals(kept),
         "the browser's triangle",
       ).toBe(true);
       await page.addStyleTag({
         content: ".failure-code-chevron { visibility: visible }",
       });
-      const field = await box(code);
       const chevron = await box(dialog.locator(".failure-code-chevron"));
       near(field.right - chevron.right, 8, "chevron at the field's end", 1);
       near(
