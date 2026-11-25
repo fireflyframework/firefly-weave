@@ -884,8 +884,11 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.changed();
     }
     const id = incidentFromQuery(location.search);
-    // It no longer names the incident that couldn't be opened.
-    if (!id || this.selected?.id === id) this.detailProblem = null;
+    // It no longer names the incident that couldn't be opened, or is on its way.
+    if (!id || this.selected?.id === id) {
+      this.detailProblem = null;
+      this.opening = "";
+    }
     if (!id) {
       if (this.selected && !this.resolving) this.close(false);
     } else if (this.selected?.id !== id) void this.openFromAddress();

@@ -1617,6 +1617,53 @@ test.describe("platform filters, direct links and opening times", () => {
     await expect(workflow).toBeFocused();
   });
 
+  for (const [name, to] of [
+    ["no incident", ""],
+    ["the incident that is open", `?incident=${active}`],
+  ])
+    test(`an incident being read never opens once the address names ${name}`, async ({
+      page,
+    }) => {
+      await inbox(page, ["incident.read"]);
+      const reads: Route[] = [];
+      await page.route(`${environment}/incidents/${hidden}`, (route) => {
+        reads.push(route);
+      });
+      const move = (query: string) =>
+        page.evaluate((to) => {
+          history.pushState(null, "", `/operate/incidents${to}`);
+          dispatchEvent(new PopStateEvent("popstate"));
+        }, query);
+      const title = page.locator("#incident-detail-title");
+      await page.goto(`/operate/incidents${to}`);
+      await expect(title).toHaveCount(to ? 1 : 0);
+      await expect(rows(page)).toHaveCount(1);
+      await move(`?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(1);
+      if (to) await move(to);
+      else {
+        // A filter leaves it out of the address, as a link to the list does.
+        await page.getByLabel("Include test runs").check();
+        await expect(page).toHaveURL(
+          /\/operate\/incidents\?include_test=true$/,
+        );
+      }
+      await settle(page, `/incidents/${hidden}`, () => {
+        void reads[0].fulfill({
+          json: incident(hidden, { code: "WV-TASK-LOST" }),
+        });
+      });
+      if (to) await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+      else await expect(title).toHaveCount(0);
+      // Named again, it is read again.
+      await move(`?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(2);
+      await reads[1].fulfill({
+        json: incident(hidden, { code: "WV-TASK-LOST" }),
+      });
+      await expect(title).toHaveText("Incident WV-TASK-LOST");
+    });
+
   test("an incident that couldn't be opened is forgotten once the address no longer names it", async ({
     page,
   }) => {
