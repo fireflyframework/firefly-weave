@@ -825,6 +825,10 @@ def _watching_simulator() -> Any:
     item stops at the target, and a sequential loop goes on to its next item. A target that is the transaction, comes
     after it or is in its error path, and every transaction before the target's, settles as in a whole run.
 
+    Before the step right after the one that can't be undone pauses in the middle of the event that brings that one's
+    result: the confirms it asks for aren't sent yet, so the reservations read confirming and no phase is listed.
+    Before a later step, they are confirmed and listed.
+
     The kernel settles a transaction when its body ends or when its step that can't be undone succeeds. Right before
     either, the reservations to confirm are marked confirmed in the simulated run, so it has none left to confirm and
     ends the transaction, and the answer shows the record as it was.
@@ -1766,8 +1770,10 @@ def _incident(status: str, variables: Mapping[str, object]) -> str | None:
 
 
 def _clocks(data: DebugState, terminal: set[str]) -> Iterator[tuple[RunState, list[Deadline]]]:
-    """The runs whose deadlines move the clock: the simulated workflow's, and each called run that hasn't ended. Not a
-    called run held on an incident, nor those waiting on it: they stay as they are until a person resolves it."""
+    """The runs whose deadlines move the clock: the simulated workflow's, always, and each called run that hasn't ended.
+    Not a called run held on an incident, nor the called runs waiting on it, which stay as they are until a person
+    resolves it. A simulated workflow that waits on such a run still meets its own deadlines: its time limit, or that
+    of a reservation."""
     if data.state is not None:
         yield data.state, data.deadlines
     held = [frame.key for frame in data.frames if frame.state is not None and frame.state.status == "suspended"]
