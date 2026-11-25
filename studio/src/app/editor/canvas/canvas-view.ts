@@ -790,6 +790,7 @@ export class CanvasView implements OnInit, DoCheck {
       id: tile.id,
       kind: tile.kind,
       shape: tile.shape,
+      wideLabel: tile.wideLabel,
       position: this.position(tile),
       width: tile.width,
       height: tile.height,

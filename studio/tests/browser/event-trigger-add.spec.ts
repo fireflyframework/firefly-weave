@@ -269,6 +269,16 @@ test.describe("the Platform event tile and its entry in Add a step", () => {
       "Needs attention · 100 workflows",
     );
     expect(parts.filter((part) => part.clipped)).toEqual([]);
+    // Its label is the only one that keeps its whole column.
+    const width = (label: Locator) =>
+      label.evaluate((element) =>
+        getComputedStyle(element).getPropertyValue("--label-width"),
+      );
+    const tiles = page.locator('.tile-node[data-tile^="$trigger"]');
+    expect(await width(tile(page).locator(".tile-label"))).toBe("232px");
+    expect(
+      await width(tiles.filter({ hasText: "Manual" }).locator(".tile-label")),
+    ).toBe("168px");
   });
 
   test("says what the platform lacks, and that a workflow has one", async ({

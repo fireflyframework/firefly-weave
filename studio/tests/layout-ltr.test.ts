@@ -24,6 +24,7 @@ import {
   fitView,
   labelScale,
   labelWidth,
+  runOutline,
   layoutLtr,
   levelOfDetail,
   midpoint,
@@ -954,8 +955,7 @@ describe("the left-to-right layout", () => {
     expect(labelWidth(2)).toBe(LTR.label);
     expect(labelWidth(1)).toBe(LTR.label);
     expect(labelWidth(1, "fork")).toBe(LTR.label);
-    // A trigger keeps its column: its subtitle says who starts the workflow.
-    expect(labelWidth(1, "trigger")).toBe(LTR.labelWide);
+    expect(labelWidth(1, "trigger")).toBe(LTR.label);
     expect(labelWidth(0.99)).toBe(LTR.labelWide);
     expect(labelWidth(0.5)).toBe(LTR.labelWide);
     expect(labelWidth(0.4, "square")).toBe(LTR.labelWide);
@@ -1086,6 +1086,47 @@ describe("the left-to-right layout", () => {
       x: 48 - 60 * 0.25,
       y: (900 - 400 * 0.25) / 2 - 96 * 0.25,
     });
+  });
+});
+
+describe("a platform event's label", () => {
+  const layout = layoutLtr(
+    fixture,
+    options({
+      triggers: [
+        { id: "m", kind: "manual" },
+        { id: "e", kind: "event" },
+        { id: "k", kind: "broker" },
+      ],
+    }),
+  );
+  const label = (id: string, zoom: number) => {
+    const { shape, wideLabel } = tile(layout, `$trigger:${id}`);
+    return labelWidth(zoom, shape, wideLabel);
+  };
+
+  it("keeps its column at every zoom: its subtitle says what starts the workflow", () => {
+    for (const zoom of [0.5, 1, 2])
+      expect(label("e", zoom)).toBe(LTR.labelWide);
+  });
+
+  it("is the only trigger's that does: the others are as wide as a step's from 100% up", () => {
+    for (const id of ["m", "k"]) {
+      expect(label(id, 0.5)).toBe(LTR.labelWide);
+      expect(label(id, 1)).toBe(LTR.label);
+      expect(label(id, 2)).toBe(LTR.label);
+    }
+  });
+
+  it("counts in what a run draws, as wide as it is", () => {
+    const left = (kind: "event" | "broker") =>
+      runOutline(
+        layoutLtr(fixture, options({ triggers: [{ id: "t", kind }] })),
+        1,
+      ).minX;
+    const center = LTR.originX + LTR.tile / 2;
+    expect(left("event")).toBe(center - LTR.labelWide / 2);
+    expect(left("broker")).toBe(center - LTR.label / 2);
   });
 });
 

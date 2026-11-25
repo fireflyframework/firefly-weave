@@ -129,6 +129,8 @@ export interface LtrTile {
   kind: string;
   role: NodeRole | "end";
   shape: TileShape;
+  /** A platform event's: its label keeps its whole column at every zoom. */
+  wideLabel?: true;
   /** The card, in canvas units. */
   x: number;
   y: number;
@@ -1056,6 +1058,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       kind: "trigger",
       role: "trigger",
       shape: "trigger",
+      ...(trigger.kind === "event" ? { wideLabel: true as const } : {}),
       x: LTR.originX,
       y,
       width: LTR.tile,
@@ -1166,7 +1169,10 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       continue;
     }
     // Its label block at its widest, at 100% or below.
-    const width = Math.max(LTR.label, labelWidth(0.5, tile.shape));
+    const width = Math.max(
+      LTR.label,
+      labelWidth(0.5, tile.shape, tile.wideLabel),
+    );
     const labelLeft = tile.x + tile.width / 2 - width / 2;
     add(
       Math.min(tile.x, labelLeft),
@@ -1228,7 +1234,8 @@ export function runOutline(
   const boxes: LtrBounds[] = [];
   const scale = labelScale(zoom);
   for (const tile of layout.tiles) {
-    const block = tile.shape === "end" ? 80 : labelWidth(zoom, tile.shape);
+    const block =
+      tile.shape === "end" ? 80 : labelWidth(zoom, tile.shape, tile.wideLabel);
     const measured = textHalf?.(tile.id);
     const half =
       measured === undefined
@@ -1324,11 +1331,16 @@ export function labelScale(zoom: number): number {
  * A step's label block width in canvas units: 168 from 100% up; below, its
  * whole column less a visible gap, so a name has two lines of room. A
  * parallel step's bar is 76 units narrower than a tile, and so is its block.
- * A trigger keeps its column at every zoom: its subtitle says what starts the
- * workflow ("Needs attention · any workflow"), longer than a step's.
+ * A platform event keeps its column at every zoom (`wide`): its subtitle says
+ * what starts the workflow ("Needs attention · any workflow"), longer than a
+ * step's.
  */
-export function labelWidth(zoom: number, shape: TileShape = "square"): number {
-  if (zoom >= 1 && shape !== "trigger") return LTR.label;
+export function labelWidth(
+  zoom: number,
+  shape: TileShape = "square",
+  wide = false,
+): number {
+  if (zoom >= 1 && !wide) return LTR.label;
   return shape === "fork"
     ? LTR.labelWide - (LTR.tile - LTR.bar)
     : LTR.labelWide;
@@ -1336,12 +1348,18 @@ export function labelWidth(zoom: number, shape: TileShape = "square"): number {
 
 /** Paint outside the fixed card, including readable labels and keyboard focus. */
 export function tilePaintMargin(
-  tile: Pick<LtrTile, "width" | "height" | "shape" | "labelY" | "y">,
+  tile: Pick<
+    LtrTile,
+    "width" | "height" | "shape" | "wideLabel" | "labelY" | "y"
+  >,
 ): number {
   const widestLabel =
     tile.shape === "end"
       ? 80
-      : Math.max(labelWidth(0.4, tile.shape), labelWidth(1, tile.shape));
+      : Math.max(
+          labelWidth(0.4, tile.shape, tile.wideLabel),
+          labelWidth(1, tile.shape, tile.wideLabel),
+        );
   return Math.ceil(
     Math.max(
       (widestLabel - tile.width) / 2,
