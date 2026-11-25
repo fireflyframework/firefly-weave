@@ -190,6 +190,8 @@ export class TestDataService {
   private platformRevision: number | undefined;
   /** The platform refused to read this draft's test data: nothing is saved over it. */
   private saveRefused = false;
+  /** The platform can't save simulated failures: they stay in this session only. */
+  private failuresKept = false;
 
   constructor(private readonly host: TestDataHost) {
     this.current = emptyTestData(host.now().toISOString());
@@ -244,6 +246,7 @@ export class TestDataService {
     this.key = key;
     this.problem = null;
     this.saveRefused = false;
+    this.failuresKept = false;
     this.platformRevision = undefined;
     this.waitingKey =
       key && place.kind === "connected" ? storeKeyFor(key, "local") : null;
@@ -328,6 +331,7 @@ export class TestDataService {
     this.waitingKey = null;
     this.waiting = new Set();
     this.problem = null;
+    this.failuresKept = false;
     this.platformRevision = undefined;
     this.loaded++;
     this.set(emptyTestData(this.stamp()));
@@ -530,13 +534,32 @@ export class TestDataService {
   }
   /** What the platform receives: the document without the entries kept on this computer. */
   toPlatform(): { document: StudioTestData; localOnly: string[] } {
-    let document = this.current;
+    let document = this.withoutKeptFailures(this.current);
     const localOnly = [...this.waiting].filter(
       (pointer) => entryAt(document, pointer) !== undefined,
     );
     for (const pointer of localOnly)
       document = withEntry(document, pointer, undefined);
     return { document, localOnly };
+  }
+  /**
+   * The platform refused simulated failures and took the same save without
+   * them: they stay in this session only, sent nowhere and kept nowhere, and
+   * go when another account, environment or workflow opens.
+   */
+  keepFailuresInSession(): void {
+    this.failuresKept = true;
+    this.version.update((value) => value + 1);
+    if (this.key) this.write();
+  }
+  failuresInSession(): boolean {
+    this.version();
+    return this.failuresKept;
+  }
+  private withoutKeptFailures(data: StudioTestData): StudioTestData {
+    if (!this.failuresKept || !data.errors) return data;
+    const { errors: _, ...rest } = data;
+    return rest;
   }
   /** Entries the platform can't classify yet ("Kept on this computer until the action is published"). */
   markLocalOnly(paths: readonly string[]): void {
@@ -613,7 +636,7 @@ export class TestDataService {
   }
   private write(): void {
     const key = this.key;
-    const data = this.current;
+    const data = this.withoutKeptFailures(this.current);
     if (!key) return;
     this.writing = this.writing.then(async () => {
       if (this.forgotten.has(key)) return;

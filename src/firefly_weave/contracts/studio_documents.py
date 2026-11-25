@@ -38,6 +38,7 @@ from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field, Validati
 
 from firefly_weave.contracts.definitions import ContractModel, OmissionOnly, _is_absent, _omit_absent_default
 from firefly_weave.contracts.instance_keys import InstanceKeyText
+from firefly_weave.contracts.step_errors import StepOutcome
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonData, JsonObject, JsonObjectData, UnicodeString
 
 TEST_DATA_SCHEMA_ID: Final = "urn:firefly-weave:schema:studio-test-data:v1"
@@ -52,12 +53,17 @@ REFERENCE_PATTERN: Final = (
     r"(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
 )
 HASH_PATTERN: Final = r"^fnv1a64:[0-9a-f]{16}$"
+# The codes a simulation can script: the platform's own (WV-...) and an action's definite failure codes.
+ERROR_CODE_PATTERN: Final = r"^[A-Z][A-Z0-9_.-]*$"
+MAX_SIMULATED_ATTEMPTS: Final = 1000
 
 type FrameKey = Annotated[UnicodeString, Field(max_length=1024, pattern=FRAME_PATTERN)]
 type CalleeReference = Annotated[UnicodeString, Field(max_length=300, pattern=REFERENCE_PATTERN)]
 type Fingerprint = Annotated[UnicodeString, Field(pattern=HASH_PATTERN)]
+type SimulatedErrorCode = Annotated[UnicodeString, Field(min_length=1, max_length=128, pattern=ERROR_CODE_PATTERN)]
 type DataSource = Literal["manual", "schema", "simulated", "test-call", "run"]
 type AiTurnsSource = Literal["manual", "simulated", "test-call", "run"]
+type ErrorSource = Literal["manual", "run"]
 type StudioDocumentKind = Literal["canvas", "test-data"]
 
 
@@ -219,12 +225,32 @@ class WaitScripts(_Sidecar):
     )
 
 
+class ErrorEntry(_Provenanced):
+    """A failure a step reports in place of its result when Studio executes the workflow; real runs never see it.
+
+    ``outcome`` (``failed`` when omitted) and ``attempts`` (1 when omitted) are what the platform would report after
+    the step's own retries. A failure never holds a message: the platform's copy for the code applies, and a failure
+    copied from a run keeps only its code, outcome, attempts and the run it came from.
+    """
+
+    code: SimulatedErrorCode
+    outcome: OmissionOnly[StepOutcome] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    attempts: OmissionOnly[Annotated[int, Field(ge=0, le=MAX_SIMULATED_ATTEMPTS)]] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    source: OmissionOnly[ErrorSource] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+
 type SignalEntry = SignalScript | SignalTimeout
 type HumanEntry = HumanScript | HumanExpire
 
 
 class StudioTestData(_Sidecar):
-    """One workflow's test data: input, pins, scripts, AI turns and called-workflow mocks."""
+    """One workflow's test data: input, pins, scripts, AI turns, called-workflow mocks and simulated failures."""
 
     schema_version: SchemaVersion = Field(alias="schemaVersion")
     kind: Literal["weave.studio/testData"]
@@ -246,6 +272,9 @@ class StudioTestData(_Sidecar):
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
     waits: OmissionOnly[WaitScripts] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    errors: OmissionOnly[Annotated[dict[InstanceKeyText, ErrorEntry], Field(max_length=1000)]] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 

@@ -130,8 +130,8 @@ backticks: `` `Hello {{ input.name }}` ``.
 | `WV-FORMULA-STRING` | Text or a template isn't closed. |
 | `WV-FORMULA-NUMBER` | A whole number is beyond ±9,007,199,254,740,991, or a number is too large. |
 | `WV-FORMULA-TEMPLATE` | Templates, `concat` or `join` on a platform without them. |
-| `WV-FORMULA-SCOPE` (warning) | A step that runs later or on another path. |
-| `WV-FORMULA-FIELD` (warning) | A field a closed schema doesn't have. |
+| `WV-FORMULA-SCOPE` (warning) | A step that runs later or on another path, or a step's output inside its own error path: "`steps.submit` has no output inside its own error path; read `steps.submit.error`." |
+| `WV-FORMULA-FIELD` (warning) | A field a closed schema doesn't have, or the error of a step that stops the run when it fails: "`steps.submit` records an error only when its On error setting is Continue or Continue with error output." |
 | `WV-FORMULA-TYPE` (warning) | Values of the wrong type for an operator. |
 
 Warnings never stop a formula from being saved; the compiler's own messages

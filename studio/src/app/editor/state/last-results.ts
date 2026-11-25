@@ -23,6 +23,7 @@ import type { Json } from "../ndv/registry";
 import type {
   ExecuteResponse,
   ExecuteStatus,
+  StepErrorView,
   StepTestOmission,
   StepTestStatus,
   TraceStatus,
@@ -46,6 +47,16 @@ export interface LastResult {
    * ended. Such a result stays in memory only: it is never kept on this computer.
    */
   real?: RealResult;
+  /** The step failed and its On error went on: the failure, and the setting that handled it. */
+  handled?: HandledResult;
+}
+/** A failure a step's On error handled, as the simulated run reported it. */
+export interface HandledResult {
+  code: string;
+  message: string;
+  outcome: StepErrorView["outcome"];
+  attempts: number;
+  policy: "continue" | "errorOutput";
 }
 export interface RealResult {
   runId: string;
@@ -95,12 +106,28 @@ export function withExecution(
     if (!print) continue;
     const key = entry.instanceKey || entry.nodeId;
     const branch = takenBranch(response, entry.nodeId, key);
+    const handled =
+      entry.status === "failed" && entry.handled && entry.error
+        ? {
+            code: entry.error.code,
+            message: entry.error.message,
+            outcome: entry.error.outcome,
+            attempts: entry.error.attempts,
+            policy: entry.handled,
+          }
+        : null;
+    // After Continue, later steps read null as the step's output.
+    const output =
+      entry.output === undefined && handled?.policy === "continue"
+        ? null
+        : entry.output;
     steps[key] = {
       status: entry.status,
       execution: print.execution,
       ...(entry.input !== undefined ? { input: entry.input } : {}),
-      ...(entry.output !== undefined ? { output: entry.output } : {}),
+      ...(output !== undefined ? { output } : {}),
       ...(branch ? { branch } : {}),
+      ...(handled ? { handled } : {}),
     };
   }
   return { schemaVersion: 1, at, status: response.status, steps };
@@ -204,6 +231,15 @@ const ENDS = new Set(["completed", "blocked", "failed", "limit"]);
 const isObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
+/** A kept handled failure in the shape this version writes. */
+const isHandled = (value: unknown): boolean =>
+  isObject(value) &&
+  typeof value["code"] === "string" &&
+  typeof value["message"] === "string" &&
+  ["not_started", "failed", "unknown"].includes(value["outcome"] as string) &&
+  typeof value["attempts"] === "number" &&
+  ["continue", "errorOutput"].includes(value["policy"] as string);
+
 /** What was kept, or null when it isn't results this version wrote. */
 export function readResults(text: string | null): LastResults | null {
   if (text === null) return null;
@@ -228,7 +264,8 @@ export function readResults(text: string | null): LastResults | null {
       typeof result["execution"] !== "string" ||
       (result["branch"] !== undefined &&
         (!isObject(result["branch"]) ||
-          typeof result["branch"]["name"] !== "string"))
+          typeof result["branch"]["name"] !== "string")) ||
+      (result["handled"] !== undefined && !isHandled(result["handled"]))
     )
       return null;
   return raw as unknown as LastResults;

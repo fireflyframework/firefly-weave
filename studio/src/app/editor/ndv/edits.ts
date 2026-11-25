@@ -21,12 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // through Rename (which rewrites references) and steps move on the canvas.
 import { getAt, setAt } from "../../forms/core/json";
 import type { Step, Workflow } from "../../model";
-import {
-  ndvRegistry,
-  type ContainerSpec,
-  type Edit,
-  type Path,
-} from "./registry";
+import { blocksOf } from "../step-blocks";
+import type { Edit, Path } from "./registry";
 
 export class EditError extends Error {
   constructor(message: string) {
@@ -35,16 +31,18 @@ export class EditError extends Error {
   }
 }
 
-type Containers = (step: Step) => readonly ContainerSpec[];
+/** Where a step's nested step lists live, relative to the step. */
+type Containers = (step: Step) => readonly { path: Path }[];
+/** Every block of a step: decision paths, branches, a loop's body, an error path. */
 const registeredContainers: Containers = (step) =>
-  ndvRegistry.kind(step.kind)?.containers?.(step) ?? [];
+  blocksOf(step).map((block) => ({ path: [...block.path, "steps"] }));
 const isStep = (value: unknown): value is Step =>
   !!value &&
   typeof value === "object" &&
   !Array.isArray(value) &&
   typeof (value as { id?: unknown }).id === "string";
 
-/** Where a step sits in the document, through registered containers; null when absent. */
+/** Where a step sits in the document, through the blocks of each step; null when absent. */
 export function stepPath(
   workflow: Workflow,
   stepId: string,

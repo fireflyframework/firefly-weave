@@ -30,7 +30,7 @@ from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.access.service import AccessService
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.ai import TRANSIENT_MODEL_CODES
+from firefly_weave.contracts.ai import TRANSIENT_MODEL_CODES, model_code
 from firefly_weave.contracts.operations import TaskTiming
 from firefly_weave.contracts.runtime import RecoveryReport
 from firefly_weave.contracts.step_errors import StepOutcome
@@ -41,7 +41,7 @@ from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.calls import CallService
 from firefly_weave.runtime.deadlines import DeadlineService
-from firefly_weave.runtime.kernel import error_policy, workflow
+from firefly_weave.runtime.kernel import error_policy, runs_model, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
@@ -325,6 +325,10 @@ class RecoveryService:
                 "code": code,
                 "next_attempt_at": next_attempt.isoformat() if allowed and next_attempt is not None else None,
             }
+            model_failure = model_code(failure.get("output"))
+            if not allowed and model_failure is not None and runs_model(workflow(artifact), task["node_id"]):
+                # The incident keeps its code, which says what Operate can do, and names why the model couldn't run.
+                data["origin_code"] = model_failure
             if transactional:
                 # An expired lease may have applied; a failure says what its release could prove.
                 effect = failure.get("effect", "unknown") if attempt["status"] == "failed" else "unknown"

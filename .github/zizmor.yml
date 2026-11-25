@@ -19,10 +19,11 @@
 rules:
   self-hosted-runner:
     ignore:
-      # ci.yml, job `release`: the release gate on the owned self-hosted runner, started only by a manual run with
-      # `release` set. No runner is registered for it today; the release gate runs locally. Before a runner is
+      # release-gate.yml, job `release`: the release gate on the owned self-hosted runner, in a workflow that only a
+      # manual run starts. No runner is registered for it today; the release gate runs locally. Before a runner is
       # registered, the weave-owned-release environment gets required reviewers and a deployment policy that allows
       # only v* tags, and the runner is ephemeral and in a runner group restricted to this repository and to selected
-      # workflows (ci.yml on refs/tags/v*). Workflows from every outside contributor's pull request need approval
-      # first, because a pull request can edit ci.yml and drop both the job's condition and its environment.
-      - ci.yml:285
+      # workflows (release-gate.yml on refs/tags/v*). Workflows from every outside contributor's pull request need
+      # approval first, because a pull request can add a job with the runner's labels to any workflow it runs.
+      # The entry names the job's runs-on line; tests/unit/test_ci_workflows.py fails when the job moves.
+      - release-gate.yml:30

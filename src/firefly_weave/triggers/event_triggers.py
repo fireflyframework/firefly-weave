@@ -276,7 +276,19 @@ class EventTriggerService:
             )
         return moved
 
-    async def disable(self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext) -> EventTrigger:
+    async def disable(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        expected: int | None = None,
+        *,
+        context: AuditContext,
+    ) -> EventTrigger:
+        """Stop a trigger; with ``expected`` (the If-Match revision), only while it is still that revision.
+
+        A trigger already stopped answers as it is, whatever revision the stop names: the stop it asks for is done.
+        """
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await self.access.load_principal(actor.id, tx=tx)
             self.runtime.require(actor, scope, "trigger.manage", context)
@@ -288,6 +300,8 @@ class EventTriggerService:
                 raise CatalogError(404, "WV-NOT-FOUND", "Event trigger not found")
             if rows[0]["disabled"]:
                 return trigger_view(rows[0])
+            if expected is not None and expected != rows[0]["revision"]:
+                raise CatalogError(409, "WV-REVISION", "The trigger changed; read it again before stopping it")
             # The update and its audit record spend the trigger's reserve; the transaction's end checks the trigger
             # is disabled and releases what is left.
             await repository.execute("SELECT weave_control_begin('event_trigger',:id)", id=identifier)

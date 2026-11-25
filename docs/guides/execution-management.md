@@ -337,16 +337,19 @@ receipt = await client.purge_run(
 The API operation is `POST runs/{run_id}/purge` with the same body and header.
 
 **What a purge removes:** the run snapshot, inputs and outputs, event history,
-step results, worker completion data, signals, incidents, and the run's human
-task forms, decisions, and task history.
+step results, worker completion data, signals, incidents, the run's human
+task forms, decisions, and task history, the platform events it emitted as
+stored for event triggers, and the trigger start records that no longer name a
+kept run.
 
 **What it keeps:** a small scoped deletion receipt, the access audit of who
 requested it, and redacted idempotency records. Replaying an earlier start
 request after a purge returns HTTP 410 instead of recreating the run or
 returning its old data. Repeating the same purge returns its recorded receipt.
 
-**What blocks it:** a worker lease that is still active, or a reference kept by
-email, schedules, triggers, or retry relationships. The purge is atomic, so a
+**What blocks it:** a worker lease that is still active, a platform event of the
+run whose trigger start is still waiting to run, or a reference kept by email,
+schedules, triggers, or retry relationships. The purge is atomic, so a
 blocked purge removes nothing. Leave such runs archived; this version does not
 cascade deletion into those separately managed resources.
 
@@ -363,7 +366,7 @@ by a connected product. Plan retention for those systems separately.
 | `WV-RUN-LIFECYCLE-STATE` (HTTP 409) | The run is already archived, or already restored | Nothing to do; refresh the list |
 | `WV-RUN-NOT-ARCHIVED` (HTTP 409) | You tried to purge a run that is not archived | Archive it first |
 | `WV-RUN-PURGE-CONFIRM` (HTTP 422) | `confirm_run_id` does not match the run | Type the exact run ID |
-| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired |
+| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease, a trigger start still waiting to run with one of the run's platform events, or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired; a waiting trigger start runs or expires within a day, so try the purge again later |
 | `WV-RUN-PURGED` (HTTP 410) | You replayed a request for a run that was purged | Start a new run with a new idempotency key if you need one |
 | HTTP 403, or the run has no **Archive** section or no **Delete run data** button | Your roles do not include `run.archive` or `run.purge` in this workspace | Ask an administrator; see [People and access](people-and-access.md) |
 | A search returns several runs | Business keys are not unique | Filter by status or correlation key, then choose one run ID |

@@ -43,6 +43,7 @@ from firefly_weave.contracts.deployments import DeploymentCapability
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk import platform_ai_files as files
 from firefly_weave.sdk import platform_docker, platform_origins
+from firefly_weave.sdk._retry import CAPACITY_RESEND, Resend
 from firefly_weave.sdk.deployment import DeploymentError, read_file, strict_json
 
 if TYPE_CHECKING:
@@ -809,7 +810,10 @@ async def _api(
     value: dict[str, Any],
     work: Callable[[WeaveClient], Awaitable[Any]],
     transport: httpx.AsyncBaseTransport | None,
+    *,
+    resend: Resend | None = CAPACITY_RESEND,
 ) -> Any:
+    """Run ``work`` with the platform client signed in as the host; ``resend`` is the client's capacity resend."""
     from firefly_weave.contracts.access import Scope
     from firefly_weave.sdk.client import WeaveClient
     from firefly_weave.sdk.errors import WeaveError
@@ -817,7 +821,7 @@ async def _api(
     api = local._summary(state)["api_url"]
     token = local._host_token(state)
     async with WeaveClient(
-        api, lambda: token, Scope.model_validate(value["scope"]), timeout=60, transport=transport
+        api, lambda: token, Scope.model_validate(value["scope"]), timeout=60, transport=transport, resend=resend
     ) as client:
         try:
             return await work(client)

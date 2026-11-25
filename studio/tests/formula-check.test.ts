@@ -162,6 +162,87 @@ describe("formula warnings", () => {
       "`and` needs Yes/No values; `index` is Whole number.",
     ]);
   });
+  describe("a step's error", () => {
+    const handling = {
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "handling", version: "1.0.0" },
+      spec: {
+        inputSchema: { type: "object" },
+        outputSchema: {},
+        steps: [
+          {
+            id: "lookup",
+            kind: "transform",
+            value: { literal: 1 },
+            onError: "continue",
+          },
+          {
+            id: "submit",
+            kind: "transform",
+            value: { literal: 1 },
+            onError: "errorOutput",
+            errorPath: {
+              steps: [
+                { id: "notify", kind: "transform", value: { literal: null } },
+              ],
+              output: { literal: null },
+            },
+          },
+          { id: "after", kind: "transform", value: { literal: null } },
+        ],
+        output: { literal: null },
+      },
+    };
+    const at = (stepId: string): CheckScope => ({
+      scope: referenceScope(handling, stepId, "/value"),
+      stepIds: new Set(["lookup", "submit", "notify", "after"]),
+      inputSchema: {},
+    });
+
+    it("is readable inside the step's own error path", () => {
+      expect(warnings("steps.submit.error.code", at("notify"))).toEqual([]);
+    });
+    it("is readable after a step that continues on failure", () => {
+      expect(warnings("steps.lookup.error.code", at("after"))).toEqual([]);
+    });
+    it("has the fields and types of the step error object", () => {
+      expect(warnings("steps.submit.error.attempts > 2", at("notify"))).toEqual(
+        [],
+      );
+      expect(warnings("steps.lookup.error.cod", at("after"))).toEqual([
+        {
+          code: "WV-FORMULA-FIELD",
+          message: "`steps.lookup.error.cod` isn't a field of lookup's error.",
+        },
+      ]);
+      expect(warnings("steps.submit.error.code > 2", at("notify"))).toEqual([
+        {
+          code: "WV-FORMULA-TYPE",
+          message:
+            "`>` needs two numbers or two texts; `steps.submit.error.code` is Text and `2` is Whole number.",
+        },
+      ]);
+    });
+    it("isn't there for a step that stops the run when it fails", () => {
+      expect(warnings("steps.check.error.code")).toEqual([
+        {
+          code: "WV-FORMULA-FIELD",
+          message:
+            "`steps.check` records an error only when its On error setting is Continue or Continue with error output.",
+        },
+      ]);
+    });
+    it("replaces the step's output inside its own error path", () => {
+      expect(warnings("steps.submit.output", at("notify"))).toEqual([
+        {
+          code: "WV-FORMULA-SCOPE",
+          message:
+            "`steps.submit` has no output inside its own error path; read `steps.submit.error`.",
+        },
+      ]);
+    });
+  });
   it("never crashes on a tree nested beyond what workflows allow", () => {
     let deep: unknown = { ref: "/input/amout" };
     for (let i = 0; i < 20_000; i++)

@@ -40,6 +40,7 @@ import {
   WORKFLOW,
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
+import { failureOf } from "../../state/test-data-ops";
 import { enclosingLoops, stepPointerOf } from "../../formula/loops";
 import {
   IterationPicker,
@@ -53,6 +54,7 @@ import {
   countLabel,
   defaultSource,
   filterRows,
+  errorData,
   inputSources,
   loopSource,
   loopSources,
@@ -243,6 +245,12 @@ import { instanceStep } from "../../state/instance-keys";
                 <p>
                   {{ missing }} hasn't run yet. Execute previous steps, or map
                   from the fields below.
+                </p>
+              } @else if (failedStep(chosen); as failed) {
+                <h4>No input data yet</h4>
+                <p>
+                  {{ failed }} has no output here: this path runs only when it
+                  fails. Simulate a failure of {{ failed }} to see its error.
                 </p>
               } @else if (!pickerSaysExecute()) {
                 <h4>No input data yet</h4>
@@ -577,10 +585,25 @@ export class InputPane implements OnInit {
         this.session().host.execution?.sampleUsed() ??
         this.value()
       );
+    if (source.startsWith("error:")) {
+      // The failure simulated for the step (the item picked, else every item).
+      const id = source.slice(6);
+      const data = controller.testData;
+      data.version();
+      const key = controller.pinKey(id);
+      const found = failureOf(data.data(), key);
+      return found
+        ? errorData(found.entry, controller.step(id), key)
+        : undefined;
+    }
     if (source.startsWith("step:"))
       // Inside a loop, the earlier step's data for the item picked.
       return controller.pickedStepData(source.slice(5))?.value ?? this.value();
     return this.value();
+  }
+  /** The failed step whose error is the chosen source (inside its error path). */
+  failedStep(source: string): string | null {
+    return source.startsWith("error:") ? source.slice(6) : null;
   }
   /** The earlier step chosen as the source, when it has no data yet (it hasn't run). */
   notRun(source: string): string | null {
@@ -613,6 +636,7 @@ export class InputPane implements OnInit {
       return item ? `Simulated · item ${item}` : "";
     }
     const run = this.session().controller.run();
+    if (source.startsWith("error:")) return "Simulated failure";
     if (source === "received") return "Recomputed from the run's data";
     if (run) return `From ${run.label()}`;
     if (source === "input")

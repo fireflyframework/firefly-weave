@@ -151,9 +151,11 @@ for (const size of sizes)
       );
       // While it runs, Output offers nothing that would start another.
       await expect(output(details)).not.toContainText("No output yet");
-      await page.clock.fastForward("00:12");
+      await page.clock.runFor("00:12");
+      // The ticker's second starts a little before or after the step's, and
+      // the clock keeps running: at least 12 s by the next tick.
       await expect(output(details)).toContainText(
-        "Executing crm-lookup in Production · 12 s",
+        /Executing crm-lookup in Production · (1[2-9]|[2-9]\d) s/,
       );
     });
 

@@ -55,6 +55,34 @@ def test_recovery_retries_model_transport_codes_for_safe_actions_only():
     assert not {"LLM_POLICY", "LLM_MODEL_NOT_FOUND", "LLM_PROVIDER", "LLM_OUTPUT"} & TRANSIENT_FAILURE_CODES
 
 
+@pytest.mark.parametrize("code", sorted(AI_ERRORS))
+def test_a_failed_attempt_names_the_models_own_code(code):
+    from firefly_weave.contracts.ai import model_code
+
+    assert model_code({"code": code, "outcome": "not_started"}) == code
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        {"code": "HTTP_500"},
+        {"code": "WV-TASK-FAILED"},
+        {"code": "LLM_UNKNOWN_CODE"},
+        {"code": "llm_unreachable"},
+        {"code": ["LLM_UNREACHABLE"]},
+        {},
+        "LLM_UNREACHABLE",
+        None,
+    ],
+    ids=["action-code", "platform-code", "unknown-model-code", "lowercase", "not-text", "no-code", "bare", "none"],
+)
+def test_any_other_report_names_no_model_code(output):
+    from firefly_weave.contracts.ai import model_code
+
+    # Only the codes the model's workers report: an action's own code or a made-up LLM_ name stays the action's.
+    assert model_code(output) is None
+
+
 def test_messages_are_filled_from_the_step_never_from_the_provider():
     assert (
         ai_message("LLM_MODEL_NOT_FOUND", model="qwen3:4b", endpoint="ollama-local")

@@ -459,6 +459,12 @@ class FactRepository:
             if isinstance(node, str) and event.type in {"task_failed", "incident_opened", "recovery_scheduled"}:
                 output = event.data.get("output")
                 code = output.get("code") if isinstance(output, dict) else event.data.get("code")
+                if event.type == "incident_opened":
+                    # An incident first reported as the model's own code names that code on the step, as the task
+                    # did; only the origin the kernel accepted counts, never the event's own text.
+                    accepted = result.state.incidents.get(f"{node}:{event.data.get('generation', 0)}")
+                    if accepted is not None and accepted.origin_code:
+                        code = accepted.origin_code
                 add(
                     node,
                     "scheduled" if event.type == "recovery_scheduled" else "failed",

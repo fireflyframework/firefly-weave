@@ -95,6 +95,16 @@ AI_ERRORS: Mapping[str, AIError] = {
 TRANSIENT_MODEL_CODES = frozenset(code for code, error in AI_ERRORS.items() if error.retryable)
 
 
+def model_code(output: object) -> str | None:
+    """The model's own code in a failed attempt's report, or None when the report names no model code.
+
+    An incident keeps it as the code it was first reported as, so Operate and the Agent log name why the model
+    couldn't run, not only that the task failed. Any other code stays the action's own.
+    """
+    code = output.get("code") if isinstance(output, dict) else None
+    return code if isinstance(code, str) and code in AI_ERRORS else None
+
+
 def ai_message(code: str, *, model: str = "The model", endpoint: str = "the endpoint", n: int = 0) -> str:
     """The product copy for a code; unknown codes read as an unexpected provider error."""
     error = AI_ERRORS.get(code, AI_ERRORS["LLM_PROVIDER"])

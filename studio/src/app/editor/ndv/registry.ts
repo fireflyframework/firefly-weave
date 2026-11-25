@@ -245,6 +245,12 @@ export interface ParamSpec {
    * requires. The field then reads as not added because it holds its default.
    */
   whenRemoved?: "delete" | "default";
+  /**
+   * mapping "both" only: while the field holds its `default` (Result on
+   * error's null), it reads as an empty Mapped field that shows
+   * `placeholder`, until Fixed is chosen.
+   */
+  emptyMapped?: boolean;
   /** list items; their paths are relative to the item. */
   item?: ParamSpec;
   /** fields rows and nested groups; their paths are absolute. */

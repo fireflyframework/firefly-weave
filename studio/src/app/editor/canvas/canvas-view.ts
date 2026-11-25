@@ -144,6 +144,7 @@ import {
   pulses,
   tileRun,
   type CanvasRun,
+  type HandledFailure,
   type TileRun,
   frameRun,
   frameExecuted,
@@ -181,11 +182,14 @@ import {
 import {
   runText,
   tileBadge,
+  runFact,
+  handledStatus,
   tileBorders,
   tileName,
   type StepFacts,
   type TileBorders,
 } from "./tile-facts";
+import { failureText } from "./error-lane";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_STEP_FACTS: ReadonlyMap<string, StepFacts> = new Map();
@@ -229,7 +233,9 @@ function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
           ? "failed"
           : loop.status === "paused"
             ? "stopped"
-            : "done",
+            : loop.handled
+              ? "handled"
+              : "done",
     progress: loop.count ? Math.min(1, loop.finished / loop.count) : null,
   };
 }
@@ -711,6 +717,7 @@ export class CanvasView implements OnInit, DoCheck {
                 : "",
             pin: tile.step ? pins.get(tile.id) : undefined,
             simulated: run?.mode === "simulated",
+            handled: run?.handled?.[tile.id],
             recorded: isRecordedRun(run) ? run : null,
             listening:
               !!listening && tile.id === triggerChoiceTarget(listening),
@@ -764,6 +771,8 @@ export class CanvasView implements OnInit, DoCheck {
       pin?: { stale: string | null };
       /** The run drawn is a simulation Studio played back. */
       simulated?: boolean;
+      /** The failure the step's On error handled in that run. */
+      handled?: HandledFailure;
       /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
       recorded?: RecordedRun | null;
       /** A loop's frame: the tile is its header band. */
@@ -878,7 +887,10 @@ export class CanvasView implements OnInit, DoCheck {
           failure:
             state.run === "failed"
               ? { code: recorded.failures[tile.id] }
-              : null,
+              : state.run === "handled" && state.handled
+                ? { code: state.handled.code, message: state.handled.message }
+                : null,
+          handled: state.handled?.policy,
           stale: null,
           pinned: false,
           selected: state.selected,
@@ -889,7 +901,12 @@ export class CanvasView implements OnInit, DoCheck {
           ...facts,
           run: state.run,
           failure:
-            state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
+            state.run === "failed"
+              ? (h.runFailure?.(tile.id) ?? {})
+              : state.run === "handled" && state.handled
+                ? { code: state.handled.code, message: state.handled.message }
+                : null,
+          handled: state.handled?.policy,
           stale: state.pin?.stale ?? null,
           pinned: !!state.pin,
           selected: state.selected,
@@ -913,11 +930,13 @@ export class CanvasView implements OnInit, DoCheck {
           text: loopResultText(finishedLoop.count!, finishedLoop.results),
           tone: null,
         }
-      : recordedRun
-        ? null
-        : recorded
-          ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-          : null;
+      : state.run === "handled"
+        ? runFact(shown)
+        : recordedRun
+          ? null
+          : recorded
+            ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+            : null;
     // The Runs tab draws the run only: nothing from the editor's executions.
     // A loop's frame says nothing under it while its playback runs.
     const runLine = fact
@@ -930,16 +949,24 @@ export class CanvasView implements OnInit, DoCheck {
       !runLine &&
       tile.kind === "callWorkflow" &&
       tile.step["mode"] === "detach";
+    // What the step's failure does: in its name, and under a step that
+    // continues on error while no run line shows (its outputs say the rest).
+    const failure = failureText(tile.step);
+    const continues = !runLine && tile.step["onError"] === "continue";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
-      output: detached ? "Doesn't wait" : runLine,
+      output: detached
+        ? "Doesn't wait"
+        : continues
+          ? "Continues on error"
+          : runLine,
       outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
-        id: tile.id,
+        id: failure ? `${tile.id}, ${failure}` : tile.id,
         kindLabel,
         // A loop's summary under its frame is in its name, whole.
         summary:
@@ -948,7 +975,12 @@ export class CanvasView implements OnInit, DoCheck {
             : detached
               ? `${summary}, doesn't wait`
               : summary,
-        status: note || runText(state.run, tile.kind) || badge?.text || "",
+        status:
+          note ||
+          runText(state.run, tile.kind) ||
+          handledStatus(shown) ||
+          badge?.text ||
+          "",
         index: tile.index,
         count: tile.count,
         place: tile.place,
@@ -1055,7 +1087,27 @@ export class CanvasView implements OnInit, DoCheck {
           }),
         );
       }
-      return { pluses, slots, onEdges };
+      // A step's Error output is a keyboard stop too: Enter adds a step at
+      // the start of its error path. An empty path's slot, beside it, does
+      // that already, under the same name: the output stays a drawing.
+      const slotted = new Set(layout.slots.map((slot) => slot.insert.owner));
+      const outputs = new Map<string, InsertView>();
+      for (const handle of layout.handles) {
+        if (handle.tone !== "danger" || slotted.has(handle.insert.owner))
+          continue;
+        const view = offer({
+          key: handle.key,
+          tile: handle.tile,
+          x: handle.x,
+          y: handle.y,
+          name: handle.name,
+          insert: handle.insert,
+          moving: false,
+          tabIndex: tab(handle.tile),
+        });
+        if (view) outputs.set(handle.key, view);
+      }
+      return { pluses, slots, onEdges, outputs };
     },
   );
   private targets() {
@@ -1068,6 +1120,36 @@ export class CanvasView implements OnInit, DoCheck {
   }
   pluses(): InsertView[] {
     return this.locked() ? [] : this.targets().pluses;
+  }
+  /** The Error output `key` as a button; null draws it as a plain handle. */
+  outputButton(key: string): InsertView | null {
+    return this.locked() ? null : (this.targets().outputs.get(key) ?? null);
+  }
+  /** Draws a tip at its size on screen, whatever the zoom. */
+  tipScale() {
+    return 1 / this.view.zoom;
+  }
+  /** The sequence a drag from an output adds to: its empty slot is the target. */
+  bandOwner(): string {
+    const key = this.band?.key;
+    return key
+      ? (this.layout().handles.find((item) => item.key === key)?.insert.owner ??
+          "")
+      : "";
+  }
+  /**
+   * Beside the pointer while a drag from a step's Error output runs; gone
+   * once it is let go, though the line stays while Add a step is open.
+   */
+  bandGhost(): string {
+    const press = this.press;
+    return press?.kind === "handle" &&
+      press.dragging &&
+      this.layout().handles.some(
+        (item) => item.key === press.key && item.tone === "danger",
+      )
+      ? "Add to the error path"
+      : "";
   }
   slots(): InsertView[] {
     return this.targets().slots;
@@ -3264,6 +3346,7 @@ export class CanvasView implements OnInit, DoCheck {
       ids,
       h.pinsForCopy(),
       ownedActionsOf(h.model.canvas),
+      h.failuresForCopy(),
     );
     if (!(await this.writeClipboard(copied)))
       return h.notify("Studio couldn't write to the clipboard. Try again.");

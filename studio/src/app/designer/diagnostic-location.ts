@@ -16,10 +16,13 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Turns a compiler diagnostic pointer into the step and field an author
-// should open: `/spec/steps/i`, `/cases/j/steps/k`, `/default/steps/k` and
-// `/branches/<name>/steps/k` select the innermost step; `/spec/...` and
-// `/metadata/...` select the workflow settings.
+// should open: `/spec/steps/i` and the steps of each block below it
+// (`/cases/j/steps/k`, `/default/steps/k`, `/branches/<name>/steps/k`,
+// `/body/steps/k`, `/errorPath/steps/k`) select the innermost step;
+// `/spec/...` and `/metadata/...` select the workflow settings.
+import { ERROR_PATH, blocksOf } from "../editor/step-blocks";
 import { WORKFLOW } from "../forms/core/scope";
+import type { Step } from "../model";
 
 export interface DiagnosticLocation {
   /** The step to select, or `WORKFLOW` for workflow settings. */
@@ -61,6 +64,14 @@ const index = (segment: string | undefined) =>
     : -1;
 
 const EXPRESSION_FIELDS = new Set(["with", "value", "title", "context"]);
+/** The step fields that hold blocks (step-blocks.ts), for a pointer into one a step no longer has. */
+const BLOCK_FIELDS = new Set([
+  "cases",
+  "default",
+  "branches",
+  "body",
+  ERROR_PATH,
+]);
 
 /** Strips Weave Expression wrappers to the target data keys. */
 function dataKeys(segments: string[]): string[] {
@@ -89,8 +100,11 @@ function stepField(rest: string[]): {
       };
     return { field: ["cases", index(second)], dataPath: [] };
   }
-  if (first === "default" && second === "output")
-    return { field: ["default", "output"], dataPath: dataKeys(rest.slice(2)) };
+  if (
+    (first === "default" || first === "body" || first === "errorPath") &&
+    second === "output"
+  )
+    return { field: [first, "output"], dataPath: dataKeys(rest.slice(2)) };
   if (first === "branches" && second !== undefined && third === "output")
     return {
       field: ["branches", second, "output"],
@@ -127,29 +141,31 @@ function workflowLocation(
   return { ...base, field: top === undefined ? [] : [top], dataPath: [] };
 }
 
-/** The nested step list a pointer continues into, and where its index sits. */
+/** The nested step list (a block of the step) a pointer continues into, and where its index sits. */
 function descend(
   step: JsonObject,
   rest: string[],
 ): { steps: unknown; skip: number } | null {
-  const [owner, key, list, next] = rest;
-  if (owner === "default" && key === "steps" && list !== undefined)
-    return {
-      steps: isObject(step["default"]) ? step["default"]["steps"] : undefined,
-      skip: 2,
-    };
-  if (list !== "steps" || next === undefined || key === undefined) return null;
-  if (owner === "cases") {
-    const branch = Array.isArray(step["cases"])
-      ? step["cases"][index(key)]
-      : undefined;
-    return { steps: isObject(branch) ? branch["steps"] : undefined, skip: 3 };
+  for (const block of blocksOf(step as unknown as Step)) {
+    const list = [...block.path.map(String), "steps"];
+    // The pointer goes on past the list, to a step in it.
+    if (
+      rest.length > list.length &&
+      list.every((segment, at) => rest[at] === segment)
+    ) {
+      const branch: unknown = block.branch;
+      return {
+        steps: isObject(branch) ? branch["steps"] : undefined,
+        skip: list.length,
+      };
+    }
   }
-  if (owner === "branches") {
-    const branch = isObject(step["branches"])
-      ? step["branches"][key]
-      : undefined;
-    return { steps: isObject(branch) ? branch["steps"] : undefined, skip: 3 };
+  // A block the step no longer has (a stale pointer) still takes the
+  // pointer, and no step is found in it.
+  const [field, key, list] = rest;
+  if (BLOCK_FIELDS.has(field)) {
+    const skip = key === "steps" ? 2 : list === "steps" ? 3 : 0;
+    if (skip && rest.length > skip) return { steps: undefined, skip };
   }
   return null;
 }

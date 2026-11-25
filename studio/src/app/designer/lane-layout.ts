@@ -24,6 +24,7 @@ import type {
   Target,
   Workflow,
 } from "../model";
+import { blocksOf, type BlockKind } from "../editor/step-blocks";
 import { branchName, parseCondition } from "./conditions";
 
 export const laneGeometry = {
@@ -59,23 +60,16 @@ export interface LaneLayout {
   targets: Target[];
   boundaries: { start: Point; end: Point };
 }
-const children = (step: Step): [string, Branch][] =>
-  step.kind === "parallel"
-    ? Object.entries(step["branches"] as Record<string, Branch>)
-    : step.kind === "switch"
-      ? [
-          ...(step["cases"] as Branch[]).map(
-            (branch, index): [string, Branch] => [`case ${index + 1}`, branch],
-          ),
-          ["default", step["default"] as Branch],
-        ]
-      : step.kind === "forEach"
-        ? [["body", step["body"] as Branch]]
-        : [];
+/** A step's blocks as [name, branch, kind]; an error path is told by its kind. */
+const children = (step: Step): [string, Branch, BlockKind][] =>
+  blocksOf(step).map((block) => [block.name, block.branch, block.kind]);
 const completes = (steps: Step[]): boolean =>
   steps.every((step) => {
     if (step.kind === "fail") return false;
-    const branches = children(step);
+    // A step with an error path goes on when it succeeds, whatever its path does.
+    const branches = children(step).filter(
+      ([, , kind]) => kind !== "errorPath",
+    );
     return (
       !branches.length ||
       (step.kind === "parallel"
@@ -175,10 +169,11 @@ export function computeLaneLayout(
       let laneLeft = point.x + nodeWidth / 2 - span / 2;
       const lanes: Lane[] = [];
       let bottom = laneTop + rowPitch;
-      for (const [name, branch] of branches) {
+      for (const [name, branch, kind] of branches) {
         const child = `${step.id}/${name}`;
         const laneWidth = sequenceWidth(branch.steps);
-        const label = branchName(step, name, workflow);
+        const label =
+          kind === "errorPath" ? "On error" : branchName(step, name, workflow);
         laneLabels.set(
           child,
           label === "Condition not set" ? `Case ${name.slice(5)}` : label,
@@ -265,6 +260,9 @@ export function computeLaneLayout(
       const split = `$split:${node.step.id}`,
         join = `$join:${node.step.id}`;
       edges.push({ from: node.step.id, to: split });
+      // A step with an error path also goes on directly when it succeeds.
+      if (branches.some(([, , kind]) => kind === "errorPath"))
+        edges.push({ from: split, to: join });
       for (const [name] of branches) {
         const owner = `${node.step.id}/${name}`;
         const first = owners.get(owner)?.[0];

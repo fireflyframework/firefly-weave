@@ -560,17 +560,24 @@ class AgentLogRepository:
         return [row["instance_key"] or step for row in rows]
 
     async def steps(self, run_id: UUID, step: str, keys: list[str]) -> list[StepRecord]:
-        """The facts of the activations at ``keys`` and of every turn, call and review under them, matched among the
-        step's facts in the run."""
+        """The facts of the activations at ``keys`` and of every turn, call and review under them.
+
+        The facts under an activation are the keys that start with its key and ``#``. In byte order (collation "C")
+        they are exactly the keys from ``key#`` up to ``key$``, since ``$`` follows ``#``, so each activation's are
+        read as one range of the ``step_facts_key_range`` index, which holds the keys with a ``#``.
+        """
+        columns = "f.instance_key,f.status,f.scheduled_at,f.started_at,f.ended_at,f.error_code,f.child_run_id"
         rows = await self.rows(
-            "SELECT f.instance_key,f.status,f.scheduled_at,f.started_at,f.ended_at,f.error_code,f.child_run_id "
-            f"FROM step_facts f WHERE {_STEP_SCOPE} AND f.node_id=:step AND (f.instance_key=ANY(:exact) OR "
-            "EXISTS(SELECT 1 FROM unnest(cast(:prefixes AS text[])) AS p(prefix) "
-            "WHERE starts_with(f.instance_key,p.prefix)))",
+            f"SELECT {columns} FROM step_facts f WHERE {_STEP_SCOPE} AND f.node_id=:step "
+            f"AND f.instance_key=ANY(:exact) UNION ALL SELECT {columns} "
+            "FROM unnest(cast(:low AS text[]),cast(:high AS text[])) AS k(low,high) "
+            f"JOIN step_facts f ON {_STEP_SCOPE} AND f.node_id=:step AND strpos(f.instance_key,'#')>0 "
+            'AND f.instance_key COLLATE "C">=k.low AND f.instance_key COLLATE "C"<k.high',
             run=run_id,
             step=step,
             exact=["" if key == step else key for key in keys],
-            prefixes=[key + "#" for key in keys],
+            low=[key + "#" for key in keys],
+            high=[key + "$" for key in keys],
         )
         return [
             StepRecord(
