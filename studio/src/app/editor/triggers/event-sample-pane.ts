@@ -40,11 +40,16 @@ import {
   replacedNote,
   SHARED_NOTE,
 } from "./event-sample";
-import { chosenEvents, readDeclaration } from "./event-trigger";
+import {
+  chosenEvents,
+  declaredSample,
+  eventInputState,
+  INPUT_UNREAD,
+  readDeclaration,
+} from "./event-trigger";
 import {
   currentPlatformEvent,
   EVENT_CHOICES,
-  sampleEvent,
   sampleId,
   type PlatformEventType,
 } from "./platform-event";
@@ -116,21 +121,23 @@ const TICK_MS = 1_000;
         </div>
       } @else {
         @let events = options();
+        @let no = blocked();
         <div class="es-field">
           <weave-select
             icon="chevronDown"
             label="Event"
             [options]="events"
             [value]="chosen() ?? ''"
-            [disabled]="!events.length"
+            [disabled]="!events.length || !!no"
             [describedBy]="id + '-hint'"
             (choose)="pick($event)"
           />
-          <p class="es-hint" [id]="id + '-hint'">
+          <p class="es-hint" aria-live="polite" [id]="id + '-hint'">
             {{
-              events.length
-                ? "Only the events this trigger reacts to."
-                : "Choose at least one event first."
+              no ??
+                (events.length
+                  ? "Only the events this trigger reacts to."
+                  : "Choose at least one event first.")
             }}
           </p>
         </div>
@@ -138,7 +145,8 @@ const TICK_MS = 1_000;
           <button
             type="button"
             class="pane-generate es-generate"
-            [disabled]="!events.length"
+            [disabled]="!events.length || !!no"
+            [attr.aria-describedby]="no ? id + '-hint' : null"
             (click)="generate()"
           >
             <weave-icon name="refresh" [size]="16" />{{
@@ -150,6 +158,8 @@ const TICK_MS = 1_000;
           <button
             type="button"
             class="pane-generate es-offer"
+            [disabled]="!!no"
+            [attr.aria-describedby]="no ? id + '-hint' : null"
             (click)="paste()"
           >
             <weave-icon name="upload" [size]="16" />Paste a sample event
@@ -158,7 +168,7 @@ const TICK_MS = 1_000;
         @if (problem()) {
           <p class="es-problem" role="alert">{{ problem() }}</p>
         }
-        @if (summary()) {
+        @if (!no && summary()) {
           @if (pasted()) {
             <div class="es-callout" data-tone="info" role="note">
               <weave-icon name="info" [size]="16" />
@@ -388,6 +398,19 @@ export class EventSample {
   pasted(): boolean {
     return this.session().controller.testEventSource() === "manual";
   }
+  /** Why no event can be tested with here: the input takes none, or no check has said; null when it can. */
+  blocked(): string | null {
+    const { controller, host } = this.session();
+    const state = eventInputState(
+      host.model.definition,
+      controller.checkedInput(),
+    );
+    return state === "refused"
+      ? "This workflow's input doesn't take the platform event. Reset the input in Parameters to test with one."
+      : state === "unread"
+        ? INPUT_UNREAD
+        : null;
+  }
   summary() {
     return eventSummary(this.sample());
   }
@@ -412,9 +435,8 @@ export class EventSample {
     const type = this.chosen();
     if (!type) return;
     const session = this.session();
-    const declared = readDeclaration(session.host.model.definition);
-    const value = sampleEvent(type, {
-      source: declared?.from?.[0],
+    const value = declaredSample(session.host.model.definition, {
+      type,
       now: new Date(),
       id: sampleId,
     }) as Json;

@@ -45,6 +45,7 @@ import {
   eventInputState,
   eventProblems,
   INPUT_REFUSED,
+  INPUT_UNREAD,
   INPUT_UNSURE,
   loopWarning,
   MAX_SOURCES,
@@ -130,6 +131,7 @@ export class EventTriggerDetails {
   }));
   readonly refused = INPUT_REFUSED;
   readonly unsure = INPUT_UNSURE;
+  readonly unchecked = INPUT_UNREAD;
   readonly most = MAX_SOURCES;
   /** The name being typed, and what is wrong with it. */
   readonly text = signal("");
@@ -389,13 +391,9 @@ export class EventTriggerDetails {
 
   // --------------------------------------------------------------- input
   inputState(): EventInputState {
-    const host = this.session().host;
     return eventInputState(
       this.workflow(),
-      host.diagnostics && {
-        definition: host.diagnosticsDefinition,
-        diagnostics: host.diagnostics.diagnostics,
-      },
+      this.session().controller.checkedInput(),
     );
   }
   /** The support code of what the check found at the input. */

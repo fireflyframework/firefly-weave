@@ -117,6 +117,8 @@ export interface NotifyTeamOptions {
   catalog?: (route: Route) => Promise<void>;
   capabilities?: string[];
   drafts?: string[];
+  /** What a check waits for before the host answers it. */
+  check?: () => Promise<void>;
   /** The platform event's fields, when the host doesn't answer them as it does. */
   view?: (route: Route) => Promise<void>;
 }
@@ -136,6 +138,11 @@ export async function openNotifyTeam(
         capabilities: options.capabilities ?? allCapabilities,
       });
       await routeValidate(p);
+      if (options.check)
+        await p.route("**/studio/local/validate", async (route) => {
+          await options.check!();
+          await route.fallback();
+        });
       await withLanguageFeatures(p, ["flow.eventTrigger"]);
       await p.route(
         /\/projects\/[^/]+\/catalog$/,

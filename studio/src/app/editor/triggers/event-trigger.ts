@@ -260,16 +260,19 @@ export interface CheckedInput {
 }
 /**
  * Whether the platform event is what the workflow's input takes: the input is
- * the event itself; a check refused it ("refused") or couldn't compare them
- * ("unsure"); or the workflow reads it through an input of its own.
+ * the event itself; no check has read the input yet ("unread"); a check
+ * refused it ("refused") or couldn't compare them ("unsure"); or the workflow
+ * reads it through an input of its own.
  */
-export type EventInputState = "event" | "refused" | "unsure" | "own";
+export type EventInputState = "event" | "unread" | "refused" | "unsure" | "own";
 
 const INPUT_PATH = "/spec/inputSchema";
 export const INPUT_REFUSED =
   "This trigger can't start runs: the workflow's input doesn't accept the platform event.";
 export const INPUT_UNSURE =
   "Studio can't confirm that the platform event fits this workflow's input.";
+export const INPUT_UNREAD =
+  "The next check says whether this workflow's input takes the platform event.";
 
 /**
  * The state of the workflow's input as the last check left it; a check that
@@ -288,7 +291,7 @@ export function eventInputState(
     !isJsonObject(spec) ||
     !jsonEqual((spec["inputSchema"] ?? null) as Json, (schema ?? null) as Json)
   )
-    return "own";
+    return "unread";
   const found = (code: string) =>
     checked.diagnostics.some(
       (item) =>

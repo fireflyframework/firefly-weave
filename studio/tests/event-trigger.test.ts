@@ -384,15 +384,26 @@ describe("what a check says of the input", () => {
     ).toBe(state);
   });
 
-  it("says nothing of an input the check didn't see", () => {
+  it("is unread until a check has read this input", () => {
     const now = workflow({ inputSchema: FORM });
-    expect(eventInputState(now, null)).toBe("own");
+    expect(eventInputState(now, null)).toBe("unread");
     expect(
       eventInputState(
         now,
         checked({ type: "string" }, "WV-COMP-TYPE_MISMATCH"),
       ),
-    ).toBe("own");
+    ).toBe("unread");
+    // The platform event waits for no check, and needs none.
+    expect(eventInputState(workflow(), null)).toBe("event");
+  });
+
+  it("says nothing of what a check found elsewhere", () => {
+    const now = workflow({ inputSchema: FORM });
+    expect(eventTileFacts(now, null)).toEqual({
+      errors: [],
+      warnings: [],
+      setup: [],
+    });
     expect(
       eventInputState(now, {
         definition: now,

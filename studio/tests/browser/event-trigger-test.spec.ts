@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   ATTENTION,
+  FORM,
   openEventTrigger,
   openNotifyTeam,
 } from "./event-trigger-po";
@@ -402,6 +403,39 @@ test.describe("a later step of a workflow a platform event starts", () => {
     await expect(again).toHaveText(/Try again in (?:10|9|8|7) s/);
     // A sample doesn't need the fields.
     await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(
+      pane.getByText("Sample ready. Execute workflow starts from it."),
+    ).toBeVisible();
+  });
+
+  test("builds and takes no event that the workflow's input refuses", async ({
+    page,
+  }) => {
+    let answer: () => void = () => undefined;
+    const read = new Promise<void>((done) => (answer = done));
+    const details = await openNotifyTeam(page, {
+      spec: { inputSchema: FORM },
+      check: () => read,
+    });
+    const dialog = await openEventTrigger(page, details);
+    const pane = await testEvent(page, dialog);
+    const generate = pane.getByRole("button", { name: "Generate sample" });
+    const paste = pane.getByRole("button", { name: "Paste a sample event" });
+    // Nothing has compared them yet.
+    await expect(pane).toContainText(
+      "The next check says whether this workflow's input takes the platform event.",
+    );
+    await expect(generate).toBeDisabled();
+    answer();
+    const refused =
+      "This workflow's input doesn't take the platform event. Reset the input in Parameters to test with one.";
+    await expect(pane).toContainText(refused);
+    await expect(generate).toBeDisabled();
+    await expect(generate).toHaveAccessibleDescription(refused);
+    await expect(paste).toBeDisabled();
+    await dialog.getByRole("button", { name: "Reset the input" }).click();
+    await expect(pane).not.toContainText(refused);
+    await generate.click();
     await expect(
       pane.getByText("Sample ready. Execute workflow starts from it."),
     ).toBeVisible();

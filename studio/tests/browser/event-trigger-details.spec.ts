@@ -348,6 +348,27 @@ test.describe("the Platform event trigger's Parameters", () => {
     await expect(field(dialog)).toBeVisible();
   });
 
+  test("says nothing of an input of its own until a check has read it", async ({
+    page,
+  }) => {
+    let answer: () => void = () => undefined;
+    const read = new Promise<void>((done) => (answer = done));
+    const details = await openNotifyTeam(page, {
+      spec: { inputSchema: FORM },
+      check: () => read,
+    });
+    const dialog = await openEventTrigger(page, details);
+    const input = inputSection(dialog);
+    await expect(input).toContainText(
+      "The next check says whether this workflow's input takes the platform event.",
+    );
+    await expect(input).not.toContainText("Runs start with");
+    answer();
+    await expect(input).toContainText(
+      "Runs start with these 2 fields, not the platform event.",
+    );
+  });
+
   test("an input Studio can't compare gets a warning, not an error", async ({
     page,
   }) => {

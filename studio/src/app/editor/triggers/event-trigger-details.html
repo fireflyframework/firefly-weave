@@ -284,6 +284,8 @@ SPDX-License-Identifier: Apache-2.0
       {{ ownCount() ? "these " + ownCount() : "this input" }}, not the platform
       event.
     </p>
+  } @else if (state === "unread") {
+    <p class="et-caption">{{ unchecked }}</p>
   } @else {
     <p class="et-caption">
       Runs start with the platform event, read through this workflow's own

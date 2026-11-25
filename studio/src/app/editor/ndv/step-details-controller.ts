@@ -2480,6 +2480,16 @@ export class StepDetailsController {
     model.canvas = next;
   }
 
+  /** What the last check found, and the definition it read; null before the first. */
+  checkedInput(): CheckedInput | null {
+    const { diagnostics, diagnosticsDefinition } = this.host;
+    return (
+      diagnostics && {
+        definition: diagnosticsDefinition,
+        diagnostics: diagnostics.diagnostics,
+      }
+    );
+  }
   /** The platform event's fields as the Studio host serves them; null until they're read. */
   eventFields(): JsonObject | null {
     const view = currentPlatformEvent(this.host.api);
@@ -2537,13 +2547,7 @@ export class StepDetailsController {
   diagnostics(target: string): StepDiagnostic[] {
     const choice = this.triggerChoice(target);
     if (choice?.kind === "event")
-      return eventDiagnostics(
-        this.host.model.definition,
-        this.host.diagnostics && {
-          definition: this.host.diagnosticsDefinition,
-          diagnostics: this.host.diagnostics.diagnostics,
-        },
-      );
+      return eventDiagnostics(this.host.model.definition, this.checkedInput());
     if (choice) return choiceDiagnostics(choice);
     const result = this.host.diagnostics;
     if (!result) return [];
