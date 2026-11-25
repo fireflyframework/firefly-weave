@@ -75,6 +75,14 @@ const route = (id: string, first: Step[], otherwise: Step[]): Step =>
     cases: [{ when: { literal: true }, steps: first, output: { literal: {} } }],
     default: { steps: otherwise, output: { literal: {} } },
   }) as Step;
+const fork = (id: string, first: Step[], second: Step[]): Step =>
+  ({
+    ...createStep("parallel", id),
+    branches: {
+      first: { steps: first, output: { literal: null } },
+      second: { steps: second, output: { literal: null } },
+    },
+  }) as Step;
 const layoutOf = (steps: Step[]): LtrLayout => {
   const workflow = freshWorkflow();
   workflow.spec.steps = steps;
@@ -621,6 +629,26 @@ describe("a transaction's points of no return", () => {
       [route("inner", [last("b")], [held("c")])],
     );
     expect(tile(nested, "b").y - tile(nested, "a").y).toBe(LTR.lane + 40);
+    // So is a parallel step.
+    const both = paths([held("a")], [fork("inner", [last("b")], [step("c")])]);
+    expect(tile(both, "b").y - tile(both, "a").y).toBe(LTR.lane + 40);
+    expect(tile(both, "c").y - tile(both, "b").y).toBe(LTR.lane);
+  });
+
+  it("is drawn for a transaction in another step's error path, or another transaction's", () => {
+    const lower = transaction("lower", [last("submit")]);
+    for (const outer of [
+      guarded("move", [held("add")], [lower]),
+      {
+        ...step("lookup", "action"),
+        onError: "errorOutput",
+        errorPath: { steps: [lower], output: { literal: null } },
+      } as Step,
+    ]) {
+      const layout = layoutOf([outer]);
+      expect(layout.dividers.map(({ stepId }) => stepId)).toEqual(["submit"]);
+      expect(frame(layout, "lower").y).toBe(tile(layout, "submit").y - 88);
+    }
   });
 
   it("keeps the next path and what follows clear of a lower row", () => {
@@ -666,7 +694,7 @@ describe("a transaction's points of no return", () => {
     expect(box.y + box.height).toBe(submit.y + 184 + 24);
   });
 
-  it("is never drawn outside a transaction, nor inside a loop or a parallel step of one", () => {
+  it("is never drawn outside a transaction, nor inside a loop of one", () => {
     expect(layoutOf([last("submit"), step("notify")]).dividers).toEqual([]);
     expect(
       layoutOf([transaction("move", [loop("each", [last("submit")])])])

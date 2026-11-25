@@ -494,8 +494,9 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     steps.some(
       (step) =>
         points.has(step.id) ||
-        // A decision's first path is on its own row.
-        (step.kind === "switch" && labeled(lanesOf(step)[0]?.steps ?? [])),
+        // A decision's first path, and a parallel step's, is on its own row.
+        ((step.kind === "switch" || step.kind === "parallel") &&
+          labeled(lanesOf(step)[0]?.steps ?? [])),
     );
   /** The room a path takes above its row: the frames it draws there, and a line's label. */
   const laneRise = (steps: readonly Step[]): number =>

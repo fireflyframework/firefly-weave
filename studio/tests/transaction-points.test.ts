@@ -371,6 +371,17 @@ describe("where a step that can be undone may go after a parallel step", () => {
   it("has no reason where no run gets to: one of its branches always stops", () => {
     expect(drop([last("submit")], [createStep("fail", "stop")])).toBeNull();
   });
+
+  it("has none after a step that can't be undone that no run gets to", () => {
+    expect(
+      dropAfterPointOfNoReturn(
+        move(createStep("fail", "stop"), last("submit")),
+        reversible("add"),
+        "move/steps",
+        2,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("what a waiting step finds held", () => {
@@ -388,6 +399,22 @@ describe("what a waiting step finds held", () => {
       ),
     ).toEqual([]);
     expect(held(reserved("a"), last("submit"), pause())).toEqual([]);
+    // A path that can't be undone any more reserves nothing that is held.
+    expect(
+      held(
+        decision("route", [last("submit"), reserved("a")], [plain("build")]),
+        pause(),
+      ),
+    ).toEqual([]);
+    expect(
+      held(last("submit"), fork("both", [pause()], [reserved("a")])),
+    ).toEqual([]);
+  });
+
+  it("is what a parallel step's branches reserved, after it", () => {
+    expect(
+      held(fork("both", [reserved("a")], [plain("build")]), pause()),
+    ).toEqual(["a"]);
   });
 
   it("is what the other branches around it can reserve, never what comes after it in its own", () => {
