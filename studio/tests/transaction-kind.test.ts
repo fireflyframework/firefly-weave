@@ -28,6 +28,7 @@ import {
 } from "../src/app/editor/add-step/insert";
 import { shown, startState } from "../src/app/editor/add-step/panel-model";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
+import { breadcrumb } from "../src/app/editor/ndv/navigation";
 import { ndvRegistry } from "../src/app/editor/ndv/registry";
 import { readClipboard } from "../src/app/editor/state/clipboard";
 import { blocksOf } from "../src/app/editor/step-blocks";
@@ -149,6 +150,12 @@ describe("the Transaction step", () => {
     expect(ownerLabel("move/steps", steps)).toBe("Transaction move");
     expect(ownerLabel("move/steps")).toBe("Transaction move");
     expect(ownerLabel("move/errorPath", steps)).toBe("On error of move");
+    // Where a step runs, in step details: its transaction, its error path.
+    expect(breadcrumb(nested(), "hold")).toBe("Transaction move · step 1 of 3");
+    expect(breadcrumb(nested(), "tell")).toBe(
+      "Error path of move · step 1 of 1",
+    );
+    expect(breadcrumb(nested(), "notify")).toBe("Main sequence · step 2 of 2");
     // A parallel branch may be called steps too.
     const fan = step({
       id: "fan",

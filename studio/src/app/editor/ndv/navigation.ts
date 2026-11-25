@@ -39,6 +39,8 @@ interface Lane {
   steps: Step[];
   ownerStep: string | null;
   label: string;
+  /** The lane with its owner: "Otherwise of check", "Transaction move". */
+  where: string;
   /** A decision's Otherwise: it runs when no path applies. */
   otherwise: boolean;
   /** A step's error path: the step goes on past it whenever it succeeds. */
@@ -66,13 +68,19 @@ function laneLabel(owner: Step, block: StepBlock, workflow: Workflow): string {
 
 /** Every lane of a step, in block order (paths, then Otherwise; branches; a body; the error path). */
 function lanesOf(step: Step, workflow: Workflow): Lane[] {
-  return blocksOf(step).map((block) => ({
-    steps: blockSteps(block).filter(isStep),
-    ownerStep: step.id,
-    label: laneLabel(step, block, workflow),
-    otherwise: block.kind === "default",
-    errorPath: block.kind === "errorPath",
-  }));
+  return blocksOf(step).map((block) => {
+    const label = laneLabel(step, block, workflow);
+    // A transaction is its own block: its steps run in "Transaction move".
+    const of = block.path.length ? " of " : " ";
+    return {
+      steps: blockSteps(block).filter(isStep),
+      ownerStep: step.id,
+      label,
+      where: label + of + step.id,
+      otherwise: block.kind === "default",
+      errorPath: block.kind === "errorPath",
+    };
+  });
 }
 
 function walk(
@@ -90,6 +98,7 @@ function walk(
     steps: workflow.spec.steps.filter(isStep),
     ownerStep: null,
     label: "Main sequence",
+    where: "Main sequence",
     otherwise: false,
     errorPath: false,
   });
@@ -144,12 +153,10 @@ export function placeOf(workflow: Workflow, id: string): Place | null {
 }
 
 export function breadcrumb(workflow: Workflow, id: string): string {
-  const place = placeOf(workflow, id);
-  if (!place) return "";
-  const where = place.ownerStep
-    ? `${place.lane} of ${place.ownerStep}`
-    : place.lane;
-  return `${where} · step ${place.index + 1} of ${place.count}`;
+  const at = laneOf(workflow, id);
+  return at
+    ? `${at.lane.where} · step ${at.index + 1} of ${at.lane.steps.length}`
+    : "";
 }
 
 export function adjacent(
