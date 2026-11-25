@@ -32,6 +32,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.idempotency import Idempotency
+from firefly_weave.runtime.record_repair import PURGE_BYTES, PURGE_EVENTS, Repair, read_repair, settle_for_purge
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.waits import TERMINAL
@@ -63,6 +64,13 @@ class RunLifecycleService:
             purged_at=row["purged_at"],
         )
 
+    async def _repair(self, actor: Principal, scope: Scope, identifier: UUID, context: AuditContext) -> Repair:
+        """What the run's history says about the transaction records an earlier version left unsettled, which would
+        refuse its purge; read before the purge takes the project's lock."""
+        async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
+            self.runtime.require(await load_principal(tx.session, actor.id), scope, "run.purge", context)
+            return await read_repair(RuntimeRepository(tx), identifier, limit=PURGE_BYTES, events=PURGE_EVENTS)
+
     async def command(
         self,
         actor: Principal,
@@ -77,6 +85,7 @@ class RunLifecycleService:
         if action not in {"archive", "restore", "purge"}:
             raise ValueError("Unknown lifecycle command")
         capability = "run.purge" if action == "purge" else "run.archive"
+        repair = await self._repair(actor, scope, identifier, context) if action == "purge" else Repair()
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.runtime.require(actor, scope, capability, context)
@@ -112,6 +121,7 @@ class RunLifecycleService:
                     raise CatalogError(409, "WV-RUN-NOT-ARCHIVED", "Archive the execution before permanent deletion")
                 try:
                     async with tx.session.begin_nested():
+                        await settle_for_purge(repository, identifier, repair)
                         await tx.session.execute(
                             text("SELECT weave_purge_run(:id,:revision)"),
                             {"id": identifier, "revision": request.expected_revision},
@@ -123,8 +133,8 @@ class RunLifecycleService:
                         409,
                         "WV-RUN-PURGE-BLOCKED",
                         "Run has a live lease, a running or undelivered workflow call, a trigger start still waiting "
-                        "to run, or retained email, trigger, schedule, or retry references; "
-                        "archive it until dependencies can be retired",
+                        "to run, a transaction whose outcome its history doesn't show, or retained email, trigger, "
+                        "schedule, or retry references; archive it until dependencies can be retired",
                     ) from None
             else:
                 archived = action == "archive"

@@ -476,6 +476,47 @@ async def emit(
     )
 
 
+async def write_record(
+    repository: RuntimeRepository, run_id: UUID, key: str, record: TransactionRecord, decided: datetime | None
+) -> bool:
+    """Write one transaction's record, unless the row already holds this revision or a later one; True when written."""
+    rows = await repository.rows(
+        "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
+        "business_key,cause,participants,revision,opened_at,decided_at,ended_at,incident_key) VALUES(:tenant,"
+        ":project,:environment,:run,:key,:node,:state,:business_key,cast(:cause AS jsonb),"
+        "cast(:participants AS jsonb),:revision,:opened,:decided,:ended,:incident) "
+        "ON CONFLICT(run_id,instance_key) DO UPDATE SET state=excluded.state,"
+        "business_key=excluded.business_key,cause=excluded.cause,participants=excluded.participants,"
+        "revision=excluded.revision,decided_at=coalesce(run_transactions.decided_at,excluded.decided_at),"
+        # The latest in-doubt incident stays named once a person resolved it, so reads find its resolution.
+        "ended_at=excluded.ended_at,incident_key=coalesce(excluded.incident_key,run_transactions.incident_key) "
+        "WHERE run_transactions.revision<excluded.revision RETURNING instance_key",
+        run=run_id,
+        key=key,
+        node=instance_view(key).node_id,
+        state=record.status,
+        business_key=None if record.business_key_withheld else record.business_key,
+        cause=None if record.cause is None else record.cause.model_dump_json(),
+        participants=json.dumps(participants_view(record.participants)),
+        revision=record.revision,
+        opened=record.opened_at,
+        decided=decided,
+        ended=record.ended_at,
+        incident=record.incident,
+    )
+    return bool(rows)
+
+
+async def refresh_transaction_state(repository: RuntimeRepository, run_id: UUID) -> None:
+    """The run's transaction state: the worst of its records'."""
+    await repository.execute(
+        "UPDATE run_facts SET transaction_state=(SELECT state FROM run_transactions t "
+        f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+        f"ORDER BY CASE t.state {_ORDER} END LIMIT 1) WHERE {SCOPE} AND run_id=:run",
+        run=run_id,
+    )
+
+
 async def project_transactions(
     repository: RuntimeRepository, view: "RunView", result: Transition, event: RuntimeEvent
 ) -> None:
@@ -507,30 +548,7 @@ async def project_transactions(
     for key in changed:
         record = result.transaction(key)
         decided = event.timestamp if record.decided_at_sequence == event.sequence else None
-        await repository.execute(
-            "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
-            "business_key,cause,participants,revision,opened_at,decided_at,ended_at,incident_key) VALUES(:tenant,"
-            ":project,:environment,:run,:key,:node,:state,:business_key,cast(:cause AS jsonb),"
-            "cast(:participants AS jsonb),:revision,:opened,:decided,:ended,:incident) "
-            "ON CONFLICT(run_id,instance_key) DO UPDATE SET state=excluded.state,"
-            "business_key=excluded.business_key,cause=excluded.cause,participants=excluded.participants,"
-            "revision=excluded.revision,decided_at=coalesce(run_transactions.decided_at,excluded.decided_at),"
-            # The latest in-doubt incident stays named once a person resolved it, so reads find its resolution.
-            "ended_at=excluded.ended_at,incident_key=coalesce(excluded.incident_key,run_transactions.incident_key) "
-            "WHERE run_transactions.revision<excluded.revision",
-            run=view.id,
-            key=key,
-            node=instance_view(key).node_id,
-            state=record.status,
-            business_key=None if record.business_key_withheld else record.business_key,
-            cause=None if record.cause is None else record.cause.model_dump_json(),
-            participants=json.dumps(participants_view(record.participants)),
-            revision=record.revision,
-            opened=record.opened_at,
-            decided=decided,
-            ended=record.ended_at,
-            incident=record.incident,
-        )
+        await write_record(repository, view.id, key, record, decided)
         if record.status in EVENT_STATES and before.get(key) != record.status:
             measure = transaction_measure(record, result.state.incidents)
             if measure is not None:
@@ -548,12 +566,7 @@ async def project_transactions(
                 )
                 facts = rows[0] if rows else {"workflow_name": "", "workflow_version": "", "test": False}
             await emit(repository, view.id, key, record, result.state.incidents, event.timestamp, facts)
-    await repository.execute(
-        "UPDATE run_facts SET transaction_state=(SELECT state FROM run_transactions t "
-        f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
-        f"ORDER BY CASE t.state {_ORDER} END LIMIT 1) WHERE {SCOPE} AND run_id=:run",
-        run=view.id,
-    )
+    await refresh_transaction_state(repository, view.id)
 
 
 def phase_of(key: str) -> str | None:

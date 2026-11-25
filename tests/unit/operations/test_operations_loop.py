@@ -218,6 +218,7 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "forget_conversations", swept)
+    monkeypatch.setattr(loop, "repair_records", swept)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
     assert pages == [(16, True)]
@@ -259,6 +260,7 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "forget_conversations", swept)
+    monkeypatch.setattr(loop, "repair_records", swept)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
 
@@ -285,6 +287,7 @@ async def test_a_quantum_that_outlives_its_wall_clock_guard_is_cancelled(monkeyp
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "forget_conversations", swept)
+    monkeypatch.setattr(loop, "repair_records", swept)
     async with asyncio.timeout(2):
         assert await loop.cycle() is False
 
@@ -313,6 +316,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     monkeypatch.setattr(loop, "sweep_step_tests", swept)
     monkeypatch.setattr(loop, "maintain_logs", swept)
     monkeypatch.setattr(loop, "forget_conversations", swept)
+    monkeypatch.setattr(loop, "repair_records", swept)
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     async with saturated_requests():
         assert await loop.cycle() is True
@@ -365,7 +369,7 @@ async def no_statistics(scope, deadline):
     return None
 
 
-async def test_each_environment_visit_forgets_expired_conversations_after_the_logs(monkeypatch):
+async def test_each_environment_visit_repairs_transaction_records_after_the_other_upkeep(monkeypatch):
     loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
     steps: list[str] = []
 
@@ -377,13 +381,106 @@ async def test_each_environment_visit_forgets_expired_conversations_after_the_lo
         return run
 
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
-    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "forget_conversations"):
+    visit = [
+        "revalidate",
+        "maintain_changes",
+        "sweep_step_tests",
+        "maintain_logs",
+        "forget_conversations",
+        "repair_records",
+    ]
+    for name in visit:
         monkeypatch.setattr(loop, name, step(name))
 
     await loop._environment(authority())
 
-    assert steps == ["revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "forget_conversations"]
-    assert operations.UPKEEP_STEPS == 4
+    assert steps == visit
+    assert operations.UPKEEP_STEPS == 5
+
+
+def repairing(monkeypatch, reads, writes=None):
+    """A loop whose runs to repair are ``reads``, in order: what reading each one gives, or the error it raises."""
+    from firefly_weave.runtime import record_repair
+
+    loop = OperationsLoop(settings(), None, LoopHealth(), monotonic=lambda: 0.0)  # type: ignore[arg-type]
+    taken: list[object] = []
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation, admission=True):
+        yield SimpleNamespace(scope=scope.scope)
+
+    async def unsettled(repository, after, limit):
+        runs = sorted(reads)
+        return runs[0 if after is None else runs.index(after) + 1 :]
+
+    async def read(repository, run_id, *, known=()):
+        taken.append((run_id, sorted(known)))
+        answer = reads[run_id].pop(0) if len(reads[run_id]) > 1 else reads[run_id][0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def write(repository, run_id, repair):
+        answer = (writes or {}).get(run_id, sorted(repair.records))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(loop, "_unit", unit)
+    for name, value in (("unsettled_runs", unsettled), ("read_repair", read), ("write_repair", write)):
+        monkeypatch.setattr(record_repair, name, value)
+    return loop, taken
+
+
+async def test_a_run_whose_repair_fails_never_pins_the_ones_after_it(monkeypatch, caplog):
+    from firefly_weave.runtime.record_repair import Repair
+
+    runs = sorted(uuid4() for _ in range(2))
+    done = Repair(records={"move[0]": (None, None)})  # type: ignore[dict-item]
+    loop, taken = repairing(monkeypatch, {runs[0]: [RuntimeError("bad row")], runs[1]: [done]})
+    scope = authority()
+
+    assert await loop.repair_records(scope, 1.0) is False
+    assert "Operations repair of transaction records failed (RuntimeError)" in caplog.text
+    assert await loop.repair_records(scope, 1.0) is True
+    assert [run for run, _ in taken] == runs
+
+
+async def test_a_run_is_read_again_only_while_there_is_more_of_it_to_repair(monkeypatch):
+    from firefly_weave.runtime.record_repair import Repair
+
+    run, busy = sorted(uuid4() for _ in range(2))
+    first = Repair(records={"move[0]": (None, None)}, left={"move[1]": "differs"}, more=True)  # type: ignore[dict-item]
+    last = Repair(records={"move[2]": (None, None)})  # type: ignore[dict-item]
+    again = Repair(records={"move[0]": (None, None)}, more=True)  # type: ignore[dict-item]
+    loop, taken = repairing(monkeypatch, {run: [first, last], busy: [again]}, {busy: None})
+
+    assert await loop.repair_records(authority(), 1.0) is True
+    # What it left is not looked at again, and a busy run is passed over.
+    assert taken == [(run, []), (run, ["move[1]"]), (busy, [])]
+
+
+async def test_a_project_at_its_capacity_is_left_for_the_next_visit(monkeypatch, caplog):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime.record_repair import Repair
+
+    run = uuid4()
+    full = CatalogError(429, "WV-OPERATION-CAPACITY", "Operation capacity unavailable")
+    done = Repair(records={"move[0]": (None, None)})  # type: ignore[dict-item]
+    loop, _ = repairing(monkeypatch, {run: [done]}, {run: full})
+
+    assert await loop.repair_records(authority(), 1.0) is True
+    assert caplog.records == []
+
+
+async def test_the_repair_refuses_an_authority_the_catalog_did_not_mint():
+    from firefly_weave.access.authorization import AccessDenied
+
+    loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
+    forged = SimpleNamespace(scope=Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()))
+
+    with pytest.raises(AccessDenied):
+        await loop.repair_records(forged, 1.0)  # type: ignore[arg-type]
 
 
 async def test_a_failed_conversation_sweep_marks_the_quantum_incomplete(monkeypatch):
@@ -403,7 +500,7 @@ async def test_a_failed_conversation_sweep_marks_the_quantum_incomplete(monkeypa
 
     monkeypatch.setattr(loop, "_unit", unit)
     monkeypatch.setattr(agent_conversations, "sweep", failing)
-    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs"):
+    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "repair_records"):
         monkeypatch.setattr(loop, name, swept)
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
 
