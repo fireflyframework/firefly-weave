@@ -32,7 +32,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.idempotency import Idempotency
-from firefly_weave.runtime.record_repair import PURGE_BYTES, PURGE_EVENTS, Repair, read_repair, settle_for_purge
+from firefly_weave.runtime.record_repair import PURGE_BYTES, Repair, read_repair, settle_for_purge
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.waits import TERMINAL
@@ -67,9 +67,11 @@ class RunLifecycleService:
     async def _repair(self, actor: Principal, scope: Scope, identifier: UUID, context: AuditContext) -> Repair:
         """What the run's history says about the transaction records an earlier version left unsettled, which would
         refuse its purge; read before the purge takes the project's lock."""
+        found = Repair()
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
             self.runtime.require(await load_principal(tx.session, actor.id), scope, "run.purge", context)
-            return await read_repair(RuntimeRepository(tx), identifier, limit=PURGE_BYTES, events=PURGE_EVENTS)
+            await read_repair(RuntimeRepository(tx), identifier, found, limit=PURGE_BYTES)
+        return found
 
     async def command(
         self,

@@ -90,13 +90,15 @@ async def due_terminal(repository: RuntimeRepository, row: dict[str, Any]) -> Ru
 
 
 UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
+# The keys of the transactions that a run's own state names.
+HELD_KEYS_SQL = (
+    "ARRAY(SELECT jsonb_object_keys("
+    "CASE WHEN jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) "
+    f"FROM runs r WHERE r.{SCOPE.replace(' AND ', ' AND r.')} AND r.id=:run)"
+)
 # The transactions a run still holds: unsettled records whose key the run's own state names. Earlier versions left the
 # record of a transaction that ended with its loop iteration unsettled, and the state no longer names that one.
-HELD_SQL = (
-    f"{SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} AND instance_key=ANY(ARRAY(SELECT jsonb_object_keys("
-    "CASE WHEN jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) "
-    f"FROM runs r WHERE r.{SCOPE.replace(' AND ', ' AND r.')} AND r.id=:run))"
-)
+HELD_SQL = f"{SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} AND instance_key=ANY({HELD_KEYS_SQL})"
 
 
 async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:

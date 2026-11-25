@@ -17,7 +17,11 @@
 """Repairing the records earlier versions left unsettled, on real PostgreSQL: each one is written only from the event
 of the run's own history that ended its transaction, recomputed and found equal to what was recorded."""
 
+import asyncio
 import logging
+import pkgutil
+import threading
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -82,13 +86,50 @@ def earlier(monkeypatch):
     return lambda: monkeypatch.setattr(settlement, "project_transactions", current)
 
 
-async def repair(platform, run_id: UUID, **options: Any):
-    """One run's repair as the operations loop does it: read and recompute first, then write under the run's lock."""
-    from firefly_weave.runtime.record_repair import read_repair, write_repair
+@pytest.fixture(autouse=True)
+def patient(monkeypatch):
+    """A loaded machine never makes a read or a write too slow, unless a test sets the limit."""
+    from firefly_weave.operations import loop as operations
+
+    for limit in ("REPAIR_READ_SECONDS", "REPAIR_WRITE_SECONDS"):
+        monkeypatch.setattr(operations, limit, 20.0)
+
+
+@pytest.fixture
+def slow(monkeypatch):
+    """Reducing the events that ``when`` names goes on until ``end`` is set; ``asked`` are the sequences it took."""
+    from firefly_weave.runtime import kernel
+
+    current = kernel.transition
+    this = SimpleNamespace(when=lambda state, event: False, end=threading.Event(), asked=[])
+
+    def reducing(state, event, artifact):
+        if this.when(state, event):
+            this.asked.append(event.sequence)
+            this.end.wait(30)
+        return current(state, event, artifact)
+
+    monkeypatch.setattr(kernel, "transition", reducing)
+    yield this
+    this.end.set()
+
+
+async def read(platform, run_id: UUID, **options: Any):
+    from firefly_weave.runtime.record_repair import Repair, read_repair
     from firefly_weave.runtime.repository import RuntimeRepository
 
+    found = Repair()
     async with platform.runtime.definitions.transaction(platform.scope, None, mutation=False) as tx:
-        found = await read_repair(RuntimeRepository(tx), run_id, **options)
+        await read_repair(RuntimeRepository(tx), run_id, found, **options)
+    return found
+
+
+async def repair(platform, run_id: UUID, **options: Any):
+    """One run's repair: read and recompute first, then write under the run's lock."""
+    from firefly_weave.runtime.record_repair import write_repair
+    from firefly_weave.runtime.repository import RuntimeRepository
+
+    found = await read(platform, run_id, **options)
     async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
         return found, await write_repair(RuntimeRepository(tx), run_id, found)
 
@@ -177,15 +218,12 @@ async def test_a_second_pass_finds_nothing_and_writes_nothing(platform, reconcil
 
 
 async def test_a_repair_read_twice_is_written_once(platform, earlier):
-    from firefly_weave.runtime.record_repair import read_repair, write_repair
+    from firefly_weave.runtime.record_repair import write_repair
     from firefly_weave.runtime.repository import RuntimeRepository
 
     run = await start(platform, BODY, 1)
     await go_back(platform, "[0]")
-    plans = []
-    for _ in range(2):
-        async with platform.runtime.definitions.transaction(platform.scope, None, mutation=False) as tx:
-            plans.append(await read_repair(RuntimeRepository(tx), run.id))
+    plans = [await read(platform, run.id) for _ in range(2)]
     written_by = []
     for plan in plans:
         async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
@@ -193,17 +231,38 @@ async def test_a_repair_read_twice_is_written_once(platform, earlier):
     assert written_by == [["move[0]"], []]
 
 
-async def test_a_run_with_more_records_than_one_read_takes_on_is_repaired_over_several(platform, earlier):
+async def test_a_run_with_more_records_than_one_read_takes_on_is_repaired_over_several(
+    platform, access_db, earlier, monkeypatch
+):
+    from firefly_weave.runtime import record_repair
+
+    monkeypatch.setattr(record_repair, "READ_KEYS", 2)
     run = await start(platform, BODY, 3)
     for suffix in ("[0]", "[1]", "[2]"):
         await commit(platform, suffix)
-    rounds = [await repair(platform, run.id, events=2) for _ in range(3)]
-    assert [(found.more, repaired) for found, repaired in rounds] == [
-        (True, ["move[0]", "move[1]"]),
-        (False, ["move[2]"]),
-        (False, []),
-    ]
+    loop = operations_loop(access_db)
+    assert await loop.repair_records(await authority(platform, access_db), loop.monotonic() + 10) is True
     assert set((await states(platform, run.id)).values()) == {"completed"}
+
+
+async def test_every_event_at_the_time_a_transaction_ended_is_read_before_its_record_is_left(
+    platform, access_db, earlier, caplog
+):
+    run = await start(platform, BODY, 5)
+    for index in range(5):
+        await commit(platform, f"[{index}]")
+    # The event before the one that ended the last transaction now has its time, and does not compute as recorded.
+    await platform.execute("ALTER TABLE run_events DISABLE TRIGGER USER")
+    await platform.execute(
+        "UPDATE run_events SET created_at=(SELECT max(created_at) FROM run_events WHERE run_id=:run) "
+        "WHERE run_id=:run AND sequence=:sequence",
+        run=run.id,
+        sequence=await last_event(platform, run.id) - 1,
+    )
+    loop = operations_loop(access_db)
+    assert await loop.repair_records(await authority(platform, access_db), loop.monotonic() + 10) is True
+    assert set((await states(platform, run.id)).values()) == {"completed"}
+    assert named(caplog, run.id) == []
 
 
 TAMPERED = {
@@ -250,6 +309,17 @@ async def test_a_record_whose_event_is_not_in_the_history_is_left_as_it_is(platf
     assert (repaired, found.left) == ([], {"move[0]": "no_event"})
 
 
+async def test_a_record_whose_event_lost_the_one_before_it_is_left_as_it_is(platform, earlier):
+    run = await start(platform, BODY, 1)
+    await go_back(platform, "[0]")
+    before = await last_event(platform, run.id) - 1
+    for table in ("run_event_evidence", "run_events"):
+        await platform.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")
+        await platform.execute(f"DELETE FROM {table} WHERE run_id=:run AND sequence=:before", run=run.id, before=before)
+    found, repaired = await repair(platform, run.id)
+    assert (repaired, found.left) == ([], {"move[0]": "no_event"})
+
+
 async def test_a_history_larger_than_the_pass_reads_is_left_for_the_purge(platform, earlier):
     run = await start(platform, BODY, 1)
     await go_back(platform, "[0]")
@@ -271,13 +341,12 @@ async def test_only_ended_runs_are_found_and_a_transaction_the_run_holds_is_neve
 async def test_a_run_that_is_being_purged_is_passed_over_and_a_purged_one_is_not_written(platform, reconciler, earlier):
     from sqlalchemy import text
 
-    from firefly_weave.runtime.record_repair import read_repair, write_repair
+    from firefly_weave.runtime.record_repair import write_repair
     from firefly_weave.runtime.repository import RuntimeRepository
 
     run = await start(platform, BODY, 1)
     await go_back(platform, "[0]")
-    async with platform.runtime.definitions.transaction(platform.scope, None, mutation=False) as tx:
-        plan = await read_repair(RuntimeRepository(tx), run.id)
+    plan = await read(platform, run.id)
     async with platform.sessions() as purging, purging.begin():
         await purging.execute(text("SELECT 1 FROM runs WHERE id=:run FOR UPDATE"), {"run": run.id})
         async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
@@ -432,3 +501,152 @@ async def test_the_operations_loop_stops_at_its_budget_and_goes_on_where_it_stop
     assert sorted(done) == ["compensated", "compensating"]
     assert await loop.repair_records(scope, now[0] + 10) is True
     assert [(await states(platform, run.id))["move[0]"] for run in runs] == ["compensated", "compensated"]
+
+
+def named(caplog, run_id: UUID) -> list[str]:
+    """What the log says about a run."""
+    return [record.getMessage() for record in caplog.records if str(run_id) in record.getMessage()]
+
+
+async def two_runs(platform) -> list[Any]:
+    """Two ended runs with one stuck record each, in the order the loop takes them."""
+    activation = await platform.publish(workflow("move-each", [each(BODY, 1)]))
+    runs = []
+    for name in ("M-1", "M-2"):
+        runs.append(await platform.start(activation, name))
+        await go_back(platform, "[0]")
+    return sorted(runs, key=lambda run: run.id)
+
+
+async def last_event(platform, run_id: UUID) -> int:
+    [row] = await platform.query("SELECT max(sequence) AS sequence FROM run_events WHERE run_id=:run", run=run_id)
+    return row["sequence"]
+
+
+async def test_a_slow_read_fails_neither_the_environment_nor_the_runs_after_it(
+    platform, access_db, earlier, slow, caplog, monkeypatch
+):
+    from firefly_weave.operations import loop as operations
+
+    async def nothing(scope, deadline):
+        return None
+
+    async def done(scope, deadline):
+        return True
+
+    first, second = await two_runs(platform)
+    last = await last_event(platform, first.id)
+    moved = (await platform.state(first.id))["input"]["moveId"]
+    slow.when = lambda state, event: (state.input["moveId"], event.sequence) == (moved, last)
+    monkeypatch.setattr(operations, "UPKEEP_SECONDS", 1.5)
+    monkeypatch.setattr(operations, "REPAIR_READ_SECONDS", 1.0)
+    loop = operations_loop(access_db)
+    # The other steps of an environment's visit have their own tests.
+    monkeypatch.setattr(loop, "roll_statistics", nothing)
+    for name in ("revalidate", "maintain_changes", "sweep_step_tests", "maintain_logs", "forget_conversations"):
+        monkeypatch.setattr(loop, name, done)
+    scope = await authority(platform, access_db)
+    # The environment's own guard ends neither visit: the run costs its own turn only.
+    for _ in range(2):
+        await loop._environment(scope)
+    assert await states(platform, first.id) == {"move[0]": "compensating"}
+    assert await states(platform, second.id) == {"move[0]": "compensated"}
+    said = named(caplog, first.id)
+    assert len(said) == 1 and "move[0]: too_slow" in said[0]
+    # It is read once, and not again by a later pass.
+    slow.end.set()
+    [scan] = loop.repairs.values()
+    assert scan.due > 0
+    scan.due = 0.0
+    assert await loop.repair_records(scope, loop.monotonic() + 10) is True
+    assert slow.asked == [last]
+    assert named(caplog, first.id) == said
+
+
+async def test_each_event_is_written_before_the_next_one_is_read(
+    platform, access_db, earlier, slow, caplog, monkeypatch
+):
+    from firefly_weave.operations import loop as operations
+
+    run = await start(platform, BODY, 3)
+    for suffix in ("[0]", "[1]", "[2]"):
+        await commit(platform, suffix)
+    last = await last_event(platform, run.id)
+    slow.when = lambda state, event: event.sequence == last
+    monkeypatch.setattr(operations, "REPAIR_READ_SECONDS", 1.0)
+    loop = operations_loop(access_db)
+    scope = await authority(platform, access_db)
+    async with asyncio.timeout(10):
+        assert await loop.repair_records(scope, loop.monotonic() + 10) is True
+    assert await states(platform, run.id) == {"move[0]": "completed", "move[1]": "completed", "move[2]": "committing"}
+    said = named(caplog, run.id)
+    assert len(said) == 1 and "move[2]: too_slow" in said[0]
+
+
+@pytest.mark.parametrize(
+    "what",
+    [
+        "firefly_weave.operations.exports:transition_digest",
+        "firefly_weave.runtime.admission:import_artifact",
+        "firefly_weave.runtime.models:RunState.model_validate_json",
+    ],
+)
+async def test_the_event_loop_goes_on_while_an_event_is_checked(platform, earlier, monkeypatch, what):
+    run = await start(platform, BODY, 1)
+    await go_back(platform, "[0]")
+    owner, _, name = what.replace(":", ".").rpartition(".")
+    current, loop, went_on = pkgutil.resolve_name(what), asyncio.get_running_loop(), []
+
+    def checking(*values, **options):
+        # Only an event loop that is not held here can answer.
+        answered = threading.Event()
+        loop.call_soon_threadsafe(answered.set)
+        went_on.append(answered.wait(5))
+        return current(*values, **options)
+
+    monkeypatch.setattr(pkgutil.resolve_name(owner), name, checking)
+    _, repaired = await repair(platform, run.id)
+    assert repaired == ["move[0]"]
+    assert went_on and all(went_on)
+
+
+@pytest.mark.parametrize("held", ["the run", "the project"])
+async def test_a_run_that_cannot_be_written_now_is_repaired_by_the_next_visit(platform, access_db, earlier, held):
+    from sqlalchemy import text
+
+    runs = await two_runs(platform)
+    lock, values = {
+        "the run": ("SELECT 1 FROM runs WHERE id=:run FOR UPDATE", {"run": runs[0].id}),
+        "the project": (
+            "SELECT pg_advisory_xact_lock(hashtextextended('weave.operations:'||:tenant||':'||:project,0))",
+            {"tenant": str(platform.scope.tenant_id), "project": str(platform.scope.project_id)},
+        ),
+    }[held]
+    now = [1000.0]
+    loop = operations_loop(access_db, monotonic=lambda: now[0])
+    scope = await authority(platform, access_db)
+    async with platform.sessions() as holding, holding.begin():
+        await holding.execute(text(lock), values)
+        assert await loop.repair_records(scope, now[0] + 10) is True
+        assert await states(platform, runs[0].id) == {"move[0]": "compensating"}
+    now[0] += 60
+    assert await loop.repair_records(scope, now[0] + 10) is True
+    assert [await states(platform, run.id) for run in runs] == [{"move[0]": "compensated"}] * 2
+
+
+async def test_a_pass_forgets_the_runs_it_no_longer_finds(platform, access_db, earlier):
+    run = await start(platform, BODY, 1)
+    await go_back(platform, "[0]")
+    await platform.execute("ALTER TABLE run_event_evidence DISABLE TRIGGER USER")
+    await platform.execute(TAMPERED["the digest"], run=run.id)
+    now = [1000.0]
+    loop = operations_loop(access_db, monotonic=lambda: now[0])
+    scope = await authority(platform, access_db)
+    for _ in range(2):
+        assert await loop.repair_records(scope, now[0] + 10) is True
+        [scan] = loop.repairs.values()
+        assert scan.left == {run.id: {"move[0]"}}
+        now[0] += 3600
+    await platform.execute("UPDATE run_transactions SET state='force_ended' WHERE run_id=:run", run=run.id)
+    assert await loop.repair_records(scope, now[0] + 10) is True
+    assert scan.left == {}
