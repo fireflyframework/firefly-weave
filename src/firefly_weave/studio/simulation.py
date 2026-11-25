@@ -1270,7 +1270,7 @@ def execute(
         shapes = cast(Any, simulator).prepared_of(frame or "").transactions
         stopped_by_transaction = False
         handled: set[str | None] = set()
-        stopped_at: set[str] = set()
+        stopped_at: list[str] = []
         if shapes is not None:
             # A run with transactions: what failed inside them, whatever settled after it.
             handled = {_entry_key(entry) for entry in trace if entry.frame == frame and entry.handled is not None}
@@ -1288,9 +1288,18 @@ def execute(
         of_run = [index for index, entry in enumerate(trace) if entry.frame == frame]
         if frame not in ended or not of_run or stopped_by_transaction:
             continue
-        # The last step, unless the run stopped at an earlier one while the steps of a transaction went on.
-        unfinished = [index for index in of_run if trace[index].status not in {"completed", "failed"}]
-        stopping_index = ([index for index in unfinished if _entry_key(trace[index]) in stopped_at] or of_run)[-1]
+        # The last step, unless a run with transactions stopped at an earlier one, outside of them, while their steps
+        # went on: at a fail step it reached, which ends the run, or else at the first place it may have stopped at.
+        outside = {
+            _entry_key(trace[index]): index
+            for index in of_run
+            if shapes is not None
+            and shapes.owner_key(_entry_key(trace[index])) is None
+            and trace[index].status not in {"completed", "failed"}
+        }
+        stops = [index for index in outside.values() if trace[index].kind == "fail"]
+        stops += [outside.get(key, of_run[-1]) for key in stopped_at if key in outside or key == "@run"]
+        stopping_index = [*stops, of_run[-1]][0]
         stopping = trace[stopping_index]
         key = _entry_key(stopping)
         # A step left unfinished by a transaction whose failure was handled didn't stop the run.
@@ -1720,12 +1729,16 @@ def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
     return {cast(str, event.data.get("node_id")): event.data for event in events if event.type == "step_failed"}
 
 
-def _stopped_at(events: Iterable[RuntimeEvent], variables: Mapping[str, Any]) -> set[str]:
-    """The step instances a run may have stopped at outside its transactions, when they didn't finish: those its
-    incidents name, which hold it; without any, the calls whose run ended and the waits whose deadline passed."""
-    incidents = {cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()}
-    ended = {"call_completed", "timed_out"}
-    return incidents or {cast(str, event.data.get("node_id")) for event in events if event.type in ended}
+def _stopped_at(events: Iterable[RuntimeEvent], variables: Mapping[str, Any]) -> list[str]:
+    """The step instances a run may have stopped at outside its transactions, when they didn't finish, in the order it
+    came to them: those its incidents name, which hold it; without any, the calls whose run failed and the waits whose
+    deadline passed, with ``@run`` where the run's own did."""
+    incidents = [cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()]
+    return incidents or [
+        cast(str, event.data.get("node_id"))
+        for event in events
+        if event.type == "timed_out" or (event.type == "call_completed" and event.data.get("status") != "succeeded")
+    ]
 
 
 def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:

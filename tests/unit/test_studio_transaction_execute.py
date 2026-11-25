@@ -1087,6 +1087,166 @@ def test_the_step_whose_incident_holds_the_run_is_blamed_before_one_that_failed_
     assert failures(answer) == {"later": "VALIDATION"}
 
 
+CALL = {key: value for key, value in called_step().items() if key != "compensate"}
+SECOND = {**CALL, "id": "second"}
+# Two steps that call a workflow which fails after the other ones ended.
+LAST_ONES = {"b": [{**CALL, "uses": "fails-last@1.0.0"}], "c": [{**SECOND, "uses": "fails-last@1.0.0"}]}
+INNER = called_step(id="inner", uses="slow@1.0.0")
+# Two transactions left open with their reservation made: one waits, and one waits on a called workflow.
+HELD = transaction([hold(), wait(60, "held"), submit()])
+CALLING = transaction([hold(), INNER, submit()])
+# One whose undo stops a called workflow, after which the run goes on.
+STOPPING = transaction([hold(), parallel(p=[INNER], q=[wait(2, "q"), add()]), submit()], onError="continue")
+ADD_REFUSED = {"errors": {"node:add": {"code": "REFUSED", "effect": "none"}}}
+STOPPING_FAILED = {"move": "WV-TXN-ROLLED-BACK", "add": "REFUSED"}
+CALLED = {
+    "inside": [wait(10), STOP],
+    "fine": [wait(10), DONE],
+    "fails-last": [wait(20), STOP],
+    "slow": [wait(50), DONE],
+}
+
+
+def at_once(**branches: list[dict[str, Any]]) -> dict[str, Any]:
+    return {**parallel(**branches), "id": "outer"}
+
+
+def run_with(called: dict[str, list[dict[str, Any]]], workflow: str, **fields: Any) -> dict[str, Any]:
+    """The answer about ``workflow`` when the request brings called workflows, each of the steps given."""
+    definitions, workflows = list(fixture()["definitions"]), {}
+    for name, steps in called.items():
+        document = {**json.loads(source(*steps)), "metadata": {"name": name, "version": "1.0.0"}}
+        document["spec"] |= {"callable": {}, "timeoutSeconds": 300}
+        definitions.append(document)
+        present = {f"node:{step['id']}" for step in steps_of(steps)}
+        workflows[f"{name}@1.0.0"] = {"mocks": {key: value for key, value in MOVED.items() if key in present}}
+    return run_move(workflow, definitions=definitions, workflows=workflows, **fields)
+
+
+@pytest.mark.parametrize(
+    "workflow, fields, expected",
+    [
+        (source(at_once(a=[wait(5), STOP], b=[CALLING])), {}, {"stop": None}),
+        (source(STOPPING, wait(5), STOP), ADD_REFUSED, {**STOPPING_FAILED, "stop": None}),
+        (
+            source(
+                STOPPING, at_once(a=[CALL], b=[SECOND], c=[transaction([hold("kept"), wait(60)], identifier="open")])
+            ),
+            {**ADD_REFUSED, "mocks": {"node:kept": {"holdId": "h-2"}}},
+            {**STOPPING_FAILED, "call": None},
+        ),
+        (source(at_once(a=[wait(10), STOP], b=[{**SECOND, "uses": "fine@1.0.0"}], c=[HELD])), {}, {"stop": None}),
+        (source(at_once(a=[{**SECOND, "uses": "fine@1.0.0"}], b=[wait(10), STOP], c=[HELD])), {}, {"stop": None}),
+        (source(at_once(a=[CALL], b=[CALLING])), {}, {"call": None}),
+        (source(at_once(a=[CALL], b=[{**SECOND, "uses": "fine@1.0.0"}], c=[HELD])), {}, {"call": None}),
+        (source(at_once(a=[CALL], b=[SECOND], c=[HELD])), {}, {"call": None}),
+        (
+            source(at_once(a=[{**CALL, "id": "handled", "onError": "continue"}], **LAST_ONES, d=[HELD])),
+            {},
+            {"handled": "STOPPED", "call": None},
+        ),
+        (
+            source(at_once(a=[{**CALL, "id": "went-on", "onFailure": "continue"}], **LAST_ONES, d=[HELD])),
+            {},
+            {"call": None},
+        ),
+    ],
+    ids=[
+        "a stop step while a transaction waits on a called step",
+        "a stop step after a transaction that stopped a called step",
+        "a call after a transaction that stopped a called step",
+        "a stop step before a call that succeeds at that instant",
+        "a stop step after a call that succeeds at that instant",
+        "a call while a transaction waits on a called step",
+        "a call beside one that succeeds at that instant",
+        "the first of two calls that fail at that instant",
+        "a call after one whose failure was handled",
+        "a call after one that failed and went on",
+    ],
+)
+def test_the_step_that_stopped_a_run_with_transactions_is_the_one_that_failed(workflow, fields, expected):
+    answer = run_with(CALLED, workflow, **fields)
+    assert answer["status"] == "failed", answer
+    assert failures(answer) == expected
+    assert answer["diagnostics"] == []
+
+
+def test_a_stop_step_failed_before_a_call_that_fails_at_that_instant():
+    # The run's own wait ends first, so its transaction is undone for the stop step.
+    ending = {**STOP, "code": "ENDED"}
+    answer = run_with(CALLED, source(at_once(a=[CALL], b=[wait(10), ending], c=[HELD])))
+    assert answer["transactions"][0]["cause"]["code"] == "ENDED"
+    assert failures(answer) == {"stop": None}
+    assert failures(answer, "call") == {"stop": None}
+
+
+def test_a_signal_that_never_arrives_failed_while_a_transaction_waits_on_a_called_step():
+    never = {"signals": {"paid": {"outcome": "timeout"}}}
+    answer = run_with(CALLED, source(at_once(a=[PAID], b=[CALLING])), scripts=never)
+    assert failures(answer) == {"paid": None}
+    assert [item["message"] for item in answer["diagnostics"]] == [
+        "The deadline of order-paid passed before the signal arrived."
+    ]
+
+
+def test_a_call_that_fails_as_the_run_reaches_its_time_limit_didnt_stop_it():
+    document = json.loads(source(at_once(a=[CALL], b=[HELD])))
+    document["spec"]["timeoutSeconds"] = 10
+    answer = run_with(CALLED, json.dumps(document))
+    assert failures(answer, "call") == {"stop": None}
+    assert failures(answer) == {"held": None}
+    assert [item["message"] for item in answer["diagnostics"]] == ["A deadline passed, so the simulated run stopped."]
+
+
+def test_a_call_that_succeeds_as_a_transaction_fails_the_run_didnt_fail():
+    # The output of one transaction can't be built, which ends the run as the call beside it succeeds.
+    ending = transaction([wait(10)], identifier="ending", output={"ref": "/input/items/5"})
+    answer = run_with(CALLED, source(at_once(a=[{**CALL, "uses": "fine@1.0.0"}], b=[ending], c=[HELD])))
+    assert answer["status"] == "failed", answer
+    assert answer["transactions"][0]["cause"]["code"] == "WV-EXPR-MISSING"
+    assert (None, "call", "running") in entries(answer) and ("call", "done", "completed") in entries(answer)
+
+
+def test_a_run_held_by_incidents_failed_where_the_first_one_opened_never_at_what_came_after():
+    calls = {"a": [{**CALL, "uses": "unpaid@1.0.0"}], "b": [{**SECOND, "uses": "unpaid@1.0.0"}]}
+    answer = run_with({"unpaid": [PAID]}, source(at_once(**calls, c=[HELD])))
+    assert failures(answer) == {"call": "WV-CALL-INTERRUPTED"}
+    # The first one can be the last of the trace: it opens once the action before it ended, and later fails after it.
+    first = at_once(a=[{**LATER, "id": "before"}, MISSING], b=[LATER], c=[HELD])
+    answer = run_move(source(first), mocks={"node:before": {"id": "a-1"}}, **FAILED_LATER)
+    assert [entry["nodeId"] for entry in answer["trace"]][-1] == "missing"
+    assert list(failures(answer)) == ["missing"]
+    # An incident at a branch, which is no step, holds the run before the call beside it fails.
+    branch = parallel(x=[wait(10)], y=[NOTE])
+    branch["branches"]["x"]["output"] = {"ref": "/input/items/5"}
+    answer = run_with(CALLED, source(at_once(a=[branch], b=[CALL], c=[HELD])))
+    assert (None, "call", "waiting") in entries(answer) and failures(answer, "call") == {"stop": None}
+
+
+@pytest.mark.parametrize(
+    "steps, expected",
+    [
+        (at_once(a=[wait(5), STOP], b=[CALLING]), {"stop": None}),
+        # What ended is read from the called run's own events, and what holds it from its own incidents.
+        (at_once(a=[{**CALL, "id": "first", "uses": "fails-last@1.0.0"}], b=LAST_ONES["c"], c=[HELD]), {"first": None}),
+        (
+            at_once(
+                a=[{**CALL, "id": "first", "uses": "unpaid@1.0.0"}],
+                b=[{**SECOND, "uses": "unpaid@1.0.0"}],
+                c=[HELD],
+            ),
+            {"first": None},
+        ),
+    ],
+    ids=["a stop step", "the first of two calls", "the first of two calls that hold it"],
+)
+def test_the_step_that_stopped_a_called_run_with_transactions_is_the_one_that_failed_there(steps, expected):
+    answer = run_with({**CALLED, "inside": [steps], "unpaid": [PAID]}, source(CALL))
+    assert answer["status"] == "failed", answer
+    assert failures(answer) == {"call": None}
+    assert failures(answer, "call") == expected
+
+
 MISSING = {"id": "missing", "kind": "transform", "value": {"ref": "/input/items/5"}}
 
 
