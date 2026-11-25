@@ -73,9 +73,12 @@ SUMMARY_LINE = re.compile(r"^(FAILED|ERROR) ([\x21-\x7e](?:[\x20-\x7e]*?[\x21-\x
 SUMMARY_TAIL_BYTES = 256 * 1024
 SUMMARY_MAX_LINES = 50
 SUMMARY_MAX_LENGTH = 300
+# A test, or a test file that can't be imported. On CI pytest prints an assertion message whole, so a line of it can
+# look like a summary line: a name counts only when its file exists.
+NODE_ID = re.compile(r"((?:workers/\w+/)?tests/(?:[\w-]+/)*\w+\.py)(?:(?:::\w+)+(?:\[.*)?)?", re.ASCII)
 
 
-def failing_tests(log: Path) -> list[str]:
+def failing_tests(log: Path, root: Path) -> list[str]:
     """Name the failing tests from the tail of a stage log, never their output."""
     try:
         with log.open("rb") as stream:
@@ -90,8 +93,9 @@ def failing_tests(log: Path) -> list[str]:
         if line.startswith("="):
             break
         match = SUMMARY_LINE.match(re.sub(r"\x1b\[[0-9;]*m", "", line))
-        if match and len(match.group(2)) <= SUMMARY_MAX_LENGTH:
-            names.append(match.group(1) + " " + match.group(2))
+        node = NODE_ID.fullmatch(match[2]) if match else None
+        if match and node and len(match[2]) <= SUMMARY_MAX_LENGTH and os.path.isfile(root / node[1]):
+            names.append(match[1] + " " + match[2])
     return list(dict.fromkeys(names))[:SUMMARY_MAX_LINES]
 
 
@@ -247,7 +251,7 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
                 results[name] = {"status": "failed", "seconds": round(time.monotonic() - started, 3)}
                 failed = True
                 print(f"Stage {name} failed.", flush=True)
-                for line in failing_tests(evidence / (name + ".log")):
+                for line in failing_tests(evidence / (name + ".log"), root):
                     print(line, flush=True)
                 break
     except BaseException:

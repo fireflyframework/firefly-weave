@@ -241,20 +241,34 @@ def test_integration_has_bounded_full_suite_budget_and_actionable_failure_output
 
 
 def test_failed_pytest_stage_names_failing_tests_without_output(runner, monkeypatch, tmp_path, capsys):
-    evidence = tmp_path / "checks"
+    for path in ("tests/unit/test_a.py", "tests/unit/sub-dir/test_b.py", "workers/files/tests/test_c.py", "secret.py"):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("")
 
     def command(argv, **kwargs):
         name = kwargs["log_path"].stem
         kwargs["log_path"].write_bytes(
             b"....F.E\n"
-            b"FAILED printed-by-a-test-before-the-summary\n"
+            b"FAILED tests/unit/test_a.py::printed_by_a_test_before_the_summary\n"
             b"E   AssertionError: token=never-print-this-secret\n"
             b"=========================== short test summary info ============================\n"
             b"FAILED tests/unit/test_a.py::test_one[case-1] - AssertionError: token=never-print-this-secret\n"
-            b"ERROR tests/unit/test_b.py::test_two - RuntimeError: never-print-this-body\n"
-            b"FAILED tests/unit/test_c.py::test_three\x1b[31m\n"
+            b"ERROR tests/unit/sub-dir/test_b.py::TestTwo::test_two - RuntimeError: never-print-this-body\n"
+            b"FAILED workers/files/tests/test_c.py::test_three\x1b[31m\n"
+            b"FAILED tests/unit/test_a.py::test_four[above 2 - 1] - AssertionError: first line\n"
+            # On CI pytest prints a message whole, so each of its lines starts at the margin, like a summary line.
+            b"FAILED token=never-print-this-secret\n"
+            b"ERROR token=never-print-this-secret::test\n"
+            b"FAILED tests/unit/test_a.py token=never-print-this-secret\n"
+            b"FAILED tests/unit/test_a.py::token=never-print-this-secret\n"
+            b"FAILED tests/unit/never_print_this_secret.py::test_one\n"
+            b"FAILED tests/unit::never_print_this_secret\n"
+            b"FAILED tests/../secret.py::never_print_this_secret\n"
+            b"FAILED secret.py::never_print_this_secret\n"
+            b"FAILED tests/" + b"x" * 256 + b".py::never_print_this_secret\n"
+            b"ERROR tests/unit/test_a.py - ModuleNotFoundError: never-print-this-body\n"
             b"===================== 2 failed, 1 error in 3.00s ======================\n"
-            b"FAILED printed-after-the-summary\n"
+            b"FAILED tests/unit/test_a.py::printed_after_the_summary\n"
             if name == "unit-contracts"
             else b""
         )
@@ -262,14 +276,19 @@ def test_failed_pytest_stage_names_failing_tests_without_output(runner, monkeypa
             raise RuntimeError("controlled command failure")
 
     monkeypatch.setattr(runner, "run_command", command)
-    assert runner.run(ROOT, evidence, release=False, context=None) == 1
+    assert runner.run(tmp_path, tmp_path / "checks", release=False, context=None) == 1
     printed = capsys.readouterr().out
+    assert [line for line in printed.splitlines() if line.startswith(("FAILED", "ERROR"))] == [
+        "FAILED tests/unit/test_a.py::test_one[case-1]",
+        "ERROR tests/unit/sub-dir/test_b.py::TestTwo::test_two",
+        "FAILED workers/files/tests/test_c.py::test_three",
+        # The id ends at the first " - ", which starts the message in every other line.
+        "FAILED tests/unit/test_a.py::test_four[above 2",
+        # A test file that can't be imported has no test to name.
+        "ERROR tests/unit/test_a.py",
+    ]
     assert "Stage unit-contracts failed" in printed
-    assert "FAILED tests/unit/test_a.py::test_one[case-1]\n" in printed
-    assert "ERROR tests/unit/test_b.py::test_two\n" in printed
-    assert "FAILED tests/unit/test_c.py::test_three\n" in printed
-    assert "printed-by-a-test" not in printed and "printed-after-the-summary" not in printed
-    assert "never-print" not in printed and "AssertionError" not in printed and "\x1b" not in printed
+    assert "never" not in printed and "AssertionError" not in printed and "\x1b" not in printed
 
 
 def test_failed_stage_without_pytest_summary_names_only_the_stage(runner, monkeypatch, tmp_path, capsys):
