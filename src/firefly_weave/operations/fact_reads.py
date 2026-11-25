@@ -119,17 +119,25 @@ _INCIDENT_TRANSACTION = (
     + ") c WHERE c.own OR c.named OR (c.possible AND c.candidates=1) "
     "ORDER BY c.own DESC,c.named DESC LIMIT 1) t ON true"
 )
-# One statement for the selected incidents: their columns, measured together against the page budget before the
-# resolutions are returned, their facts and their run's classification metadata.
+# What an incident's transaction adds to it: the steps, whose keys are also among the pending and the stuck ones.
+TRANSACTION_BYTES = (
+    "octet_length({0}.participants::text)"
+    "+2*octet_length(jsonb_path_query_array({0}.participants,'$[*].instance_key')::text)"
+)
+# One statement for the selected incidents: their columns, measured in page order against the page budget before the
+# resolutions are returned, their facts and their run's classification metadata. The page ends before the incident that
+# would take it past the budget; its first one is returned whatever its size.
 _INCIDENT_DETAILS = (
     # An in-doubt incident brings the transaction it belongs to, measured with it.
-    "WITH page AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
-    "t.participants AS txn_participants,sum(octet_length(to_jsonb(i)::text)"
-    "+coalesce(octet_length(t.participants::text),0)) OVER () AS page_bytes FROM incidents i"
+    "WITH measured AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
+    "t.participants AS txn_participants,array_position(cast(:ids AS uuid[]),i.id) AS page_position,"
+    "sum(octet_length(to_jsonb(i)::text)+coalesce("
+    + TRANSACTION_BYTES.format("t")
+    + ",0)) OVER (ORDER BY array_position(cast(:ids AS uuid[]),i.id)) AS page_bytes FROM incidents i"
     + _INCIDENT_TRANSACTION
     + " WHERE "
     + _INCIDENT_SCOPE
-    + " AND i.id=ANY(:ids)) "
+    + " AND i.id=ANY(:ids)),page AS (SELECT * FROM measured WHERE page_bytes<=:budget OR page_position=1) "
     "SELECT i.id,i.run_id,i.incident_key,i.node_id,i.generation,i.origin_code,i.code,i.status,i.revision,"
     "i.txn_key,i.txn_state,i.txn_business_key,i.txn_participants,"
     # Its steps with an open incident after the point of no return: a person must say what became of each.
@@ -572,7 +580,8 @@ class FactReadRepository(FactRepository):
         )
 
     async def incident_details(self, ids: list[UUID]) -> list[dict[str, Any]]:
-        """The selected incidents with their facts; a page above the logical byte limit is refused unread."""
+        """The selected incidents with their facts, in order, as many as fit the logical byte limit; a first one above
+        it is refused unread."""
         if not ids:
             return []
         rows = await self.rows(_INCIDENT_DETAILS, ids=ids, budget=PAGE_BYTES, in_doubt=sorted(IN_DOUBT_CODES))

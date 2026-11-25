@@ -39,7 +39,12 @@ from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
+from firefly_weave.api.transport import decode_cursor, decode_cursor_v2
 from firefly_weave.contracts.incident_queries import IncidentQuery
+from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations import fact_reads, incidents
+from firefly_weave.operations.fact_positions import run_position
+from firefly_weave.persistence.paging import PAGE_BYTES
 
 pytestmark = pytest.mark.integration
 
@@ -185,6 +190,133 @@ async def test_a_stuck_read_beside_the_decision_shows_its_transaction(platform):
     assert {key: item["instance_key"] for key, item in found.items()} == dict.fromkeys(held, "move")
     # It can't be named in a record, so it isn't one of the steps a person is asked about.
     assert all("stuck_steps" not in item for item in found.values())
+
+
+async def with_many_stuck_steps(platform, count: int):
+    """A run whose transaction has ``count`` stuck steps, each with its incident: one real confirm, and the rows that
+    as many more leave."""
+    step = "reserve-warehouse-quantity"
+    run = await platform.start(await platform.publish(workflow("move", [transaction(hold(step), submit())])))
+    for key in (step, "submit"):
+        await platform.complete(await platform.lease(key))
+    [named] = await stuck(platform, run.id, f"{step}#confirm")
+    # The quota accounting of each row written this way says nothing about reading them.
+    for table in ("incidents", "incident_facts"):
+        await platform.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")
+    await platform.execute(
+        "WITH opened AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,"
+        "generation,origin_code,code,status,revision) SELECT gen_random_uuid(),tenant_id,project_id,environment_id,"
+        "run_id,:step||'['||n||']#confirm:1',:step||'['||n||']#confirm',1,origin_code,code,'active',1 FROM incidents,"
+        "generate_series(2,:count) n WHERE run_id=:run RETURNING id,tenant_id,project_id,environment_id,node_id) "
+        "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,opened_at,"
+        "updated_at,workflow_name,workflow_version,test) SELECT o.tenant_id,o.project_id,o.environment_id,o.id,"
+        "f.node_id,o.node_id,f.opened_at,f.updated_at,f.workflow_name,f.workflow_version,f.test FROM opened o,"
+        "incident_facts f JOIN incidents i ON i.id=f.incident_id WHERE i.run_id=:run AND i.incident_key=:named",
+        step=step,
+        count=count,
+        named=named,
+        run=run.id,
+    )
+    await platform.execute(
+        "UPDATE run_transactions SET participants=participants||(SELECT jsonb_agg(jsonb_build_object("
+        "'node_id',cast(:step AS text),'instance_key',:step||'['||n||']','mode','reserve','status','confirm_stuck',"
+        "'effect','none','attempts',10)) FROM generate_series(2,:count) n) WHERE run_id=:run",
+        step=step,
+        count=count,
+        run=run.id,
+    )
+    return run
+
+
+def size(items) -> int:
+    return len(json.dumps(items, separators=(",", ":")).encode())
+
+
+async def of_run(platform, run):
+    """The run's incidents as its earlier route lists them, all in one answer."""
+    async with platform.runtime.definitions.transaction(platform.scope, None, mutation=False) as tx:
+        views = await platform.incidents.list(
+            tx, run.id, actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    return [view.model_dump(mode="json") for view in views]
+
+
+@pytest.mark.parametrize("order", ["opened_desc", "opened_asc", "id"])
+async def test_a_page_of_incidents_ends_before_the_one_that_would_take_it_past_its_budget(platform, monkeypatch, order):
+    await with_many_stuck_steps(platform, 20)
+    query = IncidentQuery(order=order)
+    whole = await platform.incidents.list_all(platform.actor, platform.scope, query=query, context=AuditContext())
+    assert len(whole["items"]) == 20 and whole["next_cursor"] is None
+    budget = 5 * max(size(item) for item in whole["items"])
+    monkeypatch.setattr(fact_reads, "PAGE_BYTES", budget)
+    found, position, cursor = [], None, ""
+    while cursor is not None:
+        page = await platform.incidents.list_all(
+            platform.actor, platform.scope, query=query, position=position, context=AuditContext()
+        )
+        assert 1 < len(page["items"]) < 20 and size(page["items"]) <= budget
+        found += page["items"]
+        if (cursor := page["next_cursor"]) is not None:
+            collection = query.cursor_collection()
+            position = (
+                decode_cursor(cursor, platform.scope, collection)
+                if order == "id"
+                else run_position(decode_cursor_v2(cursor, platform.scope, collection))
+            )
+    # Every incident once, in the same order, and each with its whole transaction.
+    assert found == whole["items"]
+    assert {len(item["transaction"]["participants"]) for item in found} == {21}
+
+
+async def test_an_incident_too_large_for_a_page_of_its_own_is_refused(platform, monkeypatch):
+    await with_many_stuck_steps(platform, 20)
+    monkeypatch.setattr(fact_reads, "PAGE_BYTES", 500)
+    with pytest.raises(CatalogError) as refused:
+        await platform.incidents.list_all(platform.actor, platform.scope, context=AuditContext())
+    assert (refused.value.status, refused.value.code) == (429, "WV-PAGE-LIMIT")
+
+
+async def test_a_run_whose_answer_would_pass_the_budget_shows_each_transaction_once(platform, monkeypatch):
+    run = await with_many_stuck_steps(platform, 20)
+    every = await of_run(platform, run)
+    assert len(every) == 20 and all(item.get("transaction") for item in every)
+    # The whole answer passes the budget, and one transaction beside the incidents doesn't.
+    budget = size(every) // 4
+    monkeypatch.setattr(incidents, "PAGE_BYTES", budget)
+    # An incident that ended comes after one a person can still decide.
+    await platform.execute(
+        "UPDATE incidents SET status='closed' WHERE run_id=:run AND incident_key=:key",
+        run=run.id,
+        key=every[0]["incident_key"],
+    )
+    answer = await of_run(platform, run)
+    assert [item["id"] for item in answer] == [item["id"] for item in every] and size(answer) <= budget
+    assert {item["priority"] for item in answer} == {"high"}
+    assert [item["id"] for item in answer if "transaction" in item] == [every[1]["id"]]
+    assert answer[1]["transaction"] == every[1]["transaction"]
+
+
+@pytest.mark.parametrize("budget", [500, 8_500], ids=["the incidents alone", "one transaction beside them"])
+async def test_a_run_whose_incidents_pass_the_budget_is_refused(platform, monkeypatch, budget):
+    run = await with_many_stuck_steps(platform, 20)
+    monkeypatch.setattr(incidents, "PAGE_BYTES", budget)
+    with pytest.raises(CatalogError) as refused:
+        await of_run(platform, run)
+    assert (refused.value.status, refused.value.code) == (429, "WV-PAGE-LIMIT")
+
+
+async def test_a_transaction_of_a_thousand_stuck_steps_never_hides_the_incidents(platform):
+    run = await with_many_stuck_steps(platform, 999)
+    for limit in (50, 100):
+        page = await platform.incidents.list_all(
+            platform.actor, platform.scope, query=IncidentQuery(limit=limit), context=AuditContext()
+        )
+        assert 10 < len(page["items"]) <= limit and page["next_cursor"] is not None
+        assert size(page["items"]) <= PAGE_BYTES
+        assert {len(item["transaction"]["participants"]) for item in page["items"]} == {1000}
+    answer = await of_run(platform, run)
+    assert len(answer) == 999 and size(answer) <= PAGE_BYTES
+    assert [len(item["transaction"]["participants"]) for item in answer if "transaction" in item] == [1000]
 
 
 async def test_an_incident_of_two_possible_transactions_shows_none(platform):

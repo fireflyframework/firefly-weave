@@ -968,9 +968,19 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   fields; for a repeated step instance, its `node_id` is the full instance key.
   Read the incident again with `incidents.read` after resolving to show it as
   the lists do.
-- A page is limited to 8 MiB of retained incident data; a larger page answers
-  `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
-  `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
+- A page is limited to 8 MiB of retained incident data, the transactions its
+  incidents show included. It ends before the incident that would take it past
+  that, so it can hold fewer than `limit`; `next_cursor` continues after its
+  last one. Only an incident larger than 8 MiB on its own answers `429` with
+  `WV-PAGE-LIMIT`.
+- The earlier array of a run's incidents (the path without `/api/v1`) has the
+  same limit and no cursor. Past it, the array shows each transaction once: with
+  its first active incident, or its first one when none is active. Its other
+  incidents leave `transaction` out, and `incidents.read` shows it. An array
+  past the limit even so answers `429` with `WV-PAGE-LIMIT`; read the pages of
+  `incidents.run_list`.
+- Unknown query parameters are rejected, and a `limit` outside 1 to 100 answers
+  `422` with `WV-VALIDATION`.
 
 **Worker identity.** `workers.create` accepts an optional `identity` describing
 where the worker runs: `host`, `runtime` (`embedded`, `container`, or

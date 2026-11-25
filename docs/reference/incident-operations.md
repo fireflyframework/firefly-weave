@@ -265,9 +265,11 @@ Weave can't finish on its own. Its view has `priority: "high"` and a
 each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`),
 the keys of the steps still `pending`, and, when there are any, the steps with an
 open `WV-TXN-AFTER-PIVOT-STUCK` incident (`stuck_steps`), with no business
-values. Each incident of a transaction shows it, however many it has. Nothing but
-one of these decisions closes it; a plain cancel is refused with HTTP 409
-`WV-TXN-IN-DOUBT` while the run has an open transaction.
+values. Each incident of a transaction shows it, however many it has; only the
+earlier array of a run's incidents shows it once, when it would be
+[too large](api.md) otherwise. Nothing but one of these decisions closes it; a
+plain cancel is refused with HTTP 409 `WV-TXN-IN-DOUBT` while the run has an open
+transaction.
 
 | Decision | `kind` | Needs | Effect |
 | --- | --- | --- | --- |

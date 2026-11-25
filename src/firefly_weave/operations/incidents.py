@@ -45,8 +45,14 @@ from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase, un
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
-from firefly_weave.operations.fact_reads import FactReadRepository, incident_of, transaction_facts
+from firefly_weave.operations.fact_reads import (
+    TRANSACTION_BYTES,
+    FactReadRepository,
+    incident_of,
+    transaction_facts,
+)
 from firefly_weave.operations.facts import task_fact_update
+from firefly_weave.persistence.paging import PAGE_BYTES
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.agent_tools import reconciled_schema
 from firefly_weave.runtime.kernel import error_policy, validate, validate_action, workflow
@@ -171,28 +177,54 @@ class IncidentService:
             repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
             row = await repository.run(run_id)
             view_of(row)
+            [measured] = await repository.rows(
+                "SELECT coalesce(sum(octet_length(to_jsonb(i)::text)),0) AS bytes FROM incidents i "
+                f"WHERE {SCOPE} AND run_id=:run",
+                run=run_id,
+            )
+            if measured["bytes"] > PAGE_BYTES:
+                raise CatalogError(429, "WV-PAGE-LIMIT", "The run's incidents exceed the logical byte limit")
             incidents = await repository.rows(
                 f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run ORDER BY incident_key", run=run_id
             )
             facts = shapes(workflow(import_artifact(row["artifact"])))
             owners = {
-                item["incident_key"]: incident_transaction(facts, item["node_id"], item["code"])
+                item["incident_key"]: owner
                 for item in incidents
                 if facts is not None and item["node_id"] is not None and item["code"] in IN_DOUBT_CODES
+                if (owner := incident_transaction(facts, item["node_id"], item["code"])) is not None
             }
+            sizes = {
+                record["instance_key"]: record["bytes"]
+                for record in await repository.rows(
+                    f"SELECT instance_key,{TRANSACTION_BYTES.format('t')} AS bytes FROM run_transactions t "
+                    f"WHERE {SCOPE} AND run_id=:run AND instance_key=ANY(cast(:keys AS text[]))",
+                    run=run_id,
+                    keys=sorted(set(owners.values())),
+                )
+            }
+            # One answer has no page to end early. Past the budget each transaction is shown once, with the first
+            # incident a person can decide or else the first one, and the answer is refused only when even that passes.
+            budget = PAGE_BYTES - measured["bytes"]
+            if sum(sizes.get(owner, 0) for owner in owners.values()) > budget:
+                first: dict[str, str] = {}
+                for item in sorted(incidents, key=lambda item: item["status"] != "active"):
+                    if item["incident_key"] in owners:
+                        first.setdefault(owners[item["incident_key"]], item["incident_key"])
+                owners = {key: owner for owner, key in first.items()}
+                if sum(sizes.values()) > budget:
+                    raise CatalogError(429, "WV-PAGE-LIMIT", "The run's incidents exceed the logical byte limit")
             records = {
                 record["instance_key"]: record
                 for record in await repository.rows(
                     f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run "
                     "AND instance_key=ANY(cast(:keys AS text[]))",
                     run=run_id,
-                    keys=sorted({owner for owner in owners.values() if owner is not None}),
+                    keys=sorted(sizes),
                 )
             }
             stuck = stuck_steps(incidents)
-            return [
-                incident_view(item, records.get(owners.get(item["incident_key"]) or ""), stuck) for item in incidents
-            ]
+            return [incident_view(item, records.get(owners.get(item["incident_key"], "")), stuck) for item in incidents]
 
     async def resolve(
         self,
@@ -863,11 +895,13 @@ class IncidentService:
             if run_id is not None and not await repository.run_exists(run_id):
                 raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
             rows = await repository.incident_rows(query, position, run_id)
-            visible = rows[: query.limit]
-            details = {row["id"]: row for row in await repository.incident_details([row["id"] for row in visible])}
+            selected = [row["id"] for row in rows[: query.limit]]
+            details = {row["id"]: row for row in await repository.incident_details(selected)}
+            # The page may end before its limit, at the byte budget; its cursor then continues there.
+            visible = [row for row in rows if row["id"] in details]
             items = [incident_of(details[row["id"]]).model_dump(mode="json") for row in visible]
             next_cursor = None
-            if len(rows) > query.limit:
+            if len(rows) > len(visible):
                 last = visible[-1]
                 collection = query.cursor_collection(run_id)
                 if query.order == "id":
