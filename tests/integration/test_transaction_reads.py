@@ -370,6 +370,7 @@ async def test_an_incident_that_ended_shows_its_transaction_however_that_one_end
     await platform.complete(await platform.lease("hold#confirm"))
     await platform.complete(await platform.lease("lookup"))
     assert (await platform.record(run.id))["state"] == "completed"
+    await platform.execute("UPDATE run_transactions SET incident_key=NULL WHERE run_id=:run", run=run.id)
     assert await owners(platform, run, "resolved") == {"lookup:1": "move"}
 
 
