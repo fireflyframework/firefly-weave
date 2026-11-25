@@ -105,8 +105,8 @@ SPDX-License-Identifier: Apache-2.0
       <button
         type="button"
         class="sm"
-        [disabled]="nothing.retryIn > 0"
-        (click)="refresh()"
+        [attr.aria-disabled]="nothing.retryIn > 0 || null"
+        (click)="tryAgain()"
       >
         {{
           nothing.retryIn > 0

@@ -173,17 +173,51 @@ test("a failed read is tried again after its pause, and a refusal says what it n
     "Studio couldn't load what this trigger started.",
   );
   const again = panel.getByRole("button", { name: /^Try again/ });
-  await expect(again).toBeDisabled();
+  // Kept in place while it waits, so focus isn't lost: pressing it asks nothing.
+  await again.focus();
+  const asked = platform.sent.length;
+  await page.keyboard.press("Enter");
   await expect(again).toHaveText(/Try again in [1-5] s/);
+  await expect(again).toBeDisabled();
+  await expect(again).toBeFocused();
+  expect(platform.sent).toHaveLength(asked);
   await expect(again).toBeEnabled({ timeout: 8_000 });
+  await expect(again).toBeFocused();
   platform.refuse.set(read, refusal(403, "WV-FORBIDDEN", "Access denied"));
-  await again.click();
+  await page.keyboard.press("Enter");
   await expect(panel).toContainText(
     "You can't see what this trigger started in development.",
   );
   await expect(panel).toContainText(
     "It needs permission to manage triggers and read runs there.",
   );
+  // The button is gone: focus is on what took its place.
+  await expect(panel.locator(".es-empty")).toBeFocused();
+});
+
+test("Try again keeps focus while it fails, then moves it to the list it read", async ({
+  page,
+}) => {
+  const { platform } = await openConnected(page, {
+    seeds: [CURRENT],
+    stored: "t-2",
+  });
+  platform.starts.set("t-2", startedRuns(3));
+  const read = "GET /event-triggers/t-2";
+  platform.refuse.set(read, refusal(503, "WV-UNAVAILABLE", "Try again later."));
+  const { panel } = await showStarts(page);
+  const again = panel.getByRole("button", { name: /^Try again/ });
+  await expect(again).toBeEnabled({ timeout: 8_000 });
+  // It fails again: focus stays on the button.
+  platform.refuse.set(read, refusal(503, "WV-UNAVAILABLE", "Try again later."));
+  await again.focus();
+  await page.keyboard.press("Enter");
+  await expect(again).toHaveText(/Try again in (?:10|9|8|7) s/);
+  await expect(again).toBeFocused();
+  await expect(again).toBeEnabled({ timeout: 12_000 });
+  await page.keyboard.press("Enter");
+  await expect(rows(panel)).toHaveCount(3);
+  await expect(panel.locator(".es-list")).toBeFocused();
 });
 
 test("asks to connect while Studio works on this computer alone", async ({
@@ -344,6 +378,98 @@ test("a stop refused or a trigger changed says so, and focus goes to the way on"
   await refresh.click();
   await expect(panel.locator(".es-callout")).toHaveCount(0);
   expect(platform.find("t-1")!["disabled"]).toBe(false);
+});
+
+/** The next stop's answer waits until `release`. */
+async function heldStop(page: Page) {
+  const held = { asked: false, release: () => undefined as void };
+  const answer = new Promise<void>((resolve) => (held.release = resolve));
+  await page.route("**/event-triggers/t-1/disable", async (route) => {
+    held.asked = true;
+    await answer;
+    await route.fallback();
+  });
+  return held;
+}
+
+test("while a stop runs, Refresh waits for it", async ({ page }) => {
+  const { panel } = await open(page, {
+    seeds: [CURRENT, OLD, { ...OLD, id: "t-3", name: "notify-team-3" }],
+    pendingStops: [OWED, { ...OWED, triggerId: "t-3" }],
+  });
+  const held = await heldStop(page);
+  const warning = panel.locator(".es-callout");
+  await warning.getByRole("button", { name: "Stop it" }).click();
+  await expect.poll(() => held.asked).toBe(true);
+  const refresh = panel.getByRole("button", { name: "Refresh the starts" });
+  await expect(refresh).toBeDisabled();
+  await refresh.focus();
+  await page.keyboard.press("Enter");
+  await expect(warning).toContainText("Stopping notify-team…");
+  held.release();
+  await expect(warning).toContainText(
+    "Stop notify-team-3 to keep only notify-team-2.",
+  );
+  await expect(refresh).toBeEnabled();
+  await warning.getByRole("button", { name: "Stop it" }).click();
+  await expect(warning).toContainText(
+    "Stopped notify-team-3. Only notify-team-2 starts notify-team now.",
+  );
+});
+
+test("a stop that answers leaves focus where the person moved it meanwhile", async ({
+  page,
+}) => {
+  const opened = await openConnected(page, {
+    seeds: [CURRENT, OLD],
+    stored: "t-2",
+    pendingStops: [OWED],
+  });
+  opened.platform.starts.set("t-2", EACH);
+  const { panel } = await showStarts(page);
+  const held = await heldStop(page);
+  await panel
+    .locator(".es-callout")
+    .getByRole("button", { name: "Stop it" })
+    .click();
+  await expect.poll(() => held.asked).toBe(true);
+  const run = panel.getByRole("button", { name: "Open run 9b1c4e2a" });
+  await run.focus();
+  held.release();
+  await expect(panel.locator(".es-callout")).toContainText(
+    "Stopped notify-team.",
+  );
+  await expect(run).toBeFocused();
+});
+
+test("a stop that answers once step details closed is settled, without an error", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    // The mocks answer some reads with 404 (the browser logs those).
+    if (message.type() === "error" && !message.text().includes("404"))
+      errors.push(message.text());
+  });
+  const { dialog, panel, platform } = await open(page, {
+    seeds: [CURRENT, OLD],
+    pendingStops: [OWED],
+  });
+  const held = await heldStop(page);
+  await panel
+    .locator(".es-callout")
+    .getByRole("button", { name: "Stop it" })
+    .click();
+  await expect.poll(() => held.asked).toBe(true);
+  await new StepDetailsPage(page).close();
+  await expect(dialog).toHaveCount(0);
+  held.release();
+  await expect.poll(() => platform.find("t-1")!["disabled"]).toBe(true);
+  await expect
+    .poll(async () => (await storedIntent(page))?.["pendingStops"])
+    .toBeUndefined();
+  expect(errors).toEqual([]);
 });
 
 test("a stop owed for a trigger someone already stopped marks nothing once it is read", async ({

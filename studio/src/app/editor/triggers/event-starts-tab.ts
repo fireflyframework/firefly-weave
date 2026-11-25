@@ -101,10 +101,15 @@ export class EventStartsTab {
   private readonly clock = signal(Date.now());
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
+  /** Step details closed, or show something else now. */
+  private gone = false;
 
   constructor() {
     const timer = setInterval(() => this.clock.set(Date.now()), TICK_MS);
-    inject(DestroyRef).onDestroy(() => clearInterval(timer));
+    inject(DestroyRef).onDestroy(() => {
+      this.gone = true;
+      clearInterval(timer);
+    });
     effect(() => {
       const state = this.list.state();
       const owed = this.list.owed();
@@ -218,10 +223,16 @@ export class EventStartsTab {
   async refresh() {
     await this.list.refresh();
   }
+  /** Try again: focus stays on it while it fails, then goes to what took its place. */
+  async tryAgain() {
+    await this.list.refresh();
+    if (this.list.state().kind !== "failed")
+      this.focus(".es-list, .es-empty", ".es-empty", true);
+  }
   /** Show more: focus goes to the first new one. */
   async more() {
     const first = await this.list.more();
-    if (first) this.focus(`[data-start="${CSS.escape(first)}"]`);
+    if (first) this.focus(`[data-start="${CSS.escape(first)}"]`, ".es-foot");
   }
   async act(action: OwedCallout["actions"][number]) {
     switch (action) {
@@ -238,22 +249,32 @@ export class EventStartsTab {
         await this.list.refresh();
         break;
     }
+    if (this.gone) return;
     const said = this.callout();
     if (said?.tone === "success")
       this.session().announce(`${said.lead} ${said.detail}`);
     // To the safe answer, the way on, or the list once nothing is asked.
-    if (said?.actions.length) this.focus(".es-callout button");
-    else if (said?.tone === "danger") this.focus(".es-callout");
-    else this.focus(".es-list, .es-empty", true);
+    const from = ".es-callout";
+    if (said?.actions.length) this.focus(".es-callout button", from);
+    else if (said?.tone === "danger") this.focus(".es-callout", from);
+    else this.focus(".es-list, .es-empty", from, true);
   }
 
-  /** `preventScroll` keeps what was just said in view while the list takes focus. */
-  private focus(selector: string, preventScroll = false) {
+  /**
+   * Moves focus on from `from`, where the person acted, unless they moved it
+   * meanwhile. `preventScroll` keeps what was just said in view while the list
+   * takes focus.
+   */
+  private focus(to: string, from: string, preventScroll = false) {
+    const root = this.element.nativeElement;
+    const at = document.activeElement;
+    if (
+      this.gone ||
+      (at && at !== document.body && !root.querySelector(from)?.contains(at))
+    )
+      return;
     afterNextRender(
-      () =>
-        this.element.nativeElement
-          .querySelector<HTMLElement>(selector)
-          ?.focus({ preventScroll }),
+      () => root.querySelector<HTMLElement>(to)?.focus({ preventScroll }),
       { injector: this.injector },
     );
   }
