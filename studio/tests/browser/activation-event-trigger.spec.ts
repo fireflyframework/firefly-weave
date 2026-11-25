@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // the next activation.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { refusal, requested } from "../event-platform";
+import { versionId } from "./activation-po";
 import {
   activate,
   activationDialog,
@@ -499,6 +500,108 @@ test("the dialog can't be closed while its triggers are set up, so what is owed 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect(await storedIntent(page)).toMatchObject({
+    pendingStops: { development: [{ triggerId: "t-1" }] },
+  });
+});
+
+test("nothing leaves the dialog while its triggers are set up, or while a row's answer runs", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page, {
+    declaration: WIDER,
+    seeds: [STORED],
+    triggers: [
+      {
+        id: "trigger-4e5f6a7b",
+        kind: "schedule",
+        cron: "0 9 * * *",
+        input: {},
+      },
+    ],
+  });
+  // The published version: an input the schedule's doesn't fit, and an
+  // optional slot with no connection to bind.
+  await page.route(`**/projects/project/workflows/${versionId}/export`, (r) =>
+    r.fulfill({
+      json: {
+        id: versionId,
+        document: {
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "notify-team", version: "1.2.0" },
+          spec: {
+            inputSchema: {
+              type: "object",
+              properties: { reference: { type: "string" } },
+              required: ["reference"],
+            },
+            outputSchema: {},
+            eventTrigger: WIDER,
+            connections: {
+              audit: { connector: "weave-http@2.0.0", required: false },
+            },
+            steps: [],
+            output: { literal: null },
+          },
+        },
+        artifact: {
+          executable: {
+            features: ["flow.eventTrigger"],
+            connections: {
+              audit: { connector: "weave-http@2.0.0", required: false },
+            },
+            dependencies: [],
+          },
+        },
+      },
+    }),
+  );
+  const held = { release: () => undefined as void, asked: 0 };
+  await page.route("**/event-triggers/t-1/disable", async (route) => {
+    held.asked++;
+    await new Promise<void>((resolve) => (held.release = resolve));
+    await route.fallback();
+  });
+  const refuse = () =>
+    platform.refuse.set(
+      DISABLE,
+      refusal(503, "WV-UNAVAILABLE", "The platform didn't answer in time."),
+    );
+  refuse();
+  const dialog = await activationDialog(page);
+  const schedule = dialog.getByRole("button", { name: "Open schedule" });
+  const connections = dialog.getByRole("button", {
+    name: "Create one in Connections.",
+  });
+  await expect(schedule).toBeEnabled();
+  await expect(connections).toBeEnabled();
+  await activate(dialog);
+  const stays = async (asked: number) => {
+    await expect.poll(() => held.asked).toBe(asked);
+    await expect(schedule).toBeDisabled();
+    await expect(connections).toBeDisabled();
+  };
+  await stays(1);
+  held.release();
+  const again = dialog.getByRole("button", { name: "Stop it" });
+  await expect(again).toBeVisible();
+  await expect(schedule).toBeEnabled();
+  // The answer that runs again: the same.
+  refuse();
+  await again.click();
+  await stays(2);
+  held.release();
+  // What it made and what it owes are kept, and the way to the schedule opens.
+  await schedule.click();
+  await expect(dialog.filter({ hasText: "Activated notify-team" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("dialog", { name: "Step details: Schedule trigger" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(await storedIntent(page)).toMatchObject({
+    resources: { development: "t-made-1" },
     pendingStops: { development: [{ triggerId: "t-1" }] },
   });
 });

@@ -370,7 +370,7 @@ export class ActivationSteps implements OnInit {
   readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
   /** Called after each Retry, Stop it or answer, so the dialog can keep what it did. */
   retried: () => void = () => undefined;
-  /** True while the activation request runs: nothing may open behind the dialog. */
+  /** True while the dialog has to stay open: nothing may open behind it. */
   readonly busy = signal(false);
   /** Opens a trigger choice's step details; the dialog closes first. */
   openTrigger: (intentId: string) => void = () => undefined;

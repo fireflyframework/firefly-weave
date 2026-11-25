@@ -227,8 +227,8 @@ function onceEach(api: StudioApi): StudioApi {
                         <button
                           type="button"
                           class="text-link"
-                          [disabled]="running()"
-                          (click)="openConnections.emit()"
+                          [disabled]="stays()"
+                          (click)="goToConnections()"
                         >
                           {{ way.link }}
                         </button>
@@ -395,6 +395,13 @@ export class ActivationDialog implements OnInit {
     first: boolean;
   }>();
   readonly settingUp = signal(false);
+  /**
+   * While the activation, its triggers or a row's answer runs, nothing closes
+   * the dialog or opens behind it: what was made and what is owed would be lost.
+   */
+  readonly stays = computed(
+    () => this.running() || this.settingUp() || !!this.steps()?.acting(),
+  );
   /** After the activation: "1 trigger needs attention.", or "" when every trigger went through. */
   readonly attentionText = signal("");
   private setUpFor = "";
@@ -482,11 +489,11 @@ export class ActivationDialog implements OnInit {
         void this.setUp(id);
       });
     });
-    // While the activation runs, the steps' ways out (Open schedule) are off too.
+    // While the dialog has to stay, the steps' ways out (Open schedule) are off too.
     effect(() => {
       const steps = this.steps();
-      const running = this.running();
-      untracked(() => steps?.busy.set(running));
+      const stays = this.stays();
+      untracked(() => steps?.busy.set(stays));
     });
     // A failure takes focus, so it is announced and Tab stays in the dialog.
     effect(() => {
@@ -590,7 +597,9 @@ export class ActivationDialog implements OnInit {
           : null,
       );
       ref.setInput("diagnostics", this.diagnostics());
-      ref.instance.openTrigger = (id) => this.openTrigger.emit(id);
+      ref.instance.openTrigger = (id) => {
+        if (!this.stays()) this.openTrigger.emit(id);
+      };
       this.steps.set(ref.instance);
     } catch {
       // Without them the platform still refuses what it can't activate.
@@ -625,9 +634,10 @@ export class ActivationDialog implements OnInit {
     return connector.replace("@", " ");
   }
   dismiss() {
-    // While triggers are set up, closing would lose what was made and what is owed.
-    if (this.running() || this.settingUp() || this.steps()?.acting()) return;
-    this.cancel.emit();
+    if (!this.stays()) this.cancel.emit();
+  }
+  goToConnections() {
+    if (!this.stays()) this.openConnections.emit();
   }
   /** The slots the connection rows were built for. */
   private loadedSlots = "";
