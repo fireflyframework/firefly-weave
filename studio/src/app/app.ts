@@ -139,7 +139,7 @@ import {
   stateLabel,
 } from "./connection";
 import { HomeDashboard } from "./home-dashboard";
-import { ApiError, StudioApi, Validation, Session } from "./api";
+import { ApiError, placeOf, StudioApi, Validation, Session } from "./api";
 import {
   Autofocus,
   DialogHost,
@@ -8565,7 +8565,13 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied())) return;
     if (!this.published || !this.profile) return;
     this.activationError = null;
+    this.activationPlace = placeOf(this.api);
     this.showActivation = true;
+  }
+  /** Where, and as who, the activation dialog was opened: what it shows was read there. */
+  private activationPlace: string | null = null;
+  private get publishedText() {
+    return `${String(this.published?.["name"] ?? this.model.definition.metadata.name)} ${String(this.published?.["version"] ?? this.model.definition.metadata.version)}`;
   }
   closeActivation() {
     if (this.busy) return;
@@ -8597,20 +8603,14 @@ export class App implements CanvasHost {
     if (event.intents)
       this.changeCanvas(withTriggerIntents(this.model.canvas, event.intents));
     if (!event.first) return;
-    const name = String(
-      this.published?.["name"] ?? this.model.definition.metadata.name,
-    );
-    const version = String(
-      this.published?.["version"] ?? this.model.definition.metadata.version,
-    );
     if (event.attention) {
-      this.notify(`Activated ${name} ${version}. ${event.attention}`);
+      this.notify(`Activated ${this.publishedText}. ${event.attention}`);
       this.cdr.markForCheck();
       return;
     }
     this.closeActivation();
     this.notify(
-      `Activated ${name} ${version} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
+      `Activated ${this.publishedText} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
       { label: "Start run", run: () => void this.runCommand("run") },
     );
     this.cdr.markForCheck();
@@ -8644,6 +8644,14 @@ export class App implements CanvasHost {
   async confirmActivation({ bindings, replaces }: ActivationAsk) {
     if (!this.published || !this.profile || this.busy) return;
     this.activationError = null;
+    if (placeOf(this.api) !== this.activationPlace) {
+      this.activationError = {
+        message: `${this.publishedText} wasn't activated: the environment or the account changed since you opened this. Close this and activate again.`,
+        code: "",
+      };
+      this.cdr.markForCheck();
+      return;
+    }
     const scope = {
       tenant_id: this.profile.tenantId,
       project_id: this.profile.projectId,
@@ -8670,7 +8678,7 @@ export class App implements CanvasHost {
         // No activation to set triggers up for: say so instead of guessing one.
         this.closeActivation();
         this.notify(
-          `Activated ${String(this.published["name"] ?? this.model.definition.metadata.name)} ${String(this.published["version"] ?? this.model.definition.metadata.version)}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
+          `Activated ${this.publishedText}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
         );
       }
     } catch (e) {

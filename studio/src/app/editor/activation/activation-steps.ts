@@ -28,7 +28,7 @@ import {
   signal,
   type OnInit,
 } from "@angular/core";
-import { ApiError, type Diagnostic, type StudioApi } from "../../api";
+import { ApiError, type Diagnostic, placeOf, type StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import { Icon } from "../../icon";
@@ -71,7 +71,6 @@ import {
   connectionNeed,
   type ConnectionNeed,
   needsSync,
-  placeOf,
   retryResult,
   syncHeld,
   syncTriggers,

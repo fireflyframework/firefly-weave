@@ -25,7 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 // moves that exact resource. A platform event trigger's rows follow their own
 // rules (event-bindings.ts): a duplicate is stopped only once the declared
 // trigger is set up, and the stops Studio still owes are kept with the choice.
-import { ApiError } from "../../api";
+import { ApiError, placeOf } from "../../api";
 import { describeError } from "../../errors";
 import {
   canonicalJson,
@@ -127,19 +127,7 @@ export function connectionNeed(intent: TriggerIntent): ConnectionNeed | null {
   }
 }
 
-/**
- * The environment Studio works in and who is signed in, right now; null
- * without one. A row's requests go there, so none is sent once it isn't where
- * the version was activated. The account is the person's, whatever a newer
- * sign-in check says they may do; one that couldn't be read is another.
- */
-export function placeOf(api: TriggerApi): string | null {
-  try {
-    return JSON.stringify([api.environment, api.expectedPrincipal?.() ?? null]);
-  } catch {
-    return null;
-  }
-}
+/** A row's requests go where Studio works now, so none is sent once that isn't where the version was activated. */
 const left = (context: SyncContext) =>
   context.place === null || placeOf(context.api) !== context.place;
 

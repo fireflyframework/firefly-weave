@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // activation, stops what the person ticked, and keeps going past a failure,
 // which never undoes the activation. Retry reads the resource again first.
 import { describe, expect, it } from "vitest";
-import { ApiError } from "../src/app/api";
+import { ApiError, placeOf } from "../src/app/api";
 import type { PendingStop } from "../src/app/editor/activation/event-bindings";
 import {
   triggerPlan,
@@ -37,7 +37,6 @@ import {
   chooseResult,
   connectionNeed,
   needsSync,
-  placeOf,
   retryResult,
   settingsKey,
   syncHeld,
