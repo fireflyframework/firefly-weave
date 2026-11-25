@@ -28,6 +28,7 @@ export function settingsKey(intent: TriggerIntent): string {
     id: _id,
     resources: _resources,
     activated: _activated,
+    pendingStops: _pendingStops,
     ...settings
   } = intent;
   return canonicalJson(settings);

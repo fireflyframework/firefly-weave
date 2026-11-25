@@ -44,8 +44,12 @@ import {
   EVENT_TYPES,
   type PlatformEventType,
 } from "../triggers/platform-event";
-import { TOO_MANY_TRIGGERS, type PlanActivation } from "./trigger-plan";
-import { MAX_PAGES, type TriggerApi } from "./trigger-resources-api";
+import type { PlanActivation } from "./trigger-plan";
+import {
+  MAX_PAGES,
+  TOO_MANY_TRIGGERS,
+  type TriggerApi,
+} from "./trigger-resources-api";
 
 /** `event_triggers.read`. */
 export interface EventTriggerView {
@@ -122,11 +126,18 @@ export type EventRow =
       stop: boolean;
       text: string;
     }
-  /** A trigger Studio can't judge and leaves as it is. */
+  /**
+   * A trigger Studio can't judge and leaves as it is. Stop it is off, and
+   * offered only for one made outside Studio.
+   */
   | {
       kind: "blocked";
       binding: EventTriggerView;
       reason: "outside-studio" | "unknown-reconcile";
+      from: string;
+      stop: boolean;
+      /** Why, as the row leads with it. */
+      lead: string;
       text: string;
     }
   /** A trigger the new version doesn't use; Stop it is off. */
@@ -163,12 +174,26 @@ export type EventStatus =
   | "waiting"
   /** Someone changed the trigger since the dialog read it: nothing was sent. */
   | "changed"
+  /** The old trigger keeps running for now, as the person chose, or because the declared one isn't set up. */
+  | "kept"
   | "failed";
 export interface EventResult {
   status: EventStatus;
   /** The trigger the workflow runs on now: created, adopted, moved, or the one stopped. */
   id?: string;
   text: string;
+  /** The name of the trigger a create or a replace made. */
+  made?: string;
+  /** The person may not do this here: trying again changes nothing. */
+  forbidden?: true;
+  /** The answer was lost, so it may have happened; trying again looks first. */
+  unknown?: true;
+  /** The name the trigger would have, when a create failed. */
+  asked?: string;
+  /** Waiting only: how many events wait to start; null when Studio can't check. */
+  waiting?: number | null;
+  /** Kept only: Studio didn't stop it, because the trigger that reacts as declared isn't set up. */
+  held?: true;
   /** What the row's button does again: create the trigger, or stop the old one. */
   retry?: "create" | "stop";
   /** The stop Studio owes for this row's trigger; null clears it, absent leaves it as it is. */
@@ -181,10 +206,10 @@ export interface ApplyOptions {
   environment?: string;
 }
 
-const AS_YOU =
+export const AS_YOU =
   "Runs start as you after the move, including events waiting to start.";
-const RESOLVES =
-  " Its runs may resolve transactions, as you after the move. This needs permission to reconcile transactions.";
+export const MAY_RESOLVE =
+  "Its runs may resolve transactions, as you after the move. This needs permission to reconcile transactions.";
 /** The most source workflows a replace row names before it counts the rest. */
 const NAMED_SOURCES = 3;
 
@@ -207,7 +232,8 @@ const declarationOf = (view: EventTriggerView): EventDeclaration => ({
 });
 const inPlatformOrder = (events: readonly PlatformEventType[]) =>
   EVENT_TYPES.filter((type) => events.includes(type));
-const owedStop = (view: EventTriggerView): PendingStop => ({
+/** The stop Studio owes for a trigger as it was read. */
+export const owedStop = (view: EventTriggerView): PendingStop => ({
   triggerId: view.id,
   revision: view.revision,
   activationId: view.activation_id,
@@ -242,8 +268,17 @@ export function sameTrigger(
   );
 }
 
+function unknownAuthority(view: EventTriggerView) {
+  const lead = `Studio can't tell whether ${view.name} may resolve transactions, so it leaves it as it is.`;
+  return { lead, text: lead };
+}
+function outsideStudio(view: EventTriggerView, declaration: EventDeclaration) {
+  const lead = `${view.name} was created outside Studio with other ${sameSet(view.events, declaration.events) ? "source workflows" : "events"}.`;
+  return { lead, text: `${lead} Studio leaves it as it is.` };
+}
+
 /** "A", "A and B", "A, B and C". */
-function joined(words: readonly string[]) {
+export function joined(words: readonly string[]) {
   return words.length < 2
     ? words.join("")
     : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
@@ -301,7 +336,7 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
     const reacting = [named, ...live].find(
       (view) =>
         view !== undefined &&
-        studioName(view.name, workflow) &&
+        isStudioName(view.name, workflow) &&
         reactsAs(view, declaration),
     );
     found = stored ?? reacting ?? named;
@@ -326,12 +361,14 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
         kind: "blocked",
         binding: found,
         reason: "unknown-reconcile",
-        text: `Studio can't tell whether ${found.name} may resolve transactions, so it leaves it as it is.`,
+        from: fromOf(found),
+        stop: false,
+        ...unknownAuthority(found),
       });
     } else {
       const from = fromOf(found);
       const reconciles = found.may_reconcile;
-      const resolves = reconciles ? RESOLVES : "";
+      const resolves = reconciles ? ` ${MAY_RESOLVE}` : "";
       if (reactsAs(found, declaration))
         rows.push({
           kind: "retarget",
@@ -347,7 +384,9 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
           kind: "blocked",
           binding: found,
           reason: "outside-studio",
-          text: `${found.name} was created outside Studio with other events or source workflows. Studio leaves it as it is.`,
+          from,
+          stop: false,
+          ...outsideStudio(found, declaration),
         });
       else {
         const name = bindingName(workflow, taken);
@@ -433,7 +472,8 @@ export const eventRowActionable = (row: EventRow): boolean =>
   row.kind === "create" ||
   row.kind === "retarget" ||
   row.kind === "replace" ||
-  ((row.kind === "duplicate" || row.kind === "left-behind") && row.stop);
+  ((row.kind === "duplicate" || row.kind === "left-behind") && row.stop) ||
+  (row.kind === "blocked" && row.reason === "outside-studio" && row.stop);
 
 interface TriggerPage {
   items: Record<string, unknown>[];
@@ -495,16 +535,37 @@ async function listed(
 export const listEventTriggers = (api: TriggerApi) => listed(routes(api));
 
 const withPeriod = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+/** Two refusals of a create in Studio's words: the platform's name the language's field and a command. */
+const CREATE_REFUSALS: Readonly<Record<string, string>> = {
+  "WV-TRIGGER-EVENTS":
+    "the workflow doesn't accept these platform events. Choose them in its Platform event trigger and publish a new version.",
+  "WV-TRIGGER-LIMIT":
+    "this environment already has 64 platform event triggers. Stop one first.",
+};
+const isForbidden = (error: unknown) =>
+  error instanceof ApiError && error.status === 403;
+/** What a failure says of the request: not allowed, or no answer, so it may have been done. */
+function failure(error: unknown): { forbidden?: true; unknown?: true } {
+  if (isForbidden(error)) return { forbidden: true };
+  const refused =
+    error instanceof ApiError
+      ? error.status >= 400 && error.status < 500
+      : error instanceof Error && error.message === TOO_MANY_TRIGGERS;
+  return refused ? {} : { unknown: true };
+}
 /** Why a create or move was refused, with the permissions a 403 means. */
 function refusedFor(error: unknown, where: string, reconciles: boolean) {
-  if (error instanceof ApiError && error.status === 403)
+  if (isForbidden(error))
     return reconciles
-      ? `you need to manage triggers, start runs, read runs and reconcile transactions in ${where}.`
+      ? `you need to manage triggers, start runs and read runs and reconcile transactions in ${where}.`
       : `you need to manage triggers, start runs and read runs in ${where}.`;
-  return withPeriod(describeError(error).message);
+  return (
+    (error instanceof ApiError ? CREATE_REFUSALS[error.code] : undefined) ??
+    withPeriod(describeError(error).message)
+  );
 }
 const stopRefused = (error: unknown, where: string) =>
-  error instanceof ApiError && error.status === 403
+  isForbidden(error)
     ? `you need to manage triggers in ${where}.`
     : withPeriod(describeError(error).message);
 const changedText = (name: string) =>
@@ -515,7 +576,11 @@ const waitingText = (name: string, count: number | null) =>
     : `${name} has ${count} ${count === 1 ? "event" : "events"} waiting to start. Stopping it now skips them.`;
 
 /** Whether `name` is one Studio gives this workflow's triggers: its own, or with a number. */
-function studioName(name: string, workflow: string, planned = workflow) {
+export function isStudioName(
+  name: string,
+  workflow: string,
+  planned = workflow,
+) {
   if (name === planned || name === workflow) return true;
   const number = name.startsWith(`${workflow}-`)
     ? name.slice(workflow.length + 1)
@@ -550,7 +615,7 @@ async function created(
       return { ok: false, name, error: Error(TOO_MANY_TRIGGERS) };
     const earlier = all.items.find(
       (view) =>
-        studioName(view.name, workflow, ask.name) &&
+        isStudioName(view.name, workflow, ask.name) &&
         sameTrigger(
           view,
           { ...ask, name: view.name, activation_id: activationId },
@@ -673,11 +738,14 @@ export async function applyEventRow(
       ? {
           status: "created",
           id: made.view.id,
+          made: made.view.name,
           text: `Created ${made.view.name}`,
         }
       : {
           status: "failed",
           retry: "create",
+          ...failure(made.error),
+          asked: made.name,
           text: `Couldn't create ${made.name}: ${refusedFor(made.error, where, false)}`,
         };
   }
@@ -693,6 +761,7 @@ export async function applyEventRow(
       if (!(error instanceof ApiError && error.code === "WV-REVISION"))
         return {
           status: "failed",
+          ...failure(error),
           text: `Couldn't move ${name}: ${refusedFor(error, where, row.reconciles)}`,
         };
       // Its revision moved on: by this same move whose answer was lost, or by someone else.
@@ -710,45 +779,49 @@ export async function applyEventRow(
       return {
         status: "failed",
         retry: "create",
+        ...failure(made.error),
+        asked: made.name,
         text: `Couldn't create ${made.name}: ${refusedFor(made.error, where, row.request.may_reconcile)}`,
       };
-    const id = made.view.id;
     const name = made.view.name;
+    const done = { id: made.view.id, made: name };
     const stop = await stopped(route, old, checkWaiting);
     switch (stop.kind) {
       case "stopped":
         return {
           status: "replaced",
-          id,
-          text: `Replaced ${old.name} by ${name}`,
+          ...done,
+          text: `Replaced by ${name}`,
           pendingStop: null,
         };
       case "changed":
         return {
           status: "changed",
-          id,
+          ...done,
           text: `Created ${name}. ${changedText(old.name)}`,
           pendingStop: null,
         };
       case "waiting":
         return {
           status: "waiting",
-          id,
+          ...done,
+          waiting: stop.count,
           text: `Created ${name}. ${waitingText(old.name, stop.count)}`,
           pendingStop: owedStop(old),
         };
       case "failed":
         return {
           status: "failed",
-          id,
+          ...done,
           retry: "stop",
+          ...failure(stop.error),
           text: `Created ${name}, but couldn't stop ${old.name}: ${stopRefused(stop.error, where)}`,
           pendingStop: owedStop(old),
         };
     }
   }
 
-  // A duplicate or a trigger left behind that the person wants stopped.
+  // A duplicate, a trigger left behind or one made outside Studio that the person wants stopped.
   const view = row.binding;
   const owes = row.kind === "duplicate";
   const stop = await stopped(route, view, checkWaiting);
@@ -771,6 +844,7 @@ export async function applyEventRow(
       return {
         status: "waiting",
         id: view.id,
+        waiting: stop.count,
         text: waitingText(view.name, stop.count),
         ...(owes ? { pendingStop: owedStop(view) } : {}),
       };
@@ -779,6 +853,7 @@ export async function applyEventRow(
         status: "failed",
         id: view.id,
         retry: "stop",
+        ...failure(stop.error),
         text: `Couldn't stop ${view.name}: ${stopRefused(stop.error, where)}`,
         ...(owes ? { pendingStop: owedStop(view) } : {}),
       };

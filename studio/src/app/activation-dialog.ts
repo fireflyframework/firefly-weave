@@ -296,11 +296,16 @@ function onceEach(api: StudioApi): StudioApi {
       <div class="dialog-footer">
         @if (activated()) {
           <!-- The activation is done: the triggers' rows say what happened. -->
+          @if (steps()?.doneKeeps(); as keeps) {
+            <p class="activation-keeps">{{ keeps }}</p>
+          }
           <button
             type="button"
             class="primary"
+            data-done
             [disabled]="settingUp()"
-            (click)="cancel.emit()"
+            [attr.aria-disabled]="steps()?.acting() || null"
+            (click)="dismiss()"
           >
             Done
           </button>
@@ -334,6 +339,20 @@ function onceEach(api: StudioApi): StudioApi {
       </div>
     </form>
   </weave-modal>`,
+  styles: `
+    .activation-keeps {
+      align-self: center;
+      margin: 0 auto 0 0;
+      color: var(--muted);
+      font: var(--type-small);
+    }
+    @media (max-width: 767px) {
+      .activation-keeps {
+        margin: 0;
+        text-align: center;
+      }
+    }
+  `,
 })
 export class ActivationDialog implements OnInit {
   api = input.required<StudioApi>();
@@ -524,6 +543,7 @@ export class ActivationDialog implements OnInit {
       attention: steps.attention(),
       first: true,
     });
+    this.focusNext();
     steps.retried = () => {
       this.attentionText.set(steps.attention() ?? "");
       this.triggers.emit({
@@ -531,7 +551,19 @@ export class ActivationDialog implements OnInit {
         attention: steps.attention(),
         first: false,
       });
+      this.focusNext();
     };
+  }
+  /** Focus goes to the first row that asks something (its safe answer), otherwise to Done. */
+  private focusNext() {
+    afterNextRender(
+      () =>
+        (
+          this.host.nativeElement.querySelector<HTMLElement>("[data-ask]") ??
+          this.host.nativeElement.querySelector<HTMLElement>("[data-done]")
+        )?.focus(),
+      { injector: this.injector },
+    );
   }
   /** Loads the checks and the called workflows and triggers steps from their own chunk. */
   async loadSteps() {
@@ -550,7 +582,11 @@ export class ActivationDialog implements OnInit {
       ref.setInput(
         "environment",
         this.environmentId()
-          ? { id: this.environmentId(), name: this.environmentLabel() }
+          ? {
+              id: this.environmentId(),
+              name: this.environmentLabel(),
+              short: this.connectionsHost()?.environmentName,
+            }
           : null,
       );
       ref.setInput("diagnostics", this.diagnostics());
@@ -589,7 +625,9 @@ export class ActivationDialog implements OnInit {
     return connector.replace("@", " ");
   }
   dismiss() {
-    if (!this.running()) this.cancel.emit();
+    // While triggers are set up, closing would lose what was made and what is owed.
+    if (this.running() || this.settingUp() || this.steps()?.acting()) return;
+    this.cancel.emit();
   }
   /** The slots the connection rows were built for. */
   private loadedSlots = "";
