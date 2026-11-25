@@ -348,8 +348,11 @@ export class TransactionResolveDialog {
   readonly typed = signal("");
   /** The confirm was pressed with something wrong: its problems show. */
   private readonly attempted = signal(false);
-  /** The revision the platform refused as an older one. */
-  private readonly refusedRevision = signal<number | null>(null);
+  /** The revision the platform refused as an older one, and that refusal. */
+  private readonly outdated = signal<{
+    revision: number;
+    refused: PlainError;
+  } | null>(null);
   /** The refusal whose result, ticks or ending were changed since. */
   private readonly corrected = signal<PlainError | null>(null);
 
@@ -436,14 +439,11 @@ export class TransactionResolveDialog {
   });
   /** The incident changed: nothing is sent until it is read again. */
   readonly stale = computed(
-    () => this.refusedRevision() === this.incident().revision,
+    () => this.outdated()?.revision === this.incident().revision,
   );
   /** Its checklist was built again: each step is ticked again. */
   readonly rebuilt = computed(
-    () =>
-      this.refusedRevision() !== null &&
-      !this.stale() &&
-      this.rows().length > 0,
+    () => this.outdated() !== null && !this.stale() && this.rows().length > 0,
   );
   /** Why the confirm waits; null when it can be pressed. */
   readonly waits = computed(() => {
@@ -481,10 +481,11 @@ export class TransactionResolveDialog {
     const failure = this.failure();
     return failure ? `${failure.message} (${failure.code})` : "";
   });
-  /** A refusal no field shows. */
-  readonly notice = computed(() =>
-    this.outputRefused() ? null : this.refused(),
-  );
+  /** A refusal no field shows; why the incident must be read again, until it is. */
+  readonly notice = computed(() => {
+    if (this.outputRefused()) return null;
+    return this.refused() ?? (this.stale() ? this.outdated()!.refused : null);
+  });
   readonly resultError = computed(() => {
     const { blockOutput, output } = this.problems() as Partial<
       Record<"blockOutput" | "output", string>
@@ -505,8 +506,12 @@ export class TransactionResolveDialog {
       }),
     );
     effect(() => {
-      if (this.failure()?.code === "WV-INCIDENT-REVISION")
-        this.refusedRevision.set(untracked(() => this.incident().revision));
+      const refused = this.failure();
+      if (refused?.code === "WV-INCIDENT-REVISION")
+        this.outdated.set({
+          revision: untracked(() => this.incident().revision),
+          refused,
+        });
     });
     // The steps of another record are checked again, whatever was ticked.
     let revision: number | null = null;

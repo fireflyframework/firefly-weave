@@ -1246,6 +1246,45 @@ test("an incident that changed must be refreshed: the checklist is built again, 
   expect(sent[1].revision).toBe('"2"');
 });
 
+test("Refresh incident stays while what it reads is the revision that was refused", async ({
+  page,
+}) => {
+  const { platform, sent } = await changedMeanwhile(page, unknown);
+  const name = "It didn't happen";
+  await offer(page, name).click();
+  await field(page, name, "Reason").fill("Not found");
+  await field(page, name, "Evidence reference").fill("Search");
+  await confirm(page, name).click();
+  const asked = dialog(page, name);
+  const refresh = asked.getByRole("button", { name: "Refresh incident" });
+  const alert = asked.getByRole("alert");
+  // Another refusal, of the read, and then the old revision again.
+  await page.route(
+    `${environment}/incidents/${ids.unknown}`,
+    (route) => refuse(route, 503, "WV-UNAVAILABLE", "Unavailable"),
+    { times: 1 },
+  );
+  await refresh.click();
+  await expect(alert).toContainText("Support code: WV-UNAVAILABLE");
+  const read = platform.reads.length;
+  await refresh.click();
+  await expect.poll(() => platform.reads.length).toBe(read + 1);
+  await expect(alert).toContainText(
+    "Someone changed this incident since you opened it. Refresh it, check it again, then decide.",
+  );
+  await expect(alert).toContainText("Support code: WV-INCIDENT-REVISION");
+  await expect(refresh).not.toHaveAttribute("aria-busy");
+  await expect
+    .poll(() => described(page, name))
+    .toBe("To record that it didn't happen, refresh the incident.");
+  change(platform, { ...unknown, revision: 2 });
+  await refresh.click();
+  await expect(alert).toHaveCount(0);
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1].revision).toBe('"2"');
+});
+
 test("the result typed for a finished transaction stays through a refresh", async ({
   page,
 }) => {
