@@ -193,7 +193,7 @@ export class EventStartsTab {
       case "forbidden":
         return says(
           `You can't see what this trigger started in ${where}.`,
-          "It needs permission to manage triggers and read runs there.",
+          "Ask an administrator for permission to manage triggers and read runs there.",
         );
       case "failed":
         this.clock();

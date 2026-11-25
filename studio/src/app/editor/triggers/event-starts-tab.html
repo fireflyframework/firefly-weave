@@ -26,7 +26,7 @@ SPDX-License-Identifier: Apache-2.0
           >Trigger {{ now.trigger.name
           }}{{
             now.trigger.stopped
-              ? " · stopped"
+              ? " · stopped. Activate this workflow to react again."
               : now.trigger.version
                 ? " · reacts for " + now.trigger.version
                 : ""

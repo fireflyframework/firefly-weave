@@ -105,6 +105,15 @@ test("lists what the trigger started, newest first, with why a start started not
   await expect(panel.getByRole("button", { name: "Show more" })).toHaveCount(0);
 });
 
+test("says how a stopped trigger reacts again", async ({ page }) => {
+  const { panel } = await open(page, {
+    seeds: [{ ...CURRENT, disabled: true }],
+  });
+  await expect(panel.locator(".es-where")).toHaveText(
+    /^\s*In development\s*Trigger notify-team-2 · stopped\. Activate this workflow to react again\.\s*$/,
+  );
+});
+
 test("shows twenty at a time; Show more moves focus to the first new one", async ({
   page,
 }) => {
@@ -189,7 +198,7 @@ test("a failed read is tried again after its pause, and a refusal says what it n
     "You can't see what this trigger started in development.",
   );
   await expect(panel).toContainText(
-    "It needs permission to manage triggers and read runs there.",
+    "Ask an administrator for permission to manage triggers and read runs there.",
   );
   // The button is gone: focus is on what took its place.
   await expect(panel.locator(".es-empty")).toBeFocused();
