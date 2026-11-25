@@ -1631,14 +1631,13 @@ def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
 
 def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:
     """The code of each failure a run's transactions name, by the step instance it happened at: what they are undone
-    for, and what put them in doubt. A transaction itself failed only when its reservations expired: one that is
-    undone because its run ends didn't."""
+    for, and what put them in doubt."""
     named: dict[str, str] = {}
     for incident in variables.get("incidents", {}).values():
         named[incident["node_id"]] = incident.get("origin_code") or incident["code"]
-    for key, record in records.items():
+    for record in records.values():
         for cause in (record.pending_abort, record.cause):
-            if cause is not None and (cause.instance_key != key or cause.code == "WV-TXN-HOLD-EXPIRED"):
+            if cause is not None:
                 named[cause.instance_key] = cause.code
     return named
 
@@ -1654,7 +1653,8 @@ def _transaction_failures(
 ) -> Iterator[tuple[int, dict[str, Any]]]:
     """The entries of a run that failed inside its transactions, and the transactions whose reservations expired,
     with their status and error. The other steps of a transaction settle before it does, so a failed one is often not
-    the last of the trace: it is an entry without an output that reported a failure, or that a transaction names."""
+    the last of the trace: it is an entry without an output that reported a failure, or that a transaction names. A
+    transaction names itself when its reservations expire, and when its run ends, which is no failure of its own."""
     for index, entry in enumerate(trace):
         key = _entry_key(entry)
         if entry.frame != frame or entry.status in {"completed", "failed"}:

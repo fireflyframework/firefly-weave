@@ -951,6 +951,22 @@ def test_a_failed_step_of_a_called_workflow_never_takes_the_error_simulated_for_
     assert failures(answer, "call") == {"note": "WV-EXPR-MISSING"}
 
 
+def test_a_step_stopped_in_a_called_workflow_never_takes_the_failure_reported_by_a_step_with_its_id():
+    missing = {**NOTE, "value": {"ref": "/input/items/5"}}
+    body = move(hold(), parallel(x=[wait(60, "add")], y=[missing]))
+    called = {**json.loads(body), "metadata": {"name": "inside", "version": "1.0.0"}}
+    called["spec"] |= {"callable": {}, "timeoutSeconds": 300}
+    call = {key: value for key, value in called_step().items() if key != "compensate"}
+    answer = run_move(
+        source(transaction([hold(), add()], onError="continue"), {**call, "with": {"ref": "/input"}}),
+        definitions=[*fixture()["definitions"], called],
+        workflows={"inside@1.0.0": {"mocks": {"node:hold": {"holdId": "h-1"}}}},
+        errors={"node:add": {"code": "UNAVAILABLE"}},
+    )
+    assert failures(answer)["add"] == "UNAVAILABLE"
+    assert failures(answer, "call") == {"note": "WV-EXPR-MISSING"}
+
+
 def test_an_expired_reservation_is_its_transactions_failure():
     answer = run_move(move(hold(holdSeconds=60), add(), wait(3000)))
     assert failures(answer) == {"move": "WV-TXN-HOLD-EXPIRED"}
