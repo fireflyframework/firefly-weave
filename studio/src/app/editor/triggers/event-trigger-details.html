@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 @let wrong = problems();
 @let state = inputState();
 @if (state === "refused") {
-  <div class="et-callout" data-tone="danger" role="alert">
+  <div
+    class="et-callout"
+    data-tone="danger"
+    role="alert"
+    data-focus-path="eventTrigger/input"
+  >
     <weave-icon name="failCircle" [size]="16" />
     <div class="et-callout-text">
       <strong>{{ refused }}</strong>
@@ -34,7 +39,12 @@ SPDX-License-Identifier: Apache-2.0
     </div>
   </div>
 } @else if (state === "unsure") {
-  <div class="et-callout" data-tone="warning" role="note">
+  <div
+    class="et-callout"
+    data-tone="warning"
+    role="note"
+    data-focus-path="eventTrigger/input"
+  >
     <weave-icon name="warning" [size]="16" />
     <div class="et-callout-text">
       <strong>{{ unsure }}</strong>
@@ -51,6 +61,7 @@ SPDX-License-Identifier: Apache-2.0
 
 <fieldset
   class="et-section et-events"
+  data-focus-path="eventTrigger/events"
   [attr.aria-labelledby]="id + '-events'"
   [attr.aria-describedby]="wrong.events ? id + '-events-problem' : null"
   [disabled]="!!reason"
@@ -139,7 +150,11 @@ SPDX-License-Identifier: Apache-2.0
     </label>
   </div>
   @if (only()) {
-    <ul class="et-chips" aria-label="Workflows this one reacts to">
+    <ul
+      class="et-chips"
+      aria-label="Workflows this one reacts to"
+      data-focus-path="eventTrigger/from"
+    >
       @for (source of names(); track $index) {
         <li
           class="et-chip"

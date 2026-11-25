@@ -266,7 +266,8 @@ export interface CheckedInput {
  */
 export type EventInputState = "event" | "unread" | "refused" | "unsure" | "own";
 
-const INPUT_PATH = "/spec/inputSchema";
+/** Where a check says what is wrong with the workflow's input. */
+export const INPUT_PATH = "/spec/inputSchema";
 export const INPUT_REFUSED =
   "This trigger can't start runs: the workflow's input doesn't accept the platform event.";
 export const INPUT_UNSURE =

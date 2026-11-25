@@ -44,6 +44,7 @@ import {
   DEFAULT_DECLARATION,
   eventInputState,
   eventProblems,
+  INPUT_PATH,
   INPUT_REFUSED,
   INPUT_UNREAD,
   INPUT_UNSURE,
@@ -400,7 +401,7 @@ export class EventTriggerDetails {
   inputCode(): string {
     const found = this.session().host.diagnostics?.diagnostics.find(
       (item) =>
-        item["path"] === "/spec/inputSchema" &&
+        item["path"] === INPUT_PATH &&
         /(TYPE_MISMATCH|UNKNOWN_COMPATIBILITY)$/.test(String(item.code ?? "")),
     );
     return String(found?.code ?? "");

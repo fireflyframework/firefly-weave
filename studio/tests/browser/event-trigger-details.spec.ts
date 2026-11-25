@@ -388,6 +388,73 @@ test.describe("the Platform event trigger's Parameters", () => {
     await expect(unsure).toHaveCount(0);
   });
 
+  const first = (dialog: Locator) =>
+    events(dialog).getByRole("checkbox").first();
+  const reset = (dialog: Locator) =>
+    dialog.getByRole("button", { name: "Reset the input" });
+  for (const [what, spec, text, hint, place, control] of [
+    [
+      "no event",
+      { eventTrigger: { events: [] } },
+      "Choose at least one event.",
+      null,
+      "Platform event trigger · Which events",
+      first,
+    ],
+    [
+      "no workflow named",
+      { eventTrigger: { ...ATTENTION, from: [] } },
+      "Add at least one workflow, or choose Any workflow in this project.",
+      null,
+      "Platform event trigger · From which workflows",
+      field,
+    ],
+    [
+      "an input that refuses the event",
+      { inputSchema: FORM },
+      "This trigger can't start runs: the workflow's input doesn't accept the platform event.",
+      "Reset the input in the trigger's Parameters.",
+      "Platform event trigger · Input",
+      reset,
+    ],
+    [
+      "an input Studio can't compare",
+      { inputSchema: { not: { type: "string" } } },
+      "Studio can't confirm that the platform event fits this workflow's input.",
+      "Each start checks it.",
+      "Platform event trigger · Input",
+      reset,
+    ],
+  ] as const)
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 360, height: 780 },
+    ])
+      test(`at ${size.width}, Diagnostics says what the trigger says and opens what fixes it: ${what}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(size);
+        const details = await openNotifyTeam(page, { spec });
+        const strip = page.getByRole("region", {
+          name: "Compiler diagnostics",
+        });
+        const toggle = strip.getByRole("button", { name: "Diagnostics" });
+        if ((await toggle.getAttribute("aria-expanded")) !== "true")
+          await toggle.click();
+        const row = strip
+          .locator(".diagnostic-row")
+          .filter({ hasText: "Platform event trigger" });
+        await expect(row.locator(".diagnostic-text")).toHaveText(text);
+        await expect(row.locator(".diagnostic-hint")).toHaveText(
+          hint ? [hint] : [],
+        );
+        await row.getByRole("button", { name: place, exact: true }).click();
+        const dialog = details.dialogFor("Platform event trigger");
+        await expect(dialog).toBeVisible();
+        await expect(control(dialog)).toBeFocused();
+        await expect(control(dialog)).toBeInViewport({ ratio: 1 });
+      });
+
   test("the keyboard reaches every control, in order", async ({ page }) => {
     const details = await openNotifyTeam(page, {
       spec: { eventTrigger: { ...ATTENTION, from: ["sync-records"] } },

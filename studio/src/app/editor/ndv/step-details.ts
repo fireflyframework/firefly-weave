@@ -2374,6 +2374,13 @@ export class StepDetails {
       found = control(
         panel?.querySelector("[data-param][data-required-empty]"),
       );
+    else if (focus.kind === "path")
+      // A part of a panel that isn't a form of fields, by its path.
+      found = control(
+        panel?.querySelector(
+          `[data-focus-path="${CSS.escape(focus.path.join("/"))}"]`,
+        ),
+      );
     else if (focus.kind === "region") {
       const region = root.querySelector<HTMLElement>(
         `[data-region="${focus.region}"]`,

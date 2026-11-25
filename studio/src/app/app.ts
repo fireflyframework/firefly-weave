@@ -3790,6 +3790,16 @@ export class App implements CanvasHost {
   }
   /** Opens the step (or the workflow settings) a diagnostic names and focuses its field. */
   async openDiagnostic(location: DiagnosticLocation) {
+    const trigger =
+      location.event &&
+      triggerIntents(this.model.canvas).find(({ kind }) => kind === "event");
+    if (trigger && stepDetailsEnabled(this as StepDetailsHost)) {
+      await this.openStepDetails(triggerChoiceTarget(trigger.id), {
+        revealAll: true,
+        focus: { kind: "path", path: ["eventTrigger", location.event!] },
+      });
+      return;
+    }
     if (
       stepDetailsEnabled(this as StepDetailsHost) &&
       location.stepId !== "$workflow"
