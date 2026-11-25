@@ -487,7 +487,7 @@ test("a run without transactions shows no Transactions section", async ({
   await expect(section(page)).toHaveCount(0);
 });
 
-test("J16: a paused rollback counts its undone steps, and a cancel waits for the step that can't be undone", async ({
+test("a paused rollback counts its undone steps, and a cancel waits for the step that can't be undone", async ({
   page,
 }) => {
   const undoing: RunTransactionView = {
@@ -577,7 +577,7 @@ test.describe("on a phone", () => {
         () => document.documentElement.scrollWidth - window.innerWidth,
       ),
     ).toBeLessThanOrEqual(0);
-    // A step with nothing to undo shows no Undo or confirm line, as the phone mockup draws it.
+    // A step with nothing to undo shows no Undo or confirm line.
     await expect(
       stepRow(page, "move[3]", "submit[3]").locator(".c-undo"),
     ).toBeHidden();
