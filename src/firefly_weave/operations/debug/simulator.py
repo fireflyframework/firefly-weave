@@ -75,6 +75,7 @@ from firefly_weave.operations.debug.models import (
     ScriptedError,
     SelectedScope,
     SignalReceipt,
+    TransactionDebugView,
 )
 from firefly_weave.operations.debug.transactions import (
     SESSION_RUN_ID,
@@ -89,6 +90,7 @@ from firefly_weave.operations.debug.transactions import (
     scripted_effect,
     started_data,
     step_instance,
+    transaction_view,
     transaction_views,
 )
 from firefly_weave.runtime.agent_tools import agent_key
@@ -674,6 +676,18 @@ class Simulator:
             )
         return views
 
+    def _transactions(self, key: str, run: Run, state: RunState) -> list[TransactionDebugView]:
+        """Every transaction of the run ``key``, in the order it opened: those its state holds, and those that ended
+        with their loop iteration, in this event or an earlier one."""
+        released = run.cursor.released if run.cursor is not None else {}
+        ended = {**run.ended, **{name: transaction_view(name, record) for name, record in released.items()}}
+        opened = [
+            boundary.node_id
+            for boundary in self.data.boundaries
+            if boundary.node_kind == "transaction" and boundary.node_id is not None and (boundary.frame or "") == key
+        ]
+        return transaction_views(state, ended, opened)
+
     def _scope(self, state: RunState, selected: str | None) -> SelectedScope | None:
         """The loop values the selected instance reads, or None outside loop bodies."""
         if selected is None:
@@ -706,7 +720,7 @@ class Simulator:
             active_nodes=list(state.active),
             variables=state.model_dump(mode="json"),
             loops=self._loops(self._workflows[frame.workflow].prepared, state),
-            transactions=transaction_views(state),
+            transactions=self._transactions(frame.key, frame, state),
         )
 
     def inspect(self) -> DebugView:
@@ -729,7 +743,7 @@ class Simulator:
             selected_scope=self._scope(state, selected),
             frames=[self._frame_view(frame) for frame in self.data.frames],
             selected_frame=upcoming[0] if upcoming is not None and upcoming[0] else None,
-            transactions=transaction_views(state),
+            transactions=self._transactions("", self.data, state),
         ).model_copy(deep=True)
 
     def _stops_at(self, path: str) -> bool:
@@ -910,6 +924,8 @@ class Simulator:
             result = run.cursor.result
             run.state = result.state
             run.cursor = None
+            # Kept once the event ended: an event that is refused behind an incident ends nothing.
+            run.ended.update({name: transaction_view(name, record) for name, record in result.released.items()})
             # Measured context parts last one event, as in production, where every transition prepares its own.
             called.prepared.contexts.parts.clear()
             if not self._dispatch(key, run, called, result):
