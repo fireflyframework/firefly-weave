@@ -253,7 +253,7 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
             "path": "/onError",
             "default": "stop",
             "block": {"name": "errorPath", "path": "/errorPath", "label": "On error"},
-            "studio": "pending",
+            "studio": "ready",
         },
     ]
     trigger = next(entry for entry in manifest.workflow_fields if entry.name == "eventTrigger")
