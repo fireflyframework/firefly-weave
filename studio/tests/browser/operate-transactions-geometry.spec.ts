@@ -199,6 +199,24 @@ for (const size of sizes)
       expect(
         await cutText(page.locator("#main"), `${own} .status-pill`),
       ).toEqual([]);
+      // A name too long for its column keeps its start, and is whole in its title.
+      const names = await rows.locator(".row-open").evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          return {
+            start:
+              range.getBoundingClientRect().left -
+              button.getBoundingClientRect().left,
+            whole: button.getAttribute("title") === button.textContent?.trim(),
+          };
+        }),
+      );
+      expect(names).toHaveLength(11);
+      for (const { start, whole } of names) {
+        expect(start).toBeGreaterThanOrEqual(-0.5);
+        expect(whole).toBe(true);
+      }
       const heads = page
         .getByRole("table", { name: "Runs" })
         .getByRole("columnheader");

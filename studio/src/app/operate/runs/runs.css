@@ -403,8 +403,10 @@ weave-operate-state {
   font: var(--type-label);
   color: var(--text);
 }
-/* The workflow name opens the run; its target covers the whole row. */
+/* The workflow name opens the run; its target covers the whole row. A block:
+   an ellipsis doesn't show in a button's own flex box, which centers it. */
 .runs-table .row-open {
+  display: block;
   min-height: 0;
   padding: 0;
   border: 0;
