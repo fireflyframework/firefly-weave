@@ -17,12 +17,65 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
 import { addStepSearch } from "./add-step-po";
-import { openNewWorkflow, openWorkflow } from "./canvas-po";
+import { openNewWorkflow, openWorkflow, type CanvasPage } from "./canvas-po";
+import { yamlFile } from "./step-details-po";
 import { sourceText, tokenColor } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 });
+
+/** Zooms with Ctrl and the wheel over the canvas's center, one event per delta. */
+async function wheelZoom(canvas: CanvasPage, deltas: number[]) {
+  const { page, root } = canvas;
+  const area = (await root.boundingBox())!;
+  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
+  for (const delta of deltas) {
+    const before = await canvas.zoomPercent();
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, delta);
+    await page.keyboard.up("Control");
+    await expect.poll(() => canvas.zoomPercent()).not.toBe(before);
+  }
+}
+
+/**
+ * The elements whose inline style changes while `act` runs: how many, and
+ * which of them are outputs, by key. Each one's style is computed again.
+ */
+async function restyled(canvas: CanvasPage, act: () => Promise<void>) {
+  await canvas.root.evaluate((root) => {
+    const changed = new Set<Element>();
+    const keep = (records: MutationRecord[]) => {
+      for (const record of records) changed.add(record.target as Element);
+    };
+    const observer = new MutationObserver(keep);
+    observer.observe(root, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style"],
+    });
+    (window as unknown as { restyled: () => object }).restyled = () => {
+      keep(observer.takeRecords());
+      observer.disconnect();
+      return {
+        elements: changed.size,
+        outputs: [...changed]
+          .filter((element) => element.matches(".handle"))
+          .map((element) => element.getAttribute("data-handle"))
+          .sort(),
+      };
+    };
+  });
+  await act();
+  return canvas.page.evaluate(() =>
+    (
+      window as unknown as {
+        restyled: () => { elements: number; outputs: string[] };
+      }
+    ).restyled(),
+  );
+}
 
 for (const gesture of [
   "Space",
@@ -209,6 +262,81 @@ test("End has a readable label below its circle at 50 percent", async ({
   expect((await label.boundingBox())!.y).toBeGreaterThan(
     (await canvas.tileBody("$end").boundingBox())!.y + 20,
   );
+});
+
+test("zooming restyles no output of steps without an error path", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page);
+  const opened = await canvas.zoomPercent();
+  // A trigger, plain steps, a decision's paths and a parallel step's branches.
+  await expect(canvas.root.locator(".handle[data-handle]")).toHaveCount(14);
+  const { elements, outputs } = await restyled(canvas, () =>
+    wheelZoom(canvas, [-120, -120, 120, 120, 120]),
+  );
+  expect(await canvas.zoomPercent()).toBeLessThan(opened);
+  expect(outputs).toEqual([]);
+  // The canvas itself did change: its scale and each step's label.
+  expect(elements).toBeGreaterThan(5);
+});
+
+test("zooming keeps the canvas's zoom on the Success and Error outputs only", async ({
+  page,
+}) => {
+  // submit's Error output is a drawing beside its empty path's slot;
+  // review's is a button.
+  const canvas = await openWorkflow(
+    page,
+    yamlFile(
+      "request-intake.yaml",
+      `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: request-intake, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: submit
+      kind: transform
+      value: {literal: sent}
+      onError: errorOutput
+      errorPath: {steps: [], output: {literal: null}}
+    - id: review
+      kind: transform
+      value: {literal: checked}
+      onError: errorOutput
+      errorPath:
+        steps: [{id: notify-team, kind: transform, value: {literal: told}}]
+        output: {literal: null}
+    - {id: summarize, kind: transform, value: {literal: done}}
+  output: {literal: null}
+`,
+    ),
+  );
+  await wheelZoom(canvas, [-120, 120, 120]);
+  // An output is drawn 12 units across, so its width on screen tells the zoom.
+  const outputs = await canvas.root
+    .locator(".handle[data-handle]")
+    .evaluateAll((elements) =>
+      elements.map((element) => ({
+        key: element.getAttribute("data-handle"),
+        zoom: (element as HTMLElement).style.getPropertyValue("--zoom"),
+        drawn: element.getBoundingClientRect().width / 12,
+      })),
+    );
+  expect(
+    outputs
+      .filter((output) => output.zoom)
+      .map((output) => output.key)
+      .sort(),
+  ).toEqual([
+    "review:path:errorPath",
+    "review:path:success",
+    "submit:path:errorPath",
+    "submit:path:success",
+  ]);
+  for (const output of outputs.filter((item) => item.zoom))
+    expect(Number(output.zoom), output.key!).toBeCloseTo(output.drawn, 3);
 });
 
 test("canvas controls stay at the bottom left with the minimap above", async ({
