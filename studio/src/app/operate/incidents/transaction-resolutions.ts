@@ -156,6 +156,7 @@ export function transactionActions(
 export interface ChecklistRow {
   instanceKey: string;
   stepId: string;
+  status: ParticipantStatus;
   sentence: string;
   /** "Undo failed after 3 tries · operation key " and the whole key. */
   caption: string;
@@ -235,6 +236,7 @@ export function checklistRows(
       {
         instanceKey: row.instanceKey,
         stepId: row.stepId,
+        status,
         sentence: `I confirmed ${stepName(row.instanceKey)} ${did} in the other system.`,
         caption: `${(row.undo ?? row.forward).text}${tries} · operation key ${row.operationKey}`,
         operationKey: row.operationKey,
@@ -361,17 +363,23 @@ export function checkReconcile(
 }
 /**
  * Whether an incident read again asks about other steps, or says otherwise how
- * Weave left one: its revision doesn't move with its transaction's record.
+ * Weave left one: its revision doesn't move with its transaction's record. A
+ * step tried again is left the same, so its tries alone change nothing.
  */
 export function checklistChanged(
   before: IncidentView,
   after: IncidentView,
 ): boolean {
   const lines = (incident: IncidentView) =>
-    JSON.stringify([
-      checklistRows(incident, "compensated"),
-      checklistRows(incident, "completed"),
-    ]);
+    JSON.stringify(
+      (["compensated", "completed"] as const).map((as) =>
+        checklistRows(incident, as).map(({ instanceKey, status, outcomes }) => [
+          instanceKey,
+          status,
+          outcomes,
+        ]),
+      ),
+    );
   return before.revision !== after.revision || lines(before) !== lines(after);
 }
 /** The draft once the incident is read again: its record may list other steps, so each is ticked again. */

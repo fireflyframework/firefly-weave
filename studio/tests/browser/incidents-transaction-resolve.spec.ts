@@ -1257,10 +1257,14 @@ test("a refused record that is the same when read again keeps its ticks, and its
   await field(page, name, "Reason").fill("Both are confirmed by hand");
   await expect(asked).toContainText("26 / 2,000");
   await expect(asked.locator(".confirm-reason")).toHaveCount(0);
-  await reads[0].fulfill({ json: twoConfirms("confirming") });
+  // The stuck confirm was only tried again meanwhile.
+  const tried = twoConfirms("confirming");
+  tried.transaction!.participants[0].attempts = 3;
+  await reads[0].fulfill({ json: tried });
   await expect(asked.locator("#decide-result-error")).toHaveText(
     "The reconciliation record doesn't fit the transaction (WV-RUNTIME-OUTPUT)",
   );
+  await expect(asked).toContainText("Confirm failed after 3 tries");
   await expect(asked).not.toContainText("rebuilt the checklist");
   for (const line of await asked.getByRole("checkbox").all())
     await expect(line).toBeChecked();

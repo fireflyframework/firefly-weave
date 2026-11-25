@@ -689,7 +689,8 @@ describe("Mark as reconciled", () => {
 
     it.each([
       ["a step moved on", of("hold", { status: "confirming" })],
-      ["a step was tried again", of("add", { attempts: 4 })],
+      ["it lists another step", of("hold", { instance_key: "hold[2]" })],
+      ["a step is sent as another", of("add", { mode: "reserve" })],
       // Listed when finished only.
       ["a step was skipped", of("add2", { status: "skipped" })],
       [
@@ -724,6 +725,12 @@ describe("Mark as reconciled", () => {
           updated_at: "2026-11-22T10:53:30Z",
         }),
       ).toBe(false);
+    });
+
+    it("has the same checklist while a step is only tried again", () => {
+      expect(checklistChanged(undoStuck, of("add", { attempts: 4 }))).toBe(
+        false,
+      );
     });
   });
 
