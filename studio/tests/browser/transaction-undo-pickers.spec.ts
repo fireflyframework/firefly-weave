@@ -120,6 +120,30 @@ test.describe("what undoes a step at 1440x900", () => {
     });
   });
 
+  test("Use data… opens the data picker on a row of an undo's input", async ({
+    page,
+  }) => {
+    const details = await openSettings(
+      page,
+      moveWorkflow(
+        step("add", "target-system.add-quantity@1.0.0", {
+          compensate:
+            "{kind: action, uses: target-system.remove-quantity@1.0.0, with: {literal: {}}}",
+        }),
+      ),
+      "add",
+    );
+    const row = details.field("compensate.input.reference");
+    await row.getByRole("button", { name: "Field menu for Reference" }).click();
+    await page.getByRole("menuitem", { name: /Use data…/ }).click();
+    const picker = row.locator("weave-reference-combobox input");
+    await expect(picker).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("listbox", { name: "Reference suggestions" }),
+    ).toBeVisible();
+  });
+
   test("a workflow is called, and another choice starts its input over", async ({
     page,
   }) => {

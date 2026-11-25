@@ -610,8 +610,9 @@ export class ParamField {
           this.focusControl(session, spec);
           return;
         }
+        // Its own control: a row in a group is inside the group's control too.
         const control = this.element.nativeElement.querySelector<HTMLElement>(
-          ".param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
+          ":scope .param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
         );
         // A drop that made the text a template: the caret goes after the
         // placeholder in the formula editor (which may still be loading).
