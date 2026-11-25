@@ -31,6 +31,7 @@ import {
   eventRowView,
   heldResult,
   keptResult,
+  resultIcon,
   type EventRowView,
 } from "../src/app/editor/activation/event-rows";
 import type { PlanActivation } from "../src/app/editor/activation/trigger-plan";
@@ -210,6 +211,80 @@ describe("a row before activating", () => {
       icon: "warning",
       stop: true,
     });
+  });
+
+  const owed = (triggerId: string): PendingStop => ({
+    triggerId,
+    revision: 1,
+    activationId: "a-older",
+  });
+  it.each<[string, Partial<Seed>, string]>([
+    [
+      "other events",
+      { name: "notify-team-2", events: ["transaction.completed"] },
+      "notify-team-2 also starts notify-team, for other events.",
+    ],
+    [
+      "events of other workflows",
+      { name: "notify-team-2", sources: ["sync-references"] },
+      "notify-team-2 also starts notify-team, for other events.",
+    ],
+    [
+      "other events under the workflow's name",
+      { name: "notify-team", events: ["transaction.completed"] },
+      "Trigger notify-team also starts notify-team, for other events.",
+    ],
+  ])(
+    "says a trigger whose stop is owed starts it for %s",
+    (_what, other, lead) => {
+      const platform = seeded(
+        { ...STORED, name: "notify-team-3" },
+        { ...STORED, id: "t-2", activation: "a-older", ...other },
+      );
+      const duplicate = row(
+        planned(platform, { storedId: "t-1", pendingStops: [owed("t-2")] }),
+        "duplicate",
+      );
+      expect(duplicate.text).toBe(`${lead} Stop ${other.name}`);
+      expect(eventRowView(duplicate)).toMatchObject({
+        lead,
+        detail: `Stop trigger ${other.name}, which an earlier activation left running.`,
+        stop: true,
+      });
+    },
+  );
+
+  it("calls a trigger that shares an event and a workflow the same, whatever else it reacts to", () => {
+    const platform = seeded(
+      STORED,
+      {
+        ...STORED,
+        id: "t-2",
+        name: "notify-team-2",
+        activation: "a-older",
+        events: ["transaction.completed", "transaction.in_doubt"],
+        sources: ["sync-references", "move-between-systems"],
+      },
+      {
+        ...STORED,
+        id: "t-3",
+        name: "notify-team-3",
+        activation: "a-older",
+        sources: undefined,
+      },
+    );
+    const rows = planned(platform, {
+      storedId: "t-1",
+      pendingStops: [owed("t-2"), owed("t-3")],
+    });
+    expect(
+      rows
+        .filter((item) => item.kind === "duplicate")
+        .map((item) => eventRowView(item).lead),
+    ).toEqual([
+      "Two triggers start notify-team for the same events.",
+      "Two triggers start notify-team for the same events.",
+    ]);
   });
 
   it("leaves a trigger made outside Studio alone, with Stop it off", () => {
@@ -522,6 +597,27 @@ describe("a row after activating", () => {
     });
   });
 
+  it("says both react, for different events, when the replaced trigger shares none with the new one", async () => {
+    const platform = seeded(STORED);
+    platform.starts.set("t-1", [requested("s-1")]);
+    const replace = row(
+      planned(platform, {
+        storedId: "t-1",
+        declaration: { events: ["transaction.completed"], from: null },
+      }),
+      "replace",
+    );
+    const until =
+      "both start notify-team, for different events, until you stop it in Starts or at the next activation.";
+    const asked = await applyEventRow(platform, replace, "a-new");
+    expect(eventResultView(replace, asked).detail).toBe(
+      `Keep it for now and ${until}`,
+    );
+    expect(eventResultView(replace, keptResult(replace, asked)).detail).toBe(
+      `B${until.slice(1)}`,
+    );
+  });
+
   it("owes nothing for a trigger left behind that is kept, and says it keeps running", async () => {
     const platform = seeded(STORED);
     platform.starts.set("t-1", [requested("s-1")]);
@@ -541,6 +637,28 @@ describe("a row after activating", () => {
     expect(eventResultView(left, kept).detail).toBe(
       "It keeps running on 1.1.0.",
     );
+  });
+
+  it("creates nothing beside a trigger someone else made meanwhile", async () => {
+    const platform = seeded();
+    const create = row(planned(platform), "create");
+    platform.seed(STORED);
+    expect(await shown(platform, create)).toEqual({
+      ...PLAIN,
+      lead: "notify-team was created since you opened this. Review it.",
+      detail:
+        "Studio created nothing. Close this and activate again to see what it is now.",
+      tone: "warning",
+      icon: "warning",
+    });
+  });
+
+  it("gives every result of another kind of trigger its icon", () => {
+    expect(
+      (["created", "moved", "stopped", "failed", "changed"] as const).map(
+        resultIcon,
+      ),
+    ).toEqual(["ok", "ok", "ok", "failCircle", "warning"]);
   });
 
   it("stops nothing that changed since the dialog opened", async () => {

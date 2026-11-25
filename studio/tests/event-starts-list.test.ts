@@ -709,6 +709,51 @@ describe("a stop Studio still owes", () => {
   ];
   const ALSO = "Stop notify-team-0 to keep only notify-team-2.";
 
+  it.each<[string, Partial<Seed>, string]>([
+    [
+      "reacts to other events",
+      { events: ["transaction.completed"] },
+      "Trigger notify-team also starts notify-team, for other events.",
+    ],
+    [
+      "reacts to other workflows",
+      { name: "notify-team-0", sources: ["sync-references"] },
+      "notify-team-0 also starts notify-team, for other events.",
+    ],
+  ])(
+    "says so of a trigger that %s, and what still starts it after the stop",
+    async (_what, other, lead) => {
+      const old = { ...OLD, ...other };
+      const f = owing([CURRENT, old]);
+      f.platform.starts.set("t-1", [requested("s-1")]);
+      await f.show();
+      expect(callout(f)).toMatchObject({
+        lead,
+        detail: `Stop ${old.name} to keep only notify-team-2.`,
+      });
+      const both =
+        "both start notify-team, for different events, until you stop it.";
+      const stopping = f.list.stop();
+      expect(callout(f)).toMatchObject({ lead, busy: true });
+      await stopping;
+      expect(callout(f)).toMatchObject({
+        detail: `Keep it for now and ${both}`,
+      });
+      f.platform.refuse.set(
+        "POST /event-triggers/t-1/disable",
+        refusal(503, "WV-UNAVAILABLE", "Try again later."),
+      );
+      await f.list.stopNow();
+      expect(callout(f)).toMatchObject({ detail: `B${both.slice(1)}` });
+      f.platform.starts.delete("t-1");
+      await f.list.stop();
+      expect(callout(f)).toMatchObject({
+        lead: `Stopped ${old.name}.`,
+        detail: "notify-team-2 still starts notify-team.",
+      });
+    },
+  );
+
   it("is read again only once the stop that runs answers", async () => {
     const f = owing(...TWO);
     await f.show();

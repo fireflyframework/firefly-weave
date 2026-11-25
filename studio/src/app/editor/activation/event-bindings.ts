@@ -135,6 +135,8 @@ export type EventRow =
       binding: EventTriggerView;
       from: string;
       stop: boolean;
+      /** An event can start both: it shares an event and a workflow with what the version declares. */
+      shared: boolean;
       text: string;
     }
   /**
@@ -241,12 +243,28 @@ const sameSources = (
 const reactsAs = (view: EventTriggerView, declaration: EventDeclaration) =>
   sameSet(view.events, declaration.events) &&
   sameSources(view.source_workflows, declaration.from);
-const declarationOf = (view: EventTriggerView): EventDeclaration => ({
+export const declarationOf = (view: EventTriggerView): EventDeclaration => ({
   events: [...view.events],
   from: view.source_workflows ? [...view.source_workflows] : null,
 });
 const inPlatformOrder = (events: readonly PlatformEventType[]) =>
   EVENT_TYPES.filter((type) => events.includes(type));
+const share = (left: readonly string[], right: readonly string[]) =>
+  left.some((item) => right.includes(item));
+/** Whether one event can start both: they share an event and a workflow it may come from. */
+export const overlap = (left: EventDeclaration, right: EventDeclaration) =>
+  share(left.events, right.events) &&
+  (left.from === null || right.from === null || share(left.from, right.from));
+/** What is said first of a second trigger of `workflow`. */
+export const second = (workflow: string, name: string, shared: boolean) =>
+  shared
+    ? `Two triggers start ${workflow} for the same events.`
+    : `${name === workflow ? "Trigger " : ""}${name} also starts ${workflow}, for other events.`;
+/** "both start notify-team for every new event", while two triggers react. */
+export const bothStart = (workflow: string, shared: boolean) =>
+  shared
+    ? `both start ${workflow} for every new event`
+    : `both start ${workflow}, for different events,`;
 /** The stop Studio owes for a trigger as it was read. */
 export const owedStop = (view: EventTriggerView): PendingStop => ({
   triggerId: view.id,
@@ -464,6 +482,8 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
     const duplicate =
       declaration !== null &&
       (owed.has(view.id) || (covered && reactsAs(view, declaration)));
+    const shared =
+      declaration !== null && overlap(declarationOf(view), declaration);
     rows.push(
       duplicate
         ? {
@@ -471,7 +491,8 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
             binding: view,
             from,
             stop: true,
-            text: `Two triggers start ${workflow} for the same events. Stop ${view.name}`,
+            shared,
+            text: `${second(workflow, view.name, shared)} Stop ${view.name}`,
           }
         : {
             kind: "left-behind",

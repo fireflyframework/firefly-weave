@@ -28,6 +28,10 @@ import { describeError } from "../../errors";
 import { activationRun } from "./activation-run";
 import {
   applyEventRow,
+  bothStart,
+  declarationOf,
+  overlap,
+  second,
   type EventTriggerView,
   type PendingStop,
 } from "./event-bindings";
@@ -106,8 +110,6 @@ export interface OwedCallout {
   busy: boolean;
 }
 
-const twice = (workflow: string) =>
-  `Two triggers start ${workflow} for the same events.`;
 /** What the tab says first while a stop is owed, and how it went. */
 export function owedCallout(owed: Owed): OwedCallout {
   const says = (
@@ -119,16 +121,19 @@ export function owedCallout(owed: Owed): OwedCallout {
   if (owed.kind === "unread")
     return says(
       "warning",
-      twice(owed.workflow),
+      second(owed.workflow, owed.workflow, true),
       "Stop the extra one when you next activate.",
     );
   const { old, keeps, others } = owed;
-  const both = `both start ${old.workflow_name} for every new event until you stop it.`;
+  const workflow = old.workflow_name;
+  const shared = overlap(declarationOf(old), declarationOf(keeps));
+  const first = second(workflow, old.name, shared);
+  const both = `${bothStart(workflow, shared)} until you stop it.`;
   switch (owed.kind) {
     case "owed":
       return says(
         "warning",
-        twice(old.workflow_name),
+        first,
         others === 0
           ? `Stop ${old.name} to keep only ${keeps.name}.`
           : `Stop ${old.name}. ${others === 1 ? "Another one is" : `${others} more are`} left to stop after it.`,
@@ -136,12 +141,7 @@ export function owedCallout(owed: Owed): OwedCallout {
       );
     case "stopping":
       return {
-        ...says(
-          "warning",
-          twice(old.workflow_name),
-          `Stopping ${old.name}…`,
-          "stop",
-        ),
+        ...says("warning", first, `Stopping ${old.name}…`, "stop"),
         busy: true,
       };
     case "waiting":
@@ -179,7 +179,9 @@ export function owedCallout(owed: Owed): OwedCallout {
       return says(
         "success",
         `Stopped ${old.name}.`,
-        `Only ${keeps.name} starts ${keeps.workflow_name} now.`,
+        shared
+          ? `Only ${keeps.name} starts ${workflow} now.`
+          : `${keeps.name} still starts ${workflow}.`,
       );
   }
 }
@@ -466,7 +468,14 @@ export class EventStartsList {
     }
     const result = await applyEventRow(
       api,
-      { kind: "duplicate", binding: old, from: "", stop: true, text: "" },
+      {
+        kind: "duplicate",
+        binding: old,
+        from: "",
+        stop: true,
+        shared: true,
+        text: "",
+      },
       old.activation_id,
       { stopWithWaiting, environment },
     );

@@ -25,10 +25,14 @@ import type { EventDeclaration } from "../triggers/event-trigger";
 import type { IconName } from "../../icon-data";
 import {
   AS_YOU,
+  bothStart,
+  declarationOf,
   isStudioName,
   joined,
   MAY_RESOLVE,
+  overlap,
   owedStop,
+  second,
   type EventResult,
   type EventRow,
   type EventStatus,
@@ -95,12 +99,6 @@ const sources = ({ from }: EventDeclaration) =>
 /** "Needs attention · from move-between-systems". */
 const reacts = (declaration: EventDeclaration) =>
   `${events(declaration)} · ${sources(declaration)}`;
-const declarationOf = (
-  view: Extract<EventRow, { kind: "left-behind" }>["binding"],
-): EventDeclaration => ({
-  events: view.events,
-  from: view.source_workflows ?? null,
-});
 const same = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((item) => right.includes(item));
 
@@ -159,8 +157,8 @@ export function eventRowView(row: EventRow): EventRowView {
       return {
         ...PLAIN,
         ...WARNING,
-        lead: `Two triggers start ${row.binding.workflow_name} for the same events.`,
-        detail: `Stop trigger ${row.binding.name}, which an earlier activation left running. Both react until one stops.`,
+        lead: second(row.binding.workflow_name, row.binding.name, row.shared),
+        detail: `Stop trigger ${row.binding.name}, which an earlier activation left running.${row.shared ? " Both react until one stops." : ""}`,
         stop: row.stop,
       };
     case "blocked":
@@ -194,17 +192,20 @@ export function eventRowView(row: EventRow): EventRowView {
   }
 }
 
-/** Whether two triggers start the workflow for every new event while this one runs. */
-const both = (row: EventRow) =>
-  row.kind === "replace" || row.kind === "duplicate";
-const UNTIL = "until you stop it in Starts or at the next activation.";
+/** "both start notify-team for every new event until you stop it…", while another trigger reacts beside this one. */
+const both = (row: EventRow): string | null => {
+  if (row.kind !== "replace" && row.kind !== "duplicate") return null;
+  const shared =
+    row.kind === "replace" ? overlap(row.before, row.after) : row.shared;
+  return `${bothStart(row.binding.workflow_name, shared)} until you stop it in Starts or at the next activation.`;
+};
 const keepsRunning = (row: EventRow) =>
   "from" in row ? `It keeps running on ${row.from}.` : null;
 /** What keeps reacting while a stop is owed or put off. */
-const stillReacting = (row: EventRow) =>
-  both(row) && "binding" in row
-    ? `Both start ${row.binding.workflow_name} for every new event ${UNTIL}`
-    : keepsRunning(row);
+const stillReacting = (row: EventRow) => {
+  const said = both(row);
+  return said ? `B${said.slice(1)}` : keepsRunning(row);
+};
 
 const unchanged = (row: Extract<EventRow, { kind: "retarget" | "replace" }>) =>
   `Nothing changed: ${row.binding.name} still reacts for ${row.from}.`;
@@ -234,8 +235,8 @@ function resultDetail(row: EventRow, result: EventResult): string | null {
     case "waiting":
       if (result.waiting === null)
         return "Stopping it now skips any that are waiting.";
-      return both(row) && "binding" in row
-        ? `Keep it for now and both start ${row.binding.workflow_name} for every new event ${UNTIL}`
+      return both(row)
+        ? `Keep it for now and ${both(row)}`
         : "from" in row
           ? `Keep it for now and it keeps running on ${row.from}.`
           : null;
