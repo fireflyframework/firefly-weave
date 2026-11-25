@@ -16,19 +16,19 @@
 
 """Resolving a transaction in doubt in the kernel: retry, mark as reconciled, it happened or not, force end."""
 
-from typing import Any
-from uuid import uuid4
-
 import pytest
 from transaction_support import (
     Run,
     add,
+    attempt_failed,
     calls,
     compiled,
     controls,
     deadlines,
     hold,
+    lookup,
     notify,
+    resolve,
     submit,
     submit_by_call,
     tasks,
@@ -37,27 +37,8 @@ from transaction_support import (
 
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 from firefly_weave.runtime.kernel import workflow
-from firefly_weave.runtime.models import Transition
 
 ROLLED_BACK = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
-UNSET = object()
-
-
-def resolve(run: Run, incident_key: str, kind: str, output: Any = UNSET) -> Transition:
-    incident = run.state.incidents[incident_key]
-    data: dict[str, Any] = {
-        "incident_key": incident_key,
-        "receipt_id": str(uuid4()),
-        "node_id": incident.node_id,
-        "generation": incident.generation,
-        "kind": kind,
-        "reason": "Checked both systems.",
-        "evidence_reference": "ticket-17",
-        "actor_id": str(uuid4()),
-    }
-    if output is not UNSET:
-        data["output"] = output
-    return run.send("incident_resolved", **data)
 
 
 def reads_the_block():
@@ -330,18 +311,6 @@ def test_a_late_result_of_work_a_person_ended_changes_nothing():
     assert controls(ended, "settle") == ["hold2#confirm"] and run.state.active == ["pause"]
     late = run.done("hold2#confirm", {})
     assert late.steps == [] and run.state.incidents == {} and run.state.active == ["pause"]
-
-
-def lookup() -> dict[str, Any]:
-    """A step that changes nothing."""
-    read = {"object": {"reference": {"ref": "/input/moveId"}}}
-    return {"id": "lookup", "kind": "action", "uses": "reports.lookup@1.0.0", "with": read}
-
-
-def attempt_failed(run: Run, key: str) -> None:
-    """A worker reported that its attempt failed, and recovery hasn't looked at it yet."""
-    run.send("task_failed", node_id=key, generation=1, output={"code": "UNAVAILABLE"}, effect="unknown")
-    assert run.state.incidents[f"{key}:1"].code == "WV-TASK-FAILED"
 
 
 def waits_for_a_failure(run: Run, key: str) -> bool:

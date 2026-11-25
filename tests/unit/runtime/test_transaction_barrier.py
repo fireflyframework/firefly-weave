@@ -16,16 +16,7 @@
 
 """Settlement work is never blocked: pause and unrelated incidents hold back only new forward steps."""
 
-from transaction_support import INPUT, Run, add, compiled, hold, submit, tasks, transaction
-
-
-def lookup(identifier: str = "lookup") -> dict:
-    return {
-        "id": identifier,
-        "kind": "action",
-        "uses": "reports.lookup@1.0.0",
-        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
-    }
+from transaction_support import INPUT, Run, add, compiled, hold, lookup, submit, tasks, transaction
 
 
 def beside(*steps) -> list:

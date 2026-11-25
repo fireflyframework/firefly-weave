@@ -63,6 +63,12 @@ def test_the_transaction_corpus_records_every_source_once_and_every_outcome():
         "settle-timeout": ("suspended", "in_doubt"),
         "rollback-while-another-incident-holds-the-run": ("failed", "compensated"),
         "cancelled-with-a-called-step-undone": ("cancelled", "compensated"),
+        "two-confirms-stuck-first-reconciled": ("suspended", "reconciled"),
+        "two-confirms-stuck-first-retried": ("suspended", "committing"),
+        "confirm-stuck-beside-an-interim-failure-reconciled": ("suspended", "reconciled"),
+        "two-steps-after-the-pivot-fail-together": ("suspended", "in_doubt"),
+        "hold-expired-while-a-body-step-waits-for-recovery": ("failed", "cancelled"),
+        "hold-expired-while-a-read-waits-for-recovery": ("suspended", "cancelled"),
     }
 
 

@@ -226,6 +226,14 @@ NOT_REPLAYABLE = {
     "golden-move-then-wait/rollback-while-another-incident-holds-the-run": (
         "an interim failure incident before the final failure"
     ),
+    "golden-move-in-parallel/hold-expired-while-a-body-step-waits-for-recovery": (
+        "an interim failure incident before the final failure"
+    ),
+    "golden-move-two-holds/two-confirms-stuck-first-reconciled": "an incident its transaction left open",
+    "golden-move-two-holds/two-confirms-stuck-first-retried": "an incident its transaction left open",
+    "golden-move-two-holds/confirm-stuck-beside-an-interim-failure-reconciled": "an interim failure incident",
+    "golden-move-two-holds/two-steps-after-the-pivot-fail-together": "a retried step still in flight at the end",
+    "golden-move-after-a-read/hold-expired-while-a-read-waits-for-recovery": "an interim failure incident",
     "golden-move-elsewhere/cancelled-with-a-called-step-undone": (
         "a child the platform cancelled; a session's call mock answers at once, so the participant's effect differs"
     ),

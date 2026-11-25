@@ -40,6 +40,7 @@ from firefly_weave.runtime.models import (
     Transition,
 )
 
+UNSET = object()
 START = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)
 RUN = UUID("6a1f6c3e-0d8b-4b7e-9f6e-2c4d8a1b3e50")
 CHILD = "5b2e7d4f-1c9a-4e8b-8a7d-3f5e9c2b4d61"
@@ -136,6 +137,18 @@ def notify(identifier: str = "notify") -> dict[str, Any]:
     }
 
 
+def lookup(identifier: str = "lookup") -> dict[str, Any]:
+    """A step that changes nothing."""
+    read = {"object": {"reference": {"ref": "/input/moveId"}}}
+    return {"id": identifier, "kind": "action", "uses": "reports.lookup@1.0.0", "with": read}
+
+
+def parallel(*steps: dict[str, Any], identifier: str = "both") -> dict[str, Any]:
+    """The steps side by side, each in a branch of its own."""
+    branches = {f"b{index}": {"steps": [step], "output": {"literal": None}} for index, step in enumerate(steps)}
+    return {"id": identifier, "kind": "parallel", "concurrency": len(steps), "branches": branches}
+
+
 def transaction(steps: list[dict[str, Any]], *, identifier: str = "move", **settings: Any) -> dict[str, Any]:
     return {
         "id": identifier,
@@ -226,8 +239,11 @@ class Run:
         self.transitions.append(result)
         return result
 
-    def start(self) -> Transition:
-        return self.send("started", admission_policy="classified-v1", origin="manual", run_id=str(RUN))
+    def start(self, rules: int = 1) -> Transition:
+        data: dict[str, Any] = {"admission_policy": "classified-v1", "origin": "manual", "run_id": str(RUN)}
+        if rules != 1:
+            data["transaction_rules"] = rules
+        return self.send("started", **data)
 
     def done(self, key: str, output: Any, *, generation: int = 1) -> Transition:
         return self.send("task_completed", node_id=key, generation=generation, output=output)
@@ -274,6 +290,84 @@ class Run:
 
     def statuses(self, key: str = "move") -> dict[str, str]:
         return {item.key: item.status for item in self.txn(key).participants}
+
+
+def resolve(run: Run, incident_key: str, kind: str, output: Any = UNSET) -> Transition:
+    """A person resolves an incident of the run."""
+    incident = run.state.incidents[incident_key]
+    data: dict[str, Any] = {
+        "incident_key": incident_key,
+        "receipt_id": str(uuid4()),
+        "node_id": incident.node_id,
+        "generation": incident.generation,
+        "kind": kind,
+        "reason": "Checked both systems.",
+        "evidence_reference": "ticket-17",
+        "actor_id": str(uuid4()),
+    }
+    if output is not UNSET:
+        data["output"] = output
+    return run.send("incident_resolved", **data)
+
+
+def attempt_failed(run: Run, key: str) -> None:
+    """A worker reported that its attempt failed, and recovery hasn't looked at it yet."""
+    run.send("task_failed", node_id=key, generation=1, output={"code": "UNAVAILABLE"}, effect="unknown")
+    assert run.state.incidents[f"{key}:1"].code == "WV-TASK-FAILED"
+
+
+def finished(*confirmed: str) -> dict[str, Any]:
+    """A person's record of a transaction that completed, with the reservations they confirmed by hand."""
+    steps = [{"instance_key": key, "outcome": "confirmed"} for key in confirmed]
+    return {"as": "completed", "participants": steps, "blockOutput": "moved"}
+
+
+def one_stuck(run_rules: int = 1) -> Run:
+    """A transaction past its point of no return: one confirm can't finish, and the other one is still in flight."""
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/move/output"}}
+    run = Run(compiled([transaction([hold(), hold("hold2"), add(), submit()]), after]))
+    run.start(run_rules)
+    for key, output in (("hold", {"holdId": "h-1"}), ("hold2", {"holdId": "h-2"}), ("add", {"id": "a-1"})):
+        run.done(key, output)
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert list(run.state.incidents) == ["hold#confirm:2"] and "hold2#confirm" in run.state.active
+    return run
+
+
+def two_stuck(run_rules: int = 1) -> Run:
+    """A transaction past its point of no return whose two confirms both can't finish."""
+    run = one_stuck(run_rules)
+    run.failed("hold2#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert sorted(run.state.incidents) == ["hold#confirm:2", "hold2#confirm:2"]
+    return run
+
+
+def after_pivot_pair(run_rules: int = 1) -> Run:
+    """A confirm that can't finish beside a step after the point of no return that can't either.
+
+    The body waits for every confirm before it goes on, so only a step already in flight when the transaction was
+    decided can fail beside one: a step that changes nothing, in a branch beside the step that can't be undone.
+    """
+    run = Run(compiled([transaction([hold(), parallel(submit(), lookup())])]))
+    run.start(run_rules)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert sorted(run.state.incidents) == ["hold#confirm:2", "lookup:3"]
+    return run
+
+
+def stored(state: RunState) -> RunState:
+    """The state as PostgreSQL gives it back: ``jsonb`` keeps an object's keys by length, then by bytes."""
+
+    def ordered(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: ordered(value[key]) for key in sorted(value, key=lambda k: (len(k.encode()), k.encode()))}
+        return [ordered(item) for item in value] if isinstance(value, list) else value
+
+    return RunState.model_validate_json(json.dumps(ordered(json.loads(state.model_dump_json()))))
 
 
 def tasks(result: Transition) -> list[TaskIntent]:

@@ -73,16 +73,16 @@ def catalog() -> CatalogSnapshot:
     )
 
 
-def hold(**settings: Any) -> dict[str, Any]:
+def hold(identifier: str = "hold", **settings: Any) -> dict[str, Any]:
     return {
-        "id": "hold",
+        "id": identifier,
         "kind": "action",
         "uses": "source-system.hold-quantity@1.0.0",
         "with": {"object": {"quantity": {"ref": "/input/quantity"}, "reference": {"ref": "/input/moveId"}}},
         "confirm": {
             "kind": "action",
             "uses": "source-system.confirm-hold@1.0.0",
-            "with": {"object": {"holdId": {"ref": "/steps/hold/output/holdId"}}},
+            "with": {"object": {"holdId": {"ref": f"/steps/{identifier}/output/holdId"}}},
         },
         "cancel": {
             "kind": "action",
@@ -148,6 +148,21 @@ BRANCHES = {
     },
 }
 PAUSE = {"id": "pause", "kind": "wait", "durationSeconds": 3600}
+NOTICES = {
+    "id": "notices",
+    "kind": "parallel",
+    "concurrency": 2,
+    "branches": {
+        "a": {"steps": [NOTIFY], "output": {"literal": None}},
+        "b": {"steps": [{**NOTIFY, "id": "notify2"}], "output": {"literal": None}},
+    },
+}
+LOOKUP = {
+    "id": "lookup",
+    "kind": "action",
+    "uses": "reports.lookup@1.0.0",
+    "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+}
 
 
 def _workflow(name: str, steps: list[dict[str, Any]], *, output: Any = None) -> dict[str, Any]:
@@ -207,6 +222,11 @@ def failed(
     return "step_failed", {**data, "effect": effect}
 
 
+def attempt_failed(key: str, effect: str = "unknown") -> tuple[str, dict[str, Any]]:
+    """A worker reported a failed attempt, and recovery has not decided yet what follows."""
+    return "task_failed", {"node_id": key, "generation": 1, "output": {"code": "UNAVAILABLE"}, "effect": effect}
+
+
 def due(key: str) -> tuple[str, dict[str, Any]]:
     """A deadline of the run falls due; its time and identity come from the transition that armed it."""
     return "wait_elapsed", {"node_id": key}
@@ -231,6 +251,17 @@ H = done("hold", {"holdId": "h-1"})
 A = done("add", {"id": "a-1"})
 UNDO_STUCK = (H, failed("add"), failed("add#undo", "REJECTED", "none", 10))
 PIVOT_UNKNOWN = (H, A, failed("submit", "TIMEOUT"))
+WENT_AHEAD = (H, done("hold2", {"holdId": "h-2"}), done("submit", {"orderId": "o-1"}))
+ONE_CONFIRM_STUCK = (*WENT_AHEAD, failed("hold#confirm", "HOLD_EXPIRED", "none", 2))
+TWO_CONFIRMS_STUCK = (*ONE_CONFIRM_STUCK, failed("hold2#confirm", "HOLD_EXPIRED", "none", 2))
+
+
+def finished(*confirmed: str) -> dict[str, Any]:
+    """A person's record of a transaction that completed, with the reservations they confirmed by hand."""
+    steps = [{"instance_key": key, "outcome": "confirmed"} for key in confirmed]
+    return {"as": "completed", "participants": steps, "blockOutput": "moved"}
+
+
 SOURCES = (
     Source(
         "golden-move",
@@ -371,7 +402,20 @@ SOURCES = (
     Source(
         "golden-move-in-parallel",
         _workflow("golden-move-in-parallel", [_transaction(hold(), BRANCHES, SUBMIT)]),
-        (Scenario("settle-timeout", (H, failed("add"), due("move#settle"))),),
+        (
+            Scenario("settle-timeout", (H, failed("add"), due("move#settle"))),
+            Scenario(
+                "hold-expired-while-a-body-step-waits-for-recovery",
+                (
+                    H,
+                    attempt_failed("add", "none"),
+                    due("move#hold"),
+                    failed("add", "REFUSED", "none"),
+                    failed("add2", "WV-TXN-ROLLED-BACK", "none", 0),
+                    done("hold#cancel", {}),
+                ),
+            ),
+        ),
     ),
     Source(
         "golden-move-then-wait",
@@ -412,6 +456,58 @@ SOURCES = (
                     done("elsewhere#undo", {}),
                     done("hold#cancel", {}),
                 ),
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-two-holds",
+        _workflow("golden-move-two-holds", [_transaction(hold(), hold("hold2"), SUBMIT, NOTICES)]),
+        (
+            Scenario(
+                "two-confirms-stuck-first-reconciled",
+                (
+                    *TWO_CONFIRMS_STUCK,
+                    resolve(
+                        "hold#confirm:2", "accept_reconciled_result", "WV-TXN-CONFIRM-STUCK", finished("hold", "hold2")
+                    ),
+                ),
+            ),
+            Scenario(
+                "two-confirms-stuck-first-retried",
+                (
+                    *TWO_CONFIRMS_STUCK,
+                    resolve("hold#confirm:2", "retry_safe", "WV-TXN-CONFIRM-STUCK"),
+                    done("hold#confirm", {}, 3),
+                ),
+            ),
+            Scenario(
+                "confirm-stuck-beside-an-interim-failure-reconciled",
+                (
+                    *ONE_CONFIRM_STUCK,
+                    attempt_failed("hold2#confirm"),
+                    resolve("hold#confirm:2", "accept_reconciled_result", "WV-TXN-CONFIRM-STUCK", finished("hold")),
+                ),
+            ),
+            Scenario(
+                "two-steps-after-the-pivot-fail-together",
+                (
+                    *WENT_AHEAD,
+                    done("hold#confirm", {}),
+                    done("hold2#confirm", {}),
+                    failed("notify", "UNAVAILABLE", "unknown", 4),
+                    failed("notify2", "UNAVAILABLE", "unknown", 4),
+                    resolve("notify:4", "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK"),
+                ),
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-after-a-read",
+        _workflow("golden-move-after-a-read", [_transaction(hold(), LOOKUP, SUBMIT), PAUSE]),
+        (
+            Scenario(
+                "hold-expired-while-a-read-waits-for-recovery",
+                (H, attempt_failed("lookup"), due("move#hold"), done("hold#cancel", {})),
             ),
         ),
     ),
