@@ -608,14 +608,17 @@ expires. The server checks, in this order, and refuses before writing anything:
 | 429 `WV-STEPTEST-BUSY` | The person already runs 4 step tests here or started 30 in the last minute; `Retry-After` says when to try again |
 
 An AI task's step test checks the step's inputs like a compile. The part of the
-saved draft up to the step is compiled: the steps before it, the blocks around
-it, the workflow's input schema, and the profiles and connections those steps
-name. The test starts only when that compile reaches the step and leaves no
-error out, when every step the prompt and the context read (through
-transforms, loops and branches too) resolves, and when no value marked
-`x-secret` or `writeOnly` reaches an AI model. A draft that isn't finished
-elsewhere still tests its step. The check covers what the draft's expressions
-read; the texts in `input` are sent as they are.
+saved draft that is compiled is the step, the steps its prompt and context read,
+the blocks around them, every earlier step those read in turn, the workflow's
+input schema, and the profiles and connections those steps name. The test starts
+only when that compile reaches the step and leaves no error out, when every step
+the prompt and the context read (through transforms, loops and branches too)
+resolves, and when the compile finds no value marked `x-secret` or `writeOnly` in
+what an AI step reads. This covers every AI step in that part: an earlier one
+too, when the prompt or the context reads its output. A draft that isn't
+finished elsewhere still tests its step; only a repeated step ID, a step without
+an ID and an unfinished `fail` step have to be fixed first. The check covers what
+the draft's expressions read; the texts in `input` are sent as they are.
 
 Only the person who started a step test can read
 (`GET {environment}/step-tests/{id}`) or cancel it through these routes;

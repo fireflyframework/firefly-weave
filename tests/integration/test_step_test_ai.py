@@ -213,10 +213,14 @@ async def test_a_step_test_whose_texts_read_a_value_marked_secret_writes_nothing
                 assert refused == (422, "WV-STEPTEST-DRAFT"), (mark, field, route)
 
 
-async def test_a_draft_unfinished_before_the_step_writes_nothing_and_one_unfinished_after_it_starts(ai_steps):
-    unfinished = {"id": "later", "kind": "action"}
-    assert await ai_steps.refused(workflow(unfinished, ASK)) == (422, "WV-STEPTEST-DRAFT")
-    accepted = await ai_steps.start(workflow(*read("prompt", "transform"), unfinished))
+async def test_a_draft_whose_text_reads_an_unfinished_step_writes_nothing_and_one_unfinished_elsewhere_starts(ai_steps):
+    # As Studio adds an action before a person chooses what it runs.
+    before, after = (
+        {"id": name, "kind": "action", "uses": "", "with": {"literal": {}}} for name in ("before", "after")
+    )
+    asks = {**ASK, "context": {"ref": "/steps/before/output"}}
+    assert await ai_steps.refused(workflow(before, asks)) == (422, "WV-STEPTEST-DRAFT")
+    accepted = await ai_steps.start(workflow(before, *read("prompt", "transform"), after))
     assert (accepted.status, accepted.side_effect) == ("running", "non_idempotent")
     assert await ai_steps.tests.scalar("SELECT count(*) FROM test_activation_details") == 1
 

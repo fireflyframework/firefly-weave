@@ -19,6 +19,7 @@ import copy
 from typing import get_args
 
 import pytest
+from pydantic import BaseModel
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.calls import workflow_steps
@@ -26,8 +27,9 @@ from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.platform_catalog import platform_schema_bundle
 from firefly_weave.contracts import agentic
 from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
-from firefly_weave.contracts.definitions import Step, load_definition
+from firefly_weave.contracts.definitions import Expression, ObjectExpression, Step, load_definition
 from firefly_weave.contracts.step_tests import DraftStep
+from firefly_weave.step_tests import inputs
 from firefly_weave.step_tests.inputs import COMPUTED, DECLARED, draft_refusal
 
 MARKS = [{"x-secret": True}, {"writeOnly": True}]
@@ -114,6 +116,7 @@ def catalog(mark=None, published=()):
             "steps": [],
             "output": ref("/input"),
             "callable": {},
+            "timeoutSeconds": 60,
         },
     }
     return CatalogSnapshot.from_definitions(
@@ -257,6 +260,29 @@ def codes(refused):
     return {code for _, code in found(refused)}
 
 
+@pytest.fixture
+def compiled(monkeypatch):
+    """The steps of the part of a draft that its check compiles, by their place in the draft."""
+    parts = []
+
+    def recorded(source, **settings):
+        parts.append(copy.deepcopy(source))
+        return compile_source(source, **settings)
+
+    monkeypatch.setattr(inputs, "compile_source", recorded)
+
+    def steps(document, **settings):
+        refusal(document, **settings)
+        return {path: step for step, path in workflow_steps(parts.pop())}
+
+    return steps
+
+
+def emptied(steps):
+    """The IDs of the steps that a step which does nothing stands in for."""
+    return {step["id"] for step in steps.values() if step == transform(step["id"], NULL)}
+
+
 SECRET_INPUT = "WV-COMP-AI_SECRET_INPUT"
 
 
@@ -312,7 +338,7 @@ def test_an_ai_task_whose_text_reads_a_value_marked_secret_is_refused(route, fie
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_a_value_marked_secret_is_found_however_the_text_reads_it(route):
+def test_a_value_marked_secret_is_found_on_each_route(route):
     marked_text_is_refused(route, "context", MARKS[0])
 
 
@@ -372,6 +398,39 @@ def test_a_marked_result_of_an_earlier_ai_task_is_refused():
     assert ("/spec/steps/1/context", SECRET_INPUT) in found(refusal(document))
 
 
+@pytest.mark.parametrize(
+    "before, text",
+    [
+        ([], {"context": ref("/input/customer/ssn")}),
+        ([transform("copy", ref("/input/customer/ssn"))], {"prompt": ref("/steps/copy/output")}),
+    ],
+    ids=["directly", "through a transform"],
+)
+@pytest.mark.parametrize("earlier", [ask, agent], ids=["a task", "an agent"])
+def test_an_earlier_ai_step_counts_only_when_the_texts_read_its_output(earlier, before, text):
+    reads = earlier(id="read", **text)
+    marked = {"mark": MARKS[0]}
+    assert refusal(workflow(*before, reads, ask(), **marked)) is None
+    refused = refusal(workflow(*before, reads, ask(context=ref("/steps/read/output/result")), **marked))
+    assert (f"/spec/steps/{len(before)}/{next(iter(text))}", SECRET_INPUT) in found(refused)
+
+
+@pytest.mark.parametrize(
+    "unread, text",
+    [
+        ({"tools": [{**agent()["tools"][0], "fixed": {"object": {"id": ref("/steps/copy/output")}}}]}, "tools/0/fixed"),
+        ({"memory": {"scope": "conversation", "key": ref("/steps/copy/output")}}, "memory/key"),
+    ],
+    ids=["a tool's fixed value", "a conversation's key"],
+)
+def test_whatever_an_agent_that_is_read_reads_keeps_its_mark(unread, text):
+    steps = [transform("copy", ref("/input/customer/ssn")), agent(id="read", **unread)]
+    document = workflow(*steps, ask(context=ref("/steps/read/output/result")), mark=MARKS[0])
+    assert any(
+        path.startswith("/spec/steps/1/" + text) and code == SECRET_INPUT for path, code in found(refusal(document))
+    )
+
+
 def test_an_unmarked_field_beside_a_marked_one_is_admitted():
     assert refusal(workflow(ask(prompt=ref("/input/customer/name")), mark=MARKS[0])) is None
 
@@ -388,25 +447,141 @@ BROKEN = {
     "an unfinished step": lambda: {"id": "x", "kind": "action"},
     "an unknown field": lambda: {**transform("x"), "bogus": 1},
     "an unknown kind": lambda: {"id": "x", "kind": "nope"},
-    "a step that isn't one": lambda: None,
+    "a kind that isn't text": lambda: {"id": "x", "kind": ["switch"], "cases": [block(transform("y"))]},
+    "tools that aren't": lambda: agent(id="x", tools=[None]),
+    "an undo that isn't one": lambda: {**fetch(id="x"), "compensate": 3},
+    "a person's task for nobody": lambda: {"id": "x", "kind": "humanTask", **READY["humanTask"], "assignment": ""},
+    "a decision without a condition": lambda: {"id": "x", "kind": "switch", "cases": [block()], "default": block()},
+    "an unfinished step in an error path": lambda: {
+        **fetch(id="x"),
+        "onError": "errorOutput",
+        "errorPath": block({"id": "y", "kind": "action"}, output=ref("/steps/y/output")),
+    },
     "a decision without a list of cases": lambda: {"id": "x", "kind": "switch", "cases": "none", "default": 3},
     "a decision whose case isn't one": lambda: {"id": "x", "kind": "switch", "cases": [None], "default": {}},
     "branches that aren't": lambda: {"id": "x", "kind": "parallel", "branches": [1], "concurrency": 1},
     "a loop without a body": lambda: {"id": "x", "kind": "forEach", "items": NULL, "body": "none"},
     "an error path that isn't one": lambda: {**fetch(id="x"), "errorPath": {"steps": [1]}, "onError": "errorOutput"},
+}
+# What Studio adds for a new step; those a person still has to finish.
+NEW = {
+    "action": {"uses": "", "with": {"literal": {}}},
+    "callWorkflow": {"uses": "", "with": {"object": {}}, "mode": "wait"},
+    "decisionTable": {"uses": "", "with": ref("/input")},
+    "forEach": {"concurrency": 1, "maxItems": 1000, "collect": "all", "body": block(output=ref("/item"))},
+    "llm": {
+        "uses": "weave-agentic-generate@1.0.0",
+        "profile": "default",
+        "connection": "ai",
+        "prompt": {"literal": ""},
+        "context": {"literal": {}},
+    },
+    "signal": {"name": "", "timeoutSeconds": 3600, "payloadSchema": {"type": "object"}},
+    "switch": {"cases": [block(output={"literal": {}})], "default": block(output={"literal": {}})},
+}
+# The same, finished as they are added.
+READY = {
+    "humanTask": {
+        "title": {"literal": "Review request"},
+        "context": {"literal": {}},
+        "assignment": "reviewers",
+        "formSchema": {"type": "object", "properties": {}},
+        "decisions": ["approve", "reject"],
+    },
+    "parallel": {
+        "branches": {"first": block(output={"literal": {}}), "second": block(output={"literal": {}})},
+        "concurrency": 2,
+    },
+    "transform": {"value": {"literal": {}}},
+    "wait": {"durationSeconds": 60},
+}
+
+# What no step can stand in for.
+UNNAMED = {
+    "a step that isn't one": lambda: None,
+    "a step without an ID": lambda: {"kind": "wait", "durationSeconds": 5},
+    "a step whose ID isn't text": lambda: {**transform("x"), "id": ["x"]},
+    "a step whose ID isn't a name": lambda: transform("Not a name"),
     "a repeated step ID": lambda: transform("first"),
+    "a failure without a message": lambda: {"id": "x", "kind": "fail", "code": "business-error", "message": ""},
 }
 
 
 @pytest.mark.parametrize("problem", BROKEN)
-def test_a_draft_broken_before_the_step_is_refused(problem):
-    steps = [transform("first"), BROKEN[problem](), ask(prompt=ref("/input/customer/ssn"))]
-    assert found(refusal(workflow(*steps, mark=MARKS[0])))
+def test_a_step_broken_before_the_step_is_left_out_until_a_text_reads_it(problem):
+    before = [transform("first"), BROKEN[problem]()]
+    assert refusal(workflow(*before, ask(prompt=ref("/input/customer/ssn")))) is None
+    marked = refusal(workflow(*before, ask(prompt=ref("/input/customer/ssn")), mark=MARKS[0]))
+    assert found(marked) == [("/spec/steps/2/prompt", SECRET_INPUT)]
+    assert found(refusal(workflow(*before, ask(context=ref("/steps/x/output")))))
+    through = transform("copy", {"object": {"value": ref("/steps/x/output")}})
+    assert found(refusal(workflow(*before, through, ask(context=ref("/steps/copy/output")))))
 
 
-@pytest.mark.parametrize("problem", BROKEN)
+@pytest.mark.parametrize("problem", UNNAMED)
+def test_a_step_that_cant_be_left_out_is_refused(problem):
+    assert found(refusal(workflow(transform("first"), UNNAMED[problem](), ask())))
+
+
+@pytest.mark.parametrize("kind", NEW)
+def test_a_new_step_is_left_out_until_a_text_reads_it(kind):
+    new = {"id": "x", "kind": kind, **NEW[kind]}
+    assert refusal(workflow(new, ask())) is None
+    assert found(refusal(workflow(new, ask(context=ref("/steps/x/output")))))
+
+
+@pytest.mark.parametrize("kind", READY)
+def test_a_new_step_with_nothing_to_finish_may_be_read(kind):
+    new = {"id": "x", "kind": kind, **READY[kind]}
+    assert refusal(workflow(new, ask())) is None
+    assert refusal(workflow(new, ask(context=ref("/steps/x/output")))) is None
+
+
+def test_steps_of_one_id_stay_when_a_text_reads_it():
+    copy_, text = transform("copy"), ask(context=ref("/steps/copy/output"))
+    assert refusal(workflow(decide(copy_), ask())) is None
+    for steps in ([decide(copy_), copy_], [copy_, decide(copy_)], [decide(copy_), {**decide(copy_), "id": "again"}]):
+        assert "WV-COMP-DUPLICATE_ID" in codes(refusal(workflow(*steps, text)))
+
+
+def test_a_step_that_stays_in_a_block_keeps_the_block(compiled):
+    inside = decide(transform("first"), fetch(), output=ref("/steps/fetch/output"))
+    steps = compiled(workflow(transform("before"), inside, ask(context=ref("/steps/fetch/output"))))
+    assert emptied(steps) == {"before", "first"}
+    assert steps["/spec/steps/1/cases/0/steps/1"] == fetch()
+
+
+def test_a_failure_stays_where_it_is(compiled):
+    stop = {"id": "stop", "kind": "fail", "code": "stopped", "message": "Stopped"}
+    # The default never completes, so what it would give is never read.
+    route = decide(transform("first"), output=NULL, default=block(stop, output=ref("/input/customer/gone")))
+    document = workflow(route, ask(context=ref("/steps/route/output")))
+    assert emptied(compiled(document)) == {"first"}
+    assert refusal(document) is None
+
+
+def test_the_blocks_around_the_step_are_cut_to_it():
+    # A step that isn't one can't be left out where it stays.
+    beside = {"steps": [None, {"id": "x", "kind": "action"}], "output": ref("/steps/x/output")}
+    assert refusal(workflow({**split(), "branches": {"left": beside, "right": block(ask())}})) is None
+    route = {**decide(), "cases": [{"when": {"literal": True}, **beside}], "default": block(ask())}
+    assert refusal(workflow(route)) is None
+
+
+def test_the_names_only_left_out_steps_use_are_left_out_too():
+    unread = [ask(id="read", profile="unfinished"), fetch(connection="unfinished")]
+    document = workflow(*unread, ask())
+    document["spec"]["llmProfiles"]["unfinished"] = {"provider": "openai-responses", "model": ""}
+    document["spec"]["connections"]["unfinished"] = {}
+    assert refusal(document) is None
+    for read in ("read", "fetch"):
+        document["spec"]["steps"][-1] = ask(context=ref(f"/steps/{read}/output"))
+        assert found(refusal(document))
+
+
+@pytest.mark.parametrize("problem", [*BROKEN, *UNNAMED])
 def test_a_draft_broken_after_the_step_still_tests_it_and_still_checks_its_texts(problem):
-    steps = [transform("first"), ask(prompt=ref("/input/customer/ssn")), BROKEN[problem]()]
+    steps = [transform("first"), ask(prompt=ref("/input/customer/ssn")), {**BROKEN, **UNNAMED}[problem]()]
     assert refusal(workflow(*steps)) is None
     assert found(refusal(workflow(*steps, mark=MARKS[0]))) == [("/spec/steps/1/prompt", SECRET_INPUT)]
 
@@ -463,6 +638,12 @@ def test_a_value_marked_secret_counts_where_only_warnings_are_listed():
     assert SECRET_INPUT not in {diagnostic.code for diagnostic in listed}
     assert found(refusal(asked(101)))
     assert codes(refusal(asked(3))) == {SECRET_INPUT}
+
+
+def test_a_refusal_names_at_most_twenty_findings():
+    texts = {"array": [ref(f"/input/customer/no{index}") for index in range(30)]}
+    assert len(found(refusal(workflow(ask(context=texts))))) == 20
+    assert len(found(refusal(workflow(ask(context={"array": texts["array"][:19]}))))) == 19
 
 
 @pytest.mark.parametrize(
@@ -620,12 +801,209 @@ def test_an_action_that_doesnt_resolve_counts_at_every_step_that_runs_it():
     }
     resources = catalog(published=[unreadable])
     uses = {"uses": "unreadable@1.0.0"}
-    document = workflow(fetch(id="first", **uses), fetch(**uses), ask(context=ref("/steps/fetch/output/name")))
-    errors = compile_source(document, format="object", catalog=resources).diagnostics
+    reads = {"with": {"object": {"id": ref("/steps/first/output/name")}}}
+    document = workflow(fetch(id="first", **uses), fetch(**uses, **reads), ask(context=ref("/steps/fetch/output/name")))
+    findings = compile_source(document, format="object", catalog=resources).diagnostics
+    errors = [finding for finding in findings if finding.severity == "error"]
     assert [error.path for error in errors if error.path.startswith("/spec/steps/0/uses")]
     assert not [error.path for error in errors if error.path.startswith("/spec/steps/1/")]
     assert found(refusal(document, resources=resources))
     assert refusal(workflow(fetch(**uses), ask()), resources=resources) is None
+
+
+# --- the steps that stay -------------------------------------------------------------------------------------------
+
+READS = {
+    **ROUTES,
+    **{
+        read: (lambda step, steps=steps: [*steps, step], pointer)
+        for read, (steps, pointer) in UNRESOLVED.items()
+        if steps
+    },
+}
+EVERYTHING = {"every step", "everything"}
+# The one step of those drafts that nothing reads, and the one that stays because it fails.
+NOT_READ, FAILS = "first", "stop"
+UNREAD = {"through a transaction": {NOT_READ}}
+
+
+def read_by(read):
+    """The draft whose text reads that way, and the IDs of the steps it reads or is in."""
+    around, pointer = READS[read]
+    document = workflow(*around(ask(context=ref(pointer))))
+    ids = {step["id"] for step, _ in workflow_steps(document)}
+    return document, ids - {"ask"} - UNREAD.get(read, set())
+
+
+@pytest.mark.parametrize("read", READS)
+def test_the_steps_the_texts_read_stay_and_the_others_are_emptied(read, compiled):
+    document, stay = read_by(read)
+    document["spec"]["steps"].insert(0, transform("beside"))
+    steps = compiled(document)
+    assert stay <= {step["id"] for step in steps.values()}
+    assert emptied(steps) == (set() if read in EVERYTHING else {"beside"} | UNREAD.get(read, set()))
+
+
+@pytest.mark.parametrize(
+    "read, missed", [(read, step) for read in READS for step in sorted(read_by(read)[1] - {FAILS})]
+)
+def test_a_step_that_was_emptied_and_is_read_after_all_is_refused(read, missed, monkeypatch):
+    stays = inputs._stays
+    monkeypatch.setattr(
+        inputs, "_stays", lambda steps, step_id: {at for at in stays(steps, step_id) if steps[at].get("id") != missed}
+    )
+    for mark in (None, MARKS[0]):
+        document, _ = read_by(read)
+        document["spec"]["inputSchema"] = workflow(mark=mark)["spec"]["inputSchema"]
+        assert refusal(document, resources=catalog(mark)) is not None
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        ref(""),
+        ref("/steps"),
+        ref("steps/fetch/output"),
+        ref("/steps/fe~2tch/output"),
+        {"ref": 1},
+        {"bogus": 1},
+        {"object": [ref("/steps/fetch/output")]},
+        {"op": {"name": "coalesce"}},
+        {"literal": 1, "ref": "/steps/fetch/output"},
+        None,
+    ],
+    ids=["everything", "every step", "no pointer", "an escape that isn't one", "a pointer that isn't text", "no tag"]
+    + ["an object that isn't one", "an operator without operands", "two tags", "nothing"],
+)
+@pytest.mark.parametrize("where", ["its own text", "a step it reads"])
+def test_every_step_stays_where_what_is_read_cant_be_told(where, context, compiled):
+    own = where == "its own text"
+    read = [] if own else [transform("copy", {"literal": 1}) | {"value": context}]
+    text = ask(context=context if own else ref("/steps/copy/output"))
+    document = workflow(fetch(), decide(transform("inside")), *read, text)
+    assert emptied(compiled(document)) == set()
+
+
+TEXTS = {"op": {"name": "concat", "args": [ref("/steps/many/output/field")] * 101}}
+TOLD = {"op": {"name": "eq", "args": [TEXTS, {"literal": "x"}]}}
+FIND = {"id": "find", "kind": "callWorkflow", "uses": "find-customer@1.0.0", "with": {"object": {}}, "mode": "wait"}
+PERSON = {"id": "person", "kind": "humanTask", **READY["humanTask"]}
+FOUND = ref("/steps/find/output")
+UNDO = {"kind": "callWorkflow", "uses": "find-customer@1.0.0", "with": {"object": {"id": TEXTS}}}
+# Finished drafts where only this expression of a step that stays reads another step: (the steps, what the text reads).
+ALSO_READ = {
+    "an action's input": (lambda step: [fetch(**{"with": {"object": {"id": TEXTS}}}), step], "/steps/fetch/output"),
+    "a table's input": (
+        lambda step: [
+            {
+                "id": "pick",
+                "kind": "decisionTable",
+                "uses": "pick-customer@1.0.0",
+                "with": {"object": {"name": TEXTS, "ssn": {"literal": "x"}}},
+            },
+            step,
+        ],
+        "/steps/pick/output",
+    ),
+    "a call's input": (lambda step: [{**FIND, "with": {"object": {"id": TEXTS}}}, step], "/steps/find/output"),
+    "a call's business key": (lambda step: [{**FIND, "businessKey": TEXTS}, step], "/steps/find/output"),
+    "a person's title": (lambda step: [{**PERSON, "title": TEXTS}, step], "/steps/person/output"),
+    "a person's context": (
+        lambda step: [{**PERSON, "context": {"object": {"id": TEXTS}}}, step],
+        "/steps/person/output",
+    ),
+    "a decision's condition": (
+        lambda step: [{**decide(), "cases": [{"when": TOLD, **block()}]}, step],
+        "/steps/route/output",
+    ),
+    "a decision's other path": (
+        lambda step: [decide(output={"literal": "x"}, default=block(output=TEXTS)), step],
+        "/steps/route/output",
+    ),
+    "a transaction's business key": (
+        lambda step: [transaction(transform("first"), businessKey=TEXTS), step],
+        "/steps/move/output",
+    ),
+    "a confirmation": (
+        lambda step: [
+            transaction({**FIND, "confirm": UNDO, "cancel": {**UNDO, "with": {"object": {}}}}, output=FOUND),
+            step,
+        ],
+        "/steps/move/output",
+    ),
+    "a cancellation": (
+        lambda step: [
+            transaction({**FIND, "confirm": {**UNDO, "with": {"object": {}}}, "cancel": UNDO}, output=FOUND),
+            step,
+        ],
+        "/steps/move/output",
+    ),
+    "a compensation": (
+        lambda step: [transaction({**FIND, "compensate": UNDO}, output=FOUND), step],
+        "/steps/move/output",
+    ),
+    "an earlier AI task's text": (lambda step: [ask(id="read", context=TEXTS), step], "/steps/read/output"),
+    "an earlier agent's text": (lambda step: [agent(id="read", instructions=TEXTS), step], "/steps/read/output"),
+    "an earlier agent's conversation": (
+        lambda step: [agent(id="read", memory={"scope": "conversation", "key": TEXTS}), step],
+        "/steps/read/output",
+    ),
+    "an earlier agent's tool": (
+        lambda step: [
+            agent(id="read", tools=[{**agent()["tools"][0], "fixed": {"object": {"id": TEXTS}}}]),
+            step,
+        ],
+        "/steps/read/output",
+    ),
+    "the condition around the step": (
+        lambda step: [{**decide(), "cases": [{"when": TOLD, **block(step)}]}],
+        "/input/customer/name",
+    ),
+    "the items around the step": (lambda step: [loop(step, items={"array": [TEXTS]})], "/input/customer/name"),
+    "the input of the step whose error path it's in": (
+        lambda step: [fetch(**{"with": {"object": {"id": TEXTS}}}, onError="errorOutput", errorPath=block(step))],
+        "/input/customer/name",
+    ),
+}
+
+
+@pytest.mark.parametrize("read", ALSO_READ)
+def test_a_step_that_stays_keeps_every_step_it_reads(read):
+    around, pointer = ALSO_READ[read]
+    many = transform("many", {"object": {"field": {"literal": "x"}}})
+    document = workflow(many, *around(ask(context=ref(pointer))))
+    assert compile_source(document, format="object", catalog=catalog()).ok
+    # Emptied, the step would leave more findings than a compile lists.
+    assert refusal(document) is None
+
+
+def test_every_expression_of_a_step_is_followed():
+    def within(annotation):
+        """The types an annotation names, through aliases, unions and collections; a step is a step of its own."""
+        pending, types = [annotation], []
+        while pending:
+            part = pending.pop()
+            if part in types:
+                continue
+            types.append(part)
+            if part is not Expression and part is not Step:
+                pending.extend(get_args(part))
+                pending.extend([part.__value__] if hasattr(part, "__value__") else [])
+        return types
+
+    names, models, seen = set(), list(get_args(get_args(Step.__value__)[0])), {ObjectExpression}
+    while models:
+        model = models.pop()
+        if model in seen:
+            continue
+        seen.add(model)
+        for name, field in model.model_fields.items():
+            types = within(field.annotation)
+            if Expression in types or ObjectExpression in types:
+                names.add(field.alias or name)
+            models.extend(part for part in types if isinstance(part, type) and issubclass(part, BaseModel))
+    # An agent's memory has a name or an expression as its key.
+    assert names == {*inputs.EXPRESSIONS, "key"}
 
 
 def test_a_text_may_read_a_call_that_doesnt_wait():
@@ -655,6 +1033,19 @@ def test_a_text_that_reads_the_loops_item_needs_the_loops_items(pointer):
     assert refusal(workflow(*beside)) is None
     copied = loop(transform("copy", ref(pointer)), ask(context=ref("/steps/copy/output")), items=items)
     assert found(refusal(workflow(fetch(**MISSING), copied)))
+
+
+@pytest.mark.parametrize("pointer", ["/loops/each/item/ssn", "/loops", ""])
+def test_a_text_in_a_loop_in_a_loop_needs_the_items_of_both(pointer):
+    def nested(items):
+        return workflow(
+            fetch(**MISSING),
+            loop(loop(ask(context=ref(pointer)), id="inner", items=ref("/input/customers")), items=items),
+        )
+
+    assert found(refusal(nested(ref("/steps/fetch/output/all"))))
+    if pointer:
+        assert refusal(nested(ref("/input/customers"))) is None
 
 
 @pytest.mark.parametrize(

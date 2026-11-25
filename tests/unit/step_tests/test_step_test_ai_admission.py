@@ -201,11 +201,13 @@ async def test_a_text_that_reads_a_value_marked_secret_is_refused_after_the_chea
     assert admitted.worker_release_ids.keys() == {"weave-agentic.generate"}
 
 
-async def test_a_draft_unfinished_after_the_step_still_tests_it_and_one_unfinished_before_it_doesnt(monkeypatch):
-    unfinished = {"id": "later", "kind": "action"}
-    admitted = await Platform(monkeypatch, workflow(ASK, unfinished)).admit()
-    assert admitted.workflow["spec"]["steps"][0]["id"] == "ask"
-    assert await Platform(monkeypatch, workflow(unfinished, ASK)).refused() == (422, "WV-STEPTEST-DRAFT")
+async def test_a_draft_with_an_unfinished_step_tests_the_step_unless_its_text_reads_it(monkeypatch):
+    unfinished = {"id": "unfinished", "kind": "action"}
+    for steps in ([unfinished, ASK], [ASK, unfinished]):
+        admitted = await Platform(monkeypatch, workflow(*steps)).admit()
+        assert admitted.workflow["spec"]["steps"][0]["id"] == "ask"
+    reads = {**ASK, "context": {"ref": "/steps/unfinished/output"}}
+    assert await Platform(monkeypatch, workflow(unfinished, reads)).refused() == (422, "WV-STEPTEST-DRAFT")
 
 
 @pytest.mark.parametrize(
