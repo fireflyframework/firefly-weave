@@ -30,7 +30,6 @@ import { sheetWhen } from "../../modal-sheet";
 import type { Node } from "../../model";
 import type { StartRunRequest } from "../../run/start-run-dialog";
 import { MAX_PAGES, REASON_LIMIT, tooLongMessage } from "../operate-limits";
-import { viewPath } from "../operate-routes";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
 import {
   UNSETTLED,
@@ -238,8 +237,8 @@ export class RunActions {
   constructor(
     private readonly host: () => App,
     private readonly onChange: () => void,
-    /** Opens a Studio address, such as an incident in the inbox. */
-    private readonly open: (path: string) => void = () => undefined,
+    /** Opens the inbox on an incident. */
+    readonly openIncident: (id: string) => void = () => undefined,
   ) {}
 
   /** The detail shows this run now: another run's dialog does not stay. */
@@ -593,10 +592,6 @@ export class RunActions {
   closeCancelDialog() {
     this.cancelDialog = null;
     this.changed();
-  }
-  /** Opens the inbox on an incident: the business key never enters the address. */
-  openIncident(id: string) {
-    this.open(`${viewPath("incidents")}?incident=${encodeURIComponent(id)}`);
   }
   private incidentAction(view: RunTransactionView | undefined) {
     const id = view?.incident_id;

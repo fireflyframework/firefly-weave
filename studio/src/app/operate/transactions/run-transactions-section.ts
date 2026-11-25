@@ -39,7 +39,7 @@ import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { toneAttribute, type Tone } from "../../status-labels";
 import { OperateState } from "../operate-state";
-import { viewPath } from "../operate-routes";
+import { openIncident } from "./open-incident";
 import {
   readRunTransactions,
   type RunTransactionView,
@@ -578,9 +578,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
     return actor === this.host().identity?.principal_id;
   }
   openIncident(id: string) {
-    void this.router.navigateByUrl(
-      `${viewPath("incidents")}?incident=${encodeURIComponent(id)}`,
-    );
+    void openIncident(this.host(), this.router, id);
   }
   openRun(id: string) {
     void this.host().viewRun({ id });

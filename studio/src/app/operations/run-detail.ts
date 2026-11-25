@@ -37,6 +37,7 @@ import { Icon } from "../icon";
 import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
 import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
+import { openIncident } from "../operate/transactions/open-incident";
 import { RunCancelDialog } from "../operate/transactions/run-cancel-dialog";
 import { RunTransactions } from "../operate/transactions/run-transactions-section";
 import { StartRunDialog } from "../run/start-run-dialog";
@@ -513,7 +514,7 @@ export class RunDetail implements DoCheck, OnDestroy {
   readonly actions = new RunActions(
     () => this.host(),
     () => this.cdr.markForCheck(),
-    (path) => void this.router.navigateByUrl(path),
+    (incident) => void openIncident(this.host(), this.router, incident),
   );
 
   ngDoCheck() {

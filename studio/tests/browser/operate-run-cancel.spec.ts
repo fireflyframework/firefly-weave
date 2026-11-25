@@ -130,6 +130,15 @@ async function platform(
 }
 const dialog = (page: Page, name: string) => page.getByRole("dialog", { name });
 const actionRow = (page: Page) => page.locator(".run-controls");
+/** The inbox is on screen, asked for the incident of the transaction in doubt. */
+async function expectInbox(page: Page) {
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Incidents" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
+  );
+}
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -181,9 +190,7 @@ test("Cancel run with a transaction in doubt says so before sending, and sends n
   await cancel.getByLabel("Reason").press("Control+Enter");
   expect(runs.posts).toEqual([]);
   await notice.getByRole("button", { name: "Open incident" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
-  );
+  await expectInbox(page);
   expect(runs.posts).toEqual([]);
 });
 
@@ -212,9 +219,7 @@ test("a cancel refused because a transaction went in doubt names it and offers i
   );
   await page.screenshot({ path: `${captures}/run-cancel-refused.png` });
   await toast.getByRole("button", { name: "Open incident" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
-  );
+  await expectInbox(page);
 });
 
 test("Cancel without undoing waits in the action row while a transaction is in doubt", async ({
@@ -240,9 +245,7 @@ test("Cancel without undoing waits in the action row while a transaction is in d
     .locator(".cancel-blocked")
     .getByRole("button", { name: "Open incident" })
     .click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
-  );
+  await expectInbox(page);
 });
 
 test("Cancel without undoing lists what stays done and needs the run's short ID", async ({

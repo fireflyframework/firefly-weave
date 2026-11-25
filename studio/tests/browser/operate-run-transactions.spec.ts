@@ -34,6 +34,7 @@ import {
   loopSummary,
   resolvingRun,
 } from "../run-transactions-fixture";
+import { called } from "../transaction-incidents-fixture";
 import { connected } from "./support";
 
 const environment =
@@ -211,11 +212,23 @@ test("a run's transactions: the summary, a folded one, an undone one and one in 
     path: `${captures}/run-transactions-loop.png`,
     fullPage: true,
   });
-  // Open incident opens the inbox on that incident.
+  // Open incident opens the inbox on that incident, and Back the run again.
+  await page.route(`${environment}/incidents/${inDoubtIncident}`, (route) =>
+    route.fulfill({ json: { ...called, id: inDoubtIncident } }),
+  );
   await third.getByRole("button", { name: "Open incident" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Incidents" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(
     new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
   );
+  await expect(page.locator("#incident-detail-title")).toHaveText(
+    "Incident WV-TXN-UNDO-STUCK",
+  );
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/operate/runs/${loopRunId}$`));
+  await expect(section(page).locator(".txn-summary")).toBeVisible();
 });
 
 test("a reconciled transaction says who resolved it, why and with what evidence, as plain text", async ({

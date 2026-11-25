@@ -174,7 +174,7 @@ function shell(open: string | null = first) {
     asked: [] as Json[],
     /** Each runs.transactions read, by path. */
     transactionReads: [] as string[],
-    /** Each address the actions opened. */
+    /** Each incident the actions opened in the inbox. */
     opened: [] as string[],
   };
   /**
@@ -261,7 +261,7 @@ function shell(open: string | null = first) {
   const actions = new RunActions(
     () => host as unknown as App,
     () => undefined,
-    (path) => calls.opened.push(path),
+    (id) => calls.opened.push(id),
   );
   actions.follow(open ?? "");
   const settle = () => new Promise((resolve) => setTimeout(resolve));
@@ -642,7 +642,7 @@ describe("Cancel run on a run with transactions", () => {
       incidentId: incident,
     });
     s.actions.openIncident(incident);
-    expect(s.calls.opened).toEqual([`/operate/incidents?incident=${incident}`]);
+    expect(s.calls.opened).toEqual([incident]);
     s.actions.closeCancelDialog();
     expect(s.actions.cancelDialog).toBeNull();
   });
@@ -693,7 +693,7 @@ describe("Cancel run on a run with transactions", () => {
       },
     ]);
     s.calls.notices[0].run!();
-    expect(s.calls.opened).toEqual([`/operate/incidents?incident=${incident}`]);
+    expect(s.calls.opened).toEqual([incident]);
   });
 
   it("keeps a 409 with another code a plain refusal: no incident, no second read", async () => {
