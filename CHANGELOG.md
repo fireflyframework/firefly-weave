@@ -220,7 +220,8 @@ SPDX-License-Identifier: Apache-2.0
   the workflow creates the trigger, moves it to the new version, or replaces it
   when the version reacts to other events or workflows: the dialog shows what
   reacts now beside what will, asks before a stop that skips waiting events, names
-  the events a stop ends, and offers a stop it still owes at the next activation.
+  the events a stop ends when the two triggers share none, and offers a stop it still
+  owes at the next activation.
   The **Starts** tab shows what the trigger started, why an event started nothing,
   **Open run**, and **Stop it** for a second trigger that still reacts. Diagnostics
   opens the trigger on what fixes it. See "React to a transaction" in the Studio
