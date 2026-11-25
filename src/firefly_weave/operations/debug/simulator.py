@@ -87,6 +87,7 @@ from firefly_weave.operations.debug.transactions import (
     phase_target,
     phase_targets,
     resolution_problem,
+    resolution_rules,
     scripted_effect,
     started_data,
     step_instance,
@@ -1466,6 +1467,7 @@ class Simulator:
                 "generation": prior.generation,
                 "kind": resolution,
                 "code": prior.code,
+                **resolution_rules(self._workflow(key).prepared, prior),
             }
             if resolution == "accept_reconciled_result":
                 data["output"] = payload

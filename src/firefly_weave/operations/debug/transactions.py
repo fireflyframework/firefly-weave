@@ -38,8 +38,8 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
-from firefly_weave.runtime.models import Deadline, RunState, TransactionCause, TransactionRecord
-from firefly_weave.runtime.transactions import TRANSACTION_RULES, split_deadline
+from firefly_weave.runtime.models import Deadline, IncidentState, RunState, TransactionCause, TransactionRecord
+from firefly_weave.runtime.transactions import TRANSACTION_RULES, incident_transaction, split_deadline
 
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
 # keys its confirms, cancels and undos read are too. A called workflow's run is ``frame_run_id`` of its call.
@@ -67,6 +67,14 @@ def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
     if prepared.transactions is None:
         return {}
     return {"run_id": str(run_id), "transaction_rules": TRANSACTION_RULES}
+
+
+def resolution_rules(prepared: PreparedWorkflow, incident: IncidentState) -> JsonObject:
+    """What a simulated resolution of a transaction in doubt says besides the decision, as the server does: the rules
+    the run's transactions follow from it, and the transaction the incident belongs to."""
+    assert prepared.transactions is not None
+    owner = incident_transaction(prepared.transactions, incident.node_id, incident.code)
+    return {"transaction_rules": TRANSACTION_RULES, **({"transaction": owner} if owner is not None else {})}
 
 
 def scripted_effect(action_spec: Mapping[str, Any] | None, failure: ScriptedError) -> Literal["none", "unknown"]:

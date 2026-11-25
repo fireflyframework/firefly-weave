@@ -53,7 +53,7 @@ from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
-from firefly_weave.runtime.transactions import shapes
+from firefly_weave.runtime.transactions import TRANSACTION_RULES, shapes
 from firefly_weave.runtime.waits import TERMINAL, settle
 from firefly_weave.workers.control import revoke_attempts
 from firefly_weave.workers.leases import TaskService
@@ -324,6 +324,9 @@ class IncidentService:
                     "actor_id": str(actor.id),
                     # An in-doubt incident's code says what the output is: the step's, or a reconciliation record.
                     **({"code": incident["code"]} if incident["code"] in IN_DOUBT_CODES else {}),
+                    # The rules the run's transactions follow from this decision, and the transaction it decides.
+                    **({"transaction_rules": TRANSACTION_RULES} if previous.state.run_id is not None else {}),
+                    **({"transaction": transaction_key} if transaction_key is not None else {}),
                     # Attempts a worker started; the step's error object reports them. A transaction in doubt hands
                     # nothing to the step, so it records none.
                     **(
