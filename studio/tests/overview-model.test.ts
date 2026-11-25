@@ -214,7 +214,8 @@ function validateWithPython(answers: OperationsSummary[]) {
 import json, sys
 from typing import get_args
 from firefly_weave.contracts import operations_summary as s
-for answer in json.load(sys.stdin):
+# The bytes, which are UTF-8 whatever the locale is, as on Windows.
+for answer in json.load(sys.stdin.buffer):
     parsed = s.OperationsSummary.model_validate_json(json.dumps(answer))
     assert parsed.model_dump(mode="json") == s.OperationsSummary.model_validate_json(json.dumps(answer)).model_dump(mode="json")
 print(json.dumps({

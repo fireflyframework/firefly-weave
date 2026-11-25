@@ -53,7 +53,8 @@ models = {
     "RunSummary": RunSummary,
     "TransactionsSection": TransactionsSection | ForbiddenSection | UnavailableSection,
 }
-records = json.load(sys.stdin)
+# The bytes, which are UTF-8 whatever the locale is, as on Windows.
+records = json.load(sys.stdin.buffer)
 written = {}
 for name, items in records.items():
     adapter = TypeAdapter(models[name])
@@ -66,7 +67,7 @@ import json, sys
 from starlette.datastructures import QueryParams
 from firefly_weave.api.transport import parse_query
 from firefly_weave.contracts.run_views import RunSummaryQuery
-query = parse_query(QueryParams(sys.stdin.read()), RunSummaryQuery)
+query = parse_query(QueryParams(sys.stdin.buffer.read().decode()), RunSummaryQuery)
 print(json.dumps(query.model_dump(mode="json", exclude_unset=True)))
 `;
 function runPython(code: string, input: string): unknown {

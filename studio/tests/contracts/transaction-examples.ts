@@ -262,7 +262,8 @@ export const transactionPage: RunTransactionPage = {
       node_id: "move",
       iteration: [3],
       state: "in_doubt",
-      business_key: "T-1052",
+      // Outside ASCII: the platform reads it as UTF-8 whatever its locale.
+      business_key: "T-1052-Müller",
       cause: {
         code: "UNAVAILABLE",
         instance_key: "elsewhere[3]",
