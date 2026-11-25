@@ -349,9 +349,11 @@ cancel is refused too (HTTP 409 `WV-TXN-IN-DOUBT`) and changes nothing: Force en
 on the incident is the way past it. It is not refused for a run whose incident
 nobody can resolve, such as one over the fetch budget of retained runs. An
 incident in doubt that a cancel closes ends `resolved` with the kind `terminate`,
-the cancel's actor and reason, and the cancel event's ID as its receipt. Retiring an
-activation that a running transaction may still need to undo a step is refused
-(HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
+the cancel's actor and reason, and the cancel event's ID as its receipt. The
+cancel's audit record lists their IDs in `closed`.
+
+Retiring an activation that a running transaction may still need to undo a step is
+refused (HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
 `reason` in its body (HTTP 422 `WV-RETIRE-REASON` without one), and the caller
 holds `transaction.reconcile`; the audit records both. If that undo is needed
 later, its call can't start and the transaction is in doubt for a person.

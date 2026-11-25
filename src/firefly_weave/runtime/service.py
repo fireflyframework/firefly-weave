@@ -196,12 +196,15 @@ async def record_stop(
     actor_id: UUID,
     event: RuntimeEvent,
     reason: str,
-) -> None:
-    """Record a stop on the incidents in doubt it closed, each with whether an earlier decision had left it."""
+) -> dict[str, JsonValue]:
+    """Record a stop on the incidents in doubt it closed, each with whether an earlier decision had left it; returns
+    what the stop's audit row says of them."""
+    closed: list[str] = []
     for left in (False, True):
         keys = [key for key, was in decided.items() if was is left]
         resolution = stopped_resolution(event, reason, left=left)
-        await repository.resolve_incidents(run_id, keys, actor_id, event.timestamp, resolution)
+        closed += await repository.resolve_incidents(run_id, keys, actor_id, event.timestamp, resolution)
+    return {"closed": sorted(closed)} if closed else {}
 
 
 async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:
@@ -798,7 +801,7 @@ class RuntimeService:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
-                await record_stop(repository, run_id, decided, actor.id, event, request.reason)
+                closed = await record_stop(repository, run_id, decided, actor.id, event, request.reason)
                 await audit(
                     tx.session,
                     actor,
@@ -812,6 +815,7 @@ class RuntimeService:
                         "reason": request.reason,
                         **skipped,
                         **cascade,
+                        **closed,
                     },
                 )
                 return capacity_ack
@@ -863,7 +867,7 @@ class RuntimeService:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
-                await record_stop(repository, run_id, decided, actor.id, event, request.reason)
+                closed = await record_stop(repository, run_id, decided, actor.id, event, request.reason)
                 await audit(
                     tx.session,
                     actor,
@@ -877,6 +881,7 @@ class RuntimeService:
                         "reason": request.reason,
                         **skipped,
                         **cascade,
+                        **closed,
                     },
                 )
                 return capacity_ack
@@ -901,7 +906,7 @@ class RuntimeService:
             else:
                 # Its audit row names the code of the stop instead of a reason, and so do its incidents.
                 decided, reason = dict.fromkeys(doubts, False), "WV-LEGACY-UNAVAILABLE"
-            await record_stop(repository, run_id, decided, actor.id, event, reason)
+            closed = await record_stop(repository, run_id, decided, actor.id, event, reason)
             await audit(
                 tx.session,
                 actor,
@@ -915,6 +920,7 @@ class RuntimeService:
                     **({"pending_undo": True} if draining else {}),
                     **({} if quarantined else {"reason": request.reason, **skipped}),
                     **cascade,
+                    **closed,
                 },
             )
             if ack is not None:

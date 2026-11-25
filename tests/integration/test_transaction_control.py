@@ -33,6 +33,7 @@ from stuck_transactions import (
     resolve,
     stuck,
     stuck_beside_a_called_confirm_that_ended,
+    two_stuck,
     with_a_called_step,
 )
 from transaction_platform import add, build, hold, submit, transaction, workflow
@@ -77,6 +78,14 @@ async def cancel(platform, run_id, *, actor=None, skip_undo=False):
             context=AuditContext(),
             skip_undo=skip_undo,
         )
+
+
+async def stop_audited(platform, run_id) -> dict:
+    [row] = await platform.query(
+        "SELECT event->'details' AS details FROM access_audit WHERE action='run.cancel' AND target=:target",
+        target=str(run_id),
+    )
+    return row["details"]
 
 
 async def test_skip_undo_needs_the_reconcile_capability(platform, reconciler):
@@ -156,6 +165,7 @@ async def test_a_stop_that_closes_a_doubt_records_who_stopped_it(platform, recon
         "leftover": True,
     }
     assert row["revision"] > left["revision"]
+    assert (await stop_audited(platform, run.id))["closed"] == [str(left["id"])]
 
 
 @pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
@@ -175,6 +185,7 @@ async def test_a_stop_of_a_run_too_large_keeps_what_an_earlier_decision_left(
     [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=left["id"])
     assert (row["status"], row["actor_id"]) == ("resolved", reconciler.id)
     assert (row["resolution"]["kind"], row["resolution"].get("leftover")) == ("terminate", True)
+    assert (await stop_audited(platform, run.id))["closed"] == [str(left["id"])]
 
 
 @pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
@@ -222,6 +233,20 @@ async def test_a_stop_closes_any_other_incident_without_a_person(platform, recon
     await cancel(platform, run.id, actor=reconciler, skip_undo=True)
     [row] = await platform.query("SELECT status,actor_id,resolution FROM incidents WHERE id=:id", id=failed["id"])
     assert row == {"status": "closed", "actor_id": None, "resolution": None}
+
+
+async def test_a_stop_of_a_withheld_run_records_who_stopped_it(platform, reconciler):
+    run, held = await two_stuck(platform)
+    await platform.execute(
+        "UPDATE runs SET state=jsonb_set(state,'{unavailable}','true'::jsonb) WHERE id=:run", run=run.id
+    )
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: (row["actor_id"], row["resolution"]["reason"]) for key, row in ended.items()} == dict.fromkeys(
+        held, (reconciler.id, "WV-LEGACY-UNAVAILABLE")
+    )
+    closed = sorted(str(row["id"]) for row in held.values())
+    assert (await stop_audited(platform, run.id))["closed"] == closed
 
 
 async def test_a_doubt_no_row_shows_refuses_no_stop_without_undoing(platform, reconciler):
