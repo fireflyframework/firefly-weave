@@ -90,6 +90,15 @@ async def due_terminal(repository: RuntimeRepository, row: dict[str, Any]) -> Ru
 
 
 UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
+# The keys of the transactions that a run's own state names.
+HELD_KEYS_SQL = (
+    "ARRAY(SELECT jsonb_object_keys("
+    "CASE WHEN jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) "
+    f"FROM runs r WHERE r.{SCOPE.replace(' AND ', ' AND r.')} AND r.id=:run)"
+)
+# The transactions a run still holds: unsettled records whose key the run's own state names. Earlier versions left the
+# record of a transaction that ended with its loop iteration unsettled, and the state no longer names that one.
+HELD_SQL = f"{SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} AND instance_key=ANY({HELD_KEYS_SQL})"
 
 
 async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:
@@ -100,10 +109,7 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
     It is written in SQL, as the oversized terminal path is, because the kernel cannot take the run any more. True
     when the deadline was held this way (or the run already was).
     """
-    unsettled = await repository.rows(
-        f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
-        run=row["id"],
-    )
+    unsettled = await repository.rows(f"SELECT 1 FROM run_transactions WHERE {HELD_SQL} LIMIT 1", run=row["id"])
     if not unsettled:
         return False
     from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
@@ -259,8 +265,8 @@ async def force_end_transactions(repository: RuntimeRepository, row: dict[str, A
     from firefly_weave.runtime.settlement import emit
 
     ended = await repository.rows(
-        f"UPDATE run_transactions SET state='force_ended',ended_at=:at,revision=revision+1 WHERE {SCOPE} "
-        f"AND run_id=:run AND state IN {UNSETTLED_SQL} RETURNING instance_key,revision",
+        f"UPDATE run_transactions SET state='force_ended',ended_at=:at,revision=revision+1 WHERE {HELD_SQL} "
+        "RETURNING instance_key,revision",
         run=row["id"],
         at=at,
     )
@@ -318,10 +324,7 @@ async def persist_terminal(
         raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal run")
     if repository.outbox is None:
         raise RuntimeError("Outbox required")
-    if await repository.rows(
-        f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
-        run=row["id"],
-    ):
+    if await repository.rows(f"SELECT 1 FROM run_transactions WHERE {HELD_SQL} LIMIT 1", run=row["id"]):
         # Ending here would abandon a transaction without undoing it: callers hold the run first.
         raise RuntimeError("Unsettled transactions require hold_transactions first")
     await repository.execute("SELECT weave_control_begin('run',:id)", id=row["id"])

@@ -31,6 +31,14 @@ SPDX-License-Identifier: Apache-2.0
   published on 0.1.0a19 change, so publishing one again gives a new artifact;
   published artifacts keep running as they are, and workflows that don't
   reference a platform schema keep their bytes.
+- Weave no longer refuses a valid document, run input, or worker output with
+  `WV-SCHEMA-RESOURCE_LIMIT` because other work keeps the processor busy: the
+  time that schema patterns may take is now the CPU time of the thread that
+  validates (10 ms a match, 100 ms a validation, as before), and a match that
+  stops before it spends that time is tried again, up to 8 times. A match that
+  still can't finish, such as one on a long string in a process that is busy
+  running Python, is refused as before. A runaway pattern is still refused, with
+  the same code and message.
 
 ### Runs, incidents, and workers
 
@@ -92,6 +100,28 @@ SPDX-License-Identifier: Apache-2.0
   `409 WV-REVISION` and leaves the trigger running, and the answer carries the
   stopped trigger's revision as its `ETag`. A stop without `If-Match` works as
   before.
+- A transaction inside a Loop over items records how it ended, also when it ends
+  together with its item, debug sessions list it, and its run can be purged.
+  **Behavior change:** such a transaction now sends `transaction.completed`,
+  `transaction.compensated`, `transaction.cancelled` or `transaction.reconciled`,
+  once per item, so event subscriptions receive it and the workflows whose event
+  trigger listens to it start. `transaction.in_doubt` and
+  `transaction.force_ended` were already sent. The server repairs the records
+  that earlier versions left open, without sending their events.
+- A purge that Weave refuses because it had no time to read how every transaction
+  of the run ended keeps whole records or none, and its
+  `WV-RUN-PURGE-BLOCKED` says which: purge the run again, or make room first when
+  the project's storage is full. It also names a transaction whose outcome the
+  run's history doesn't show. A run too large to load is no longer kept from
+  stopping by a record of an ended transaction.
+- Marking a transaction as reconciled, or force ending it, while another of its
+  steps or confirms is queued or claimed no longer suspends the run with
+  `WV-RUNTIME-EVENT` or stops the environment's recovery. That work is canceled,
+  its lease is revoked, a late report answers `409 WV-LEASE`, and the run goes on
+  or ends as decided. Environments an earlier version left stuck recover by
+  themselves. Mark as reconciled answers `409 WV-RUNTIME-STATE` while a failed
+  attempt of one of the transaction's steps is still handled: send it again after
+  the next recovery scan. Force end doesn't wait.
 
 ### Operations
 
@@ -340,6 +370,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
+- A unit or contract test that hangs ends the local gate and CI after 10 minutes,
+  named as `FAILED`, with the files, lines, and functions where its threads wait,
+  instead of holding the stage for an hour without a name. The stage also fails
+  when a pytest worker stops early or no test passes.
 - Studio's tests no longer fail on a busy machine: page clocks advance with
   `runFor` instead of `fastForward` in the approvals, connect wizard and
   incidents specs, canvas tidy is bounded by the work it does instead of
@@ -391,6 +425,11 @@ SPDX-License-Identifier: Apache-2.0
   upgrade guide for its locks and run time.
 - `0048_operations_step_fact_keys` adds a partial index on `step_facts` for agent
   and transaction phase keys, which the agent log reads as key ranges.
+- `0049_unsettled_transactions` adds a partial index on `run_transactions` that
+  holds only the unsettled records, which the operations loop repairs. A server
+  of an earlier version can't read a debug session that holds ended transactions
+  of a loop. See the upgrade guide for what to check first and what the repair
+  does.
 - `0043_operations_logs` adds the empty `execution_logs` and
   `execution_log_days` tables and adds the role check again with the same
   roles; see the upgrade guide. Upgrade CLIs and SDKs with the server:

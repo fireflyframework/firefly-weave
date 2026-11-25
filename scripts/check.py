@@ -25,8 +25,10 @@ import re
 import runpy
 import signal
 import sys
+import sysconfig
 import time
 from datetime import UTC, datetime
+from itertools import takewhile
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,6 +41,10 @@ RELEASE_TESTS = (
     "tests/e2e/test_worker_shutdown.py",
     "tests/benchmarks/test_queue_load.py",
 )
+
+# A unit or contract test that takes longer, setup and teardown included, counts as hung. The slowest takes 135 s on a
+# busy machine, and a property test that fails may spend another 300 s shrinking its example before it says so.
+TEST_TIMEOUT_SECONDS = 600
 
 
 def worker_stages() -> list[tuple[str, list[str], int]]:
@@ -68,30 +74,78 @@ def worker_stages() -> list[tuple[str, list[str], int]]:
     return stages
 
 
+# What run_command keeps of a stage's output.
+LOG_BYTES = 4 * 1024 * 1024
 # Only the outcome and node id of pytest's short summary lines; the " - message" part may carry output.
 SUMMARY_LINE = re.compile(r"^(FAILED|ERROR) ([\x21-\x7e](?:[\x20-\x7e]*?[\x21-\x7e])?)(?: - |$)")
-SUMMARY_TAIL_BYTES = 256 * 1024
 SUMMARY_MAX_LINES = 50
 SUMMARY_MAX_LENGTH = 300
+# A test, or a test file that can't be imported. On CI pytest prints an assertion message whole, so a line of it can
+# look like a summary line: a name counts only when its file exists.
+NODE_ID = re.compile(r"((?:workers/\w+/)?tests/(?:[\w-]+/)*\w+\.py)(?:(?:::\w+)+(?:\[.*)?)?", re.ASCII)
+# One thread's stack as faulthandler writes it: files, lines and function names, never values or output.
+STACK = re.compile(r"^(?:Thread|Current thread) 0x[0-9a-f]+ .*\n((?:  File .*\n)+)", re.MULTILINE)
+FRAME = re.compile(r'  File "([\x20-\x7e]{1,300})", line \d+ in (?:\w+|<\w+>)', re.ASCII)
+FROZEN = re.compile(r"<frozen ([\w.]+)>", re.ASCII)
+HARNESS = ("/_pytest/", "/execnet/")
+# pytest's report, which starts after every dumped stack, holds assertion messages: any text a test chooses.
+REPORT = re.compile(r"^=+ (?:FAILURES|ERRORS|warnings summary|short test summary info) =+$", re.MULTILINE)
+# The counts that end pytest's output, such as "12265 passed, 3 warnings in 1843.06s (0:30:43)".
+PASSED = re.compile(r"^(?:=+ )?(?:\d+ \w+, )*\d+ passed\b.* in \d", re.MULTILINE)
+# pytest writes its progress dots, then this, on one line.
+WORKER_STOPPED = re.compile(r"\[[^\]\n]+\] node down: ")
 
 
-def failing_tests(log: Path) -> list[str]:
-    """Name the failing tests from the tail of a stage log, never their output."""
+def log_text(log: Path) -> str:
     try:
         with log.open("rb") as stream:
-            stream.seek(max(0, stream.seek(0, os.SEEK_END) - SUMMARY_TAIL_BYTES))
-            tail = stream.read().decode("utf-8", "replace")
+            text = stream.read(LOG_BYTES).decode("utf-8", "replace")
     except OSError:
-        return []
-    _, header, summary = tail.rpartition("short test summary info")
+        return ""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def in_source_file(line: str) -> bool:
+    """Code made at run time can have any text as its file name: such a frame is not shown."""
+    frame = FRAME.fullmatch(line)
+    if frame is None:
+        return False
+    frozen = FROZEN.fullmatch(frame[1])
+    if frozen:
+        return os.path.isfile(os.path.join(sysconfig.get_path("stdlib"), *frozen[1].split(".")) + ".py")
+    return os.path.isfile(frame[1])
+
+
+def dumped_stacks(log: Path) -> list[str]:
+    """The innermost frames, down to pytest's own, of each thread that faulthandler dumped in a stage log."""
+    lines: list[str] = []
+    for stack in STACK.finditer(REPORT.split(log_text(log), maxsplit=1)[0]):
+        frames = takewhile(lambda frame: not any(part in frame for part in HARNESS), stack[1].splitlines())
+        shown = list(filter(in_source_file, frames))
+        if shown:
+            lines += ["Thread (most recent call first):", *shown]
+    # The main thread, which runs the tests, comes last.
+    return lines[-SUMMARY_MAX_LINES:]
+
+
+def every_test_ran(log: Path) -> bool:
+    """Whether pytest passed tests and lost no worker: without restarts it drops a lost worker's tests and exits 0."""
+    text = log_text(log)
+    return PASSED.search(text) is not None and WORKER_STOPPED.search(text) is None
+
+
+def failing_tests(log: Path, root: Path) -> list[str]:
+    """Name the failing tests from pytest's summary in a stage log, never their output."""
+    _, header, summary = log_text(log).rpartition("short test summary info")
     names = []
     for line in summary.splitlines()[1:] if header else ():
         # pytest closes its summary with a "==== 1 failed in 3.00s ====" line; later output is not its summary.
         if line.startswith("="):
             break
-        match = SUMMARY_LINE.match(re.sub(r"\x1b\[[0-9;]*m", "", line))
-        if match and len(match.group(2)) <= SUMMARY_MAX_LENGTH:
-            names.append(match.group(1) + " " + match.group(2))
+        match = SUMMARY_LINE.match(line)
+        node = NODE_ID.fullmatch(match[2]) if match else None
+        if match and node and len(match[2]) <= SUMMARY_MAX_LENGTH and os.path.isfile(root / node[1]):
+            names.append(match[1] + " " + match[2])
     return list(dict.fromkeys(names))[:SUMMARY_MAX_LINES]
 
 
@@ -156,9 +210,15 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
             ("types", [python, "-m", "mypy"], 120),
             (
                 "unit-contracts",
-                [python, "-m", "pytest", "tests/unit", "tests/contracts", "-q", "--tb=short", "--show-capture=no"],
-                # About 8,700 tests: about 25 minutes locally and 20 to 45 on a shared CI
-                # runner, so the limit leaves room for a slow runner without hiding a hang.
+                [
+                    *(python, "-m", "pytest", "tests/unit", "tests/contracts", "-q", "--tb=short", "--show-capture=no"),
+                    # One xdist worker: when it exits at the limit, pytest is still there to name the test it was
+                    # running. PYTEST_ADDOPTS="-n 4" starts more. The first hung test ends the run.
+                    *("--dist", "load", "--tx", "popen", "--max-worker-restart", "0"),
+                    *("-o", f"faulthandler_timeout={TEST_TIMEOUT_SECONDS}", "-o", "faulthandler_exit_on_timeout=true"),
+                ],
+                # About 12,300 tests: 25 to 45 minutes on a shared CI runner, so the limit leaves room for a slow
+                # runner and then for one hung test to reach its own limit.
                 3600,
             ),
             *worker_stages(),
@@ -222,8 +282,12 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
         for name, command, timeout in stages:
             print("Running " + name, flush=True)
             started = time.monotonic()
+            log = evidence / (name + ".log")
             try:
-                run_command(command, timeout=timeout, limit=4 * 1024 * 1024, log_path=evidence / (name + ".log"))
+                run_command(command, timeout=timeout, limit=LOG_BYTES, log_path=log)
+                if name == "unit-contracts" and not every_test_ran(log):
+                    print("pytest exited 0, but a worker stopped early or no test passed.", flush=True)
+                    raise RuntimeError("The unit and contract tests did not all run")
                 if name == "images":
                     images = json.loads((evidence / "images/images.json").read_text())
                     prepared = json.loads((evidence / "release/release.json").read_text())
@@ -247,7 +311,8 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
                 results[name] = {"status": "failed", "seconds": round(time.monotonic() - started, 3)}
                 failed = True
                 print(f"Stage {name} failed.", flush=True)
-                for line in failing_tests(evidence / (name + ".log")):
+                stacks = dumped_stacks(log) if name == "unit-contracts" else []
+                for line in (*failing_tests(log, root), *stacks):
                     print(line, flush=True)
                 break
     except BaseException:

@@ -507,6 +507,9 @@ class KernelCursor(ContractModel):
     # reduced again, and each of them fails as its onError setting says, or fails its transaction, instead of being
     # evaluated.
     failing: dict[str, str] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # What the event's result has released so far: a result's released records are never stored, and a cursor is. Empty
+    # between events.
+    released: dict[str, TransactionRecord] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> KernelCursor:
@@ -638,6 +641,9 @@ def _advance_owned(
     if state.status not in {"queued", "waiting", "suspended"}:
         raise KernelError("WV-RUNTIME-STATE")
     result = cursor.result
+    if cursor.released and not result.released:
+        # The cursor was stored in the middle of its event and read back.
+        result.released.update(cursor.released)
     current_state = result.state
     if not cursor.admitted:
         current_state = current_state.model_copy(update={"accepted_sequence": event.sequence})
@@ -657,6 +663,7 @@ def _advance_owned(
                 "current": current,
                 "turn_units": 0 if done else units,
                 "turn_intents": 0 if done else reserved,
+                "released": {} if done else value.released,
             }
         )
 
@@ -759,7 +766,8 @@ def _advance_owned(
             queue.append(node.target + within)
 
     def release(node: ForEachNode, key: str, index: int) -> None:
-        """Delete an iteration's frame and every frame, join and loop that its body created."""
+        """Delete an iteration's frame and every frame, join, loop and transaction that its body created; the result
+        hands on the final record of each transaction."""
         within = iteration_suffix(loop_suffix(key), index)
         del current_state.branches[branch_key(node.id, "body", within)]
         body = [*node.scope, node.id, "body"]
@@ -780,7 +788,7 @@ def _advance_owned(
         for name in [name for name in current_state.joins if inside(node_of(name), loop_suffix(name))]:
             del current_state.joins[name]
         for name in [name for name in current_state.transactions if inside(node_of(name), loop_suffix(name))]:
-            del current_state.transactions[name]
+            result.released[name] = current_state.transactions.pop(name)
         growing = growing_containers.get()
         for name in [name for name in current_state.loops if inside(node_of(name), loop_suffix(name))]:
             if growing is not None:
@@ -3013,6 +3021,7 @@ def _advance_owned(
                     "turn_units": 0,
                     "turn_intents": 0,
                     "failing": {**failing, current: code},
+                    "released": {},
                 }
             )
         current_state = state.model_copy(deep=True)
