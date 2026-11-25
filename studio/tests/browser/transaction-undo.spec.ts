@@ -281,4 +281,33 @@ test.describe("how a step is undone at 360x640", () => {
           .boundingBox())!.height,
       ).toBeGreaterThanOrEqual(44);
   });
+
+  test("an undo step's input is as wide as its column, however long its formula", async ({
+    page,
+  }) => {
+    const details = await openMove(
+      page,
+      moveWorkflow(
+        `${ADD}  compensate: {kind: action, uses: target-system.remove-quantity@1.0.0, with: {object: {reference: {ref: /input/moveId}, addOperation: {ref: /participant/operationKey}}}}
+`,
+      ),
+    );
+    await openInside(details, "add");
+    await details.tab("Settings").click();
+    const column = (await undoSelect(details)
+      .locator("xpath=ancestor::weave-select")
+      .boundingBox())!;
+    const input = details
+      .field("compensate.input")
+      .locator(".param-control")
+      .first();
+    await expect(input).toContainText("addOperation");
+    for (const control of [
+      details.field("compensate").getByRole("textbox"),
+      input,
+    ]) {
+      const box = (await control.boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(column.x + column.width);
+    }
+  });
 });
