@@ -91,6 +91,8 @@ export class FormulaEditor {
   mode = input<"formula" | "template">("formula");
   /** Fixed once the editor is on screen. */
   multiline = input(false);
+  /** What the empty formula editor says; fixed once the editor is on screen. */
+  placeholder = input("Type a formula, or drag a field here");
   readOnly = input(false);
   required = input(false);
   invalid = input(false);
@@ -216,7 +218,7 @@ export class FormulaEditor {
             },
           }),
           ...(this.mode() === "formula"
-            ? [placeholder("Type a formula, or drag a field here")]
+            ? [placeholder(this.placeholder())]
             : []),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {

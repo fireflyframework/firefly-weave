@@ -728,7 +728,7 @@
           "path": "/errorPath",
           "label": "On error"
         },
-        "studio": "pending"
+        "studio": "ready"
       }
     ]
   }

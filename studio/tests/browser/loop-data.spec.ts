@@ -95,6 +95,31 @@ async function open(page: Page, file = NESTED) {
   await openWorkflow(page, file);
   return new StepDetailsPage(page);
 }
+/** Where the steps inside the loops sit in the workflow document. */
+const POINTERS = {
+  check: "/spec/steps/0/body/steps/0",
+  send: "/spec/steps/0/body/steps/1/body/steps/0",
+};
+/**
+ * Opens a step inside a loop once the host has answered what its Value
+ * field can read: until then the Input pane offers only the sources Studio
+ * knows offline. The test host starts the repository's Python for each
+ * question, which takes seconds on a busy machine, so the wait is for that
+ * step's own answer, not for a time.
+ */
+async function openInLoop(
+  page: Page,
+  details: StepDetailsPage,
+  id: keyof typeof POINTERS,
+) {
+  const answered = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/studio/local/scope") &&
+      response.request().postDataJSON()?.path === `${POINTERS[id]}/value`,
+  );
+  await details.open(id);
+  await answered;
+}
 
 async function inputPane(details: StepDetailsPage): Promise<Locator> {
   const tabs = details.dialog
@@ -136,7 +161,7 @@ test.describe("data inside a loop at 1440x900", () => {
     page,
   }) => {
     const details = await open(page);
-    await details.open("send");
+    await openInLoop(page, details, "send");
     const pane = await inputPane(details);
     await expect
       .poll(() => sourceOptions(pane))
@@ -158,10 +183,7 @@ test.describe("data inside a loop at 1440x900", () => {
     page,
   }) => {
     const details = await open(page);
-    // The current item is a source once the host's scope answers.
-    const scoped = page.waitForResponse("**/studio/local/scope");
-    await details.open("check");
-    await scoped;
+    await openInLoop(page, details, "check");
     let pane = await inputPane(details);
     await expect(pane.getByLabel("Input source")).toHaveValue("item");
     let target = details.field("value");
@@ -173,7 +195,8 @@ test.describe("data inside a loop at 1440x900", () => {
       ref: "/item/customerEmail",
     });
 
-    await details.open("send");
+    // The edit above changed the workflow: send's question is a new one.
+    await openInLoop(page, details, "send");
     pane = await inputPane(details);
     await chooseSource(pane, "Loop orders › Current item");
     target = details.field("value");
@@ -228,10 +251,7 @@ test.describe("data inside a loop at 1440x900", () => {
     page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
     page.on("pageerror", (error) => errors.push(String(error)));
     const details = await open(page);
-    // The current item is a source once the host's scope answers.
-    const scoped = page.waitForResponse("**/studio/local/scope");
-    await details.open("send");
-    await scoped;
+    await openInLoop(page, details, "send");
     const pane = await inputPane(details);
     const picker = pane.locator("weave-iteration-picker");
     const rows = picker.locator(".picker-row");

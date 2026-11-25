@@ -54,7 +54,8 @@ export interface FrameView {
   /** While a run shows: "7 of 20", "20 of 20" or "failed at item 4", and how far it is (0 to 1). */
   run?: {
     text: string;
-    tone: "live" | "done" | "failed" | "stopped";
+    /** "handled": done, and items went on after failures their On error handled. */
+    tone: "live" | "done" | "failed" | "stopped" | "handled";
     progress: number | null;
   } | null;
 }
@@ -77,7 +78,7 @@ export interface TileView {
   /** What its data holds, under the label ("3 fields"); "" when it has none. */
   output: string;
   /** On the Runs tab, the line names the run's fact: a failure's code in danger ink, a change in info ink. */
-  outputTone?: "danger" | "info" | null;
+  outputTone?: "danger" | "warning" | "info" | null;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;

@@ -126,7 +126,7 @@ from firefly_weave.contracts.runtime import (
 )
 from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
 from firefly_weave.contracts.studio_documents import StudioDocument, StudioDocumentKind, StudioDocumentSave
-from firefly_weave.contracts.surface import OPERATIONS
+from firefly_weave.contracts.surface import OPERATIONS, Operation
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
@@ -155,6 +155,8 @@ from firefly_weave.contracts.workers import (
     WorkerStatus,
 )
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
+from firefly_weave.sdk._retry import CAPACITY_RESEND, retry_after, send_admitted
+from firefly_weave.sdk._retry import Resend as Resend
 from firefly_weave.sdk.errors import ContractError, PreconditionFailed, TransportError, WeaveError
 from firefly_weave.sdk.worker_registration import negotiate_worker_registration
 from firefly_weave.triggers.models import Trigger, TriggerRequest
@@ -197,7 +199,9 @@ class AsyncTokenProvider(Protocol):
 class WeaveClient:
     """Owns its async HTTP client and any supplied HTTPX transport; use async with.
 
-    No automatic retry, redirect, proxy inheritance, or implicit request replay.
+    No redirect, proxy inheritance, or implicit replay of a request whose outcome is unknown. The one request sent
+    again is one the API refused before admitting it (429 with a capacity code), and only a GET or a change that
+    carries an idempotency key, as ``resend`` allows; ``resend=None`` sends every request once.
     Credentials supplied by a callable remain host-owned. Async providers receive
     the exact API origin so persisted sessions can enforce target binding.
     """
@@ -211,9 +215,13 @@ class WeaveClient:
         timeout: float = 30,
         transport: httpx.AsyncBaseTransport | None = None,
         private_origin: Purpose | None = None,
+        resend: Resend | None = CAPACITY_RESEND,
     ) -> None:
         """``private_origin`` names the purpose of an approved private-origin entry: plain HTTP outside loopback is
-        accepted only with it, a ``PinnedTransport`` and an exact entry of that purpose for this origin."""
+        accepted only with it, a ``PinnedTransport`` and an exact entry of that purpose for this origin.
+
+        ``resend`` bounds how a GET or a keyed change the API refused for capacity is sent again: by default four
+        sends in all within 15 seconds, never sooner than the API's Retry-After."""
         target = urlsplit(base_url)
         if (
             target.scheme not in {"https", "http"}
@@ -240,6 +248,7 @@ class WeaveClient:
         self.base_url = base_url.rstrip("/")
         self.scope = scope
         self.credential_provider = credential_provider
+        self.resend = resend
         self._client = httpx.AsyncClient(
             base_url=self.base_url, timeout=timeout, transport=transport, follow_redirects=False, trust_env=False
         )
@@ -284,8 +293,6 @@ class WeaveClient:
         key_hash: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
-        import httpx
-
         if not self._entered or self.closed:
             raise RuntimeError("Use the client in an active async context")
         spec = OPERATIONS[operation]
@@ -349,13 +356,37 @@ class WeaveClient:
         if not isinstance(token, str) or not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
             raise ValueError("Credential provider must return an access token string")
         headers["Authorization"] = "Bearer " + token
+        path = spec.canonical_path.format(**values)
+        # Built once, so a request sent again carries the same body, key and credential.
+        payload = body.model_dump(mode="json", by_alias=True) if body is not None else None
+
+        async def send() -> Any:
+            return await self._send(spec, path, headers, query, payload)
+
+        # The API lets a client send again a read, or a change it deduplicates by key, that it refused before admitting.
+        if self.resend is not None and (spec.method == "GET" or "Idempotency-Key" in headers):
+            # A client closed during a pause sends nothing more: the refusal stands.
+            return await send_admitted(send, self.resend, stopped=lambda: self.closed)
+        return await send()
+
+    async def _send(
+        self,
+        spec: Operation,
+        path: str,
+        headers: dict[str, str],
+        query: Mapping[str, str | int | list[str]] | None,
+        payload: Any,
+    ) -> Any:
+        """Send one request and read its answer within the response bounds."""
+        import httpx
+
         try:
             async with self._client.stream(
                 spec.method,
-                spec.canonical_path.format(**values),
+                path,
                 headers=headers,
                 params=query,
-                json=body.model_dump(mode="json", by_alias=True) if body is not None else None,
+                json=payload,
             ) as response:
                 if response.headers.get("Content-Encoding", "identity") != "identity":
                     raise ContractError(Problem(status=502, code="WV-WIRE", message="Compressed response rejected"))
@@ -383,7 +414,9 @@ class WeaveClient:
                     if response.status_code < 400:
                         # The API never redirects: a redirect is an answer outside the contract, not one to retry.
                         raise ContractError(problem)
-                    raise (PreconditionFailed if problem.status == 412 else WeaveError)(problem)
+                    raise (PreconditionFailed if problem.status == 412 else WeaveError)(
+                        problem, retry_after=retry_after(response.headers.get("Retry-After"))
+                    )
                 if response.status_code not in spec.statuses:
                     raise ValueError("Unexpected response status")
                 if spec.response is None:

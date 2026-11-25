@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import { connectionsPort } from "../connections/connections-port";
 import { signal, untracked } from "@angular/core";
 import { safeSample } from "./panes/sample";
+import { errorData } from "./panes/views";
 import {
   canonicalJson,
   getAt,
@@ -32,7 +33,12 @@ import {
 } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
-import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
+import {
+  stepIdentities,
+  type StructuredCanvasAdapter,
+  type Step,
+  type Workflow,
+} from "../../model";
 import { applyEdits } from "./edits";
 import { findStep } from "./step-walk";
 import {
@@ -72,6 +78,7 @@ import {
   CANVAS_MAX_BYTES,
   type AiTurnsEntry,
   type DataSource,
+  type ErrorEntry,
   type HumanEntry,
   type Provenance,
   type SignalEntry,
@@ -87,6 +94,8 @@ import {
 import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
+  failureOf,
+  withFailure,
   withInput,
   withPin,
   withoutInput,
@@ -143,7 +152,11 @@ import {
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
 import type { BlockedReason } from "../state/execution";
-import type { LastResult, RealResult } from "../state/last-results";
+import type {
+  HandledResult,
+  LastResult,
+  RealResult,
+} from "../state/last-results";
 import { shortId } from "../../format";
 import { instanceStep } from "../state/instance-keys";
 import type {
@@ -180,6 +193,14 @@ import {
   workflowRows,
   type CallSources,
 } from "../calls/call-sources";
+import {
+  endedOnError,
+  onErrorFields,
+  onErrorKinds,
+  removedPathToast,
+  type OnErrorContext,
+  type OnErrorWrite,
+} from "./settings/on-error";
 
 /**
  * A pin's step as toasts name it: the step, and inside a loop's body the
@@ -194,6 +215,11 @@ export function pinSubject(key: string): string {
 function answerSubject(key: string): string {
   const item = pinItem(key);
   return item ? `${instanceStep(key)}, item ${item}` : instanceStep(key);
+}
+/** Whose simulated failure a toast names: "send", or "item 3 of send" for one item. */
+function failureSubject(key: string): string {
+  const item = pinItem(key);
+  return item ? `item ${item} of ${instanceStep(key)}` : instanceStep(key);
 }
 /** The item of a pin inside a loop's body, one-based ("3", "3 › 1"); null for a step's pin. */
 function pinItem(key: string): string | null {
@@ -683,9 +709,35 @@ export class StepDetailsController {
     return this.host.execution?.results()?.steps[key] ?? null;
   }
   /**
+   * The failure the last execution's On error handled for this step (inside
+   * a loop, for the item picked), and when that execution ran; null when
+   * the step didn't fail and go on there.
+   */
+  handledResult(id: string): { failure: HandledResult; at: string } | null {
+    if (this.viewingRuns()) return null;
+    const results = this.host.execution?.results();
+    const key = this.iterations.instanceKey(id) ?? id;
+    const failure = this.handledHere(key)?.handled;
+    return results && failure ? { failure, at: results.at } : null;
+  }
+  /**
+   * The last result at `key` when the last execution failed the step there
+   * and its On error went on: what later steps read (null, or the error
+   * path's result), over a pin the failure stood in for. Once that failure
+   * is removed, the pin stands for the step again; null then, and when the
+   * step didn't fail and go on.
+   */
+  private handledHere(key: string): LastResult | null {
+    const result = this.lastResult(key);
+    if (!result?.handled) return null;
+    const pinned = this.pinOfTarget(key) ?? this.pinOfTarget(instanceStep(key));
+    return pinned && !this.failureOf(key) ? null : result;
+  }
+  /**
    * What a step's output reads now, the same for the Output pane, the Input
    * pane and formula previews: its pin, else its last result (still used when
-   * out of date), else nothing. Secret fields are left out.
+   * out of date), else nothing; a result whose failure was handled while
+   * its failure is still set comes before the pin. Secret fields are left out.
    */
   stepData(key: string):
     | {
@@ -703,7 +755,9 @@ export class StepDetailsController {
         : undefined;
     }
     const stepId = instanceStep(key);
-    const pin = this.pinOfTarget(key) ?? this.pinOfTarget(stepId);
+    const pin = this.handledHere(key)
+      ? null
+      : (this.pinOfTarget(key) ?? this.pinOfTarget(stepId));
     if (pin)
       return {
         value: this.pinnedOutput(pin.key) ?? {},
@@ -930,6 +984,46 @@ export class StepDetailsController {
     return { ok: true };
   }
 
+  /** The failure simulated for one item (`key`), else for its step; null when none is. */
+  failureOf(key: string): ErrorEntry | null {
+    this.testData.version();
+    return failureOf(this.testData.data(), key)?.entry ?? null;
+  }
+  /**
+   * Keeps the failure simulated at `key` (an item's or a step's), set by
+   * hand and checked as all test data is; null removes it, with Undo.
+   * `replacing` is the failure an edit moves from (an item's, when it now
+   * fails for every item, or back): it goes in the same change, with no
+   * toast, as the edit removed nothing the builder would undo.
+   */
+  async setFailure(
+    key: string,
+    failure: Omit<ErrorEntry, "source"> | null,
+    replacing: string | null = null,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const service = this.testData;
+    const entry: ErrorEntry | null = failure && {
+      ...failure,
+      source: "manual",
+    };
+    const now = new Date().toISOString();
+    const written = withFailure(service.data(), key, entry, now);
+    const pointer = `/errors/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    const outcome = await service.change(
+      replacing !== null && replacing !== key
+        ? withFailure(written, replacing, null, now)
+        : written,
+      entry === null ? [] : [pointer],
+    );
+    if (!outcome.ok) return { ok: false, message: outcome.message };
+    if (entry === null)
+      this.offerUndo(
+        `Removed the simulated failure of ${failureSubject(key)}.`,
+        outcome.previous,
+      );
+    return { ok: true };
+  }
+
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
     if (this.viewingRuns()) return false;
@@ -1107,6 +1201,25 @@ export class StepDetailsController {
       // The same precedence as the Output pane: a pin, else the last result;
       // inside a loop, for the item picked.
       output: (id) => this.pickedStepData(id)?.value,
+      // The failure simulated for the item picked, as the Input pane's Error
+      // of <step> shows it, else the failure the last Execute handled. On the
+      // Runs tab only a run's data shows, never the draft's.
+      error: (id) => {
+        if (this.viewingRuns()) return undefined;
+        const key = this.pinKey(id);
+        const simulated = this.failureOf(key);
+        const handled = this.handledResult(id)?.failure;
+        if (simulated) return errorData(simulated, this.step(id), key);
+        return (
+          handled && {
+            code: handled.code,
+            message: handled.message,
+            outcome: handled.outcome,
+            attempts: handled.attempts,
+            instanceKey: key,
+          }
+        );
+      },
       stamp: () => [
         this.run()?.version() ?? null,
         this.host.model.revision,
@@ -1119,6 +1232,12 @@ export class StepDetailsController {
   }
 
   readonly features = signal<readonly string[]>([]);
+  /** The kinds the target's language manifest lets choose On error; null when it lists none. */
+  readonly onErrorKinds = signal<readonly string[] | null>(null);
+  /** What On error rules read: the kind context and the manifest's On error kinds. */
+  onErrorContext(): OnErrorContext {
+    return { ...this.kindContext(), onErrorKinds: this.onErrorKinds() };
+  }
   /** What fields in loop bodies can read, from the Studio host. */
   readonly loopScopes = new LoopScopes(
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
@@ -1256,6 +1375,7 @@ export class StepDetailsController {
     if (this.featureLoad?.profile === profile && this.featureLoad.api === api)
       return this.featureLoad.promise;
     this.features.set([]);
+    this.onErrorKinds.set(null);
     const load = { profile, api, promise: Promise.resolve() };
     this.featureLoad = load;
     const current = () =>
@@ -1268,10 +1388,14 @@ export class StepDetailsController {
           ? `${api.project}/language`
           : "/studio/contracts/language";
         const manifest = await api.request<{ features?: string[] }>(path);
-        if (current()) this.features.set(manifest.features ?? []);
+        if (current()) {
+          this.features.set(manifest.features ?? []);
+          this.onErrorKinds.set(onErrorKinds(manifest));
+        }
       } catch {
         if (current()) {
           this.features.set([]);
+          this.onErrorKinds.set(null);
           this.featureLoad = null;
         }
       }
@@ -1414,12 +1538,15 @@ export class StepDetailsController {
   }
   settings(target: string): FormSpec {
     const step = this.step(target);
-    return (
-      (step &&
-        this.descriptor(target)?.settings?.(step, this.kindContext())) || {
-        fields: [],
-      }
-    );
+    const own = (step &&
+      this.descriptor(target)?.settings?.(step, this.kindContext())) || {
+      fields: [],
+    };
+    // On error, and Result on error with it, come after the kind's own settings.
+    const onError = step ? onErrorFields(step, this.onErrorContext()) : [];
+    return onError.length
+      ? { ...own, fields: [...own.fields, ...onError] }
+      : own;
   }
 
   private set(map: Map<string, Set<string>>, target: string): Set<string> {
@@ -1955,6 +2082,12 @@ export class StepDetailsController {
     let outcome: CommitOutcome = { ok: false, removed: [] };
     let reasons: string[] = [];
     let moves: VersionMove[] = [];
+    // Set inside perform(); typed so the check after it isn't narrowed to null.
+    let ended = null as OnErrorWrite | null;
+    let held = null as {
+      steps: ReadonlySet<string>;
+      identities: (id: string) => string | undefined;
+    } | null;
     this.host.perform(() => {
       const changes = changesOf();
       if (!changes.length) return;
@@ -1989,6 +2122,17 @@ export class StepDetailsController {
         afterEnv,
         new Set(),
       );
+      // A change that ends On error (a call that stops waiting for its
+      // result) removes the setting and its error path in the same step.
+      let settled = subject;
+      for (const change of hidden.changes)
+        settled = applyChange(settled, change);
+      ended = settled.step ? endedOnError(settled.step) : null;
+      const endChanges: FormChange[] = (ended?.patch ?? []).map((edit) => ({
+        scope: "step",
+        path: edit.path,
+        value: edit.value,
+      }));
       // Changes that leave the step as it is write nothing: the file keeps
       // its bytes (a space typed in a formula, a value set to itself).
       // Key order counts: moving rows reorders an object's keys.
@@ -1997,40 +2141,66 @@ export class StepDetailsController {
       const unchanged =
         !!step &&
         !hidden.changes.length &&
+        !endChanges.length &&
         same(subject.step, env.subject.step) &&
         same(subject.action, env.subject.action) &&
         same(subject.workflow, env.subject.workflow);
       const apply = () => {
-        moves = this.write(target, [...changes, ...hidden.changes]);
+        moves = this.write(target, [
+          ...changes,
+          ...hidden.changes,
+          ...endChanges,
+        ]);
       };
       if (unchanged) {
         outcome = { ok: true, removed: [] };
         return;
       }
+      // An error path removed here takes its steps' test data, as deleting
+      // them on the canvas does: read the steps as they are, for Undo.
+      if (env.subject.step?.["errorPath"] !== undefined)
+        held = {
+          steps: model.stepIdSet(),
+          identities: stepIdentities(model.definition),
+        };
       if (merge) model.continueEdit(burst!.revision, apply);
       else model.batch(apply);
       outcome = { ok: true, removed: hidden.labels };
       reasons = hidden.reasons;
     });
     if (!outcome.ok) return outcome;
+    if (held) {
+      // Kept by the test data for an Undo that brings the same steps back.
+      const { steps, identities } = held;
+      const after = model.stepIdSet();
+      this.testData.prune((id) => after.has(id) || !steps.has(id), identities);
+    }
     this.burst = { key, revision: model.revision, at: this.now() };
     if (moves.length) this.host.notify(versionMoveText(moves[0]));
-    if (outcome.removed.length) {
-      const revision = model.revision;
-      const opened = model.opened;
-      this.host.notify(
-        `Removed ${outcome.removed.join(", ")}.${reasons.length ? ` ${reasons[0]}.` : ""}`,
-        {
-          label: "Undo",
-          run: () =>
-            void this.host.undoIfUnchanged(
-              () =>
-                this.host.model === model &&
-                model.opened === opened &&
-                model.revision === revision,
-            ),
-        },
-      );
+    const revision = model.revision;
+    const opened = model.opened;
+    const undo = {
+      label: "Undo",
+      run: () =>
+        void this.host.undoIfUnchanged(
+          () =>
+            this.host.model === model &&
+            model.opened === opened &&
+            model.revision === revision,
+        ),
+    };
+    // The steps an error path held are the larger loss: their toast names them.
+    const path = ended && removedPathToast(ended.removed, ended.names);
+    if (path) this.host.notify(path.text, undo, "neutral", path.detail);
+    else {
+      const removed = ended
+        ? [...outcome.removed, "On error"]
+        : outcome.removed;
+      if (removed.length)
+        this.host.notify(
+          `Removed ${removed.join(", ")}.${reasons.length ? ` ${reasons[0]}.` : ""}`,
+          undo,
+        );
     }
     return outcome;
   }

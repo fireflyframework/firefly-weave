@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Clusters › Approvals: plans waiting for an approval, a countdown to each
 // plan's expiry, and Approve plan for people who may approve.
 import { test, expect, Page } from "@playwright/test";
-import { connected } from "./support";
+import { connected, pauseClock } from "./support";
 
 const scope = {
   tenant_id: "tenant",
@@ -155,13 +155,16 @@ for (const viewport of [
         .filter({ hasText: "Scale workers · fixture-workers" });
       const clock = row.locator(".countdown .status-pill");
       await expect(clock).toHaveText(/^2:0[0-5]$/);
-      await page.clock.fastForward(10_000);
+      // Paused, the clock moves only by runFor, which fires each tick on the
+      // way as real time would; a running one can step back after it.
+      await pauseClock(page);
+      await page.clock.runFor(10_000);
       await expect(clock).toHaveText(/^1:5\d$/);
       await expect(row).toContainText("Expires soon");
       await expect(clock).toHaveAttribute("data-tone", "warning");
-      await page.clock.fastForward(95_000);
+      await page.clock.runFor(95_000);
       await expect(clock).toHaveAttribute("data-tone", "danger");
-      await page.clock.fastForward(25_000);
+      await page.clock.runFor(25_000);
       await expect(clock).toHaveText("Expired");
       await expect(
         row.getByRole("button", { name: /^Approve plan/ }),

@@ -70,8 +70,16 @@ export interface SimulationRequest {
   stubUnresolved?: boolean;
   input?: Json;
   mocks?: Record<MockKey, Json>;
+  /** Simulated failures, keyed like mocks; a key holds a failure or a mock. */
+  errors?: Record<MockKey, ScriptedFailure>;
   scripts?: ExecuteScripts;
   now: string;
+}
+/** A failure a step reports in place of its result in this simulation (local_contracts.py). */
+export interface ScriptedFailure {
+  code: string;
+  outcome?: "not_started" | "failed" | "unknown";
+  attempts?: number;
 }
 /** `POST /studio/local/debug/execute`. */
 export interface ExecuteRequest extends SimulationRequest {
@@ -97,6 +105,17 @@ export interface TraceEntry {
   output?: Json;
   virtualTime?: string;
   frame?: FrameKey;
+  /** The step's failure: handled by its On error when `handled` says how, else the one that stopped the run. */
+  error?: StepErrorView;
+  handled?: "continue" | "errorOutput";
+}
+/** A step's error as the platform reports it (contracts/step_errors.py StepError). */
+export interface StepErrorView {
+  code: string;
+  message: string;
+  outcome: "not_started" | "failed" | "unknown";
+  attempts: number;
+  instanceKey: string;
 }
 export interface LoopProgress {
   nodeId: string;

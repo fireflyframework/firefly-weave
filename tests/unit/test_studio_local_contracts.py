@@ -277,28 +277,21 @@ def test_decision_evaluation_takes_a_local_table():
     assert request.table.metadata.version == "1.3.0"
 
 
-HOST_BODIES = [
-    lc.CalleeSource,
-    lc.ExecuteScripts,
-    lc.ExecuteTarget,
-    lc.SimulationRequest,
-    lc.ExecuteRequest,
-    lc.CompileSummary,
-    lc.TraceEntry,
-    lc.LoopProgress,
-    lc.FrameView,
-    lc.LoopRoot,
-    lc.SelectedScope,
-    lc.Blocked,
-    lc.ExecuteResponse,
-    lc.CheckTestDataRequest,
-    lc.CheckTestDataEntry,
-    lc.CheckTestDataResult,
-    lc.DecisionEvaluateRequest,
-]
+def host_bodies() -> list[type]:
+    """Every body the host's contracts module defines, found from the base they share, so none is missed."""
+    found: list[type] = []
+    pending: list[type] = [lc._HostBody]
+    while pending:
+        for model in pending.pop().__subclasses__():
+            if model.__module__ == lc.__name__ and model not in found:
+                found.append(model)
+                pending.append(model)
+    return found
 
 
 def test_host_bodies_are_camel_case():
-    for model in HOST_BODIES:
+    bodies = host_bodies()
+    assert {lc.SimulationRequest, lc.ExecuteRequest, lc.TraceEntry, lc.ScriptedFailure} <= set(bodies)
+    for model in bodies:
         for name, field in model.model_fields.items():
             assert re.fullmatch(r"[a-z]+(?:[A-Z][a-z0-9]*)*", field.alias or name), (model.__name__, name)

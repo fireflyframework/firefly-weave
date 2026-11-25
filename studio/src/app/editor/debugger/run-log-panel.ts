@@ -41,7 +41,9 @@ import type { Step, Workflow } from "../../model";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Json } from "../ndv/registry";
 import { allSteps, childLists } from "../ndv/step-walk";
+import { errorPathsAround } from "../state/execute-gate";
 import { LOOP_LIMIT, loopProgress } from "../canvas/run-state";
+import { failureCodeText } from "../canvas/tile-facts";
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
 import { stepPointerOf } from "../formula/loops";
 import { loopLimitText } from "../canvas/loop-frame";
@@ -49,6 +51,7 @@ import {
   countsOf,
   overLimitOf,
   pausedOf,
+  runFailureOf,
   stepsOf,
 } from "../canvas/trace-playback";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
@@ -110,10 +113,23 @@ const segment = (key: string) =>
 
 export interface RunLogEntry {
   id: string;
-  status: TraceStatus | "current";
+  /** "handled": the step failed and its On error went on. */
+  status: TraceStatus | "current" | "handled";
   summary: string | null;
   stale: boolean;
   breakpoint: boolean;
+  /**
+   * A handled failure's code, or the code the run stopped at this step with,
+   * as given (cut at 128), on a line of its own.
+   */
+  code?: string;
+  /** Why the run stopped here although the step's On error goes on. */
+  reason?: string;
+  /**
+   * In an error path: the steps whose error paths hold it, outermost first;
+   * `first` heads its path with "Error path".
+   */
+  path?: { owners: readonly string[]; first: boolean };
   /** A loop's row: how far it got, its items (nested loops' too), the items that didn't run. */
   loop?: {
     progress: number | null;
@@ -129,6 +145,7 @@ export interface RunLogEntry {
 const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
   completed: "check",
   failed: "critical",
+  handled: "degraded",
   waiting: "wait",
   running: "wait",
   current: "play",
@@ -137,9 +154,12 @@ const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
 /** One item of a loop in the run log: "Item 3", what it went through, where it failed. */
 export interface LoopLogItem {
   label: string;
-  status: "completed" | "failed" | "running";
-  /** "check, send", "Failed at send", "at send". */
+  /** "handled": a step failed in it and its On error went on. */
+  status: "completed" | "failed" | "running" | "handled";
+  /** "check, send", "Failed at send", "Failed, continued at send", "at send". */
   text: string;
+  /** A handled failure's code, as given (cut at 128). */
+  code?: string;
   /** The step its row opens, on this item: where it failed, else the last one it reached (`send[2]`). */
   key: string;
   /** The failed item: each step it went through, the failed one last; it shows open. */
@@ -183,6 +203,42 @@ function failCopy(
     typeof value === "string" && value ? value : undefined;
   return { code: text(step["code"]), message: text(step["message"]) };
 }
+/** Why a step whose On error goes on still stopped the run. */
+const UNKNOWN_STOP =
+  "Its outcome is unknown and it changes data, so the run stopped with an incident, whatever On error says.";
+
+/**
+ * The step of this workflow the run stopped at, for its row: the code it
+ * stopped with (the run's incident, else a Fail step's code, else the step's
+ * own error) and, when its On error goes on but its outcome was unknown,
+ * why the run stopped anyway. Null when the run didn't stop at a step.
+ */
+export function stoppedRow(
+  response: ExecuteResponse,
+  definition: unknown,
+): { step: string; code: string; reason: string | null } | null {
+  if (response.status !== "failed") return null;
+  const entry = response.trace.find(
+    (each) => each.status === "failed" && !each.handled && !each.frame,
+  );
+  if (!entry) return null;
+  const code =
+    runFailureOf(response, entry.nodeId, definition)?.code ??
+    failCopy(definition, entry.nodeId)?.code ??
+    entry.error?.code;
+  if (!code) return null;
+  const pointer = stepPointerOf(definition, entry.nodeId);
+  const step =
+    pointer === null ? null : getAt(definition, parsePointer(pointer)!);
+  const goesOn =
+    isJsonObject(step) &&
+    (step["onError"] === "continue" || step["onError"] === "errorOutput");
+  return {
+    step: entry.nodeId,
+    code: failureCodeText(code),
+    reason: goesOn && entry.error?.outcome === "unknown" ? UNKNOWN_STOP : null,
+  };
+}
 /** What a step in a failed item returned: "3 fields", "2 items"; null for paths, loops and plain values. */
 function outputText(kind: string, output: Json | undefined): string | null {
   if (output === undefined || ["switch", "parallel", "forEach"].includes(kind))
@@ -221,8 +277,11 @@ export function loopLog(
   const trace = stepsOf(response);
   const entries = response.trace.filter((entry) => !entry.frame);
   // The step the run failed at, and its error, said once under its item:
-  // the answer's, else a Fail step's own code and message.
-  const failedAt = entries.find((entry) => entry.status === "failed");
+  // the answer's, else a Fail step's own code and message. A failure a
+  // step's On error handled went on: it isn't where the run stopped.
+  const failedAt = entries.find(
+    (entry) => entry.status === "failed" && !entry.handled,
+  );
   const error =
     response.diagnostics?.[0] ??
     (failedAt ? failCopy(definition, failedAt.nodeId) : undefined);
@@ -240,6 +299,8 @@ export function loopLog(
       { steps: string[]; last: TraceStatus; key: string; ran: number[] }
     >();
     let failure: { index: number; step: string; key: string } | null = null;
+    // Each item a step failed in and went on: its first such failure.
+    const handled = new Map<number, { step: string; key: string }>();
     for (const [position, entry] of trace.entries()) {
       if (loopsAround(entry.nodeId)[depth] !== run.id) continue;
       const iteration = iterationOf(entry.instanceKey);
@@ -261,12 +322,12 @@ export function loopLog(
       // The steps directly in this loop's body, paths included.
       if (loopsAround(entry.nodeId).length === depth + 1)
         item.ran.push(position);
-      if (entry.status === "failed" && !failure)
-        failure = {
-          index,
-          step: entry.nodeId,
-          key: entry.instanceKey || entry.nodeId,
-        };
+      const key = entry.instanceKey || entry.nodeId;
+      if (entry.status === "failed" && entry.handled) {
+        if (!handled.has(index))
+          handled.set(index, { step: entry.nodeId, key });
+      } else if (entry.status === "failed" && !failure)
+        failure = { index, step: entry.nodeId, key };
     }
     const reached = [...items.keys()].sort((a, b) => a - b);
     const logged = reached.map((index): LoopLogItem => {
@@ -299,6 +360,22 @@ export function loopLog(
             };
           }),
           ...(stopped && error?.message ? { message: error.message } : {}),
+        };
+      }
+      // A step failed in it and its On error went on: where, and its code.
+      const went = handled.get(index);
+      if (went && item.last !== "running" && item.last !== "waiting") {
+        const code = entries.find(
+          (entry) =>
+            entry.status === "failed" &&
+            (entry.instanceKey || entry.nodeId) === went.key,
+        )?.error?.code;
+        return {
+          label: itemLabel(run.within, index),
+          status: "handled",
+          text: `Failed, continued at ${went.step}`,
+          ...(code ? { code: failureCodeText(code) } : {}),
+          key: went.key,
         };
       }
       // The run ended inside a paused loop's items after the ones it finished.
@@ -525,15 +602,34 @@ function withFrames(
   });
 }
 
+/** The failures of this workflow's steps their On error handled, one per entry. */
+const handledCount = (response: ExecuteResponse): number =>
+  response.trace.filter(
+    (entry) => !entry.frame && entry.status === "failed" && !!entry.handled,
+  ).length;
+
+/** "The simulated run succeeded with 1 handled error."; null unless it did. */
+export function handledSentence(response: ExecuteResponse): string | null {
+  const count = handledCount(response);
+  if (response.status !== "completed" || !count) return null;
+  return `The simulated run succeeded with ${count.toLocaleString("en-US")} handled ${count === 1 ? "error" : "errors"}.`;
+}
+
 /** The header's words for an execution's answer. */
 export function runStatus(
   response: ExecuteResponse,
   target: ExecuteTarget | null,
   called: CalledRuns | null = null,
 ): string {
+  // A step that failed and went on ran too.
   const ran = new Set(
     response.trace
-      .filter((entry) => !entry.frame && entry.status === "completed")
+      .filter(
+        (entry) =>
+          !entry.frame &&
+          (entry.status === "completed" ||
+            (entry.status === "failed" && !!entry.handled)),
+      )
       .map((entry) => entry.nodeId),
   ).size;
   const steps = `${ran} step${ran === 1 ? "" : "s"}`;
@@ -555,7 +651,11 @@ export function runStatus(
     return `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
-    const failed = response.trace.find((entry) => entry.status === "failed");
+    // Where it stopped, past any failure a step's On error handled; a
+    // called run's step (its frame) is the call's, which the call reports.
+    const failed = response.trace.find(
+      (entry) => entry.status === "failed" && !entry.handled && !entry.frame,
+    );
     // A loop that failed over its Up to, before any item.
     if (
       failed?.kind === "forEach" &&
@@ -571,6 +671,7 @@ export function runStatus(
   }
   if (response.status === "limit") return "Stopped at the simulation's limit";
   if (target?.mode === "before") return `Paused before ${target.stepId}`;
+  if (handledCount(response)) return `Succeeded with errors · ${steps}`;
   return `Completed · ${steps}`;
 }
 
@@ -586,10 +687,13 @@ export function runStatus(
       <weave-icon name="runHistory" [size]="16" aria-hidden="true" />
       <h2 class="run-log-title">Run log</h2>
       <!-- A long status takes its own line under the title, whole. -->
+      <!-- "Succeeded with errors" reads in the warning tone, on the title's
+           line: it shortens last, and its tooltip says it whole. -->
       <span
         class="run-log-status"
         role="status"
-        [class.run-log-status-long]="status().length > 26"
+        [class.run-log-status-long]="status().length > 26 && !handledText()"
+        [attr.data-tone]="handledText() ? 'warning' : null"
         [title]="status()"
         >{{ status() }}</span
       >
@@ -603,6 +707,12 @@ export function runStatus(
         <weave-icon name="close" [size]="16" />
       </button>
     </header>
+    @if (handledText(); as said) {
+      <!-- First: the run went on past failures its steps handled. -->
+      <p class="run-log-outcome">
+        <weave-icon name="degraded" [size]="16" aria-hidden="true" />{{ said }}
+      </p>
+    }
     @if (!host().runSession()) {
       @let sampled = !!host().execution?.sampledInput();
       @let ran = names();
@@ -695,13 +805,32 @@ export function runStatus(
     } @else if (list.length) {
       <ul class="run-log-list" aria-label="Steps that ran">
         @for (entry of list; track entry.id) {
-          <li class="run-log-row">
+          @if (entry.path; as path) {
+            @if (path.first) {
+              <!-- Each step's own name says it is in the error path. -->
+              <li
+                class="run-log-path"
+                aria-hidden="true"
+                [style.--path-depth]="path.owners.length"
+              >
+                <weave-icon name="warning" [size]="16" />Error path
+              </li>
+            }
+          }
+          <li
+            class="run-log-row"
+            [class.run-log-in-path]="!!entry.path"
+            [style.--path-depth]="entry.path ? entry.path.owners.length : null"
+          >
             <button
               type="button"
               class="run-log-entry"
               [attr.data-entry]="entry.id"
               [attr.data-status]="entry.status"
               [attr.aria-label]="label(entry)"
+              [attr.aria-describedby]="
+                entry.reason ? reasonId + '-' + entry.id : null
+              "
               (click)="host().openEntry(entry.id)"
               (keydown)="key($event, entry)"
             >
@@ -726,7 +855,17 @@ export function runStatus(
                   aria-hidden="true"
                 ></span>
               }
+              @if (entry.code) {
+                <code class="run-log-handled-code" [title]="entry.code">{{
+                  entry.code
+                }}</code>
+              }
             </button>
+            @if (entry.reason; as reason) {
+              <p class="run-log-stop-reason" [id]="reasonId + '-' + entry.id">
+                {{ reason }}
+              </p>
+            }
             @if (entry.loop?.message; as message) {
               <p class="run-log-loop-message">{{ message }}</p>
             }
@@ -742,7 +881,12 @@ export function runStatus(
                       type="button"
                       class="run-log-entry run-log-item"
                       [attr.data-status]="item.status"
-                      [attr.aria-label]="item.label + ': ' + item.text"
+                      [attr.aria-label]="
+                        item.label +
+                        ': ' +
+                        item.text +
+                        (item.code ? ', ' + item.code : '')
+                      "
                       (click)="openItem(item.key)"
                     >
                       <weave-icon
@@ -753,6 +897,13 @@ export function runStatus(
                       />
                       <strong class="run-log-step">{{ item.label }}</strong>
                       <span class="run-log-summary">{{ item.text }}</span>
+                      @if (item.code) {
+                        <code
+                          class="run-log-handled-code"
+                          [title]="item.code"
+                          >{{ item.code }}</code
+                        >
+                      }
                     </button>
                     <!-- The failed item shows open: each step it went through, then the error. -->
                     @if (item.steps; as steps) {
@@ -1027,6 +1178,13 @@ export class RunLogPanel {
       ? runStatus(last, host.lastTarget, this.called())
       : "Nothing ran yet";
   }
+  /** "The simulated run succeeded with 1 handled error."; null unless the last execution did. */
+  handledText(): string | null {
+    const host = this.host();
+    if (host.runSession() || host.executeRefusal?.()) return null;
+    const last = host.execution?.last();
+    return last ? handledSentence(last) : null;
+  }
   readonly entries = computed((): RunLogEntry[] => {
     const host = this.host();
     const marks = host.breakpoints();
@@ -1064,7 +1222,10 @@ export class RunLogPanel {
     if (!last) return [];
     // The steps inside a loop show under its row, item by item.
     const around = this.loopsAround();
+    // The steps of an error path follow their step's row, further in.
+    const paths = errorPathsAround(host.model.definition.spec.steps ?? []);
     const loops = loopLog(last, around, host.model.definition);
+    const stopped = stoppedRow(last, host.model.definition);
     const seen = new Map<string, RunLogEntry>();
     for (const entry of last.trace) {
       if (entry.frame || around(entry.nodeId).length) continue;
@@ -1073,21 +1234,37 @@ export class RunLogPanel {
           loop.id === entry.nodeId || around(loop.id)[0] === entry.nodeId,
       );
       const own = runs.find((loop) => loop.id === entry.nodeId);
+      const handled = entry.status === "failed" && !!entry.handled;
+      const owners = paths(entry.nodeId);
       seen.set(entry.nodeId, {
         id: entry.nodeId,
-        status:
-          own && entry.status !== "failed"
+        status: handled
+          ? "handled"
+          : own && entry.status !== "failed"
             ? own.items.some((item) => item.status === "failed")
               ? "failed"
               : entry.status
             : entry.status,
-        summary: own
-          ? own.summary
-          : entry.status === "completed"
-            ? host.summaryOf(entry.nodeId)
-            : null,
+        summary: handled
+          ? "Failed, continued"
+          : own
+            ? own.summary
+            : entry.status === "completed"
+              ? host.summaryOf(entry.nodeId)
+              : null,
         stale: stale.has(entry.instanceKey || entry.nodeId),
         breakpoint: marks.has(entry.nodeId),
+        ...(handled && entry.error
+          ? { code: failureCodeText(entry.error.code) }
+          : {}),
+        // Where the run stopped: its code, and why its On error didn't go on.
+        ...(!own && stopped?.step === entry.nodeId && entry.status === "failed"
+          ? {
+              code: stopped.code,
+              ...(stopped.reason ? { reason: stopped.reason } : {}),
+            }
+          : {}),
+        ...(owners.length ? { path: { owners, first: false } } : {}),
         ...(own
           ? {
               loop: {
@@ -1102,7 +1279,16 @@ export class RunLogPanel {
           : {}),
       });
     }
-    return withFrames([...seen.values()], this.calls());
+    // "Error path" heads the first row of each path, under its step.
+    const rows = [...seen.values()];
+    const joined = (owners: readonly string[]) => owners.join("/") + "/";
+    rows.forEach((row, at) => {
+      const before = joined(rows[at - 1]?.path?.owners ?? []);
+      // Back from a path inside this one: no second heading.
+      if (row.path && !before.startsWith(joined(row.path.owners)))
+        row.path = { ...row.path, first: true };
+    });
+    return withFrames(rows, this.calls());
   });
   /** The loops around each step of the workflow, outermost first. */
   private loopsAround(): (stepId: string) => readonly string[] {
@@ -1126,6 +1312,7 @@ export class RunLogPanel {
     running: "Running",
   };
   readonly setId = `run-log-set-${Math.random().toString(36).slice(2, 8)}`;
+  readonly reasonId = `run-log-reason-${Math.random().toString(36).slice(2, 8)}`;
   readonly setJson = signal("{}");
   readonly setProblem = signal("");
   /** The step inside a called workflow whose test output is being set. */
@@ -1276,14 +1463,18 @@ export class RunLogPanel {
     const words: Record<RunLogEntry["status"], string> = {
       completed: "finished",
       failed: "failed",
+      handled: "failed and continued",
       waiting: "waiting",
       running: "reached",
       current: "paused here",
     };
+    const owner = entry.path?.owners.at(-1);
     return [
       entry.id,
+      owner ? `in the error path of ${owner}` : "",
       words[entry.status],
-      entry.summary,
+      // A handled or stopping step's code; a step that ran, its summary.
+      entry.code ?? (entry.status === "handled" ? "" : entry.summary),
       entry.stale ? "out of date" : "",
       entry.breakpoint ? "breakpoint" : "",
     ]

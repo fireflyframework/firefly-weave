@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Shared route mocks for the integration editor, round-trip and layout specs.
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
-import { promisify } from "node:util";
+import { createInterface } from "node:readline";
 import { python, repository } from "../python-path";
 import { expect, Locator, Page } from "@playwright/test";
 
@@ -164,6 +164,28 @@ export interface Recorder {
   catalogPages: number;
   exports: string[];
 }
+/**
+ * Stops the page's fake clock where it is, so from here time moves only by
+ * `runFor` and `fastForward`. A running fake clock also follows real time in
+ * a loop of its own, which can step it back after a `runFor` and adds the
+ * seconds a slow runner takes, so a check of "every 15 seconds" passes at 20.
+ * Call it after `page.clock.install()` and the first screen: Studio needs its
+ * timers to start.
+ */
+export async function pauseClock(page: Page) {
+  // A little ahead: the clock still runs until pauseAt reaches the page.
+  const pause = async () =>
+    page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  try {
+    await pause();
+  } catch (error) {
+    // A stall of over 1 s carried the clock past that moment. Playwright
+    // stops the clock before it refuses, so the time read again holds.
+    if (!String(error).includes("Cannot fast-forward to the past")) throw error;
+    await pause();
+  }
+}
+
 export async function connected(
   page: Page,
   options: ConnectedOptions = {},
@@ -683,23 +705,147 @@ export async function registerTarget(page: Page) {
     .click();
 }
 
-/** What a field can read, from the Studio host's own scope_at with the repository's Python. */
+/**
+ * What a field can read, from the Studio host's own scope_at with the
+ * repository's Python: one line of JSON in, one line out. scope_at reads only
+ * the question it is given, so one process can answer every test's questions
+ * without one answer changing another.
+ */
 const SCOPE_AT = `
-import json, sys
+import json, sys, traceback
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.compiler.scope import scope_at
-body = json.loads(sys.stdin.read())
-document = parse_source(body["source"], format=body["format"]).value
-print(json.dumps(scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)))
+for line in iter(sys.stdin.readline, ""):
+    try:
+        body = json.loads(line)
+        document = parse_source(body["source"], format=body["format"]).value
+        answer = {"scope": scope_at(document, body["path"]).model_dump(mode="json", by_alias=True)}
+    except Exception:
+        answer = {"error": traceback.format_exc()}
+    print(json.dumps(answer), flush=True)
 `;
-export async function hostScope(page: Page) {
-  await page.route("**/studio/local/scope", async (route) => {
-    const child = promisify(execFile)(python, ["-c", SCOPE_AT], {
+/** Longer than any answer takes: a process this slow is stuck, so it is stopped. */
+const SCOPE_ANSWER_MS = 30_000;
+/** How much of the end of stderr an ended process's error quotes: a traceback's last lines. */
+const SCOPE_STDERR_CHARS = 4_000;
+
+/**
+ * One Python process per Playwright worker answers the scope questions, one
+ * at a time, so a question doesn't wait for Python to start and import the
+ * compiler. A process that ends or stops answering is replaced at the next
+ * question, and the process ends with the worker. `command` is the program
+ * and its arguments.
+ */
+export class ScopeHost {
+  private child: ChildProcess | null = null;
+  private waiting: ((reply: string | Error) => void) | null = null;
+  private turn: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private readonly command: readonly string[] = [python, "-c", SCOPE_AT],
+  ) {
+    process.on("exit", () => this.child?.kill());
+  }
+
+  /** Ends the current process, if any. */
+  close() {
+    if (this.child) this.stop(this.child);
+  }
+
+  /** The answer to one question, after the questions asked before it. */
+  ask(question: unknown): Promise<unknown> {
+    const answer = this.turn.then(() => this.answer(question));
+    this.turn = answer.catch(() => undefined);
+    return answer;
+  }
+
+  private answer(question: unknown): Promise<unknown> {
+    const child = (this.child ??= this.start());
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.stop(child);
+        this.settle(new Error(`No scope answer in ${SCOPE_ANSWER_MS} ms.`));
+      }, SCOPE_ANSWER_MS);
+      this.waiting = (reply) => {
+        clearTimeout(timer);
+        this.waiting = null;
+        if (reply instanceof Error) return reject(reply);
+        // A stray line: its real answer may still come, so a new process
+        // keeps the next question from reading it.
+        const stray = (what: string) => {
+          this.stop(child);
+          reject(
+            new Error(
+              `The scope process answered with a line that isn't ${what}: ${reply}`,
+            ),
+          );
+        };
+        let answer: unknown;
+        try {
+          answer = JSON.parse(reply);
+        } catch {
+          return stray("JSON");
+        }
+        if (
+          typeof answer !== "object" ||
+          answer === null ||
+          !("scope" in answer || "error" in answer)
+        )
+          return stray("an answer");
+        const { scope, error } = answer as { scope?: unknown; error?: string };
+        if (error === undefined) resolve(scope);
+        else reject(new Error(error));
+      };
+      child.stdin!.write(`${JSON.stringify(question)}\n`);
+    });
+  }
+
+  private start(): ChildProcess {
+    const [program, ...args] = this.command;
+    const child = spawn(program, args, {
       cwd: repository,
       env: { ...process.env, PYTHONPATH: resolvePath(repository, "src") },
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    child.child.stdin?.end(route.request().postData() ?? "{}");
-    const { stdout } = await child;
-    await route.fulfill({ json: JSON.parse(stdout) }).catch(() => undefined);
+    let stderr = "";
+    child.stderr!.setEncoding("utf8").on("data", (text: string) => {
+      stderr = (stderr + text).slice(-SCOPE_STDERR_CHARS);
+    });
+    // Only the current process answers: a stopped one's late line is dropped.
+    createInterface({ input: child.stdout! }).on("line", (line) => {
+      if (this.child === child) this.settle(line);
+    });
+    // Writing to a process that just ended fails here; its exit answers.
+    child.stdin!.on("error", () => undefined);
+    const ended = (why: string) => {
+      if (this.child !== child) return;
+      this.child = null;
+      const said = stderr.trim();
+      this.settle(
+        new Error(`The scope process ended: ${why}.${said && `\n${said}`}`),
+      );
+    };
+    // "close", not "exit": by then stderr has been read to its end.
+    child.on("close", (code, signal) => ended(String(signal ?? code)));
+    child.on("error", (error) => ended(error.message));
+    return child;
+  }
+
+  private stop(child: ChildProcess) {
+    if (this.child === child) this.child = null;
+    child.kill();
+  }
+
+  private settle(reply: string | Error) {
+    this.waiting?.(reply);
+  }
+}
+
+const scopeHost = new ScopeHost();
+
+export async function hostScope(page: Page) {
+  await page.route("**/studio/local/scope", async (route) => {
+    const scope = await scopeHost.ask(route.request().postDataJSON() ?? {});
+    await route.fulfill({ json: scope }).catch(() => undefined);
   });
 }

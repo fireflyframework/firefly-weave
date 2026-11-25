@@ -122,8 +122,8 @@ class RunLifecycleService:
                     raise CatalogError(
                         409,
                         "WV-RUN-PURGE-BLOCKED",
-                        "Run has a live lease, a running or undelivered workflow call, or retained email, trigger, "
-                        "schedule, or retry references; "
+                        "Run has a live lease, a running or undelivered workflow call, a trigger start still waiting "
+                        "to run, or retained email, trigger, schedule, or retry references; "
                         "archive it until dependencies can be retired",
                     ) from None
             else:

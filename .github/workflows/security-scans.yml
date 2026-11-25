@@ -1,0 +1,122 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Secret, dependency and infrastructure scans on every pull request and every push to main. Each tool is one pinned
+# release, checked against its SHA-256 before it is unpacked and installed without a third-party action. The workflow
+# runs for fork pull requests too, so its jobs only read the repository, keep no checkout credentials and use no
+# secret.
+name: Security scans
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+# The token can do nothing unless a job asks for more: both jobs only read the repository.
+permissions: {}
+# A new commit on a pull request cancels that pull request's older run, as in Checks; every other run keeps its own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  secrets:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    # A local scan of the whole tree takes about 15 seconds.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so that both ends of a pull request's or a push's commits are there.
+          fetch-depth: 0
+          persist-credentials: false
+      # The SHA-256 is the one gitleaks_8.30.1_checksums.txt in the same release lists for this archive.
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$RUNNER_TEMP/$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/${archive}"
+          actual="$(sha256sum "$RUNNER_TEMP/$archive" | cut -d ' ' -f 1)"
+          if [ "$actual" != "$SHA256" ]; then
+            echo "::error::$archive has SHA-256 $actual, not the pinned $SHA256"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+      # gitleaks's own rules, less the findings .github/gitleaks.toml accepts after review, each with its reason.
+      # --redact keeps a found secret out of the log.
+      - name: Scan the files
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir . --config .github/gitleaks.toml --redact --no-banner'
+      # A secret a commit adds and a later commit removes is gone from the files but stays in the history.
+      # gitleaks scans nothing and still passes when git cannot read the range, so both ends are checked first.
+      - name: Scan each new commit
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          for end in base head; do
+            commit="${BASE}"; [ "$end" = head ] && commit="${HEAD}"
+            if ! git rev-parse --quiet --verify "${commit}^{commit}" > /dev/null; then
+              echo "::error::The $end commit $commit is not in the checkout"
+              exit 1
+            fi
+          done
+          echo "$(git rev-list --count "$BASE..$HEAD") new commit(s) to scan"
+          "$RUNNER_TEMP/gitleaks/gitleaks" git . --config .github/gitleaks.toml --redact --no-banner --log-opts="$BASE..$HEAD"
+  files:
+    name: dependencies and infrastructure (trivy)
+    runs-on: ubuntu-24.04
+    # A local scan takes seconds once the vulnerability database is downloaded.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The SHA-256 is the one trivy_0.76.2_checksums.txt in the same release lists for this archive; that file's
+      # Sigstore signature names trivy's own release workflow for the v0.76.2 tag.
+      - name: Install trivy
+        env:
+          VERSION: 0.76.2
+          SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+        run: |
+          archive="trivy_${VERSION}_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$RUNNER_TEMP/$archive" "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/${archive}"
+          actual="$(sha256sum "$RUNNER_TEMP/$archive" | cut -d ' ' -f 1)"
+          if [ "$actual" != "$SHA256" ]; then
+            echo "::error::$archive has SHA-256 $actual, not the pinned $SHA256"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/trivy"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/trivy" trivy
+          "$RUNNER_TEMP/trivy/trivy" --version
+      # The known vulnerabilities of every lockfile (uv, npm, Cargo) and the misconfigurations of the Dockerfiles and
+      # Kubernetes manifests. A high or critical finding fails the job, including one with no fixed version yet: a
+      # finding that is reviewed and accepted goes in an ignore file with its reason, passed with --ignorefile.
+      # The vulnerability database is downloaded on each run; the infrastructure checks are the ones built into the
+      # pinned release.
+      - name: Scan the lockfiles, Dockerfiles and Kubernetes manifests
+        run: >-
+          "$RUNNER_TEMP/trivy/trivy" fs . --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 1
+          --include-dev-deps --skip-check-update --no-progress

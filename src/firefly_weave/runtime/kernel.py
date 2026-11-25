@@ -56,6 +56,7 @@ from firefly_weave.compiler.ir import (
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.agent_conversations import CONVERSATION_KEY_LENGTH, conversation_key_hash
 from firefly_weave.contracts.agent_turns import TurnOutput
+from firefly_weave.contracts.ai import AI_ERRORS
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.limits import Limits
@@ -224,6 +225,19 @@ def error_policy(ir: WorkflowIR, key: str) -> str:
     if isinstance(node, HandlesErrors) and node.on_error is not None:
         return node.on_error
     return "stop"
+
+
+def runs_model(ir: WorkflowIR, key: str) -> bool:
+    """Whether the step instance ``key`` is a task that runs an AI model: an AI agent's turn, or an AI step.
+
+    Only such a task's incident can be first reported as the model's own code: a tool call, a review or an undo action
+    runs no model, whatever its worker reports.
+    """
+    node = next((node for node in ir.graph.nodes if node.id == node_of(key)), None)
+    if isinstance(node, AgentNode):
+        parsed = parse_agent_key(key)
+        return parsed is not None and parsed.call is None and not parsed.review
+    return isinstance(node, ActionNode) and node.llm_profile is not None and split_phase(key) is None
 
 
 def ambiguous(ir: WorkflowIR, node: Node) -> bool:
@@ -2476,7 +2490,13 @@ def _advance_owned(
                         raise KernelError("WV-RUNTIME-EVENT")
                     if event.type == "task_failed":
                         observe(current, event.data)
-                    incident(current, code, generation)
+                    # Recovery's incident names the model's own code it was first reported as, when there is one.
+                    origin = event.data.get("origin_code") if event.type == "incident_opened" else None
+                    if origin is not None and (
+                        not isinstance(origin, str) or origin not in AI_ERRORS or not runs_model(ir, current)
+                    ):
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    incident(current, code, generation, origin)
                     return checkpoint(result.model_copy(update={"state": current_state}))
             elif event.type == "started":
                 if state.status != "queued" or state.accepted_sequence:

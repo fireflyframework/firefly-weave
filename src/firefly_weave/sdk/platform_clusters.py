@@ -48,6 +48,7 @@ from firefly_weave.sdk import platform as local
 from firefly_weave.sdk import platform_cluster_objects as objects
 from firefly_weave.sdk import platform_cluster_tools as tools
 from firefly_weave.sdk import platform_operations, platform_origins
+from firefly_weave.sdk._retry import Resend, send_admitted
 from firefly_weave.sdk.deployment import DeploymentError, read_file, strict_json
 from firefly_weave.sdk.platform_cluster_objects import SYSTEM_NAMESPACE
 
@@ -561,12 +562,15 @@ OTHER_CONTAINERS = (
 wait_async = asyncio.sleep
 # How long a request the API refused for capacity is sent again before the refusal stands.
 CAPACITY_SECONDS = 60
-_CAPACITY = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+# The SDK's capacity resend over connect, disconnect and list's longer window: as many sends as it allows.
+RESEND = Resend(sends=None, seconds=CAPACITY_SECONDS)
 
 
 class _Patient:
-    """The platform client, sending a request again after the API's capacity refusal: a 429 with a capacity code
-    means the API rolled the request back and asks for it again, as the SDK's worker transport does."""
+    """The platform client, sending a request again after the API's capacity refusal, which means the API did not
+    admit it. Every request these commands send is safe to send again: reads, changes with an idempotency key, target
+    updates conditioned on the revision they read, and grants, identity links, revocations and deactivations that end
+    in the same state however often they are sent."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
@@ -575,16 +579,9 @@ class _Patient:
         return getattr(self._client, name)
 
     async def invoke(self, operation: str, **kwargs: Any) -> Any:
-        from firefly_weave.sdk.errors import WeaveError
-
-        deadline = clock() + CAPACITY_SECONDS
-        while True:
-            try:
-                return await self._client.invoke(operation, **kwargs)
-            except WeaveError as error:
-                if error.status != 429 or error.code not in _CAPACITY or clock() >= deadline:
-                    raise
-            await wait_async(1)
+        return await send_admitted(
+            lambda: self._client.invoke(operation, **kwargs), RESEND, monotonic=clock, sleep=wait_async
+        )
 
 
 def _api(
@@ -593,12 +590,13 @@ def _api(
     work: Callable[[Any], Awaitable[Any]],
     transport: httpx.AsyncBaseTransport | None,
 ) -> Any:
-    """Run `work` with the platform client signed in as the owner, through capacity refusals."""
+    """Run `work` with the platform client signed in as the owner, through capacity refusals. The client's own
+    resend is off: it would stack its sends under this window's."""
 
     async def patient(client: Any) -> Any:
         return await work(_Patient(client))
 
-    return asyncio.run(platform_operations._api(state, operations, patient, transport))
+    return asyncio.run(platform_operations._api(state, operations, patient, transport, resend=None))
 
 
 @dataclass

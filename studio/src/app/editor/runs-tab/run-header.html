@@ -51,9 +51,12 @@ SPDX-License-Identifier: Apache-2.0
             <weave-icon name="copy" [size]="16" />
           </button>
           @if (v.outcome; as outcome) {
-            <span class="pill run-pill" [attr.data-tone]="outcome.tone">{{
-              outcome.label
-            }}</span>
+            <span class="pill run-pill" [attr.data-tone]="outcome.tone">
+              @if (outcome.label === "Succeeded with errors") {
+                <weave-icon name="degraded" [size]="16" />
+              }
+              {{ outcome.label }}</span
+            >
           } @else {
             <span class="run-sk run-sk-pill"></span>
           }
@@ -78,6 +81,8 @@ SPDX-License-Identifier: Apache-2.0
             }
             @if (v.failedAt) {
               <span class="run-failed-at">{{ v.failedAt }}</span>
+            } @else if (v.handled) {
+              <span class="run-handled">{{ v.handled }}</span>
             }
             @if (v.version) {
               <span
@@ -105,16 +110,16 @@ SPDX-License-Identifier: Apache-2.0
         <button
           type="button"
           class="run-main"
-          [class.primary]="v.failed"
+          [class.primary]="v.debug"
           [attr.aria-disabled]="off ? 'true' : null"
           [attr.aria-busy]="phase() === 'copying' ? 'true' : null"
           [attr.aria-describedby]="refused ? 'run-refusal' : null"
-          (click)="!off && debug(v.failed ? 'debug' : 'copy')"
+          (click)="!off && debug(v.debug ? 'debug' : 'copy')"
         >
           @if (phase() === "copying") {
             <span class="loading-spinner small" aria-hidden="true"></span
             >Copying run data…
-          } @else if (v.failed) {
+          } @else if (v.debug) {
             <weave-icon name="execute" [size]="16" />Debug in editor
           } @else {
             <weave-icon name="copy" [size]="16" />Copy to editor

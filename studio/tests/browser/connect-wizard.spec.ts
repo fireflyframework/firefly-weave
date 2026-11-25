@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // connect command registers while it stays open. It only reads; the routes
 // here stand in for the platform.
 import { expect, test } from "@playwright/test";
+import { pauseClock } from "./support";
 import {
   CONNECT,
   CREATE,
@@ -33,6 +34,7 @@ import {
   openWizard,
   openWizardAndLook,
   settled,
+  settledPaused,
   shown,
   status,
   targetId,
@@ -198,12 +200,15 @@ test("while a name is invalid Studio isn't looking, so it never claims a fresh l
   await openWizardAndLook(page);
   await page.getByRole("textbox", { name: "Cluster name" }).fill("Weave_Test");
   await expect(status(page)).toContainText("Not looking yet");
-  await page.clock.fastForward(60_000);
+  // Paused, the clock moves only by runFor, which fires each timer on the
+  // way as real time would; a running one can step back after it.
+  await pauseClock(page);
+  await page.clock.runFor(60_000);
   const updated = page.locator(".refresh-status .updated");
   await expect(updated).toHaveText("Updated 1 min ago");
   // Refresh has nothing to read either.
   await page.getByRole("button", { name: "Refresh" }).click();
-  await page.clock.fastForward(1_000);
+  await page.clock.runFor(1_000);
   await expect(updated).toHaveText("Updated 1 min ago");
 });
 
@@ -293,7 +298,7 @@ test("Studio notices the new cluster within 15 s of it appearing", async ({
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
   backend.observations = [observation(12_000)];
-  await page.clock.fastForward(5_000);
+  await page.clock.runFor(5_000);
   await expect(status(page).getByRole("status")).toContainText(
     "Cluster connected",
     { timeout: 3_000 },
@@ -373,18 +378,23 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
+  await pauseClock(page);
+  // A jump, not runFor: firing Studio's 1 s ticks one by one for 15 minutes
+  // takes about 15 s of real time.
   await page.clock.fastForward(15 * 60_000);
+  await settledPaused(page);
   await expect(status(page).getByRole("status")).toContainText("Not seen yet");
   await expect(status(page)).toContainText(
     "Studio hasn't seen kind-weave-test yet. Check the command's output in your terminal.",
   );
-  await settled(page);
   const reads = backend.targetReads;
   for (let step = 0; step < 3; step++) {
-    await page.clock.fastForward(5_000);
-    await settled(page);
+    await page.clock.runFor(5_000);
+    await settledPaused(page);
   }
   expect(backend.targetReads).toBe(reads);
+  // Studio draws on its timers, so the clock runs again for the clicks.
+  await page.clock.resume();
   await status(page).getByRole("button", { name: "Keep waiting" }).click();
   await expect.poll(() => backend.targetReads).toBe(reads + 1);
   await expect(status(page)).toContainText("Waiting for the cluster");
@@ -397,11 +407,14 @@ test("after 15 minutes Studio stops looking until Keep waiting", async ({
 test("an unreachable platform shows the partial state and waiting resumes on the next good poll", async ({
   page,
 }) => {
+  // This test keeps a running clock: under a paused clock Studio sometimes
+  // doesn't redraw after Refresh (tracked as its own task), so it checks the
+  // partial state and the recovery, not the exact backoff.
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
   backend.unreachable = true;
-  await page.clock.fastForward(5_000);
+  await page.clock.runFor(5_000);
   const problem = page.getByRole("alert").filter({
     hasText: "This section could not be loaded.",
   });
@@ -413,7 +426,7 @@ test("an unreachable platform shows the partial state and waiting resumes on the
   backend.targets = [clusterTarget()];
   backend.runners = [clusterRunner(true)];
   // After a failure the next poll waits twice as long.
-  await page.clock.fastForward(10_000);
+  await page.clock.runFor(10_000);
   await expect(problem).toHaveCount(0);
   await expect(status(page).getByRole("status")).toContainText(
     "Cluster connected",
@@ -506,19 +519,37 @@ test("Clusters polls every 5 s while the wizard is open and every 15 s after it"
   await page.clock.install();
   const backend = await openClusters(page);
   await openWizardAndLook(page);
-  const count = async (seconds: number) => {
-    const before = backend.targetReads;
-    for (let step = 0; step < seconds; step++) {
-      await page.clock.fastForward(1_000);
-      await settled(page);
+  // Paused, the clock moves only by runFor. Each poll is timed from the
+  // answer before it, when Studio schedules the next one: none in the first
+  // interval less 100 ms, then exactly one by its end, so an early poll and a
+  // late one both fail.
+  await pauseClock(page);
+  // The poll due when the clock stopped anchors the rest: it lands within 5 s.
+  const anchor = backend.targetReads;
+  for (let step = 0; step < 50 && backend.targetReads === anchor; step++) {
+    await page.clock.runFor(100);
+    await settledPaused(page);
+  }
+  expect(backend.targetReads).toBe(anchor + 1);
+  const pollsEvery = async (interval: number, times: number) => {
+    for (let poll = 0; poll < times; poll++) {
+      const before = backend.targetReads;
+      await page.clock.runFor(interval - 100);
+      await settledPaused(page);
+      expect(backend.targetReads, `poll ${poll + 1} came early`).toBe(before);
+      await page.clock.runFor(100);
+      await settledPaused(page);
+      expect(backend.targetReads, `poll ${poll + 1} by its interval`).toBe(
+        before + 1,
+      );
     }
-    return backend.targetReads - before;
   };
-  expect(await count(30)).toBeGreaterThanOrEqual(5);
+  await pollsEvery(5_000, 3);
   await page.getByRole("button", { name: "Back to Clusters" }).click();
+  // Leaving the wizard restarts the wait, from the click: every 15 s now.
+  await settledPaused(page);
+  await pollsEvery(15_000, 2);
   await expect(page.getByRole("button", { name: "Add target" })).toBeFocused();
-  await settled(page);
-  expect(await count(30)).toBeLessThanOrEqual(3);
 });
 
 test("the wizard reads targets, and the new target's runners and observations, and sends nothing", async ({

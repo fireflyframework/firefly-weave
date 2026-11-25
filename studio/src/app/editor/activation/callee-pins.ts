@@ -24,6 +24,8 @@ SPDX-License-Identifier: Apache-2.0
 // --pin-current-calls picks it: it must run the called version and must not
 // be retired.
 import { escapeSegment, isJsonObject } from "../../forms/core/json";
+import type { Step } from "../../model";
+import { blocksOf } from "../step-blocks";
 
 /** A called workflow version and where the definition calls it. */
 export interface CalledReference {
@@ -103,33 +105,21 @@ export function calledReferenceSites(definition: unknown): CalledReference[] {
             path: `${location}/${name}/uses`,
           });
       }
-      if (kind === "switch") {
-        const cases = step["cases"];
-        (Array.isArray(cases) ? cases : []).forEach((item, number) => {
-          if (isJsonObject(item))
-            blocks.push([item["steps"], `${location}/cases/${number}/steps`]);
-        });
-        const fallback = step["default"];
-        if (isJsonObject(fallback))
-          blocks.push([fallback["steps"], `${location}/default/steps`]);
-      } else if (kind === "parallel" && isJsonObject(step["branches"])) {
-        const branches = step["branches"];
-        for (const name of Object.keys(branches).sort()) {
-          const branch = branches[name];
-          if (isJsonObject(branch))
-            blocks.push([
-              branch["steps"],
-              `${location}/branches/${escapeSegment(name)}/steps`,
-            ]);
-        }
-      } else if (kind === "forEach" && isJsonObject(step["body"])) {
-        blocks.push([step["body"]["steps"], `${location}/body/steps`]);
-      } else if (kind === "transaction") {
-        blocks.push([step["steps"], `${location}/steps`]);
+      // The platform lists a parallel step's branches by name.
+      const own = blocksOf(step as unknown as Step);
+      const byName = own
+        .filter((block) => block.kind === "branch")
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      for (const block of own.map((block) =>
+        block.kind === "branch" ? byName.shift()! : block,
+      )) {
+        const branch: unknown = block.branch;
+        if (!isJsonObject(branch)) continue;
+        const path = block.path
+          .map((segment) => `/${escapeSegment(String(segment))}`)
+          .join("");
+        blocks.push([branch["steps"], `${location}${path}/steps`]);
       }
-      const errorPath = step["errorPath"];
-      if (isJsonObject(errorPath))
-        blocks.push([errorPath["steps"], `${location}/errorPath/steps`]);
     });
   }
   return found;

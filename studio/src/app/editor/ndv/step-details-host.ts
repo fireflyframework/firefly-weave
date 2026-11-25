@@ -91,7 +91,13 @@ export interface StepDetailsHost {
   error: string;
   can(capability: string, resource?: string): boolean;
   label(kind: string): string;
-  notify(text: string, action?: ToastAction, tone?: "neutral" | "danger"): void;
+  /** A toast; `detail` is a quieter second line under the text, which then reads as a title. */
+  notify(
+    text: string,
+    action?: ToastAction,
+    tone?: "neutral" | "danger",
+    detail?: string,
+  ): void;
   /** Runs a model edit: marks the workflow changed, or shows the failure. */
   perform(edit: () => void): void;
   /** Records what publishing learned (a version is published) in the last undo step, without unsaving the workflow; false when refused. */

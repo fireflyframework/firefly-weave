@@ -74,6 +74,7 @@ import type { HumanEntry, SignalEntry } from "./editor/state/test-data";
 import type { ExecuteResponse, ExecuteTarget } from "./editor/state/execution";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
+  ErrorEntry,
   PinEntry,
   StudioDocument,
   StudioDocumentKind,
@@ -186,7 +187,7 @@ import {
   kinds,
   ownerLabel,
   renamedSteps,
-  sequencesOf,
+  stepIdentities,
   StructuredCanvasAdapter,
   Workflow,
   Node,
@@ -501,18 +502,6 @@ const sideEffects: Record<string, string> = {
   idempotency_key: "Retried with an idempotency key",
   non_idempotent: "Not idempotent — never retried automatically",
 };
-/** Each step as it is in a definition, by ID: a deleted step's test data returns only to the same step. */
-function stepIdentities(
-  definition: Workflow,
-): (id: string) => string | undefined {
-  // Read now: the definition may change in place afterwards.
-  const found = new Map(
-    [...sequencesOf(definition).values()]
-      .flat()
-      .map((step) => [step.id, JSON.stringify(step)]),
-  );
-  return (id) => found.get(id);
-}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 
@@ -3241,35 +3230,25 @@ export class App implements CanvasHost {
   }
   /**
    * Deletes one step or several as one undo step: groups with steps inside
-   * ask first, and a toast offers Undo while the workflow is still as the
-   * deletion left it. False when nothing was deleted.
+   * ask first, a step's error path goes with it unasked, and a toast offers
+   * Undo while the workflow is still as the deletion left it. False when
+   * nothing was deleted.
    */
   private async deleteSteps(ids: readonly string[]): Promise<boolean> {
     const one = ids.length === 1 ? ids[0] : "";
-    const contained = ids.reduce(
-      (sum, id) => sum + this.model.containedSteps(id),
-      0,
+    // The workflow the person saw, read before the wait for the words'
+    // code (it loads with the canvas, not the first page); an edit during
+    // the wait deletes nothing.
+    const { definition, revision: seen } = this.model;
+    const contained = ids.map((id) => this.model.containedSteps(id));
+    const deletion = (await import("./editor/canvas/deletion")).deletionOf(
+      definition,
+      ids,
+      contained,
     );
-    const inside = contained === 1 ? "1 step" : `${contained} steps`;
     if (
-      contained &&
-      !(await this.dialogs.confirm(
-        one
-          ? {
-              title: `Delete ${one} and the ${inside} inside it?`,
-              message:
-                "The group and every step in its branches are removed from the workflow. You can undo this.",
-              confirmLabel: "Delete group",
-              danger: true,
-            }
-          : {
-              title: `Delete ${ids.length} steps and the ${inside} inside them?`,
-              message:
-                "The groups and every step in their branches are removed from the workflow. You can undo this.",
-              confirmLabel: "Delete steps",
-              danger: true,
-            },
-      ))
+      this.model.revision !== seen ||
+      (deletion.question && !(await this.dialogs.confirm(deletion.question)))
     )
       return false;
     // Their inspector edits go with them.
@@ -3277,7 +3256,7 @@ export class App implements CanvasHost {
     const identities = stepIdentities(this.model.definition);
     this.perform(() =>
       one
-        ? this.model.remove(one, { contents: contained > 0 })
+        ? this.model.remove(one, { contents: !!deletion.question })
         : this.model.removeSteps(ids),
     );
     if (this.error) {
@@ -3288,26 +3267,28 @@ export class App implements CanvasHost {
     const steps = this.model.stepIdSet();
     const pruned =
       this.testData?.prune((id) => steps.has(id), identities) ?? [];
-    const what = one || `${ids.length} steps`;
+    const words = deletion.done(pruned.length > 0);
     const revision = this.model.revision;
-    const withData = pruned.length
-      ? ` and ${one ? "its" : "their"} pinned output`
-      : "";
-    this.notify(`Deleted ${what}${withData}.`, {
-      label: "Undo",
-      run: async () => {
-        const done = await this.undoIfUnchanged(
-          () => this.model.revision === revision && this.model.canUndo,
-        );
-        if (done === "changed")
-          this.notify(
-            `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+    this.notify(
+      words.text,
+      {
+        label: "Undo",
+        run: async () => {
+          const done = await this.undoIfUnchanged(
+            () => this.model.revision === revision && this.model.canUndo,
           );
-        if (done !== "undone") return;
-        this.notify(`Restored ${what}${withData}.`);
-        if (one) this.focusStep(one);
+          if (done === "changed")
+            this.notify(
+              `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+            );
+          if (done !== "undone") return;
+          this.notify(words.restored);
+          if (one) this.focusStep(one);
+        },
       },
-    });
+      "neutral",
+      words.detail,
+    );
     return true;
   }
   /** Makes a copy of a step right after it (the inspector's ⋯ menu). */
@@ -4536,7 +4517,8 @@ export class App implements CanvasHost {
       }),
     );
     if (this.error) return null;
-    if (Object.keys(planned.pins).length) void this.pastePins(planned.pins);
+    if (Object.keys(planned.pins).length || Object.keys(planned.errors).length)
+      void this.pasteTestData(planned);
     const renamed = Object.keys(planned.renamed).length;
     this.notify(
       `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
@@ -4548,56 +4530,17 @@ export class App implements CanvasHost {
     return planned;
   }
   /**
-   * Pasted steps bring their pinned output (never what runs recorded). Each
-   * value is checked as any pin is; one refused is dropped, and a toast says
-   * why once.
+   * Pasted steps bring their pinned output and hand-set simulated failures
+   * (never what runs recorded); one the check refuses is dropped, and a
+   * toast says why once. The code loads with the paste, not the first page.
    */
-  private async pastePins(pins: Readonly<Record<string, unknown>>) {
+  private async pasteTestData(planned: PastePlan) {
     const service = await this.requireTestData();
-    const {
-      readTestData,
-      testDataOps: { emptyTestData, withPin },
-    } = await this.loadTools();
-    const escape = (key: string) =>
-      key.replace(/~/g, "~0").replace(/\//g, "~1");
-    // What came from the clipboard is read as test data first: only well-formed pins go on.
-    const reading = readTestData({
-      ...emptyTestData(new Date().toISOString()),
-      pins,
-    });
-    let refusal = reading.ok ? "" : reading.reason;
-    let waiting: [string, PinEntry][] = reading.ok
-      ? Object.entries(reading.data.pins ?? {})
-      : [];
-    while (waiting.length) {
-      const at = new Date().toISOString();
-      let next = service.data();
-      for (const [key, entry] of waiting) next = withPin(next, key, entry, at);
-      const outcome = await service.change(
-        next,
-        waiting.map(([key]) => `/pins/${escape(key)}`),
-      );
-      if (outcome.ok) {
-        this.markForeign(waiting.map(([key]) => key));
-        break;
-      }
-      refusal ||= outcome.message;
-      const refused = waiting.find(
-        ([key]) => `/pins/${escape(key)}` === outcome.pointer,
-      );
-      // Nothing to drop by pointer (the document changed meanwhile, say): none is pasted.
-      if (!refused) {
-        waiting = [];
-        break;
-      }
-      waiting = waiting.filter((pair) => pair !== refused);
-    }
-    if (refusal)
-      this.notify(
-        `Some pinned output wasn't pasted: ${refusal}`,
-        undefined,
-        "danger",
-      );
+    const { pinned, refusal } = await (
+      await import("./editor/state/paste-test-data")
+    ).pasteTestData(service, planned);
+    this.markForeign(pinned);
+    if (refusal) this.notify(refusal, undefined, "danger");
   }
   /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
   tidyCanvas(next: CanvasSidecar | null): boolean {
@@ -7985,6 +7928,9 @@ export class App implements CanvasHost {
   pinsForCopy(): Readonly<Record<string, PinEntry>> {
     return this.testData?.data().pins ?? {};
   }
+  failuresForCopy(): Readonly<Record<string, ErrorEntry>> {
+    return this.testData?.data().errors ?? {};
+  }
   /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
   togglePins(ids: readonly string[]): void {
     const pinned = ids.filter((id) => this.pinStates().has(id));
@@ -8225,6 +8171,29 @@ export class App implements CanvasHost {
         revision,
         false,
       );
+    }
+    // A platform that predates simulated failures refuses them naming no
+    // path: it can't save them only when the same save without them works.
+    const { errors, ...rest } = document as StudioTestData;
+    if (
+      kind === "test-data" &&
+      service &&
+      answer.code === "WV-STUDIO-DOCUMENT-SCHEMA" &&
+      !answer.paths.length &&
+      errors &&
+      again
+    ) {
+      const saved = await this.savePlatformDocument(
+        kind,
+        rest,
+        revision,
+        false,
+      );
+      if (saved && open()) {
+        service.keepFailuresInSession();
+        this.cdr.markForCheck();
+      }
+      return saved;
     }
     if (
       kind === "test-data" &&

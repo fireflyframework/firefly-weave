@@ -557,6 +557,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/language/step-errors.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON list of the platform's failure codes with their messages and the step kinds that may return them, shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/template-segments.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"

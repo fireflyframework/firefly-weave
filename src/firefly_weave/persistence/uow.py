@@ -118,17 +118,28 @@ class UnitOfWork:
         self.telemetry = telemetry
 
     @asynccontextmanager
-    async def open(self, scope: Scope, *, mutation: bool = True, admission: bool = True) -> AsyncIterator[Transaction]:
+    async def open(
+        self, scope: Scope, *, mutation: bool = True, admission: bool = True, resource: str | None = None
+    ) -> AsyncIterator[Transaction]:
         """A scoped transaction; a project mutation first takes the project's operation lock.
 
         ``admission=False`` is for writers of tables no operation admits or charges (the run statistics): they
         neither wait for nor hold that lock, so they never delay or refuse a person's change to the project.
+
+        ``resource`` names the one record a change decides on, such as ``incident:<id>``. Two changes to it then
+        queue for each other before the project's lock, so the later one waits for the earlier one's whole
+        transaction and reads its result, instead of being refused for capacity while the earlier one holds the
+        project. That wait ends after 2 s; the project's lock keeps its own 250 ms. Either refusal is a 429.
+        A waiting change holds its pooled connection for up to about 2.25 s, so check the caller's permission before
+        opening it: a caller who may not decide must not queue.
         """
         from sqlalchemy.exc import DBAPIError
 
         from firefly_weave.definitions.models import CatalogError
         from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
 
+        if resource is not None and not (mutation and admission and scope.project_id is not None):
+            raise ValueError("Only an admitted project change takes a record's lock")
         failures: list[bool] = []
         failure_token = capacity_failures.set(failures)
         capacity_failed = False
@@ -139,6 +150,16 @@ class UnitOfWork:
                     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 await bind_scope(session, scope)
                 if mutation and admission and scope.project_id is not None:
+                    if resource is not None:
+                        # Always before the project's lock, and never while holding it, so the two cannot deadlock.
+                        await session.execute(text("SET LOCAL lock_timeout='2s'"))
+                        await session.execute(
+                            text(
+                                "SELECT pg_advisory_xact_lock(hashtextextended('weave.resource:' "
+                                "|| cast(:tenant AS text) || ':' || cast(:project AS text) || ':' || :resource,0))"
+                            ),
+                            {"tenant": str(scope.tenant_id), "project": str(scope.project_id), "resource": resource},
+                        )
                     await session.execute(text("SET LOCAL lock_timeout='250ms'"))
                     await session.execute(
                         text(

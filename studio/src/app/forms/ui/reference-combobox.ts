@@ -44,7 +44,8 @@ import {
 export interface ReferenceOption {
   /** RFC 6901 pointer written as `{ref}`, for example `/steps/check/output/eligible`. */
   ref: string;
-  source: "input" | "step";
+  /** "error": a failed step's error, `/steps/<id>/error`. */
+  source: "input" | "step" | "error";
   stepId?: string;
   stepKind?: string;
   label: string;
@@ -71,6 +72,8 @@ export interface ViewGroup {
   kind?: string;
   /** Plain step kind, for example "Call an integration". */
   detail?: string;
+  /** "danger": a failed step's error, its header in the danger ink. */
+  tone?: "danger";
   options: ViewOption[];
 }
 export interface ReferenceView {
@@ -98,21 +101,32 @@ export function referenceView(
       `${option.ref} ${option.label} ${option.breadcrumb} ${option.typeLabel} ${option.stepId ?? ""}`.toLowerCase();
     if (!words.every((word) => text.includes(word))) continue;
     const id =
-      option.source === "input" ? "input" : `step:${option.stepId ?? ""}`;
+      option.source === "input"
+        ? "input"
+        : `${option.source}:${option.stepId ?? ""}`;
     let group = groups.get(id);
     if (!group) {
       group =
         option.source === "input"
           ? { id, label: "Workflow input", options: [] }
-          : {
-              id,
-              label: option.stepId ?? "Step",
-              kind: option.stepKind,
-              detail: option.stepKind
-                ? (kindLabels[option.stepKind] ?? option.stepKind)
-                : undefined,
-              options: [],
-            };
+          : option.source === "error"
+            ? // A failed step's error: its own group, marked as an error.
+              {
+                id,
+                label: `Error of ${option.stepId ?? "the step"}`,
+                kind: "warning",
+                tone: "danger",
+                options: [],
+              }
+            : {
+                id,
+                label: option.stepId ?? "Step",
+                kind: option.stepKind,
+                detail: option.stepKind
+                  ? (kindLabels[option.stepKind] ?? option.stepKind)
+                  : undefined,
+                options: [],
+              };
       groups.set(id, group);
     }
     const fit: Fit =
@@ -320,6 +334,7 @@ let sequence = 0;
               class="ref-combo-group"
               role="presentation"
               [id]="listId + '-' + group.id"
+              [attr.data-tone]="group.tone ?? null"
             >
               <weave-icon
                 [name]="group.kind ?? 'source'"
@@ -495,6 +510,10 @@ let sequence = 0;
       .ref-combo-group weave-icon {
         color: var(--muted);
         flex: none;
+      }
+      .ref-combo-group[data-tone="danger"],
+      .ref-combo-group[data-tone="danger"] weave-icon {
+        color: var(--danger-ink);
       }
       .ref-combo-group small {
         font-weight: 400;

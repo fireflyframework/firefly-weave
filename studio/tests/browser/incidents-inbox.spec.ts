@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // engine events, and the Resolve incident dialog with its error paths. The
 // server checks incident.resolve, the revision and the receipt.
 import { test, expect, Page, Route } from "@playwright/test";
-import { connected } from "./support";
+import { connected, pauseClock } from "./support";
 
 const environment =
   "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
@@ -797,15 +797,26 @@ for (const viewport of [
       ]);
       await page.goto("/operate/incidents");
       await expect(rows(page)).toHaveCount(1);
-      const before = lists();
-      await page.clock.fastForward(15_500);
+      // Only runFor moves a paused clock, and Refresh restarts the wait, so
+      // the next reload is due exactly 15 s on: one every 20 s fails here.
+      await pauseClock(page);
+      const before = lists() + 1;
+      await page.getByRole("button", { name: "Refresh" }).click();
+      await expect.poll(lists).toBe(before);
+      await page.clock.runFor(14_500);
+      expect(lists()).toBe(before);
+      await page.clock.runFor(1_000);
       await expect.poll(lists).toBe(before + 1);
       // The revision a decision is sent with never changes under the dialog.
+      // Studio draws on its timers, so the clock runs while the dialog opens.
+      await page.clock.resume();
       const dialog = await openDialog(page);
-      await page.clock.fastForward(31_000);
+      await expect(dialog).toBeVisible();
+      await pauseClock(page);
+      await page.clock.runFor(31_000);
       expect(lists()).toBe(before + 1);
       await dialog.getByRole("button", { name: "Cancel" }).click();
-      await page.clock.fastForward(15_500);
+      await page.clock.runFor(15_500);
       await expect.poll(lists).toBe(before + 2);
     });
 

@@ -44,6 +44,8 @@ export interface PreviewData {
   input(): Json | undefined;
   /** A step's output as test data, secret values removed; undefined while it has none. */
   output(stepId: string): Json | undefined;
+  /** A step's error as test data (its simulated failure, else the failure the last Execute handled); undefined while it has none. */
+  error(stepId: string): Json | undefined;
   /** Changes whenever the data or the workflow changes. */
   stamp(): readonly unknown[];
 }
@@ -79,6 +81,8 @@ const NOUNS: Record<string, string> = {
   object: "a group",
 };
 const noun = (type: string | undefined) => NOUNS[type ?? ""] ?? "a value";
+const stepPointer = (id: string) =>
+  `/steps/${id.replace(/~/g, "~0").replace(/\//g, "~1")}`;
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const failed = (code: string, message: string): PreviewResult => ({
   ok: false,
@@ -195,8 +199,11 @@ export function sourceLabel(expression: unknown, data: PreviewData): string {
   const roots = referencesOf(expression).map((pointer) => segmentsOf(pointer));
   if (
     roots.some(
-      ([root, id]) =>
-        root === "steps" && id !== undefined && data.output(id) !== undefined,
+      ([root, id, part]) =>
+        root === "steps" &&
+        id !== undefined &&
+        part !== "error" &&
+        data.output(id) !== undefined,
     )
   )
     return "From pinned output";
@@ -240,6 +247,58 @@ function pickedItems(
   };
 }
 
+/**
+ * Puts in `step` what a reference to step `id` reads, its output or its
+ * error, or says why it can't be read: the same rules as the formula check.
+ * The scope lists a step's error inside the step's own error path, where the
+ * step has failed and has no output, and after a step that handles its
+ * failures, where it has an error only when it failed.
+ */
+function readStep(
+  id: string,
+  part: string | undefined,
+  at: PreviewAt,
+  step: Record<string, Json>,
+): PreviewResult | null {
+  const name = printRef(stepPointer(id));
+  const visible = at.scope.steps.some((item) => item.id === id);
+  const listed = at.scope.entries.some(
+    (entry) =>
+      entry.source === "error" && entry.ref === `${stepPointer(id)}/error`,
+  );
+  if (!visible && !listed)
+    return failed(UNAVAILABLE, `\`${name}\` isn't available here.`);
+  if (part === "error" && !listed)
+    return failed(
+      UNAVAILABLE,
+      `\`${name}\` records an error only when its On error setting is Continue or Continue with error output.`,
+    );
+  if (!visible && part !== undefined && part !== "error")
+    return failed(
+      UNAVAILABLE,
+      `\`${name}\` has no output inside its own error path; read \`${name}.error\`.`,
+    );
+  const error = listed ? at.data.error(id) : undefined;
+  if (error !== undefined) step["error"] = error;
+  if (!visible)
+    return error === undefined
+      ? failed(
+          WAITING,
+          `Can't compute yet: ${name} has no error in the test data. Simulate a failure of ${id} first.`,
+        )
+      : null;
+  // A step that may have failed: without an error, its data says it ran without failing.
+  if (part === "error" && error !== undefined) return null;
+  const output = at.data.output(id);
+  if (output === undefined)
+    return failed(
+      WAITING,
+      `Can't compute yet: ${name} has no data. Execute previous steps.`,
+    );
+  step["output"] = output;
+  return null;
+}
+
 /** What a formula resolves to at a field, or why it can't be shown. */
 export function previewFormula(
   expression: Expression,
@@ -251,28 +310,17 @@ export function previewFormula(
       SECRET,
       "This formula reads a secret value, so Studio doesn't preview it.",
     );
-  const visible = new Set(at.scope.steps.map((step) => step.id));
-  const steps: Record<string, { output: Json }> = {};
+  const steps: Record<string, Record<string, Json>> = {};
   for (const pointer of pointers) {
-    const [root, id] = segmentsOf(pointer);
+    const [root, id, part] = segmentsOf(pointer);
     if (root === "input" && at.data.input() === undefined)
       return failed(
         WAITING,
         "Can't compute yet: there's no test input. Add it in the trigger's Test event.",
       );
     if (root === "steps" && id !== undefined) {
-      const name = printRef(
-        `/steps/${id.replace(/~/g, "~0").replace(/\//g, "~1")}`,
-      );
-      if (!visible.has(id))
-        return failed(UNAVAILABLE, `\`${name}\` isn't available here.`);
-      const output = at.data.output(id);
-      if (output === undefined)
-        return failed(
-          WAITING,
-          `Can't compute yet: ${name} has no data. Execute previous steps.`,
-        );
-      steps[id] = { output };
+      const unread = readStep(id, part, at, (steps[id] ??= {}));
+      if (unread) return unread;
     }
     const picked =
       root === "item"
@@ -294,9 +342,25 @@ export function previewFormula(
   if (at.loop?.index !== undefined) context["index"] = at.loop.index;
   if (at.loop?.loops) context["loops"] = at.loop.loops as Json;
   const result = evaluate(expression, context);
-  return result.ok
-    ? { ok: true, value: result.value }
-    : failed(result.code, wordsFor(result, expression));
+  if (result.ok) return { ok: true, value: result.value };
+  const node = nodeAt(expression, result.path);
+  const [root, id, part] =
+    isRecord(node) && typeof node["ref"] === "string"
+      ? segmentsOf(node["ref"])
+      : [];
+  // A step that ran without failing has no error: say so, not that a field is missing.
+  if (
+    result.code === "WV-EXPR-MISSING" &&
+    root === "steps" &&
+    id !== undefined &&
+    part === "error" &&
+    steps[id]?.["error"] === undefined
+  )
+    return failed(
+      result.code,
+      `\`${printRef(stepPointer(id))}\` has no error: it didn't fail in the test data.`,
+    );
+  return failed(result.code, wordsFor(result, expression));
 }
 
 /**

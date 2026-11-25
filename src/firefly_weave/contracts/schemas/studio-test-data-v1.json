@@ -38,7 +38,10 @@
         "properties": {"mocks": {"type": "object", "maxProperties": 1000, "propertyNames": {"$ref": "#/$defs/key"},
                                  "additionalProperties": {"$ref": "#/$defs/mock"}}}}},
     "waits": {"type": "object", "additionalProperties": false,
-              "properties": {"autoAdvance": {"type": "boolean", "default": true}}}
+              "properties": {"autoAdvance": {"type": "boolean", "default": true}}},
+    "errors": {"type": "object", "maxProperties": 1000, "propertyNames": {"$ref": "#/$defs/key"},
+               "additionalProperties": {"$ref": "#/$defs/error"},
+               "description": "Step failures Studio simulates when it executes the workflow; real runs never read them"}
   },
   "$defs": {
     "uuid": {"type": "string", "format": "uuid"},
@@ -83,6 +86,13 @@
                      "source": {"enum": ["manual", "simulated", "test-call", "run"]},
                      "runId": {"$ref": "#/$defs/uuid"}, "runEnvironmentId": {"$ref": "#/$defs/uuid"},
                      "configHash": {"$ref": "#/$defs/hash"}, "upstreamHash": {"$ref": "#/$defs/hash"}},
+      "allOf": [{"$ref": "#/$defs/provenance"}]},
+    "error": {"type": "object", "required": ["code"], "additionalProperties": false,
+      "properties": {"code": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Z][A-Z0-9_.-]*$"},
+                     "outcome": {"enum": ["not_started", "failed", "unknown"], "default": "failed"},
+                     "attempts": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 1},
+                     "source": {"enum": ["manual", "run"]},
+                     "runId": {"$ref": "#/$defs/uuid"}, "runEnvironmentId": {"$ref": "#/$defs/uuid"}},
       "allOf": [{"$ref": "#/$defs/provenance"}]}
   }
 }
