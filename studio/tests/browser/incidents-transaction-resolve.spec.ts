@@ -1165,6 +1165,43 @@ for (const [why, as, message, words] of [
     await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
   });
 
+test("Finished refused for a block that can never complete says what to choose instead", async ({
+  page,
+}) => {
+  const platform = await opened(page, called);
+  await decisions(page, platform, (route) =>
+    refuse(
+      route,
+      422,
+      "WV-RUNTIME-OUTPUT",
+      "The block can never complete, because every way through it reaches a Fail step: use Force end, or compensated if everything was undone",
+    ),
+  );
+  const name = "Mark as reconciled";
+  await offer(page, name).click();
+  await ending(page, name, "Finished").check();
+  const asked = dialog(page, name);
+  await tickAll(page);
+  const result = field(page, name, "Result of the transaction (JSON)");
+  await result.fill("{}");
+  await field(page, name, "Reason").fill("Checked");
+  await field(page, name, "Evidence reference").fill("OPS-2304");
+  await confirm(page, name).click();
+  // It is about the ending: neither the result nor a step is blamed.
+  const notice = asked.locator(".notice");
+  await expect(notice).toContainText(
+    "Finished doesn't fit: every way through this transaction reaches a Fail step, so the run can't go on after it. Choose Undone if everything was undone, or use Force end.",
+  );
+  await expect(notice).toContainText("Support code: WV-RUNTIME-OUTPUT");
+  await expect(result).not.toHaveAttribute("aria-invalid");
+  await expect(
+    asked.getByRole("group", { name: "Check each step in its system" }),
+  ).not.toHaveAttribute("aria-invalid");
+  // Undone, which it says to choose, hasn't been refused.
+  await ending(page, name, "Undone").check();
+  await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
+});
+
 /** A confirm stuck while another runs, or sticks too: never another revision. */
 const twoConfirms = (second: "confirming" | "confirm_stuck"): IncidentView => {
   const [hold] = called.transaction!.participants;

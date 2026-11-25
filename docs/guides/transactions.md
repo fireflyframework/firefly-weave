@@ -374,7 +374,9 @@ before you tick it. With **Undone**, you confirm that each step was reversed, wa
 released, or has nothing left to undo, and that a step still running is stopped;
 with **Finished**, that each one was confirmed or went through. Weave then stops
 whatever is left and takes your word, so a step you didn't check stays as that
-system has it.
+system has it. **Finished** is refused when every way through the transaction
+reaches a Fail step and the run would go on after it: choose **Undone** if
+everything was undone, or **Force end**.
 
 **Force end** first lists what **stays done in other systems**.
 

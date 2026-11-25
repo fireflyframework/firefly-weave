@@ -544,8 +544,18 @@ export function explainDecision(
         : null;
     if (message) return { ...refused, message };
   }
+  if (
+    refused.code === "WV-RUNTIME-OUTPUT" &&
+    NEVER_COMPLETES.test(refused.message)
+  )
+    return { ...refused, message: NEVER_FINISHES };
   return refused;
 }
+/** What the platform says of Finished for a block that every way through ends at a Fail step. */
+const NEVER_COMPLETES = /can never complete/;
+/** Studio's words for it: what to choose instead. */
+const NEVER_FINISHES =
+  "Finished doesn't fit: every way through this transaction reaches a Fail step, so the run can't go on after it. Choose Undone if everything was undone, or use Force end.";
 /** What the platform says of a record it has nothing more to say of. */
 const DOESNT_FIT = "The reconciliation record doesn't fit the transaction";
 /** How a refused record or result reads where it was typed. */
@@ -575,13 +585,16 @@ function namesOneOf(steps: ReadonlySet<string>, sentence: string): boolean {
 }
 /**
  * Where a refused record shows: under the checklist when it names one of its
- * steps or there is no result to blame, under the result otherwise.
+ * steps or there is no result to blame, under the result otherwise. A Finished
+ * that the transaction can never have is about neither: null, and the
+ * dialog's notice says it.
  */
 export function outputRefusalAt(
   message: string,
   as: ReconcileDraft["as"],
   rows: readonly ChecklistRow[],
-): "blockOutput" | "checklist" {
+): "blockOutput" | "checklist" | null {
+  if (message === NEVER_FINISHES || NEVER_COMPLETES.test(message)) return null;
   const steps = new Set(rows.map((row) => stepName(row.instanceKey)));
   const named = !ABOUT_NO_STEP.has(message) && namesOneOf(steps, message);
   return as === "completed" && !named ? "blockOutput" : "checklist";

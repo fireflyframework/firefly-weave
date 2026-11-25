@@ -1060,6 +1060,42 @@ describe("a refused decision", () => {
       );
   });
 
+  it("of Finished, for a transaction whose every way reaches a Fail step, says what to choose instead", () => {
+    const [, mark] = transactionActions(called, everything);
+    const never = refused(
+      422,
+      "WV-RUNTIME-OUTPUT",
+      "The block can never complete, because every way through it reaches a Fail step: use Force end, or compensated if everything was undone",
+    );
+    expect(explainDecision(never, mark)).toEqual({
+      ...never,
+      message:
+        "Finished doesn't fit: every way through this transaction reaches a Fail step, so the run can't go on after it. Choose Undone if everything was undone, or use Force end.",
+    });
+  });
+
+  it("of Finished shows beside neither the result nor a step, even one named like its words", () => {
+    const [, mark] = transactionActions(called, everything);
+    const words = checklistRows(
+      about(
+        "WV-TXN-UNDO-STUCK",
+        "step#undo",
+        ["step", "end", "way", "block", "Fail"].map((key) =>
+          step(key, "compensate", "undo_stuck"),
+        ),
+      ),
+      "completed",
+    );
+    const sentence =
+      "The block can never complete, because every way through it reaches a Fail step: use Force end, or compensated if everything was undone";
+    const said = explainDecision(
+      refused(422, "WV-RUNTIME-OUTPUT", sentence),
+      mark,
+    ).message;
+    for (const message of [sentence, said])
+      expect(outputRefusalAt(message, "completed", words), message).toBe(null);
+  });
+
   it("names the access its decision needs", () => {
     const forbidden = refused(403, "WV-FORBIDDEN", "Not allowed");
     const [retry, mark] = transactionActions(called, everything);

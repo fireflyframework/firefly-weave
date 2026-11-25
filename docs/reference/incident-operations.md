@@ -298,6 +298,7 @@ A refused decision changes nothing:
 | HTTP 409 `WV-RUNTIME-STATE` | The step's latest attempt or child run is still running, a failure of the transaction is still handled, or the incident is no longer active | Read the incident again; decide once the step ended or the next recovery scan ran |
 | HTTP 409 `WV-INCIDENT-REVISION` | The incident changed since you read it | Read it again, and check every step again |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The record doesn't fit the transaction, or the output doesn't fit its schema | Read the incident again: a step may have changed. Then correct the record |
+| HTTP 422 `WV-RUNTIME-OUTPUT` | `completed` for a block that can never complete, because every way through it reaches a Fail step, while the run would go on after it | Send `compensated` if everything was undone, or `terminate` |
 
 **Name every step you checked.** The platform refuses a record that leaves out a
 stuck step. It accepts one that leaves out a step that is still running or whose
