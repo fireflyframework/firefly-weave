@@ -259,6 +259,15 @@ export async function transactionsPlatform(
           status: run.status,
           active: stops.map(keyOf),
           input: {},
+          ...(run.paused ? { manual_paused: true } : {}),
+          // Of several incidents the platform names the first key's code.
+          ...(stops.length
+            ? {
+                incident: [...stops].sort((a, b) =>
+                  a.incident_key < b.incident_key ? -1 : 1,
+                )[0].code,
+              }
+            : {}),
           incidents: Object.fromEntries(
             stops.map((item) => [
               item.incident_key,

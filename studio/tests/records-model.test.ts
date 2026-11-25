@@ -203,8 +203,60 @@ describe("run detail", () => {
           },
         }),
       ),
-    ).toEqual({ step: "check", text: "The CRM answered 500 three times." });
+    ).toEqual({
+      step: "check",
+      text: "The CRM answered 500 three times.",
+      code: "WV-TASK",
+    });
     expect(runIncident(run())).toBeNull();
+  });
+
+  it("explains a run several incidents stop by the one the platform names", () => {
+    const stopped = (incident: string) =>
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident,
+            incidents: {
+              "send:0": { node_id: "send", code: "WV-TASK-AMBIGUOUS" },
+              "hold#cancel:0": {
+                node_id: "hold#cancel",
+                code: "WV-TXN-CANCEL-STUCK",
+              },
+              "add#undo:0": { node_id: "add#undo", code: "WV-TXN-UNDO-STUCK" },
+            },
+          },
+        }),
+      );
+    expect(stopped("WV-TXN-UNDO-STUCK")).toEqual({
+      step: "add",
+      text: "A step's undo couldn't finish, so the transaction is in doubt. Support code: WV-TXN-UNDO-STUCK.",
+      code: "WV-TXN-UNDO-STUCK",
+    });
+    expect(stopped("WV-TASK-AMBIGUOUS")).toEqual({
+      step: "send",
+      text: "Support code: WV-TASK-AMBIGUOUS",
+      code: "WV-TASK-AMBIGUOUS",
+    });
+  });
+
+  it("says why an ended run stopped, with no incident left to open", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "failed",
+            incident: "WV-TXN-ROLLED-BACK",
+            incidents: {},
+          },
+        }),
+      ),
+    ).toEqual({
+      step: "an unknown step",
+      text: "The transaction was undone. Support code: WV-TXN-ROLLED-BACK.",
+      code: "",
+    });
   });
 
   it.each([
@@ -244,17 +296,20 @@ describe("run detail", () => {
   ])(
     "says a run stopped at %s (%s) in words, by its step",
     (key, code, step, text) => {
-      expect(
-        runIncident(
-          run({
-            state: {
-              status: "suspended",
-              active: [key],
-              incidents: { [`${key}:0`]: { node_id: key, code } },
-            },
-          }),
-        ),
-      ).toEqual({ step, text });
+      // The platform names the code of the incident that stops the run.
+      for (const named of [{ incident: code }, {}])
+        expect(
+          runIncident(
+            run({
+              state: {
+                status: "suspended",
+                active: [key],
+                incidents: { [`${key}:0`]: { node_id: key, code } },
+                ...named,
+              },
+            }),
+          ),
+        ).toEqual({ step, text, code });
     },
   );
 

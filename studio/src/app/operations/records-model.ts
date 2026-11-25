@@ -337,26 +337,38 @@ export function runNow(
 
 /**
  * "This run stopped at {step}." and why, or null. The step is null when the
- * run is stopped whole, at no step of its workflow.
+ * run is stopped whole, at no step of its workflow. The platform names one
+ * code for the run, its first incident's; a run that ended keeps the code and
+ * has no incident left, and its `code` is empty.
  */
 export function runIncident(
   run: Json,
-): { step: string | null; text: string } | null {
+): { step: string | null; text: string; code: string } | null {
   const state = isRecord(run["state"]) ? run["state"] : {};
   const incidents = isRecord(state["incidents"])
-    ? Object.values(state["incidents"]).filter(isRecord)
+    ? Object.entries(state["incidents"])
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .flatMap(([, value]) => (isRecord(value) ? [value] : []))
     : [];
-  const message = text(state["incident"]);
-  if (!message && !incidents.length) return null;
+  const named = text(state["incident"]);
+  if (!named && !incidents.length) return null;
   const active = Array.isArray(state["active"]) ? state["active"] : [];
+  const incident =
+    incidents.find((item) => text(item["code"]) === named) ?? incidents[0];
   const key =
-    text(incidents[0]?.["node_id"]) || text(active[0]) || "an unknown step";
-  const code = text(incidents[0]?.["code"]);
-  const sentence = TRANSACTION_CODE_TEXT[code];
-  const support = code && `Support code: ${code}`;
+    text(incident?.["node_id"]) || text(active[0]) || "an unknown step";
+  const code = text(incident?.["code"]);
+  const said = named || code;
+  const sentence = TRANSACTION_CODE_TEXT[said];
+  const support = `Support code: ${said}`;
   return {
     step: incidentStep(key),
-    text: message || (sentence ? `${sentence} ${support}.` : support),
+    text: sentence
+      ? `${sentence} ${support}.`
+      : said && said === code
+        ? support
+        : said,
+    code,
   };
 }
 
