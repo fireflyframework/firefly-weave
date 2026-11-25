@@ -28,7 +28,7 @@ from starlette.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent / "runtime"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "operations" / "debug"))
 
-from simulation_support import STOP, callee, each, fixture, strict  # noqa: E402
+from simulation_support import STOP, callee, each, fixture, parallel, strict  # noqa: E402
 from transaction_support import add, hold, reverse_by_call, submit, transaction  # noqa: E402
 
 from firefly_weave.contracts.transactions import IN_DOUBT_CODES  # noqa: E402
@@ -565,14 +565,18 @@ def test_a_called_undo_that_needs_test_data_blocks_at_its_undo():
     assert [(phase["instanceKey"], phase["status"]) for phase in answer["phases"]] == [("add#undo", "waiting")]
 
 
-def inside_a_call(*steps: dict[str, Any], definitions: list[dict[str, Any]], **fields: Any) -> dict[str, Any]:
+def inside_a_call(
+    *steps: dict[str, Any], definitions: list[dict[str, Any]], timeout: int | None = 300, **fields: Any
+) -> dict[str, Any]:
     """The answer about a workflow that calls one with a transaction of ``steps``; the request brings it along."""
     called = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": "inside", "version": "1.0.0"},
-        "spec": {**json.loads(move(*steps))["spec"], "callable": {}, "timeoutSeconds": 300},
+        "spec": {**json.loads(move(*steps))["spec"], "callable": {}},
     }
+    if timeout is not None:
+        called["spec"]["timeoutSeconds"] = timeout
     call = {
         "id": "call",
         "kind": "callWorkflow",
@@ -669,3 +673,109 @@ def test_the_host_route_answers_a_called_undo_in_the_request(tmp_path):
         assert answer.status_code == 200, answer.text
         assert [record["state"] for record in answer.json()["transactions"]] == ["compensated"]
         assert [phase["instanceKey"] for phase in answer.json()["phases"]] == ["add#undo", "hold#cancel"]
+
+
+# --- the clock: waits of called workflows, and what a transaction needs to end ----------------------------------
+
+PERSON = {
+    "id": "ask",
+    "kind": "humanTask",
+    "assignment": "reviewers",
+    "title": {"literal": "Approve"},
+    "context": {"literal": {}},
+    "formSchema": {"type": "object"},
+    "decisions": ["approve", "reject"],
+}
+DONE = {"id": "done", "kind": "transform", "value": {"literal": {}}}
+
+
+def wait(seconds: int, identifier: str = "pause") -> dict[str, Any]:
+    return {"id": identifier, "kind": "wait", "durationSeconds": seconds}
+
+
+def called_step(**settings: Any) -> dict[str, Any]:
+    """A step that calls the workflow ``inside``, undone as add is."""
+    values = {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}
+    call = {"id": "call", "kind": "callWorkflow", "uses": "inside@1.0.0", "with": {"object": values}}
+    return {**call, "compensate": add()["compensate"], **settings}
+
+
+def run_calling(workflow: str, *steps: dict[str, Any], **fields: Any) -> dict[str, Any]:
+    """The answer about ``workflow`` when the request brings ``inside``, a called workflow of ``steps``."""
+    inside, _ = callee("inside", list(steps))
+    return run_move(
+        workflow,
+        definitions=[*fixture()["definitions"], inside],
+        workflows={"inside@1.0.0": {"mocks": {}}},
+        **fields,
+    )
+
+
+def entries(answer: dict[str, Any]) -> list[tuple[str | None, str, str]]:
+    return [(entry.get("frame"), entry["instanceKey"] or entry["nodeId"], entry["status"]) for entry in answer["trace"]]
+
+
+@pytest.mark.parametrize("before", [hold, add], ids=["a reservation", "a step with an undo"])
+def test_a_called_step_that_waits_ends_before_its_transaction_does(before):
+    answer = run_calling(move(before(), called_step(), submit()), wait(100), DONE)
+    assert answer["status"] == "completed"
+    [record] = answer["transactions"]
+    assert record["state"] == "completed"
+    assert participants(answer)["call"] == "done"
+    assert [entry["status"] for entry in answer["trace"]] == ["completed"] * 6
+
+
+@pytest.mark.parametrize("before", [[hold()], []], ids=["after a reservation", "alone"])
+def test_a_called_undo_that_waits_is_undone_at_its_end(before):
+    body = undo_by_call_request(wait(100), DONE)
+    document = json.loads(body.source)
+    document["spec"]["steps"][0]["steps"][0:1] = before
+    mocks = {key: value for key, value in body.mocks.items() if before or key != "node:hold"}
+    answer = answered(body.model_copy(update={"source": json.dumps(document), "mocks": mocks}))
+    assert [item["code"] for item in answer["diagnostics"]] == ["WV-TXN-ROLLED-BACK"]
+    assert [record["state"] for record in answer["transactions"]] == ["compensated"]
+    assert participants(answer)["add"] == "undone"
+    assert (answer["phases"][0]["instanceKey"], answer["phases"][0]["status"]) == ("add#undo", "completed")
+
+
+@pytest.mark.parametrize("after", [600, 300], ids=["another moment", "the same moment"])
+def test_the_clock_passes_a_wait_that_an_undo_already_stopped(after):
+    # The pause is stopped with its transaction; its deadline is no run's to take, so it never holds the clock.
+    branches = parallel(x=[add()], y=[wait(300)])
+    workflow = source(transaction([hold(), branches], onError="continue"), wait(after, "long"), wait(10, "more"), DONE)
+    answer = run_move(workflow, errors={"node:add": {"code": "UNAVAILABLE"}})
+    assert answer["status"] == "completed"
+    assert entries(answer)[-3:] == [
+        (None, "long", "completed"),
+        (None, "more", "completed"),
+        (None, "done", "completed"),
+    ]
+
+
+def test_a_transaction_that_didnt_settle_never_answers_completed(monkeypatch):
+    # The simulation gives up after so many moves of the clock.
+    monkeypatch.setattr(simulation, "ROUNDS", 1)
+    answer = run_move(move(hold(), wait(60), submit()))
+    assert [record["state"] for record in answer["transactions"]] == ["open"]
+    assert answer["status"] == "failed"
+    assert [(item["code"], item["message"]) for item in answer["diagnostics"]] == [
+        ("WV-STUDIO-SIMULATION", "Studio couldn't simulate transaction move, so the simulated run stopped there.")
+    ]
+
+
+def test_a_transaction_in_a_called_workflow_that_didnt_settle_never_answers_completed():
+    # Nobody can answer a person's task inside a called workflow, and nothing bounds this one.
+    answer = inside_a_call(
+        add(),
+        PERSON,
+        definitions=fixture()["definitions"],
+        timeout=None,
+        workflows={"inside@1.0.0": {"mocks": {"node:add": {"id": "a-1"}}}},
+    )
+    assert answer["status"] == "failed"
+    assert [(item["code"], item["message"]) for item in answer["diagnostics"]] == [
+        (
+            "WV-STUDIO-SIMULATION",
+            "Studio couldn't simulate transaction move of inside, so the simulated run stopped there.",
+        )
+    ]

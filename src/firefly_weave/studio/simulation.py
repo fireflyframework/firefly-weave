@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from firefly_weave.operations.debug.models import DebugState, TransactionDebugView
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.operations.debug.transactions import PhaseTarget
-    from firefly_weave.runtime.models import RuntimeEvent, TransactionRecord
+    from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TransactionRecord
     from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
 NULL: JsonObject = {"literal": None}
@@ -783,6 +783,22 @@ def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
     return "the current step", simulator
 
 
+def _unsettled(data: DebugState) -> str | None:
+    """The first transaction that still holds work, in words, when the run didn't end or pause; None otherwise."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.simulator import TERMINAL
+    from firefly_weave.runtime.transactions import UNSETTLED
+
+    if data.paused is not None or data.state is None or data.state.status in TERMINAL:
+        return None
+    runs = [("", data.state), *((f" of {f.workflow.rpartition('@')[0]}", f.state) for f in data.frames if f.state)]
+    for within, state in runs:
+        for key, record in state.transactions.items():
+            if record.status in UNSETTLED:
+                return f"transaction {node_of(key)}{within}"
+    return None
+
+
 def unsimulated(place: str) -> str:
     """The sentence for a run the simulator couldn't carry on with."""
     return f"Studio couldn't simulate {place}, so the simulated run stopped there."
@@ -887,6 +903,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
     timed_out = view.status in {"timed_out", "cancelled"}
     failed = (view.status == "failed" or timed_out or on_hold) and not view.diagnostics
+    if not failed and blocked is None and not view.diagnostics:
+        # An answer never says completed while a transaction has work left, unless Execute stopped at its target.
+        unsimulated_at = unsimulated_at or _unsettled(data)
 
     @functools.cache
     def handlers(frame: str | None) -> dict[str, Any]:
@@ -1413,10 +1432,24 @@ def _incident(status: str, variables: Mapping[str, object]) -> str | None:
     return code if status == "suspended" and isinstance(code, str) else None
 
 
+def _clocks(data: DebugState, terminal: set[str]) -> Iterator[tuple[RunState, list[Deadline]]]:
+    """The runs whose deadlines move the clock: the simulated workflow's, and each called run that hasn't ended. Not a
+    called run held on an incident, nor those waiting on it: they stay as they are until a person resolves it."""
+    if data.state is not None:
+        yield data.state, data.deadlines
+    held = [frame.key for frame in data.frames if frame.state is not None and frame.state.status == "suspended"]
+    for frame in data.frames:
+        if frame.state is None or frame.state.status in terminal:
+            continue
+        if not any(key == frame.key or key.startswith(frame.key + "/") for key in held):
+            yield frame.state, frame.deadlines
+
+
 def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:
     """Run until the end, the target, an incident (it waits for a person), or a signal or a person nobody scripted;
-    waits advance by themselves."""
+    waits advance by themselves, those of the called workflows too."""
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.transactions import due_deadline
     from firefly_weave.studio.local_contracts import Blocked
 
     nodes = {node.id: node for node in simulator.ir.graph.nodes}
@@ -1483,7 +1516,13 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
                 break
         if moved:
             continue
-        due = [d.deadline for d in data.deadlines if d.deadline >= data.now]
+        # Only a deadline its run would still take: one left behind by a step that ended would hold the clock.
+        due = [
+            deadline.deadline
+            for state, deadlines in _clocks(data, terminal)
+            for deadline in deadlines
+            if deadline.deadline >= data.now and due_deadline(state, deadline)
+        ]
         if not due:
             return None
         simulator.advance_time(max(0, math.ceil((min(due) - data.now).total_seconds())))
