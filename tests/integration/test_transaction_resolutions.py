@@ -662,9 +662,9 @@ async def test_a_run_that_recovery_leaves_alone_is_decided_as_it_was_read(platfo
     await platform.scan()
     assert (await by_key(platform, run.id)).keys() == {"hold#confirm:1"}
     before = [row["type"] for row in (await everything(platform, run.id))["run_events"]]
-    await resolve(platform, incident, "terminate", actor=reconciler)
-    assert (await platform.state(run.id))["status"] == "cancelled"
-    assert (await platform.record(run.id))["state"] == "force_ended"
+    await reconcile(platform, incident, reconciler)
+    assert (await platform.state(run.id))["status"] == "waiting"
+    assert (await platform.record(run.id))["state"] == "reconciled"
     after = [row["type"] for row in (await everything(platform, run.id))["run_events"]]
     assert after == [*before, "incident_resolved"]
 
