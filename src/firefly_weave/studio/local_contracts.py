@@ -33,6 +33,7 @@ from firefly_weave.contracts.step_errors import StepError, StepOutcome
 from firefly_weave.contracts.studio_documents import (
     ERROR_CODE_PATTERN,
     MAX_SIMULATED_ATTEMPTS,
+    NOTHING_APPLIED,
     REFERENCE_PATTERN,
     AiTurnsEntry,
     CalleeReference,
@@ -41,6 +42,7 @@ from firefly_weave.contracts.studio_documents import (
     SignalEntry,
     StudioTestData,
 )
+from firefly_weave.contracts.transactions import Effect
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 
 SOURCE_LIMIT = 1024 * 1024
@@ -105,12 +107,20 @@ class ExecuteTarget(_HostBody):
 class ScriptedFailure(_HostBody):
     """A failure a step reports in place of its result in this simulation; real runs never see one.
 
-    ``outcome`` and ``attempts`` are what the platform would report after the step's own retries.
+    ``outcome`` and ``attempts`` are what the platform would report after the step's own retries. ``effect`` says
+    whether a step inside a transaction may have applied anything; omitted, it follows from the code and the outcome.
     """
 
     code: str = Field(min_length=1, max_length=128, pattern=ERROR_CODE_PATTERN)
     outcome: StepOutcome = "failed"
     attempts: int = Field(default=1, ge=0, le=MAX_SIMULATED_ATTEMPTS)
+    effect: Effect | None = None
+
+    @model_validator(mode="after")
+    def effect_rule(self) -> Self:
+        if self.effect == "none" and self.outcome == "unknown":
+            raise ValueError(NOTHING_APPLIED)
+        return self
 
 
 class SimulationRequest(_HostBody):

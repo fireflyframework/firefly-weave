@@ -187,6 +187,17 @@ def test_mock_keys_follow_the_simulator_precedence_kinds(key, valid):
             lc.ExecuteRequest.model_validate_json(body)
 
 
+def test_a_failure_says_what_it_may_have_applied():
+    def failure(**fields) -> lc.ScriptedFailure:
+        return lc.ScriptedFailure.model_validate_json(json.dumps({"code": "REFUSED", **fields}))
+
+    assert failure().effect is None
+    assert failure(effect="none", outcome="not_started").effect == "none"
+    for refused in ({"effect": "maybe"}, {"effect": "none", "outcome": "unknown"}):
+        with pytest.raises(ValidationError):
+            failure(**refused)
+
+
 @pytest.mark.parametrize(
     "change",
     [

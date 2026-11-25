@@ -36,6 +36,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.ir import WorkflowIR
+    from firefly_weave.contracts.transactions import UndoPhase
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
@@ -322,15 +323,16 @@ def classify_test_data(
     """Pointers into the request of values a schema marks secret, and of values too large or too deep to classify.
 
     Only typed values are classified, each against its own schema: the input, each step mock by its step's output
-    fields, each action mock by its action's, each AI agent tool's mock by every schema of the tool's result and a mock
-    of one agent call for secrets by every tool's, each mock inside a called workflow by that workflow's step, each
-    signal payload, each person's answer, each saved AI turn's final answer by its profile's output fields, and each
-    saved tool call's arguments by its tool's input. Both lists are refused before anything is simulated.
+    fields (a confirm's, cancel's or undo's by that operation's own), each action mock by its action's, each AI agent
+    tool's mock by every schema of the tool's result and a mock of one agent call for secrets by every tool's, each
+    mock inside a called workflow by that workflow's step, each signal payload, each person's answer, each saved AI
+    turn's final answer by its profile's output fields, and each saved tool call's arguments by its tool's input. Both
+    lists are refused before anything is simulated.
     """
     from firefly_weave.compiler.agent_tools import offline_input_schema
     from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import _Failure
-    from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.compiler.test_data import pin_target, step_at
     from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
 
@@ -364,7 +366,7 @@ def classify_test_data(
                 instance = key.removeprefix("node:")
                 tools = _call_tools(workflow, instance, catalog)
                 if tools is None:
-                    check(_pointer(*prefix, key), output_target(workflow, step_at(workflow, instance), catalog), value)
+                    check(_pointer(*prefix, key), pin_target(workflow, instance, catalog), value)
                 # A mock of one call is checked for secrets by every schema of every tool, whether it fits that tool
                 # or not, since the saved turns decide which tool the call runs.
                 for schema in (schema for schemas in tools or [] for schema in schemas):
@@ -605,17 +607,20 @@ def _in_slice[V](document: JsonObject, whole: JsonObject, mocks: Mapping[str, V]
     A key that names no step (or action) anywhere in the workflow stays, so the simulator still refuses it.
     """
     from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
 
     def ids(workflow: JsonObject) -> set[str]:
         spec = workflow.get("spec")
         return {cast(str, step.get("id")) for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)}
 
     def actions(workflow: JsonObject) -> set[str]:
+        # The actions its steps run, and those that confirm, release or undo a step.
         spec = workflow.get("spec")
         return {
-            cast(str, step.get("uses"))
+            cast(str, operation.get("uses"))
             for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)
-            if step.get("kind") == "action"
+            for operation in (step, *(step.get(phase) for phase in PHASE_SEGMENTS))
+            if isinstance(operation, dict) and operation.get("kind") == "action"
         }
 
     kept_ids, all_ids = ids(document), ids(whole)
@@ -689,7 +694,7 @@ def simulator_for(
     mocks = with_ai_turns(artifact, kept, ai_turns)
     workflows = _called(artifact, request, callees, catalog)
     errors = {
-        key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts)
+        key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts, effect=failure.effect)
         for key, failure in _in_slice(document, whole, request.errors).items()
     }
     try:
@@ -764,6 +769,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     from firefly_weave.compiler.parser import ParseFailure, parse_source
     from firefly_weave.contracts.diagnostics import Diagnostic
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS, TRANSACTION_MESSAGES
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
     from firefly_weave.runtime.kernel import KernelError, prepare
@@ -929,6 +935,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 message=words,
             )
         )
+    if view.status == "failed" and view.variables.get("incident") == "WV-TXN-ROLLED-BACK":
+        # The run failed because its transaction was undone, and nothing it did stays applied.
+        words = TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]
+        extra.append(
+            Diagnostic(code="WV-TXN-ROLLED-BACK", severity="error", stage="evaluation", path="", message=words)
+        )
     for code in [*([held] if held is not None else []), *held_frames.values()]:
         words = _incident_words(code)
         extra.append(Diagnostic(code=code, severity="error", stage="evaluation", path="", message=words))
@@ -952,10 +964,19 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             inside, _, last = last.rpartition("/")
             step = node_of(last)
             called = parse_agent_key(last)
+            phase = _phase_of(last)
             if inside:
                 # Its test data goes under the called workflow's mocks, which apply wherever that workflow runs.
                 workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
                 message = f"Step {step} {f'in {workflow} ' if workflow else ''}needs test data."
+            elif phase is not None:
+                # A confirm, cancel or undo is answered at its own keys, never at its step's.
+                what = f"{_PHASE_NAMES[phase]} of {step}"
+                segment = PHASE_SEGMENTS[phase]
+                if {"node:" + last, f"node:{step}#{segment}"} & misfits:
+                    message = f"The pinned output of the {what} doesn't fit its output fields. Edit it, or unpin it."
+                else:
+                    message = f"The {what} needs test data."
             elif "node:" + last in misfits and called is not None and called.call is not None:
                 # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
                 message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
@@ -1055,6 +1076,22 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             *extra,
         ],
     )
+
+
+# What each phase of a step in a transaction does, as Studio names it.
+_PHASE_NAMES: Mapping[UndoPhase, str] = {"confirm": "confirm", "cancel": "release", "compensate": "undo"}
+
+
+def _phase_of(key: str) -> UndoPhase | None:
+    """The phase an instance key names (``hold#confirm``), or None for a step's own key."""
+    from firefly_weave.contracts.instance_keys import InvalidInstanceKey
+    from firefly_weave.contracts.transactions import split_phase
+
+    try:
+        found = split_phase(key)
+    except InvalidInstanceKey:
+        return None
+    return found[1] if found is not None else None
 
 
 def _error_handlers(ir: WorkflowIR) -> dict[str, Any]:
@@ -1243,11 +1280,12 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
 
 
 def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catalog: CatalogSnapshot) -> set[str]:
-    """Step mocks that no longer fit their step's output fields: left out, so the step asks for test data instead of
-    the whole run being refused for a pin it may never reach."""
+    """Step mocks that no longer fit their step's output fields, or those of the confirm, cancel or undo they stand
+    for: left out, so the step asks for test data instead of the whole run being refused for a pin it may never
+    reach."""
     from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import validate_payload
-    from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.compiler.test_data import pin_target
 
     bundle = platform_schema_bundle() | {name: schema.value for name, schema in catalog.schemas.items()}
     misfits = set()
@@ -1260,7 +1298,7 @@ def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catal
             if not _fits_a_tool(tools, value, bundle):
                 misfits.add(key)
             continue
-        target = output_target(document, step_at(document, key.removeprefix("node:")), catalog)
+        target = pin_target(document, key.removeprefix("node:"), catalog)
         if isinstance(target, dict) and validate_payload(target, value, bundle):
             misfits.add(key)
     return misfits
