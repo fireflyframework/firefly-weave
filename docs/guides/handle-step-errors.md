@@ -180,9 +180,12 @@ confirm, cancel or undo, is always the transaction's. When the step that can't
 be undone fails with nothing applied and has the setting, the transaction stays
 open and the body goes on, so its reservations are confirmed at the end instead
 of released. A transaction step with the setting handles its own
-clean rollback (`WV-TXN-ROLLED-BACK`, outcome `failed`); a transaction in
-doubt is never handled, and when a person says the step that can't be undone
-didn't happen, the transaction goes back even if that step has the setting.
+clean rollback (`WV-TXN-ROLLED-BACK`, outcome `failed`). Continue does nothing
+on a transaction whose block can never complete, because every way through it
+reaches a Fail step: no step follows such a block, so a rollback fails the run
+as without the setting. A transaction in doubt is never handled, and when a
+person says the step that can't be undone didn't happen, the transaction goes
+back even if that step has the setting.
 
 ## What you see
 

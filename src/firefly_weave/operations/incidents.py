@@ -691,7 +691,7 @@ class IncidentService:
         try:
             ending, _, output = check_reconciliation(record, request.output)
             if ending == "completed":
-                block_output(ir, nodes[node_of(cast(str, owner))], output)
+                block_output(ir, nodes[node_of(cast(str, owner))], output, goes_on=state.ending is None)
         except (KernelError, ValueError) as error:
             raise CatalogError(
                 422, "WV-RUNTIME-OUTPUT", "The reconciliation record doesn't fit the transaction"
