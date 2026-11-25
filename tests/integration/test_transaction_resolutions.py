@@ -779,8 +779,9 @@ async def test_a_step_that_failed_beside_the_decision_is_retried_with_a_fresh_ti
 
 
 async def test_a_reconcile_says_nothing_of_a_step_that_failed_beside_the_decision(platform, reconciler):
-    run, incident = await failed_beside(platform)
+    run, _ = await failed_beside(platform)
     await platform.complete(await platform.lease("hold#confirm"))
+    incident = await active(platform, run.id)
     confirmed = [{"instance_key": "hold", "outcome": "confirmed"}]
     # It changes nothing, so it's no part of the transaction and there is no ending to state for it.
     named = {**FINISHED, "participants": [*confirmed, {"instance_key": "lookup", "outcome": "done"}]}

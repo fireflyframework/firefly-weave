@@ -73,7 +73,7 @@ def earlier(monkeypatch):
 
     current = settlement.project_transactions
 
-    async def skipping(repository, view, result, event):
+    async def skipping(repository, view, result, event, incidents):
         kept = [
             command
             for command in result.commands
@@ -83,7 +83,7 @@ def earlier(monkeypatch):
                 and command.node_id not in result.state.transactions
             )
         ]
-        await current(repository, view, result.model_copy(update={"commands": kept}), event)
+        await current(repository, view, result.model_copy(update={"commands": kept}), event, incidents)
 
     monkeypatch.setattr(settlement, "project_transactions", skipping)
     return lambda: monkeypatch.setattr(settlement, "project_transactions", current)

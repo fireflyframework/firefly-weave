@@ -17,6 +17,7 @@
 """Scoped runtime SQL. Durable intents become visible only after caller commit."""
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -106,6 +107,15 @@ def candidates_query() -> str:
         "AND NOT coalesce((r.state->>'manual_paused')::boolean,false) FROM runs r "
         "WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit) ORDER BY rank,id LIMIT :limit"
     )
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentChanges:
+    """The incident rows an event opened (a new one, one that opens again, or one that says something else now), by
+    their key, and the steps or phases and codes of those it closed."""
+
+    opened: frozenset[str] = frozenset()
+    closed: tuple[tuple[str | None, str], ...] = ()
 
 
 class RuntimeRepository:
@@ -283,7 +293,7 @@ class RuntimeRepository:
             state=result.state.model_dump_json(),
             run=view.id,
         )
-        await self.project_incidents(view, at=event.timestamp)
+        incidents = await self.project_incidents(view, at=event.timestamp)
         for change in result.steps:
             await self.execute(
                 "INSERT INTO step_instances "
@@ -376,7 +386,7 @@ class RuntimeRepository:
                         await expire_task(self, view.id, command.node_id)
                     awaited = command.node_id in result.state.active
                     await settle_work(self, view.id, command.node_id, event.timestamp, awaited=awaited)
-            await project_transactions(self, view, result, event)
+            await project_transactions(self, view, result, event, incidents)
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":
             await self.execute(
@@ -669,16 +679,19 @@ class RuntimeRepository:
         )
         return [row["id"] for row in rows]
 
-    async def project_incidents(self, view: RunView | TerminalControl, *, at: datetime | None = None) -> None:
+    async def project_incidents(
+        self, view: RunView | TerminalControl, *, at: datetime | None = None
+    ) -> IncidentChanges:
         """Projection only: never changes or repairs authoritative accepted state. The row of an incident the state
         holds is active: one may open again under the key of an incident that ended, and then its row does too."""
         at = at if at is not None else await self.now()
         active = {key: value.model_dump() for key, value in view.state.incidents.items()}
         if view.state.status == "suspended" and not active and view.state.incident:
             active["@legacy"] = {"node_id": None, "generation": None, "code": view.state.incident}
+        opened: set[str] = set()
         for key, value in active.items():
             identity = author_instance(value["node_id"]) if value["node_id"] is not None else None
-            await self.execute(
+            changed = await self.rows(
                 f"WITH ended AS (SELECT id FROM incidents WHERE {SCOPE} AND run_id=:run AND incident_key=:key "
                 "AND status<>'active'), "
                 "changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
@@ -691,16 +704,17 @@ class RuntimeRepository:
                 # A transaction in doubt keeps the failure that put it there.
                 "origin_code=CASE WHEN :origin IS NULL AND incidents.status='active' THEN incidents.origin_code "
                 "ELSE excluded.origin_code END,revision=incidents.revision+1 "
-                "WHERE incidents.status<>'active' OR incidents.code<>excluded.code RETURNING id) "
-                "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
-                "opened_at,updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,"
-                "c.id,:fact_node,:instance,:at,:at,f.workflow_name,f.workflow_version,f.test FROM changed c "
+                "WHERE incidents.status<>'active' OR incidents.code<>excluded.code RETURNING id), "
+                "facts AS (INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,"
+                "instance_key,opened_at,updated_at,workflow_name,workflow_version,test) "
+                "SELECT :tenant,:project,:environment,c.id,:fact_node,:instance,:at,:at,"
+                "f.workflow_name,f.workflow_version,f.test FROM changed c "
                 f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
                 "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at,"
                 # Nothing was open in between, so the age of a row that opens again starts again.
                 "opened_at=CASE WHEN EXISTS(SELECT 1 FROM ended) THEN excluded.opened_at "
                 "ELSE incident_facts.opened_at END,opened_at_estimated=incident_facts.opened_at_estimated "
-                "AND NOT EXISTS(SELECT 1 FROM ended)",
+                "AND NOT EXISTS(SELECT 1 FROM ended)) SELECT id FROM changed",
                 fact_node=identity.node_id if identity else None,
                 instance=identity.instance_key if identity else "",
                 at=at,
@@ -711,14 +725,18 @@ class RuntimeRepository:
                 code=value["code"],
                 origin=value.get("origin_code"),
             )
-        await self.execute(
+            if changed:
+                opened.add(key)
+        closed = await self.rows(
             f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
-            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[]))) RETURNING id) "
-            f"UPDATE incident_facts SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM closed)",
+            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[]))) RETURNING id,node_id,code), "
+            f"facts AS (UPDATE incident_facts SET updated_at=:at WHERE {SCOPE} "
+            "AND incident_id IN (SELECT id FROM closed)) SELECT node_id,code FROM closed",
             at=at,
             run=view.id,
             keys=list(active),
         )
+        return IncidentChanges(frozenset(opened), tuple((row["node_id"], row["code"]) for row in closed))
 
     async def observe_policy_block(self, row: dict[str, Any]) -> None:
         """Trusted scanner/claim observation; caller holds this scoped run lock."""
