@@ -853,6 +853,46 @@ describe("Cancel without undoing", () => {
     expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
   });
 
+  for (const command of ["Cancel run", "Cancel without undoing"])
+    it(`keeps what ${command} found in the 10 pages it read of 11 over the first page read again`, async () => {
+      const s = shell();
+      s.actions.know(first, firstPage, false);
+      // The transaction in doubt is on page 3 of 11.
+      s.platform.pages = Array.from({ length: 11 }, (_, page) =>
+        page === 0 ? firstPage : page === 2 ? [inDoubt] : [settled],
+      );
+      if (command === "Cancel run") await s.actions.cancel();
+      else await s.actions.cancelWithoutUndoing();
+      expect(s.calls.transactionReads).toHaveLength(10);
+      // The section reads its first page again, every 2 s: the button stays in
+      // the row, held back by the transaction on page 3, with its incident.
+      for (const poll of [1, 2]) {
+        s.actions.know(first, firstPage, false);
+        expect(s.actions.withoutUndoing(), `poll ${poll}`).toEqual({
+          blocked: { text: IN_DOUBT_LINE, incidentId: incident },
+        });
+      }
+    });
+
+  it("keeps the 10 pages of 11 read after a refusal because a transaction is in doubt", async () => {
+    const s = shell();
+    const eleven = (third: RunTransactionView) =>
+      Array.from({ length: 11 }, (_, page) =>
+        page === 0 ? firstPage : page === 2 ? [third] : [settled],
+      );
+    s.platform.pages = eleven(settled);
+    const sending = s.actions.cancel();
+    await s.settle();
+    // The transaction on page 3 goes in doubt before the cancel arrives.
+    s.platform.pages = eleven(inDoubt);
+    s.refuse(refused(409, "WV-TXN-IN-DOUBT", "Resolve the transaction first."));
+    await sending;
+    s.actions.know(first, firstPage, false);
+    expect(s.actions.withoutUndoing()).toEqual({
+      blocked: { text: IN_DOUBT_LINE, incidentId: incident },
+    });
+  });
+
   it("keeps every page read for one run apart from the first page of another", () => {
     const s = shell();
     s.actions.know(first, [inDoubt], true);

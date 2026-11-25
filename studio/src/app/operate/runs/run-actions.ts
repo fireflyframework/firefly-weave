@@ -227,8 +227,12 @@ export class RunActions {
     runId: string;
     views: RunTransactionView[];
     complete: boolean;
-    /** A read of every page is in `views`, though more may have opened since. */
-    everyPage: boolean;
+    /**
+     * A command's read is in `views`, or every page is: the detail's first
+     * page, read again, updates it. More may have opened since, or lie past
+     * the pages a command reads.
+     */
+    base: boolean;
   } | null = null;
 
   constructor(
@@ -246,21 +250,26 @@ export class RunActions {
     this.cancelDialog = null;
   }
   /**
-   * The run's transactions as the detail or a command just read them, and
-   * whether that was every page. The detail reads its first page again every
-   * 2 s: that page doesn't replace every page a command read, it updates the
-   * records they share, each time. It can't say the list is still whole: the
-   * run lists its oldest transactions first, so a new one lands on a later
-   * page.
+   * The run's transactions as the detail or a command just read them, whether
+   * that was every page, and whether it is a `base`: a command's read, which
+   * may stop at MAX_PAGES, or every page. The detail reads its first page
+   * again every 2 s: that page doesn't replace a base, it updates the records
+   * they share, each time. It can't say the list is still whole: the run lists
+   * its oldest transactions first, so a new one lands on a later page.
    */
-  know(runId: string, views: RunTransactionView[] | null, complete: boolean) {
+  know(
+    runId: string,
+    views: RunTransactionView[] | null,
+    complete: boolean,
+    base = complete,
+  ) {
     const held = this.known;
     if (!views) {
       this.known = null;
       return;
     }
-    if (complete || !held?.everyPage || held.runId !== runId) {
-      this.known = { runId, views, complete, everyPage: complete };
+    if (base || !held?.base || held.runId !== runId) {
+      this.known = { runId, views, complete, base };
       return;
     }
     const newer = new Map(views.map((view) => [view.instance_key, view]));
@@ -273,7 +282,7 @@ export class RunActions {
         ...added,
       ],
       complete: false,
-      everyPage: true,
+      base: true,
     };
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
@@ -371,7 +380,7 @@ export class RunActions {
     // pages remain unread, one there may not have settled either.
     const read = await this.readWhileBusy(target, "Cancel run");
     if (!this.current(target)) return;
-    if (read) this.know(target.id, read.views, read.complete);
+    if (read) this.know(target.id, read.views, read.complete, true);
     const doubt = read?.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       this.cancelDialog = {
@@ -511,7 +520,7 @@ export class RunActions {
         "danger",
       );
     if (!read) return unread("its transactions");
-    this.know(target.id, read.views, read.complete);
+    this.know(target.id, read.views, read.complete, true);
     const doubt = read.views.find((view) => view.state === "in_doubt");
     if (doubt) {
       host.notify(IN_DOUBT_LINE, this.incidentAction(doubt), "danger");
@@ -651,7 +660,7 @@ export class RunActions {
     if (plain.status !== 409 || plain.code !== "WV-TXN-IN-DOUBT") return false;
     const read = await this.readTransactions(target);
     if (read && this.current(target))
-      this.know(target.id, read.views, read.complete);
+      this.know(target.id, read.views, read.complete, true);
     this.host().notify(
       `${failed} ${sentence(plain.message)} Support code: ${plain.code}.`,
       this.incidentAction(
