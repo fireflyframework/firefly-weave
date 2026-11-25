@@ -257,7 +257,10 @@ test.describe("The rule editor's states", () => {
     await expect(result).toContainText(
       "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
     );
-    await expect(result).not.toContainText("it doesn't fire");
+    // Its own words, not the general ones.
+    await expect(result).not.toContainText(
+      "With no data, the rule doesn't fire",
+    );
     await shot(page, "alerts-preview-nothing-undoing-1440");
   });
 

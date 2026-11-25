@@ -241,6 +241,19 @@ describe("run detail", () => {
     });
   });
 
+  it("says where a run stopped for an incident without a code, and nothing else", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incidents: { "check:0": { node_id: "check" } },
+          },
+        }),
+      ),
+    ).toEqual({ step: "check", text: "", code: "" });
+  });
+
   it("says why an ended run stopped, with no incident left to open", () => {
     expect(
       runIncident(

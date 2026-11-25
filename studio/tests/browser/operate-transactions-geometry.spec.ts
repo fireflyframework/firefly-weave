@@ -657,7 +657,7 @@ for (const size of sizes)
       expect(platform.sent).toEqual([]);
     });
 
-    test("the Overview panel sits last and holds its counts and link", async ({
+    test("the Overview panel holds its counts and its link, whole and full size", async ({
       page,
     }) => {
       await transactionsPlatform(page);

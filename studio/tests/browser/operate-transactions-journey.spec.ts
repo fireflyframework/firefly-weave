@@ -357,7 +357,7 @@ test("from the runs that need attention to none in doubt, and no business key le
     });
   };
 
-  // ---- Overview counts four, and its link opens the runs to look at.
+  // ---- Overview counts four, and lists them first among what needs attention.
   await go(page, "Overview");
   const counts = overviewPanel(page).locator("dd");
   await expect(counts).toHaveText(["4", "1"]);
@@ -612,6 +612,10 @@ test("from the runs that need attention to none in doubt, and no business key le
 test("the scan sees a business key in each place it watches", async ({
   page,
 }) => {
+  // A headless browser may have no notifications: the watch wraps this one.
+  await page.addInitScript(() => {
+    window.Notification ??= class {} as unknown as typeof Notification;
+  });
   const scan = await KeyScan.on(page);
   await transactionsPlatform(page);
   await page.route("**/lumi/**", (route) => route.fulfill({ json: {} }));
@@ -635,6 +639,11 @@ test("the scan sees a business key in each place it watches", async ({
       notice.textContent = "Resolved T-1029.";
       document.body.append(notice);
     }),
+  );
+  await seen("notification", () =>
+    page.evaluate(
+      () => void new Notification("Resolved", { body: "Business key T-1029" }),
+    ),
   );
   await seen("console", () =>
     page.evaluate(() => console.log("Resolving T-1029")),
