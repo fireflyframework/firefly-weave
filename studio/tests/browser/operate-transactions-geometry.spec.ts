@@ -135,6 +135,23 @@ async function expectTargets(
     expect(target.width, selector).toBeGreaterThanOrEqual(width - 0.5);
   }
 }
+/** The sides of an element, `grow` px outside it, that something else cuts off or lies over. */
+const hiddenSides = (element: Locator, grow = 0): Promise<string[]> =>
+  element.evaluate((node, outside) => {
+    const around = node.closest("article")!;
+    const { left, right, top, bottom } = node.getBoundingClientRect();
+    const [x1, x2] = [left - outside + 0.5, right + outside - 0.5];
+    const [y1, y2] = [top - outside + 0.5, bottom + outside - 0.5];
+    return Object.entries({
+      top: [(x1 + x2) / 2, y1],
+      right: [x2, (y1 + y2) / 2],
+      bottom: [(x1 + x2) / 2, y2],
+      left: [x1, (y1 + y2) / 2],
+    }).flatMap(([side, [x, y]]) => {
+      const shown = document.elementFromPoint(x, y);
+      return shown && around.contains(shown) ? [] : [side];
+    });
+  }, grow);
 /** Whole in the window, without scrolling. */
 async function expectInView(page: Page, ...parts: Locator[]) {
   const { height } = page.viewportSize()!;
@@ -460,6 +477,43 @@ for (const size of sizes)
       expect(
         Object.entries(heights).filter(([, height]) => height < least - 0.5),
       ).toEqual([]);
+    });
+
+    test("going to the transaction in doubt shows its card from the top, its name's focus ring and Open incident whole", async ({
+      page,
+    }) => {
+      await transactionsPlatform(page, { capabilities: reconciler });
+      for (const [run, key] of [
+        [runs.called, "apply"],
+        [runs.loop, "move[3]"],
+      ]) {
+        await openRunDetail(page, run);
+        await page
+          .getByRole("button", { name: "Go to the transaction" })
+          .focus();
+        await page.keyboard.press("Enter");
+        const card = block(page, key);
+        const name = card.getByRole("heading");
+        await expect(name).toBeFocused();
+        const ring = await name.evaluate((element) => {
+          const { outlineStyle, outlineWidth, outlineOffset } =
+            getComputedStyle(element);
+          return outlineStyle === "none"
+            ? 0
+            : parseFloat(outlineWidth) + parseFloat(outlineOffset);
+        });
+        expect(ring).toBeGreaterThan(0);
+        expect(
+          {
+            card: (await hiddenSides(card)).filter((side) => side === "top"),
+            name: await hiddenSides(name, ring),
+            open: await hiddenSides(
+              card.getByRole("button", { name: "Open incident" }),
+            ),
+          },
+          key,
+        ).toEqual({ card: [], name: [], open: [] });
+      }
     });
 
     test("a run held whole keeps its ID and its state on one line, and what resolves it in view", async ({
