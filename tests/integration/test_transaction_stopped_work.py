@@ -212,12 +212,33 @@ async def ended(platform, run_id, status: str) -> None:
     assert (await platform.record(run_id))["state"] == "reconciled"
 
 
-async def lookup_stopped(platform, *, by: str):
+async def started_by_an_earlier_version(platform, run_id) -> None:
+    """The run follows the transaction rules of the version that started it: its state says nothing of rules."""
+    await platform.execute("UPDATE runs SET state=state-'transaction_rules' WHERE id=:run", run=run_id)
+
+
+def resolved_by_an_earlier_version(monkeypatch) -> None:
+    """A resolution moves no run to the transaction rules of this version."""
+    from firefly_weave.operations import incidents
+
+    current = incidents.transition
+
+    async def earlier(state, event, artifact):
+        said = {key: value for key, value in event.data.items() if key not in {"transaction_rules", "transaction"}}
+        return await current(state, event.model_copy(update={"data": said}), artifact)
+
+    monkeypatch.setattr(incidents, "transition", earlier)
+
+
+async def lookup_stopped(platform, *, by: str, earlier: bool = False):
     """The read failed and the rollback, which the ``hold`` time or a ``cancel`` of the run started, stopped it before
-    recovery handled that failure; then the reservation's cancel got stuck."""
+    recovery handled that failure; then the reservation's cancel got stuck. Only a run an ``earlier`` version started
+    still shows the read's failure."""
     run = await platform.start(
         await platform.publish(workflow("move", [transaction(hold(holdSeconds=600), LOOKUP, add()), PAUSE]))
     )
+    if earlier:
+        await started_by_an_earlier_version(platform, run.id)
     await platform.complete(await platform.lease("hold"))
     await platform.fail(await platform.lease("lookup"), "UNAVAILABLE")
     if by == "hold":
@@ -229,10 +250,10 @@ async def lookup_stopped(platform, *, by: str):
     open_incidents = await platform.query(
         "SELECT * FROM incidents WHERE run_id=:run AND status='active' ORDER BY incident_key", run=run.id
     )
-    assert [found["code"] for found in open_incidents] == ["WV-TXN-CANCEL-STUCK", "WV-TASK-FAILED"]
+    left = ["WV-TASK-FAILED"] if earlier else []
+    assert [found["code"] for found in open_incidents] == ["WV-TXN-CANCEL-STUCK", *left]
     assert (await platform.state(run.id))["active"] == []
-    stuck, failed = open_incidents
-    return run, stuck, failed
+    return run, open_incidents[0]
 
 
 def beside_another_transaction() -> dict[str, Any]:
@@ -276,7 +297,7 @@ async def left_running(platform, reconciler):
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
     await busy(platform, run.id, "hold2#confirm", hours=0)
     confirm = await platform.lease("hold2#confirm")
-    await completed(platform, stuck, reconciler, hold="confirmed")
+    await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     await leave(platform, confirm, "leased")
     return run, confirm
 
@@ -298,7 +319,7 @@ async def test_an_unclaimed_confirm_of_a_reconciled_transaction_is_never_reporte
     platform, reconciler
 ):
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
-    await completed(platform, stuck, reconciler, hold="confirmed")
+    await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     await platform.scan()
     await goes_on(platform, run.id, "pause")
     assert await reported(platform, run.id, "hold2#confirm") == []
@@ -319,7 +340,7 @@ async def test_an_unclaimed_confirm_is_never_reported_once_its_loop_iteration_en
         },
     }
     run, stuck = await one_confirm_stuck(platform, [each], "[0]")
-    await completed(platform, stuck, reconciler, **{"hold[0]": "confirmed"})
+    await completed(platform, stuck, reconciler, **{"hold[0]": "confirmed", "hold2[0]": "confirmed"})
     await platform.scan()
     await goes_on(platform, run.id, "hold[1]")
     assert await reported(platform, run.id, "hold2[0]#confirm") == []
@@ -328,7 +349,7 @@ async def test_an_unclaimed_confirm_is_never_reported_once_its_loop_iteration_en
 
 async def test_a_stopped_confirm_still_marked_to_be_reported_is_dropped(platform, reconciler):
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
-    await completed(platform, stuck, reconciler, hold="confirmed")
+    await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     await goes_on(platform, run.id, "pause")
     await platform.execute(
         "UPDATE task_intents SET status='revoked' WHERE run_id=:run AND node_id='hold2#confirm'", run=run.id
@@ -383,7 +404,7 @@ async def test_a_claimed_confirm_of_a_reconciled_transaction_loses_its_lease_and
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
     await busy(platform, run.id, "hold2#confirm", hours=0)
     confirm = await platform.lease("hold2#confirm")
-    await completed(platform, stuck, reconciler, hold="confirmed")
+    await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     assert await attempts(platform, run.id, "hold2#confirm") == ["control_revoked"]
     assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")
     await platform.expire(confirm)
@@ -396,7 +417,7 @@ async def test_a_worker_that_still_ends_a_stopped_confirm_is_refused_and_changes
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
     await busy(platform, run.id, "hold2#confirm", hours=0)
     confirm = await platform.lease("hold2#confirm")
-    await completed(platform, stuck, reconciler, hold="confirmed")
+    await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     with pytest.raises(CatalogError) as refused:
         await platform.complete(confirm)
     assert (refused.value.status, refused.value.code) == (409, "WV-LEASE")
@@ -427,7 +448,7 @@ async def test_a_reconcile_waits_for_a_failed_confirm_to_be_handled_and_then_the
     await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed")
     assert await task(platform, run.id, "hold2#confirm") == ("failed", "failed")
     await platform.scan()
-    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed")
+    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed", hold2="confirmed")
     await goes_on(platform, run.id, "pause")
     assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")
     assert await reported(platform, run.id, "hold2#confirm") == ["task_failed", "recovery_scheduled"]
@@ -463,7 +484,7 @@ async def test_a_reconcile_waits_only_for_the_failures_of_its_own_transaction(pl
     await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed")
     await platform.scan()
     await platform.fail(other, "UNAVAILABLE")
-    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed")
+    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed", hold2="confirmed")
     await platform.scan()
     # The other transaction's failure is recovery's as usual: that step failed for good, so it is undone.
     await goes_on(platform, run.id, "add3#undo")
@@ -480,41 +501,27 @@ async def test_a_force_end_never_waits_for_a_failure_to_be_handled(platform, rec
     assert (await platform.record(run.id))["state"] == "force_ended"
 
 
+@pytest.mark.parametrize("earlier", [False, True])
 async def test_a_reconcile_as_compensated_never_waits_for_a_failed_step_that_the_hold_deadline_stopped(
-    platform, reconciler
+    platform, reconciler, earlier
 ):
-    run, stuck, _ = await lookup_stopped(platform, by="hold")
+    run, stuck = await lookup_stopped(platform, by="hold", earlier=earlier)
     await compensated(platform, stuck, reconciler, "hold")
     await ended(platform, run.id, "failed")
 
 
-@pytest.mark.parametrize("ended_by", ["terminate", "cancel"])
-async def test_a_reconcile_as_completed_never_waits_for_a_failed_step_that_the_hold_deadline_stopped(
-    platform, reconciler, ended_by
-):
-    run, stuck, failed = await lookup_stopped(platform, by="hold")
+@pytest.mark.parametrize("earlier", [False, True])
+async def test_a_run_goes_on_after_a_reconcile_whose_hold_deadline_stopped_a_failed_step(platform, reconciler, earlier):
+    run, stuck = await lookup_stopped(platform, by="hold", earlier=earlier)
     await completed(platform, stuck, reconciler, hold="confirmed")
     assert (await platform.record(run.id))["state"] == "reconciled"
-    # The stopped step's incident still holds the run, and only ending the run closes it.
-    state = await platform.state(run.id)
-    assert (state["status"], list(state["incidents"])) == ("suspended", ["lookup:1"])
-    for kind, code, record in (
-        ("retry_safe", "WV-RUNTIME-STATE", {}),
-        ("accept_reconciled_result", "WV-RUNTIME-STATE", {"output": {"count": 1}, "evidence_reference": "ticket-17"}),
-        ("accept_reconciled_failure", "WV-RUNTIME-RECONCILIATION_REQUIRED", {"evidence_reference": "ticket-17"}),
-    ):
-        with pytest.raises(CatalogError) as refused:
-            await resolve(platform, failed, kind, reconciler, **record)
-        assert (refused.value.status, refused.value.code) == (409, code)
-    if ended_by == "terminate":
-        await resolve(platform, failed, "terminate", reconciler)
-    else:
-        await cancel(platform, run.id)
-    await ended(platform, run.id, "cancelled")
+    await goes_on(platform, run.id, "pause")
+    assert await platform.query("SELECT id FROM incidents WHERE run_id=:run AND status='active'", run=run.id) == []
 
 
-async def test_a_reconcile_never_waits_for_a_failed_step_that_a_run_cancel_stopped(platform, reconciler):
-    run, stuck, _ = await lookup_stopped(platform, by="cancel")
+@pytest.mark.parametrize("earlier", [False, True])
+async def test_a_reconcile_never_waits_for_a_failed_step_that_a_run_cancel_stopped(platform, reconciler, earlier):
+    run, stuck = await lookup_stopped(platform, by="cancel", earlier=earlier)
     await compensated(platform, stuck, reconciler, "hold")
     await ended(platform, run.id, "cancelled")
 
@@ -550,27 +557,32 @@ async def test_recovery_cancels_only_an_unfinished_task_its_run_no_longer_waits_
         assert (await task(platform, run.id, "hold2#confirm"))[0] == end, status
 
 
-@pytest.mark.parametrize("decision", ["retry_safe", "accept_reconciled_result"])
 async def test_a_person_still_closes_the_failure_an_earlier_version_left_behind_a_reconcile(
-    platform, reconciler, monkeypatch, decision
+    platform, reconciler, monkeypatch
 ):
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
+    await started_by_an_earlier_version(platform, run.id)
     await busy(platform, run.id, "hold2#confirm", hours=0)
     confirm = await platform.lease("hold2#confirm")
     await platform.fail(confirm, "UNAVAILABLE")
     with monkeypatch.context() as earlier:
         # Earlier versions took the decision at once and left the failed task as it was.
         earlier.setattr("firefly_weave.operations.incidents.failure_in_progress", lambda *_: False, raising=False)
-        await completed(platform, stuck, reconciler, hold="confirmed")
+        resolved_by_an_earlier_version(earlier)
+        await completed(platform, stuck, reconciler, hold="confirmed", hold2="confirmed")
     await leave(platform, confirm, "failed", attempt="failed")
     await recovery_reaches_another_run(platform)
     assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
     failed = await incident(platform, run.id, "WV-TASK-FAILED")
-    record = {} if decision == "retry_safe" else {"output": {}, "evidence_reference": "ticket-17"}
-    await resolve(platform, failed, decision, reconciler, **record)
+    # The person already said how its transaction ended, so there is no result of it to accept.
+    with pytest.raises(CatalogError) as refused:
+        await resolve(
+            platform, failed, "accept_reconciled_result", reconciler, output={}, evidence_reference="ticket-17"
+        )
+    assert refused.value.status == 409
+    await resolve(platform, failed, "retry_safe", reconciler)
     await goes_on(platform, run.id, "pause")
-    # Nobody does it again: the person already said how its transaction ended.
+    # Nobody does it again.
     await platform.claim()
     assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
-    ended = "cancelled" if decision == "retry_safe" else "completed"
-    assert await task(platform, run.id, "hold2#confirm") == (ended, ended)
+    assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")

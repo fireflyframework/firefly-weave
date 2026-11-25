@@ -57,7 +57,10 @@ MOCKS = {
     "node:submit": {"orderId": "o-1"},
     "node:notify": {},
 }
-UNDONE = {"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}
+UNDONE = {
+    "as": "compensated",
+    "participants": [{"instance_key": key, "outcome": "undone"} for key in ("hold", "add")],
+}
 COMPLETED = {"as": "completed", "participants": [{"instance_key": "hold", "outcome": "confirmed"}]}
 REMOVED = "action:target-system.remove-quantity@1.0.0"
 WAIT = {"id": "pause", "kind": "wait", "durationSeconds": 60}
@@ -252,6 +255,13 @@ def test_a_resolution_its_code_doesnt_take_is_refused_whole():
     simulator = in_doubt(compiled([move()]), PIVOT_UNKNOWN)
     refused(simulator, "submit:1", "retry_safe")
     refused(simulator, "nothing:0", "terminate")
+
+
+def test_a_reconciliation_that_leaves_a_step_out_is_refused_in_a_session():
+    simulator = in_doubt(compiled([move()]), UNDO_STUCK)
+    for left_out in range(2):
+        short = [step for index, step in enumerate(UNDONE["participants"]) if index != left_out]
+        refused(simulator, "add#undo:10", "accept_reconciled_result", {**UNDONE, "participants": short})
 
 
 def frame_in_doubt():

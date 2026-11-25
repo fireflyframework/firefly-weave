@@ -91,6 +91,11 @@ async def undo_stuck(platform, steps=None):
     return run, incident
 
 
+def undone(*keys: str) -> dict[str, Any]:
+    """A person's record of a transaction that was undone, with the steps they undid."""
+    return {"as": "compensated", "participants": [{"instance_key": key, "outcome": "undone"} for key in keys]}
+
+
 async def pivot_unknown(platform, *after):
     name = "move-then-notify" if after else "move"
     activation = await platform.publish(workflow(name, [transaction(hold(), add(), submit(), *after)]))
@@ -130,7 +135,7 @@ async def test_a_resolution_while_the_latest_attempt_runs_is_refused(platform, r
     await platform.execute(
         "UPDATE task_intents SET status='leased' WHERE run_id=:run AND node_id='add#undo'", run=run.id
     )
-    record = {"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}
+    record = undone("hold", "add")
     for kind, fields in (
         ("retry_safe", {}),
         ("accept_reconciled_result", {"output": record, "evidence_reference": "T-17"}),
@@ -143,7 +148,7 @@ async def test_a_resolution_while_the_latest_attempt_runs_is_refused(platform, r
 
 async def test_mark_as_reconciled_needs_the_reconcile_capability_a_reason_and_evidence(platform, reconciler):
     run, incident = await undo_stuck(platform)
-    record = {"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}
+    record = undone("hold", "add")
     with pytest.raises(AccessDenied):
         await resolve(platform, incident, "accept_reconciled_result", output=record, evidence_reference="T-17")
     with pytest.raises(CatalogError) as refused:
@@ -185,6 +190,36 @@ async def test_mark_as_reconciled_needs_the_reconcile_capability_a_reason_and_ev
         evidence_reference="T-17",
     )
     assert replayed == resolved
+
+
+@pytest.mark.parametrize(
+    ("record", "code", "message"),
+    [
+        (undone("add"), "WV-TXN-RECONCILE-INCOMPLETE", "Say what happened to: hold."),
+        (undone(), "WV-TXN-RECONCILE-INCOMPLETE", "Say what happened to: hold, add."),
+        ({**undone(), "blockOutput": 1}, "WV-RUNTIME-OUTPUT", "The reconciliation record doesn't fit the transaction"),
+        (undone("hold", "add", "nowhere"), "WV-RUNTIME-OUTPUT", "The reconciliation record doesn't fit"),
+    ],
+)
+async def test_a_reconciliation_that_leaves_a_step_out_says_which_and_changes_nothing(
+    platform, reconciler, record, code, message
+):
+    run, incident = await undo_stuck(platform)
+    before = await platform.state(run.id)
+    with pytest.raises(CatalogError) as refused:
+        await resolve(
+            platform,
+            incident,
+            "accept_reconciled_result",
+            actor=reconciler,
+            output=record,
+            evidence_reference="T-17",
+        )
+    assert (refused.value.status, refused.value.code) == (422, code)
+    assert refused.value.message.startswith(message)
+    assert await platform.state(run.id) == before
+    [after] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=incident["id"])
+    assert after == incident
 
 
 async def test_reconciled_as_completed_needs_a_valid_block_output(platform, reconciler):

@@ -40,7 +40,7 @@ from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.step_errors import confirmable
-from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase, unsaid_message
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
@@ -53,7 +53,7 @@ from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
-from firefly_weave.runtime.transactions import TRANSACTION_RULES, shapes
+from firefly_weave.runtime.transactions import TRANSACTION_RULES, doubted_steps, shapes
 from firefly_weave.runtime.waits import TERMINAL, settle
 from firefly_weave.workers.control import revoke_attempts
 from firefly_weave.workers.leases import TaskService
@@ -573,6 +573,7 @@ class IncidentService:
             block_output,
             called_workflow,
             check_reconciliation,
+            unsaid_steps,
             validate,
         )
         from firefly_weave.runtime.transactions import HELD_INCIDENT
@@ -691,8 +692,12 @@ class IncidentService:
                 "An attempt of this transaction failed and that failure is still being handled; try again in a moment",
             )
         record = state.transactions[cast(str, owner)]
+        facts = shapes(ir)
+        doubted = doubted_steps(facts, state, cast(str, owner)) if facts is not None else frozenset()
+        if unsaid := unsaid_steps(record, request.output, doubted):
+            raise CatalogError(422, "WV-TXN-RECONCILE-INCOMPLETE", unsaid_message(unsaid))
         try:
-            ending, _, output = check_reconciliation(record, request.output)
+            ending, _, output = check_reconciliation(record, request.output, complete=True, doubted=doubted)
             if ending == "completed":
                 block_output(ir, nodes[node_of(cast(str, owner))], output)
         except (KernelError, ValueError) as error:

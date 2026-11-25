@@ -239,7 +239,10 @@ async def outcomes(platform, reconciler, activation) -> UUID:
     incident = await undo_stuck(platform, "[1]")
     record = {
         "as": "completed",
-        "participants": [{"instance_key": "add[1]", "outcome": "done"}],
+        "participants": [
+            {"instance_key": "hold[1]", "outcome": "confirmed"},
+            {"instance_key": "add[1]", "outcome": "done"},
+        ],
         "blockOutput": "moved",
     }
     await resolve(platform, incident, "accept_reconciled_result", reconciler, output=record, evidence_reference="T-1")
