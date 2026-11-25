@@ -34,6 +34,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Runs, incidents, and workers
 
+- Two decisions sent at once on one incident no longer answer HTTP 429
+  `WV-OPERATION-CAPACITY` when the first takes more than 250 ms: the later one
+  waits up to 2 seconds for it, then answers HTTP 409 `WV-INCIDENT-REVISION`. A
+  caller without `incident.resolve` is refused with 403 before it waits.
 - Purging a run also removes what its platform events left for event triggers:
   the stored event and the trigger start records that no longer name a kept run.
   A start record of a kept run stays, with its event emptied, until that run is
@@ -342,6 +346,13 @@ SPDX-License-Identifier: Apache-2.0
   wall-clock time, step details and loop data wait for the state they check
   instead of sleeping, and browser workers answer scope questions from one
   Python process each.
+- Studio's timed browser tests pause the page clock, so only the test moves
+  it: the approvals countdown, the connect wizard's polls and the incidents
+  reload are checked to the interval, and a reload every 20 s no longer
+  passes a check of every 15 s. A scope process that answers with a line that
+  isn't an answer (not JSON, or JSON without a scope or an error) fails that
+  one question instead of every later one, and a scope process that ends
+  quotes the end of its stderr.
 - CI has a manual job that runs the PostgreSQL integration tests against
   PostgreSQL 17; it moves to every pull request once the tests that depend on
   timing pass on a hosted runner. The tests that need Kafka, Keycloak, a built
