@@ -19,9 +19,19 @@ SPDX-License-Identifier: Apache-2.0
 // to the transaction in doubt or to the incidents of its code, whatever could
 // be read; and a run held whole offers no cancel the platform would refuse.
 import { expect, test, type Page, type Route } from "@playwright/test";
+import type {
+  IncidentRecord,
+  IncidentView,
+} from "../../src/app/operate/incidents/incidents-model";
 import type { RunTransactionView } from "../../src/app/operate/transactions/transaction-contracts";
 import { completed, inDoubt } from "../run-transactions-fixture";
-import { held, ids, others, runs } from "../transaction-incidents-fixture";
+import {
+  called,
+  held,
+  ids,
+  others,
+  runs,
+} from "../transaction-incidents-fixture";
 import { environment } from "./incidents-po";
 import {
   operator,
@@ -54,11 +64,13 @@ async function openRun(
   id: string,
   options: {
     capabilities?: readonly string[];
+    items?: IncidentRecord[];
     answer?: (route: Route) => Promise<void> | void;
   } = {},
 ): Promise<TransactionsPlatform> {
   const platform = await transactionsPlatform(page, {
     capabilities: options.capabilities ?? reconciler,
+    items: options.items,
   });
   if (options.answer)
     await page.route(
@@ -193,6 +205,45 @@ for (const [what, answer] of [
         name: "Open incident WV-TXN-UNDO-STUCK at add",
       }),
     ).toBeVisible();
+  });
+
+for (const [what, buttons, query, answer] of [
+  [
+    "to its transaction in doubt",
+    ["Open incident", "Go to the transaction"],
+    `incident=${ids.called}`,
+    undefined,
+  ],
+  [
+    "to its transaction's incidents when no transaction could be read",
+    ["Show in Incidents"],
+    "code=WV-TXN-UNDO-STUCK&include_test=true",
+    (route: Route) =>
+      route.fulfill({
+        status: 503,
+        json: { code: "WV-UNAVAILABLE", message: "Down" },
+      }),
+  ],
+] as const)
+  test(`the notice of a run stopped at another step too leads ${what}`, async ({
+    page,
+  }) => {
+    // The platform names the first of a run's incidents: the other step's.
+    const another: IncidentView = {
+      ...others[0],
+      run_id: runs.called,
+      node_id: "aaa",
+      incident_key: "aaa:0",
+    };
+    await openRun(page, runs.called, {
+      items: [called, another],
+      ...(answer ? { answer } : {}),
+    });
+    await expect(notice(page)).toContainText("This run stopped at aaa.");
+    await expect(notice(page)).toContainText("WV-TASK-AMBIGUOUS");
+    await expect(notice(page).getByRole("button")).toHaveText([...buttons]);
+    await step(page, buttons[0]).click();
+    await inbox(page, query);
   });
 
 test("the notice of a test run leads to its incident, which the inbox lists only with test runs", async ({

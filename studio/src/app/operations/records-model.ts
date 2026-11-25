@@ -22,6 +22,7 @@ import { TRANSACTION_CODE_TEXT } from "../editor/transactions/transaction-words"
 import { durationText, relativeTime, shortId, toDate } from "../format";
 import { localKeepLabel } from "../local-drafts";
 import { incidentStep } from "../operate/incidents/incidents-model";
+import { stoppedForTransaction } from "../operate/transactions/transaction-contracts";
 import {
   runStatus,
   statusLabel,
@@ -338,8 +339,10 @@ export function runNow(
 /**
  * "This run stopped at {step}." and why, or null. The step is null when the
  * run is stopped whole, at no step of its workflow. The platform names one
- * code for the run, its first incident's; a run that ended keeps the code and
- * has no incident left, and its `code` is empty.
+ * code for the run, its first incident's. `code` is the one its notice leads
+ * by: that incident's, or, where that one is no transaction's, the first
+ * transaction's incident of the run. A run that ended keeps the platform's
+ * code and has no incident left, and its `code` is empty.
  */
 export function runIncident(
   run: Json,
@@ -357,18 +360,19 @@ export function runIncident(
     incidents.find((item) => text(item["code"]) === named) ?? incidents[0];
   const key =
     text(incident?.["node_id"]) || text(active[0]) || "an unknown step";
-  const code = text(incident?.["code"]);
-  const said = named || code;
+  const own = text(incident?.["code"]);
+  const said = named || own;
   const sentence = TRANSACTION_CODE_TEXT[said];
   const support = `Support code: ${said}`;
+  const codes = [own, ...incidents.map((item) => text(item["code"]))];
   return {
     step: incidentStep(key),
     text: sentence
       ? `${sentence} ${support}.`
-      : said && said === code
+      : said && said === own
         ? support
         : said,
-    code,
+    code: codes.find(stoppedForTransaction) ?? own,
   };
 }
 

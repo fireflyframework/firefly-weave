@@ -234,10 +234,35 @@ describe("run detail", () => {
       text: "A step's undo couldn't finish, so the transaction is in doubt. Support code: WV-TXN-UNDO-STUCK.",
       code: "WV-TXN-UNDO-STUCK",
     });
+    // Named for another incident, it still leads to its first transaction's.
     expect(stopped("WV-TASK-AMBIGUOUS")).toEqual({
       step: "send",
       text: "Support code: WV-TASK-AMBIGUOUS",
-      code: "WV-TASK-AMBIGUOUS",
+      code: "WV-TXN-UNDO-STUCK",
+    });
+  });
+
+  it("leads from a run held whole to its incident, also when another one is named", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident: "WV-TASK-AMBIGUOUS",
+            incidents: {
+              "@transactions:0": {
+                node_id: "@transactions",
+                code: "WV-TXN-RUN-OVERSIZED",
+              },
+              "1send:0": { node_id: "1send", code: "WV-TASK-AMBIGUOUS" },
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      step: "1send",
+      text: "Support code: WV-TASK-AMBIGUOUS",
+      code: "WV-TXN-RUN-OVERSIZED",
     });
   });
 

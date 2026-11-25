@@ -80,6 +80,9 @@ export interface TransactionsSection {
 
 /** The code of a run held whole: one incident stands for all its transactions. */
 export const HELD_RUN = "WV-TXN-RUN-OVERSIZED";
+/** Whether an incident of this code stops its run for a transaction. */
+export const stoppedForTransaction = (code: string) =>
+  code.startsWith("WV-TXN-");
 /** The states of a transaction that hasn't settled: canceling its run undoes it first. */
 export const UNSETTLED: readonly TransactionState[] = [
   "open",

@@ -41,12 +41,12 @@ import {
   noticeSteps,
   openIncident,
   showInIncidents,
-  stoppedForTransaction,
   type ListedTransactions,
   type NoticeSteps,
 } from "../operate/transactions/open-incident";
 import { RunCancelDialog } from "../operate/transactions/run-cancel-dialog";
 import { RunTransactions } from "../operate/transactions/run-transactions-section";
+import { stoppedForTransaction } from "../operate/transactions/transaction-contracts";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
 import { absoluteTime, isoTime, relativeTime, shortId } from "../format";

@@ -24,7 +24,10 @@ import {
   incidentFiltersToQuery,
 } from "../incidents/incidents-model";
 import { viewPath } from "../operate-routes";
-import type { RunTransactionView } from "./transaction-contracts";
+import {
+  stoppedForTransaction,
+  type RunTransactionView,
+} from "./transaction-contracts";
 
 /**
  * Opens the inbox on an address query. The shell moves to the page first: an
@@ -89,9 +92,6 @@ export interface NoticeSteps {
   /** The transaction in doubt, when it is listed. */
   goTo: "Go to the transaction" | "Go to the first transaction in doubt" | null;
 }
-/** Whether a transaction stopped the run its notice names this code for. */
-export const stoppedForTransaction = (code: string) =>
-  code.startsWith("WV-TXN-");
 /**
  * Where the notice of a run stopped with `code` leads: null for a run no
  * transaction stopped, and until its transactions are read. It never lacks a
