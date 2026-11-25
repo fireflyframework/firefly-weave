@@ -845,12 +845,18 @@ mod tests {
             "http://user:secret@127.0.0.1:32199/",
             "https://evil.example/",
             "blob:http://127.0.0.1:32198/1d7f",
+            "blob:blob:http://127.0.0.1:32199/1d7f",
             "data:text/html,studio",
             "about:blank",
             "file:///etc/passwd",
         ] {
             assert!(!navigation_allowed(&url(refused), ORIGIN), "{refused}");
         }
+        // macOS refuses every blob: URL by its scheme, before the check reads its origin, so assert the origin of
+        // a nested one too: it must not be the origin of the URL inside it.
+        assert!(!url("blob:blob:http://127.0.0.1:32199/1d7f")
+            .origin()
+            .is_tuple());
         // An exported file never replaces Studio on macOS; WebKitGTK must still be allowed to start the download.
         assert_eq!(
             navigation_allowed(&url("blob:http://127.0.0.1:32199/1d7f"), ORIGIN),
