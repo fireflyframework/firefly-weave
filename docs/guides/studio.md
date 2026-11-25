@@ -1658,8 +1658,8 @@ the row says so.
   off, or one that fails, comes back at the next activation and in **Starts**.
 - **Someone else's changes.** Studio reads a trigger again right before it stops
   it, and stops nothing that changed since the dialog opened. When someone else
-  set up a trigger for the same events meanwhile, Studio creates none. A trigger
-  made with the command line for other events stays as it is.
+  set up a trigger for any of the same events meanwhile, Studio creates none. A
+  trigger made with the command line for other events stays as it is.
 
 **See what it started.** On a platform with platform event triggers, the
 trigger's step details have a **Starts** tab, which needs `trigger.manage` and
@@ -2386,7 +2386,8 @@ activating a later version moves the same webhook, so its URL doesn't change.
 
 An activation replaces the workflow's activation that the dialog read. When
 someone activated the workflow there after you opened the dialog, nothing is
-activated and the dialog says so: close it and select **Activate…** again.
+activated and the dialog says so: close it and select **Activate…** again. The
+same goes when the environment or your account changed while it was open.
 
 ## Save, publish, activate and run
 

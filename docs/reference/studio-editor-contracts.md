@@ -595,8 +595,12 @@ guard per workflow.
 
 - **A create whose answer is lost** is adopted: Studio lists first and takes a
   trigger equal in name, workflow, activation, events, workflows and authority.
-  A trigger that reacts as declared and wasn't in the list the dialog read is
-  someone else's: the row answers "changed" and nothing is created.
+  A trigger that shares an event and a workflow with the declaration, and wasn't
+  in the list the dialog read, is someone else's: the row answers "changed" and
+  nothing is created.
+- **The activation and every row after it** go only to the environment, and as
+  the person, the dialog opened with. When either changed meanwhile, nothing is
+  sent, and the stop of a duplicate not stopped yet stays owed.
 - **Every stop** first reads the trigger's starts, at most ten pages, and asks
   while any is `requested`, or when they can't be read; then reads the trigger
   again, stops nothing that changed, and sends the revision as `If-Match`.
