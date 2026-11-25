@@ -361,6 +361,14 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/transactions/reconcile-outcomes.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/public/c6-wire.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
