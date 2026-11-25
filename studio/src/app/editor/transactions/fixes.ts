@@ -28,8 +28,8 @@ import {
   type Workflow,
 } from "../../model";
 import type { Path } from "../ndv/registry";
-import { blocksOf } from "../step-blocks";
 import { enclosingTransaction } from "./group";
+import { heldAt } from "./points";
 import { clearUndo, transactionHold, undoChoiceOf } from "./undo";
 
 export type TransactionFix =
@@ -134,15 +134,10 @@ function moveTarget(
   return at ? { owner: at.owner, index: at.index + 1, past } : null;
 }
 
-/** Every step inside a step's own blocks, in the order they run. */
-const inner = (step: Step): Step[] =>
-  blocksOf(step).flatMap((block) =>
-    (Array.isArray(block.branch.steps) ? block.branch.steps : []).flatMap(
-      (child) => [child, ...inner(child)],
-    ),
-  );
-
-/** What sets the shortest hold of a transaction: a step's own Hold for, or the transaction's. */
+/**
+ * What sets the shortest hold a waiting step finds: the own Hold for of a
+ * reservation made before it, or the transaction's.
+ */
 function shortestHold(
   workflow: Workflow,
   waiting: string,
@@ -151,16 +146,13 @@ function shortestHold(
   const transaction = at && enclosingTransaction(workflow, at.owner);
   if (!transaction) return null;
   const common = transactionHold(transaction);
-  const own = inner(transaction)
-    .filter(
-      (step) =>
-        undoChoiceOf(step) === "reserve" &&
-        typeof step["holdSeconds"] === "number" &&
-        step["holdSeconds"] < common,
-    )
-    .sort((a, b) => Number(a["holdSeconds"]) - Number(b["holdSeconds"]))[0];
-  return own
-    ? { stepId: own.id, path: ["holdSeconds"] }
+  const own = (step: Step) =>
+    typeof step["holdSeconds"] === "number" ? step["holdSeconds"] : null;
+  const [shortest] = heldAt(transaction, waiting).sort(
+    (a, b) => (own(a) ?? common) - (own(b) ?? common),
+  );
+  return shortest && own(shortest) !== null
+    ? { stepId: shortest.id, path: ["holdSeconds"] }
     : { stepId: transaction.id, path: ["policy", "holdSeconds"] };
 }
 

@@ -23,10 +23,10 @@ import type { Step } from "../../model";
 import type { LanguageManifest, ManifestStepField } from "../language-manifest";
 import { durationWords } from "../ndv/params/field-rules";
 import type { Edit, Expression, Json } from "../ndv/registry";
+import { undoChoiceOf, type UndoChoice } from "./points";
 import type { UndoMode } from "./transaction-words";
 
-/** How a step is undone; null while nothing is chosen. */
-export type UndoChoice = UndoMode | null;
+export { undoChoiceOf, type UndoChoice } from "./points";
 /** What a choice writes, relative to the step, as one undo step. */
 export type StepPatch = Edit[];
 /** One step of a step's undo: what confirms, releases or reverses it. */
@@ -95,14 +95,6 @@ function undoField(ctx: UndoContext): ManifestStepField | null {
 /** The undo fields a step has, in the order the language lists them. */
 const presentFields = (step: Step): string[] =>
   FIELDS.filter((name) => step[name] !== undefined);
-
-/** The step's choice, as the platform reads it from the fields present. */
-export function undoChoiceOf(step: Step): UndoChoice {
-  if (step["confirm"] !== undefined || step["cancel"] !== undefined)
-    return "reserve";
-  if (step["compensate"] !== undefined) return "compensate";
-  return step["irreversible"] !== undefined ? "irreversible" : null;
-}
 
 /** How long a transaction holds reservations. */
 export function transactionHold(transaction: Step): number {

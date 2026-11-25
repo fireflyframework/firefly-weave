@@ -222,6 +222,41 @@ const WORKFLOWS = {
   undeclared: document(move([hold(), add({})])),
   wait: document(move([hold(), pause, submit()])),
   ownHoldWait: document(move([hold({ holdSeconds: 60 }), pause, submit()])),
+  // Its own hold is longer than the transaction's, and still too short.
+  longerHoldWait: document(
+    move([hold({ holdSeconds: 1800 }), pause, submit()]),
+  ),
+  // What is reserved after the wait isn't held during it.
+  laterHoldWait: document(
+    move([hold(), pause, hold({ id: "hold2", holdSeconds: 60 }), submit()]),
+  ),
+  // A reservation in a parallel branch is held while the other one waits.
+  besideHoldWait: document(
+    move([parallel(hold({ holdSeconds: 60 }), pause), submit()]),
+  ),
+  // The next item waits while what the last one reserved is held.
+  loopHoldWait: document(
+    move([loop(pause, hold({ holdSeconds: 60 })), submit()]),
+  ),
+  // A path that waits holds only what its own path reserved.
+  pathHoldWait: document(
+    move([
+      hold(),
+      {
+        id: "route",
+        kind: "switch",
+        cases: [
+          {
+            when: { literal: true },
+            steps: [hold({ id: "hold2", holdSeconds: 60 })],
+            output: { literal: null },
+          },
+        ],
+        default: { steps: [pause], output: { literal: null } },
+      },
+      submit(),
+    ]),
+  ),
   shortHold: document(move([hold({ holdSeconds: 30 }), submit()])),
   output: document(
     move([
@@ -527,6 +562,45 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
         { revealAll: true, focus: { kind: "path", path: ["holdSeconds"] } },
       ],
     ]);
+  });
+
+  it("opens the hold that decides: setting it ends the finding", async () => {
+    const waits = {
+      wait: "move",
+      ownHoldWait: "hold",
+      longerHoldWait: "hold",
+      laterHoldWait: "move",
+      besideHoldWait: "hold",
+      loopHoldWait: "hold",
+      pathHoldWait: "move",
+    } as const;
+    const set: Record<string, unknown> = {};
+    for (const [name, step] of Object.entries(waits)) {
+      const { fix } = row(name as Name, "TXN_HOLD_WAIT");
+      expect([name, fix]).toMatchObject([name, { stepId: step }]);
+      if (fix?.kind !== "hold") throw new Error(name);
+      const { model } = editor(name as Name);
+      const held = structuredClone(
+        model.nodes().find((node) => node.step.id === step)!.step,
+      ) as unknown as Record<string, unknown>;
+      if (step === "move")
+        held["policy"] = {
+          holdSeconds: 7300,
+          undoRetry: {
+            maxAttempts: 10,
+            initialDelaySeconds: 2,
+            maxDelaySeconds: 300,
+          },
+          undoTimeoutSeconds: 86400,
+        };
+      else held["holdSeconds"] = 7300;
+      model.update(step, JSON.stringify(held));
+      set[name] = model.definition;
+    }
+    const all = compiled(set, "WV-COMP-TXN_HOLD_WAIT");
+    expect(all).toEqual(
+      Object.fromEntries(Object.keys(waits).map((name) => [name, []])),
+    );
   });
 
   it("writes the hold the step that can't be undone needs, and opens it", async () => {
@@ -839,19 +913,25 @@ describe("a finding's fix", () => {
         pause,
       ),
     ).toMatchObject({ stepId: "short", path: ["holdSeconds"] });
-    // The transaction's own is the shortest, or as short.
-    for (const own of [
-      held("same", { holdSeconds: 3600 }),
-      { ...add({ holdSeconds: 60, compensate: REVERSE }), id: "reversed" },
-    ])
-      expect(
-        transactionFix("WV-COMP-TXN_HOLD_WAIT", null, {
-          ...at("pause"),
-          workflow: document(
-            move([own, pause], { policy: { holdSeconds: 3600 } }),
-          ) as never,
-        }),
-      ).toMatchObject({ stepId: "move", path: ["policy", "holdSeconds"] });
+    const under = (own: object) =>
+      transactionFix("WV-COMP-TXN_HOLD_WAIT", null, {
+        ...at("pause"),
+        workflow: document(
+          move([own, pause], { policy: { holdSeconds: 3600 } }),
+        ) as never,
+      });
+    // Its own value is what it holds for, also when the transaction's is the same.
+    expect(under(held("same", { holdSeconds: 3600 }))).toMatchObject({
+      stepId: "same",
+      path: ["holdSeconds"],
+    });
+    // A step that is reversed holds nothing.
+    expect(
+      under({
+        ...add({ holdSeconds: 60, compensate: REVERSE }),
+        id: "reversed",
+      }),
+    ).toMatchObject({ stepId: "move", path: ["policy", "holdSeconds"] });
   });
 
   it("moves no step that left its transaction since the check", () => {
