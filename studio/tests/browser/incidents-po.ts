@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // incidents.list by status, code, test runs and priority, pages each list
 // with its own cursor, and answers incidents.read by ID. An earlier one
 // refuses the priority, or ignores it.
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import type {
   IncidentRecord,
   IncidentView,
@@ -152,4 +152,76 @@ export async function incidentPlatform(
     }),
   );
   return platform;
+}
+
+/** A decision Studio sent: the incident, its revision (If-Match) and the body. */
+export interface SentDecision {
+  id: string;
+  revision: string;
+  body: Record<string, unknown> & {
+    receipt_id: string;
+    kind: string;
+    reason: string;
+    evidence_reference?: string;
+    output?: unknown;
+  };
+}
+/**
+ * Answers incidents.resolve, recording what was sent: by default as the
+ * platform does, with the incident's own row, which says neither when it
+ * opened nor its workflow, its run or its links. `answer` may refuse it.
+ */
+export async function decisions(
+  page: Page,
+  platform: IncidentPlatform,
+  answer?: (route: Route, sent: SentDecision) => unknown,
+): Promise<SentDecision[]> {
+  const sent: SentDecision[] = [];
+  await page.route(`${environment}/incidents/*/resolve`, async (route) => {
+    const request = route.request();
+    const id = new URL(request.url()).pathname.split("/").at(-2)!;
+    const decision: SentDecision = {
+      id,
+      revision: request.headers()["if-match"] ?? "",
+      body: request.postDataJSON() as SentDecision["body"],
+    };
+    sent.push(decision);
+    if (answer && (await answer(route, decision)) !== false) return;
+    await resolveIncident(route, platform, decision);
+  });
+  return sent;
+}
+/** Resolves an incident on the platform and answers with its row. */
+export async function resolveIncident(
+  route: Route,
+  platform: IncidentPlatform,
+  { id, body }: SentDecision,
+) {
+  const before = platform.items.find((item) => item.id === id) as IncidentView;
+  const { waits_on: _waitsOn, held_by: _heldBy, ...kept } = before;
+  const after: IncidentView = {
+    ...kept,
+    status: "resolved",
+    revision: before.revision + 1,
+    actor_id: "human",
+    resolved_at: NOW,
+    resolution: {
+      receipt_id: body.receipt_id,
+      kind: body.kind as NonNullable<IncidentView["resolution"]>["kind"],
+      reason: body.reason,
+      output: body.output ?? null,
+      evidence_reference: body.evidence_reference ?? null,
+    },
+  };
+  platform.items = platform.items.map((item) =>
+    item.id === id ? after : item,
+  );
+  const {
+    opened_at: _openedAt,
+    updated_at: _updatedAt,
+    workflow: _workflow,
+    run_status: _runStatus,
+    ...row
+  } = after;
+  await route.fulfill({ json: row });
 }

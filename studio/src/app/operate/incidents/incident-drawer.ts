@@ -19,8 +19,9 @@ SPDX-License-Identifier: Apache-2.0
 // its status, when it opened, marked when that time is an estimate), or for
 // one that holds a transaction its record and the related incidents; the
 // run's last engine events (types only, never their data), how it was
-// resolved, and Resolve incident while it is active. A time the platform
-// doesn't know reads Unknown.
+// resolved, and while it is active Resolve incident, or the decisions that fit
+// the transaction in doubt it holds. A time the platform doesn't know reads
+// Unknown.
 import { Component, input, output } from "@angular/core";
 import type { App } from "../../app";
 import type { PlainError } from "../../errors";
@@ -39,8 +40,18 @@ import {
   type IncidentView,
 } from "./incidents-model";
 import { TransactionPanel, type PartnerRead } from "./transaction-panel";
-import { decisionText } from "./transaction-resolutions";
+import {
+  decisionText,
+  transactionActions,
+  type TransactionAction,
+} from "./transaction-resolutions";
 
+/** A decision whose incident is read again before its dialog opens, or why it couldn't be. */
+export interface OfferRead {
+  action: TransactionAction;
+  reading: boolean;
+  problem: { message: string; code: string } | null;
+}
 /** The run's last events, or why they are missing. */
 export interface RecentEvents {
   loading: boolean;
@@ -200,7 +211,51 @@ export interface RecentEvents {
         }
       </dl>
     }
-    @if (i.status === "active" && canResolve()) {
+    @if (offers().length) {
+      <section class="offers" aria-labelledby="incident-offers-title">
+        <h3 id="incident-offers-title">Resolve this incident</h3>
+        @for (item of offers(); track item.action) {
+          @let read = readOf(item.action);
+          <div class="offer">
+            <button
+              type="button"
+              [class.danger]="item.action === 'force_end'"
+              [attr.data-offer]="item.action"
+              [attr.aria-busy]="read?.reading ? 'true' : null"
+              [attr.aria-describedby]="'incident-offer-' + item.action"
+              [disabled]="!!item.missing"
+              (click)="decide.emit(item.action)"
+            >
+              @if (read?.reading) {
+                <weave-icon name="spinner" [size]="16" class="spin" />Reading
+                the incident…
+              } @else {
+                {{ item.label }}
+              }
+            </button>
+            <div [id]="'incident-offer-' + item.action">
+              <p>{{ item.help }}</p>
+              @if (item.missing) {
+                <p class="why">
+                  <weave-icon name="lock" [size]="16" />{{ item.missing }}
+                </p>
+              }
+            </div>
+            @if (read?.problem; as problem) {
+              <div class="notice" role="alert">
+                <weave-icon name="warning" [size]="16" />
+                <div>
+                  <p>{{ problem.message }}</p>
+                  @if (problem.code) {
+                    <p class="support-code">Support code: {{ problem.code }}</p>
+                  }
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </section>
+    } @else if (i.status === "active" && canResolve()) {
       <div class="action-row">
         <button type="button" class="primary" (click)="resolve.emit()">
           Resolve incident
@@ -296,7 +351,11 @@ export class IncidentDrawer {
   events = input.required<RecentEvents>();
   /** The related incident being read for this one, if any. */
   partner = input<PartnerRead | null>(null);
+  /** The decision whose incident is being read before its dialog opens, if any. */
+  offerRead = input<OfferRead | null>(null);
   resolve = output<void>();
+  /** A decision on the transaction in doubt the incident holds. */
+  decide = output<TransactionAction>();
   /** A run to open: the incident's, a called step's or a resolving workflow's. */
   openRun = output<string>();
   /** A related incident to open. */
@@ -310,6 +369,16 @@ export class IncidentDrawer {
   readonly absolute = timeAbsolute;
   canResolve() {
     return this.host().can("incident.resolve", this.incident().id);
+  }
+  /** The platform asks for each capability across the environment: a grant for this incident alone isn't enough. */
+  offers() {
+    return transactionActions(this.incident(), (capability) =>
+      this.host().can(capability),
+    );
+  }
+  readOf(action: TransactionAction): OfferRead | null {
+    const read = this.offerRead();
+    return read?.action === action ? read : null;
   }
   label(incident: IncidentView) {
     return incidentStatusLabel(incident.status);

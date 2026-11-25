@@ -15,14 +15,28 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// How the drawer names the decision recorded on an incident. The incident's
-// code says which phase a retry ran again, and whether it was Wait again: a
-// transaction's record alone can't. Pure.
+// The decisions an incident in doubt offers, by its code and what the person
+// may do; what each asks for before it can be sent, the request it builds and
+// how a refusal reads; and how the drawer names the decision recorded. The
+// incident's code says which phase a retry runs again, and whether it is Wait
+// again: a transaction's record alone can't. Pure.
+import type { PlainError } from "../../errors";
+import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
+import { stepName } from "../transactions/transaction-contracts";
 import {
   RESOLUTION_LABELS,
   RETRY_LABELS,
+  recordRows,
+  typedConfirmation,
 } from "../transactions/transaction-record";
-import { resolutionLabel, type IncidentView } from "./incidents-model";
+import {
+  inDoubt,
+  resolutionLabel,
+  type IncidentTransaction,
+  type IncidentView,
+  type ResolutionKind,
+  type ResolutionRequest,
+} from "./incidents-model";
 
 const RETRIES: Readonly<Record<string, string>> = {
   "WV-TXN-UNDO-STUCK": RETRY_LABELS.undo,
@@ -34,6 +48,378 @@ const RETRIES: Readonly<Record<string, string>> = {
 /** "Retry the undo", "Wait again"…, by the incident's code; null when no retry fits it. */
 export function retryLabel(code: string): string | null {
   return RETRIES[code] ?? null;
+}
+
+export type TransactionAction =
+  | "retry"
+  | "mark_reconciled"
+  | "it_happened"
+  | "it_didnt_happen"
+  | "force_end";
+type Capability = "incident.resolve" | "transaction.reconcile";
+export interface ActionOffer {
+  action: TransactionAction;
+  kind: ResolutionKind;
+  label: string;
+  help: string;
+  needs: readonly Capability[];
+  /** What the person lacks to choose it; null when nothing. */
+  missing: string | null;
+}
+
+/** A decision of any kind but a retry says how a transaction ended, or ends it. */
+const RECONCILER: readonly Capability[] = [
+  "incident.resolve",
+  "transaction.reconcile",
+];
+const MISSING: Readonly<Record<Capability, string>> = {
+  "incident.resolve": "Needs permission to resolve incidents.",
+  "transaction.reconcile": "Needs the transaction reconciler role.",
+};
+const DECISIONS: Readonly<
+  Record<
+    Exclude<TransactionAction, "retry">,
+    Pick<ActionOffer, "kind" | "help">
+  >
+> = {
+  mark_reconciled: {
+    kind: "accept_reconciled_result",
+    help: "You checked every step in the other systems. Say how the transaction ended.",
+  },
+  it_happened: {
+    kind: "accept_reconciled_result",
+    help: "The step that can't be undone did happen. The transaction finishes and its later steps run.",
+  },
+  it_didnt_happen: {
+    kind: "accept_reconciled_failure",
+    help: "The step that can't be undone didn't happen. Weave undoes what was done.",
+  },
+  force_end: {
+    kind: "terminate",
+    help: "Ends the transaction and the run as they are. Nothing more is done or undone.",
+  },
+};
+/** "Runs the release again…": a retry's help names what its label does. */
+function retryHelp(label: string): string {
+  if (label === RESOLUTION_LABELS.wait_again)
+    return "Waits again for the steps still running, up to the same limit.";
+  const what = label.replace(/^Retry /, "");
+  return `Runs ${what} again with the same operation key. Only if the other system can take it again.`;
+}
+
+/** The decisions that fit an incident in doubt, Force end last; none for any other incident. */
+export function transactionActions(
+  incident: IncidentView,
+  can: (capability: string) => boolean,
+): ActionOffer[] {
+  if (!inDoubt(incident)) return [];
+  const offer = (
+    action: TransactionAction,
+    parts: Pick<ActionOffer, "kind" | "label" | "help">,
+    needs: readonly Capability[],
+  ): ActionOffer => {
+    const lacks = needs.find((capability) => !can(capability));
+    return { action, ...parts, needs, missing: lacks ? MISSING[lacks] : null };
+  };
+  const decision = (action: Exclude<TransactionAction, "retry">) =>
+    offer(
+      action,
+      { label: RESOLUTION_LABELS[action], ...DECISIONS[action] },
+      RECONCILER,
+    );
+  const retry = retryLabel(incident.code);
+  const offers: ActionOffer[] = [];
+  if (retry) {
+    offers.push(
+      offer(
+        "retry",
+        { kind: "retry_safe", label: retry, help: retryHelp(retry) },
+        ["incident.resolve"],
+      ),
+    );
+    // Its checklist is built from the record.
+    if (incident.transaction) offers.push(decision("mark_reconciled"));
+  } else if (incident.code === "WV-TXN-PIVOT-UNKNOWN")
+    offers.push(decision("it_happened"), decision("it_didnt_happen"));
+  // A run held whole, or a code Studio doesn't know, can only be ended.
+  offers.push(decision("force_end"));
+  return offers;
+}
+
+/** A step Weave couldn't finish, which a person checks in its own system. */
+export interface ChecklistRow {
+  instanceKey: string;
+  stepId: string;
+  sentence: string;
+  /** "Undo failed after 3 tries · operation key " and the whole key. */
+  caption: string;
+  operationKey: string;
+  /** What the record may say of it; the first is sent. */
+  outcomes: readonly ("undone" | "confirmed" | "done")[];
+}
+export function checklistRows(
+  transaction: IncidentTransaction,
+  as: "compensated" | "completed",
+  runId: string,
+): ChecklistRow[] {
+  return recordRows(transaction, runId)
+    .filter((row) => row.stuck)
+    .map((row) => {
+      const outcome =
+        as === "compensated"
+          ? "undone"
+          : row.how === "Reserved"
+            ? "confirmed"
+            : "done";
+      const did = {
+        undone: "was reversed",
+        confirmed: "was confirmed",
+        done: "finished",
+      }[outcome];
+      const tries = row.attempts ? ` after ${row.attempts}` : "";
+      return {
+        instanceKey: row.instanceKey,
+        stepId: row.stepId,
+        sentence: `I confirmed ${stepName(row.instanceKey)} ${did} in the other system.`,
+        caption: `${row.undo?.text}${tries} · operation key ${row.operationKey}`,
+        operationKey: row.operationKey,
+        outcomes: [outcome],
+      };
+    });
+}
+
+/** What the person entered in Mark as reconciled. */
+export interface ReconcileDraft {
+  as: "compensated" | "completed" | "";
+  /** Instance keys of the checklist's ticked lines. */
+  ticked: ReadonlySet<string>;
+  blockOutput: string;
+  reason: string;
+  evidence: string;
+}
+/** What a confirm still lacks, in the form's order. */
+export type MissingPart =
+  | { kind: "as" }
+  | { kind: "tick"; steps: readonly string[] }
+  | {
+      kind: "field";
+      label:
+        | "Result of the transaction"
+        | "Result of the step"
+        | "Reason"
+        | "Evidence reference";
+    }
+  | { kind: "typed" }
+  | { kind: "refresh" };
+/** The request a draft makes, or what it lacks and the problem under each field. */
+export type Checked<Field extends string> =
+  | { request: ResolutionRequest }
+  | {
+      missing: MissingPart[];
+      problems: Partial<Record<Field | "reason" | "evidence", string>>;
+    };
+
+const field = (
+  label: Extract<MissingPart, { kind: "field" }>["label"],
+): MissingPart => ({ kind: "field", label });
+const NOT_JSON = 'Enter the result as JSON, for example {"quantity": 40}.';
+function json(text: string): { value: unknown } | null {
+  try {
+    return { value: JSON.parse(text) as unknown };
+  } catch {
+    return null;
+  }
+}
+/** The reason and the evidence every decision but a retry and Force end asks for. */
+function checkSaid(
+  draft: { reason: string; evidence?: string },
+  missing: MissingPart[],
+  problems: Partial<Record<"reason" | "evidence", string>>,
+) {
+  if (!draft.reason.trim()) missing.push(field("Reason"));
+  else if (draft.reason.length > REASON_LIMIT)
+    problems.reason = tooLongMessage("reason");
+  if (draft.evidence === undefined) return;
+  const evidence = draft.evidence.trim();
+  if (!evidence) missing.push(field("Evidence reference"));
+  else if (evidence.length > REASON_LIMIT)
+    problems.evidence = tooLongMessage("evidence reference");
+}
+const lacks = (missing: MissingPart[], problems: object) =>
+  missing.length > 0 || Object.keys(problems).length > 0;
+
+/**
+ * The record of how a transaction ended: its stuck steps as ticked, and the
+ * result the steps after it read, only when it finished.
+ */
+export function checkReconcile(
+  draft: ReconcileDraft,
+  rows: readonly ChecklistRow[],
+): Checked<"blockOutput"> {
+  const missing: MissingPart[] = [];
+  const problems: Partial<
+    Record<"blockOutput" | "reason" | "evidence", string>
+  > = {};
+  if (!draft.as) missing.push({ kind: "as" });
+  const unticked = rows.filter((row) => !draft.ticked.has(row.instanceKey));
+  if (unticked.length)
+    missing.push({
+      kind: "tick",
+      steps: unticked.map((row) => stepName(row.instanceKey)),
+    });
+  const finished = draft.as === "completed";
+  const typed = draft.blockOutput.trim();
+  const result = finished && typed ? json(typed) : null;
+  if (finished && !typed) missing.push(field("Result of the transaction"));
+  else if (finished && !result) problems.blockOutput = NOT_JSON;
+  else if (draft.as === "compensated" && typed)
+    problems.blockOutput = "A transaction that was undone has no result.";
+  checkSaid(draft, missing, problems);
+  if (lacks(missing, problems)) return { missing, problems };
+  return {
+    request: {
+      kind: "accept_reconciled_result",
+      reason: draft.reason,
+      evidence_reference: draft.evidence.trim(),
+      output: {
+        as: draft.as,
+        participants: rows.map((row) => ({
+          instance_key: row.instanceKey,
+          outcome: row.outcomes[0],
+        })),
+        ...(result ? { blockOutput: result.value } : {}),
+      },
+    },
+  };
+}
+/** The draft once the incident is read again: its record may list other steps, so each is ticked again. */
+export function afterRevisionRefresh(draft: ReconcileDraft): ReconcileDraft {
+  return { ...draft, ticked: new Set() };
+}
+
+/** Whether the step that can't be undone happened: its output is the step's own. */
+export function checkStepOutcome(draft: {
+  happened: boolean;
+  output: string;
+  reason: string;
+  evidence: string;
+}): Checked<"output"> {
+  const missing: MissingPart[] = [];
+  const problems: Partial<Record<"output" | "reason" | "evidence", string>> =
+    {};
+  const typed = draft.output.trim();
+  const result = draft.happened && typed ? json(typed) : null;
+  if (draft.happened && !typed) missing.push(field("Result of the step"));
+  else if (draft.happened && !result) problems.output = NOT_JSON;
+  checkSaid(draft, missing, problems);
+  if (lacks(missing, problems)) return { missing, problems };
+  return {
+    request: {
+      kind: draft.happened
+        ? "accept_reconciled_result"
+        : "accept_reconciled_failure",
+      reason: draft.reason,
+      evidence_reference: draft.evidence.trim(),
+      ...(result ? { output: result.value } : {}),
+    },
+  };
+}
+export function checkRetry(draft: { reason: string }): Checked<never> {
+  const missing: MissingPart[] = [];
+  const problems = {};
+  checkSaid({ reason: draft.reason }, missing, problems);
+  if (lacks(missing, problems)) return { missing, problems };
+  return { request: { kind: "retry_safe", reason: draft.reason } };
+}
+export function checkForceEnd(
+  draft: { reason: string; typed: string },
+  runId: string,
+): Checked<never> {
+  const missing: MissingPart[] = [];
+  const problems = {};
+  checkSaid({ reason: draft.reason }, missing, problems);
+  if (!typedConfirmation(runId, draft.typed)) missing.push({ kind: "typed" });
+  if (lacks(missing, problems)) return { missing, problems };
+  return { request: { kind: "terminate", reason: draft.reason } };
+}
+
+const LEADS: Readonly<
+  Record<Exclude<TransactionAction, "retry"> | "wait_again", string>
+> = {
+  wait_again: "To wait again",
+  mark_reconciled: "To mark it as reconciled",
+  it_happened: "To record that it happened",
+  it_didnt_happen: "To record that it didn't happen",
+  force_end: "To force end it",
+};
+function partText(part: MissingPart): string {
+  switch (part.kind) {
+    case "as":
+      return "choose how it ended";
+    case "tick":
+      return part.steps.length === 1
+        ? `tick the line for \`${part.steps[0]}\``
+        : `tick ${part.steps.length} more lines`;
+    case "field":
+      return `fill in ${part.label}`;
+    case "typed":
+      return "type the run ID";
+    case "refresh":
+      return "refresh the incident";
+  }
+}
+/**
+ * Why a confirm waits, naming only what is missing; a step's name is between
+ * backticks. Null when nothing is.
+ */
+export function confirmReason(
+  action: TransactionAction | "wait_again",
+  missing: readonly MissingPart[],
+  retry: string = RETRY_LABELS.undo,
+): string | null {
+  if (!missing.length) return null;
+  const lead = action === "retry" ? `To ${retry.toLowerCase()}` : LEADS[action];
+  const parts = missing.map(partText);
+  const last = parts.pop()!;
+  const list = parts.length ? `${parts.join(", ")} and ${last}` : last;
+  return `${lead}, ${list}.`;
+}
+
+/** How a refused decision reads; a refusal Studio has no words for keeps the platform's. */
+export function explainDecision(
+  refused: PlainError,
+  offer: Pick<ActionOffer, "needs">,
+): PlainError {
+  if (refused.status === 403)
+    return {
+      ...refused,
+      message: `You need ${offer.needs.join(" and ")} in this environment. Ask an administrator in Settings › People and access.`,
+    };
+  // The same code says an incident is no longer active.
+  if (
+    refused.code === "WV-RUNTIME-STATE" &&
+    /still running|has not ended/.test(refused.message)
+  )
+    return {
+      ...refused,
+      message: "The step is running again. Wait for it to finish, then decide.",
+    };
+  return refused;
+}
+/**
+ * Where a refused record shows: under the checklist when it names one of its
+ * steps or there is no result to blame, under the result otherwise.
+ */
+export function outputRefusalAt(
+  message: string,
+  as: ReconcileDraft["as"],
+  rows: readonly ChecklistRow[],
+): "blockOutput" | "checklist" {
+  const names = new Set(rows.map((row) => stepName(row.instanceKey)));
+  const named = message
+    .split(/[\s,;:"'`()]+/)
+    .some((word) => names.has(word.replace(/\.$/, "")));
+  return as === "completed" && !named ? "blockOutput" : "checklist";
 }
 
 /** How a reconciliation's record says the transaction ended. */

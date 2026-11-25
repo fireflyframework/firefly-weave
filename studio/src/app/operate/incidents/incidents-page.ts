@@ -20,10 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 // ("?incident=ID"), which opens from incidents.read even when no loaded page
 // lists it. Transactions in doubt come first, in their own band, each case of
 // them one group; a code or status filter shows one list. A drawer says what
-// happened, and the Resolve incident dialog decides on the revision the
-// person looked at. The server checks incident.resolve, the revision and the
-// receipt on every decision. Reloads every 15 s while visible, except while a
-// decision is being made.
+// happened; Resolve incident, or a decision on a transaction in doubt, is made
+// on the revision the person looked at. The server checks the capabilities,
+// the revision and the receipt on every decision. Reloads every 15 s while
+// visible, except while a decision is being made.
 import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
@@ -59,7 +59,11 @@ import { OperateState } from "../operate-state";
 import { viewFromPath, viewPath } from "../operate-routes";
 import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
-import { IncidentDrawer, type RecentEvents } from "./incident-drawer";
+import {
+  IncidentDrawer,
+  type OfferRead,
+  type RecentEvents,
+} from "./incident-drawer";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import { retryDelay } from "../transactions/transaction-record";
 import {
@@ -95,6 +99,12 @@ import {
 } from "./incidents-model";
 import { ResolveIncidentDialog } from "./resolve-incident-dialog";
 import type { PartnerRead } from "./transaction-panel";
+import { TransactionResolveDialog } from "./transaction-resolve-dialog";
+import {
+  explainDecision,
+  transactionActions,
+  type TransactionAction,
+} from "./transaction-resolutions";
 
 /** The longest opening range the platform accepts: 400 days. */
 const MAX_RANGE_MS = 400 * 86_400_000;
@@ -104,6 +114,20 @@ const UNOPENED = ".incident-unopened";
 const STOPS = "[data-incident], .band-heading h2";
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
+/** Why an incident can't be read from the drawer. */
+const NOT_SHOWN =
+  "Studio can't show this incident: its run can't be shown here.";
+const READ_REFUSED =
+  "You need incident.read in this environment. Ask an administrator in Settings › People and access.";
+const NOT_FOUND =
+  "This incident can't be found. It may belong to another environment, or its run's data was deleted.";
+/** What never changes of an incident, which the platform's answer to a decision leaves out. */
+const unchanging = ({
+  opened_at,
+  opened_at_estimated,
+  workflow,
+  test,
+}: IncidentView) => ({ opened_at, opened_at_estimated, workflow, test });
 const noEvents: RecentEvents = {
   loading: false,
   lines: [],
@@ -148,6 +172,7 @@ interface Band {
     RefreshStatus,
     IncidentDrawer,
     ResolveIncidentDialog,
+    TransactionResolveDialog,
   ],
   styleUrls: ["../operate.css", "./incidents.css"],
   template: `
@@ -576,6 +601,8 @@ interface Band {
               [incident]="selected"
               [events]="events"
               (resolve)="startResolving()"
+              [offerRead]="offerRead"
+              (decide)="startDeciding($event)"
               [partner]="partner"
               (openLink)="openPartner($event)"
               (tryPartner)="readPartner()"
@@ -588,14 +615,27 @@ interface Band {
       </div>
     }
     @if (resolving && selected) {
-      <weave-resolve-incident-dialog
-        [incident]="selected"
-        [busy]="sending.has(selected.id)"
-        [failure]="failure"
-        (decide)="resolve($event)"
-        (cancel)="resolving = false"
-        (reload)="reloadIncident()"
-      />
+      @if (deciding; as action) {
+        <weave-transaction-resolve-dialog
+          [incident]="selected"
+          [action]="action"
+          [busy]="sending.has(selected.id)"
+          [failure]="failure"
+          [refreshing]="refreshing"
+          (decide)="resolve($event)"
+          (dismiss)="stopDeciding(action)"
+          (refresh)="reloadIncident()"
+        />
+      } @else {
+        <weave-resolve-incident-dialog
+          [incident]="selected"
+          [busy]="sending.has(selected.id)"
+          [failure]="failure"
+          (decide)="resolve($event)"
+          (cancel)="resolving = false"
+          (reload)="reloadIncident()"
+        />
+      }
     }
     <ng-template #tableHead>
       <div role="rowgroup">
@@ -753,8 +793,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     ["closed", "Closed"],
     ["all", "Any status"],
   ];
-  // A reload never changes the incident under an open Resolve incident, not
-  // even one already on its way when the dialog opened: the revision the
+  // A reload never changes the incident under an open decision, not even one
+  // already on its way when its dialog opened: the revision the
   // decision is sent with is the one the person looked at. Only Refresh
   // incident, in the dialog, reads it again.
   readonly poller = new Poller(
@@ -781,6 +821,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   rangeProblem = "";
   events: RecentEvents = noEvents;
   resolving = false;
+  /** The decision being made on a transaction in doubt; null in Resolve incident, or with no dialog. */
+  deciding: TransactionAction | null = null;
+  /** The decision whose incident is read before its dialog opens, or why it couldn't be. */
+  offerRead: OfferRead | null = null;
+  /** The incident under a decision on a transaction in doubt is being read again. */
+  refreshing = false;
+  /** Bumped as a dialog opens or closes: an answer for an older one isn't its own. */
+  private dialogs = 0;
   /** The incidents whose decision is on its way; one never blocks another. */
   readonly sending = new Set<string>();
   /** The last refusal, shown in the dialog of the incident it was for. */
@@ -864,8 +912,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.detailProblem = null;
     this.opening = "";
     this.events = noEvents;
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     this.pending.clear();
     this.rangeProblem = "";
     this.filters = incidentFiltersFromQuery(location.search);
@@ -1149,8 +1196,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.selected = incident;
     this.detailProblem = null;
     this.opening = "";
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     this.syncAddress();
     void this.loadEvents(incident);
   }
@@ -1172,8 +1218,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.forgetPartner();
     this.selected = null;
     this.opening = "";
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     if (sync) this.syncAddress();
   }
   /**
@@ -1198,18 +1243,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (generation !== this.generation || this.opening !== id) return;
       this.opening = "";
       if (isUnavailableIncident(incident)) {
-        this.explainUnopened({
-          message:
-            "Studio can't show this incident: its run can't be shown here.",
-          code: "",
-          status: 0,
-        });
+        this.explainUnopened({ message: NOT_SHOWN, code: "", status: 0 });
         return;
       }
       this.forgetPartner();
       this.selected = incident;
-      this.resolving = false;
-      this.failure = null;
+      this.leaveDialog();
       // The Try again it was asked from goes.
       if (document.activeElement?.closest(UNOPENED))
         afterNextRender(() => this.focusTitle(), { injector: this.injector });
@@ -1251,6 +1290,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.focusTitle();
       return;
     }
+    this.offerRead = null;
     // Asked again after a failure, it keeps how long the next wait is.
     if (this.asked?.id !== link.id) {
       this.forgetPartner();
@@ -1292,8 +1332,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         `${scope}/incidents/${encodeURIComponent(asked.id)}`,
       );
       if (!current()) return;
-      if (isUnavailableIncident(incident))
-        say("Studio can't show this incident: its run can't be shown here.");
+      if (isUnavailableIncident(incident)) say(NOT_SHOWN);
       else {
         const takesFocus =
           !waited || !!document.activeElement?.closest(".record-detail");
@@ -1303,16 +1342,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     } catch (error) {
       if (!current()) return;
       const plain = describeError(error);
-      if (plain.status === 403)
-        say(
-          "You need incident.read in this environment. Ask an administrator in Settings › People and access.",
-          plain.code,
-        );
-      else if (plain.status === 404)
-        say(
-          "This incident can't be found. It may belong to another environment, or its run's data was deleted.",
-          plain.code,
-        );
+      if (plain.status === 403) say(READ_REFUSED, plain.code);
+      else if (plain.status === 404) say(NOT_FOUND, plain.code);
       else {
         const wait = retryDelay(++asked.failures);
         say(
@@ -1329,11 +1360,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (this.alive) this.cdr.markForCheck();
     }
   }
-  /** Another incident, a decision or no drawer: the one asked for is no longer wanted. */
+  /** Another incident, a decision or no drawer: what was asked for in this one is no longer wanted. */
   private forgetPartner() {
     if (this.asked?.timer) clearTimeout(this.asked.timer);
     this.asked = null;
     this.partner = null;
+    this.offerRead = null;
   }
   /** Try now goes once an answer is final: its link's Open takes the focus. */
   private leaveTryNow(id: string) {
@@ -1451,10 +1483,119 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     }
   }
   startResolving() {
+    this.dropAsked();
+    this.leaveDialog();
     this.resolving = true;
-    this.failure = null;
-    // An incident on its way never opens under a decision.
+  }
+  /**
+   * Opens a decision on the transaction in doubt. A retry decides on the
+   * drawer's record; any other reads the incident first, so the checklist,
+   * what stays done and the revision it is sent with are the platform's now.
+   * The last one pressed opens, for the incident it was pressed in only.
+   */
+  async startDeciding(action: TransactionAction) {
+    const incident = this.selected;
+    const scope = this.scope;
+    if (!incident || !scope || this.resolving) return;
+    if (this.offerRead?.reading && this.offerRead.action === action) return;
+    this.dropAsked();
+    if (action === "retry") return this.openDecision(action);
+    const read: OfferRead = { action, reading: true, problem: null };
+    this.offerRead = read;
+    const generation = this.generation;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.offerRead === read &&
+      this.selected?.id === incident.id;
+    const say = (message: string, code = "") => {
+      this.offerRead = { action, reading: false, problem: { message, code } };
+    };
+    try {
+      const fresh = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(incident.id)}`,
+      );
+      if (!current()) return;
+      this.offerRead = null;
+      if (isUnavailableIncident(fresh)) say(NOT_SHOWN);
+      else if (this.readAgain(fresh, action)) this.openDecision(action);
+    } catch (error) {
+      if (!current()) return;
+      const plain = describeError(error);
+      say(
+        plain.status === 403
+          ? READ_REFUSED
+          : plain.status === 404
+            ? NOT_FOUND
+            : "Studio couldn't read this incident. Choose again to read it.",
+        plain.code,
+      );
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
+    }
+  }
+  private openDecision(action: TransactionAction) {
+    this.leaveDialog();
+    this.resolving = true;
+    this.deciding = action;
+  }
+  /** An incident on its way never opens under a decision. */
+  private dropAsked() {
     this.forgetPartner();
+    if (!this.opening) return;
+    this.opening = "";
+    this.syncAddress();
+  }
+  /** Closing a decision returns to its offer. */
+  stopDeciding(action: TransactionAction) {
+    this.leaveDialog();
+    setTimeout(() =>
+      this.element.nativeElement
+        .querySelector<HTMLElement>(`[data-offer="${action}"]`)
+        ?.focus(),
+    );
+  }
+  /** No dialog is open any more, or another one opens. */
+  private leaveDialog() {
+    this.resolving = false;
+    this.deciding = null;
+    this.failure = null;
+    this.refreshing = false;
+    this.dialogs++;
+  }
+  /**
+   * The incident under a decision as just read: whether the decision still
+   * fits it. Otherwise the drawer says how it stands now, and no dialog does.
+   */
+  private readAgain(fresh: IncidentView, action: TransactionAction): boolean {
+    this.selected = fresh;
+    this.relist(fresh);
+    const offer = transactionActions(fresh, (capability) =>
+      this.host.can(capability),
+    ).find((item) => item.action === action);
+    if (offer && !offer.missing) return true;
+    this.leaveDialog();
+    if (!inDoubt(fresh))
+      this.host.notify(`Incident ${this.whereOf(fresh)} is no longer active.`);
+    void this.loadEvents(fresh);
+    this.focusTitle();
+    return false;
+  }
+  /**
+   * An incident as just read or decided, in the lists that hold it. One the
+   * status filter no longer matches leaves them at once, as the platform's
+   * next page would leave it out.
+   */
+  private relist(fresh: IncidentView) {
+    const listed =
+      this.filters.status === "all" || fresh.status === this.filters.status;
+    for (const list of [this.high, this.rest])
+      list.items = list.items.flatMap((item) =>
+        item.id !== fresh.id ? [item] : listed ? [fresh] : [],
+      );
+  }
+  private whereOf(incident: IncidentView) {
+    return `${incident.code} at ${this.stepOf(incident)}`;
   }
   /**
    * Sends a decision with the incident's revision as If-Match and a receipt.
@@ -1473,12 +1614,21 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.pending.set(incident.id, { key, receipt });
     this.sending.add(incident.id);
     this.failure = null;
-    const where = `${incident.code} at ${this.stepOf(incident)}`;
+    const where = this.whereOf(incident);
+    const offer = this.deciding
+      ? transactionActions(incident, () => true).find(
+          (item) => item.action === this.deciding,
+        )
+      : null;
+    const dialog = this.dialogs;
     // Still this page, environment and person; and this incident still open.
     const samePage = () => this.alive && generation === this.generation;
     const stillOpen = () => samePage() && this.selected?.id === incident.id;
+    // A decision on a transaction in doubt is refused in its own dialog only.
+    const stillAsked = () =>
+      stillOpen() && this.resolving && (!offer || dialog === this.dialogs);
     try {
-      const resolved = await this.host.api.request<IncidentView>(
+      const row = await this.host.api.request<IncidentView>(
         `${scope}/incidents/${encodeURIComponent(incident.id)}/resolve`,
         "POST",
         { receipt_id: receipt, ...request },
@@ -1486,12 +1636,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       );
       if (this.pending.get(incident.id)?.receipt === receipt)
         this.pending.delete(incident.id);
+      const resolved = { ...unchanging(incident), ...row };
       if (stillOpen()) {
         const dialogOpen = this.resolving;
-        this.resolving = false;
+        this.leaveDialog();
         this.selected = resolved;
         this.host.notify("Incident resolved.");
         void this.loadEvents(resolved);
+        void this.readDecided(resolved);
         // The dialog's button is gone.
         if (dialogOpen) this.focusTitle();
       } else {
@@ -1499,20 +1651,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         this.host.notify(`Incident ${where} is resolved.`);
         if (!samePage()) return;
       }
-      // A decided incident the status filter no longer matches leaves the
-      // list at once, as the platform's next page would leave it out.
-      const listed =
-        this.filters.status === "all" ||
-        resolved.status === this.filters.status;
-      for (const list of [this.high, this.rest])
-        list.items = list.items.flatMap((item) =>
-          item.id !== resolved.id ? [item] : listed ? [resolved] : [],
-        );
+      this.relist(resolved);
       // Not while the person decides on another incident: reading the list
       // would change the revision that decision is sent with.
       if (!this.resolving) void this.poller.refresh();
     } catch (error) {
-      const plain = describeError(error);
+      const plain = offer
+        ? explainDecision(describeError(error), offer)
+        : describeError(error);
       const unknown =
         plain.status === 0 || plain.status === 408 || plain.status >= 500;
       // A refusal is final for that receipt; a lost answer keeps it.
@@ -1531,7 +1677,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
                 "Someone changed this incident since you opened it. Refresh it, check it again, then decide.",
             }
           : plain;
-      if (stillOpen() && this.resolving) this.failure = explained;
+      if (stillAsked()) this.failure = explained;
       else
         this.host.notify(
           unknown
@@ -1547,25 +1693,30 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
    * Refresh incident: reads the incident again (incidents.read) so the dialog
    * decides on its current revision, whether or not a loaded page lists it.
    * A read that fails, or finds it gone, says so in the dialog instead of
-   * leaving the old revision to fail again.
+   * leaving the old revision to fail again. A decision on a transaction in
+   * doubt keeps why it was refused while it is read, and closes when it no
+   * longer fits.
    */
   async reloadIncident() {
     const incident = this.selected;
     const scope = this.scope;
-    if (!incident || !scope) return;
+    const action = this.deciding;
+    if (!incident || !scope || this.refreshing) return;
     const generation = this.generation;
-    this.failure = null;
+    const dialog = this.dialogs;
+    if (action) this.refreshing = true;
+    else this.failure = null;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.selected?.id === incident.id &&
+      this.resolving &&
+      (!action || dialog === this.dialogs);
     try {
       const fresh = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(incident.id)}`,
       );
-      if (
-        !this.alive ||
-        generation !== this.generation ||
-        this.selected?.id !== incident.id ||
-        !this.resolving
-      )
-        return;
+      if (!current()) return;
       if (isUnavailableIncident(fresh))
         this.failure = {
           message:
@@ -1573,7 +1724,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           code: "",
           status: 0,
         };
-      else {
+      else if (action) {
+        this.failure = null;
+        this.readAgain(fresh, action);
+      } else {
         this.selected = fresh;
         for (const list of [this.high, this.rest])
           list.items = list.items.map((item) =>
@@ -1581,13 +1735,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           );
       }
     } catch (error) {
-      if (
-        !this.alive ||
-        generation !== this.generation ||
-        this.selected?.id !== incident.id ||
-        !this.resolving
-      )
-        return;
+      if (!current()) return;
       const plain = describeError(error);
       this.failure =
         plain.status === 404
@@ -1598,7 +1746,37 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
             }
           : plain;
     } finally {
-      this.cdr.markForCheck();
+      if (dialog === this.dialogs) this.refreshing = false;
+      if (this.alive) this.cdr.markForCheck();
+    }
+  }
+  /**
+   * The platform's answer to a decision is the incident's own row: when it
+   * opened, its workflow and its run come from reading it again. The decision
+   * is recorded, so a read that fails leaves what the answer said.
+   */
+  private async readDecided(decided: IncidentView) {
+    const scope = this.scope;
+    if (!scope) return;
+    const generation = this.generation;
+    try {
+      const fresh = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(decided.id)}`,
+      );
+      if (
+        !this.alive ||
+        generation !== this.generation ||
+        this.selected?.id !== decided.id ||
+        isUnavailableIncident(fresh) ||
+        fresh.revision < this.selected.revision
+      )
+        return;
+      this.selected = fresh;
+      this.relist(fresh);
+    } catch {
+      // What the answer said stays.
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
     }
   }
   unavailable(item: IncidentRecord) {

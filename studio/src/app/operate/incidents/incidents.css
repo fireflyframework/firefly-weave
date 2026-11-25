@@ -300,6 +300,76 @@ weave-operate-state {
   }
 }
 
+/* The drawer: the decisions on a transaction in doubt, each with what it does
+   and what it needs, none drawn as the recommended one. */
+.offers {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+.offers h3 {
+  margin: 0;
+  font: var(--type-label);
+  line-height: 20px;
+}
+.offer {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.offer > button {
+  justify-self: start;
+  max-width: 100%;
+}
+/* Reading the incident it keeps its place and its border: it isn't refused. */
+.offer > button[aria-busy="true"] {
+  gap: var(--space-2);
+}
+.offer > button.danger:not(:disabled) {
+  border-color: var(--danger-bd);
+}
+.offer p {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.offer .why {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: var(--space-1);
+  color: var(--warning-ink);
+}
+.offer .why weave-icon,
+.offer .notice > weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.offer .notice {
+  margin: var(--space-1) 0 0;
+}
+.offer .notice p {
+  color: var(--text);
+}
+.offer .notice .support-code {
+  margin-top: var(--space-1);
+  font: var(--type-caption);
+}
+.offer .spin {
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .offer .spin {
+    animation: none;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .offer > button {
+    min-height: var(--control-touch);
+  }
+}
+
 /* The drawer: the run's last engine events. */
 .recent-events {
   margin-top: var(--space-6);

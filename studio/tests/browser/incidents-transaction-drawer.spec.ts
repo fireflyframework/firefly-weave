@@ -622,10 +622,9 @@ test("a partner on its way never opens under a decision", async ({ page }) => {
   const { reads, openPartner } = await partnerElsewhere(page);
   await openPartner.click();
   await expect.poll(() => reads.length).toBe(1);
-  await drawer(page)
-    .getByRole("button", { name: "Resolve incident", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Resolve incident" });
+  const wait = { name: "Wait again", exact: true };
+  await drawer(page).getByRole("button", wait).click();
+  const dialog = page.getByRole("dialog", wait);
   await dialog.getByLabel("Reason").fill("The target system is back");
   const answered = page.waitForResponse((response) =>
     response.url().endsWith(`/incidents/${ids.called}`),
@@ -639,7 +638,7 @@ test("a partner on its way never opens under a decision", async ({ page }) => {
         requestAnimationFrame(() => requestAnimationFrame(() => done())),
       ),
   );
-  await expect(dialog).toContainText("WV-TXN-SETTLE-TIMEOUT at move");
+  await expect(dialog).toContainText("Transaction move in run 6d18b3f0");
   await expect(dialog.getByLabel("Reason")).toHaveValue(
     "The target system is back",
   );

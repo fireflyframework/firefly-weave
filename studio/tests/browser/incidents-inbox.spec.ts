@@ -2267,11 +2267,14 @@ test.describe("transactions in doubt", () => {
     );
     await page.goto(`/operate/incidents?incident=${ids.loop}`);
     await expect(codes(high(page))).toHaveCount(2);
+    const retry = { name: "Retry the release", exact: true };
     await page
       .locator("weave-incident-drawer")
-      .getByRole("button", { name: "Resolve incident", exact: true })
+      .getByRole("button", retry)
       .click();
-    await endTheRun(page);
+    const dialog = page.getByRole("dialog", retry);
+    await dialog.getByLabel("Reason").fill("The source system is back");
+    await dialog.getByRole("button", retry).click();
     // The reload after it is still on its way: the band already left it out.
     await expect(codes(high(page))).toHaveText(["WV-TXN-PIVOT-UNKNOWN"]);
     await expect(codes(other(page))).toHaveCount(4);
