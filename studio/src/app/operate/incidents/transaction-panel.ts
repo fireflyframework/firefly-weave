@@ -36,6 +36,7 @@ import {
   type Tone,
 } from "../../status-labels";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import { HELD_RUN } from "../transactions/transaction-contracts";
 import {
   recordBadge,
   recordRows,
@@ -95,8 +96,7 @@ export interface PanelView {
   held: string | null;
 }
 
-/** A run held whole: one incident stands for all its transactions. */
-const HELD = "WV-TXN-RUN-OVERSIZED";
+/** What stands in for the record of a run held whole. */
 const HELD_TEXT =
   "Its transactions are held as they are. Open the run to see each one.";
 const MORE_TEXT = "More called runs wait in doubt. Open the run to see them.";
@@ -142,7 +142,8 @@ export function panelView(incident: IncidentView): PanelView | null {
       badge: recordBadge(transaction),
       rows: recordRows(transaction, incident.run_id),
     },
-    held: active && !transaction && incident.code === HELD ? HELD_TEXT : null,
+    held:
+      active && !transaction && incident.code === HELD_RUN ? HELD_TEXT : null,
   };
 }
 

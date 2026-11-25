@@ -886,6 +886,9 @@ test("a run held whole can only be force ended, whatever its record", async ({
   await offer(page, name).click();
   const asked = dialog(page, name);
   await expect(asked).toContainText("Run 0e5a7c13");
+  await expect(asked).toHaveAccessibleDescription(
+    "Ends the run and its transactions as they are. Weave starts and undoes nothing more, but a step that is already running may still finish. Open the run to see what stays done in other systems.",
+  );
   await expect(asked).not.toContainText("Stays done in other systems");
   await expect(asked.getByRole("checkbox")).toHaveCount(0);
   await field(page, name, "Reason").fill("It can't be undone");

@@ -24,6 +24,7 @@ import type { ParticipantStatus } from "../../editor/transactions/transaction-wo
 import type { PlainError } from "../../errors";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import {
+  HELD_RUN,
   stepName,
   type TransactionParticipantView,
 } from "../transactions/transaction-contracts";
@@ -105,6 +106,9 @@ const DECISIONS: Readonly<
     help: "Ends the transaction and the run as they are. Nothing more is done or undone.",
   },
 };
+/** Force end on a run held whole ends every transaction it has. */
+const HELD_RUN_HELP =
+  "Ends the run and its transactions as they are. Weave starts and undoes nothing more, but a step that is already running may still finish. Open the run to see what stays done in other systems.";
 /** "Runs the release again…": a retry's help names what its label does. */
 function retryHelp(label: string): string {
   if (label === RESOLUTION_LABELS.wait_again)
@@ -148,7 +152,10 @@ export function transactionActions(
   } else if (incident.code === "WV-TXN-PIVOT-UNKNOWN")
     offers.push(decision("it_happened"), decision("it_didnt_happen"));
   // A run held whole, or a code Studio doesn't know, can only be ended.
-  offers.push(decision("force_end"));
+  const end = decision("force_end");
+  offers.push(
+    incident.code === HELD_RUN ? { ...end, help: HELD_RUN_HELP } : end,
+  );
   return offers;
 }
 

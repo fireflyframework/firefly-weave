@@ -117,6 +117,19 @@ describe("the decisions an incident in doubt offers", () => {
     expect(wait.action).toBe("retry");
   });
 
+  it("say of a run held whole that a step already running may still finish", () => {
+    const [end] = transactionActions(held, everything);
+    expect(end.help).toBe(
+      "Ends the run and its transactions as they are. Weave starts and undoes nothing more, but a step that is already running may still finish. Open the run to see what stays done in other systems.",
+    );
+    // A code Studio doesn't know may hold one transaction only.
+    const [newer] = transactionActions(
+      coded("WV-TXN-SOMETHING-NEW"),
+      everything,
+    );
+    expect(newer.help).toBe(corpus.resolutions["force_end"].help);
+  });
+
   it("say what a retry runs again", () => {
     expect(
       ["UNDO", "CANCEL", "CONFIRM", "AFTER-PIVOT"].map(

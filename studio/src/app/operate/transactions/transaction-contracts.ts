@@ -78,6 +78,8 @@ export interface TransactionsSection {
   oldest_undoing_seconds?: number;
 }
 
+/** The code of a run held whole: one incident stands for all its transactions. */
+export const HELD_RUN = "WV-TXN-RUN-OVERSIZED";
 /** The states of a transaction that hasn't settled: canceling its run undoes it first. */
 export const UNSETTLED: readonly TransactionState[] = [
   "open",
