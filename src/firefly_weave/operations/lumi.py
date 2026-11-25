@@ -79,6 +79,7 @@ from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_co
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.lumi_operations import (
     EXPLAINED_KINDS,
+    Explained,
     ExplainRequest,
     OperationsExplainer,
     explanation_for,
@@ -670,13 +671,15 @@ def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfigurat
 
 # Pages of 200 step facts read for a run attachment: the latest steps of runs up to 10,000 instances.
 RUN_PAGES = 50
+# The reach of a run attachment whose facts were read.
+RUN_READ: Final = frozenset({"run"})
 # Every attachment kind `_attachments` reads; a test keeps it equal to the contract's kinds.
 HANDLED_KINDS: Final = frozenset(COLLECTIONS) | EXPLAINED_KINDS | {"draft", "run", "simulation"}
 
 
 @dataclass(frozen=True)
 class Attachments:
-    """The attached resources as read, and the access grants that filled the operations ones, by position."""
+    """The attached resources as read, and the access grants that filled the operations and run ones, by position."""
 
     resources: list[JsonValue]
     reach: frozenset[str]
@@ -700,12 +703,13 @@ class LumiService:
         self.deployments = deployments
         self.policy, self.runs, self.operations = policy, runs, operations
 
-    async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
+    async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> None:
+        """Check ``capability`` on the principal stored now. It returns nothing on purpose: the reloaded principal
+        carries no credential identity, so callers keep ``actor`` for every owning check and audit record."""
         if tx.scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Weave AI requires an environment")
         current = await load_principal(tx.session, actor.id)
         self.definitions.require(current, tx.scope, capability, context)
-        return current
 
     @staticmethod
     async def _read(tx: Transaction) -> LumiConfiguration | None:
@@ -743,7 +747,7 @@ class LumiService:
         context: AuditContext,
     ) -> LumiConfiguration:
         async with self.definitions.transaction(scope, None) as tx:
-            actor = await self._require(tx, actor, "lumi.manage", context)
+            await self._require(tx, actor, "lumi.manage", context)
             prior = await self._read(tx)
             if (prior.revision if prior else None) != expected:
                 raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reload it")
@@ -805,8 +809,10 @@ class LumiService:
         *,
         summary: OperationsSummaryService | None,
     ) -> Attachments:
-        """The attached resources, read with the caller's own access, and the grants that filled the operations ones;
-        the inline draft is shaped separately. A kind with no reader is refused before anything is read."""
+        """The attached resources, read with the caller's own access, and the grants that filled the operations and
+        run ones; the inline draft is shaped separately. A kind with no reader is refused before anything is read.
+        ``actor`` is the principal of the credential that asked, never one reloaded from storage, so each owning
+        service checks and audits that credential."""
         unknown = [attachment.kind for attachment in request.attachments if attachment.kind not in HANDLED_KINDS]
         if unknown:
             raise LookupError(f"No reader for attachment kind {unknown[0]!r}")
@@ -831,7 +837,9 @@ class LumiService:
                 value = await self.definitions.read(actor, project, "drafts", attachment.id, context=context)
                 data = cast(JsonValue, {"document": value["document"], "revision": value["revision"]})
             elif attachment.kind == "run":
-                data = await self._run(actor, scope, attachment.id, context)
+                run = await self._run(actor, scope, attachment.id, context)
+                data = run.data
+                reach |= {f"{position}:{grant}" for grant in run.reach}
             elif attachment.kind == "simulation":
                 async with self.definitions.transaction(project, None, mutation=False) as tx:
                     session = await self.debug.inspect(tx, attachment.id, actor=actor, scope=project, context=context)
@@ -849,25 +857,28 @@ class LumiService:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
         return Attachments(result, frozenset(reach))
 
-    async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> JsonValue:
-        """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time."""
+    async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> Explained:
+        """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time.
+
+        Its reach holds ``run`` when the run's facts were read: a run classified, blocked by policy or gone by the
+        read after the reply has none, so a reply built from its facts is discarded."""
         summary = await self.runs.summary(actor, scope, run_id, context=context)
         if summary is None:
-            return {"status": "not_recorded_yet"}
+            return Explained({"status": "not_recorded_yet"}, frozenset())
         if not isinstance(summary, RunSummary):
             # Classified or blocked by policy for this caller: say so, and read none of its steps.
-            return {"status": "unavailable"}
+            return Explained({"status": "unavailable"}, frozenset())
         facts: list[StepFact] = []
         position: tuple[JsonValue, str] | None = None
         for _ in range(RUN_PAGES):
             page = await self.runs.steps(actor, scope, run_id, RunStepQuery(limit=200), position, context=context)
             facts.extend(item for item in page.items if isinstance(item, StepFact))
             if page.next_cursor is None or not page.items:
-                return run_context(summary, facts)
+                return Explained(run_context(summary, facts), RUN_READ)
             # The next page starts after the last item, as the step cursor does: its scheduled time and key.
             last = page.items[-1]
             position = (last.scheduled_at.isoformat() if last.scheduled_at else None, last.instance_key or last.node_id)
-        return run_context(summary, facts, partial=True)
+        return Explained(run_context(summary, facts, partial=True), RUN_READ)
 
     def _context_tokens(self, connection: ConnectionRevision) -> int | None:
         """The context size the AI policy records for the connection's endpoint, or None when it records none."""
@@ -912,9 +923,13 @@ class LumiService:
         summary: OperationsSummaryService | None,
     ) -> LumiAnswer:
         """One question. ``summary`` is the lifespan-owned operations summary, or None before it starts; only an
-        environment attachment reads it."""
+        environment attachment reads it.
+
+        ``actor`` stays the principal of the credential that asked: the principal stored now only decides whether
+        Weave AI may be used, and each attachment is read as the caller, so its owning service checks and audits the
+        credential that made the request."""
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
-            actor = await self._require(tx, actor, "lumi.use", context)
+            await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
             if config is None or not config.enabled or not self.gateway.configured:
                 raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
@@ -939,7 +954,7 @@ class LumiService:
                     context_tokens=tokens,
                 )
                 async with self.definitions.transaction(scope, None, mutation=False) as tx:
-                    actor = await self._require(tx, actor, "lumi.use", context)
+                    await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)
                     if current is None or current.revision != config.revision or not current.enabled:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")

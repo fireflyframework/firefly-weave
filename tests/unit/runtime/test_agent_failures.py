@@ -35,7 +35,8 @@ from agent_fixtures import (
     workflow,
 )
 
-from firefly_weave.compiler.ir import WorkflowIR
+from firefly_weave.compiler.ir import ActionNode, WorkflowIR
+from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.runtime.agent_tools import reconciled_schema
 from firefly_weave.runtime.kernel import error_policy
 from firefly_weave.runtime.models import ControlCommand, HumanTaskIntent
@@ -146,6 +147,20 @@ def test_a_model_that_is_missing_opens_an_incident_at_the_turn():
     assert run.state.agents["support"].phase == "turn"
 
 
+@pytest.mark.parametrize("origin", ["", "HTTP_500", "llm_unreachable", "LLM UNREACHABLE", 17, ["LLM_UNREACHABLE"]])
+def test_an_incident_is_first_reported_only_as_the_models_code(origin):
+    run = run_with()
+    run.send("started")
+    run.send("task_failed", node_id="support#1", generation=1, output={"code": "LLM_NO_TOOL_SUPPORT"})
+
+    # What an incident was first reported as reaches Operate and the Agent log: only the model's own code. The kernel
+    # refuses anything else, and the turn keeps its interim incident beside the refusal.
+    run.send("incident_opened", node_id="support#1", generation=1, code="WV-TASK-RETRIES-EXHAUSTED", origin_code=origin)
+
+    assert incidents(run) == {("support#1", "WV-TASK-FAILED"), ("support#1", "WV-RUNTIME-EVENT")}
+    assert all(item.origin_code is None for item in run.state.incidents.values())
+
+
 def node_dependency(ir: WorkflowIR) -> str:
     return node_of_ir(ir).dependency
 
@@ -236,6 +251,52 @@ def test_an_ambiguous_tool_incident_is_held_at_the_tools_key():
 
     assert incidents(run) == {("support#1.1", "WV-TASK-AMBIGUOUS")}
     assert run.state.agents["support"].calls[0].status == "running"
+
+
+def test_a_tools_incident_is_never_first_reported_as_a_model_code():
+    run = run_with(LOOKUP, CANCEL)
+    approved_cancel(run)
+
+    # The tool runs a plain action: its worker can't put a model's code on the incident, so the kernel refuses it.
+    run.send("incident_opened", node_id="support#1.1", generation=1, code="WV-TASK-AMBIGUOUS", origin_code="LLM_POLICY")
+
+    assert incidents(run) == {("support#1.1", "WV-RUNTIME-EVENT")}
+    assert all(item.origin_code is None for item in run.state.incidents.values())
+
+
+@pytest.mark.parametrize(
+    ("key", "model"),
+    [
+        ("support#1", True),
+        ("support[2]#3", True),
+        ("support#1.1", False),
+        ("support#1.1.review", False),
+        ("support", False),
+        ("other", False),
+    ],
+)
+def test_only_an_agents_turn_runs_its_model(key, model):
+    from firefly_weave.runtime.kernel import runs_model
+
+    assert runs_model(ir_of(run_with()), key) is model
+
+
+@pytest.mark.parametrize(
+    ("key", "model"),
+    [("summarize", True), ("summarize[1]", True), ("summarize#undo", False), ("lookup", False)],
+)
+def test_an_ai_steps_task_runs_its_model_and_a_plain_actions_doesnt(key, model):
+    from firefly_weave.runtime.kernel import runs_model
+
+    ir = ir_of(run_with())
+    profile = LLMProfile.model_construct(provider="openai-chat", model="qwen3:4b")
+    steps = [
+        ActionNode.model_construct(id="summarize", llm_profile=profile),
+        ActionNode.model_construct(id="lookup", llm_profile=None),
+    ]
+    ir = ir.model_copy(update={"graph": ir.graph.model_copy(update={"nodes": [*ir.graph.nodes, *steps]})})
+
+    assert runs_model(ir, key) is model
 
 
 def test_an_operators_reconciled_tool_output_reaches_the_model():

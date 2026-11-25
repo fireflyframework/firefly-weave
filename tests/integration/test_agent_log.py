@@ -20,7 +20,7 @@ import json
 
 import pytest
 import test_agent_runtime as runtime
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
@@ -178,6 +178,66 @@ async def test_a_steps_activations_are_listed_in_iteration_order(agent):
         "support[10][10]",
     ]
     assert after == ["support[10][9]", "support[10][10]"]
+
+
+def plan_nodes(plan: dict):
+    yield plan
+    for child in plan.get("Plans", []):
+        yield from plan_nodes(child)
+
+
+async def test_an_activations_facts_are_read_as_one_key_range(agent):
+    """Among 160,000 facts of the step in the run, the facts under two activations are read as two ranges of the
+    key index: 160 rows, and exactly theirs, though keys such as support[10]#1 and support[1000] sit next to them in
+    byte order."""
+    scope = {
+        "tenant": agent.scope.tenant_id,
+        "project": agent.scope.project_id,
+        "environment": agent.scope.environment_id,
+        "run": agent.run.id,
+    }
+    async with agent.db[1].begin() as session:
+        # Bulk rows past the row triggers: usage accounting plays no part in this read.
+        await session.execute(text("SET LOCAL session_replication_role=replica"))
+        await session.execute(
+            text(
+                "INSERT INTO step_facts(tenant_id,project_id,environment_id,run_id,node_id,instance_key,kind,"
+                "status) SELECT :tenant,:project,:environment,:run,'support','support['||a||']'||CASE WHEN t=0 "
+                "THEN '' ELSE '#'||t END,'agent','succeeded' FROM generate_series(1,2000) AS a,"
+                "generate_series(0,79) AS t"
+            ),
+            scope,
+        )
+        await session.execute(text("ANALYZE step_facts"))
+    keys = ["support[1]", "support[1999]"]
+    statements: list[tuple[str, object]] = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany) -> None:
+        statements.append((statement, parameters))
+
+    engine = agent.db[0].kw["bind"].sync_engine
+    async with agent.definitions.transaction(agent.scope, None) as tx:
+        event.listen(engine, "before_cursor_execute", capture)
+        try:
+            records = await AgentLogRepository(tx).steps(agent.run.id, "support", keys)
+        finally:
+            event.remove(engine, "before_cursor_execute", capture)
+        [(statement, parameters)] = [item for item in statements if "FROM step_facts f" in item[0]]
+        connection = await tx.session.connection()
+        value = (await connection.exec_driver_sql("EXPLAIN (ANALYZE, FORMAT JSON) " + statement, parameters)).scalar()
+
+    assert sorted(record.key for record in records) == sorted(
+        keys + [f"{key}#{turn}" for key in keys for turn in range(1, 80)]
+    )
+    plan = (json.loads(value) if isinstance(value, str) else value)[0]["Plan"]
+    scans = [node for node in plan_nodes(plan) if node.get("Relation Name") == "step_facts"]
+    assert {node["Node Type"] for node in scans} == {"Index Scan"}, scans
+    [ranged] = [node for node in scans if node["Index Name"] == "step_facts_key_range"]
+    assert (ranged["Actual Loops"], ranged["Actual Rows"]) == (2, 79)
+    # Nothing read and thrown away: each scan's index conditions select only the rows it returns.
+    assert (
+        sum(node.get("Rows Removed by Filter", 0) + node.get("Rows Removed by Index Recheck", 0) for node in scans) == 0
+    )
 
 
 async def change(setup, sql: str, node: str, **values) -> None:

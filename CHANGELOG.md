@@ -34,6 +34,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Runs, incidents, and workers
 
+- Purging a run also removes what its platform events left for event triggers:
+  the stored event and the trigger start records that no longer name a kept run.
+  A start record of a kept run stays, with its event emptied, until that run is
+  purged too. A purge answers `409 WV-RUN-PURGE-BLOCKED`, naming the waiting
+  start, while a trigger start still waits to run with one of the run's events;
+  such a start runs or expires within a day.
 - Workers and native connectors write log entries about the tasks they run.
   In a handler, `task_log().info("Checked the order", code="ORDER.CHECKED",
   items=3)` (from `firefly_weave.sdk.task_log`) writes an entry; the SDK
@@ -77,6 +83,11 @@ SPDX-License-Identifier: Apache-2.0
   PostgreSQL connector now records a cancel or undo of an `idempotent-command`
   step, so a request for that step that arrives later fails `SQL_ALREADY_UNDONE`
   and changes nothing; the operation table keeps its shape.
+- Stopping a platform-event trigger (`POST …/event-triggers/{identifier}/disable`)
+  accepts an optional `If-Match`: a stop sent with an older revision answers
+  `409 WV-REVISION` and leaves the trigger running, and the answer carries the
+  stopped trigger's revision as its `ETag`. A stop without `If-Match` works as
+  before.
 
 ### Operations
 
@@ -116,6 +127,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ### AI and connections
 
+- Weave AI reads every attachment of a question as the principal of the
+  credential that asked, so each owning service checks and audits that
+  credential; it no longer substitutes the principal reloaded from storage,
+  whose authorization records named no identity.
+- Weave AI discards a reply when a run attachment's run becomes classified,
+  blocked by policy or purged between the read sent to the model and the read
+  after the reply.
+- Configuring Weave AI reads the provider connection and writes the
+  `lumi.configure` audit record as the credential that asked, so the
+  connection's owning check and the audit name that credential.
 - AI agents can remember a conversation across runs. With
   `memory: {scope: conversation, key: <expression>}`, each run loads what earlier
   runs with the same key remembered (the newest `window` messages, as one data
@@ -141,9 +162,34 @@ SPDX-License-Identifier: Apache-2.0
   conversation's key hash, version and expiry.
 - The simulator answers a conversation load from the `memory` seed of the
   agent's saved turns, and never reads a stored conversation.
+- The compiler refuses an action step whose Action runs an AI model, such as
+  `weave-agentic-generate` (`WV-COMP-AGENT_ACTION`), as it already refused the
+  AI agent turn: an action step has no AI profile, so activation could never
+  check its model against the AI policy. Activation now refuses a workflow
+  version compiled before this fix (`WV-ACTIVATION-AI-RESERVED`). Activations
+  made earlier keep starting runs, and their action step runs the model without
+  an AI step's guards until it is moved into an AI step and the workflow is
+  activated again; the worker still refuses a model the AI policy doesn't
+  approve (`LLM_POLICY`).
+- An AI agent turn or AI step that fails for good because of its model names
+  the model's own code, such as `LLM_NO_TOOL_SUPPORT`, `LLM_CONTEXT_LIMIT` or
+  `LLM_UNREACHABLE`: it is the incident's `origin_code` ("First reported as" in
+  Studio) and the turn's `error` in the Agent log. The incident's `code` is
+  unchanged.
 
 ### Studio, desktop app, and CLI
 
+- The Python SDK and the typed CLI send a request again when the platform
+  refused it before admitting it (HTTP 429 `WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`): a `GET`, or a change that carries an idempotency key,
+  with the same body, key, and token. Each pause lasts at least `Retry-After`
+  and grows from half a second to 5 seconds; the client stops after 4 sends or
+  15 seconds, and lets the refusal stand at once when `Retry-After` asks for
+  more than 5 seconds or can't be read as whole seconds. A change without a key
+  is never sent again, and a client closed during a pause sends nothing more.
+  `WeaveClient(..., resend=None)` turns this off, and `WeaveError.retry_after`
+  gives the refusal's `Retry-After` in seconds. The `weave platform cluster`
+  commands keep their 60-second window on the same policy.
 - The Studio host bridge forwards webhooks, schedules, Kafka triggers, app
   event sources and draft test activations; every operation is still
   authorized by the server.
@@ -269,6 +315,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
+- Studio's tests no longer fail on a busy machine: page clocks advance with
+  `runFor` instead of `fastForward` in the approvals, connect wizard and
+  incidents specs, canvas tidy is bounded by the work it does instead of
+  wall-clock time, step details and loop data wait for the state they check
+  instead of sleeping, and browser workers answer scope questions from one
+  Python process each.
 - CI has a manual job that runs the PostgreSQL integration tests against
   PostgreSQL 17; it moves to every pull request once the tests that depend on
   timing pass on a hosted runner. The tests that need Kafka, Keycloak, a built
@@ -286,9 +338,27 @@ SPDX-License-Identifier: Apache-2.0
   `tests/browser/cluster-connect-real.spec.ts`: Studio copies the connect
   command for a namespace of the run's cluster, the command runs as copied,
   and Studio must show **Cluster connected** within 15 seconds of its end.
+- A Security scans workflow runs on pull requests and on `main`: gitleaks over
+  the files and the new commits, and trivy over the lockfiles (development
+  dependencies included), Dockerfiles and Kubernetes manifests, both pinned to
+  checksummed releases. A high or critical finding fails it; the reviewed false
+  positives are listed in `.github/gitleaks.toml`, each anchored to its exact
+  block.
+- Every third-party action is pinned by commit, each job gets only the token
+  permissions it needs, and the release gate runs in its own workflow, started by
+  hand.
+- The desktop installer jobs fetch crates again when crates.io breaks off a
+  download.
 
 ### Versions and schema
 
+- `0047_event_trigger_purge` adds indexes on
+  `event_trigger_payloads(source_run_id)` and `event_trigger_starts(event_id)`
+  and removes, once, the trigger rows left by runs purged before it; like
+  earlier backfills it needs explicit `EXECUTE` on `weave_tenant_ids()`. See the
+  upgrade guide for its locks and run time.
+- `0048_operations_step_fact_keys` adds a partial index on `step_facts` for agent
+  and transaction phase keys, which the agent log reads as key ranges.
 - `0043_operations_logs` adds the empty `execution_logs` and
   `execution_log_days` tables and adds the role check again with the same
   roles; see the upgrade guide. Upgrade CLIs and SDKs with the server:

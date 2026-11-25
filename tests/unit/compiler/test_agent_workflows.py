@@ -277,6 +277,81 @@ def test_only_an_agent_step_runs_the_turn_action():
     assert ("WV-COMP-LLM_ACTION", "error", "/spec/steps/0/uses") in errors(workflow(llm_step))
 
 
+def test_an_action_step_cant_run_an_ai_task():
+    # An action step carries no AI profile, so activation could never check its model against the AI policy.
+    action_step = {
+        "id": "summarize",
+        "kind": "action",
+        "uses": "weave-agentic-generate@1.0.0",
+        "with": {"literal": {}},
+        "connection": "ai",
+    }
+
+    found = analyze(parse_source(workflow(action_step), format="object"), catalog()).diagnostics
+
+    refused = [item for item in found if item.path == "/spec/steps/0/uses"]
+    assert [(item.code, item.severity) for item in refused] == [("WV-COMP-AGENT_ACTION", "error")]
+    assert refused[0].message == (
+        "An action step can't run an AI model: use an AI step, so activation checks its model against the AI policy."
+    )
+
+
+MODEL_STEP = {
+    "id": "summarize",
+    "kind": "action",
+    "uses": "weave-agentic-generate@1.0.0",
+    "with": {"literal": {}},
+    "connection": "ai",
+}
+
+
+def body(*steps):
+    return {"steps": list(steps), "output": {"literal": None}}
+
+
+@pytest.mark.parametrize(
+    ("step", "path"),
+    [
+        (
+            {"id": "both", "kind": "parallel", "concurrency": 2, "branches": {"a": body(MODEL_STEP), "b": body()}},
+            "/branches/a/steps/0",
+        ),
+        (
+            {"id": "each", "kind": "forEach", "items": {"ref": "/input/orders"}, "body": body(MODEL_STEP)},
+            "/body/steps/0",
+        ),
+        (
+            {
+                "id": "pick",
+                "kind": "switch",
+                "cases": [{"when": {"literal": True}, **body(MODEL_STEP)}],
+                "default": body(),
+            },
+            "/cases/0/steps/0",
+        ),
+        ({"id": "move", "kind": "transaction", **body(MODEL_STEP)}, "/steps/0"),
+        (
+            {
+                "id": "load",
+                "kind": "action",
+                "uses": "orders-get@1.0.0",
+                "connection": "orders",
+                "with": {"object": {"id": {"literal": "A-1"}}},
+                "onError": "errorOutput",
+                "errorPath": body(MODEL_STEP),
+            },
+            "/errorPath/steps/0",
+        ),
+    ],
+    ids=["parallel", "for-each", "switch", "transaction", "error-path"],
+)
+def test_a_nested_action_step_cant_run_an_ai_task(step, path):
+    found = analyze(parse_source(workflow(step), format="object"), catalog()).diagnostics
+
+    refused = [item for item in found if item.path == f"/spec/steps/0{path}/uses"]
+    assert [(item.code, item.severity) for item in refused] == [("WV-COMP-AGENT_ACTION", "error")]
+
+
 def compensated(uses):
     """A transaction whose refund is undone by the action ``uses`` on the AI connection."""
     refund = {

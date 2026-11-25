@@ -118,6 +118,8 @@ class IncidentView(ContractModel):
     incident_key: str
     node_id: str | None
     generation: int | None
+    # The code the incident was first reported as: the incident's own code, the step's failure that put a transaction
+    # in doubt, or the model's own code (such as LLM_NO_TOOL_SUPPORT) when an AI step's model couldn't run.
     origin_code: str
     code: str
     status: Literal["active", "closed", "resolved"]

@@ -295,6 +295,8 @@ test.describe("step details and another workflow", () => {
   test("Back from one workflow's step details to another workflow closes them and doesn't open them there", async ({
     page,
   }) => {
+    // The page's clock runs the work Back leaves for later, below.
+    await page.clock.install();
     // The first workflow is kept on this computer, so Back can bring it back.
     await openStoredWorkflow(page, {
       id: "kept-order-intake",
@@ -330,7 +332,9 @@ test.describe("step details and another workflow", () => {
     ).toBeVisible();
     await expect(details.node("lookup")).toBeVisible();
     await expect(details.dialog).toHaveCount(0);
-    await page.waitForTimeout(300);
+    // Every timer Back started, and those they start, within a second: step
+    // details opened by any of them would be on screen now.
+    await page.clock.runFor(1_000);
     await expect(details.dialog).toHaveCount(0);
     // Step details still open on request, for this workflow's step.
     await details.open("lookup");
@@ -586,12 +590,17 @@ for (const size of sizes)
       await page.keyboard.press("Escape");
       if (await details.dialog.count()) await page.keyboard.press("Escape");
       await expect(details.dialog).toHaveCount(0);
+      // A close returns focus to the step's tile after the next render. Wait
+      // for it: a step focused before then loses focus to it, and Enter
+      // opens the step just closed.
+      await expect(details.node("route-by-value")).toBeFocused();
       await details.openWithKeyboard("summarize");
       // Moving between steps left nothing that looks like an unapplied edit.
       await expect(
         page.getByText("Fix the invalid fields before continuing."),
       ).toHaveCount(0);
       await details.close();
+      await expect(details.node("summarize")).toBeFocused();
       if (size.width >= 768) await details.open("wait-for-payment");
       else await details.openWithKeyboard("wait-for-payment");
       // Previous step goes back the same way.
@@ -600,6 +609,7 @@ for (const size of sizes)
         .click();
       await expect(details.dialogFor("score")).toBeVisible();
       await details.close();
+      await expect(details.node("score")).toBeFocused();
       await details.openWithKeyboard("check-customer");
     });
   });

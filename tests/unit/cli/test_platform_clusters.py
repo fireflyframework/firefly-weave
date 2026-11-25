@@ -552,8 +552,10 @@ def world(platform, monkeypatch):
     }
     monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: operations)
 
-    async def api(state, value, work, transport):
+    async def api(state, value, work, transport, *, resend):
         assert value["scope"] == SCOPE
+        # The commands send a refused request again themselves; the client's own resend would stack under theirs.
+        assert resend is None
         return await work(cluster)
 
     async def keycloak(state, named, transport):
@@ -1634,14 +1636,15 @@ def test_connect_and_disconnect_send_a_request_again_after_the_apis_capacity_ref
 
 def test_a_capacity_refusal_that_outlasts_the_wait_stops_disconnect(world, monkeypatch):
     """The refusal reaches the caller (the CLI's platform client turns it into its one-sentence refusal) once the
-    wait is over; the attempts are bounded."""
+    60 s wait is over. The test clock moves 10 s each time it is read: the sixth refusal comes 60 s after the first
+    send, so no pause fits and six sends are all."""
     _, _, _, cluster = world
     connect(world)
     busy(cluster, monkeypatch, "deployment_targets.update", 10**6)
     with pytest.raises(WeaveError) as refused:
         disconnect(world)
     assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
-    assert 1 < cluster.count("deployment_targets.update") < 100
+    assert cluster.count("deployment_targets.update") == 6
 
 
 def test_a_429_that_is_not_a_capacity_refusal_is_never_sent_again(world, monkeypatch):

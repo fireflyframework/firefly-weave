@@ -264,6 +264,20 @@ def test_an_ir_that_runs_the_turn_task_outside_an_agent_is_refused_at_activation
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
 
 
+def test_an_action_step_that_runs_an_ai_task_is_refused_at_activation():
+    ir = WorkflowIR.model_validate(compiled(ai_workflow()).executable)
+    # Both AI tasks of the workflow carry their profile, so the AI policy checks their models: they are admitted.
+    reserved()(ir)
+    generate = next(dependency for dependency in ir.dependencies if dependency.kind == "Action")
+    # A version compiled before the compiler refused it: an action step with no profile, so no model to check.
+    stray = ActionNode.model_construct(id="summary", dependency=generate.digest, connection="ai", llm_profile=None)
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, [*ir.graph.nodes, stray]))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert str(refused.value) == "Only an AI step runs an AI model, so the AI policy checks it"
+
+
 def test_an_agent_whose_turn_action_isnt_the_platforms_is_refused_at_activation():
     ir = agent_ir()
     nodes = [

@@ -15,7 +15,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-"""The installer build bundles a DMG again when hdiutil stopped it, and retries nothing else."""
+"""The installer jobs retry only what the network or hdiutil break: crates whose download crates.io broke off are
+fetched again, and a DMG that hdiutil stopped is bundled again. Nothing else is retried."""
 
 import shutil
 import subprocess
@@ -51,18 +52,50 @@ exit 1
 """
 
 
-def build_step() -> dict:
-    jobs = yaml.safe_load((ROOT / ".github/workflows/desktop.yml").read_text(encoding="utf-8"))["jobs"]
-    (step,) = [step for step in jobs["installer"]["steps"] if step.get("name") == "Build unsigned installers"]
+# Stands in for cargo: fetch N fails with line N of failures.txt (an empty line passes), printing each \n in it as a
+# new line.
+CARGO = """#!/usr/bin/env bash
+echo "cargo $*" >> "$CALLS"
+fetch=$(grep -c '^cargo fetch' "$CALLS")
+failure=$(sed -n "${fetch}p" "$FAILURES")
+[ -z "$failure" ] && exit 0
+printf '%b\\n' "$failure" >&2
+exit 101
+"""
+# What cargo 1.96 printed when crates.io's index broke off on the Linux runner (run 44008032135, first attempt), and
+# when the lockfile no longer matches Cargo.toml, which no new attempt can fix.
+NETWORK_FAILURE = (
+    "error: failed to get `typenum` as a dependency of package `crypto-common v0.1.7`\\n\\nCaused by:\\n"
+    "  download of ty/pe/typenum failed\\n\\nCaused by:\\n  curl failed\\n\\nCaused by:\\n"
+    "  [16] Error in the HTTP2 framing layer"
+)
+LOCK_FAILURE = "error: the lock file Cargo.lock needs to be updated but --locked was passed to prevent this"
+INSTALLER_JOBS = (("desktop.yml", "installer"), ("desktop-notarized.yml", "macos"))
+FETCH = "Fetch locked crates"
+
+
+def installer_job(workflow: str = "desktop.yml", job: str = "installer") -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8"))["jobs"][job]
+
+
+def named_step(name: str, workflow: str = "desktop.yml", job: str = "installer") -> dict:
+    (step,) = [step for step in installer_job(workflow, job)["steps"] if step.get("name") == name]
     return step
 
 
-def run_build(tmp_path: Path, failures: list[str]) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
-    """Runs the step's script as GitHub's bash runs it, with npm, hdiutil and sleep stubbed."""
+def build_step() -> dict:
+    return named_step("Build unsigned installers")
+
+
+def run_step(
+    tmp_path: Path, step: dict, stubs: dict[str, str], failures: list[str], environment: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+    """Runs the step's script as GitHub's bash runs it, with the given tools, hdiutil and sleep stubbed."""
     tools, desktop = tmp_path / "bin", tmp_path / "desktop"
     tools.mkdir()
     desktop.mkdir()
-    (tools / "npm").write_text(NPM, encoding="utf-8")
+    for name, script in stubs.items():
+        (tools / name).write_text(script, encoding="utf-8")
     # Recorded, never run: a developer's own disk images stay attached.
     for name in ("hdiutil", "sleep"):
         (tools / name).write_text(f'#!/usr/bin/env bash\necho "{name} $*" >> "$CALLS"\n', encoding="utf-8")
@@ -71,17 +104,13 @@ def run_build(tmp_path: Path, failures: list[str]) -> tuple[subprocess.Completed
     (tmp_path / "failures.txt").write_text("".join(f"{line}\n" for line in failures), encoding="utf-8")
     calls = tmp_path / "calls.log"
     calls.touch()
-    step = build_step()
     environment = {
         "PATH": f"{tools}:/usr/bin:/bin",
         "CALLS": str(calls),
         "FAILURES": str(tmp_path / "failures.txt"),
-        "LEFTOVERS": str(desktop / LEFTOVERS),
         "RUNNER_TEMP": str(tmp_path),
-        "TARGET": TARGET,
-        "BUNDLES": "app,dmg",
+        **environment,
     }
-    assert set(step["env"]) == {"TARGET", "BUNDLES"}
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
         cwd=desktop,
@@ -92,6 +121,69 @@ def run_build(tmp_path: Path, failures: list[str]) -> tuple[subprocess.Completed
         check=False,
     )
     return result, calls.read_text(encoding="utf-8").splitlines(), desktop
+
+
+def run_build(tmp_path: Path, failures: list[str]) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+    step = build_step()
+    assert set(step["env"]) == {"TARGET", "BUNDLES"}
+    environment = {"LEFTOVERS": str(tmp_path / "desktop" / LEFTOVERS), "TARGET": TARGET, "BUNDLES": "app,dmg"}
+    return run_step(tmp_path, step, {"npm": NPM}, failures, environment)
+
+
+def run_fetch(tmp_path: Path, failures: list[str]) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    step = named_step(FETCH)
+    assert step["env"] == {"TARGET": "${{ matrix.target }}"}
+    result, calls, _ = run_step(tmp_path, step, {"cargo": CARGO}, failures, {"TARGET": TARGET})
+    return result, calls
+
+
+def fetches(calls: list[str]) -> list[str]:
+    return [call for call in calls if call.startswith("cargo fetch")]
+
+
+def test_crates_whose_download_crates_io_broke_off_are_fetched_again(tmp_path):
+    result, calls = run_fetch(tmp_path, [NETWORK_FAILURE, ""])
+    assert result.returncode == 0, result.stderr
+    locked = f"cargo fetch --locked --target {TARGET} --manifest-path desktop/src-tauri/Cargo.toml"
+    assert fetches(calls) == [locked] * 2
+    assert "Fetching crates failed on attempt 1 of 3" in result.stdout
+
+
+def test_fetching_stops_after_three_network_failures(tmp_path):
+    result, calls = run_fetch(tmp_path, [NETWORK_FAILURE] * 5)
+    assert result.returncode != 0
+    assert len(fetches(calls)) == 3
+    assert "[16] Error in the HTTP2 framing layer" in result.stdout
+
+
+def test_a_fetch_failure_that_is_not_the_network_is_not_retried(tmp_path):
+    result, calls = run_fetch(tmp_path, [LOCK_FAILURE, ""])
+    assert result.returncode != 0
+    assert len(fetches(calls)) == 1
+    assert not any(call.startswith("sleep") for call in calls)
+
+
+@pytest.mark.parametrize(("workflow", "job"), INSTALLER_JOBS)
+def test_installer_jobs_fetch_every_crate_over_http_1_before_any_other_cargo_command(workflow, job):
+    """cargo 1.96 never retries an index request that broke off, so no later cargo command may be the first to fetch;
+    over HTTP/1.1 the index cannot fail as it did over HTTP/2 (curl error 16)."""
+    settings = installer_job(workflow, job)["env"]
+    assert settings["CARGO_HTTP_MULTIPLEXING"] == "false"
+    # cargo's own retries of a crate download that broke off: three by default.
+    assert int(settings["CARGO_NET_RETRY"]) > 3
+    steps = installer_job(workflow, job)["steps"]
+    fetch = steps.index(named_step(FETCH, workflow, job))
+    assert steps[fetch] == named_step(FETCH)
+    cargo = [
+        index
+        for index, step in enumerate(steps)
+        if "cargo " in step.get("run", "") or "npm run build" in step.get("run", "")
+    ]
+    toolchain = next(
+        index for index, step in enumerate(steps) if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+    )
+    assert toolchain < fetch and [index for index in cargo if index < fetch] == []
+    assert len(cargo) > 1
 
 
 def builds(calls: list[str]) -> list[str]:

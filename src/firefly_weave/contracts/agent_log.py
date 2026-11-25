@@ -174,6 +174,7 @@ class AgentTurn(ContractModel):
     calls: list[AgentCall] = Field(max_length=16)
     # Calls past the 16 a turn keeps; the model asked for them and none ran.
     dropped_tool_calls: Count
+    # Why the turn failed: the model's own code (such as LLM_NO_TOOL_SUPPORT) when the model couldn't run it.
     error: AgentError | None
 
 
