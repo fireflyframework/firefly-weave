@@ -234,6 +234,15 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "businessKey",
     ...ON_ERROR,
   ]),
+  transaction: new Set([
+    "id",
+    "kind",
+    "businessKey",
+    "policy",
+    "steps",
+    "output",
+    ...ON_ERROR,
+  ]),
 };
 const PATH_FIELDS = new Set(["steps", "output"]);
 const CASE_FIELDS = new Set(["steps", "output", "when"]);
@@ -433,9 +442,14 @@ function checkStep(
     const lane: unknown = block.branch;
     if (!isRecord(lane) || !Array.isArray(lane["steps"]))
       return PATHLESS(step["id"]);
+    // A transaction is its own block: its fields are the step's.
     const field = unknownKey(
       lane,
-      block.kind === "case" ? CASE_FIELDS : PATH_FIELDS,
+      !block.path.length
+        ? fields
+        : block.kind === "case"
+          ? CASE_FIELDS
+          : PATH_FIELDS,
     );
     if (field) return UNKNOWN_FIELD(step["id"], field);
     for (const inner of lane["steps"]) {
@@ -448,9 +462,13 @@ function checkStep(
 
 /**
  * The step kinds a workflow in Studio holds, as the model reads them: loops
- * too, which the model reads before Add step offers them.
+ * too, which the model reads before Add step offers them, and transactions.
  */
-const HELD_KINDS: ReadonlySet<string> = new Set([...kinds, "forEach"]);
+const HELD_KINDS: ReadonlySet<string> = new Set([
+  ...kinds,
+  "forEach",
+  "transaction",
+]);
 
 /** Text from the clipboard as steps, or why it isn't. */
 export function readClipboard(

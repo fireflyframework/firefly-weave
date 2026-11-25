@@ -71,13 +71,13 @@ const registryFields = (step: Step) =>
     .map((f) => ({ path: f.path, label: f.label }));
 
 describe("built-in step kinds", () => {
-  it("has a descriptor for each kind Add step lists, and for Call a workflow", () => {
+  it("has a descriptor for each kind Add step lists, for Call a workflow and for Transaction", () => {
     expect(
       ndvRegistry
         .kinds()
         .map((d) => d.kind)
         .sort(),
-    ).toEqual([...kinds, "callWorkflow"].sort());
+    ).toEqual([...kinds, "callWorkflow", "transaction"].sort());
   });
 
   it("creates the classic editor's defaults and ID prefixes", () => {
@@ -129,6 +129,7 @@ describe("built-in step kinds", () => {
         expect.any(Function),
         null,
       ],
+      transaction: ["group", "flow", "transaction", false, null],
     });
   });
 

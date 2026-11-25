@@ -273,6 +273,7 @@ const SHAPES: Record<NodeRole, TileShape> = {
   decision: "square",
   parallel: "fork",
   loop: "square",
+  group: "square",
   "sub-workflow": "stacked",
   transform: "square",
   human: "square",

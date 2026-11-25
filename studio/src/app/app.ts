@@ -3648,11 +3648,16 @@ export class App implements CanvasHost {
       this.contractRevision++;
       this.cdr.markForCheck();
     }
-    // Decision cases without a condition are named by Studio itself: the
-    // compiler reports such a step only as a whole.
+    // Decision cases without a condition and transactions without steps are
+    // named by Studio itself: the compiler reports such a step only as a whole.
     const conditions =
-      (source: string, format: string) => (result: Validation) =>
-        withConditionDiagnostics(result, this.parseSource(source, format));
+      (source: string, format: string) => (result: Validation) => {
+        const definition = this.parseSource(source, format);
+        return module.withEmptyTransactions(
+          withConditionDiagnostics(result, definition),
+          definition,
+        );
+      };
     return (this.validation ??= new module.ValidationService({
       transport: {
         local: (source, format) =>

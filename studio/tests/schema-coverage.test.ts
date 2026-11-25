@@ -111,11 +111,15 @@ describe.skipIf(!available)(
       ).toEqual([...schema.workflow].sort());
     });
     it("covers every ready step kind and its configuration fields", async () => {
-      // Kinds the palette doesn't list come with their own descriptor (Call a workflow).
+      // Kinds the palette doesn't list come with their own descriptor (Call a
+      // workflow); a kind still marked pending may have one already.
       await loadKindRegistrations();
       const own = ndvRegistry
         .kinds()
-        .filter((d) => !(kinds as readonly string[]).includes(d.kind));
+        .filter((d) => !(kinds as readonly string[]).includes(d.kind))
+        .filter((d) =>
+          ready(manifest.step_kinds).some((entry) => entry.kind === d.kind),
+        );
       expect([...kinds, ...own.map((d) => d.kind)].sort()).toEqual(
         ready(manifest.step_kinds)
           .map((entry) => entry.kind)

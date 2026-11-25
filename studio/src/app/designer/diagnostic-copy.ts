@@ -18,7 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 // Plain-language explanations of compiler diagnostics. Rows show `text`
 // (and `hint`); the stable code and the compiler's own message stay
 // available as secondary detail for support.
+import { blocksOf } from "../editor/step-blocks";
 import { readable } from "../errors";
+import { formatPointer } from "../forms/core/json";
+import type { Step } from "../model";
 
 export type Severity = "error" | "warning" | "info";
 
@@ -537,5 +540,78 @@ export function describeDiagnostic(
     code,
     technical,
     ...(hint ? { hint } : {}),
+  };
+}
+
+interface DiagnosticLike {
+  code?: unknown;
+  severity?: unknown;
+  path?: unknown;
+  message?: unknown;
+}
+interface ResultLike {
+  diagnostics: readonly object[];
+  errorCount?: number;
+  validationOk?: boolean;
+  ok?: boolean;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+/** Where each transaction without steps is, at any depth: "/spec/steps/0". */
+function emptyTransactions(definition: unknown): string[] {
+  const found: string[] = [];
+  const visit = (steps: unknown, at: (string | number)[]) => {
+    if (!Array.isArray(steps)) return;
+    steps.forEach((step: unknown, index) => {
+      if (!isRecord(step)) return;
+      const here = [...at, index];
+      const own = step["steps"];
+      if (step["kind"] === "transaction" && Array.isArray(own) && !own.length)
+        found.push(formatPointer(here));
+      for (const block of blocksOf(step as Step))
+        if (isRecord(block.branch))
+          visit(block.branch["steps"], [...here, ...block.path, "steps"]);
+    });
+  };
+  if (isRecord(definition) && isRecord(definition["spec"]))
+    visit(definition["spec"]["steps"], ["spec", "steps"]);
+  return found;
+}
+
+/**
+ * A check result with "Add a step to the transaction." on every transaction
+ * without steps. The platform answers one only with a general error, on the
+ * step of the main sequence that holds it: that answer is replaced by the
+ * one that says what to do, where it is to be done.
+ */
+export function withEmptyTransactions<T extends ResultLike>(
+  result: T,
+  definition: unknown,
+): T {
+  const empty = emptyTransactions(definition);
+  if (!empty.length || !Array.isArray(result.diagnostics)) return result;
+  const all = result.diagnostics as DiagnosticLike[];
+  const generic = (d: DiagnosticLike) =>
+    text(d.code).startsWith("WV-SCHEMA-") &&
+    d.severity !== "warning" &&
+    d.severity !== "info" &&
+    text(d.path).startsWith("/spec/steps/") &&
+    empty.some((at) => `${at}/`.startsWith(`${text(d.path)}/`));
+  const kept = all.filter((d) => !generic(d));
+  const added = empty.map((path) => ({
+    code: "WV-STUDIO-TRANSACTION",
+    severity: "error",
+    message: "Add a step to the transaction.",
+    path,
+  }));
+  const replaced = all.length - kept.length;
+  return {
+    ...result,
+    diagnostics: [...added, ...kept],
+    errorCount: Math.max(0, (result.errorCount ?? 0) - replaced) + added.length,
+    validationOk: false,
+    ...(result.ok !== undefined ? { ok: false } : {}),
   };
 }

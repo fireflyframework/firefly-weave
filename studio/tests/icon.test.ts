@@ -29,7 +29,11 @@ import {
 } from "../src/app/icon";
 import { iconNodes, lucideNames } from "../src/app/icon-data";
 import { kinds } from "../src/app/model";
-import { iconMap, renderIconData } from "../scripts/build-icons.mjs";
+import {
+  iconMap,
+  lucideNodes,
+  renderIconData,
+} from "../scripts/build-icons.mjs";
 
 const app = fileURLToPath(new URL("../src/app", import.meta.url));
 
@@ -86,11 +90,11 @@ function requestedIcons(): Map<string, string> {
 }
 
 describe("icons", () => {
-  it("draws the 111 mapped names from Lucide", () => {
-    expect(iconNames).toHaveLength(111);
+  it("draws the 112 mapped names from Lucide", () => {
+    expect(iconNames).toHaveLength(112);
     expect(lucideNames).toEqual(iconMap);
     for (const name of iconNames)
-      expect(iconNodes[name].length, name).toBeGreaterThan(0);
+      expect(iconNodes[name], name).toEqual(lucideNodes(lucideNames[name]));
   });
 
   it("matches a fresh generation from lucide-static byte for byte", async () => {
@@ -117,6 +121,7 @@ describe("icons", () => {
       signal: "radio-tower",
       action: "zap",
       email: "mail",
+      transaction: "shield-check",
     });
   });
 

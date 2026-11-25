@@ -30,6 +30,7 @@ export const kindRegistrations: readonly KindRegistrationLoader[] = [
   () => import("./llm"),
   () => import("./decision-grid"),
   () => import("./call"),
+  () => import("./transaction"),
 ];
 
 /**

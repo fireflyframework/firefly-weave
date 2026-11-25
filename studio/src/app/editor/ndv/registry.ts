@@ -51,6 +51,7 @@ export type NodeRole =
   | "decision"
   | "parallel"
   | "loop"
+  | "group"
   | "sub-workflow"
   | "transform"
   | "human"

@@ -99,6 +99,7 @@ export const iconMap = {
   // Flow kinds
   forEach: "iteration-cw",
   callWorkflow: "square-stack",
+  transaction: "shield-check",
   textTemplate: "text-cursor-input",
   // Editor
   execute: "flask-conical",
