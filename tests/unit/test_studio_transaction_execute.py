@@ -1029,9 +1029,11 @@ def test_a_step_that_failed_in_a_transaction_a_called_workflow_handles_failed_th
     assert failures(answer, "call") == {"move[0]": "WV-TXN-ROLLED-BACK", "note[0]": "WV-EXPR-MISSING"}
 
 
-def beside(step: dict[str, Any]) -> str:
-    """A workflow that runs a step beside a transaction that waits with its reservation made."""
-    return source({**parallel(x=[step], y=[transaction([hold(), wait(60, "held"), submit()])]), "id": "outer"})
+def beside(step: dict[str, Any], *others: dict[str, Any]) -> str:
+    """A workflow that runs steps beside a transaction that waits with its reservation made."""
+    branches = {f"z{index}": [other] for index, other in enumerate(others)}
+    held = transaction([hold(), wait(60, "held"), submit()])
+    return source({**parallel(x=[step], y=[held], **branches), "id": "outer"})
 
 
 LATER = {"id": "later", "kind": "action", "uses": "target-system.add-quantity@1.0.0", "with": add()["with"]}
@@ -1056,9 +1058,11 @@ def test_a_step_of_an_open_transaction_is_never_blamed_for_a_failure_outside_of_
 
 def test_a_step_of_an_open_transaction_is_never_blamed_for_a_called_run_that_failed():
     call = {key: value for key, value in called_step().items() if key != "compensate"}
-    answer = run_calling(beside(call), wait(10), STOP)
+    # Another call, after it in the trace, ends at once.
+    answer = run_calling(beside(call, {**call, "id": "quick"}), wait(10), STOP, mocks={"node:quick": {}})
     assert answer["status"] == "failed", answer
-    assert [entry["nodeId"] for entry in answer["trace"] if "frame" not in entry][-1] == "held"
+    own = [entry["nodeId"] for entry in answer["trace"] if "frame" not in entry]
+    assert own.index("call") < own.index("quick") < own.index("held") == len(own) - 1
     assert failures(answer) == {"call": None}
     assert failures(answer, "call") == {"stop": None}
 

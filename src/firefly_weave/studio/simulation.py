@@ -1719,14 +1719,11 @@ def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
 
 
 def _stopped_at(events: Iterable[RuntimeEvent], variables: Mapping[str, Any]) -> set[str]:
-    """The step instances a run may have stopped at outside its transactions: those its incidents name, which hold it;
-    without any, the calls whose run failed and the waits whose deadline passed."""
+    """The step instances a run may have stopped at outside its transactions, when they didn't finish: those its
+    incidents name, which hold it; without any, the calls whose run ended and the waits whose deadline passed."""
     incidents = {cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()}
-    return incidents or {
-        cast(str, event.data.get("node_id"))
-        for event in events
-        if event.type == "timed_out" or (event.type == "call_completed" and event.data.get("status") != "succeeded")
-    }
+    ended = {"call_completed", "timed_out"}
+    return incidents or {cast(str, event.data.get("node_id")) for event in events if event.type in ended}
 
 
 def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:
