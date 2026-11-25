@@ -173,12 +173,24 @@ export const PASTE_MAX_STEPS = 500;
 export const NAME_MAX = 128;
 /** What a step's failure does, and the error path that handles it, on the kinds that can fail. */
 const ON_ERROR = ["onError", ERROR_PATH] as const;
+/** The steps of a step's undo, each with an action or a workflow of its own. */
+const UNDO_STEPS = ["confirm", "cancel", "compensate"] as const;
+/** How a step in a transaction is undone. */
+const UNDO = [...UNDO_STEPS, "irreversible", "holdSeconds"] as const;
 /**
  * The fields each step kind has in the workflow language, which refuses any
  * other; loops and workflow calls too, for platforms whose language has them.
  */
 const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
-  action: new Set(["id", "kind", "uses", "with", "connection", ...ON_ERROR]),
+  action: new Set([
+    "id",
+    "kind",
+    "uses",
+    "with",
+    "connection",
+    ...UNDO,
+    ...ON_ERROR,
+  ]),
   decisionTable: new Set(["id", "kind", "uses", "with", ...ON_ERROR]),
   llm: new Set([
     "id",
@@ -232,6 +244,7 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "mode",
     "onFailure",
     "businessKey",
+    ...UNDO,
     ...ON_ERROR,
   ]),
   transaction: new Set([
@@ -343,6 +356,12 @@ export function stepTree(step: Step): Step[] {
 /** The step an instance key belongs to: `send[2]` and `support#2.1` belong to send and support. */
 export { instanceStep } from "./instance-keys";
 
+/** A step and the steps of its undo: everything that may name a connection slot. */
+const slotHolders = (step: Step): Record<string, unknown>[] => [
+  step,
+  ...UNDO_STEPS.map((name) => step[name]).filter(isRecord),
+];
+
 export function copySteps(
   workflow: Workflow,
   ids: readonly string[],
@@ -369,9 +388,9 @@ export function copySteps(
   const llmProfiles: [string, unknown][] = [];
   const actions: [string, OwnedRecipe][] = [];
   for (const step of tree) {
-    const slot = step["connection"];
-    if (typeof slot === "string" && Object.hasOwn(slots, slot))
-      connections.push([slot, structuredClone(slots[slot])]);
+    for (const { connection: slot } of slotHolders(step))
+      if (typeof slot === "string" && Object.hasOwn(slots, slot))
+        connections.push([slot, structuredClone(slots[slot])]);
     const profile = step["profile"];
     if (
       step.kind === "llm" &&
@@ -843,9 +862,11 @@ export function planPaste(
   const connections = brought(content.connections, slots);
   const llmProfiles = brought(content.llmProfiles, profiles);
   for (const step of steps.flatMap(stepTree)) {
-    const slot = step["connection"];
-    if (typeof slot === "string" && Object.hasOwn(connections.rename, slot))
-      step["connection"] = connections.rename[slot];
+    for (const holder of slotHolders(step)) {
+      const slot = holder["connection"];
+      if (typeof slot === "string" && Object.hasOwn(connections.rename, slot))
+        holder["connection"] = connections.rename[slot];
+    }
     const profile = step["profile"];
     if (
       step.kind === "llm" &&

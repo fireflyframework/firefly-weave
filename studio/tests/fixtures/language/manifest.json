@@ -700,7 +700,7 @@
           ]
         },
         "only_inside": "transaction",
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "name": "onError",

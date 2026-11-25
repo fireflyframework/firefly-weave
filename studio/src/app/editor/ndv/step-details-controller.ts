@@ -46,7 +46,15 @@ import {
   triggerForm,
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
+import { actionSideEffect } from "./kinds/forms/action-forms";
 import { settledPolicy } from "./kinds/forms/transaction-forms";
+import type { LanguageManifest } from "../language-manifest";
+import { enclosingTransaction } from "../transactions/group";
+import { settledHold } from "../transactions/undo";
+import {
+  undoFields,
+  type UndoFieldsContext,
+} from "../transactions/undo-fields";
 import {
   ownedActionsOf,
   usesOwning,
@@ -1239,6 +1247,25 @@ export class StepDetailsController {
   onErrorContext(): OnErrorContext {
     return { ...this.kindContext(), onErrorKinds: this.onErrorKinds() };
   }
+  /** The settings several kinds share, as the target's manifest lists them. */
+  readonly manifest = signal<Pick<LanguageManifest, "step_fields"> | null>(
+    null,
+  );
+  /** What decides how a step is undone: its transaction, and what it changes. */
+  undoContext(target: string): UndoFieldsContext {
+    const { model } = this.host;
+    const node = model.nodes().find((found) => found.step.id === target);
+    const kind = this.kindContext();
+    return {
+      ...kind,
+      manifest: this.manifest(),
+      inTransaction: node
+        ? enclosingTransaction(model.definition, node.owner)
+        : null,
+      sideEffect:
+        node?.step.kind === "action" ? actionSideEffect(node.step, kind) : "",
+    };
+  }
   /** What fields in loop bodies can read, from the Studio host. */
   readonly loopScopes = new LoopScopes(
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
@@ -1377,6 +1404,7 @@ export class StepDetailsController {
       return this.featureLoad.promise;
     this.features.set([]);
     this.onErrorKinds.set(null);
+    this.manifest.set(null);
     const load = { profile, api, promise: Promise.resolve() };
     this.featureLoad = load;
     const current = () =>
@@ -1388,15 +1416,19 @@ export class StepDetailsController {
         const path = profile
           ? `${api.project}/language`
           : "/studio/contracts/language";
-        const manifest = await api.request<{ features?: string[] }>(path);
+        const manifest = await api.request<
+          Pick<LanguageManifest, "step_fields"> & { features?: string[] }
+        >(path);
         if (current()) {
           this.features.set(manifest.features ?? []);
           this.onErrorKinds.set(onErrorKinds(manifest));
+          this.manifest.set(manifest);
         }
       } catch {
         if (current()) {
           this.features.set([]);
           this.onErrorKinds.set(null);
+          this.manifest.set(null);
           this.featureLoad = null;
         }
       }
@@ -1543,11 +1575,14 @@ export class StepDetailsController {
       this.descriptor(target)?.settings?.(step, this.kindContext())) || {
       fields: [],
     };
-    // On error, and Result on error with it, come after the kind's own settings.
-    const onError = step ? onErrorFields(step, this.onErrorContext()) : [];
-    return onError.length
-      ? { ...own, fields: [...own.fields, ...onError] }
-      : own;
+    // How it's undone, then On error with its result, after the kind's own.
+    const shared = step
+      ? [
+          ...undoFields(step, this.undoContext(target)),
+          ...onErrorFields(step, this.onErrorContext()),
+        ]
+      : [];
+    return shared.length ? { ...own, fields: [...own.fields, ...shared] } : own;
   }
 
   private set(map: Map<string, Set<string>>, target: string): Set<string> {
@@ -2137,9 +2172,19 @@ export class StepDetailsController {
         )
           ? settledPolicy(settled.step)
           : null;
+      // Hold for, changed to what the transaction holds, is left out.
+      const hold =
+        settled.step &&
+        changes.some(
+          (change) =>
+            change.scope === "step" && change.path[0] === "holdSeconds",
+        )
+          ? settledHold(settled.step, this.undoContext(target).inTransaction)
+          : null;
       const endChanges: FormChange[] = [
         ...(ended?.patch ?? []),
         ...(policy ? [policy] : []),
+        ...(hold ? [hold] : []),
       ].map((edit) => ({
         scope: "step",
         path: edit.path,

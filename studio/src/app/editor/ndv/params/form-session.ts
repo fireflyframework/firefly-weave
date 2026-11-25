@@ -49,6 +49,7 @@ import {
   NOT_SAVED,
   fieldFor,
   fixFor,
+  messageField,
   type PlacedSpec,
   type StepIssue,
 } from "../issues";
@@ -145,6 +146,13 @@ import {
 } from "./slots";
 import { resourceProblem } from "./resource";
 import { outlineRank, stepsAfter } from "../navigation";
+import {
+  clearUndo,
+  removedUndoText,
+  writeUndo,
+  type StepPatch,
+} from "../../transactions/undo";
+import type { UndoMode } from "../../transactions/transaction-words";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
 import {
@@ -196,8 +204,10 @@ const NOTES: PlacedSpec = {
 };
 const NOTE_KEY = "note";
 /** Fixes the field itself offers: Studio shows them only in the issues list. */
-const AT_THE_FIELD = new Set(["focus", "connection"]);
+const AT_THE_FIELD = new Set(["focus", "connection", "undo", "clearUndo"]);
 const pointer = formatPointer;
+const stepChanges = (patch: StepPatch): FormChange[] =>
+  patch.map(({ path, value }) => ({ scope: "step", path, value }));
 const WHOLE_PATH =
   "The path values are mapped as a whole. Edit them with Edit as YAML in the More menu.";
 
@@ -1633,7 +1643,7 @@ export class FormSession {
     this.controller.diagnostics(this.target).forEach((diagnostic, index) => {
       // Notes aren't issues: the canvas doesn't count them either.
       if (diagnostic.severity === "info") return;
-      const field = fieldFor(diagnostic.at, scoped);
+      const field = messageField(diagnostic.code, diagnostic.at, scoped);
       if (
         /REQUIRED$/.test(diagnostic.code) &&
         field &&
@@ -1643,13 +1653,15 @@ export class FormSession {
       )
         return;
       const message = describeDiagnostic(diagnostic).text;
+      // One message a field: its own rule's, or How it's undone's, whose
+      // several fields each get the same finding.
       if (
         field &&
         issues.some(
           (item) =>
             item.field === field &&
             item.message === message &&
-            item.key.startsWith("rule:"),
+            (item.key.startsWith("rule:") || field.spec.id === "undo"),
         )
       )
         return;
@@ -1797,6 +1809,12 @@ export class FormSession {
       case "answers":
         void this.host.branchOnDecision(this.target);
         return;
+      case "clearUndo":
+        this.clearUndo();
+        return;
+      case "waitForCall":
+        this.commit([{ scope: "step", path: ["mode"], value: "wait" }], "mode");
+        return;
       case "update":
         window.open(fix.href, "_blank", "noopener");
         return;
@@ -1812,6 +1830,41 @@ export class FormSession {
         if (issue.field)
           this.hooks.focusField?.(issue.field, fix.kind === "connection");
     }
+  }
+
+  // ------------------------------------------------ how it's undone
+  /**
+   * Writes how the step is undone as one undo step. Chosen operations of
+   * another way go with it, and a toast names them and offers Undo.
+   */
+  chooseUndo(choice: UndoMode): boolean {
+    const step = this.controller.step(this.target);
+    if (!step) return false;
+    const { patch, removed } = writeUndo(step, choice);
+    if (!this.commit(stepChanges(patch), "undo")) return false;
+    if (!removed.length) return true;
+    const { host, model, opened } = this;
+    const revision = model.revision;
+    host.notify(
+      removedUndoText(removed),
+      {
+        label: "Undo",
+        run: () =>
+          void host.undoIfUnchanged(
+            () =>
+              host.model === model &&
+              model.opened === opened &&
+              model.revision === revision,
+          ),
+      },
+      "neutral",
+    );
+    return true;
+  }
+  /** Removes every field that says how the step is undone, as one undo step. */
+  clearUndo(): boolean {
+    const step = this.controller.step(this.target);
+    return !!step && this.commit(stepChanges(clearUndo(step)), "undo");
   }
 
   // ------------------------------------------- entries not applied yet

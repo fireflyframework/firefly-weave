@@ -318,7 +318,7 @@ STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
             "irreversible": ["/irreversible"],
         },
         only_inside="transaction",
-        studio="pending",
+        studio="ready",
     ),
     ManifestStepField(
         name="onError",

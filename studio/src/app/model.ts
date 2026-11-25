@@ -392,12 +392,6 @@ function expressionRefs(
 /** The expression fields of a step, as paths relative to the step. */
 function expressionPaths(step: Step): (string | number)[][] {
   switch (step.kind) {
-    case "llm":
-      return [["prompt"], ["context"]];
-    case "transform":
-      return [["value"]];
-    case "humanTask":
-      return [["title"], ["context"]];
     case "switch":
       return [
         ...(Array.isArray(step["cases"]) ? step["cases"] : []).flatMap(
@@ -415,10 +409,22 @@ function expressionPaths(step: Step): (string | number)[][] {
     case "forEach":
       return [["items"], ["body", "output"]];
     default:
-      // An action's, a decision table's or a call's input, a call's or a
-      // transaction's business key, and a transaction's result; a step
-      // without them reads nothing there.
-      return [["with"], ["businessKey"], ["output"]];
+      // An AI task's prompt, a human task's title, the context of both, a
+      // transform's value, the input of an action, a decision table or a call
+      // and those of its undo, a call's or a transaction's business key, and
+      // a transaction's result; a step without one reads nothing there.
+      return [
+        ["prompt"],
+        ["title"],
+        ["context"],
+        ["value"],
+        ["with"],
+        ["businessKey"],
+        ["output"],
+        ["confirm", "with"],
+        ["cancel", "with"],
+        ["compensate", "with"],
+      ];
   }
 }
 const readPath = (root: unknown, path: (string | number)[]) =>

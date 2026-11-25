@@ -100,11 +100,14 @@ function stepField(rest: string[]): {
       };
     return { field: ["cases", index(second)], dataPath: [] };
   }
+  // A path's result, and an undo step's action and input.
   if (
-    (first === "default" || first === "body" || first === "errorPath") &&
-    second === "output"
+    (second === "output" &&
+      (first === "default" || first === "body" || first === "errorPath")) ||
+    (["uses", "with"].includes(second!) &&
+      (first === "confirm" || first === "cancel" || first === "compensate"))
   )
-    return { field: [first, "output"], dataPath: dataKeys(rest.slice(2)) };
+    return { field: [first, second!], dataPath: dataKeys(rest.slice(2)) };
   if (first === "branches" && second !== undefined && third === "output")
     return {
       field: ["branches", second, "output"],

@@ -26,6 +26,14 @@ import type { StepDetailsTab } from "./step-details-service";
 
 export const UPDATE_URL =
   "https://fireflyframework.github.io/firefly-weave/guides/platform-overview/";
+const UNDECLARED_CODE = "WV-COMP-TXN_UNDECLARED";
+/** Fixes of a transaction's findings, by code. */
+const TRANSACTION_FIXES: Readonly<Record<string, IssueFix>> = {
+  // Never the compiler's own answer: only the builder says a step can't be undone.
+  [UNDECLARED_CODE]: { kind: "undo", label: "Choose how it's undone" },
+  "WV-COMP-TXN_OUTSIDE": { kind: "clearUndo", label: "Clear How it's undone" },
+  "WV-COMP-TXN_DETACH": { kind: "waitForCall", label: "Wait for its result" },
+};
 /** What a field shows while what it holds isn't in the workflow. */
 export const NOT_APPLIED = "Not applied";
 /** What Notes show while their text isn't saved. */
@@ -41,6 +49,9 @@ export type IssueFix =
       change: SuggestedChange;
     }
   | { kind: "answers"; label: "Add paths for answers" }
+  | { kind: "undo"; label: "Choose how it's undone" }
+  | { kind: "clearUndo"; label: "Clear How it's undone" }
+  | { kind: "waitForCall"; label: "Wait for its result" }
   | { kind: "update"; label: "Update the platform"; href: string };
 
 export interface PlacedSpec {
@@ -70,6 +81,33 @@ export function fieldFor(at: Path, specs: PlacedSpec[]): PlacedSpec | null {
   return best;
 }
 
+/** The fields that say how a step is undone, where a problem belongs to How it's undone as a whole. */
+const UNDO_FIELDS: ReadonlySet<string> = new Set([
+  "confirm",
+  "cancel",
+  "compensate",
+  "irreversible",
+  "holdSeconds",
+]);
+/**
+ * The field a compiler message shows at: the deepest that holds its path, or
+ * How it's undone for a choice the step lacks or a field of it that no
+ * control holds.
+ */
+export function messageField(
+  code: string,
+  at: Path,
+  specs: PlacedSpec[],
+): PlacedSpec | null {
+  const field = fieldFor(at, specs);
+  if (
+    field ||
+    !(code === UNDECLARED_CODE || UNDO_FIELDS.has(String(at[0] ?? "")))
+  )
+    return field;
+  return specs.find((placed) => placed.spec.id === "undo") ?? null;
+}
+
 /** A field whose value must be data from earlier in the workflow. */
 const takesData = (spec: ParamSpec): boolean =>
   spec.mapping === "mapped" ||
@@ -81,6 +119,8 @@ export function fixFor(
   suggestion: SuggestedChange | null,
   field: PlacedSpec | null,
 ): IssueFix | null {
+  const transaction = TRANSACTION_FIXES[code];
+  if (transaction) return transaction;
   if (suggestion)
     return {
       kind: "suggestion",
@@ -94,6 +134,8 @@ export function fixFor(
     return { kind: "connection", label: "Choose a connection" };
   if (/(UNAVAILABLE|MISSING)_REFERENCE$/.test(code))
     return { kind: "picker", label: "Use data…" };
+  if (code === "required" && field.spec.id === "undo")
+    return TRANSACTION_FIXES[UNDECLARED_CODE];
   if (code === "required")
     return takesData(field.spec)
       ? { kind: "picker", label: "Use data…" }
