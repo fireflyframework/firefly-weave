@@ -73,7 +73,7 @@ from firefly_weave.contracts.definitions import load_definition
 fixture = yaml.safe_load(Path(sys.argv[1]).read_text())
 catalog = CatalogSnapshot.from_definitions([load_definition(d) for d in fixture["definitions"]], tasks=fixture["tasks"])
 out = {}
-for name, document in json.loads(sys.stdin.read()).items():
+for name, document in json.load(sys.stdin.buffer).items():
     result = json.loads(compile_source(json.dumps(document), format="json", catalog=catalog).to_bytes())
     out[name] = [d for d in result["diagnostics"] if d["code"].startswith(sys.argv[2])]
 print(json.dumps(out))
