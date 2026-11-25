@@ -479,27 +479,33 @@ async def emit(
 async def project_transactions(
     repository: RuntimeRepository, view: "RunView", result: Transition, event: RuntimeEvent
 ) -> None:
-    """Write the record of every transaction this transition changed, then the run's transaction state."""
-    changed = [
-        command.node_id
-        for command in result.commands
-        if isinstance(command, ControlCommand) and command.kind == "transaction"
-    ]
+    """Write the record of every transaction this transition changed, then the run's transaction state. A transaction
+    that ended with its loop iteration is no longer in the state: its final record is the one the transition released.
+    """
+    changed = list(
+        dict.fromkeys(
+            command.node_id
+            for command in result.commands
+            if isinstance(command, ControlCommand) and command.kind == "transaction"
+        )
+    )
     phase = phase_measure(str(event.data.get("node_id")), event.type, event.data)
     if phase is not None:
         repository.tx.record("transaction_phase", *phase)
     if not changed:
         return
-    facts: dict[str, Any] | None = None
-    for key in dict.fromkeys(changed):
-        record = result.state.transactions.get(key)
-        if record is None:
-            continue
-        before = await repository.rows(
-            f"SELECT state FROM run_transactions WHERE {SCOPE} AND run_id=:run AND instance_key=:key",
+    before = {
+        row["instance_key"]: row["state"]
+        for row in await repository.rows(
+            f"SELECT instance_key,state FROM run_transactions WHERE {SCOPE} AND run_id=:run "
+            "AND instance_key=ANY(cast(:keys AS text[]))",
             run=view.id,
-            key=key,
+            keys=changed,
         )
+    }
+    facts: dict[str, Any] | None = None
+    for key in changed:
+        record = result.transaction(key)
         decided = event.timestamp if record.decided_at_sequence == event.sequence else None
         await repository.execute(
             "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
@@ -525,7 +531,7 @@ async def project_transactions(
             ended=record.ended_at,
             incident=record.incident,
         )
-        if record.status in EVENT_STATES and (not before or before[0]["state"] != record.status):
+        if record.status in EVENT_STATES and before.get(key) != record.status:
             measure = transaction_measure(record, result.state.incidents)
             if measure is not None:
                 repository.tx.record(
