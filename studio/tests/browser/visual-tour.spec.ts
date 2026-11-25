@@ -115,7 +115,7 @@ import {
   openWorkflow,
   useNewEditor,
 } from "./canvas-po";
-import { AddStepPanel } from "./add-step-po";
+import { AddStepPanel, languageFeatures } from "./add-step-po";
 import {
   debugSession,
   later,
@@ -149,6 +149,22 @@ import {
   type TableDocumentFixture,
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
+import {
+  activate as activateEvents,
+  activationDialog,
+  eventRows,
+  openConnected as openEventTriggers,
+  openForActivation,
+  showStarts,
+  STORED as EVENT_STORED,
+  WIDER as EVENT_WIDER,
+} from "./event-activation-po";
+import {
+  FORM as EVENT_FORM,
+  openEventTrigger,
+  openNotifyTeam,
+} from "./event-trigger-po";
+import { requested as requestedStart, startedRuns } from "../event-platform";
 import {
   activationsOf,
   platform as activationPlatform,
@@ -6380,6 +6396,188 @@ spec:
       page.getByRole("region", { name: "Run log" }).locator(".run-log-refusal"),
     ).toContainText("This test would run 51 called workflows.");
     await shot("230-call-limit-run-log");
+  },
+  // Add a step's Platform event entry, then the question about the input it
+  // asks of a workflow that has a form.
+  async "event-add"({ page, shot }) {
+    await languageFeatures(page, ["flow.eventTrigger"], []);
+    await openStoredWorkflow(page, {
+      id: "event-tour",
+      source: JSON.stringify({
+        apiVersion: "weave/v1alpha1",
+        kind: "Workflow",
+        metadata: { name: "notify-team", version: "1.2.0" },
+        spec: {
+          inputSchema: EVENT_FORM,
+          outputSchema: { type: "object" },
+          steps: [{ id: "send", kind: "transform", value: { ref: "/input" } }],
+          output: { literal: {} },
+        },
+      }),
+    });
+    await fitCanvas(page);
+    await page
+      .getByRole("button", { name: "Add a step after send", exact: true })
+      .filter({ visible: true })
+      .first()
+      .click();
+    const panel = new AddStepPanel(page);
+    await panel.search.fill("platform event");
+    await expect(panel.option("Platform event")).toBeVisible();
+    await shot("280-event-add-step", { tabs: 0 });
+    await panel.option("Platform event").click();
+    await expect(
+      page.getByRole("dialog", { name: "Replace this workflow's input?" }),
+    ).toBeVisible();
+    await shot("281-event-input-question", { tabs: 2 });
+  },
+  // Parameters with the workflows it reacts to, its own among them, and the
+  // suggestions while one is typed.
+  async "event-parameters"({ page, shot }) {
+    test.skip(!hasPython, "The event's fields are the Studio host's Python.");
+    const details = await openNotifyTeam(page, {
+      spec: {
+        eventTrigger: {
+          events: ["transaction.compensated", "transaction.in_doubt"],
+          from: ["move-between-systems", "notify-team"],
+        },
+      },
+      drafts: ["move-archive"],
+    });
+    const dialog = await openEventTrigger(page, details);
+    await showParameters(page, dialog);
+    await expect(
+      dialog.getByText("Reactions stop after 3 in a row.", { exact: false }),
+    ).toBeAttached();
+    await shot("282-event-parameters", { tabs: 0 });
+    await dialog.getByRole("combobox", { name: "Add a workflow" }).fill("mo");
+    await expect(
+      page.getByRole("listbox", { name: "Workflow suggestions" }),
+    ).toBeVisible();
+    await shot("283-event-suggestions", { tabs: 0 });
+  },
+  // A generated sample in Test event and Output, then a later step that reads
+  // the event's fields.
+  async "event-sample"({ page, shot }) {
+    test.skip(!hasPython, "The event's fields are the Studio host's Python.");
+    const details = await openNotifyTeam(page, {
+      spec: {
+        steps: [
+          {
+            id: "send",
+            kind: "transform",
+            value: {
+              object: { key: { ref: "/input/transaction/business_key" } },
+            },
+          },
+        ],
+      },
+    });
+    const dialog = await openEventTrigger(page, details);
+    const fold = dialog
+      .getByRole("tablist", { name: "Step details panes" })
+      .getByRole("tab", { name: "Test event", exact: true });
+    if (await fold.count()) await fold.click();
+    const pane = dialog.getByRole("region", { name: "Input data" });
+    await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(
+      pane.getByText("Sample ready. Execute workflow starts from it."),
+    ).toBeVisible();
+    await shot("284-event-sample", { tabs: 0 });
+    await details.close();
+    await details.openWithKeyboard("send");
+    const input = details.dialog
+      .getByRole("tablist", { name: "Step details panes" })
+      .getByRole("tab", { name: "Input", exact: true });
+    if (await input.count()) await input.click();
+    await expect(
+      details.dialog.locator('[data-ref="/input/transaction/business_key"]'),
+    ).toBeAttached();
+    await shot("285-event-fields", { tabs: 0 });
+  },
+  // The activation dialog's Triggers rows: a replace that widens who reacts
+  // and keeps the right to resolve, and a trigger left behind; then the
+  // question before a stop that would skip waiting events.
+  async "event-activation"({ page, shot }) {
+    test.skip(!hasPython, "The event's fields are the Studio host's Python.");
+    const { platform } = await openForActivation(page, {
+      declaration: EVENT_WIDER,
+      seeds: [
+        { ...EVENT_STORED, mayReconcile: true },
+        {
+          id: "t-cli",
+          name: "notify-old",
+          activation: "a-older",
+          events: ["transaction.completed"],
+          sources: ["sync-records"],
+        },
+      ],
+    });
+    platform.capabilities.add("transaction.reconcile");
+    platform.starts.set("t-1", [
+      requestedStart("s-1"),
+      requestedStart("s-2"),
+      requestedStart("s-3"),
+    ]);
+    const dialog = await activationDialog(page);
+    await expect(eventRows(dialog)).toHaveCount(2);
+    await shot("286-event-activation-rows", { end: ".modal-panel" });
+    await activateEvents(dialog);
+    await expect(
+      dialog.getByRole("button", { name: "Keep it for now" }),
+    ).toBeFocused();
+    await shot("287-event-activation-waiting", { tabs: 2 });
+  },
+  // Starts: a stop still owed, then each kind of start.
+  async "event-starts"({ page, shot }) {
+    test.skip(!hasPython, "The event's fields are the Studio host's Python.");
+    const opened = await openEventTriggers(page, {
+      declaration: EVENT_WIDER,
+      seeds: [
+        {
+          id: "t-2",
+          name: "notify-team-2",
+          activation: "a-old",
+          revision: 1,
+          events: EVENT_WIDER.events,
+          sources: undefined,
+        },
+        {
+          id: "t-1",
+          name: "notify-team",
+          activation: "a-older",
+          revision: 3,
+        },
+      ],
+      stored: "t-2",
+      pendingStops: [
+        { triggerId: "t-1", revision: 3, activationId: "a-older" },
+      ],
+    });
+    const start = (id: string, fields: Record<string, unknown>) => ({
+      ...requestedStart(id),
+      source_run_id: "3fa2c1d0-6b5e-4d7c-9a8f-2e1d0c9b8a7f",
+      ...fields,
+    });
+    opened.platform.starts.set("t-2", [
+      start("s-1", {
+        status: "started",
+        run_id: "9b1c4e2a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+      }),
+      start("s-2", { event_type: "transaction.compensated" }),
+      start("s-3", { status: "skipped", code: "WV-TRIGGER-EVENT-DEPTH" }),
+      start("s-4", {
+        status: "rejected",
+        code: "WV-TRIGGER-START",
+        cause: "WV-FORBIDDEN",
+      }),
+      ...startedRuns(25),
+    ]);
+    const { panel } = await showStarts(page);
+    await expect(
+      panel.getByRole("list", { name: "Starts" }).getByRole("listitem"),
+    ).toHaveCount(20);
+    await shot("288-event-starts", { tabs: 0 });
   },
 };
 
