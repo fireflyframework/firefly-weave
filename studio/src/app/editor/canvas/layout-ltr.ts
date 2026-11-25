@@ -256,6 +256,8 @@ export interface LtrDivider {
   y1: number;
   y2: number;
   label: "Point of no return";
+  /** How far right of the line its label may reach: a frame starts there. Null when nothing does. */
+  room: number | null;
 }
 export interface LtrBounds {
   minX: number;
@@ -648,6 +650,10 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           y1: top - 8,
           y2: top + LTR.tile + FRAME.labels,
           label: "Point of no return",
+          room:
+            next && isFrame(steps[index + 1])
+              ? LTR.edge / 2 - FRAME.pointGap
+              : null,
         });
       layout.handles.push({
         key: `${item.id}>out`,

@@ -527,6 +527,7 @@ describe("a transaction's points of no return", () => {
         x: tile(layout, "submit").x + LTR.tile + 76,
         ...onRow(ROW),
         label: "Point of no return",
+        room: null,
       },
     ]);
   });
@@ -554,6 +555,16 @@ describe("a transaction's points of no return", () => {
     expect(layout.dividers.map(({ x }) => x)).toEqual([
       tile(layout, "notify").x - LTR.edge + 76,
     ]);
+  });
+
+  it("keeps its label off a frame right after it", () => {
+    const room = (...after: Step[]) =>
+      layoutOf([transaction("move", [last("submit"), ...after])]).dividers[0]
+        .room;
+    expect(room(loop("each", [step("note")]))).toBe(68);
+    // Over a tile's column there is room for all of it at any zoom.
+    expect(room(step("notify"))).toBeNull();
+    expect(room()).toBeNull();
   });
 
   it("makes room for its label: a frame that holds one has 56 under its header", () => {

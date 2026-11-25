@@ -46,6 +46,8 @@ export const FRAME = {
   pointTop: 56,
   /** More room above a path's row for the label of its point of no return. */
   pathLabel: 40,
+  /** Between that label and a frame right after it. */
+  pointGap: 8,
   /** A frame's Error output sits this far above its bottom, on its right border. */
   errHandle: 24,
   /** Under a frame: its own label line (the loop's result once it ran) and a gap. */

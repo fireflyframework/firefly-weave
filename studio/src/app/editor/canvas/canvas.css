@@ -662,7 +662,9 @@ weave-canvas-view,
     transparent 0 calc(9px / var(--zoom, 1))
   );
 }
-/* Its label, centered on the line above the row, on the canvas's own color. */
+/* Its label, centered on the line above the row, on the canvas's own color;
+   further left when a frame starts right after the line (--point-room), as
+   it draws larger than that column when zoomed out. */
 .canvas-v2 .point-label {
   position: absolute;
   z-index: 4;
@@ -676,7 +678,11 @@ weave-canvas-view,
   color: var(--warning-ink);
   white-space: nowrap;
   pointer-events: auto;
-  transform: translate(-50%, -100%) scale(var(--point-scale, 1));
+  transform: translate(
+      min(-50%, var(--point-room, 1000px) - (var(--point-scale, 1) + 1) * 50%),
+      -100%
+    )
+    scale(var(--point-scale, 1));
   transform-origin: bottom center;
 }
 .canvas-v2 .point-label weave-icon {

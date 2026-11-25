@@ -489,6 +489,18 @@ ${LAST("submit", 16)}${build("notify", 16)}              output: {literal: null}
 ${LAST("submit-batch", 14)}            output: {literal: null}
       output: {literal: null}
 `);
+/** A loop right after the step that can't be undone. */
+const THEN_A_LOOP = workflow(`    - id: move
+      kind: transaction
+      steps:
+${ADD()}${LAST("submit")}        - id: each
+          kind: forEach
+          items: {ref: /input/moves}
+          body:
+            steps:
+${build("note", 14)}            output: {ref: /item}
+      output: {literal: null}
+`);
 
 const line = (canvas: CanvasPage, step: string) =>
   canvas.root.locator(`.point-line[data-point="${step}"]`);
@@ -704,6 +716,31 @@ test.describe("how each step is undone at 1440x900", () => {
     await zoomOutTo(page, canvas, 25);
     await expect(undoBadge(canvas, "submit")).toBeHidden();
     await expect(line(canvas, "submit")).toBeVisible();
+  });
+
+  test("the label ends before a frame right after the line, at any zoom", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, THEN_A_LOOP);
+    await canvas.closeInspector();
+    await page.getByRole("button", { name: "Reset zoom to 100%" }).click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(100);
+    for (const percent of [100, 80, 70, 58]) {
+      await zoomOutTo(page, canvas, percent);
+      const label = await box(pointLabel(canvas, "submit"));
+      const divider = center(await box(line(canvas, "submit")));
+      const loop = await box(frame(canvas, "each"));
+      expect(label.right, `${percent}%`).toBeLessThan(loop.left);
+      // Still over its line.
+      expect(label.left, `${percent}%`).toBeLessThan(divider.x);
+      expect(label.right, `${percent}%`).toBeGreaterThan(divider.x);
+      if (percent === 100)
+        expect(Math.abs(center(label).x - divider.x)).toBeLessThan(2);
+    }
+    // Its header keeps every click.
+    const header = await box(canvas.tileBody("each"));
+    await page.mouse.click(header.left + 6, center(header).y);
+    await expect(frame(canvas, "each")).toHaveClass(/\bselected\b/);
   });
 
   test("the pointer reaches the line and its label, whose tooltip says what it means", async ({
