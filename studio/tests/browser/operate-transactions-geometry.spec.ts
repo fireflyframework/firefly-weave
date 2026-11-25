@@ -770,17 +770,21 @@ test.describe("at 1400x900", () => {
     const filters = page.getByRole("search", { name: "Filter incidents" });
     const fields = filters.locator(".field");
     await expect(fields).toHaveCount(7);
-    const tops = await fields.evaluateAll((parts) =>
-      parts.map((part) => part.getBoundingClientRect().top),
-    );
-    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
-    const widths = await filters
-      .locator("input:not([type])")
+    const controls = await fields
+      .locator("input, select")
       .evaluateAll((parts) =>
-        parts.map((part) => part.getBoundingClientRect().width),
+        parts.map((part) => {
+          const { left, right, top } = part.getBoundingClientRect();
+          return { left, right, top };
+        }),
       );
-    expect(widths).toHaveLength(3);
-    for (const width of widths) expect(width).toBeGreaterThanOrEqual(100);
+    for (const [index, { left, right, top }] of controls.entries()) {
+      expect(top, `control ${index}`).toBeCloseTo(controls[0].top, 0);
+      expect(right - left, `control ${index}`).toBeGreaterThanOrEqual(100);
+      // 16 px from one control to the next, so none lies over another.
+      if (index)
+        expect(left - controls[index - 1].right, `control ${index}`).toBe(16);
+    }
   });
 });
 

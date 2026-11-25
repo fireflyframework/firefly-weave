@@ -208,6 +208,7 @@ weave-operate-state {
 @media (min-width: 768px) {
   .operate-filters
     .field:has(input:not([type="checkbox"], [type="datetime-local"])) {
+    grid-template-columns: minmax(0, 1fr);
     flex: 1 1 108px;
     max-width: max-content;
   }
