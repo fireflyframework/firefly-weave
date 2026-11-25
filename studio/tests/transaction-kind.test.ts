@@ -391,14 +391,17 @@ describe("a transaction without steps", () => {
   });
 
   it("leaves every other answer as it was", () => {
-    const other = [generic("/spec/steps/10")];
+    // Step 1 isn't step 10, though its pointer starts the same.
+    const other = [generic("/spec/steps/1")];
     const result = checked(
-      [lookup("notify"), newTransaction("transaction-1")],
+      [
+        ...Array.from({ length: 10 }, (_, index) => lookup(`step-${index}`)),
+        newTransaction("transaction-1"),
+      ],
       other,
     );
-    // The same digits at the start are another step.
     expect(result.diagnostics).toEqual([
-      { ...problem, path: "/spec/steps/1" },
+      { ...problem, path: "/spec/steps/10" },
       other[0],
     ]);
     expect(result.errorCount).toBe(2);
