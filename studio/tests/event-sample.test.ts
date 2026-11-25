@@ -41,21 +41,38 @@ const event = (type: PlatformEventType = "transaction.in_doubt") =>
   }) as JsonObject & { transaction: JsonObject };
 describe("the IDs of an event entered as test data", () => {
   it("become sample IDs, each its own, and the rest stays as it was", () => {
-    const { value, replaced } = withSampleIds(event());
-    const facts = value["transaction"] as JsonObject;
+    let number = 0;
+    const real = sampleEvent("transaction.in_doubt", {
+      now: new Date("2026-11-20T10:00:00Z"),
+      id: () => `5f0c2b7e-1111-4222-8333-00000000000${++number}`,
+    }) as JsonObject & { transaction: JsonObject };
+    const { value, replaced } = withSampleIds(real);
+    const facts = value.transaction;
     expect(replaced).toEqual(["event", "run", "incident"]);
     const ids = [value["event_id"], facts["run_id"], facts["incident_id"]];
     for (const id of ids) expect(id).toMatch(SAMPLE_ID);
     expect(new Set(ids).size).toBe(3);
     expect(value).toEqual({
-      ...event(),
+      ...real,
       event_id: ids[0],
       transaction: {
-        ...event().transaction,
+        ...real.transaction,
         run_id: ids[1],
         incident_id: ids[2],
       },
     });
+  });
+
+  it("become the same sample ID wherever the same real one is, and each time while the samples last", () => {
+    const samples = new Map<string, string>();
+    const { value } = withSampleIds([event(), event()], samples);
+    expect(value[0]).toEqual(value[1]);
+    expect(withSampleIds(event(), samples).value).toEqual(value[0]);
+    const other = { ...event(), event_id: REAL_ID.replace("5f0c", "6f0c") };
+    const next = withSampleIds(other, samples).value;
+    expect(next["event_id"]).not.toBe(value[0]!["event_id"]);
+    expect(next.transaction).toEqual(value[0]!.transaction);
+    expect(withSampleIds(event()).value).not.toEqual(value[0]);
   });
 
   it("stay when they are sample IDs already", () => {

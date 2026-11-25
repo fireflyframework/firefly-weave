@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // is read by everyone who can test the workflow, so an event copied from a
 // real transaction never keeps the IDs of its event, run or incident.
 import {
+  canonicalJson,
   hasOwn,
   isJsonObject,
   jsonEqual,
@@ -319,12 +320,19 @@ const REPLACED_ORDER: readonly ReplacedId[] = ["event", "run", "incident"];
 /**
  * The value with sample IDs in place of the event, run and incident IDs of
  * every platform event in it, at any depth, and which it replaced; IDs that
- * are samples already stay, and so does the rest.
+ * are samples already stay, and so does the rest. A real ID gets the sample
+ * ID it has in `samples`, which keeps the new ones.
  */
 export function withSampleIds<T extends Json>(
   value: T,
-  id: () => string = sampleId,
+  samples = new Map<string, string>(),
 ): { value: T; replaced: ReplacedId[] } {
+  const sampleOf = (real: Json): string => {
+    const key = canonicalJson(real);
+    const id = samples.get(key) ?? sampleId();
+    samples.set(key, id);
+    return id;
+  };
   const replaced = new Set<ReplacedId>();
   const visit = (node: Json, inEvent: boolean): Json => {
     if (Array.isArray(node)) return node.map((item) => visit(item, inEvent));
@@ -340,7 +348,7 @@ export function withSampleIds<T extends Json>(
           return [key, visit(held, event && key === "transaction")];
         if (held === null || isSampleId(held)) return [key, held];
         replaced.add(ids[key]!);
-        return [key, id()];
+        return [key, sampleOf(held)];
       }),
     );
   };

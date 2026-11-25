@@ -327,14 +327,13 @@ test.describe("a real platform event entered in another Test event pane", () => 
     const first = await held();
     await expect(box).toBeFocused();
     expect(await caret()).toBe(first);
-    // A real ID put back is replaced where it is, the caret right after it.
+    // A real ID put back gets the sample ID it had, the caret right after it.
     await box.evaluate((element: HTMLTextAreaElement) => {
       const start = element.value.indexOf('"event_id": "') + 13;
       element.setSelectionRange(start, start + 36);
     });
     await page.keyboard.insertText(REAL.event);
-    await expect(box).not.toHaveValue(new RegExp(REAL.event));
-    await held();
+    await expect(box).toHaveValue(first);
     await expect(box).toBeFocused();
     expect(await caret()).toMatch(/"event_id": "[0-9a-f-]{36}$/);
     await details.close();

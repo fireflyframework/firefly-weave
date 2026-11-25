@@ -138,11 +138,13 @@ function setup(inputSchema: unknown = { $ref: "weave.platform-event-v1" }) {
       },
       {
         provide: ChangeDetectorRef,
-        useValue: { markForCheck() {}, detectChanges() {} },
+        useValue: { markForCheck() {}, detectChanges: () => draw.now() },
       },
     ],
   });
-  return { model, controller, session, injector, announced };
+  /** What drawing the form does, for a test that looks at it. */
+  const draw = { now: () => undefined as void };
+  return { model, controller, session, injector, announced, draw };
 }
 const kept = (controller: StepDetailsController) =>
   controller.testEvent() as unknown as Event;
@@ -262,6 +264,23 @@ describe("the manual form's box", () => {
     const compact = JSON.stringify(JSON.parse(box()));
     await enter(JSON.parse(compact));
     expect(box()).toBe(compact);
+  });
+
+  it("shows the kept event again when the same real one is typed over it before it's drawn", async () => {
+    const f = setup();
+    const { box, enter, type, settled } = manualPane(f);
+    await enter(realEvent());
+    // As Angular draws a box: only a text that isn't the last one it drew.
+    let last = box();
+    let onScreen = last;
+    f.draw.now = () => {
+      if (box() !== last) onScreen = last = box();
+    };
+    const text = JSON.stringify(realEvent());
+    onScreen = text;
+    type(text);
+    await settled();
+    expect(onScreen).toBe(JSON.stringify(kept(f.controller), null, 2));
   });
 
   it("keeps text that isn't JSON yet, and shows the kept event once it is", async () => {
@@ -397,6 +416,50 @@ describe("where the test event came from", () => {
   it("is the person who pasted it, or the sample Studio built", async () => {
     expect(said(await from({ source: "manual" }))).toBe("Pasted · 5 fields");
     expect(said(await from({ source: "schema" }))).toBe("Sample · 5 fields");
+  });
+});
+
+describe("a real ID entered again", () => {
+  it.each([
+    ["the manual form", manualPane],
+    ["a Kafka message trigger", kafkaPane],
+  ] as const)(
+    "gets the sample ID it had in %s, so an edit that is undone leaves the event as it was",
+    async (_name, open) => {
+      const f = setup();
+      const { enter } = open(f);
+      await enter(realEvent());
+      const first = kept(f.controller);
+      await enter(realEvent({ business_key: "REF-5" }));
+      expect(kept(f.controller)).toEqual({
+        ...first,
+        transaction: { ...first.transaction, business_key: "REF-5" },
+      });
+      await enter(realEvent());
+      expect(kept(f.controller)).toEqual(first);
+      expect(f.controller.replacedIds()).toEqual(["event", "run", "incident"]);
+    },
+  );
+
+  it.each([
+    [
+      "the workflow opens again",
+      (f: ReturnType<typeof setup>) =>
+        f.controller.testData.open({ kind: "memory" }),
+    ],
+    [
+      "the account signs out",
+      (f: ReturnType<typeof setup>) => f.controller.testData.forget(),
+    ],
+  ] as const)("gets another sample ID once %s", async (_when, leave) => {
+    const f = setup();
+    const { enter } = kafkaPane(f);
+    await enter(realEvent());
+    const first = kept(f.controller).event_id;
+    await leave(f);
+    await enter(realEvent());
+    expect(kept(f.controller).event_id).toMatch(SAMPLE_ID);
+    expect(kept(f.controller).event_id).not.toBe(first);
   });
 });
 

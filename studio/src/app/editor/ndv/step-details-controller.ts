@@ -560,7 +560,9 @@ export class StepDetailsController {
       const problem = eventProblem(value, this.eventFields());
       if (problem) return { value, problem };
     }
-    return value === undefined ? { value } : withSampleIds(value);
+    return value === undefined
+      ? { value }
+      : withSampleIds(value, this.testData.sampleIds);
   }
   /** The IDs the last write of the test event replaced. */
   private readonly replaced = signal<{
