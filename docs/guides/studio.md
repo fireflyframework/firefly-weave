@@ -1329,12 +1329,12 @@ the local check alone does not prove that actions or worker releases are
 available.
 
 Each diagnostic row shows what is wrong, a hint, and where, such as "Step
-decision-1 · Case 1 condition". Select the location to open the step, or the
-workflow settings, with the field focused. **Details** shows the support code
-and the compiler's own wording. **Apply suggested edit** applies a proposed fix
-as one undoable change. Select **Diagnostics** to fold or unfold the rows. Steps
-on the canvas show the same problems as a red border and a chip such as
-"2 problems".
+decision-1 · Case 1 condition". Select the location to open the step, the
+platform event trigger, or the workflow settings, with the field focused.
+**Details** shows the support code and the compiler's own wording. **Apply
+suggested edit** applies a proposed fix as one undoable change. Select
+**Diagnostics** to fold or unfold the rows. Steps on the canvas show the same
+problems as a red border and a chip such as "2 problems".
 
 ### Execute steps and read the run log
 
@@ -1651,15 +1651,18 @@ transactions. Studio never grants that itself: a move or a replace keeps it, and
 the row says so.
 
 - **Two triggers.** Two triggers that react to the same events start the
-  workflow twice. The dialog shows the extra one as a row with **Stop it** on,
-  and stops it only after the version's own trigger is set up and still reacts.
+  workflow twice for each event they share. The dialog shows the extra one as a
+  row with **Stop it** on, and stops it only after the version's own trigger is
+  set up and still reacts. When the extra one reacts to other events, the row
+  names the events that no longer start the workflow once it's stopped.
 - **Events that wait to start.** Stopping a trigger skips them, so Studio asks
   first: **Keep it for now** or **Stop now**. **Done** keeps it. A stop you put
   off, or one that fails, comes back at the next activation and in **Starts**.
 - **Someone else's changes.** Studio reads a trigger again right before it stops
   it, and stops nothing that changed since the dialog opened. When someone else
   set up a trigger for any of the same events meanwhile, Studio creates none. A
-  trigger made with the command line for other events stays as it is.
+  trigger made with the command line for other events stays as it is, and Studio
+  doesn't create the version's own until you change that one or stop it.
 
 **See what it started.** On a platform with platform event triggers, the
 trigger's step details have a **Starts** tab, which needs `trigger.manage` and
