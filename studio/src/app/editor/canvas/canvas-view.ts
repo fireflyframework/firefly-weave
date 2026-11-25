@@ -71,6 +71,7 @@ import {
 } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { memo } from "../memo";
+import { moveRefusal } from "../transactions/points";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
 import {
   canvasCommand,
@@ -145,7 +146,14 @@ import {
 } from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
-import { TRANSACTION_PROMISE, transactionFacts } from "./transaction-frame";
+import {
+  TRANSACTION_PROMISE,
+  pointOfNoReturnText,
+  stepsInTransactions,
+  transactionFacts,
+  undoBadge,
+  undoText,
+} from "./transaction-frame";
 import { NodeTile, type FrameView, type TileView } from "./node-tile";
 import {
   edgeRun,
@@ -210,6 +218,7 @@ import { failureText } from "./error-lane";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_STEP_FACTS: ReadonlyMap<string, StepFacts> = new Map();
+const NONE: ReadonlySet<string> = new Set();
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 const NO_BORDERS: TileBorders = {
   selected: false,
@@ -733,6 +742,11 @@ export class CanvasView implements OnInit, DoCheck {
       const frames = new Map(layout.frames.map((frame) => [frame.id, frame]));
       // A selected decision or parallel step shows every step inside it as
       // selected; a selected frame says its steps come with it.
+      // How a step of a transaction is undone shows while no run does.
+      const undone =
+        run || this.viewingRuns()
+          ? NONE
+          : stepsInTransactions(layout.tiles, layout.frames);
       const chosen = drawnSelected(
         covered(selection, places),
         selection.ids,
@@ -784,6 +798,7 @@ export class CanvasView implements OnInit, DoCheck {
             frame: tile.step ? frames.get(tile.id) : undefined,
             loop: loopRun,
             ended: !!run?.ended,
+            undone: undone.has(tile.id),
           },
         );
       });
@@ -841,6 +856,8 @@ export class CanvasView implements OnInit, DoCheck {
       loop?: LoopRun;
       /** The simulation's playback has ended: the whole run has played. */
       ended?: boolean;
+      /** A step of a transaction, while no run shows: it says how it is undone. */
+      undone?: boolean;
     },
   ): TileView {
     const h = this.host();
@@ -1017,6 +1034,7 @@ export class CanvasView implements OnInit, DoCheck {
     // continues on error while no run line shows (its outputs say the rest).
     const failure = failureText(tile.step);
     const continues = !runLine && tile.step["onError"] === "continue";
+    const undo = state.undone ? undoBadge(tile.step) : null;
     return {
       ...common,
       step: true,
@@ -1047,7 +1065,7 @@ export class CanvasView implements OnInit, DoCheck {
           "",
         index: tile.index,
         count: tile.count,
-        place: tile.place,
+        place: undo ? `${tile.place}, ${undoText(tile.step)}` : tile.place,
       }),
       tooltip: [
         frame?.promise
@@ -1060,6 +1078,11 @@ export class CanvasView implements OnInit, DoCheck {
         .filter(Boolean)
         .join(". "),
       badge,
+      undo: undo && {
+        ...undo,
+        warning: undo.icon === "critical",
+        word: !runLine,
+      },
       borders: tileBorders(shown),
       selected: state.selected,
       frame,
@@ -1103,11 +1126,18 @@ export class CanvasView implements OnInit, DoCheck {
       active: string,
     ) => {
       /** While a step moves: only where it can go, named for the move. */
+      const refusal = this.refusalOf(layout, moving);
       const offer = (target: InsertView): InsertView | null => {
         if (!moving) return target;
         if (places.has(moving) && !moveAllowed(places, moving, target.insert))
           return null;
-        return { ...target, name: moveName(target.name, moving), moving: true };
+        const refused = refusal(target.insert);
+        return {
+          ...target,
+          name: moveName(target.name, moving),
+          moving: !refused,
+          refused,
+        };
       };
       const tab = (tile: string): 0 | -1 => (tile === active ? 0 : -1);
       const pluses = layout.handles.flatMap((handle) => {
@@ -1173,11 +1203,72 @@ export class CanvasView implements OnInit, DoCheck {
           moving: false,
           tabIndex: tab(handle.tile),
         });
-        if (view) outputs.set(handle.key, view);
+        if (view && !view.refused) outputs.set(handle.key, view);
       }
       return { pluses, slots, onEdges, outputs };
     },
   );
+  /** Why the step being moved can't go to a place, because of a transaction there. */
+  private refusalOf(layout: LtrLayout, moving: string) {
+    const step = moving
+      ? layout.tiles.find((tile) => tile.id === moving)?.step
+      : null;
+    if (!step || !layout.frames.some((frame) => frame.transaction))
+      return () => null;
+    const definition = this.host().model.definition;
+    return (insert: Insertion) => moveRefusal(definition, step, insert);
+  }
+  /** The place refused to the step being moved that the pointer or focus is on. */
+  private refusedAt = "";
+  private refusedKey({ owner, index }: Insertion): string {
+    return `${this.moving()} ${owner} ${index}`;
+  }
+  refusedOver(insert: Insertion): boolean {
+    return !!this.refusedAt && this.refusedKey(insert) === this.refusedAt;
+  }
+  /** Says why that place is refused, under it, at screen size. */
+  moveReason(): { x: number; y: number; text: string } | null {
+    if (!this.moving() || !this.refusedAt) return null;
+    const { pluses, slots, onEdges } = this.targets();
+    const at = [...pluses, ...slots, ...onEdges.values()].find(
+      (view) => view?.refused && this.refusedOver(view.insert),
+    );
+    if (!at?.refused) return null;
+    const size = slots.includes(at) ? LTR.slot : 24;
+    return { x: at.x + size / 2, y: at.y + size, text: at.refused };
+  }
+  /** Why the places refused to the step being moved are: one reason for them all. */
+  refusedReason(): string {
+    if (!this.moving()) return "";
+    const { pluses, slots, onEdges } = this.targets();
+    return (
+      [...pluses, ...slots, ...onEdges.values()].find((view) => view?.refused)
+        ?.refused ?? ""
+    );
+  }
+  /** Follows the pointer or focus onto a refused place, or off it. */
+  private markRefused(element: Element | null) {
+    const control = element?.closest?.("[data-refused]");
+    const insert = control ? this.insertOf(control) : null;
+    const key = insert ? this.refusedKey(insert) : "";
+    if (key === this.refusedAt) return;
+    this.refusedAt = key;
+    this.cdr.markForCheck();
+  }
+  private readonly dividersMemo = memo((layout: LtrLayout) =>
+    layout.dividers.map((divider) => ({
+      ...divider,
+      ...pointOfNoReturnText(divider.stepId),
+    })),
+  );
+  /** The points of no return, drawn in runs too. */
+  dividers() {
+    return this.dividersMemo(this.layout());
+  }
+  /** Draws the line's label at 11 px or more on screen. */
+  pointScale() {
+    return Math.max(1, 11 / (12 * this.view.zoom));
+  }
   private targets() {
     return this.targetsMemo(
       this.layout(),
@@ -1530,6 +1621,8 @@ export class CanvasView implements OnInit, DoCheck {
   private insertAt(control: HTMLElement) {
     const h = this.host();
     const insert = this.insertOf(control);
+    const refused = control.getAttribute("data-refused");
+    if (refused) return h.notify(refused);
     if (!insert || control.getAttribute("aria-disabled") === "true") return;
     const moving = this.moving();
     if (moving) return h.moveStep(moving, insert);
@@ -1548,6 +1641,7 @@ export class CanvasView implements OnInit, DoCheck {
   }
   hover(event: PointerEvent) {
     const target = event.target as Element;
+    if (this.moving()) this.markRefused(target);
     const edge =
       target.closest?.("[data-edge]")?.getAttribute("data-edge") ?? "";
     if (edge !== this.hoveredEdge) this.hoveredEdge = edge;
@@ -1566,10 +1660,12 @@ export class CanvasView implements OnInit, DoCheck {
     this.hoveredEdge = "";
     this.hoveredTile = "";
     this.hoveredHeader = "";
+    this.refusedAt = "";
   }
   /** Focus on a step, or in its toolbar, shows that step's toolbar. */
   focusIn(event: FocusEvent) {
     const target = event.target as Element;
+    if (this.moving()) this.markRefused(target);
     this.focusTile = this.toolbarStep(target);
     this.reached(this.focusTile);
     // Keyboard focus on a loop's header shows its whole sentence; a click's doesn't.
@@ -2039,7 +2135,11 @@ export class CanvasView implements OnInit, DoCheck {
         from: { x: port.x, y: port.y },
         to: this.toWorld(event.clientX, event.clientY),
       };
-    } else this.draggingStep = press.key;
+    } else {
+      this.draggingStep = press.key;
+      // The step keeps the pointer while it is dragged: what is under it is asked.
+      this.markRefused(document.elementFromPoint(event.clientX, event.clientY));
+    }
     this.cdr.markForCheck();
   }
   pointerUp(event: PointerEvent) {
@@ -2113,10 +2213,13 @@ export class CanvasView implements OnInit, DoCheck {
       this.draggingStep = "";
       const over = document
         .elementFromPoint(event.clientX, event.clientY)
-        ?.closest("[data-insert]");
+        ?.closest("[data-insert], [data-refused]");
+      const refused = over?.getAttribute("data-refused");
       const insert = over ? this.insertOf(over) : null;
       const places = this.places();
-      if (
+      this.refusedAt = "";
+      if (refused) h.notify(refused);
+      else if (
         insert &&
         (!places.has(press.key) || moveAllowed(places, press.key, insert))
       )
@@ -2140,6 +2243,7 @@ export class CanvasView implements OnInit, DoCheck {
     this.press = null;
     this.band = null;
     this.draggingStep = "";
+    this.refusedAt = "";
     if (panned) this.showWhilePanning();
     this.cdr.markForCheck();
   }

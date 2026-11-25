@@ -51,6 +51,11 @@ import {
   type OwnedRecipe,
 } from "../ndv/owned/owned-actions";
 import { ownedActionsOf, unpublished } from "../ndv/owned/owned-store";
+import {
+  NESTED_TRANSACTION,
+  enclosingTransaction,
+  holdsTransaction,
+} from "../transactions/group";
 import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
 import { instanceStep } from "./instance-keys";
 // Run data as test data reads it: from a run or a test call, or naming a run.
@@ -820,6 +825,11 @@ export function planPaste(
       reason:
         "That place in the workflow changed. Choose where to paste again.",
     };
+  if (
+    holdsTransaction(content.steps) &&
+    enclosingTransaction(workflow, at.owner)
+  )
+    return { reason: NESTED_TRANSACTION };
   // 1. IDs: a free one stays; a taken one takes the next free ID on its base.
   const pasted = structuredClone(content.steps);
   const used = new Set(taken);

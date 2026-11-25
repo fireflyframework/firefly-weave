@@ -275,9 +275,9 @@ describe("a transaction's way on", () => {
     expect(edge(caught, "report>$join:move")).toBeDefined();
     // Its steps never end: no run leaves through Success.
     expect(edge(caught, "move:path:success>$join:move")).toBeUndefined();
-    expect(
-      completes([guarded("move", fails, [step("stop-too", "fail")])]),
-    ).toBe(false);
+    const stuck = guarded("move", fails, [step("stop-too", "fail")]);
+    expect(completes([stuck])).toBe(false);
+    expect(handle(layoutOf([stuck]), "move>out")).toBeUndefined();
   });
 });
 
@@ -506,6 +506,165 @@ describe("a transaction that continues with error output", () => {
       inner.x + inner.width + 64,
     );
     expect(tile(layout, "after").y - (around.y + around.height)).toBe(48);
+  });
+});
+
+describe("a transaction's points of no return", () => {
+  const last = (id: string): Step =>
+    ({ ...step(id, "action"), irreversible: true }) as Step;
+  const held = (id: string): Step =>
+    ({ ...step(id, "action"), compensate: {} }) as unknown as Step;
+  /** From 8 above a row to 184 under it. */
+  const onRow = (y: number) => ({ y1: y - 8, y2: y + 184 });
+
+  it("is a line after the step that can't be undone, on the middle of its edge", () => {
+    const layout = layoutOf([
+      transaction("move", [held("add"), last("submit"), step("notify")]),
+    ]);
+    expect(layout.dividers).toEqual([
+      {
+        stepId: "submit",
+        x: tile(layout, "submit").x + LTR.tile + 76,
+        ...onRow(ROW),
+        label: "Point of no return",
+      },
+    ]);
+  });
+
+  it("is 20 after the step when it is the last of its path", () => {
+    const layout = layoutOf([
+      transaction("move", [held("add"), last("submit")]),
+    ]);
+    expect(layout.dividers.map(({ x }) => x)).toEqual([
+      tile(layout, "submit").x + LTR.tile + 20,
+    ]);
+  });
+
+  it("is after both outputs meet, for a step that continues with error output", () => {
+    const layout = layoutOf([
+      transaction("move", [
+        {
+          ...last("submit"),
+          onError: "errorOutput",
+          errorPath: { steps: [step("report")], output: { literal: null } },
+        },
+        step("notify"),
+      ]),
+    ]);
+    expect(layout.dividers.map(({ x }) => x)).toEqual([
+      tile(layout, "notify").x - LTR.edge + 76,
+    ]);
+  });
+
+  it("makes room for its label: a frame that holds one has 56 under its header", () => {
+    const plain = layoutOf([transaction("move", [held("add")])]);
+    const layout = layoutOf([
+      step("lookup"),
+      transaction("move", [held("add"), last("submit")]),
+    ]);
+    expect(frame(plain, "move").y).toBe(ROW - 56);
+    const box = frame(layout, "move");
+    expect(box.y).toBe(ROW - 88);
+    expect(box.y + box.height).toBe(BOTTOM);
+    // The steps stay on the row of the ones before.
+    expect(tile(layout, "submit").y).toBe(tile(layout, "lookup").y);
+    // The loop around it makes room too.
+    const around = layoutOf([
+      loop("moves", [transaction("move", [last("a")])]),
+    ]);
+    expect(around.dividers.map(({ stepId }) => stepId)).toEqual(["a"]);
+    expect(frame(around, "move").y).toBe(ROW - 88);
+    expect(frame(around, "moves").y).toBe(ROW - 144);
+  });
+
+  it("is drawn once per decision path that has one, whose row starts 40 lower", () => {
+    const paths = (first: Step[], second: Step[]) =>
+      layoutOf([
+        transaction("move", [held("add"), route("route", first, second)]),
+      ]);
+    const layout = paths([last("submit"), step("notify")], [last("batch")]);
+    const submit = tile(layout, "submit");
+    const batch = tile(layout, "batch");
+    expect(layout.dividers).toEqual([
+      expect.objectContaining({
+        stepId: "submit",
+        x: submit.x + LTR.tile + 76,
+        ...onRow(submit.y),
+      }),
+      expect.objectContaining({
+        stepId: "batch",
+        x: batch.x + LTR.tile + 20,
+        ...onRow(batch.y),
+      }),
+    ]);
+    expect(batch.y - submit.y).toBe(LTR.lane + 40);
+    // A path without one keeps its place.
+    const one = paths([last("submit")], [held("again")]);
+    expect(tile(one, "again").y - tile(one, "submit").y).toBe(LTR.lane);
+    // The frame holds the lower path, its labels and the line.
+    const box = frame(layout, "move");
+    expect(box.y + box.height).toBe(batch.y + 184 + 24);
+    // A decision at the start of a path is on that path's row.
+    const nested = paths(
+      [held("a")],
+      [route("inner", [last("b")], [held("c")])],
+    );
+    expect(tile(nested, "b").y - tile(nested, "a").y).toBe(LTR.lane + 40);
+  });
+
+  it("keeps the next path and what follows clear of a lower row", () => {
+    const layout = layoutOf([
+      route(
+        "outer",
+        [
+          transaction("move", [
+            route("route", [last("submit")], [last("batch")]),
+          ]),
+        ],
+        [step("after")],
+      ),
+    ]);
+    const box = frame(layout, "move");
+    expect(tile(layout, "after").y - (box.y + box.height)).toBe(48);
+  });
+
+  it("pushes the path under a decision that holds lower rows", () => {
+    const layout = layoutOf([
+      transaction("move", [
+        route("outer", [route("inner", [last("a")], [last("b")])], [held("c")]),
+      ]),
+    ]);
+    expect(tile(layout, "b").y - tile(layout, "a").y).toBe(LTR.lane + 40);
+    expect(tile(layout, "c").y - tile(layout, "b").y).toBe(LTR.lane);
+  });
+
+  it("starts a step's error path 40 lower when that path has one", () => {
+    const layout = layoutOf([
+      transaction("move", [
+        {
+          ...held("add"),
+          onError: "errorOutput",
+          errorPath: { steps: [last("submit")], output: { literal: null } },
+        },
+        held("again"),
+      ]),
+    ]);
+    const submit = tile(layout, "submit");
+    expect(submit.y - tile(layout, "add").y).toBe(LTR.lane + 40);
+    const box = frame(layout, "move");
+    expect(box.y + box.height).toBe(submit.y + 184 + 24);
+  });
+
+  it("is never drawn outside a transaction, nor inside a loop or a parallel step of one", () => {
+    expect(layoutOf([last("submit"), step("notify")]).dividers).toEqual([]);
+    expect(
+      layoutOf([transaction("move", [loop("each", [last("submit")])])])
+        .dividers,
+    ).toEqual([]);
+    // Nor in the transaction's own error path.
+    expect(
+      layoutOf([guarded("move", [held("add")], [last("report")])]).dividers,
+    ).toEqual([]);
   });
 });
 

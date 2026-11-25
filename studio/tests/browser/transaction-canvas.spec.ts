@@ -16,11 +16,15 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // A transaction on the canvas: a frame around its own steps, whose header
-// names it and says what it promises. The header is the transaction's own
-// target, as a loop's is. Runs without a platform.
+// names it and says what it promises, and is the transaction's own target, as
+// a loop's is; how each step in it is undone; the point of no return; and
+// where a step may not be moved. Runs without a platform.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openWorkflow, type CanvasPage } from "./canvas-po";
+import { parse } from "yaml";
+import { CanvasPage, openWorkflow } from "./canvas-po";
+import { RUN_IDS, openRunsTab, runFixture } from "./runs-po";
 import { yamlFile } from "./step-details-po";
+import { showView, sourceText } from "./support";
 
 const PROMISE = "All of these succeed, or what's done is undone";
 const build = (id: string, by = 8) =>
@@ -113,7 +117,17 @@ const zoomOf = (canvas: CanvasPage, id: string) =>
       (element: HTMLElement) =>
         element.getBoundingClientRect().width / element.offsetWidth,
     );
-/** Zooms out to `percent` or the closest the buttons reach below it. */
+/** Zooms in from Fit view to `percent`, or the closest above it. */
+async function zoomTo(page: Page, canvas: CanvasPage, percent: number) {
+  const body = await box(canvas.root);
+  await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
+  for (let i = 0; i < 60 && (await canvas.zoomPercent()) < percent; i++) {
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -20);
+    await page.keyboard.up("Control");
+  }
+}
+/** Zooms out to `percent` or the closest the wheel reaches below it. */
 async function zoomOutTo(page: Page, canvas: CanvasPage, percent: number) {
   const body = await box(canvas.root);
   await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
@@ -234,6 +248,27 @@ test.describe("transaction frames at 1440x900", () => {
     // Never under 11 px on screen.
     expect(small.name.size).toBeGreaterThanOrEqual(11);
     expect(small.kind.size).toBeGreaterThanOrEqual(11);
+  });
+
+  test("a short name keeps all of its width while the promise still shows", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, MOVE);
+    await canvas.closeInspector();
+    await zoomOutTo(page, canvas, 35);
+    const widths = await canvas
+      .tileBody("move")
+      .locator(".frame-name")
+      .evaluate((element: HTMLElement) => {
+        const shown = element.getBoundingClientRect().width;
+        // A hair under its natural width draws as an ellipsis.
+        element.style.flex = "none";
+        const natural = element.getBoundingClientRect().width;
+        element.style.flex = "";
+        return { shown, natural };
+      });
+    expect(widths.shown).toBe(widths.natural);
+    expect((await headerParts(canvas, "move")).promise.cut).toBe(true);
   });
 
   test("an empty transaction asks for a step on its frame, as setup", async ({
@@ -378,3 +413,693 @@ for (const size of [
         }
     });
   });
+
+// ------------------------------------- how each step is undone, and where it ends
+
+const REASON =
+  "Steps that can be undone must come before the step that can't be undone.";
+const NESTED = "A transaction can't contain another transaction.";
+const DESCRIPTION =
+  "Once submit succeeds, the transaction finishes. Steps after this line retry until they succeed and are never undone.";
+const operation = (uses: string) =>
+  `{kind: action, uses: ${uses}, with: {literal: {}}}`;
+/** A step that calls an action, as YAML, with how it is undone. */
+const call = (id: string, undo: string[] = [], by = 8) =>
+  [
+    `- id: ${id}`,
+    "  kind: action",
+    `  uses: systems.${id}@1.0.0`,
+    "  with: {literal: {}}",
+    ...undo.map((line) => `  ${line}`),
+  ]
+    .map((line) => `${" ".repeat(by)}${line}\n`)
+    .join("");
+const HOLD = (by?: number) =>
+  call(
+    "hold",
+    [
+      `confirm: ${operation("systems.confirm@1.0.0")}`,
+      `cancel: ${operation("systems.release@1.0.0")}`,
+    ],
+    by,
+  );
+const ADD = (by?: number) =>
+  call("add", [`compensate: ${operation("systems.remove@1.0.0")}`], by);
+const LAST = (id: string, by?: number) => call(id, ["irreversible: true"], by);
+/** move: lookup (says nothing), hold, add, submit (can't be undone), notify; then other (a transaction) and tally. */
+const UNDO = workflow(`    - id: move
+      kind: transaction
+      steps:
+${call("lookup")}${HOLD()}${ADD()}${LAST("submit")}${build("notify")}      output: {literal: null}
+    - id: other
+      kind: transaction
+      steps:
+${build("check")}      output: {literal: null}
+${build("tally", 4)}`);
+/** A decision inside move, each of whose paths has its own step that can't be undone. */
+const PATHS = workflow(`    - id: move
+      kind: transaction
+      steps:
+${ADD()}        - id: route
+          kind: switch
+          cases:
+            - when: {literal: true}
+              steps:
+${LAST("submit", 16)}${build("notify", 16)}              output: {literal: null}
+          default:
+            steps:
+${LAST("submit-batch", 14)}            output: {literal: null}
+      output: {literal: null}
+`);
+
+const line = (canvas: CanvasPage, step: string) =>
+  canvas.root.locator(`.point-line[data-point="${step}"]`);
+const pointLabel = (canvas: CanvasPage, step: string) =>
+  canvas.root.locator(`.point-label[data-point="${step}"]`);
+const undoBadge = (canvas: CanvasPage, id: string) =>
+  canvas.tile(id).locator(".undo-badge");
+const undoWord = (canvas: CanvasPage, id: string) =>
+  canvas.tile(id).locator(".tile-undo");
+/** "Move to…" from the step's menu. */
+async function startMove(canvas: CanvasPage, id: string) {
+  await canvas.tileBody(id).click({ button: "right" });
+  await canvas.page.getByRole("menuitem", { name: "Move to…" }).click();
+  await expect(canvas.root).toHaveClass(/\brevealing\b/);
+}
+/** Takes a step by its card, as a person does, and stays over a "+". */
+async function dragOver(
+  page: Page,
+  canvas: CanvasPage,
+  id: string,
+  target: Locator,
+) {
+  const from = center(await box(canvas.tileBody(id)));
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 12, from.y + 12, { steps: 4 });
+  await expect(canvas.root).toHaveClass(/\brevealing\b/);
+  const to = center(await box(target));
+  await page.mouse.move(to.x, to.y, { steps: 10 });
+}
+const stepsOfMove = async (page: Page) => {
+  const { spec } = parse(await sourceText(page)) as {
+    spec: { steps: { id: string; steps?: { id: string }[] }[] };
+  };
+  return spec.steps.find(({ id }) => id === "move")!.steps!.map(({ id }) => id);
+};
+
+test.describe("how each step is undone at 1440x900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("each step that says how it is undone shows it by icon and by word, and in its name", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    for (const [id, icon, word, name, token] of [
+      [
+        "hold",
+        "lock",
+        "Reserved",
+        "is reserved, then confirmed",
+        "--neutral-ink",
+      ],
+      [
+        "add",
+        "undo",
+        "Reversible",
+        "can be undone by reversing it",
+        "--neutral-ink",
+      ],
+      [
+        "submit",
+        "critical",
+        "Can't be undone",
+        "can't be undone",
+        "--warning-ink",
+      ],
+    ] as const) {
+      const badge = undoBadge(canvas, id);
+      await expect(badge.locator("weave-icon")).toHaveAttribute(
+        "data-icon",
+        icon,
+      );
+      await expect(badge).toHaveAttribute("title", word);
+      await expect(undoWord(canvas, id)).toHaveText(word);
+      await expect(canvas.tileBody(id)).toHaveAccessibleName(
+        new RegExp(`in Transaction move, ${name}$`),
+      );
+      expect(
+        await badge.evaluate((element) => getComputedStyle(element).color),
+      ).toBe(
+        await page.evaluate((name) => {
+          const probe = document.createElement("span");
+          probe.style.color = `var(${name})`;
+          document.body.append(probe);
+          const { color } = getComputedStyle(probe);
+          probe.remove();
+          return color;
+        }, token),
+      );
+      // On the card's lower left corner: 20 units, 10 out of it, its bottom 10 above the card's.
+      const [card, at] = [await box(canvas.tileBody(id)), await box(badge)];
+      const zoom = await zoomOf(canvas, id);
+      expect(at.width / zoom).toBeCloseTo(20, 0);
+      expect((card.left - at.left) / zoom).toBeCloseTo(10, 0);
+      expect((card.bottom - at.bottom) / zoom).toBeCloseTo(10, 0);
+    }
+    for (const id of ["lookup", "notify", "tally"]) {
+      await expect(undoBadge(canvas, id)).toHaveCount(0);
+      await expect(undoWord(canvas, id)).toHaveCount(0);
+    }
+    await expect(canvas.tileBody("notify")).toHaveAccessibleName(
+      /step 5 of 5 in Transaction move$/,
+    );
+    await expect(page.locator("weave-icon[data-icon-missing]")).toHaveCount(0);
+  });
+
+  test("a step outside a transaction shows no undo, though its document says one", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, workflow(ADD(4)));
+    await expect(canvas.tileBody("add")).toBeVisible();
+    await expect(undoBadge(canvas, "add")).toHaveCount(0);
+    await expect(undoWord(canvas, "add")).toHaveCount(0);
+  });
+
+  test("the point of no return is a named line after the step that can't be undone", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await zoomTo(page, canvas, 80);
+    const divider = canvas.root.getByRole("img", {
+      name: "Point of no return, after submit",
+      exact: true,
+    });
+    await expect(divider).toHaveCount(1);
+    await expect(divider).toHaveAccessibleDescription(DESCRIPTION);
+    await expect(divider).toHaveAttribute("title", DESCRIPTION);
+    // Not a stop: its words are in the step's name and its own.
+    await expect(divider).not.toHaveAttribute("tabindex", /.*/);
+    const label = pointLabel(canvas, "submit");
+    await expect(label).toHaveText("Point of no return");
+    await expect(label).toHaveAttribute("title", DESCRIPTION);
+    await expect(label.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "critical",
+    );
+    const zoom = await zoomOf(canvas, "submit");
+    const [submit, notify, at, text, header] = [
+      await box(canvas.tileBody("submit")),
+      await box(canvas.tileBody("notify")),
+      await box(divider),
+      await box(label),
+      await box(canvas.tileBody("move")),
+    ];
+    const x = center(at).x;
+    expect(Math.abs(x - (submit.right + 76 * zoom))).toBeLessThan(1);
+    expect(x).toBeLessThan(notify.left);
+    expect(Math.abs(at.top - (submit.top - 8 * zoom))).toBeLessThan(1);
+    expect(Math.abs(at.bottom - (submit.top + 184 * zoom))).toBeLessThan(1);
+    expect(at.width).toBeCloseTo(12, 0);
+    // The label: centered on the line, 12 above the row, clear of the header.
+    expect(Math.abs(center(text).x - x)).toBeLessThan(1);
+    expect(Math.abs(text.bottom - (submit.top - 12 * zoom))).toBeLessThan(1);
+    expect(text.top).toBeGreaterThan(header.bottom);
+    // It names the frame's whole sequence: a line of the transaction's own.
+    expect(contains(await box(frame(canvas, "move")), at)).toBe(true);
+  });
+
+  test("a decision draws one line in each path that has one, with room for its label", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, PATHS);
+    await canvas.closeInspector();
+    for (const id of ["submit", "submit-batch"])
+      await expect(
+        canvas.root.getByRole("img", {
+          name: `Point of no return, after ${id}`,
+          exact: true,
+        }),
+      ).toHaveCount(1);
+    const zoom = await zoomOf(canvas, "submit");
+    const [submit, batch] = [
+      await box(canvas.tileBody("submit")),
+      await box(canvas.tileBody("submit-batch")),
+    ];
+    // The last step of its path: 20 after it.
+    expect(
+      Math.abs(
+        center(await box(line(canvas, "submit-batch"))).x -
+          (batch.right + 20 * zoom),
+      ),
+    ).toBeLessThan(1);
+    expect(Math.abs(batch.top - submit.top - 264 * zoom)).toBeLessThan(1);
+  });
+
+  test("the label draws at 11 px or more from 55% up; below, the line alone keeps its name", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    const size = () =>
+      pointLabel(canvas, "submit").evaluate(
+        (element: HTMLElement) =>
+          parseFloat(getComputedStyle(element).fontSize) *
+          (element.getBoundingClientRect().height / element.offsetHeight),
+      );
+    await page.getByRole("button", { name: "Reset zoom to 100%" }).click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(100);
+    expect(await size()).toBeCloseTo(12, 0);
+    await zoomOutTo(page, canvas, 60);
+    expect(await size()).toBeGreaterThanOrEqual(10.9);
+    await zoomOutTo(page, canvas, 50);
+    await expect(pointLabel(canvas, "submit")).toHaveCount(0);
+    const divider = canvas.root.getByRole("img", {
+      name: "Point of no return, after submit",
+    });
+    await expect(divider).toHaveAccessibleDescription(DESCRIPTION);
+    expect((await box(divider)).width).toBeCloseTo(12, 0);
+    await expect(undoWord(canvas, "submit")).toBeVisible();
+    await expect(undoBadge(canvas, "submit")).toBeVisible();
+    await zoomOutTo(page, canvas, 25);
+    await expect(undoBadge(canvas, "submit")).toBeHidden();
+    await expect(line(canvas, "submit")).toBeVisible();
+  });
+
+  test("the pointer reaches the line and its label, whose tooltip says what it means", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await zoomTo(page, canvas, 80);
+    const under = (x: number, y: number) =>
+      page.evaluate(
+        ([left, top]) =>
+          document
+            .elementFromPoint(left, top)
+            ?.closest("[title]")
+            ?.getAttribute("title") ?? null,
+        [x, y],
+      );
+    const at = await box(line(canvas, "submit"));
+    // Anywhere in its 12 px, above the edge it crosses and below it.
+    for (const x of [at.left + 1, center(at).x, at.right - 1])
+      for (const y of [at.top + 20, at.bottom - 20])
+        expect(await under(x, y), `${x} ${y}`).toBe(DESCRIPTION);
+    const label = center(await box(pointLabel(canvas, "submit")));
+    expect(await under(label.x, label.y)).toBe(DESCRIPTION);
+    // So does each step's undo badge.
+    const badge = center(await box(undoBadge(canvas, "hold")));
+    expect(await under(badge.x, badge.y)).toBe("Reserved");
+  });
+
+  test("the edge under the line keeps its +, which inserts there", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    const at = center(await box(line(canvas, "submit")));
+    const row = center(await box(canvas.tileBody("submit"))).y;
+    await page.mouse.move(at.x, row);
+    const plus = canvas.insertTarget("Insert a step between submit and notify");
+    await expect(plus).toHaveCSS("opacity", "1");
+    await plus.click();
+    await expect(page.locator(".add-step-panel")).toBeVisible();
+  });
+
+  test("a step that can be undone can't be dragged past the point of no return", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    const refused = canvas.insertTarget(
+      "Move add at the end of transaction move",
+    );
+    await dragOver(page, canvas, "add", refused);
+    await expect(refused).toHaveAttribute("aria-disabled", "true");
+    await expect(refused).toHaveAccessibleDescription(REASON);
+    await expect(refused.locator("weave-icon")).toHaveAttribute(
+      "data-icon",
+      "revoke",
+    );
+    const tip = canvas.root.locator(".move-reason");
+    await expect(tip).toHaveText(REASON);
+    const [plus, at] = [await box(refused), await box(tip)];
+    expect(at.top).toBeGreaterThanOrEqual(plus.bottom);
+    // The one before it is offered, and so is the next path's.
+    await expect(
+      canvas.insertTarget("Move add at the start of transaction move"),
+    ).not.toHaveAttribute("aria-disabled", /.*/);
+    await expect(
+      canvas.insertTarget("Move add between submit and notify"),
+    ).toHaveAttribute("aria-disabled", "true");
+    await page.mouse.up();
+    await expect(page.locator(".toast-region")).toContainText(REASON);
+    await expect(tip).toHaveCount(0);
+    expect(await stepsOfMove(page)).toEqual([
+      "lookup",
+      "hold",
+      "add",
+      "submit",
+      "notify",
+    ]);
+  });
+
+  test("a step that changes nothing goes anywhere, and the reason goes as the pointer leaves", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await dragOver(
+      page,
+      canvas,
+      "add",
+      canvas.insertTarget("Move add at the end of transaction move"),
+    );
+    const tip = canvas.root.locator(".move-reason");
+    await expect(tip).toBeVisible();
+    const open = center(
+      await box(
+        canvas.insertTarget("Move add at the start of transaction move"),
+      ),
+    );
+    await page.mouse.move(open.x, open.y, { steps: 6 });
+    await expect(tip).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await startMove(canvas, "lookup");
+    const last = canvas.insertTarget(
+      "Move lookup at the end of transaction move",
+    );
+    await expect(last).not.toHaveAttribute("aria-disabled", /.*/);
+    await last.click();
+    expect(await stepsOfMove(page)).toEqual([
+      "hold",
+      "add",
+      "submit",
+      "notify",
+      "lookup",
+    ]);
+  });
+
+  test("by keyboard, Move to… starts at a place it offers and a refused one says why", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await startMove(canvas, "add");
+    const focused = page.locator(":focus");
+    await expect(focused).toHaveAttribute("data-insert", "");
+    await expect(focused).not.toHaveAttribute("aria-disabled", /.*/);
+    const refused = canvas.insertTarget(
+      "Move add at the end of transaction move",
+    );
+    await refused.focus();
+    await expect(refused).toBeFocused();
+    await expect(refused).toHaveAccessibleDescription(REASON);
+    await expect(canvas.root.locator(".move-reason")).toHaveText(REASON);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".toast-region")).toContainText(REASON);
+    // Still moving: another place takes it.
+    await expect(canvas.root).toHaveClass(/\brevealing\b/);
+    // The reason goes as focus goes on to a place that is offered.
+    await canvas
+      .insertTarget("Move add at the start of transaction move")
+      .focus();
+    await expect(canvas.root.locator(".move-reason")).toHaveCount(0);
+    await canvas
+      .insertTarget("Move add at the start of transaction move")
+      .click();
+    expect(await stepsOfMove(page)).toEqual([
+      "add",
+      "lookup",
+      "hold",
+      "submit",
+      "notify",
+    ]);
+  });
+
+  test("a transaction can't be moved or pasted into another, and the reason says so", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await startMove(canvas, "other");
+    const inside = canvas.insertTarget(
+      "Move other at the end of transaction move",
+    );
+    await expect(inside).toHaveAttribute("aria-disabled", "true");
+    await expect(inside).toHaveAccessibleDescription(NESTED);
+    await inside.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".toast-region")).toContainText(NESTED);
+    await page.keyboard.press("Escape");
+    const before = await sourceText(page);
+    await showView(page, "Designer");
+    await canvas.ready();
+    await canvas.tileBody("hold").click();
+    await canvas.root.evaluate(
+      (root, text) => {
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        root.querySelector('[data-tile="hold"] .tile-body')!.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData: data,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      },
+      JSON.stringify({
+        weaveClipboard: 1,
+        steps: [
+          {
+            id: "again",
+            kind: "transaction",
+            steps: [],
+            output: { literal: null },
+          },
+        ],
+      }),
+    );
+    await expect(page.locator(".toast-region")).toContainText(NESTED);
+    expect(await sourceText(page)).toBe(before);
+  });
+
+  test("step details and Outline name a step's place in its transaction", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    await canvas.tileBody("hold").dblclick();
+    const details = page.getByRole("dialog", { name: "Step details: hold" });
+    await expect(details).toContainText("Transaction move · step 2 of 5");
+    await details.getByRole("button", { name: "Close", exact: true }).click();
+    await showView(page, "Outline");
+    await expect(
+      page.getByRole("treeitem", { name: /^hold\s*Transaction move$/ }),
+    ).toBeVisible();
+  });
+});
+
+/** The lines as drawn, in canvas units from the first step: their step, place and size. */
+const drawnLines = (canvas: CanvasPage, from: string) =>
+  canvas.root.evaluate((root, id) => {
+    const card = root.querySelector<HTMLElement>(
+      `[data-tile="${id}"] .tile-body`,
+    )!;
+    const at = card.getBoundingClientRect();
+    const zoom = at.width / card.offsetWidth;
+    return [...root.querySelectorAll<HTMLElement>(".point-line")].map(
+      (line) => {
+        const box = line.getBoundingClientRect();
+        return [
+          line.dataset["point"],
+          line.getAttribute("aria-label"),
+          Math.round((box.left + box.width / 2 - at.left) / zoom),
+          Math.round((box.top - at.top) / zoom),
+          Math.round(box.height / zoom),
+        ];
+      },
+    );
+  }, from);
+
+test.describe("the point of no return in runs", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  /** hold, add and submit's columns, less the rest of submit's edge. */
+  const LINE = [
+    "submit",
+    "Point of no return, after submit",
+    2 * 248 + 96 + 76,
+    -8,
+    192,
+  ];
+
+  test("a simulated run keeps the line and hides how steps are undone", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    expect(await drawnLines(canvas, "hold")).toEqual([LINE]);
+    await page.route("**/studio/local/debug/execute", (route) =>
+      route.fulfill({
+        json: {
+          status: "completed",
+          compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+          trace: [
+            ["lookup", "action"],
+            ["hold", "action"],
+            ["add", "action"],
+            ["submit", "action"],
+            ["notify", "transform"],
+            ["move", "transaction"],
+            ["check", "transform"],
+            ["other", "transaction"],
+            ["tally", "transform"],
+          ].map(([nodeId, kind], index) => ({
+            index,
+            nodeId,
+            instanceKey: "",
+            kind,
+            status: "completed",
+            output: {},
+          })),
+        },
+      }),
+    );
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    await expect(canvas.tile("submit").locator(".tile-badge")).toHaveAttribute(
+      "data-badge",
+      "done",
+    );
+    expect(await drawnLines(canvas, "hold")).toEqual([LINE]);
+    for (const id of ["hold", "add", "submit"]) {
+      await expect(undoBadge(canvas, id)).toHaveCount(0);
+      await expect(undoWord(canvas, id)).toHaveCount(0);
+      await expect(canvas.tileBody(id)).toHaveAccessibleName(
+        /of 5 in Transaction move$/,
+      );
+    }
+  });
+
+  test("a loop inside a transaction counts its own items", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const canvas = await openWorkflow(
+      page,
+      workflow(`    - id: move
+      kind: transaction
+      steps:
+        - id: each
+          kind: forEach
+          items: {ref: /input/moves}
+          concurrency: 1
+          maxItems: 100
+          collect: all
+          body:
+            steps:
+${build("send", 14)}            output: {ref: /item}
+      output: {literal: null}
+`),
+    );
+    await canvas.closeInspector();
+    const entry = (nodeId: string, kind: string, instanceKey = "") => ({
+      nodeId,
+      instanceKey,
+      kind,
+      status: "completed",
+      output: {},
+    });
+    await page.route("**/studio/local/debug/execute", (route) =>
+      route.fulfill({
+        json: {
+          status: "completed",
+          compile: { ok: true, sliced: false, diagnostics: [], stubs: [] },
+          trace: [
+            entry("send", "transform", "send[0]"),
+            entry("send", "transform", "send[1]"),
+            { ...entry("each", "forEach"), output: [{}, {}] },
+            entry("move", "transaction"),
+          ].map((step, index) => ({ index, ...step })),
+          loops: [{ nodeId: "each", instanceKey: "", count: 2, completed: 2 }],
+        },
+      }),
+    );
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    await expect(canvas.tileBody("each").locator(".frame-run")).toContainText(
+      "2 of 2",
+    );
+    // The transaction isn't a loop: its header keeps its promise.
+    await expect(canvas.tileBody("move").locator(".frame-run")).toHaveCount(0);
+    await expect(
+      canvas.tileBody("move").locator(".frame-promise"),
+    ).toBeVisible();
+  });
+
+  test("a recorded run keeps it too, and offers no place to drop a step", async ({
+    page,
+  }) => {
+    const { spec } = parse(UNDO.buffer.toString()) as { spec: unknown };
+    const document = {
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "invoice-approval", version: "1.3.0" },
+      spec,
+    };
+    const base = runFixture("succeeded");
+    const { runs } = await openRunsTab(page, {
+      runs: [base],
+      workflow: document,
+      before: async () => {
+        await page.route("**/projects/*/workflows/*/export", (route) =>
+          route.fulfill({ json: { id: "version", document } }),
+        );
+      },
+    });
+    await runs.row(RUN_IDS.succeeded).click();
+    const canvas = new CanvasPage(page);
+    await expect(
+      canvas.root.getByRole("img", {
+        name: "Point of no return, after submit",
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    expect(await drawnLines(canvas, "hold")).toEqual([LINE]);
+    await expect(undoBadge(canvas, "submit")).toHaveCount(0);
+    await expect(canvas.root.locator("[data-insert]")).toHaveCount(0);
+  });
+});
+
+test.describe("how each step is undone on a phone", () => {
+  test.use({ viewport: { width: 360, height: 640 } });
+
+  test("the label shows above the line at 55% and up, and its tooltip area is 12 px", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, UNDO);
+    await canvas.closeInspector();
+    const body = await box(canvas.root);
+    await expect(async () => {
+      await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -40);
+      await page.keyboard.up("Control");
+      await expect(pointLabel(canvas, "submit")).toHaveCount(1, {
+        timeout: 500,
+      });
+    }).toPass({ timeout: 15_000 });
+    await expect(pointLabel(canvas, "submit")).toHaveCount(1);
+    expect((await box(line(canvas, "submit"))).width).toBeCloseTo(12, 0);
+    expect((await box(pointLabel(canvas, "submit"))).bottom).toBeLessThan(
+      (await box(canvas.tileBody("submit"))).top,
+    );
+  });
+});

@@ -35,6 +35,8 @@ export interface InsertView {
   insert: Insertion;
   /** Offered as a place for the step being moved. */
   moving: boolean;
+  /** Why the step being moved can't go here: shown, crossed out. */
+  refused?: string | null;
   tabIndex: 0 | -1;
 }
 export interface EdgeView {

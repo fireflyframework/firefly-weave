@@ -87,6 +87,13 @@ export interface TileView {
   name: string;
   tooltip: string;
   badge: TileBadge | null;
+  /** How a step of a transaction is undone, while no run shows; its word only while no run line takes its place. */
+  undo?: {
+    icon: string;
+    label: string;
+    warning: boolean;
+    word: boolean;
+  } | null;
   borders: TileBorders;
   pulse: boolean;
   /** A webhook listening for its test event: its border pulses until it stops. */
@@ -170,6 +177,16 @@ export interface TileView {
       } @else if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
       }
+      @if (v.undo; as undo) {
+        <!-- Never in the status badge's place: the card's other corner. -->
+        <span
+          class="undo-badge"
+          [attr.data-tone]="undo.warning ? 'warning' : null"
+          [attr.title]="undo.label"
+        >
+          <weave-icon [name]="undo.icon" [size]="16" />
+        </span>
+      }
       @if (!issueBadge() && v.badge; as badge) {
         <span
           class="tile-badge"
@@ -225,7 +242,7 @@ export interface TileView {
         class="tile-label"
         [class.frame-label]="!!v.frame"
         [class.has-note]="!!v.note"
-        [class.has-output]="!!v.output"
+        [class.has-output]="!!v.output || !!v.undo?.word"
         [style.top.px]="v.labelTop"
         [style.--label-scale]="labelScale()"
         [style.--label-width.px]="v.shape === 'end' ? null : labelWidth()"
@@ -236,6 +253,13 @@ export interface TileView {
           @if (v.subtitle) {
             <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
           }
+        }
+        @if (v.undo?.word) {
+          <span
+            class="tile-undo"
+            [attr.data-tone]="v.undo!.warning ? 'warning' : null"
+            >{{ v.undo!.label }}</span
+          >
         }
         @if (v.output) {
           <span

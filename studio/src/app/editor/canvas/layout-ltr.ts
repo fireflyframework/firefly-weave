@@ -26,6 +26,7 @@ import type { NodeRole } from "../ndv/registry";
 import { blocksOf, type BlockKind } from "../step-blocks";
 import { errorLane, type ErrorLane } from "./error-lane";
 import { FRAME, loopHeader } from "./loop-frame";
+import { pointsOfNoReturn } from "../transactions/points";
 import { TRANSACTION_HEADER, isTransaction } from "./transaction-frame";
 
 /** Sizes in canvas units: one unit is one CSS pixel at 100% zoom. */
@@ -248,6 +249,14 @@ export interface LtrFrame {
   /** The block's own depth: 0 in the main sequence. */
   depth: number;
 }
+/** The line after a step a transaction can't be undone past, across its row. */
+export interface LtrDivider {
+  stepId: string;
+  x: number;
+  y1: number;
+  y2: number;
+  label: "Point of no return";
+}
 export interface LtrBounds {
   minX: number;
   minY: number;
@@ -264,6 +273,7 @@ export interface LtrLayout {
   terminals: LtrTerminal[];
   subNodes: LtrSubNodeRow[];
   frames: LtrFrame[];
+  dividers: LtrDivider[];
   bounds: LtrBounds;
 }
 
@@ -396,6 +406,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     terminals: [],
     subNodes: [],
     frames: [],
+    dividers: [],
     bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   };
   const roleOf = (step: Step): NodeRole => options.role(step.kind) ?? "app";
@@ -454,13 +465,39 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       const inner = riseOf(
         isGroup(step) ? (lanesOf(step)[0]?.steps ?? []) : [],
       );
-      value = isFrame(step) ? FRAME.header + FRAME.top + inner : inner;
+      const top = pointsIn.get(step)?.size ? FRAME.pointTop : FRAME.top;
+      value = isFrame(step) ? FRAME.header + top + inner : inner;
       rises.set(step, value);
     }
     return value;
   }
   const riseOf = (steps: readonly Step[]): number =>
     Math.max(0, ...steps.map(rise));
+  /** Each transaction's points of no return; the steps of all of them. */
+  const pointsIn = new Map<Step, ReadonlySet<string>>();
+  const points = new Set<string>();
+  const findPoints = (steps: readonly Step[]) => {
+    for (const step of steps) {
+      if (isTransaction(step)) {
+        const own = pointsOfNoReturn(step);
+        pointsIn.set(step, own);
+        for (const id of own) points.add(id);
+      }
+      for (const lane of lanesOf(step)) findPoints(lane.steps);
+    }
+  };
+  /** Whether a line's label sits above this list's row. */
+  const labeled = (steps: readonly Step[]): boolean =>
+    points.size > 0 &&
+    steps.some(
+      (step) =>
+        points.has(step.id) ||
+        // A decision's first path is on its own row.
+        (step.kind === "switch" && labeled(lanesOf(step)[0]?.steps ?? [])),
+    );
+  /** The room a path takes above its row: the frames it draws there, and a line's label. */
+  const laneRise = (steps: readonly Step[]): number =>
+    riseOf(steps) + (labeled(steps) ? FRAME.pathLabel : 0);
   /** How far a step draws below its row: its tile and labels, or all its lanes hold. */
   function drop(step: Step): number {
     let value = drops.get(step);
@@ -474,7 +511,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         let offset = 0;
         value = 0;
         lanesOf(step).forEach((lane, index) => {
-          if (index) offset += riseOf(lane.steps);
+          if (index) offset += laneRise(lane.steps);
           value = Math.max(value!, offset + dropOf(lane.steps));
           offset += laneHeight(lane.steps);
         });
@@ -502,7 +539,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
    */
   const errorRow = (step: Step, errors: ErrorLane): number =>
     (isFrame(step) ? frameDrop(step) + FRAME.after : LTR.lane) +
-    riseOf(errors.steps);
+    laneRise(errors.steps);
   function height(step: Step): number {
     let value = heights.get(step);
     if (value === undefined) {
@@ -519,7 +556,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
                 lanesOf(step).reduce(
                   (sum, lane, index) =>
                     sum +
-                    (index ? riseOf(lane.steps) : 0) +
+                    (index ? laneRise(lane.steps) : 0) +
                     laneHeight(lane.steps),
                   0,
                 ),
@@ -604,6 +641,14 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       if (!item.out) return;
       const next = placed[index + 1];
       const insert = { owner, index: index + 1 };
+      if (points.has(item.id))
+        layout.dividers.push({
+          stepId: item.id,
+          x: item.out.x + (next ? LTR.edge / 2 : LTR.rail),
+          y1: top - 8,
+          y2: top + LTR.tile + FRAME.labels,
+          label: "Point of no return",
+        });
       layout.handles.push({
         key: `${item.id}>out`,
         tile: item.id,
@@ -835,8 +880,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     const join: Point = { x: parallel ? joinX : joinX - 6, y: top + MID };
     let laneTop = top;
     for (const [index, lane] of lanes.entries()) {
-      // A path after the first makes room for the frames it draws above its row.
-      if (index) laneTop += riseOf(lane.steps);
+      // A path after the first makes room for what it draws above its row.
+      if (index) laneTop += laneRise(lane.steps);
       const owner = `${step.id}/${lane.name}`;
       const label = laneLabel(step, lane.name, workflow);
       const y = laneTop + MID;
@@ -1093,6 +1138,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
   }
 
   const steps = workflow.spec.steps ?? [];
+  findPoints(steps);
   const triggers = options.triggers;
   triggers.forEach((trigger, i) => {
     const y = LTR.originY + i * LTR.lane;

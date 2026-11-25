@@ -42,6 +42,10 @@ export const FRAME = {
   minWidth: 360,
   /** A transaction's narrowest, so a new one's header shows whole at 100%. */
   transactionWidth: 520,
+  /** Under a transaction's header that holds a point of no return: room for its label. */
+  pointTop: 56,
+  /** More room above a path's row for the label of its point of no return. */
+  pathLabel: 40,
   /** A frame's Error output sits this far above its bottom, on its right border. */
   errHandle: 24,
   /** Under a frame: its own label line (the loop's result once it ran) and a gap. */

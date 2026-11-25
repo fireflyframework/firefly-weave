@@ -81,6 +81,24 @@ SPDX-License-Identifier: Apache-2.0
             (editingChange)="editingNote = $event"
             (notice)="h.notify($event)"
           />
+          <!-- Where a transaction can't be undone any more: under the edges and the steps. -->
+          @for (point of dividers(); track point.stepId) {
+            <span
+              class="point-line"
+              role="img"
+              [attr.data-point]="point.stepId"
+              [style.left.px]="point.x"
+              [style.top.px]="point.y1"
+              [style.height.px]="point.y2 - point.y1"
+              [style.--zoom]="view.zoom"
+              [attr.aria-label]="point.name"
+              [attr.aria-describedby]="'point-' + point.stepId"
+              [attr.title]="point.description"
+            ></span>
+            <span hidden [id]="'point-' + point.stepId">{{
+              point.description
+            }}</span>
+          }
           <weave-edge-layer
             [edges]="edges()"
             [width]="l.bounds.maxX + 96"
@@ -172,6 +190,32 @@ SPDX-License-Identifier: Apache-2.0
                 </div>
               </div>
             </div>
+          }
+          @if (view.zoom >= 0.55) {
+            @for (point of dividers(); track point.stepId) {
+              <span
+                class="point-label"
+                [attr.data-point]="point.stepId"
+                [style.left.px]="point.x"
+                [style.top.px]="point.y1 - 4"
+                [style.--point-scale]="pointScale()"
+                [attr.title]="point.description"
+                aria-hidden="true"
+                ><weave-icon name="critical" [size]="16" />{{
+                  point.label
+                }}</span
+              >
+            }
+          }
+          @if (moveReason(); as reason) {
+            <span
+              class="move-reason"
+              [style.left.px]="reason.x"
+              [style.top.px]="reason.y"
+              [style.--tip-scale]="tipScale()"
+              aria-hidden="true"
+              >{{ reason.text }}</span
+            >
           }
           @for (bar of toolbars(); track bar.id) {
             <div
@@ -329,20 +373,30 @@ SPDX-License-Identifier: Apache-2.0
               [style.outline-width.px]="focusWidth()"
               [style.outline-offset.px]="focusWidth()"
               [class.move-target]="plus.moving"
+              [class.move-refused]="!!plus.refused"
+              [class.over]="!!plus.refused && refusedOver(plus.insert)"
               data-action="insert"
-              data-insert=""
+              [attr.data-insert]="plus.refused ? null : ''"
+              [attr.data-refused]="plus.refused || null"
+              [attr.aria-disabled]="plus.refused ? true : null"
+              [attr.aria-describedby]="
+                plus.refused ? 'canvas-v2-refused' : null
+              "
               [attr.data-handle]="plus.key"
               [attr.data-insert-owner]="plus.insert.owner"
               [attr.data-insert-index]="plus.insert.index"
               [style.left.px]="plus.x"
               [style.top.px]="plus.y"
               [attr.aria-label]="plus.name"
-              [attr.title]="plus.name"
+              [attr.title]="plus.refused ? null : plus.name"
               [attr.tabindex]="plus.tabIndex"
               aria-haspopup="dialog"
               [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
             >
-              <weave-icon name="plus" [size]="16" />
+              <weave-icon
+                [name]="plus.refused ? 'revoke' : 'plus'"
+                [size]="16"
+              />
             </button>
           }
           <!-- After the steps and their stubs: Tab goes from a step to its "+" on the edge that follows it. -->
@@ -355,20 +409,30 @@ SPDX-License-Identifier: Apache-2.0
                 [style.outline-offset.px]="focusWidth()"
                 [class.shown]="item.shown"
                 [class.move-target]="plus.moving"
+                [class.move-refused]="!!plus.refused"
+                [class.over]="!!plus.refused && refusedOver(plus.insert)"
                 data-action="insert"
-                data-insert=""
+                [attr.data-insert]="plus.refused ? null : ''"
+                [attr.data-refused]="plus.refused || null"
+                [attr.aria-disabled]="plus.refused ? true : null"
+                [attr.aria-describedby]="
+                  plus.refused ? 'canvas-v2-refused' : null
+                "
                 [attr.data-edge]="item.edge.key"
                 [attr.data-insert-owner]="plus.insert.owner"
                 [attr.data-insert-index]="plus.insert.index"
                 [style.left.px]="plus.x"
                 [style.top.px]="plus.y"
                 [attr.aria-label]="plus.name"
-                [attr.title]="plus.name"
+                [attr.title]="plus.refused ? null : plus.name"
                 [attr.tabindex]="plus.tabIndex"
                 aria-haspopup="dialog"
                 [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
               >
-                <weave-icon name="plus" [size]="16" />
+                <weave-icon
+                  [name]="plus.refused ? 'revoke' : 'plus'"
+                  [size]="16"
+                />
               </button>
             }
           }
@@ -379,9 +443,15 @@ SPDX-License-Identifier: Apache-2.0
               [style.outline-width.px]="focusWidth()"
               [style.outline-offset.px]="focusWidth()"
               [class.move-target]="slot.moving"
+              [class.move-refused]="!!slot.refused"
+              [class.over]="!!slot.refused && refusedOver(slot.insert)"
               [class.drop-target]="bandOwner() === slot.insert.owner"
               data-action="insert"
-              data-insert=""
+              [attr.data-insert]="slot.refused ? null : ''"
+              [attr.data-refused]="slot.refused || null"
+              [attr.aria-describedby]="
+                slot.refused ? 'canvas-v2-refused' : null
+              "
               [attr.data-insert-owner]="slot.insert.owner"
               [attr.data-insert-index]="slot.insert.index"
               [attr.data-slot-for]="slot.tile"
@@ -389,13 +459,16 @@ SPDX-License-Identifier: Apache-2.0
               [style.top.px]="slot.y"
               [style.--zoom]="view.zoom"
               [attr.aria-label]="slot.name"
-              [attr.title]="slot.name"
-              [attr.aria-disabled]="fixed || null"
+              [attr.title]="slot.refused ? null : slot.name"
+              [attr.aria-disabled]="fixed || slot.refused ? true : null"
               [attr.tabindex]="slot.tabIndex"
               aria-haspopup="dialog"
               [attr.aria-expanded]="h.isPickerOpenAt(slot.insert)"
             >
-              <weave-icon name="plus" [size]="16" /><span
+              <weave-icon
+                [name]="slot.refused ? 'revoke' : 'plus'"
+                [size]="16"
+              /><span
                 class="lane-slot-label"
                 [style.--label-scale]="labelScale()"
                 aria-hidden="true"
@@ -492,6 +565,8 @@ SPDX-License-Identifier: Apache-2.0
       />
     }
   }
+  <!-- Why the step being moved can't go where focus is. -->
+  <p class="sr-only" id="canvas-v2-refused">{{ refusedReason() }}</p>
   <p class="sr-only" id="canvas-v2-help">
     Arrow keys move between steps. Scroll to pan; hold Ctrl or Command and
     scroll to zoom. Press ? for keyboard shortcuts.

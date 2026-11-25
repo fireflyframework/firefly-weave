@@ -398,7 +398,8 @@ weave-canvas-view,
   }
 }
 /* A transaction's header: its promise shortens first, then its name; the
-   word "Transaction" never does. */
+   word "Transaction" never does. The promise takes so much of the shrinking
+   that the name loses nothing of a pixel, which would draw as an ellipsis. */
 .canvas-v2 .frame-transaction .frame-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -409,7 +410,7 @@ weave-canvas-view,
   color: var(--text);
 }
 .canvas-v2 .frame-promise {
-  flex: 0 1000 auto;
+  flex: 0 1000000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -606,6 +607,79 @@ weave-canvas-view,
   color: var(--text);
 }
 
+/* How a step of a transaction is undone: an icon on the card's lower left
+   corner, never in the status badge's place, and its word in the label. */
+.canvas-v2 .undo-badge {
+  position: absolute;
+  left: -10px;
+  top: 66px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--neutral-bd);
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  color: var(--neutral-ink);
+}
+.canvas-v2 .undo-badge weave-icon {
+  width: 14px;
+  height: 14px;
+}
+.canvas-v2 .undo-badge[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.canvas-v2 .tile-label span.tile-undo[data-tone="warning"] {
+  color: var(--warning-ink);
+  font-weight: 600;
+}
+/* The point of no return: a 1.5 px line at any zoom (--zoom is the canvas's),
+   across the row of the step it follows, in a 12 px area that keeps its
+   tooltip. Under the edges, so the "+" it crosses keeps the pointer. */
+.canvas-v2 .point-line {
+  position: absolute;
+  z-index: 0;
+  width: calc(12px / var(--zoom, 1));
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+.canvas-v2 .point-line::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: calc(50% - 0.75px / var(--zoom, 1));
+  width: calc(1.5px / var(--zoom, 1));
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--warning) 0 calc(5px / var(--zoom, 1)),
+    transparent 0 calc(9px / var(--zoom, 1))
+  );
+}
+/* Its label, centered on the line above the row, on the canvas's own color. */
+.canvas-v2 .point-label {
+  position: absolute;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  padding: 0 0.33em;
+  background: var(--canvas);
+  font: var(--type-caption);
+  font-weight: 600;
+  color: var(--warning-ink);
+  white-space: nowrap;
+  pointer-events: auto;
+  transform: translate(-50%, -100%) scale(var(--point-scale, 1));
+  transform-origin: bottom center;
+}
+.canvas-v2 .point-label weave-icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* Handles: drawn 12 px, hit area 24 × 24 */
 .canvas-v2 .handle {
   position: absolute;
@@ -699,6 +773,34 @@ weave-canvas-view,
 .canvas-v2 :is(.insert-plus, .lane-slot).move-target {
   border-color: var(--border-hover);
   color: var(--text);
+}
+/* A place refused to it: crossed out, and it says why under the pointer. */
+.canvas-v2 :is(.insert-plus, .lane-slot).move-refused {
+  border-color: var(--danger-bd);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+  cursor: not-allowed;
+}
+.canvas-v2 :is(.insert-plus, .lane-slot).move-refused:is(:hover, .over) {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-bg);
+}
+.canvas-v2 .move-reason {
+  position: absolute;
+  z-index: 8;
+  width: max-content;
+  max-width: 300px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  font: var(--type-small);
+  pointer-events: none;
+  transform: translateX(-50%) scale(var(--tip-scale, 1)) translateY(8px);
+  transform-origin: top center;
 }
 .canvas-v2 .lane-slot {
   position: absolute;
@@ -1194,6 +1296,7 @@ weave-canvas-view,
     .join-label,
     .lane-slot-label,
     .tile-badge,
+    .undo-badge,
     .tile-issue,
     .handle,
     .sub-node-chip,

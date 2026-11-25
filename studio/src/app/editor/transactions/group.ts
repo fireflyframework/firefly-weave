@@ -96,7 +96,7 @@ const stepsIn = (workflow: Workflow, run: GroupRun): Step[] =>
   (sequencesOf(workflow).get(run.owner) ?? []).slice(run.from, run.to + 1);
 
 /** A transaction among these steps, or anywhere inside them. */
-const holdsTransaction = (steps: readonly Step[]): boolean =>
+export const holdsTransaction = (steps: readonly Step[]): boolean =>
   steps.some(
     (step) =>
       isTransaction(step) ||
