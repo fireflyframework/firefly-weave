@@ -85,30 +85,29 @@ import { typedConfirmation, type StaysDoneLine } from "./transaction-record";
             </section>
           }
         }
-        <div class="field">
-          <div class="label-row">
-            <label for="cancel-reason">Reason</label>
-            @if (mode() === "without_undo") {
+        <!-- In doubt nothing can be sent: it asks for no reason. -->
+        @if (mode() === "without_undo") {
+          <div class="field">
+            <div class="label-row">
+              <label for="cancel-reason">Reason</label>
               <span class="reason-count" aria-hidden="true">{{ count() }}</span>
+            </div>
+            <textarea
+              id="cancel-reason"
+              spellcheck="false"
+              [attr.aria-invalid]="!!reasonError() || null"
+              [attr.aria-describedby]="
+                reasonError() ? 'cancel-reason-error' : null
+              "
+              [value]="reason()"
+              (input)="reason.set(value($event))"
+            ></textarea>
+            @if (reasonError(); as error) {
+              <p class="error" id="cancel-reason-error" role="alert">
+                {{ error }}
+              </p>
             }
           </div>
-          <textarea
-            id="cancel-reason"
-            spellcheck="false"
-            [attr.aria-invalid]="!!reasonError() || null"
-            [attr.aria-describedby]="
-              reasonError() ? 'cancel-reason-error' : null
-            "
-            [value]="reason()"
-            (input)="reason.set(value($event))"
-          ></textarea>
-          @if (reasonError(); as error) {
-            <p class="error" id="cancel-reason-error" role="alert">
-              {{ error }}
-            </p>
-          }
-        </div>
-        @if (mode() === "without_undo") {
           <div class="field">
             <label for="cancel-typed">Type {{ short() }} to confirm</label>
             <input

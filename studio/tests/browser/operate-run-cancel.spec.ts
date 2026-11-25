@@ -22,7 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // doubt. The platform is mocked with runs.transactions and runs.cancel.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { test, expect, type Page, type Route } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import type { RunTransactionView } from "../../src/app/operate/transactions/transaction-contracts";
 import {
   completed,
@@ -186,8 +192,11 @@ test("Cancel run with a transaction in doubt says so before sending, and sends n
     cancel.getByRole("button", { name: "Cancel run" }),
   ).toBeDisabled();
   await page.screenshot({ path: `${captures}/run-cancel-in-doubt.png` });
-  await cancel.getByLabel("Reason").fill("Stop it");
-  await cancel.getByLabel("Reason").press("Control+Enter");
+  // Nothing can be sent, so it asks for no reason.
+  await expect(cancel.getByRole("textbox")).toHaveCount(0);
+  await cancel
+    .locator("form")
+    .evaluate((form: HTMLFormElement) => form.requestSubmit());
   expect(runs.posts).toEqual([]);
   await notice.getByRole("button", { name: "Open incident" }).click();
   await expectInbox(page);
@@ -221,6 +230,93 @@ test("a cancel refused because a transaction went in doubt names it and offers i
   await toast.getByRole("button", { name: "Open incident" }).click();
   await expectInbox(page);
 });
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 360, height: 640 },
+])
+  test.describe(`a refusal at ${size.width} px`, () => {
+    test.use({ viewport: size, hasTouch: size.width < 768 });
+
+    /** The sentence has room to read, and its answer is beside or under it, inside. */
+    const readable = async (
+      holder: Locator,
+      words: Locator,
+      answers: Locator[],
+    ) => {
+      const [around, text] = [
+        (await holder.boundingBox())!,
+        (await words.boundingBox())!,
+      ];
+      expect(around.x).toBeGreaterThanOrEqual(0);
+      expect(around.x + around.width).toBeLessThanOrEqual(size.width);
+      expect(text.width).toBeGreaterThanOrEqual(180);
+      for (const answer of answers) {
+        const box = (await answer.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(around.x);
+        expect(box.x + box.width).toBeLessThanOrEqual(around.x + around.width);
+        const beside = box.x >= text.x + text.width;
+        if (size.width >= 1440) expect(beside).toBe(true);
+        if (!beside) expect(box.y).toBeGreaterThanOrEqual(text.y + text.height);
+      }
+    };
+
+    test("Cancel run in doubt has a sentence to read, and its answer", async ({
+      page,
+    }) => {
+      await platform(page, operator, [running, inDoubt]);
+      await expect(page.locator(".txn-summary")).toBeVisible();
+      await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+      const notice = dialog(page, "Cancel this run?").locator(".notice");
+      await readable(notice, notice.locator("p"), [
+        notice.getByRole("button", { name: "Open incident" }),
+      ]);
+      await page.screenshot({
+        path: `${captures}/run-cancel-in-doubt-${size.width}.png`,
+      });
+    });
+
+    test("a cancel refused in a race has a sentence to read, and its answers", async ({
+      page,
+    }) => {
+      const runs = await platform(page, operator, [running]);
+      await expect(page.locator(".txn-summary")).toBeVisible();
+      runs.cancel = async (route) => {
+        runs.transactions = [inDoubt];
+        await route.fulfill({
+          status: 409,
+          json: {
+            code: "WV-TXN-IN-DOUBT",
+            message: "Resolve the transaction first.",
+          },
+        });
+      };
+      await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+      const cancel = dialog(page, "Cancel this run?");
+      await cancel.getByLabel("Reason").fill("Stop it");
+      await cancel.getByRole("button", { name: "Cancel run" }).click();
+      const toast = page
+        .locator(".toast")
+        .filter({ hasText: "WV-TXN-IN-DOUBT" });
+      await expect
+        .poll(() => toast.evaluate((element) => element.getAnimations().length))
+        .toBe(0);
+      const text = toast.locator(".toast-text");
+      await readable(toast, text, [
+        toast.getByRole("button", { name: "Open incident" }),
+      ]);
+      // Ten lines of two words became a few.
+      const line = await text.evaluate((element) =>
+        parseFloat(getComputedStyle(element).lineHeight),
+      );
+      expect((await text.boundingBox())!.height).toBeLessThanOrEqual(
+        (size.width >= 1440 ? 5 : 6) * line + 1,
+      );
+      await page.screenshot({
+        path: `${captures}/run-cancel-refused-${size.width}.png`,
+      });
+    });
+  });
 
 test("Cancel without undoing waits in the action row while a transaction is in doubt", async ({
   page,
