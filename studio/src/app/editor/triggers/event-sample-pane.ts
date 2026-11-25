@@ -125,6 +125,7 @@ const TICK_MS = 1_000;
         @let no = blocked();
         <div class="es-field">
           <weave-select
+            data-control
             icon="chevronDown"
             label="Event"
             [options]="events"
@@ -215,6 +216,7 @@ const TICK_MS = 1_000;
       margin: 0;
     }
     .es-field {
+      --select-height: var(--sd-control);
       display: grid;
       gap: var(--space-1);
     }

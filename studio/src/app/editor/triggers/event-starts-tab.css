@@ -47,6 +47,13 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--subtle);
   white-space: nowrap;
 }
+/* As step details' other icon buttons: 32 px, 44 px on touch. */
+.es-head .es-refresh {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
 .es-callout {
   display: flex;
   align-items: flex-start;
@@ -244,11 +251,6 @@ SPDX-License-Identifier: Apache-2.0
   }
 }
 @media (max-width: 767px), (pointer: coarse) {
-  .es-refresh {
-    width: var(--control-touch);
-    min-width: var(--control-touch);
-    height: var(--control-touch);
-  }
   :is(.es-callout, .es-empty, .es-foot) button,
   .es-action button {
     min-height: var(--control-touch);

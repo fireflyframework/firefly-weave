@@ -83,6 +83,10 @@ legend.et-head {
 .et-row:hover {
   background: var(--hover);
 }
+/* The error belongs to the list: closer to it than the section's own gap. */
+.et-rows + * > .et-problem {
+  margin-top: -2px;
+}
 /* The box at the row's start, the words beside it (inputs are full width elsewhere). */
 .et-row input[type="checkbox"],
 .et-card input[type="radio"] {
