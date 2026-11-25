@@ -140,6 +140,24 @@ def transaction(*steps: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def started_by_an_earlier_version(platform, run_id) -> None:
+    """The run follows the transaction rules of the version that started it: its state says nothing of rules."""
+    await platform.execute("UPDATE runs SET state=state-'transaction_rules' WHERE id=:run", run=run_id)
+
+
+def resolved_by_an_earlier_version(monkeypatch) -> None:
+    """A resolution moves no run to the transaction rules of this version."""
+    from firefly_weave.operations import incidents
+
+    current = incidents.transition
+
+    async def earlier(state, event, artifact):
+        said = {key: value for key, value in event.data.items() if key not in {"transaction_rules", "transaction"}}
+        return await current(state, event.model_copy(update={"data": said}), artifact)
+
+    monkeypatch.setattr(incidents, "transition", earlier)
+
+
 OUTPUTS = {
     "source-system-hold-quantity@1.0.0": {"holdId": "h-1"},
     "target-system-add-quantity@1.0.0": {"id": "a-1"},

@@ -240,6 +240,7 @@ class RuntimeRepository:
         *,
         safe_response: UnavailableRunAcknowledgment | None = None,
         task_timing: TaskTiming | None = None,
+        leftover: bool = False,
     ) -> None:
         if self.outbox is None:
             raise RuntimeError("Native outbox append port is required for authoritative persistence")
@@ -456,7 +457,7 @@ class RuntimeRepository:
                 self, view.id, result.state.status, result.state.output, result.state.incident, event.timestamp
             )
 
-        await FactRepository(self.tx).project_run(view, event, result)
+        await FactRepository(self.tx).project_run(view, event, result, leftover=leftover)
         await self.outbox.append(
             self.tx,
             IntegrationEvent(
