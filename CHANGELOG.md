@@ -340,6 +340,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
+- A unit or contract test that hangs ends the local gate and CI after 10 minutes,
+  named as `FAILED`, with the files, lines, and functions where its threads wait,
+  instead of holding the stage for an hour without a name. The stage also fails
+  when a pytest worker stops early or no test passes.
 - Studio's tests no longer fail on a busy machine: page clocks advance with
   `runFor` instead of `fastForward` in the approvals, connect wizard and
   incidents specs, canvas tidy is bounded by the work it does instead of
