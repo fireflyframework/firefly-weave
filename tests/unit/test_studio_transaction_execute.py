@@ -1042,18 +1042,30 @@ FAILED_LATER = {"errors": {"node:later": {"code": "VALIDATION"}}}
 
 
 @pytest.mark.parametrize(
-    "failing, fields, expected",
+    "failing, fields, expected, said",
     [
-        (LATER, FAILED_LATER, {"later": "VALIDATION"}),
-        (PAID, {"scripts": {"signals": {"paid": {"outcome": "timeout"}}}}, {"paid": None}),
+        (
+            LATER,
+            FAILED_LATER,
+            {"later": "VALIDATION"},
+            "An attempt of an action that is not safe to repeat ended without a usable result, so whether it applied"
+            " is unknown.",
+        ),
+        (
+            PAID,
+            {"scripts": {"signals": {"paid": {"outcome": "timeout"}}}},
+            {"paid": None},
+            "The deadline of order-paid passed before the signal arrived.",
+        ),
     ],
     ids=["an action", "a signal that never arrives"],
 )
-def test_a_step_of_an_open_transaction_is_never_blamed_for_a_failure_outside_of_it(failing, fields, expected):
+def test_a_step_of_an_open_transaction_is_never_blamed_for_a_failure_outside_of_it(failing, fields, expected, said):
     answer = run_move(beside(failing), **fields)
     assert answer["status"] == "failed", answer
     assert answer["trace"][-1]["nodeId"] in {"hold", "held"}
     assert failures(answer) == expected
+    assert [item["message"] for item in answer["diagnostics"]] == [said]
 
 
 def test_a_step_of_an_open_transaction_is_never_blamed_for_a_called_run_that_failed():

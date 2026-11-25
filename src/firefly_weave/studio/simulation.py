@@ -1265,6 +1265,7 @@ def execute(
         for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))
         if isinstance(step.get("uses"), str)
     }
+    stopped_step: str | None = None
     for frame in [None, *shown]:
         shapes = cast(Any, simulator).prepared_of(frame or "").transactions
         stopped_by_transaction = False
@@ -1301,11 +1302,12 @@ def execute(
             if stopped is not None:
                 update["error"] = stopped
         trace[stopping_index] = stopping.model_copy(update=update)
+        if frame is None:
+            stopped_step = stopping.nodeId
     own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
-        at = own[-1] if own and own[-1].status == "failed" else None
-        node = next((n for n in simulator.ir.graph.nodes if at is not None and n.id == at.nodeId), None)
+        node = next((n for n in simulator.ir.graph.nodes if n.id == stopped_step), None)
         if view.status == "cancelled":
             words = "The simulated run was cancelled."
         elif isinstance(node, SignalNode):
