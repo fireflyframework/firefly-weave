@@ -152,7 +152,7 @@ export const SIGNAL_WORDS: Record<AlertSignal, SignalWords> = {
     ),
     wholeEnvironment: true,
     noData:
-      "With nothing undoing, the signal has no data and the rule stays as it is.",
+      "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
   },
 };
 const isKnown = (signal: string): signal is AlertSignal =>
@@ -443,7 +443,7 @@ export function previewWords(
       status,
       detail:
         signalWords(rule.signal)?.noData ??
-        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
     };
   }
   const value = valueText(preview.value, preview.unit);

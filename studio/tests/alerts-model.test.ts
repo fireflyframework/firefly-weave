@@ -300,11 +300,11 @@ describe("a preview", () => {
       value: "—",
       status: "No data: there is nothing to read for this signal yet.",
       detail:
-        "With nothing undoing, the signal has no data and the rule stays as it is.",
+        "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
     });
     for (const signal of ["queue.oldest_ready_seconds", "runs.newer_ratio"])
       expect(previewWords(noData, draft(signal)).detail, signal).toBe(
-        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
       );
   });
 });

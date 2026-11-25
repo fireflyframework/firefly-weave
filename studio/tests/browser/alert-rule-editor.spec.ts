@@ -73,7 +73,7 @@ for (const size of [
         "No data: fewer than 10 runs ended in the last 15 minutes.",
       );
       await expect(result).toContainText(
-        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
       );
       await expect(result).toContainText("Run failure rate, invoice-approval");
       await expect(result).toContainText("1 (test runs don't count)");
@@ -231,7 +231,7 @@ test.describe("The rule editor's states", () => {
       });
     });
 
-  test("Preview of a transaction undoing with nothing to read says the rule stays as it is", async ({
+  test("Preview of a transaction undoing with nothing to read says what a rule with no data does", async ({
     page,
   }) => {
     await alertsPlatform(page, {
@@ -255,7 +255,7 @@ test.describe("The rule editor's states", () => {
     await page.getByRole("button", { name: "Preview", exact: true }).click();
     const result = page.locator(".preview-result");
     await expect(result).toContainText(
-      "With nothing undoing, the signal has no data and the rule stays as it is.",
+      "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
     );
     await expect(result).not.toContainText("it doesn't fire");
     await shot(page, "alerts-preview-nothing-undoing-1440");
