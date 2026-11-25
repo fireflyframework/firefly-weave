@@ -918,4 +918,46 @@ describe("a refused decision", () => {
       "blockOutput",
     );
   });
+
+  it("names a step by its key, with its phase, in quotes or as an owner, and no other one", () => {
+    const at = (message: string) =>
+      outputRefusalAt(message, "completed", rows());
+    for (const name of ["add#undo", "'add'", "`keep[2]#confirm`", "add's"])
+      expect(at(`Nothing says how ${name} ended`), name).toBe("checklist");
+    for (const name of ["add2", "keep[3]", "keep", "hold.value"])
+      expect(at(`Nothing says how ${name} ended`), name).toBe("blockOutput");
+  });
+
+  it("isn't about the steps whose names are words of the platform's own sentences", () => {
+    const words = checklistRows(
+      about(
+        "WV-TXN-UNDO-STUCK",
+        "record#undo",
+        [
+          "record",
+          "fit",
+          "transaction",
+          "t",
+          "output",
+          "limits",
+          "exceeds",
+        ].map((key) => step(key, "compensate", "undo_stuck")),
+      ),
+      "completed",
+    );
+    for (const sentence of [
+      "The reconciliation record doesn't fit the transaction",
+      "Resolution output exceeds runtime limits",
+    ])
+      expect(outputRefusalAt(sentence, "completed", words), sentence).toBe(
+        "blockOutput",
+      );
+    // Another sentence may name one of them.
+    expect(
+      outputRefusalAt("Nothing says how record ended", "completed", words),
+    ).toBe("checklist");
+    expect(outputRefusalAt("Nothing doesn't end", "completed", words)).toBe(
+      "blockOutput",
+    );
+  });
 });

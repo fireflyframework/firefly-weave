@@ -469,6 +469,21 @@ export function explainDecision(
     };
   return refused;
 }
+/** What the platform says of a whole record: a step named like one of their words isn't meant. */
+const ABOUT_NO_STEP: ReadonlySet<string> = new Set([
+  "The reconciliation record doesn't fit the transaction",
+  "Resolution output exceeds runtime limits",
+]);
+/** Whether a sentence names one of these steps: its whole key, with or without its phase. */
+function namesOneOf(steps: ReadonlySet<string>, sentence: string): boolean {
+  return sentence.split(/[\s,;:"`()]+/).some((word) => {
+    const name = word
+      .replace(/[.']+$/, "")
+      .replace(/'s$/, "")
+      .replace(/^'+/, "");
+    return steps.has(stepName(name));
+  });
+}
 /**
  * Where a refused record shows: under the checklist when it names one of its
  * steps or there is no result to blame, under the result otherwise.
@@ -478,10 +493,8 @@ export function outputRefusalAt(
   as: ReconcileDraft["as"],
   rows: readonly ChecklistRow[],
 ): "blockOutput" | "checklist" {
-  const names = new Set(rows.map((row) => stepName(row.instanceKey)));
-  const named = message
-    .split(/[\s,;:"'`()]+/)
-    .some((word) => names.has(word.replace(/\.$/, "")));
+  const steps = new Set(rows.map((row) => stepName(row.instanceKey)));
+  const named = !ABOUT_NO_STEP.has(message) && namesOneOf(steps, message);
   return as === "completed" && !named ? "blockOutput" : "checklist";
 }
 
