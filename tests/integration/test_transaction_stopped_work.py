@@ -354,7 +354,9 @@ async def test_a_force_end_drops_its_own_unclaimed_confirm_and_still_reports_the
         await platform.complete(await platform.lease(key))
     stuck = await confirm_stuck(platform, run)
     await resolve(platform, stuck, "terminate", reconciler)
-    # The step the other transaction waits for is reported as skipped, so its reservation is released now.
+    # Force end applies nothing but what ends the run, and recovery reports the step the other transaction waits for
+    # as skipped, so its reservation is released then.
+    await platform.scan()
     await goes_on(platform, run.id, "hold3#cancel")
     assert await reported(platform, run.id, "add3") == ["step_failed"]
     assert await reported(platform, run.id, "hold2#confirm") == []
