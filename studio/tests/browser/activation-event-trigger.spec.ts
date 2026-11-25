@@ -720,11 +720,48 @@ test("nothing is planned for the trigger while its activation can't be read", as
   });
   const dialog = await activationDialog(page);
   await expect(eventRows(dialog)).toHaveText([
-    "Couldn't check the platform event triggers: Try again later.",
+    /^\s*Couldn't check the platform event triggers: Try again later\.\s*If you activate now, Studio leaves them as they are\. To check them first, close this and activate again\.\s*$/,
   ]);
+  await expect(
+    eventRows(dialog).locator("weave-icon[data-icon='failCircle']"),
+  ).toBeVisible();
   await activate(dialog);
   await expect(dialog).toHaveCount(0);
   expect(platform.writes()).toEqual([]);
+});
+
+test("a kind that couldn't be checked no longer says what activating does once it is done", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page, {
+    seeds: [STORED],
+    triggers: [
+      {
+        id: "trigger-1b2c3d4e",
+        kind: "webhook",
+        name: "orders-in",
+        secretRef: "orders-signing",
+      },
+    ],
+  });
+  await page.route(/\/environments\/development\/triggers\?/, (route) =>
+    route.fulfill({
+      status: 503,
+      json: { code: "WV-UNAVAILABLE", message: "Try again later." },
+    }),
+  );
+  platform.refuse.set(
+    "POST /event-triggers/t-1/retarget",
+    refusal(503, "WV-UNAVAILABLE", "Try again later."),
+  );
+  const dialog = await activationDialog(page);
+  const unread = eventRows(dialog).filter({ hasText: "webhooks" });
+  await expect(unread).toContainText("If you activate now");
+  await activate(dialog);
+  await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(unread).toHaveText(
+    /^\s*Couldn't check the webhooks: Try again later\.\s*$/,
+  );
 });
 
 test("a platform without event triggers is never asked for them", async ({

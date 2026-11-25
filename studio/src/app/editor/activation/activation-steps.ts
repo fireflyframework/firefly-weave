@@ -54,7 +54,13 @@ import {
   type EventRowAnswer,
 } from "./event-activation-row";
 import { joined } from "./event-bindings";
-import { eventResultView, eventRowView, resultIcon } from "./event-rows";
+import {
+  eventResultView,
+  eventRowView,
+  resultIcon,
+  uncheckedView,
+  type EventRowView,
+} from "./event-rows";
 import {
   triggerPlan,
   withStop,
@@ -241,8 +247,14 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
               }
             </li>
           }
-          @for (failure of failures(); track failure) {
-            <li class="activation-row" data-kind="failed">{{ failure }}</li>
+          @for (failure of failures(); track failure.lead) {
+            <li class="activation-row event-row" data-kind="failed">
+              <!-- What activating does to it is said until it is done. -->
+              <weave-event-activation-row
+                [view]="synced() ? { ...failure, detail: null } : failure"
+                [textId]="'trigger-failure-' + $index"
+              />
+            </li>
           }
         </ul>
       }
@@ -282,7 +294,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       flex: none;
       margin-top: 2px;
     }
-    /* A platform event trigger's row lays its own text and controls out. */
+    /* A row with a lead and a detail lays its own text and controls out. */
     .activation-row.event-row {
       align-items: flex-start;
       padding: 10px var(--space-3);
@@ -342,7 +354,8 @@ export class ActivationSteps implements OnInit {
   readonly stop = signal<string | null>(null);
   readonly callees = signal<CalleeRow[]>([]);
   readonly triggers = signal<TriggerRow[]>([]);
-  readonly failures = signal<string[]>([]);
+  /** What couldn't be checked, so Studio leaves it as it is. */
+  readonly failures = signal<EventRowView[]>([]);
   /**
    * The revision of the workflow's newest activation here, which the next one
    * replaces; null when it has none, undefined when Studio can't read it.
@@ -624,15 +637,20 @@ export class ActivationSteps implements OnInit {
       );
     const resources: Partial<Record<ResourceKind, ResourceList>> = {};
     const unread = new Set<ResourceKind>();
-    const failures: string[] = [];
+    const failures: EventRowView[] = [];
     const unreadable = (kind: ResourceKind, error: unknown) => {
       // A list that can't be read can't be checked: its triggers aren't planned.
       resources[kind] = { items: [], truncated: true };
       unread.add(kind);
       failures.push(
         error instanceof ApiError && error.status === 403
-          ? `You can't check the ${PLURALS[kind]} here, so Studio leaves them as they are.`
-          : `Couldn't check the ${PLURALS[kind]}: ${describeError(error).message}`,
+          ? uncheckedView(
+              `You can't check the ${PLURALS[kind]} here, so Studio leaves them as they are.`,
+            )
+          : uncheckedView(
+              `Couldn't check the ${PLURALS[kind]}: ${describeError(error).message}`,
+              "If you activate now, Studio leaves them as they are. To check them first, close this and activate again.",
+            ),
       );
     };
     // A version that declares no platform event may still have a trigger an
@@ -653,7 +671,9 @@ export class ActivationSteps implements OnInit {
     const couldnt = (error: unknown) => {
       if (known && checked)
         failures.push(
-          `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+          uncheckedView(
+            `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+          ),
         );
       known = false;
     };

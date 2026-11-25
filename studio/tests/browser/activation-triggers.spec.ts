@@ -356,6 +356,56 @@ test("what happened to each trigger has an icon beside its words, and what wasn'
   ).toHaveCount(0);
 });
 
+test("each kind of trigger that can't be checked has an icon and says what activating does to it", async ({
+  page,
+}) => {
+  await platform(page);
+  await page.route(/\/environments\/development\/triggers\?/, (r) =>
+    r.fulfill({
+      status: 503,
+      json: { code: "WV-UNAVAILABLE", message: "Try again later." },
+    }),
+  );
+  await page.route(/\/environments\/development\/schedules\?/, (r) =>
+    r.fulfill({
+      status: 403,
+      json: { code: "WV-FORBIDDEN", message: "Access denied" },
+    }),
+  );
+  await open(page);
+  const dialog = await activateDialog(page);
+  const rows = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  const [unread, forbidden] = [
+    rows.filter({ hasText: "webhooks" }),
+    rows.filter({ hasText: "schedules" }),
+  ];
+  await expect(unread).toHaveText(
+    /^\s*Couldn't check the webhooks: Try again later\.\s*If you activate now, Studio leaves them as they are\. To check them first, close this and activate again\.\s*$/,
+  );
+  await expect(forbidden).toHaveText(
+    /^\s*You can't check the schedules here, so Studio leaves them as they are\.\s*$/,
+  );
+  for (const row of [unread, forbidden]) {
+    const icon = row.locator("weave-icon[data-icon='failCircle']");
+    await expect(icon).toHaveCSS("color", await inkOf(page, "--danger-ink"));
+    const [at, lead] = [
+      (await icon.boundingBox())!,
+      (await row.locator(".row-lead").boundingBox())!,
+    ];
+    expect([at.width, at.height]).toEqual([16, 16]);
+    expect(lead.x - (at.x + at.width)).toBe(12);
+  }
+  // What it means is under what happened, in the muted ink.
+  const detail = unread.locator(".row-detail");
+  await expect(detail).toHaveCSS("color", await inkOf(page, "--muted"));
+  expect((await detail.boundingBox())!.x).toBe(
+    (await unread.locator(".row-lead").boundingBox())!.x,
+  );
+});
+
 test("a new Kafka trigger asks for its Kafka connection, of any version, and is created on it", async ({
   page,
 }) => {

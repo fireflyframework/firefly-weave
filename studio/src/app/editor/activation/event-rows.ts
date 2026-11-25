@@ -105,6 +105,12 @@ function changes(before: EventDeclaration, after: EventDeclaration) {
       : "other events and workflows";
 }
 
+/** What the dialog couldn't check before the activation, of any kind of trigger. */
+export const uncheckedView = (
+  lead: string,
+  detail: string | null = null,
+): EventRowView => ({ ...PLAIN, ...DANGER, lead, detail });
+
 /** A row as the dialog shows it before the activation. */
 export function eventRowView(row: EventRow): EventRowView {
   switch (row.kind) {
