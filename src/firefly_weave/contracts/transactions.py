@@ -146,6 +146,7 @@ TRANSACTION_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         ),
         "WV-TXN-UNDO-PINNED": "A transaction that is still running may need this activation to undo a step.",
         "WV-TXN-RECONCILE-DENIED": "This run isn't allowed to resolve the transaction.",
+        "WV-TXN-RECONCILE-INCOMPLETE": "Say what happened to every step whose end isn't known.",
         "WV-COMPLETION-EFFECT": "A failure whose outcome is unknown can't also say that nothing was applied.",
         "WV-TRIGGER-EVENT-DEPTH": "Platform events from a run this deep in a chain of reactions start no workflows.",
     }
@@ -196,6 +197,16 @@ def must_say(
         or (status == "done" and mode == "reserve")
         or (status == "failed" and doubted)
     )
+
+
+# The most steps a refused reconciliation names; the rest are counted.
+UNSAID_STEPS: Final = 20
+
+
+def unsaid_message(keys: Sequence[str]) -> str:
+    """What a reconciliation that leaves steps out answers: the steps a person must still say something about."""
+    more = len(keys) - UNSAID_STEPS
+    return f"Say what happened to: {', '.join(keys[:UNSAID_STEPS])}{f', and {more} more' if more > 0 else ''}."
 
 
 def phase_key(instance_key: str, phase: UndoPhase) -> str:

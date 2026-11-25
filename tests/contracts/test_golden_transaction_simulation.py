@@ -46,7 +46,6 @@ REPLAYABLE = (
     "golden-move/compensated",
     "golden-move/cancelled",
     "golden-move/undo-stuck-then-retried",
-    "golden-move/undo-stuck-then-reconciled-as-compensated",
     "golden-move/pivot-unknown-then-it-did-not-happen",
     "golden-move/cancel-while-deciding-then-it-went-through",
     "golden-move/cancel-while-deciding-then-it-definitely-failed",
@@ -222,6 +221,7 @@ def test_histories_a_session_cant_replay_are_named():
 # What a session can't show of each history it doesn't replay.
 NOT_REPLAYABLE = {
     "golden-move/rollback-while-paused": "a pause",
+    "golden-move/undo-stuck-then-reconciled-as-compensated": "a record that leaves a step out, which a session refuses",
     "golden-move-short-hold/hold-expired": "a result that arrives after the hold deadline",
     "golden-move-then-wait/rollback-while-another-incident-holds-the-run": (
         "an interim failure incident before the final failure"

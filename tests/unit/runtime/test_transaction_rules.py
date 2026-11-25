@@ -95,6 +95,14 @@ def test_the_first_rules_leave_an_interim_failure_a_reconcile_stopped():
     assert (run.state.status, run.state.active, list(run.state.incidents)) == ("suspended", [], ["hold2#confirm:1"])
 
 
+def test_the_first_rules_take_a_result_for_a_step_a_reconcile_stopped():
+    run = one_stuck()
+    attempt_failed(run, "hold2#confirm")
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished("hold"))
+    resolve(run, "hold2#confirm:1", "accept_reconciled_result", {})
+    assert (run.state.status, run.state.incidents, run.state.deferred_results) == ("succeeded", {}, [])
+
+
 def test_the_first_rules_leave_the_incident_of_a_refused_output_a_reconcile_stopped():
     # A read's output was refused: no recovery decides that, only a person.
     pause = {"id": "pause", "kind": "wait", "durationSeconds": 3600}
@@ -220,6 +228,14 @@ def test_a_stuck_confirm_waits_beside_a_stuck_step_only_when_the_step_was_alread
     assert (run.txn().status, run.txn().incident) == ("in_doubt", "lookup:3")
     run = one_stuck()
     assert run.txn().resume == ["@branch:move:0"] and run.state.active == ["hold2#confirm"]
+
+
+def test_the_first_rules_leave_the_body_waiting_for_a_confirm_that_finished_beside_a_stuck_step():
+    run = after_pivot_pair(confirm="finishes")
+    resolve(run, "lookup:3", "retry_safe")
+    run.done("lookup", {"count": 1}, generation=4)
+    assert (run.state.status, run.state.active, run.state.incidents) == ("waiting", [], {})
+    assert (run.txn().status, run.txn().resume) == ("committing", ["@branch:both:0"])
 
 
 def two_transactions(run_rules: int = 1) -> Run:

@@ -16,9 +16,13 @@
 
 """Resolving a transaction in doubt in the kernel: retry, mark as reconciled, it happened or not, force end."""
 
+import json
+from pathlib import Path
+
 import pytest
 from transaction_support import (
     INPUT,
+    START,
     UNSET,
     Run,
     add,
@@ -44,8 +48,10 @@ from transaction_support import (
     two_stuck,
 )
 
-from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
-from firefly_weave.runtime.kernel import workflow
+from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES, unsaid_message
+from firefly_weave.runtime.kernel import KernelError, check_reconciliation, unsaid_steps, workflow
+from firefly_weave.runtime.models import ParticipantRecord, TransactionRecord
+from firefly_weave.runtime.transactions import doubted_steps, shapes
 
 ROLLED_BACK = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
 
@@ -601,6 +607,14 @@ def test_a_stuck_step_is_retried_before_the_stuck_confirm_beside_it_and_its_resu
     assert (run.txn().status, run.state.status) == ("completed", "succeeded")
 
 
+def test_a_step_retried_after_the_confirm_beside_it_finished_lets_the_body_go_on():
+    run = after_pivot_pair(run_rules=2, confirm="finishes")
+    assert (run.txn().status, run.txn().incident, run.txn().resume) == ("in_doubt", "lookup:3", ["@branch:both:0"])
+    resolve(run, "lookup:3", "retry_safe")
+    run.done("lookup", {"count": 1}, generation=4)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+
+
 def test_either_incident_of_a_stuck_confirm_beside_a_stuck_step_decides_the_transaction():
     for key in ("hold#confirm:2", "lookup:3"):
         run = after_pivot_pair(run_rules=2)
@@ -769,3 +783,169 @@ def test_ending_the_run_from_what_an_earlier_decision_left_undoes_its_other_tran
     assert release.node_id == "hold3#cancel" and run.txn("other").status == "compensating"
     run.done("hold3#cancel", {})
     assert (run.txn("other").status, run.txn().status, run.state.status) == ("cancelled", "reconciled", "cancelled")
+
+
+def stuck_release() -> Run:
+    """The reservation's release can't finish, and the step that failed applied nothing."""
+    run = Run(compiled([transaction([hold(), add()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "REFUSED", effect="none")
+    run.failed("hold#cancel", "REJECTED", effect="none", generation=10)
+    return run
+
+
+def stuck_undo() -> Run:
+    """One undo can't finish, the one before it did, and the reservation was not released yet."""
+    run = Run(compiled([transaction([hold(), add(), add("add2"), add("add3")])]))
+    run.start(2)
+    for key, output in (("hold", {"holdId": "h-1"}), ("add", {"id": "a-1"}), ("add2", {"id": "a-2"})):
+        run.done(key, output)
+    run.failed("add3", "REFUSED", effect="none")
+    run.done("add2#undo", {})
+    run.failed("add#undo", "REJECTED", effect="none", generation=10)
+    return run
+
+
+def stuck_after_the_pivot(effect: str) -> Run:
+    run = Run(compiled([transaction([hold(), add(), submit(), notify()])]))
+    run.start(2)
+    for key, output in (("hold", {"holdId": "h-1"}), ("add", {"id": "a-1"}), ("submit", {"orderId": "o-1"})):
+        run.done(key, output)
+    run.done("hold#confirm", {})
+    run.failed("notify", "UNAVAILABLE", effect=effect, generation=4)
+    return run
+
+
+UNDONE = dict.fromkeys(("hold", "add", "submit"), "undone")
+TO_SAY = {
+    "undo-finished": (stuck_undo, "completed", {"hold": "confirmed", "add": "done", "add2": "done"}),
+    "undo-undone": (stuck_undo, "compensated", {"hold": "undone", "add": "undone"}),
+    "settle-finished": (
+        lambda: settle_timeout(2),
+        "completed",
+        {"hold": "confirmed", "add": "done", "add2": "done"},
+    ),
+    "settle-undone": (
+        lambda: settle_timeout(2),
+        "compensated",
+        {"hold": "undone", "add": "undone", "add2": "undone"},
+    ),
+    "confirm-finished": (lambda: one_stuck(2), "completed", {"hold": "confirmed", "hold2": "confirmed"}),
+    "confirm-undone": (lambda: one_stuck(2), "compensated", {**UNDONE, "hold2": "undone"}),
+    "after-unknown-finished": (lambda: stuck_after_the_pivot("unknown"), "completed", {"notify": "done"}),
+    "after-unknown-undone": (lambda: stuck_after_the_pivot("unknown"), "compensated", {**UNDONE, "notify": "undone"}),
+    "after-failed-finished": (lambda: stuck_after_the_pivot("none"), "completed", {"notify": "done"}),
+    "after-failed-undone": (lambda: stuck_after_the_pivot("none"), "compensated", UNDONE),
+    "release-finished": (stuck_release, "completed", {"hold": "confirmed"}),
+    "release-undone": (stuck_release, "compensated", {"hold": "undone"}),
+}
+
+
+@pytest.mark.parametrize("case", TO_SAY)
+def test_a_reconciliation_names_every_step_whose_end_is_unknown(case):
+    make, ending, steps = TO_SAY[case]
+    run = make()
+    key = run.txn().incident
+    for left_out in steps:
+        before = run.state.model_copy(deep=True)
+        short = {name: outcome for name, outcome in steps.items() if name != left_out}
+        refused = resolve(run, key, "accept_reconciled_result", record(ending, short))
+        assert refused.commands == [], left_out
+        assert run.state == before.model_copy(update={"accepted_sequence": run.state.accepted_sequence}), left_out
+    resolve(run, key, "accept_reconciled_result", record(ending, steps))
+    assert (run.txn().status, run.txn().reconciled_as, run.state.incidents.get(key)) == ("reconciled", ending, None)
+
+
+OUTCOMES = json.loads(Path("tests/fixtures/transactions/reconcile-outcomes.json").read_text(encoding="utf-8"))
+
+
+def standing(**participants: tuple[str, str]) -> TransactionRecord:
+    """A transaction in doubt whose steps stand at the given mode and status, in this order."""
+    items = [ParticipantRecord(key=key, mode=mode, status=status) for key, (mode, status) in participants.items()]
+    return TransactionRecord(status="in_doubt", opened_at=START, participants=items)
+
+
+def test_a_record_with_nothing_to_say_leaves_out_exactly_what_the_table_asks_for():
+    wrong = []
+    for row in OUTCOMES:
+        held = standing(step=(row["mode"], row["status"]))
+        doubted = frozenset({"step"}) if row["doubted"] else frozenset()
+        if unsaid_steps(held, record(row["ending"], {}), doubted) != (["step"] if row["must_say"] else []):
+            wrong.append(row)
+    assert wrong == []
+
+
+def test_what_a_record_leaves_out_comes_in_the_order_the_steps_were_registered():
+    unknown = ("compensate", "unknown")
+    held = standing(z=unknown, a=("compensate", "done"), m=("compensate", "dispatched"), b=unknown)
+    assert unsaid_steps(held, record("completed", {"m": "done"}), frozenset()) == ["z", "b"]
+    with pytest.raises(KernelError, match="^WV-TXN-RECONCILE-INCOMPLETE$"):
+        check_reconciliation(held, record("completed", {"m": "done"}), complete=True, doubted=frozenset())
+    # A record of another shape leaves nothing out: its shape is what's wrong.
+    assert unsaid_steps(held, {"as": "completed", "participants": []}, frozenset()) == []
+    with pytest.raises(KernelError, match="^WV-RUNTIME-OUTPUT$"):
+        check_reconciliation(held, {"as": "completed", "participants": []}, complete=True, doubted=frozenset())
+
+
+def test_the_steps_to_say_are_named_up_to_twenty_and_then_counted():
+    assert unsaid_message(["hold", "add2"]) == "Say what happened to: hold, add2."
+    keys = [f"add[{index}]" for index in range(23)]
+    assert unsaid_message(keys[:20]) == f"Say what happened to: {', '.join(keys[:20])}."
+    assert unsaid_message(keys) == f"Say what happened to: {', '.join(keys[:20])}, and 3 more."
+
+
+def test_a_step_is_doubted_while_an_incident_in_doubt_of_its_transaction_is_at_it_or_at_its_phase():
+    for run, expected in (
+        (two_stuck(2), {"hold", "hold2"}),
+        (stuck_after_the_pivot("none"), {"notify"}),
+        (after_pivot_pair(2), {"hold", "lookup"}),
+        (settle_timeout(2), {"move"}),
+    ):
+        facts = shapes(workflow(run.flow))
+        assert facts is not None
+        assert doubted_steps(facts, run.state, "move") == expected
+        assert doubted_steps(facts, run.state, "other") == frozenset()
+
+
+def test_a_step_that_finished_while_the_dialog_was_open_may_be_named():
+    run = one_stuck(2)
+    run.done("hold2#confirm", {})
+    assert run.statuses()["hold2"] == "confirmed"
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished(*CONFIRMS))
+    assert (run.txn().status, run.statuses()["hold2"], run.state.status) == ("reconciled", "confirmed", "succeeded")
+
+
+def test_a_reservation_marked_finished_is_confirmed():
+    said = record("completed", {"hold": "confirmed", "hold2": "done"})
+    run = two_stuck(2)
+    before = run.state.model_copy(deep=True)
+    refused = resolve(run, "hold#confirm:2", "accept_reconciled_result", said)
+    assert refused.commands == []
+    assert run.state == before.model_copy(update={"accepted_sequence": run.state.accepted_sequence})
+    # The first rules took it, and what they took still applies.
+    run = two_stuck()
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", said)
+    assert (run.txn().status, run.statuses()["hold2"]) == ("reconciled", "done")
+
+
+def test_a_step_whose_setting_handled_its_failure_is_not_asked_about():
+    run = Run(compiled([transaction([hold(), {**add(), "onError": "continue"}, submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "REFUSED", effect="none")
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert run.statuses()["add"] == "failed"
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished("hold"))
+    assert (run.txn().status, run.state.status) == ("reconciled", "succeeded")
+
+
+def test_recorded_reconciliations_still_apply():
+    # A run of the first rules asks about stuck steps only, whatever else its steps did.
+    run = undo_stuck()
+    resolve(run, "add#undo:10", "accept_reconciled_result", record("completed", {"add": "done"}))
+    assert (run.txn().status, run.statuses()) == ("reconciled", {"hold": "done", "add": "done", "add2": "undone"})
+    run = settle_timeout(1)
+    resolve(run, "move:0", "accept_reconciled_result", record("compensated", {}))
+    assert run.txn().status == "reconciled"

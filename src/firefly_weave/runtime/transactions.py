@@ -282,8 +282,7 @@ def incident_transaction(shapes_of: TransactionShapes, node_id: str, code: str) 
     try:
         if code == SETTLE_CODE:
             return node_id if split_instance(node_id).node_id in shapes_of.depths else None
-        phase = split_phase(node_id)
-        return shapes_of.owner_key(phase[0] if phase is not None else node_id)
+        return shapes_of.owner_key(step_of(node_id))
     except InvalidInstanceKey:
         return None
 
@@ -295,6 +294,17 @@ def open_doubts(shapes_of: TransactionShapes, state: "RunState", key: str) -> li
         for name, item in state.incidents.items()
         if item.code in IN_DOUBT_CODES and incident_transaction(shapes_of, item.node_id, item.code) == key
     )
+
+
+def step_of(node_id: str) -> str:
+    """The step instance an incident is at: its own, or the one whose confirm, cancel or undo it is at."""
+    phase = split_phase(node_id)
+    return phase[0] if phase is not None else node_id
+
+
+def doubted_steps(shapes_of: TransactionShapes, state: "RunState", key: str) -> frozenset[str]:
+    """The instance keys with an open in-doubt incident of the transaction instance ``key``, phases as their steps."""
+    return frozenset(step_of(state.incidents[name].node_id) for name in open_doubts(shapes_of, state, key))
 
 
 def closes_with_step(code: str) -> bool:

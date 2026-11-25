@@ -67,6 +67,7 @@ from firefly_weave.contracts.transactions import (
     TRANSACTION_MESSAGES,
     TransactionState,
     UndoPhase,
+    must_say,
     phase_key,
     split_phase,
     undo_context,
@@ -163,6 +164,7 @@ from firefly_weave.runtime.transactions import (
     TransactionShapes,
     closes_with_step,
     deadline_key,
+    doubted_steps,
     fold,
     in_transaction,
     incident_transaction,
@@ -172,6 +174,7 @@ from firefly_weave.runtime.transactions import (
     settlement_event,
     shapes,
     split_deadline,
+    step_of,
     undo_scope,
 )
 
@@ -450,18 +453,17 @@ def validate_action(
         validate(ir, schema, value)
 
 
-def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple[str, dict[str, str], JsonValue]:
-    """Check a person's reconciliation record against a transaction: how it ended, each named step's outcome, and the
-    block output (required when it completed, refused when it was undone).
-
-    Every step that couldn't finish must be named; ``completed`` admits ``confirmed`` (reservations only) and
-    ``done``, ``compensated`` only ``undone``. A record that doesn't fit raises ``KernelError("WV-RUNTIME-OUTPUT")``.
-    """
+def read_reconciliation(
+    transaction: TransactionRecord, value: object, *, complete: bool
+) -> tuple[Literal["completed", "compensated"], dict[str, str], JsonValue]:
+    """A person's reconciliation record of a transaction, checked against its steps. ``complete`` is the second rules'
+    reading: it leaves the steps the record leaves out to ``unsaid_steps``, and a reservation of a transaction that
+    completed was confirmed, never only done."""
     if not isinstance(value, dict) or value.get("as") not in {"completed", "compensated"}:
         raise KernelError("WV-RUNTIME-OUTPUT")
     if set(value) - {"as", "participants", "blockOutput"}:
         raise KernelError("WV-RUNTIME-OUTPUT")
-    ending = cast(str, value["as"])
+    ending = cast(Literal["completed", "compensated"], value["as"])
     known = {item.key: item for item in transaction.participants}
     outcomes: dict[str, str] = {}
     entries = value.get("participants", [])
@@ -476,8 +478,10 @@ def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple
             raise KernelError("WV-RUNTIME-OUTPUT")
         if outcome == "confirmed" and known[name].mode != "reserve":
             raise KernelError("WV-RUNTIME-OUTPUT")
+        if complete and outcome == "done" and known[name].mode == "reserve":
+            raise KernelError("WV-RUNTIME-OUTPUT")
         outcomes[name] = cast(str, outcome)
-    if any(item.status in STUCK and item.key not in outcomes for item in transaction.participants):
+    if not complete and any(item.status in STUCK and item.key not in outcomes for item in transaction.participants):
         # Every step that couldn't finish needs a person's word on what happened to it.
         raise KernelError("WV-RUNTIME-OUTPUT")
     if (ending == "completed") != ("blockOutput" in value):
@@ -485,6 +489,38 @@ def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple
     output = cast(JsonValue, value.get("blockOutput"))
     if ending == "completed":
         measure_value(output)
+    return ending, outcomes, output
+
+
+def unsaid_steps(transaction: TransactionRecord, value: object, doubted: frozenset[str]) -> list[str]:
+    """The steps a reconciliation record leaves out although a person must say what happened to them, in the order
+    they were registered. A record of another shape leaves nothing out: its shape is what's wrong."""
+    try:
+        ending, outcomes, _ = read_reconciliation(transaction, value, complete=True)
+    except ValueError:
+        return []
+    return [
+        item.key
+        for item in transaction.participants
+        if item.key not in outcomes and must_say(ending, item.mode, item.status, item.key in doubted)
+    ]
+
+
+def check_reconciliation(
+    transaction: TransactionRecord, value: object, *, complete: bool, doubted: frozenset[str]
+) -> tuple[str, dict[str, str], JsonValue]:
+    """Check a person's reconciliation record against a transaction: how it ended, each named step's outcome, and the
+    block output (required when it completed, refused when it was undone).
+
+    A ``complete`` record names every step whose end a person must state (``doubted`` are the steps with an open
+    incident in doubt) and raises ``KernelError("WV-TXN-RECONCILE-INCOMPLETE")`` otherwise; under the first rules,
+    which recorded histories keep, it names every step that couldn't finish. ``completed`` admits ``confirmed``
+    (reservations only) and ``done``, ``compensated`` only ``undone``. A record that doesn't fit raises
+    ``KernelError("WV-RUNTIME-OUTPUT")``.
+    """
+    ending, outcomes, output = read_reconciliation(transaction, value, complete=complete)
+    if complete and unsaid_steps(transaction, value, doubted):
+        raise KernelError("WV-TXN-RECONCILE-INCOMPLETE")
     return ending, outcomes, output
 
 
@@ -1603,9 +1639,9 @@ def _advance_owned(
         else:
             proceed([successor(node.join + suffix)])
 
-    def reconciliation(key: str, value: JsonValue) -> tuple[str, dict[str, str], JsonValue]:
+    def reconciliation(key: str, value: JsonValue, doubted: frozenset[str]) -> tuple[str, dict[str, str], JsonValue]:
         """Check a reconciliation record against the transaction: how it ended, each step's outcome, its output."""
-        ending, outcomes, output = check_reconciliation(record(key), value)
+        ending, outcomes, output = check_reconciliation(record(key), value, complete=rules_2(), doubted=doubted)
         if ending == "completed":
             block_output(ir, cast(TransactionNode, nodes[node_of(key)]), output)
         return ending, outcomes, output
@@ -1721,7 +1757,9 @@ def _advance_owned(
             proceed([successor(name)])
             return
         if kind == "accept_reconciled_result":
-            ending, outcomes, output = reconciliation(key, data.get("output"))
+            # The incident a person decides is out of the state already; its step is one of those in doubt.
+            doubted = doubted_steps(txns, current_state, key) if txns is not None else frozenset()
+            ending, outcomes, output = reconciliation(key, data.get("output"), doubted | {step_of(name)})
             stop_transaction(key)
             participants = [
                 item.model_copy(

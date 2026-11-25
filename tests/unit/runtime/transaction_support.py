@@ -365,8 +365,8 @@ def two_stuck(run_rules: int = 1) -> Run:
     return run
 
 
-def after_pivot_pair(run_rules: int = 1) -> Run:
-    """A confirm that can't finish beside a step after the point of no return that can't either.
+def after_pivot_pair(run_rules: int = 1, confirm: str = "is stuck") -> Run:
+    """A confirm that can't finish (or finishes) beside a step after the point of no return that can't.
 
     The body waits for every confirm before it goes on, so only a step already in flight when the transaction was
     decided can fail beside one: a step that changes nothing, in a branch beside the step that can't be undone.
@@ -376,6 +376,10 @@ def after_pivot_pair(run_rules: int = 1) -> Run:
     run.done("hold", {"holdId": "h-1"})
     run.done("submit", {"orderId": "o-1"})
     run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    if confirm == "finishes":
+        run.done("hold#confirm", {})
+        assert list(run.state.incidents) == ["lookup:3"]
+        return run
     run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
     assert sorted(run.state.incidents) == ["hold#confirm:2", "lookup:3"]
     return run
