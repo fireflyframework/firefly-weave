@@ -936,6 +936,21 @@ def test_a_step_of_a_called_workflow_never_takes_the_failure_of_a_step_with_its_
     assert failures(answer)["add"] == "UNAVAILABLE"
 
 
+def test_a_failed_step_of_a_called_workflow_never_takes_the_error_simulated_for_a_step_with_its_id():
+    missing = {**NOTE, "value": {"ref": "/input/items/5"}}
+    called = {**json.loads(move(add(), missing)), "metadata": {"name": "inside", "version": "1.0.0"}}
+    called["spec"] |= {"callable": {}, "timeoutSeconds": 300}
+    call = {key: value for key, value in called_step().items() if key != "compensate"}
+    answer = run_move(
+        source(transaction([hold(), NOTE], onError="continue"), {**call, "with": {"ref": "/input"}}),
+        definitions=[*fixture()["definitions"], called],
+        workflows={"inside@1.0.0": {"mocks": {"node:add": {"id": "a-1"}}}},
+        errors={"node:note": {"code": "BAD"}},
+    )
+    assert failures(answer)["note"] == "BAD"
+    assert failures(answer, "call") == {"note": "WV-EXPR-MISSING"}
+
+
 def test_an_expired_reservation_is_its_transactions_failure():
     answer = run_move(move(hold(holdSeconds=60), add(), wait(3000)))
     assert failures(answer) == {"move": "WV-TXN-HOLD-EXPIRED"}
