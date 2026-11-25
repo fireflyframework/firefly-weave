@@ -253,6 +253,11 @@ const UNDO_PHASES = new Set<ParticipantStatus>([
   "undo_stuck",
 ]);
 
+/** Of an undo, only what its state says: it goes on, it ended, or it started. */
+const UNDO_WORDS: Partial<Record<TransactionState, string>> = {
+  compensating: "Undoing",
+  compensated: "Undone",
+};
 /**
  * "Undoing after add[2] failed: UNAVAILABLE", or for a transaction in doubt
  * "In doubt: " and the platform's sentence for what holds it. Null when
@@ -272,7 +277,7 @@ export function causeText(
   if (!undoing) return null;
   return (
     TRANSACTION_CODE_TEXT[view.cause.code] ??
-    `Undoing after ${view.cause.instance_key} failed: ${view.cause.code}`
+    `${UNDO_WORDS[view.state] ?? "Undo started"} after ${view.cause.instance_key} failed: ${view.cause.code}`
   );
 }
 
@@ -292,7 +297,10 @@ export const RETRY_LABELS = {
   confirm: "Retry the confirm",
   step: "Retry the step",
 } as const;
-/** The phase a retry ran again: a step still stuck, else the one that took more than one try. */
+/**
+ * The phase a retry ran again: a step still stuck, else the one that took more
+ * than one try. A record that shows neither can't tell a retry from Wait again.
+ */
 function retryLabel(
   participants: readonly TransactionParticipantView[],
 ): string {
@@ -302,7 +310,7 @@ function retryLabel(
       (item) => PHASES[item.status] && (item.attempts ?? 0) > 1,
     );
   const phase = retried && PHASES[retried.status];
-  return phase ? RETRY_LABELS[phase] : RETRY_LABELS.step;
+  return phase ? RETRY_LABELS[phase] : "Retry or Wait again";
 }
 /** "Mark as reconciled as undone", "Force end"…: what the person chose. */
 export function resolutionText(
@@ -360,8 +368,14 @@ const SUMMARY_ORDER: readonly TransactionState[] = [
   "reconciled",
   "completed",
 ];
-/** "5 transactions: 1 in doubt, 1 undone, …", and the first one in doubt. */
-export function sectionSummary(views: readonly RunTransactionView[]): {
+/**
+ * "5 transactions: 1 in doubt, 1 undone, …", or while more follow "The first 50
+ * of this run's transactions: …", and the first one in doubt.
+ */
+export function sectionSummary(
+  views: readonly RunTransactionView[],
+  more = false,
+): {
   text: string;
   firstInDoubt: string | null;
 } {
@@ -372,8 +386,11 @@ export function sectionSummary(views: readonly RunTransactionView[]): {
     .filter(([, count]) => count > 0)
     .map(([state, count]) => `${count} ${stateWord(state).toLowerCase()}`);
   const noun = views.length === 1 ? "transaction" : "transactions";
+  const lead = more
+    ? `The first ${views.length} of this run's transactions`
+    : `${views.length} ${noun}`;
   return {
-    text: `${views.length} ${noun}: ${counts.join(", ")}`,
+    text: `${lead}: ${counts.join(", ")}`,
     firstInDoubt:
       views.find((view) => view.state === "in_doubt")?.instance_key ?? null,
   };

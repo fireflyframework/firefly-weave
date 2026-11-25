@@ -159,7 +159,7 @@ test("a run's transactions: the summary, a folded one, an undone one and one in 
     /Business key T-1051\s*Opened at 10:31:02/,
   );
   await expect(second.locator(".txn-cause")).toHaveText(
-    "Undoing after add[2] failed: UNAVAILABLE",
+    "Undone after add[2] failed: UNAVAILABLE",
   );
   await expect(stepRow(page, "move[2]", "hold[2]")).toContainText("Released");
   await expect(stepRow(page, "move[2]", "submit[2]")).toContainText(
@@ -259,9 +259,10 @@ test("a reconciled transaction says who resolved it, why and with what evidence,
   // A triggered workflow's resolve step applied it: By names that run, which opens.
   const by = block(page, "move[5]").locator(".txn-resolution dd").nth(1);
   const link = by.getByRole("button", {
-    name: "Resolved by workflow run 5c90e1b7",
+    name: "Workflow run 5c90e1b7",
+    exact: true,
   });
-  await expect(link).toBeVisible();
+  await expect(by).toHaveText("Workflow run 5c90e1b7 · 10:40:00");
   await link.click();
   await expect(page).toHaveURL(new RegExp(`/operate/runs/${resolvingRun}$`));
 });
@@ -375,6 +376,8 @@ test("a failed read says when it tries again, waiting 5 s and then 10 s", async 
     "Studio couldn't read this run's transactions. It tries again in 5 s.",
   );
   await expect(problem).toContainText("Support code: WV-UNAVAILABLE");
+  // A wait and its unit stay on one line.
+  expect(await problem.locator("p").first().textContent()).toContain("in 5 s.");
   await page.screenshot({ path: `${captures}/run-transactions-failed.png` });
   // Stop the page's clock a moment after the first failure; only the test moves it now.
   await page.clock.pauseAt(
@@ -450,7 +453,7 @@ test("a run with more than 50 transactions shows the first 50 and reads more on 
   const runs = await platform(page);
   runs.status = "succeeded";
   const many = Array.from({ length: 50 }, (_, index) => ({
-    ...completed,
+    ...(index === 6 ? inDoubt : completed),
     instance_key: `move[${index + 1}]`,
     iteration: [index + 1],
   }));
@@ -465,9 +468,12 @@ test("a run with more than 50 transactions shows the first 50 and reads more on 
     });
   await openRun(page);
   await expect(section(page).locator(".txn-summary")).toHaveText(
-    "The first 50 of this run's transactions",
+    "The first 50 of this run's transactions: 1 in doubt, 49 completed",
   );
   await expect(section(page).getByRole("article")).toHaveCount(50);
+  // Its "1 in doubt" moves focus to that transaction, as the whole summary's does.
+  await section(page).getByRole("button", { name: "1 in doubt" }).click();
+  await expect(block(page, "move[7]").getByRole("heading")).toBeFocused();
   await section(page)
     .getByRole("button", { name: "Show more transactions" })
     .scrollIntoViewIfNeeded();
@@ -483,7 +489,7 @@ test("a run with more than 50 transactions shows the first 50 and reads more on 
     cursor: "djI6bW92ZVs1MF0",
   });
   await expect(section(page).locator(".txn-summary")).toHaveText(
-    "51 transactions: 1 in doubt, 50 completed",
+    "51 transactions: 2 in doubt, 49 completed",
   );
   await expect(
     section(page).getByRole("button", { name: "Show more transactions" }),

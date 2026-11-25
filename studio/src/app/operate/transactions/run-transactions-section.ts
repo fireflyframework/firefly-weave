@@ -86,29 +86,23 @@ interface Scope {
       <div class="txn-heading">
         <h3 id="run-transactions-title">Transactions</h3>
         @if (views.length) {
-          @if (next) {
-            <p class="txn-summary">
-              The first {{ views.length }} of this run's transactions
-            </p>
-          } @else {
-            @let summary = summaryParts();
-            <p class="txn-summary">
-              {{ summary.lead }}:
-              @for (part of summary.parts; track $index) {
-                @if (part.inDoubt) {
-                  <button
-                    type="button"
-                    class="text-link"
-                    (click)="focusInDoubt()"
-                  >
-                    {{ part.text }}</button
-                  >{{ $last ? "" : "," }}
-                } @else {
-                  {{ part.text }}{{ $last ? "" : "," }}
-                }
+          @let summary = summaryParts();
+          <p class="txn-summary">
+            {{ summary.lead }}:
+            @for (part of summary.parts; track $index) {
+              @if (part.inDoubt) {
+                <button
+                  type="button"
+                  class="text-link"
+                  (click)="focusInDoubt()"
+                >
+                  {{ part.text }}</button
+                >{{ $last ? "" : "," }}
+              } @else {
+                {{ part.text }}{{ $last ? "" : "," }}
               }
-            </p>
-          }
+            }
+          </p>
         }
       </div>
       @if (phase === "forbidden") {
@@ -125,7 +119,7 @@ interface Scope {
           <div>
             <p>
               Studio couldn't read this run's transactions. It tries again in
-              {{ waitSeconds() }} s.
+              {{ waitSeconds() }}&nbsp;s.
             </p>
             @if (error.code) {
               <p class="support-code">Support code: {{ error.code }}</p>
@@ -238,7 +232,7 @@ interface Scope {
                         class="text-link"
                         (click)="openRun(resolver)"
                       >
-                        Resolved by workflow run {{ short(resolver) }}
+                        Workflow run {{ short(resolver) }}
                       </button>
                     } @else if (resolution.actor_id; as actor) {
                       @if (isViewer(actor)) {
@@ -500,7 +494,7 @@ export class RunTransactions implements DoCheck, OnDestroy {
     return retryDelay(this.failures) / 1000;
   }
   summaryParts() {
-    const { text } = sectionSummary(this.views);
+    const { text } = sectionSummary(this.views, !!this.next);
     const [lead, rest = ""] = text.split(": ");
     return {
       lead,

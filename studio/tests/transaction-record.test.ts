@@ -424,10 +424,31 @@ describe("the Transactions section", () => {
     ).toBeNull();
   });
 
+  it("sums up the first page the same way while more follow", () => {
+    expect(sectionSummary(loop, true)).toEqual({
+      text: "The first 5 of this run's transactions: 1 in doubt, 1 undone, 1 reconciled, 2 completed",
+      firstInDoubt: "move[3]",
+    });
+  });
+
+  it.each([
+    ["compensating", "Undoing after add[2] failed: UNAVAILABLE"],
+    ["compensated", "Undone after add[2] failed: UNAVAILABLE"],
+    ["cancelled", "Undo started after add[2] failed: UNAVAILABLE"],
+    ["reconciled", "Undo started after add[2] failed: UNAVAILABLE"],
+    ["force_ended", "Undo started after add[2] failed: UNAVAILABLE"],
+    // Its undo began, whatever it came to since.
+    ["completed", "Undo started after add[2] failed: UNAVAILABLE"],
+  ] as const)(
+    "says of a %s transaction no more than that of its undo",
+    (state, text) => {
+      expect(causeText({ ...undone, state })).toBe(text);
+    },
+  );
+
   it("says why a transaction left its path: the failed step, or what is in doubt", () => {
-    expect(causeText(undone)).toBe("Undoing after add[2] failed: UNAVAILABLE");
     expect(causeText(reconciled)).toBe(
-      "Undoing after submit[4] failed: REJECTED",
+      "Undo started after submit[4] failed: REJECTED",
     );
     // In doubt: the stuck step says why, whatever failed first.
     expect(causeText(inDoubt)).toBe(
@@ -542,16 +563,17 @@ describe("the Transactions section", () => {
     expect(
       retryOf(participant("add", "compensate", "undone", { attempts: 4 })),
     ).toBe("Retry the undo");
-    // One try is no retry: the label can't name that phase.
+    // One try is no retry, and Wait again leaves no more: the record can't
+    // tell which it was.
     expect(
       retryOf(participant("add", "compensate", "undone", { attempts: 1 })),
-    ).toBe("Retry the step");
+    ).toBe("Retry or Wait again");
     expect(
       retryOf(participant("hold", "reserve", "cancelled", { attempts: 11 })),
     ).toBe("Retry the release");
     expect(retryOf(...retried.participants)).toBe("Retry the confirm");
     expect(retryOf(participant("submit", "irreversible", "done"))).toBe(
-      "Retry the step",
+      "Retry or Wait again",
     );
     expect(RESOLUTION_LABELS).toEqual(
       Object.fromEntries(

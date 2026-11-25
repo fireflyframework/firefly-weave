@@ -430,7 +430,7 @@ test("from the runs that need attention to none in doubt, and no business key le
   );
   await expect(high(page).locator(".band-count")).toHaveText("4 incidents");
   await expect(high(page)).toContainText(
-    "Transactions in doubt. Other systems may not match Weave until someone resolves them.",
+    "Transactions that need a person. Other systems may not match Weave until someone resolves them.",
   );
   await expect(caseOf(page).locator(".case-head")).toContainText(
     "Resolve first: WV-TXN-UNDO-STUCK in run 9a01c7d2",
@@ -493,7 +493,7 @@ test("from the runs that need attention to none in doubt, and no business key le
   await expect(high(page).locator(".band-count")).toHaveText("2 incidents");
   scan.clean("Wait again");
 
-  // ---- The record can't tell which retry it was, so the run says the step's.
+  // ---- The record can't tell a retry from Wait again, so the run says both.
   await go(page, "Runs");
   await openRun(page, runs.caller);
   const move = block(page, "move");
@@ -507,10 +507,10 @@ test("from the runs that need attention to none in doubt, and no business key le
     corpus.statuses["cancelled"]!.word,
   );
   await expect(move.locator(".txn-timeline")).toContainText(
-    "Resolved: Retry the step",
+    "Resolved: Retry or Wait again",
   );
   await expect(move.locator(".txn-resolution dd")).toHaveText([
-    "Retry the step",
+    "Retry or Wait again",
     "You · 10:54:00",
     "The called run ended",
   ]);
@@ -571,7 +571,9 @@ test("from the runs that need attention to none in doubt, and no business key le
   await go(page, "Runs");
   await page.getByRole("checkbox", { name: "Needs attention" }).check();
   await expect(
-    page.getByRole("heading", { name: "No runs need attention." }),
+    page.getByRole("heading", {
+      name: "No transaction in doubt in this range.",
+    }),
   ).toBeVisible();
   scan.clean("Overview again");
 
