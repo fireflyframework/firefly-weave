@@ -457,7 +457,7 @@ test("triggers made outside Studio are left as they are, Stop it off", async ({
     name: "notify-team was created outside Studio with other events. Studio leaves it as it is.",
   });
   await expect(outside).toContainText(
-    "Studio leaves it as it is. Change it with the command line.",
+    "Studio leaves it as it is and doesn't create the trigger this version declares. Change it with the command line, or stop it and activate again.",
   );
   await expect(outside.locator("weave-icon[data-icon='lock']")).toBeVisible();
   const left = dialog.getByRole("listitem", {

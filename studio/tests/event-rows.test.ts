@@ -300,7 +300,8 @@ describe("a row before activating", () => {
     expect(eventRowView(row(rows, "blocked"))).toEqual({
       ...PLAIN,
       lead: "notify-team was created outside Studio with other events.",
-      detail: "Studio leaves it as it is. Change it with the command line.",
+      detail:
+        "Studio leaves it as it is and doesn't create the trigger this version declares. Change it with the command line, or stop it and activate again.",
       tone: "muted",
       icon: "lock",
       stop: false,
@@ -315,7 +316,7 @@ describe("a row before activating", () => {
       ...PLAIN,
       lead: "Studio can't tell whether notify-team may resolve transactions, so it leaves it as it is.",
       detail:
-        "Ask an administrator to check the trigger with the command line.",
+        "It isn't moved to this version. Ask an administrator to check it with the command line.",
       tone: "muted",
       icon: "lock",
     });

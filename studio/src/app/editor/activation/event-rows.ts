@@ -160,7 +160,7 @@ export function eventRowView(row: EventRow): EventRowView {
             ...LEFT_ALONE,
             lead: row.lead,
             detail:
-              "Studio leaves it as it is. Change it with the command line.",
+              "Studio leaves it as it is and doesn't create the trigger this version declares. Change it with the command line, or stop it and activate again.",
             stop: row.stop,
           }
         : {
@@ -168,7 +168,7 @@ export function eventRowView(row: EventRow): EventRowView {
             ...LEFT_ALONE,
             lead: row.lead,
             detail:
-              "Ask an administrator to check the trigger with the command line.",
+              "It isn't moved to this version. Ask an administrator to check it with the command line.",
           };
     case "left-behind": {
       const what = `${reacts(declarationOf(row.binding))}.`;
