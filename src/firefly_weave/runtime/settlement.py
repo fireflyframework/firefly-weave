@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 # The code a participant task reports when its transaction went back before any worker claimed it.
 REVOKED_CODE = "WV-TXN-ROLLED-BACK"
 _WORKER_TASK_STATUSES = ("ready", "leased", "retry_pending", "incident", "failed")
+# A task nothing has ended yet; a revoked one still waits to be reported.
+UNFINISHED_TASK_STATUSES = (*_WORKER_TASK_STATUSES, "revoked")
 _ORDER = " ".join(f"WHEN '{state}' THEN {index}" for index, state in enumerate(TRANSACTION_STATE_ORDER))
 
 
@@ -94,24 +96,6 @@ def settling(event: RuntimeEvent, result: Transition) -> bool:
     )
 
 
-def ignored_after_person(event: RuntimeEvent, result: Transition) -> bool:
-    """Whether an event was the late result of work a person already settled by hand (a transaction they marked
-    reconciled or force ended): the kernel changes nothing for it, and Operations counts it, because such a result
-    may show the person's record was wrong."""
-    name = event.data.get("node_id")
-    if not isinstance(name, str) or result.steps or result.commands:
-        return False
-    try:
-        phase = split_phase(name)
-    except ValueError:
-        return False
-    key = phase[0] if phase is not None else name
-    return any(
-        record.status in {"reconciled", "force_ended"} and any(item.key == key for item in record.participants)
-        for record in result.state.transactions.values()
-    )
-
-
 def only_settlement(result: Transition) -> bool:
     """Whether a transition writes settlement work only: confirms, cancels and undos, a transaction's own deadlines,
     and the steps and joins of its transactions. One that also runs forward work (a step after a block a confirm
@@ -141,11 +125,12 @@ def only_settlement(result: Transition) -> bool:
     return True
 
 
-async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime) -> None:
-    """A transaction going back stops the work of ``key``.
+async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime, *, awaited: bool) -> None:
+    """A transaction going back, or one a person ended, stops the work of ``key``.
 
-    A participant's own task becomes settlement work: a worker may finish it while the run is paused, and an unclaimed
-    one is revoked and later reported as skipped. A step the transaction no longer needs is cancelled and its lease
+    A participant's own task whose result the run still waits for (``awaited``) becomes settlement work: a worker may
+    finish it while the run is paused, and an unclaimed one is revoked and later reported as skipped. A step the
+    transaction no longer needs, and a participant's task the run no longer waits for, is cancelled and its lease
     revoked. A participant's call that has not started is cancelled with nothing applied; a started one asks its
     child run to stop and keeps its result for the transaction. Human tasks close and deadlines are consumed.
     """
@@ -155,7 +140,7 @@ async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at:
         f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node FOR UPDATE", run=run_id, node=key
     )
     for task in tasks:
-        if "transaction" in task["payload"]:
+        if awaited and "transaction" in task["payload"]:
             status = "revoked" if task["status"] == "ready" else task["status"]
             await repository.execute(
                 task_fact_update(f"UPDATE task_intents SET settlement=true,status=:status WHERE {SCOPE} AND id=:id"),
@@ -165,6 +150,9 @@ async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at:
             )
         elif task["status"] in _WORKER_TASK_STATUSES:
             await revoke_attempts(repository.tx, run_id, [task], control_failure=True)
+            await repository.task_status(task["id"], "cancelled", at=at)
+        elif task["status"] == "revoked":
+            # No worker had claimed it, and its run no longer waits for the report.
             await repository.task_status(task["id"], "cancelled", at=at)
     calls = await repository.rows(
         f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
@@ -208,7 +196,8 @@ async def deliver_revoked(
     """Report each participant task revoked before any worker claimed it: nothing was applied.
 
     Runs under the run's lock, like the delivery of call results; each report is one accepted event with a stable
-    identity.
+    identity. A task its run no longer waits for (a person ended its transaction) is cancelled and never reported: the
+    kernel refuses a result nobody waits for and would hold the run behind an incident.
     """
     from firefly_weave.compiler.canonical import canonical_digest
     from firefly_weave.runtime.kernel import transition_async as transition
@@ -217,7 +206,11 @@ async def deliver_revoked(
         f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND status='revoked' ORDER BY id FOR UPDATE",
         run=view.id,
     )
+    delivered = 0
     for row in rows:
+        if row["node_id"] not in view.state.active:
+            await repository.task_status(row["id"], "cancelled")
+            continue
         generations = await repository.rows(
             f"SELECT coalesce(max(generation),0) AS value FROM task_leases WHERE {SCOPE} AND task_id=:task",
             task=row["id"],
@@ -240,7 +233,8 @@ async def deliver_revoked(
         result = await transition(view.state, event, artifact)
         view = view.model_copy(update={"state": result.state})
         await repository.persist(view, event, result, canonical_digest({"revoked": str(row["id"])}))
-    return view, len(rows)
+        delivered += 1
+    return view, delivered
 
 
 async def child_effect(repository: RuntimeRepository, run_id: UUID, artifact: Mapping[str, Any]) -> str:
