@@ -540,7 +540,10 @@ def test_a_simulation_out_of_time_stops_at_its_next_step_and_answers_limit(step)
 def test_a_simulation_out_of_time_while_it_looks_for_where_it_stopped_answers_limit(monkeypatch):
     from firefly_weave.runtime import kernel
 
+    stopped: list[bool] = []
+
     def defect(*_: object) -> None:
+        stopped.append(True)
         raise TypeError("a defect in the runtime")
 
     monkeypatch.setattr(kernel, "call_result", defect)
@@ -549,11 +552,8 @@ def test_a_simulation_out_of_time_while_it_looks_for_where_it_stopped_answers_li
         definitions=[ACTION, callee_definition()],
         workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
     )
-    whole = after(1000)
-    assert execute(body, None, out_of_time=whole).status == "failed"
-    # Half of what it asked was the run itself; the rest looks for the step.
-    answer = execute(body, None, out_of_time=after(whole.asked // 2 + 1))
-    assert (answer.status, answer.diagnostics) == ("limit", [])
+    answer = execute(body, None, out_of_time=lambda: bool(stopped))
+    assert (answer.status, answer.diagnostics, len(stopped)) == ("limit", [], 1)
 
 
 def test_the_waits_of_a_loop_never_have_the_whole_run_checked_for_each(monkeypatch):

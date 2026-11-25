@@ -371,24 +371,18 @@ def test_a_command_out_of_time_is_refused_and_the_session_stays_as_it_was(script
 def test_a_command_out_of_time_while_it_looks_for_where_it_stopped_is_refused_as_out_of_time(monkeypatch):
     from firefly_weave.runtime import kernel
 
+    stopped: list[bool] = []
+
     def defect(*_: object) -> None:
+        stopped.append(True)
         raise TypeError("a defect in the runtime")
 
     monkeypatch.setattr(kernel, "call_result", defect)
     sessions = HostSessions()
     session = calling_session(sessions, callee_definition())
-    asked: list[int] = []
-
-    def out_of_time(after: int) -> bool:
-        asked.append(1)
-        return len(asked) > after
-
     command = DebugCommand(kind="continue")
-    refusal(lambda: sessions.command(session.id, 1, command, now=1, out_of_time=lambda: out_of_time(1000)))
-    half = len(asked) // 2 + 1
-    asked.clear()
-    late = refusal(lambda: sessions.command(session.id, 1, command, now=2, out_of_time=lambda: out_of_time(half)))
-    assert (late.status, late.code) == (503, "WV-STUDIO-TIMEOUT")
+    late = refusal(lambda: sessions.command(session.id, 1, command, now=1, out_of_time=lambda: bool(stopped)))
+    assert (late.status, late.code, len(stopped)) == (503, "WV-STUDIO-TIMEOUT", 1)
 
 
 def test_the_route_of_a_session_gives_its_commands_the_time_of_the_request(tmp_path, monkeypatch):
