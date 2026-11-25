@@ -473,12 +473,12 @@ def test_the_answer_carries_no_business_key():
     assert set(record) == {"instanceKey", "nodeId", "state", "cause", "incidentKey", "participants"}
 
 
-def test_a_cause_with_a_code_of_the_authors_own_spelling_is_left_out():
+def test_a_cause_leaves_out_a_code_of_the_authors_own_spelling_and_keeps_its_step_and_effect():
     # A fail step's code is any name; the answer only carries codes spelled as the platform's and actions' are.
     answer = run_move(move(hold(), add(), {**STOP, "code": "not-accepted"}))
     [record] = answer["transactions"]
     assert (answer["status"], record["state"]) == ("failed", "compensated")
-    assert "cause" not in record
+    assert record["cause"] == {"instanceKey": "stop", "effect": "none"}
     kept = run_move(move(hold(), add(), STOP))["transactions"][0]
     assert kept["cause"]["code"] == "STOPPED"
 

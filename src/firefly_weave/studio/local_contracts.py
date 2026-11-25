@@ -226,9 +226,10 @@ class Blocked(_HostBody):
 
 
 class TransactionCause(_HostBody):
-    """Why a transaction left its normal path: a code, the step instance and what it may have applied."""
+    """Why a transaction left its normal path: a code, the step instance and what it may have applied. A fail step's
+    code in its author's own spelling is left out."""
 
-    code: str = Field(max_length=128, pattern=ERROR_CODE_PATTERN)
+    code: str | None = Field(default=None, max_length=128, pattern=ERROR_CODE_PATTERN)
     instanceKey: InstanceKeyText
     effect: Effect
 

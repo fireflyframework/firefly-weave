@@ -1364,9 +1364,11 @@ def _transaction_entry(record: TransactionDebugView) -> JsonObject:
 
     entry: JsonObject = {"instanceKey": record.instance_key, "nodeId": record.node_id, "state": record.state}
     for name, cause in (("cause", record.cause), ("pendingAbort", record.pending_abort)):
+        if cause is None:
+            continue
         # A fail step's code is any name its author gave it; only codes spelled as codes are passed on.
-        if cause is not None and re.fullmatch(ERROR_CODE_PATTERN[1:-1], cause.code) is not None:
-            entry[name] = {"code": cause.code, "instanceKey": cause.instance_key, "effect": cause.effect}
+        code = {"code": cause.code} if re.fullmatch(ERROR_CODE_PATTERN[1:-1], cause.code) is not None else {}
+        entry[name] = {**code, "instanceKey": cause.instance_key, "effect": cause.effect}
     if record.incident_key is not None:
         entry["incidentKey"] = record.incident_key
     if record.reconciled_as is not None:
