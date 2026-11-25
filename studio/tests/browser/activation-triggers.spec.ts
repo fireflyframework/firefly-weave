@@ -212,6 +212,48 @@ test("a trigger that can't be created says why with Retry, and the activation st
   });
 });
 
+test("Retry keeps focus on its row while a webhook can't be created, the first of two rows to fix", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  const held = { asked: 0, release: () => undefined as void };
+  await page.route("**/environments/development/triggers", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    if (++held.asked > 2)
+      await new Promise<void>((resolve) => (held.release = resolve));
+    return r.fulfill({
+      status: 500,
+      json: { code: "WV-INTERNAL", message: "Broken" },
+    });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      canvas.triggers[0]!,
+      {
+        id: "trigger-2c3d4e5f",
+        kind: "webhook",
+        name: "orders-out",
+        secretRef: "orders-signing",
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const retry = dialog.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toHaveCount(2);
+  await retry.nth(1).focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => held.asked).toBe(3);
+  await expect(retry.nth(1)).toBeDisabled();
+  held.release();
+  await expect(retry.nth(1)).toBeEnabled();
+  await expect(retry.nth(1)).toBeFocused();
+});
+
 test("what happened to each trigger has an icon beside its words, and what wasn't set up yet has none", async ({
   page,
 }) => {

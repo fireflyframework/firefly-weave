@@ -136,6 +136,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
             <li
               class="activation-row"
               [class.event-row]="row.event"
+              [attr.data-row]="$index"
               [attr.data-kind]="result ? result.status : row.kind"
               [attr.aria-label]="row.event && !synced() ? row.text : null"
             >
@@ -158,10 +159,11 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                 </span>
               }
               @if (!row.event && result?.status === "failed") {
+                <!-- It keeps focus while it runs. -->
                 <button
                   type="button"
                   class="sm"
-                  [disabled]="acting()"
+                  [attr.aria-disabled]="acting() || null"
                   (click)="answer($index, 'retry')"
                 >
                   Retry
@@ -374,8 +376,8 @@ export class ActivationSteps implements OnInit {
   );
   /** The connection revision chosen for each new trigger, by trigger choice. */
   readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
-  /** Called after each Retry, Stop it or answer, so the dialog can keep what it did. */
-  retried: () => void = () => undefined;
+  /** Called after each Retry, Stop it or answer, with its row, so the dialog can keep what it did. */
+  retried: (row: number) => void = () => undefined;
   /** True while the dialog has to stay open: nothing may open behind it. */
   readonly busy = signal(false);
   /** Opens a trigger choice's step details; the dialog closes first. */
@@ -446,7 +448,7 @@ export class ActivationSteps implements OnInit {
       await syncHeld(this.triggers(), this.results(), context, this.keep);
     } finally {
       this.acting.set(false);
-      this.retried();
+      this.retried(index);
     }
   }
   /** "Done keeps notify-team for now.", while a trigger's waiting events are still to be chosen; null otherwise. */

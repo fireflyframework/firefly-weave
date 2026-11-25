@@ -551,24 +551,33 @@ export class ActivationDialog implements OnInit {
       first: true,
     });
     this.focusNext();
-    steps.retried = () => {
+    steps.retried = (row) => {
       this.attentionText.set(steps.attention() ?? "");
       this.triggers.emit({
         intents: steps.storedIntents(),
         attention: steps.attention(),
         first: false,
       });
-      this.focusNext();
+      this.focusNext(row);
     };
   }
-  /** Focus goes to the first row that asks something (its safe answer), otherwise to Done. */
-  private focusNext() {
+  /**
+   * Focus goes to the safe answer or the button the row acted on still has;
+   * otherwise to the first row that asks something, otherwise to Done. It
+   * stays where the person moved it while that row's button ran.
+   */
+  private focusNext(row?: number) {
+    const root = this.host.nativeElement;
+    const own = `[data-row="${row}"]`;
+    const at = document.activeElement;
+    if (row !== undefined && at && at !== document.body && !at.closest(own))
+      return;
     afterNextRender(
       () =>
-        (
-          this.host.nativeElement.querySelector<HTMLElement>("[data-ask]") ??
-          this.host.nativeElement.querySelector<HTMLElement>("[data-done]")
-        )?.focus(),
+        [`${own} [data-ask]`, `${own} button`, "[data-ask]", "[data-done]"]
+          .map((to) => root.querySelector<HTMLElement>(to))
+          .find((to) => to !== null)
+          ?.focus(),
       { injector: this.injector },
     );
   }

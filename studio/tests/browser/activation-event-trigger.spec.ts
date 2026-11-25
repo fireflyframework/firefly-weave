@@ -383,6 +383,65 @@ test("Retry after a lost answer adopts the trigger already created", async ({
   });
 });
 
+test("Retry keeps focus on its row while it fails again, and Done takes it once nothing is left", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page);
+  const refuse = () =>
+    platform.refuse.set(
+      "POST /event-triggers",
+      refusal(503, "WV-UNAVAILABLE", "The platform didn't answer in time."),
+    );
+  refuse();
+  const dialog = await activationDialog(page);
+  await activate(dialog);
+  const retry = dialog.getByRole("button", { name: "Retry", exact: true });
+  const done = dialog.getByRole("button", { name: "Done", exact: true });
+  await expect(done).toBeFocused();
+  refuse();
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => platform.writes().filter((key) => key.startsWith("POST")))
+    .toHaveLength(2);
+  await expect(dialog.locator("[aria-disabled='true']")).toHaveCount(0);
+  await expect(retry).toBeFocused();
+  // A second Enter tries again: it doesn't close the dialog.
+  await page.keyboard.press("Enter");
+  await expect(eventRows(dialog)).toContainText(["Created notify-team"]);
+  await expect(done).toBeFocused();
+});
+
+test("someone who activates at the same time leaves one trigger, and the dialog says so", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page);
+  const dialog = await activationDialog(page);
+  await expect(eventRows(dialog)).toContainText([
+    "Create platform event trigger notify-team",
+  ]);
+  platform.seed({
+    id: "t-theirs",
+    name: "notify-team",
+    activation: "a-old",
+  });
+  await activate(dialog);
+  await expect(eventRows(dialog)).toHaveText([
+    /^\s*notify-team was created since you opened this\. Review it\.\s*Studio created nothing\. Close this and activate again to see what it is now\.\s*$/,
+  ]);
+  await expect(dialog.locator("#activation-summary")).toContainText(
+    "1 trigger needs attention.",
+  );
+  expect(platform.writes()).toEqual([]);
+  expect(platform.enabled().map((item) => item["id"])).toEqual(["t-theirs"]);
+  // Activating again moves theirs, which is this workflow's.
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  const again = await activationDialog(page);
+  await expect(eventRows(again)).toContainText([
+    "Move platform event trigger notify-team from 1.1.0 to 1.2.0",
+  ]);
+});
+
 test("triggers made outside Studio are left as they are, Stop it off", async ({
   page,
 }) => {
