@@ -356,3 +356,86 @@ def test_a_paused_run_whose_incidents_closed_waits_for_resume():
     assert run.txn().status == "cancelled" and run.state.parked == ["@join:move"]
     run.send("resumed", reason="go", control_revision=2)
     assert (run.state.status, run.state.output) == ("failed", ROLLED_BACK)
+
+
+def two_moves(*beside, paused: bool = True) -> Run:
+    """Two transactions side by side: ``move`` with the steps ``beside``, and one whose only change is ``a9``."""
+    other = transaction([add("a9")], identifier="other")
+    run = Run(compiled([parallel(transaction(list(beside)), other, identifier="fork")]))
+    run.start(2)
+    return run
+
+
+def fails_in_a_resume(run: Run, finishes: str, output) -> None:
+    """The last step of one transaction finishes and the only change of the other applies nothing, in one event."""
+    run.send("paused", reason="p", control_revision=1)
+    run.done(finishes, output)
+    run.failed("a9", "REFUSED", effect="none")
+    run.send("resumed", reason="p", control_revision=2)
+
+
+def test_a_run_failure_keeps_the_join_of_a_transaction_that_finished():
+    run = two_moves(hold(), submit(), notify())
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    fails_in_a_resume(run, "notify", {})
+    assert (run.state.status, run.txn().status) == ("failed", "completed")
+
+
+def test_a_run_failure_keeps_the_join_of_a_transaction_that_finished_behind_a_failed_release():
+    other = transaction([hold("h9"), add("a9")], identifier="other")
+    run = Run(compiled([parallel(transaction([hold(), submit(), notify()]), other, identifier="fork")]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    run.done("h9", {"holdId": "h-9"})
+    run.failed("a9", "REFUSED", effect="none")
+    attempt_failed(run, "h9#cancel")
+    run.done("notify", {})
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["notify"]
+    resolve(run, "h9#cancel:1", "accept_reconciled_result", {})
+    assert (run.state.status, run.txn().status, run.txn("other").status) == ("failed", "completed", "cancelled")
+
+
+@pytest.mark.parametrize(
+    ("step", "output", "undoes", "ended"),
+    [
+        (add, {"id": "a-1"}, "add#undo", "compensated"),
+        (hold, {"holdId": "h-1"}, "hold#cancel", "cancelled"),
+    ],
+)
+def test_a_run_failure_drops_the_join_of_a_transaction_it_undoes(step, output, undoes, ended):
+    run = two_moves(step())
+    fails_in_a_resume(run, undoes.partition("#")[0], output)
+    assert (run.state.status, run.state.active, run.state.incidents) == ("waiting", [undoes], {})
+    run.done(undoes, {})
+    assert (run.state.status, run.txn().status, run.state.incidents) == ("failed", ended, {})
+
+
+def test_a_run_failure_keeps_the_join_of_a_loop_iteration_that_finished():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [1, 2]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold(), submit(), notify()])], "output": {"literal": None}},
+    }
+    other = transaction([add("a9")], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]))
+    run.start(2)
+    for index in (0, 1):
+        run.done(f"hold[{index}]", {"holdId": "h-1"})
+        run.done(f"submit[{index}]", {"orderId": "o-1"})
+        run.done(f"hold[{index}]#confirm", {})
+    run.send("paused", reason="p", control_revision=1)
+    run.done("notify[1]", {})
+    run.failed("a9", "REFUSED", effect="none")
+    run.send("resumed", reason="p", control_revision=2)
+    # The other iteration still runs its last step, and the run ends once it has.
+    assert (run.state.status, run.state.active) == ("waiting", ["notify[0]"])
+    assert run.txn("move[1]").status == "completed"
+    run.done("notify[0]", {})
+    assert run.state.status == "failed"

@@ -1560,6 +1560,15 @@ def _advance_owned(
         if ending.output is not None:
             current_state = current_state.model_copy(update={"output": ending.output})
 
+    def ends_ahead(name: str) -> bool:
+        """Whether a queued step is the join of a transaction that goes ahead: no transaction owns it, and only it ends
+        that one. The join of a transaction that goes back has nothing left to do."""
+        node = nodes[node_of(name)]
+        if not rules_2() or not isinstance(node, JoinNode) or node.mode != "transaction":
+            return False
+        ahead = current_state.transactions.get(node.owner + loop_suffix(name))
+        return ahead is not None and ahead.status in {"committing", "in_doubt"}
+
     def end_run(status: str, code: str | None = None, output: JsonValue = None) -> None:
         """End the run, or start ending it once its transactions settle: they are undone first, never abandoned."""
         nonlocal current_state
@@ -1589,7 +1598,7 @@ def _advance_owned(
         # An agent whose work stopped has ended: its state goes with it.
         for name in [name for name in current_state.agents if name not in current_state.active]:
             del current_state.agents[name]
-        queue[:] = [name for name in queue if owner_of(name) is not None]
+        queue[:] = [name for name in queue if owner_of(name) is not None or ends_ahead(name)]
         maybe_end()
 
     def holder_of(name: str) -> str | None:
