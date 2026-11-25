@@ -116,13 +116,10 @@ const ENDINGS = [
           </div>
         }
         @if (action() === "mark_reconciled") {
-          @if (rebuilt()) {
+          @if (rebuilt(); as told) {
             <div class="notice" data-tone="info" role="status">
               <weave-icon name="info" [size]="16" />
-              <p>
-                Studio read the incident again and rebuilt the checklist. Tick
-                each step again; your reason and evidence are kept.
-              </p>
+              <p>{{ told }}</p>
             </div>
           }
           <fieldset class="endings">
@@ -449,10 +446,13 @@ export class TransactionResolveDialog {
     () =>
       this.unread() || this.outdated()?.revision === this.incident().revision,
   );
-  /** Its checklist was built again: each step is ticked again. */
-  readonly rebuilt = computed(
-    () => this.builtAgain() && !this.stale() && this.rows().length > 0,
-  );
+  /** What to do now that its checklist was built again, even with no step left on it. */
+  readonly rebuilt = computed(() => {
+    if (!this.builtAgain() || this.stale()) return "";
+    return this.rows().length
+      ? "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept."
+      : "Studio read the incident again and it changed: no step is left to tick. Check it again, then decide; your reason and evidence are kept.";
+  });
   /** Why the confirm waits; null when it can be pressed. */
   readonly waits = computed(() => {
     const { action, label } = this.offer();

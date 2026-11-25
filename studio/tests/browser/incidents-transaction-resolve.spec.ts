@@ -1346,6 +1346,61 @@ test("a refused record that couldn't be read again is forgotten with its dialog,
     );
 });
 
+test("a refused record whose steps are all known when read again says so, with nothing left to tick", async ({
+  page,
+}) => {
+  const platform = await opened(page, caller);
+  let refusals = 0;
+  const sent = await decisions(page, platform, async (route) => {
+    if (refusals++) return false;
+    return refuse(
+      route,
+      422,
+      "WV-RUNTIME-OUTPUT",
+      "The reconciliation record doesn't fit the transaction",
+    );
+  });
+  const name = "Mark as reconciled";
+  await offer(page, name).click();
+  await ending(page, name, "Undone").check();
+  await tickAll(page);
+  await field(page, name, "Reason").fill("Both are reversed");
+  await field(page, name, "Evidence reference").fill("OPS-2317");
+  const [hold, add, submit] = caller.transaction!.participants;
+  change(platform, {
+    ...caller,
+    transaction: {
+      ...caller.transaction!,
+      participants: [
+        { ...hold, status: "cancelled" },
+        { ...add, status: "undone" },
+        submit,
+      ],
+    },
+  });
+  await confirm(page, name).click();
+  const asked = dialog(page, name);
+  const notice = asked.getByRole("status");
+  await expect(notice).toHaveText(
+    "Studio read the incident again and it changed: no step is left to tick. Check it again, then decide; your reason and evidence are kept.",
+  );
+  await expect(asked.getByRole("checkbox")).toHaveCount(0);
+  await expect(field(page, name, "Reason")).toHaveValue("Both are reversed");
+  await page.screenshot({ path: `${captures}/reconcile-none-left-1440.png` });
+  // The other ending asks about the same steps.
+  await ending(page, name, "Finished").check();
+  await expect(asked.getByRole("checkbox")).toHaveCount(2);
+  await expect(notice).toHaveText(
+    "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept.",
+  );
+  await ending(page, name, "Undone").check();
+  // Nothing is sent before it is pressed again.
+  expect(sent).toHaveLength(1);
+  await confirm(page, name).click();
+  await expect(asked).toHaveCount(0);
+  expect(sent[1].body.output).toEqual({ as: "compensated", participants: [] });
+});
+
 test("a refused record whose incident was decided meanwhile leaves the dialog and says so once", async ({
   page,
 }) => {
