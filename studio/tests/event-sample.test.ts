@@ -108,6 +108,31 @@ describe("the IDs of an event entered as test data", () => {
     expect(replaced).toEqual(["run", "incident"]);
   });
 
+  it.each(["state", "instance_key", "run_id"])(
+    "are replaced in an event known by its version alone, its transaction without its %s",
+    (key) => {
+      const { [key]: _missing, ...some } = event().transaction;
+      const { value } = withSampleIds({
+        ...event(),
+        transaction: some as JsonObject,
+      });
+      expect(JSON.stringify(value)).not.toContain(REAL_ID);
+      expect(value["event_id"]).toMatch(SAMPLE_ID);
+    },
+  );
+
+  it("are a run's and an incident's only in its transaction: the same names elsewhere stay", () => {
+    const beside = {
+      ...event(),
+      run_id: REAL_ID,
+      other: { run_id: REAL_ID, incident_id: REAL_ID },
+    };
+    const { value } = withSampleIds(beside);
+    expect(value["event_id"]).toMatch(SAMPLE_ID);
+    expect(value["run_id"]).toBe(REAL_ID);
+    expect(value["other"]).toEqual({ run_id: REAL_ID, incident_id: REAL_ID });
+  });
+
   it("are only those it has: an incident that is missing or empty stays so", () => {
     const undone = event("transaction.compensated");
     const without = withSampleIds(undone);

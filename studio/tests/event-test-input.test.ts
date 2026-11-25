@@ -53,11 +53,16 @@ import { StepDetailsController } from "../src/app/editor/ndv/step-details-contro
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import { eventCount } from "../src/app/editor/triggers/event-sample";
+import {
+  eventFields,
+  platformEventView,
+} from "../src/app/editor/triggers/platform-event";
 import { EventSample } from "../src/app/editor/triggers/event-sample-pane";
 import { TriggerEventPane } from "../src/app/editor/triggers/test-event-pane";
 import { keepTestEvent } from "../src/app/editor/triggers/test-listener";
 import { takeLinkedRun } from "../src/app/editor/runs-tab/run-links";
 import { TaskForm } from "../src/app/task-form";
+import { available, platformView } from "./platform-view";
 
 afterAll(() => vi.unstubAllGlobals());
 beforeAll(() => loadKindRegistrations());
@@ -93,8 +98,14 @@ const realEvent = (facts: JsonObject = {}): JsonObject => ({
   },
 });
 
-/** notify-team's step details on its input form, with test data in memory. */
-function setup(inputSchema: unknown = { $ref: "weave.platform-event-v1" }) {
+/**
+ * notify-team's step details on its input form, with test data in memory;
+ * `view` is the platform event's as the Studio host serves it.
+ */
+function setup(
+  inputSchema: unknown = { $ref: "weave.platform-event-v1" },
+  view: JsonObject | null = null,
+) {
   const model = new StructuredCanvasAdapter();
   model.updateWorkflow({
     ...model.definition,
@@ -120,8 +131,9 @@ function setup(inputSchema: unknown = { $ref: "weave.platform-event-v1" }) {
     notify: () => undefined,
     refreshView: () => undefined,
     perform: (edit: () => void) => edit(),
-    // The Studio host has no platform event fields to serve here.
-    api: { request: async () => Promise.reject(Error("busy")) },
+    api: {
+      request: async () => view ?? Promise.reject(Error("busy")),
+    },
   } as unknown as StepDetailsHost;
   const controller = new StepDetailsController(host);
   const session = new FormSession(
@@ -175,6 +187,8 @@ function manualPane(f: ReturnType<typeof setup>) {
     ({ target: { value, setCustomValidity() {} } }) as unknown as Event;
   return {
     pane,
+    form,
+    target,
     /** What the box shows, and the text a person leaves in it. */
     box: () => form.jsonText(["value"]),
     type: (text: string) => form.setJson(["value"], target(text), null),
@@ -350,6 +364,22 @@ describe("the manual form's box", () => {
     });
     for (const id of Object.values(REAL))
       expect(JSON.stringify(shown)).not.toContain(id);
+  });
+
+  it("keeps the text of a field whose value Studio leaves as it is", async () => {
+    const f = setup({
+      type: "object",
+      properties: { event: { type: "object" }, other: { type: "object" } },
+    });
+    const { form, target, settled } = manualPane(f);
+    form.setJson(["other"], target('{"a":1}'), null);
+    form.setJson(["event"], target(JSON.stringify(realEvent())), null);
+    await settled();
+    expect(form.jsonText(["event"])).toBe(
+      JSON.stringify(kept(f.controller)["event" as never], null, 2),
+    );
+    expect(form.jsonText(["event"])).not.toContain(REAL.event);
+    expect(form.jsonText(["other"])).toBe('{"a":1}');
   });
 
   it("shows the last of two changes, never the first one's event over it", async () => {
@@ -592,6 +622,24 @@ describe("a real platform event a test call brings", () => {
       await receive(f, { ...realEvent(), root_event_id: REAL.event }),
     ).toBeUndefined();
   });
+
+  it.runIf(available)(
+    "isn't kept beyond the limits of the fields the host serves",
+    async () => {
+      const f = setup(undefined, platformView());
+      // The first read of the fields, which the check then has.
+      eventFields(f.session.host.api);
+      await platformEventView(f.session.host.api);
+      await Promise.resolve();
+      expect(eventFields(f.session.host.api)).not.toBeNull();
+      expect(
+        await receive(f, realEvent({ business_key: "x".repeat(201) })),
+      ).toBeUndefined();
+      expect(
+        await receive(f, realEvent({ business_key: "x".repeat(200) })),
+      ).toMatchObject({ source: "test-call" });
+    },
+  );
 
   it("keeps none of the fields the input marks secret", async () => {
     const f = setup({
