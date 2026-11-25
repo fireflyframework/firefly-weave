@@ -47,6 +47,7 @@ import { typeLabels } from "../core/type-labels";
 import { isFileSchema } from "../core/file-reference";
 import { Modal } from "../../dialog";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
+import { isPlatformEventInput } from "../../editor/triggers/platform-event";
 import { describeError } from "../../errors";
 import { TaskForm, type Schema as TaskSchema } from "../../task-form";
 import {
@@ -1084,7 +1085,12 @@ let sequence = 0;
         </div>
       }
     </header>
-    @if (!model.editable) {
+    @if (platformEvent()) {
+      <p class="hint">
+        This workflow's input is the platform event, which a Platform event
+        trigger needs. To take other fields, edit the input schema as JSON.
+      </p>
+    } @else if (!model.editable) {
       <p class="notice">{{ model.reason }}</p>
     } @else {
       @if (notes.length) {
@@ -1932,6 +1938,14 @@ export class SchemaDesigner implements OnChanges {
   private loadedRevision: number | null = null;
   /** Bumped to discard an inference answer that is still on its way. */
   private inference = 0;
+  /** A workflow's input that Studio set to the platform event: nothing to warn of. */
+  platformEvent(): boolean {
+    return (
+      this.purpose() === "input" &&
+      this.json() &&
+      isPlatformEventInput(this.model.source)
+    );
+  }
   /** The validity last told to the host (null: never told, taken as valid). */
   private lastValidity: boolean | null = null;
   private loads = 0;

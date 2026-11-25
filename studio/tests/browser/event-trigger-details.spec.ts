@@ -388,6 +388,50 @@ test.describe("the Platform event trigger's Parameters", () => {
     await expect(unsure).toHaveCount(0);
   });
 
+  test("the workflow settings say the input is the platform event, without a warning, and keep it as JSON", async ({
+    page,
+  }) => {
+    await openNotifyTeam(page, {
+      spec: { outputSchema: { anyOf: [{ type: "object" }, { type: "null" }] } },
+    });
+    const schema = (name: "input" | "output") =>
+      page.locator(`.inspector [data-field="spec/${name}Schema"]`);
+    const note = schema("input").getByText(
+      "This workflow's input is the platform event, which a Platform event trigger needs. To take other fields, edit the input schema as JSON.",
+      { exact: true },
+    );
+    await expect(note).toBeVisible();
+    await expect(schema("input").locator(".notice")).toHaveCount(0);
+    await expect(note).toHaveCSS("border-top-width", "0px");
+    // Another schema Studio can't list keeps its warning.
+    const warning = schema("output").locator(".notice");
+    await expect(warning).toHaveText(
+      "This schema uses anyOf, so it is not a list of fields. It is kept unchanged; edit it in Source.",
+    );
+    await schema("input")
+      .getByRole("button", { name: "Edit input schema as JSON" })
+      .click();
+    await expect(
+      schema("input").getByRole("button", { name: "Use the field editor" }),
+    ).toBeVisible();
+    expect(await spec(page)).toMatchObject({ inputSchema: REFERENCE });
+  });
+
+  test("the workflow settings warn of any other input Studio can't list", async ({
+    page,
+  }) => {
+    await openNotifyTeam(page, {
+      spec: {
+        inputSchema: { ...REFERENCE, description: "What happened" },
+      },
+    });
+    const input = page.locator('.inspector [data-field="spec/inputSchema"]');
+    await expect(input.locator(".notice")).toContainText(
+      "This schema uses $ref",
+    );
+    await expect(input).not.toContainText("which a Platform event trigger");
+  });
+
   const first = (dialog: Locator) =>
     events(dialog).getByRole("checkbox").first();
   const reset = (dialog: Locator) =>
