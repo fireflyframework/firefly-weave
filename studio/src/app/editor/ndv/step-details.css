@@ -234,10 +234,13 @@ weave-step-details {
   color: var(--muted);
 }
 /* Tabs and Docs share one baseline; the tabs sit on the row's rule. */
-.sd-tabs {
+.sd-tabs,
+.sd-tablist {
   display: flex;
   align-items: baseline;
   gap: var(--space-4);
+}
+.sd-tabs {
   padding: 0 var(--sd-edge);
   border-bottom: 1px solid var(--line);
 }
