@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // first problem by field, and the event with its real IDs replaced. Test data
 // is read by everyone who can test the workflow, so an event copied from a
 // real transaction never keeps the IDs of its event, run or incident.
-import { isJsonObject, type JsonObject } from "../../forms/core/json";
+import {
+  hasOwn,
+  isJsonObject,
+  jsonEqual,
+  type JsonObject,
+} from "../../forms/core/json";
 import type { Json } from "../ndv/registry";
 import {
   EVENT_CHOICE_ORDER,
@@ -41,43 +46,236 @@ const VERSION = "weave/platform-event-v1";
 const STATES = EVENT_CHOICE_ORDER.map((type) =>
   type.slice("transaction.".length),
 );
-const text = (value: unknown) => typeof value === "string" && value !== "";
 
-/** The first field the platform would refuse, in its order; null when none. */
-function problemOf(event: JsonObject): string | null {
-  if (event["version"] !== VERSION) return `version must be ${VERSION}.`;
-  const type = event["type"];
-  if (!isPlatformEventType(type))
-    return `type must be one of ${EVENT_TYPES.join(", ")}.`;
-  const at = event["emitted_at"];
-  if (typeof at !== "string" || Number.isNaN(Date.parse(at)))
-    return "emitted_at must be a date and time.";
-  const facts = event["transaction"];
-  const group = (field: string) => `${field} must be a group of fields.`;
-  if (!isJsonObject(facts)) return group("transaction");
-  const workflow = facts["workflow"];
-  if (!isJsonObject(workflow)) return group("transaction.workflow");
-  if (!text(workflow["name"])) return "transaction.workflow.name must be text.";
-  if (!text(workflow["version"]))
-    return "transaction.workflow.version must be text.";
-  if (!text(facts["instance_key"]))
-    return "transaction.instance_key must be text.";
-  if (facts["business_key"] !== null && !text(facts["business_key"]))
-    return "transaction.business_key must be text or null.";
-  const state = facts["state"];
-  if (typeof state !== "string" || !STATES.includes(state))
+const TEXT: JsonObject = { type: "string", minLength: 1 };
+const ID: JsonObject = { type: "string", format: "uuid" };
+const orNull = (schema: JsonObject): JsonObject => ({
+  anyOf: [schema, { type: "null" }],
+});
+const group = (properties: JsonObject, optional: string[] = []) => ({
+  type: "object",
+  properties,
+  required: Object.keys(properties).filter((key) => !optional.includes(key)),
+});
+const STEPS: JsonObject = {
+  type: "array",
+  items: group(
+    {
+      step: TEXT,
+      instance_key: TEXT,
+      how: TEXT,
+      phase: orNull(TEXT),
+      attempts: orNull({ type: "integer" }),
+    },
+    ["phase", "attempts"],
+  ),
+};
+/**
+ * The fields a platform event has and what each holds, without its limits:
+ * what Studio checks while its host can't serve the platform's view. A field
+ * that isn't here is refused, because it could hold a real ID.
+ */
+const KNOWN: JsonObject = group({
+  type: { enum: [...EVENT_TYPES] },
+  emitted_at: { type: "string", format: "date-time" },
+  transaction: group(
+    {
+      workflow: group({ name: TEXT, version: TEXT }),
+      business_key: orNull(TEXT),
+      state: TEXT,
+      cause: orNull(
+        group({ code: TEXT, step: orNull(TEXT), origin_code: orNull(TEXT) }, [
+          "step",
+          "origin_code",
+        ]),
+      ),
+      steps: group({ done: STEPS, undone: STEPS, pending: STEPS }, [
+        "done",
+        "undone",
+        "pending",
+      ]),
+      incident_id: orNull(ID),
+      run_id: ID,
+      instance_key: TEXT,
+      test: { type: "boolean" },
+    },
+    ["cause", "incident_id"],
+  ),
+  event_id: ID,
+  version: { const: VERSION },
+});
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+function isDateTime(text: string): boolean {
+  const parts = DATE_TIME.exec(text);
+  if (!parts || Number.isNaN(Date.parse(text))) return false;
+  const [, year, month, day] = parts.map(Number);
+  // Dates roll over: February 30 would be March 2.
+  return new Date(Date.UTC(year!, month! - 1, day)).getUTCDate() === day;
+}
+/** What a field in a form of its own must be, in words, with an example after "such as". */
+const FORMS: Readonly<Record<string, [what: string, example: string]>> = {
+  uuid: ["an ID", "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e"],
+  "date-time": ["a date and time", "2026-11-18T16:05:11Z"],
+  name: ["a workflow name", "move-between-systems"],
+  version: ["a version", "1.0.0"],
+  step: ["a step ID", "add"],
+  code: ["a code", "WV-TXN-UNDO-STUCK"],
+  origin_code: ["a code", "WV-TXN-UNDO-STUCK"],
+};
+const TYPE_WORDS: Readonly<Record<string, string>> = {
+  object: "a group of fields",
+  array: "a list",
+  string: "text",
+  boolean: "true or false",
+  integer: "a whole number",
+  number: "a number",
+};
+const ofType = (value: unknown, type: unknown): boolean =>
+  type === "object"
+    ? isJsonObject(value)
+    : type === "array"
+      ? Array.isArray(value)
+      : type === "integer"
+        ? Number.isInteger(value)
+        : typeof value === type;
+/** The longest part of an unknown field's name a sentence repeats. */
+const NAME_SHOWN = 60;
+
+/** The first thing wrong with `value` at `path`; undefined is a field that is missing. */
+function problemAt(
+  path: string,
+  value: unknown,
+  schema: JsonObject,
+  event: JsonObject,
+  empty = false,
+): string | null {
+  if (path === "transaction.state") return stateProblem(value, event);
+  if (Array.isArray(schema["anyOf"])) {
+    const options = schema["anyOf"].filter(isJsonObject);
+    const isNull = (option: JsonObject) => option["type"] === "null";
+    const allowed = empty || options.some(isNull);
+    if (value === null && allowed) return null;
+    const found = options
+      .filter((option) => !isNull(option))
+      .map((option) => problemAt(path, value, option, event, allowed));
+    return found.includes(null) ? null : (found[0] ?? null);
+  }
+  const named = schema["type"];
+  const types = Array.isArray(named) ? named : named ? [named] : [];
+  const allowed = empty || types.includes("null");
+  if (value === null && allowed) return null;
+  const type = types.find((each) => each !== "null");
+  const key = /[^.[\]]+$/.exec(path)?.[0] ?? "";
+  const pattern = schema["pattern"];
+  const form =
+    type === "string"
+      ? FORMS[String(schema["format"] ?? (pattern ? key : ""))]
+      : undefined;
+  const must = (what: string, example = "") =>
+    `${path} must be ${what}${allowed ? " or null" : ""}${example && `, such as ${example}`}.`;
+  const wrong = () =>
+    form ? must(...form) : must(TYPE_WORDS[String(type)] ?? "filled in");
+  if ("const" in schema && !jsonEqual(value, schema["const"]))
+    return must(String(schema["const"]));
+  const choices = schema["enum"];
+  if (
+    Array.isArray(choices) &&
+    !choices.some((choice) => jsonEqual(value, choice))
+  )
+    return must(`one of ${choices.join(", ")}`);
+  if (value === undefined || (type && !ofType(value, type))) return wrong();
+  const limit = (name: string) => Number(schema[name] ?? Infinity);
+  if (typeof value === "string") {
+    const length = [...value].length;
+    if (!length && Number(schema["minLength"] ?? 0)) return wrong();
+    if (length > limit("maxLength"))
+      return `${path} can have up to ${schema["maxLength"]} characters.`;
+    if (schema["format"] === "uuid" && !UUID.test(value)) return wrong();
+    if (schema["format"] === "date-time" && !isDateTime(value)) return wrong();
+    if (typeof pattern === "string" && !matches(pattern, value))
+      return form ? wrong() : must("in the form the platform sends");
+  }
+  if (
+    typeof value === "number" &&
+    value < Number(schema["minimum"] ?? -Infinity)
+  )
+    return `${path} must be ${schema["minimum"]} or more.`;
+  if (Array.isArray(value)) {
+    if (value.length > limit("maxItems"))
+      return `${path} can have up to ${schema["maxItems"]} items.`;
+    const items = isJsonObject(schema["items"]) ? schema["items"] : {};
+    for (const [index, item] of value.entries()) {
+      const problem = problemAt(`${path}[${index}]`, item, items, event);
+      if (problem) return problem;
+    }
+  }
+  return isJsonObject(value) ? fieldProblem(path, value, schema, event) : null;
+}
+/** The first field of a group that is wrong; then one it hasn't, which could hold a real ID. */
+function fieldProblem(
+  path: string,
+  value: JsonObject,
+  schema: JsonObject,
+  event: JsonObject,
+): string | null {
+  const at = (key: string) => (path ? `${path}.${key}` : key);
+  const fields = isJsonObject(schema["properties"]) ? schema["properties"] : {};
+  const required = Array.isArray(schema["required"]) ? schema["required"] : [];
+  for (const [key, field] of Object.entries(fields)) {
+    const held = hasOwn(value, key);
+    if (!held && !required.includes(key)) continue;
+    const problem = problemAt(
+      at(key),
+      held ? value[key] : undefined,
+      isJsonObject(field) ? field : {},
+      event,
+    );
+    if (problem) return problem;
+  }
+  const unknown = Object.keys(value).find((key) => !hasOwn(fields, key));
+  return unknown === undefined
+    ? null
+    : `${at(unknown.slice(0, NAME_SHOWN))} isn't one of the platform event's fields.`;
+}
+/** A transaction's state goes with its event: the platform sends no other. */
+function stateProblem(value: unknown, event: JsonObject): string | null {
+  if (typeof value !== "string" || !STATES.includes(value))
     return `transaction.state must be one of ${STATES.join(", ")}.`;
-  if (type !== `transaction.${state}`)
-    return `transaction.state must be ${type.slice("transaction.".length)} for ${type}.`;
-  if (!isJsonObject(facts["steps"])) return group("transaction.steps");
-  if (typeof facts["test"] !== "boolean")
-    return "transaction.test must be true or false.";
-  return null;
+  const type = String(event["type"]);
+  return type === `transaction.${value}`
+    ? null
+    : `transaction.state must be ${type.slice("transaction.".length)} for ${type}.`;
+}
+/** Whether a text fits the view's pattern; one this browser can't read is the platform's to check. */
+function matches(pattern: string, text: string): boolean {
+  try {
+    return new RegExp(pattern, "u").test(text);
+  } catch {
+    return true;
+  }
 }
 
-/** The event pasted as `source`, or what is wrong with it. */
+/**
+ * The first problem, by field, with a value a person entered as a platform
+ * event; null when it is one. `fields` is the platform's view as the data
+ * picker lists it; without it, the fields Studio knows.
+ */
+export function eventProblem(
+  value: unknown,
+  fields: JsonObject | null,
+): string | null {
+  if (!isJsonObject(value)) return SAMPLE_FIELD_PROBLEM;
+  const known = fields && isJsonObject(fields["properties"]) ? fields : KNOWN;
+  return fieldProblem("", value, known, value);
+}
+
+/** The event pasted as `source`, or what is wrong with it (see eventProblem). */
 export function pastedEvent(
   source: string,
+  fields: JsonObject | null,
 ): { value: Json } | { problem: string } {
   let event: unknown;
   try {
@@ -85,8 +283,7 @@ export function pastedEvent(
   } catch {
     return { problem: SAMPLE_FIELD_PROBLEM };
   }
-  if (!isJsonObject(event)) return { problem: SAMPLE_FIELD_PROBLEM };
-  const problem = problemOf(event);
+  const problem = eventProblem(event, fields);
   return problem ? { problem } : { value: event as Json };
 }
 

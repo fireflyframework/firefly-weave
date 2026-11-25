@@ -18,15 +18,18 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "../src/app/forms/core/json";
 import {
+  eventProblem,
   pastedEvent,
   replacedNote,
   SAMPLE_FIELD_PROBLEM,
   withSampleIds,
 } from "../src/app/editor/triggers/event-sample";
 import {
+  eventFieldView,
   sampleEvent,
   type PlatformEventType,
 } from "../src/app/editor/triggers/platform-event";
+import { available, platformTakes, platformView } from "./platform-view";
 
 const SAMPLE_ID = /^00000000-0000-4000-8000-[0-9a-f]{12}$/;
 const REAL_ID = "5f0c2b7e-1111-4222-8333-944455556666";
@@ -36,11 +39,6 @@ const event = (type: PlatformEventType = "transaction.in_doubt") =>
     now: new Date("2026-11-20T10:00:00Z"),
     id: () => REAL_ID,
   }) as JsonObject & { transaction: JsonObject };
-const problemOf = (value: unknown) => {
-  const answer = pastedEvent(JSON.stringify(value));
-  return "problem" in answer ? answer.problem : null;
-};
-
 describe("the IDs of an event entered as test data", () => {
   it("become sample IDs, each its own, and the rest stays as it was", () => {
     const { value, replaced } = withSampleIds(event());
@@ -109,101 +107,277 @@ describe("the IDs of an event entered as test data", () => {
   });
 });
 
-describe("what is wrong with a pasted event, the first problem by field", () => {
-  const changed = (
-    path: [string] | [string, string] | [string, string, string],
-    value: unknown,
-  ) => {
-    const next = structuredClone(event()) as Record<string, unknown>;
-    const parents = path.slice(0, -1);
-    let node = next;
-    for (const key of parents) node = node[key] as Record<string, unknown>;
-    const last = path.at(-1)!;
-    if (value === undefined) delete node[last];
-    else node[last] = value;
-    return next;
-  };
+/** An event with one field changed, or removed for undefined. */
+const changed = (path: string, value: unknown): JsonObject => {
+  const next = structuredClone(event()) as JsonObject;
+  const keys = path.split(".");
+  const last = keys.pop()!;
+  let node: JsonObject = next;
+  for (const key of keys) node = node[key] as JsonObject;
+  if (value === undefined) delete node[last];
+  else node[last] = value as never;
+  return next;
+};
+const step = { step: "hold", instance_key: "hold", how: "reserve" };
+const steps = (done: unknown) => ({ done, undone: [], pending: [] });
+const ALL_TYPES = [
+  "transaction.completed",
+  "transaction.compensated",
+  "transaction.cancelled",
+  "transaction.in_doubt",
+  "transaction.reconciled",
+  "transaction.force_ended",
+] as const;
 
-  it("is nothing for each event Studio builds", () => {
-    for (const type of [
-      "transaction.completed",
-      "transaction.compensated",
-      "transaction.cancelled",
-      "transaction.in_doubt",
-      "transaction.reconciled",
-      "transaction.force_ended",
-    ] as const)
-      expect(problemOf(event(type)), type).toBeNull();
+/** What is wrong, the event as pasted, and what Studio says until the host serves the fields, when that differs. */
+type Refused = [problem: string, event: JsonObject, unread?: string | null];
+const ID = "such as 3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e.";
+const REFUSED: Refused[] = [
+  [
+    "version must be weave/platform-event-v1.",
+    changed("version", "weave/platform-event-v2"),
+  ],
+  [
+    "type must be one of transaction.completed, transaction.compensated, transaction.cancelled, transaction.in_doubt, transaction.reconciled, transaction.force_ended.",
+    changed("type", "transaction.open"),
+  ],
+  [`event_id must be an ID, ${ID}`, changed("event_id", undefined)],
+  [`event_id must be an ID, ${ID}`, changed("event_id", "evt-1")],
+  [
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", 5),
+  ],
+  [
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", "2026"),
+  ],
+  [
+    // No time zone.
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", "2026-11-18T16:05:11"),
+  ],
+  [
+    // No such day.
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", "2026-02-30T16:05:11Z"),
+  ],
+  ["transaction must be a group of fields.", changed("transaction", null)],
+  [
+    "transaction.workflow must be a group of fields.",
+    changed("transaction.workflow", undefined),
+  ],
+  [
+    "transaction.workflow.name must be a workflow name, such as move-between-systems.",
+    changed("transaction.workflow.name", "sync records"),
+    null,
+  ],
+  [
+    "transaction.workflow.version must be a version, such as 1.0.0.",
+    changed("transaction.workflow.version", "1"),
+    null,
+  ],
+  [`transaction.run_id must be an ID, ${ID}`, changed("transaction.run_id", 7)],
+  [
+    "transaction.instance_key must be text.",
+    changed("transaction.instance_key", null),
+  ],
+  [
+    "transaction.instance_key must be text.",
+    changed("transaction.instance_key", ""),
+  ],
+  [
+    "transaction.instance_key can have up to 512 characters.",
+    changed("transaction.instance_key", "x".repeat(513)),
+    null,
+  ],
+  [
+    "transaction.business_key must be text or null.",
+    changed("transaction.business_key", 12),
+  ],
+  [
+    "transaction.business_key must be text or null.",
+    changed("transaction.business_key", undefined),
+  ],
+  [
+    "transaction.business_key can have up to 200 characters.",
+    changed("transaction.business_key", "x".repeat(300)),
+    null,
+  ],
+  [
+    "transaction.cause must be a group of fields or null.",
+    changed("transaction.cause", "x"),
+  ],
+  [
+    "transaction.cause.code must be a code, such as WV-TXN-UNDO-STUCK.",
+    changed("transaction.cause", { code: "stuck" }),
+    null,
+  ],
+  [
+    "transaction.cause.code must be a code, such as WV-TXN-UNDO-STUCK.",
+    changed("transaction.cause", { step: "add" }),
+    "transaction.cause.code must be text.",
+  ],
+  [
+    "transaction.incident_id must be an ID or null, such as 3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e.",
+    changed("transaction.incident_id", "INC-1"),
+  ],
+  [
+    "transaction.steps must be a group of fields.",
+    changed("transaction.steps", []),
+  ],
+  [
+    "transaction.steps.done must be a list.",
+    changed("transaction.steps", { done: "no" }),
+  ],
+  [
+    "transaction.steps.done[0].how must be one of reserve, compensate, irreversible.",
+    changed("transaction.steps", steps([{ ...step, how: "maybe" }])),
+    null,
+  ],
+  [
+    "transaction.steps.done[1].attempts must be 0 or more.",
+    changed("transaction.steps", steps([step, { ...step, attempts: -1 }])),
+    null,
+  ],
+  [
+    "transaction.steps.done[0].attempts must be a whole number or null.",
+    changed("transaction.steps", steps([{ ...step, attempts: 1.5 }])),
+  ],
+  [
+    "transaction.steps.done can have up to 1000 items.",
+    changed("transaction.steps", steps(Array(1001).fill(step))),
+    null,
+  ],
+  [
+    "transaction.test must be true or false.",
+    changed("transaction.test", "no"),
+  ],
+];
+/** A real ID in a field the platform event hasn't, at each level. */
+const UNKNOWN: [path: string, event: JsonObject][] = [
+  ["root_event_id", changed("root_event_id", REAL_ID)],
+  ["constructor", changed("constructor", REAL_ID)],
+  ["transaction.parent_run_id", changed("transaction.parent_run_id", REAL_ID)],
+  ["transaction.workflow.id", changed("transaction.workflow.id", REAL_ID)],
+  [
+    "transaction.cause.incident",
+    changed("transaction.cause.incident", REAL_ID),
+  ],
+  ["transaction.steps.run_id", changed("transaction.steps.run_id", REAL_ID)],
+  [
+    "transaction.steps.done[0].run_id",
+    changed("transaction.steps", steps([{ ...step, run_id: REAL_ID }])),
+  ],
+];
+
+describe.runIf(available)(
+  "what is wrong with an event entered as test data",
+  () => {
+    const fields = available ? eventFieldView(platformView()) : null;
+    const problem = (value: JsonObject) => eventProblem(value, fields);
+
+    it("is nothing for each event Studio builds", () => {
+      for (const type of ALL_TYPES) {
+        expect(problem(event(type)), type).toBeNull();
+        expect(eventProblem(event(type), null), type).toBeNull();
+      }
+    });
+
+    it.each(REFUSED)("is the first problem by field: %s", (said, value) => {
+      expect(problem(value)).toBe(said);
+    });
+
+    it.each(REFUSED)(
+      "is what Studio can tell while the host doesn't serve the fields: %s",
+      (said, value, unread) => {
+        expect(eventProblem(value, null)).toBe(
+          unread === undefined ? said : unread,
+        );
+      },
+    );
+
+    it.each(UNKNOWN)(
+      "is a field the platform event hasn't, whether the host serves the fields or not: %s",
+      (path, value) => {
+        const said = `${path} isn't one of the platform event's fields.`;
+        expect(problem(value)).toBe(said);
+        expect(eventProblem(value, null)).toBe(said);
+      },
+    );
+
+    it("is what the platform refuses too, and it takes each event Studio builds", () => {
+      const refused = [...REFUSED, ...UNKNOWN].map(([, value]) => value);
+      const taken = platformTakes([...refused, ...ALL_TYPES.map(event)]);
+      expect(refused.filter((_, index) => taken[index]).map(problem)).toEqual(
+        [],
+      );
+      expect(taken.slice(refused.length)).toEqual(ALL_TYPES.map(() => true));
+    });
+
+    it("is nothing for what the platform leaves out or takes empty", () => {
+      const events = [
+        changed("transaction.cause", undefined),
+        changed("transaction.cause", null),
+        changed("transaction.incident_id", null),
+        changed("transaction.business_key", null),
+        changed("transaction.steps", {}),
+        changed("transaction.steps", steps([{ ...step, phase: null }])),
+        changed("transaction.cause", { code: "WV-X", origin_code: null }),
+        changed("emitted_at", "2026-11-18T16:05:11.123456+02:00"),
+        // Counted as the platform counts: 200 characters, 400 in UTF-16.
+        changed("transaction.business_key", "𝄞".repeat(200)),
+      ];
+      expect(platformTakes(events)).toEqual(events.map(() => true));
+      expect(events.map(problem)).toEqual(events.map(() => null));
+      expect(events.map((value) => eventProblem(value, null))).toEqual(
+        events.map(() => null),
+      );
+    });
+
+    it("is a state that isn't the event's, which no event the platform sends has", () => {
+      for (const known of [fields, null]) {
+        expect(eventProblem(changed("transaction.state", "open"), known)).toBe(
+          "transaction.state must be one of in_doubt, compensated, cancelled, completed, reconciled, force_ended.",
+        );
+        expect(
+          eventProblem(changed("transaction.state", "completed"), known),
+        ).toBe("transaction.state must be in_doubt for transaction.in_doubt.");
+      }
+    });
+
+    it("is told by the fields Studio knows when the host answers something else", () => {
+      expect(eventProblem(event(), { features: [] })).toBeNull();
+      expect(
+        eventProblem(changed("root_event_id", REAL_ID), { features: [] }),
+      ).toBe("root_event_id isn't one of the platform event's fields.");
+    });
+  },
+);
+
+describe("a pasted event", () => {
+  it("is refused when the text isn't a JSON object", () => {
+    for (const source of ["{oops", "[1]", "null", '"text"'])
+      expect(pastedEvent(source, null)).toEqual({
+        problem: SAMPLE_FIELD_PROBLEM,
+      });
   });
 
-  it("is the text, when it isn't a JSON object", () => {
-    const notJson = pastedEvent("{oops");
-    expect(notJson).toEqual({ problem: SAMPLE_FIELD_PROBLEM });
-    expect(problemOf([1])).toBe(SAMPLE_FIELD_PROBLEM);
+  it("keeps no field the platform event hasn't, one named __proto__ too", () => {
+    const text = JSON.stringify(event()).replace(
+      "{",
+      `{"__proto__":{"run_id":"${REAL_ID}"},`,
+    );
+    expect(pastedEvent(text, null)).toEqual({
+      problem: "__proto__ isn't one of the platform event's fields.",
+    });
   });
 
-  it.each<[string, Record<string, unknown>, string]>([
-    [
-      "version",
-      changed(["version"], "weave/platform-event-v2"),
-      "version must be weave/platform-event-v1.",
-    ],
-    [
-      "type",
-      changed(["type"], "transaction.open"),
-      "type must be one of transaction.completed, transaction.compensated, transaction.cancelled, transaction.in_doubt, transaction.reconciled, transaction.force_ended.",
-    ],
-    [
-      "emitted_at",
-      changed(["emitted_at"], 5),
-      "emitted_at must be a date and time.",
-    ],
-    [
-      "no transaction",
-      changed(["transaction"], null),
-      "transaction must be a group of fields.",
-    ],
-    [
-      "no workflow",
-      changed(["transaction", "workflow"], undefined),
-      "transaction.workflow must be a group of fields.",
-    ],
-    [
-      "workflow name",
-      changed(["transaction", "workflow", "name"], ""),
-      "transaction.workflow.name must be text.",
-    ],
-    [
-      "instance key",
-      changed(["transaction", "instance_key"], null),
-      "transaction.instance_key must be text.",
-    ],
-    [
-      "business key",
-      changed(["transaction", "business_key"], 12),
-      "transaction.business_key must be text or null.",
-    ],
-    [
-      "state",
-      changed(["transaction", "state"], "open"),
-      "transaction.state must be one of in_doubt, compensated, cancelled, completed, reconciled, force_ended.",
-    ],
-    [
-      "state of another event",
-      changed(["transaction", "state"], "completed"),
-      "transaction.state must be in_doubt for transaction.in_doubt.",
-    ],
-    [
-      "steps",
-      changed(["transaction", "steps"], []),
-      "transaction.steps must be a group of fields.",
-    ],
-    [
-      "test",
-      changed(["transaction", "test"], "no"),
-      "transaction.test must be true or false.",
-    ],
-  ])("names %s", (_name, value, problem) => {
-    expect(problemOf(value)).toBe(problem);
+  it("is read as it was pasted, or refused with its first problem", () => {
+    expect(pastedEvent(JSON.stringify(event()), null)).toEqual({
+      value: event(),
+    });
+    expect(
+      pastedEvent(JSON.stringify(changed("transaction", null)), null),
+    ).toEqual({ problem: "transaction must be a group of fields." });
   });
 });

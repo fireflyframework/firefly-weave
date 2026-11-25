@@ -15,8 +15,6 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "../src/app/forms/core/json";
 import { referenceScope, type ScopeOptions } from "../src/app/forms/core/scope";
@@ -27,27 +25,10 @@ import {
   PLATFORM_EVENT_SCHEMA,
 } from "../src/app/editor/triggers/platform-event";
 import { inputSources, sourceRows } from "../src/app/editor/ndv/panes/views";
-import { python, pythonAvailable, repository } from "./python-path";
+import { available, platformView } from "./platform-view";
 
-const available = pythonAvailable();
 /** The platform's own view, as the Studio host serves it. */
-const view = (
-  available
-    ? JSON.parse(
-        execFileSync(
-          python,
-          [
-            "-c",
-            "import json; from firefly_weave.compiler.platform_catalog import platform_schema_bundle as b; from firefly_weave.contracts.transaction_resolve import PLATFORM_EVENT_SCHEMA as n; print(json.dumps(b()[n]))",
-          ],
-          {
-            encoding: "utf8",
-            env: { ...process.env, PYTHONPATH: join(repository, "src") },
-          },
-        ),
-      )
-    : {}
-) as JsonObject;
+const view = platformView();
 
 const reacting = (inputSchema: unknown = PLATFORM_EVENT_INPUT) => ({
   spec: {

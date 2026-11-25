@@ -438,7 +438,10 @@ export class EventSample {
     this.cancel();
   }
   async use() {
-    const read = pastedEvent(this.draft());
+    const read = pastedEvent(
+      this.draft(),
+      this.session().controller.eventFields(),
+    );
     if ("problem" in read) {
       this.problem.set(read.problem);
       return;

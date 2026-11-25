@@ -208,6 +208,14 @@ describe.each([
     expect(kept(f.controller)).toEqual(event);
     expect(f.controller.replacedIds()).toEqual([]);
   });
+
+  it("is refused with a field the platform event hasn't, which could keep a real ID", async () => {
+    await opened.enter({ ...realEvent(), root_event_id: REAL.event });
+    expect(f.controller.testEvent()).toBeUndefined();
+    expect(opened.pane.problem()).toBe(
+      "root_event_id isn't one of the platform event's fields.",
+    );
+  });
 });
 
 describe("what isn't a platform event", () => {

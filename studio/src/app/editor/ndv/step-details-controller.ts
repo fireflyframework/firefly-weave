@@ -76,6 +76,7 @@ import {
   triggerProblems,
 } from "../triggers/trigger-forms";
 import {
+  eventProblem,
   isPlatformEvent,
   withSampleIds,
   type ReplacedId,
@@ -531,6 +532,7 @@ export class StepDetailsController {
     const safe = this.safeInput(value);
     const entered =
       source === "manual" ? this.enteredEvent(safe) : { value: safe };
+    if (entered.problem) return entered.problem;
     const data = service.data();
     const outcome =
       entered.value === undefined
@@ -548,15 +550,20 @@ export class StepDetailsController {
   /**
    * What a person entered, whichever pane they entered it in: test data is
    * shared, so a platform event never keeps the IDs of a real event, run or
-   * incident.
+   * incident, nor, in a workflow whose input it is, a field that could hold
+   * one.
    */
   private enteredEvent(value: Json | undefined): {
     value: Json | undefined;
-    replaced?: ReplacedId[];
+    replaced?: readonly ReplacedId[];
+    problem?: string;
   } {
     const schema = this.host.model.definition.spec["inputSchema"];
-    return isPlatformEvent(value) ||
-      (isPlatformEventInput(schema) && isJsonObject(value))
+    if (value !== undefined && isPlatformEventInput(schema)) {
+      const problem = eventProblem(value, this.eventFields());
+      if (problem) return { value, problem };
+    }
+    return isPlatformEvent(value)
       ? (withSampleIds(value) as { value: Json; replaced: ReplacedId[] })
       : { value };
   }
@@ -2473,15 +2480,17 @@ export class StepDetailsController {
     model.canvas = next;
   }
 
-  /**
-   * The platform event's fields while the workflow's input is the event, as
-   * the Studio host serves them; null for another input, or until they're read.
-   */
-  eventView(): JsonObject | null {
-    const { definition } = this.host.model;
-    if (!isPlatformEventInput(definition.spec["inputSchema"])) return null;
+  /** The platform event's fields as the Studio host serves them; null until they're read. */
+  eventFields(): JsonObject | null {
     const view = currentPlatformEvent(this.host.api);
     return view?.state === "ready" ? eventFieldView(view.schema) : null;
+  }
+  /** Those fields while the workflow's input is the event; null for another input. */
+  eventView(): JsonObject | null {
+    const { definition } = this.host.model;
+    return isPlatformEventInput(definition.spec["inputSchema"])
+      ? this.eventFields()
+      : null;
   }
   scopeOptions(): ScopeOptions {
     return {

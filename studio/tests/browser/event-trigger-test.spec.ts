@@ -167,11 +167,34 @@ for (const size of [
       await pane.getByRole("button", { name: "Paste a sample event" }).click();
       const box = pane.getByRole("textbox", { name: "Sample event (JSON)" });
       await expect(box).toBeFocused();
-      await box.fill(JSON.stringify(pastedEvent({ state: "open" }), null, 2));
-      await pane.getByRole("button", { name: "Use this sample" }).click();
-      await expect(pane.getByRole("alert")).toHaveText(
-        "transaction.state must be one of in_doubt, compensated, cancelled, completed, reconciled, force_ended.",
-      );
+      // The first problem, by field, with what the platform would refuse.
+      for (const [event, problem] of [
+        [
+          pastedEvent({ state: "open" }),
+          "transaction.state must be one of in_doubt, compensated, cancelled, completed, reconciled, force_ended.",
+        ],
+        [
+          { ...pastedEvent(), root_event_id: REAL.event },
+          "root_event_id isn't one of the platform event's fields.",
+        ],
+        [
+          pastedEvent({ cause: "x", steps: { done: "no" } }),
+          "transaction.cause must be a group of fields or null.",
+        ],
+        [
+          { ...pastedEvent(), emitted_at: "2026" },
+          "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+        ],
+        [
+          pastedEvent({ business_key: "x".repeat(300) }),
+          "transaction.business_key can have up to 200 characters.",
+        ],
+      ] as const) {
+        await box.fill(JSON.stringify(event, null, 2));
+        await pane.getByRole("button", { name: "Use this sample" }).click();
+        await expect(pane.getByRole("alert")).toHaveText(problem);
+        expect(sent.some((body) => body.includes("REF-4410"))).toBe(false);
+      }
       await box.fill(JSON.stringify(pastedEvent(), null, 2));
       await pane.getByRole("button", { name: "Use this sample" }).click();
       const info = pane.getByRole("note").filter({ hasText: SHARED });
