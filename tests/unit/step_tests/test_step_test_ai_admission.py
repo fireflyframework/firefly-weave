@@ -55,8 +55,8 @@ ASK = {
 }
 
 
-def workflow(*steps):
-    question = {"type": "string", "minLength": 1}
+def workflow(*steps, mark=None):
+    question = {"type": "string", "minLength": 1, **(mark or {})}
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
@@ -185,6 +185,27 @@ class Platform:
         with pytest.raises(CatalogError) as raised:
             await self.admit(*args, **kwargs)
         return raised.value.status, raised.value.code
+
+
+@pytest.mark.parametrize("mark", [{"x-secret": True}, {"writeOnly": True}], ids=["x-secret", "writeOnly"])
+async def test_a_text_that_reads_a_value_marked_secret_is_refused_after_the_cheaper_checks_and_before_the_release(
+    monkeypatch, mark
+):
+    platform = Platform(monkeypatch, workflow(mark=mark))
+    assert await platform.refused(acknowledged_side_effect=None) == (409, "WV-STEPTEST-CONFIRM")
+    assert await platform.refused(connections={}) == (422, "WV-STEPTEST-CONNECTION")
+    assert await platform.refused(input={"prompt": ""}) == (422, "WV-STEPTEST-INPUT")
+    assert await platform.refused() == (422, "WV-STEPTEST-DRAFT")
+    assert "releases" not in platform.read
+    admitted = await Platform(monkeypatch, workflow()).admit()
+    assert admitted.worker_release_ids.keys() == {"weave-agentic.generate"}
+
+
+async def test_a_draft_unfinished_after_the_step_still_tests_it_and_one_unfinished_before_it_doesnt(monkeypatch):
+    unfinished = {"id": "later", "kind": "action"}
+    admitted = await Platform(monkeypatch, workflow(ASK, unfinished)).admit()
+    assert admitted.workflow["spec"]["steps"][0]["id"] == "ask"
+    assert await Platform(monkeypatch, workflow(unfinished, ASK)).refused() == (422, "WV-STEPTEST-DRAFT")
 
 
 @pytest.mark.parametrize(

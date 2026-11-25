@@ -23,6 +23,7 @@ import copy
 import json
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -55,6 +56,7 @@ from firefly_weave.definitions.ai import uses_ai, validate_ai_bindings, validate
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.definitions.service import DefinitionService, project_scope
+from firefly_weave.operations.execution import execute_pure
 from firefly_weave.operations.fact_reads import FactReadRepository, step_of
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency, lock
@@ -70,6 +72,7 @@ from firefly_weave.step_tests.admission import (
     release_pins,
     start_audit,
 )
+from firefly_weave.step_tests.inputs import draft_refusal
 from firefly_weave.step_tests.policy import TestPolicyService
 from firefly_weave.step_tests.synthesis import StepTestSynthesizers, test_version
 from firefly_weave.step_tests.view import StepTestDetails, step_test_view
@@ -227,6 +230,9 @@ class StepTestService:
         validate_ai_reserved(ir)
         if uses_ai(ir.graph.nodes):
             validate_ai_bindings(ir.graph.nodes, bound, self.definitions.ai_policy.current())
+            refused = await execute_pure(partial(draft_refusal, draft, metadata, catalog))
+            if refused is not None:
+                raise refused
         needed = await repository.release_choices(compiled.artifact)
         pinned = release_pins(needed, {str(key): value for key, value in request.releases.items()})
         if isinstance(pinned, ReleaseChoices):

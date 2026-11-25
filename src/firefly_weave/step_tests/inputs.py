@@ -1,0 +1,232 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+"""What an AI step's texts read in the saved draft, checked like a compile.
+
+A step test runs a copy of the step alone, whose texts arrive as its input, so only the draft says what they read. The
+part of the draft up to the step is compiled, and the step runs only when that compile could check everything its
+texts read and found nothing wrong with it. Pure.
+"""
+
+from collections import deque
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Final, cast
+
+from firefly_weave.compiler.agents import MESSAGES, agent_expressions, expression_references
+from firefly_weave.compiler.analyzer import AnalysisResult, AnalyzedStep
+from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.calls import workflow_steps
+from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.expressions import ExpressionFailure, pointer_segments
+from firefly_weave.contracts.diagnostics import Diagnostic
+from firefly_weave.contracts.step_tests import DraftStep
+from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.definitions.models import CatalogError
+from firefly_weave.step_tests.synthesis import API_VERSION
+from firefly_weave.studio.simulation import slice_for_target
+
+SECRET_INPUT: Final = "WV-COMP-AI_SECRET_INPUT"
+ABOUT_STEPS: Final = ("/spec/steps", "/spec/connections")
+UNCHECKED: Final = (
+    "What this step's texts read can't be checked as saved; finish the texts and the steps they read, "
+    "publish the actions those steps use, then try again"
+)
+# A refusal names at most this many findings.
+REPORTED: Final = 20
+# Steps whose output their contract declares, with the guard the compile keeps once it knows that contract.
+DECLARED: Final[Mapping[str, str]] = {
+    "action": "action_output",
+    "agent": "agent_output",
+    "callWorkflow": "call_output",
+    "decisionTable": "decision_output",
+    "humanTask": "human_output",
+    "llm": "action_output",
+    "signal": "signal_payload",
+}
+# Every other step's output is computed: from these expressions, and from what each of its blocks gives.
+COMPUTED: Final[Mapping[str, tuple[str, ...]]] = {
+    "fail": (),
+    "forEach": ("items",),
+    "parallel": (),
+    "switch": (),
+    "transaction": (),
+    "transform": ("value",),
+    "wait": (),
+}
+
+
+def draft_refusal(draft: DraftStep, metadata: JsonObject, catalog: CatalogSnapshot) -> CatalogError | None:
+    """Why an AI step of the draft can't run on its own, or None; ``metadata`` is the step test's own version."""
+    part = _up_to(draft, metadata)
+    if part is None:
+        return _refusal(UNCHECKED, [])
+    compiled = compile_source(part, format="object", catalog=catalog)
+    errors = [diagnostic for diagnostic in compiled.diagnostics if diagnostic.severity == "error"]
+    secret = [error for error in errors if error.code == SECRET_INPUT]
+    if secret:
+        return _refusal(MESSAGES["AI_SECRET_INPUT"], secret)
+    # A finding outside the steps and their connections is about the whole draft, so it's about this step too.
+    whole = [error for error in errors if not any(_within(error.path, place) for place in ABOUT_STEPS)]
+    if compiled.analysis is None or compiled.truncated or whole:
+        return _refusal(UNCHECKED, errors)
+    problems = _Checked(compiled.analysis, errors).problems(cast(str, draft.step["id"]))
+    return None if problems is None else _refusal(UNCHECKED, problems or errors)
+
+
+def _refusal(message: str, findings: Sequence[Diagnostic]) -> CatalogError:
+    """Paths in the draft and codes, never values."""
+    return CatalogError(
+        422,
+        "WV-STEPTEST-DRAFT",
+        message,
+        result={"diagnostics": [{"path": item.path, "code": item.code} for item in findings[:REPORTED]]},
+    )
+
+
+def _up_to(draft: DraftStep, metadata: JsonObject) -> JsonObject | None:
+    """The draft up to the step as a workflow of its own, or None when the step can't be cut out of it.
+
+    Steps keep their places, so a finding's path is its path in the draft. What isn't before the step or around it is
+    left out: the steps after it, its own error path, profiles and connections only other steps name, how the workflow
+    starts, and what it returns.
+    """
+    step_id = cast(str, draft.step["id"])
+    cut = slice_for_target(draft.workflow, step_id)
+    if cut is None:
+        return None
+    for step, _ in workflow_steps(cut):
+        if step.get("id") == step_id:
+            step.pop("onError", None)
+            step.pop("errorPath", None)
+    whole = cast(JsonObject, cut["spec"])
+    kept = ("inputSchema", "outputSchema", "steps", "output")
+    spec: JsonObject = {name: whole[name] for name in kept if name in whole}
+    for field, reference in (("connections", "connection"), ("llmProfiles", "profile")):
+        declared = whole.get(field)
+        if isinstance(declared, dict):
+            names = _names(whole["steps"], reference)
+            spec[field] = {name: value for name, value in declared.items() if name in names}
+    return {"apiVersion": API_VERSION, "kind": "Workflow", "metadata": metadata, "spec": spec}
+
+
+def _names(steps: JsonValue, field: str) -> set[str]:
+    """Every name the field holds anywhere in the steps: a step's, a tool's, or an undo's."""
+    found: set[str] = set()
+    pending = [steps]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            name = node.get(field)
+            if isinstance(name, str):
+                found.add(name)
+            pending.extend(node.values())
+    return found
+
+
+class _Checked:
+    """What a compile of the draft up to the step settled."""
+
+    def __init__(self, analysis: AnalysisResult, errors: Sequence[Diagnostic]) -> None:
+        self.steps = {step.id: step for step in _every(analysis.typed_graph)}
+        self.guards = {(guard.path, guard.purpose) for guard in analysis.runtime_guards}
+        self.errors = errors
+
+    def errors_in(self, *places: str) -> list[Diagnostic]:
+        return [error for error in self.errors if any(_within(error.path, place) for place in places)]
+
+    def settled(self, step: AnalyzedStep) -> bool:
+        """Whether the compile knows the schema of everything the step's output may hold."""
+        if step.kind in DECLARED:
+            # A call that doesn't wait gives only the platform's own identity of the run it started.
+            detached = step.kind == "callWorkflow" and step.definition.value.get("mode") == "detach"
+            if not detached and (step.path, DECLARED[step.kind]) not in self.guards:
+                return False
+        elif step.kind not in COMPUTED:
+            return False
+        if step.kind == "forEach" and not all(branch.completes for branch in step.branches):
+            return False
+        return not self.errors_in(*(path for _, path in _output(step)))
+
+    def problems(self, step_id: str) -> list[Diagnostic] | None:
+        """None when the compile settled everything the step's texts read, directly or through other steps.
+
+        Otherwise the findings there, maybe none: a contract is reported once, at the first step that names it.
+        """
+        target = self.steps.get(step_id)
+        if target is None or not self.settled(target):
+            return list(self.errors)
+        texts = _texts(target)
+        found = self.errors_in(*(path for _, path in texts))
+        settled = not found
+        seen = {target.id}
+        reading = deque((target, expression) for expression, _ in texts)
+        while reading:
+            reader, expression = reading.popleft()
+            for name in self.reads(reader, expression):
+                if name in seen:
+                    continue
+                seen.add(name)
+                step = self.steps.get(name)
+                if step is None or not self.settled(step):
+                    settled = False
+                    found.extend(self.errors_in(step.path) if step is not None else [])
+                if step is not None:
+                    reading.extend((step, part) for part, _ in _output(step))
+        return None if settled else found
+
+    def reads(self, reader: AnalyzedStep, expression: JsonObject) -> Iterator[str]:
+        """The steps an expression reads; a loop's item is read from the loop."""
+        for pointer in expression_references(expression):
+            try:
+                segments = pointer_segments(pointer)
+            except ExpressionFailure:
+                segments = ()
+            root = segments[0] if segments else ""
+            if root in {"", "item", "loops"}:
+                # Scopes alternate a step's ID and the name of its block.
+                yield from (name for name in reader.scope[::2] if self.steps[name].kind == "forEach")
+            if root == "steps" and len(segments) > 1:
+                yield segments[1]
+            elif root in {"", "steps"}:
+                yield from self.steps
+
+
+def _every(steps: Sequence[AnalyzedStep]) -> Iterator[AnalyzedStep]:
+    for step in steps:
+        yield step
+        for branch in step.branches:
+            yield from _every(branch.steps)
+
+
+def _within(path: str, place: str) -> bool:
+    return path == place or path.startswith(place + "/")
+
+
+def _texts(step: AnalyzedStep) -> list[tuple[JsonObject, str]]:
+    """What the model reads of the step: each expression with its path. A step test keeps no conversation."""
+    value = step.definition.value
+    if step.kind == "agent":
+        memory = step.path + "/memory"
+        return [item for item in agent_expressions(value, step.path) if not _within(item[1], memory)]
+    return [(cast(JsonObject, value[name]), f"{step.path}/{name}") for name in ("prompt", "context")]
+
+
+def _output(step: AnalyzedStep) -> list[tuple[JsonObject, str]]:
+    """The expressions a step's output is computed from, with their paths: its own, and each of its blocks'."""
+    value = step.definition.value
+    own = [(cast(JsonObject, value[name]), f"{step.path}/{name}") for name in COMPUTED.get(step.kind, ())]
+    return own + [(branch.output.value, branch.path + "/output") for branch in step.branches]

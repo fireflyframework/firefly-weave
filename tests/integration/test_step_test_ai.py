@@ -13,7 +13,7 @@
 # limitations under the License.
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
-"""An AI task's step test checks the AI policy before it writes anything."""
+"""An AI task's step test checks its inputs like a compile, and the AI policy, before it writes anything."""
 
 import copy
 import json
@@ -47,6 +47,7 @@ from firefly_weave.workers.service import WorkerService
 
 pytestmark = pytest.mark.integration
 ENDPOINT = "https://api.openai.com/v1"
+CANARY = "canary-value-of-a-marked-field"
 ASK = {
     "id": "ask",
     "kind": "llm",
@@ -56,15 +57,21 @@ ASK = {
     "context": {"literal": None},
     "connection": "provider",
 }
+ORDERS = {"id": "each", "kind": "forEach", "items": {"ref": "/input/orders"}}
 
 
-def workflow(*steps):
+def workflow(*steps, mark=None):
+    customer = {"type": "string", "minLength": 1, **(mark or {})}
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": "model-flow", "version": "1.0.0"},
         "spec": {
-            "inputSchema": {"type": "object"},
+            "inputSchema": {
+                "type": "object",
+                "required": ["customer", "orders"],
+                "properties": {"customer": customer, "orders": {"type": "array", "items": customer}},
+            },
             "outputSchema": {},
             "llmProfiles": {
                 "assistant": {
@@ -177,7 +184,7 @@ async def ai_steps(services, access_db, provisioned, monkeypatch):
         )
         return await helper.start(helper.tester, request, key=uuid4().hex)
 
-    async def refused(document, value="What is it?"):
+    async def refused(document, value=CANARY):
         with pytest.raises(CatalogError) as raised:
             await start(document, value)
         assert await helper.nothing_written()
@@ -186,6 +193,32 @@ async def ai_steps(services, access_db, provisioned, monkeypatch):
         return raised.value.status, raised.value.code
 
     return SimpleNamespace(start=start, refused=refused, tests=helper)
+
+
+def read(field, route):
+    """The steps around an AI task whose field reads the marked customer."""
+    if route == "direct":
+        return [{**ASK, field: {"ref": "/input/customer"}}]
+    if route == "transform":
+        copied = {"id": "copy", "kind": "transform", "value": {"object": {"value": {"ref": "/input/customer"}}}}
+        return [copied, {**ASK, field: {"ref": "/steps/copy/output/value"}}]
+    return [{**ORDERS, "body": {"steps": [{**ASK, field: {"ref": "/item"}}], "output": {"literal": None}}}]
+
+
+async def test_a_step_test_whose_texts_read_a_value_marked_secret_writes_nothing(ai_steps):
+    for mark in ({"x-secret": True}, {"writeOnly": True}):
+        for field in ("prompt", "context"):
+            for route in ("direct", "transform", "loop"):
+                refused = await ai_steps.refused(workflow(*read(field, route), mark=mark))
+                assert refused == (422, "WV-STEPTEST-DRAFT"), (mark, field, route)
+
+
+async def test_a_draft_unfinished_before_the_step_writes_nothing_and_one_unfinished_after_it_starts(ai_steps):
+    unfinished = {"id": "later", "kind": "action"}
+    assert await ai_steps.refused(workflow(unfinished, ASK)) == (422, "WV-STEPTEST-DRAFT")
+    accepted = await ai_steps.start(workflow(*read("prompt", "transform"), unfinished))
+    assert (accepted.status, accepted.side_effect) == ("running", "non_idempotent")
+    assert await ai_steps.tests.scalar("SELECT count(*) FROM test_activation_details") == 1
 
 
 async def test_a_model_the_ai_policy_doesnt_approve_writes_nothing(ai_steps):

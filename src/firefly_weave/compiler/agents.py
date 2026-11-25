@@ -199,7 +199,7 @@ def reads_secret(checks: AgentChecks, expression: JsonObject, visible: dict[str,
     Each reference is followed through the schema it reads: properties, items, combinators, local ``$defs`` and the
     schema bundle. Where the path can't be followed exactly, every schema it may reach counts.
     """
-    for pointer in _references(expression):
+    for pointer in expression_references(expression):
         try:
             segments = pointer_segments(pointer)
         except ExpressionFailure:
@@ -210,7 +210,7 @@ def reads_secret(checks: AgentChecks, expression: JsonObject, visible: dict[str,
     return False
 
 
-def _references(expression: JsonValue) -> Iterator[str]:
+def expression_references(expression: JsonValue) -> Iterator[str]:
     """Every pointer an expression reads, walked by its grammar: each node is one ``{tag: value}``.
 
     An object's keys are data, never tags, so only its values are walked; a literal holds data and stops the walk.
