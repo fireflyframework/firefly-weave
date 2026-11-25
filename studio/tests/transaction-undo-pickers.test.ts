@@ -759,5 +759,30 @@ describe("a check of a way whose operations aren't chosen yet", () => {
         "How a step is undone applies only to steps inside a transaction.",
       ],
     ]);
+    // A loop isn't a transaction, and neither is what runs after one failed.
+    const loop = {
+      id: "each",
+      kind: "forEach",
+      items: { literal: [] },
+      body: { steps: [step({ compensate: EMPTY })], output: { literal: null } },
+    };
+    const places = (steps: unknown[]) =>
+      checked(steps).map(([path, code]) => [path, code]);
+    expect(places([loop])).toEqual([
+      ["/spec/steps/0/body/steps/0/compensate", "WV-COMP-TXN_OUTSIDE"],
+    ]);
+    expect(
+      places([
+        {
+          ...move(step({})),
+          errorPath: {
+            steps: [step({ compensate: EMPTY })],
+            output: { literal: null },
+          },
+        },
+      ]),
+    ).toEqual([
+      ["/spec/steps/0/errorPath/steps/0/compensate", "WV-COMP-TXN_OUTSIDE"],
+    ]);
   });
 });
