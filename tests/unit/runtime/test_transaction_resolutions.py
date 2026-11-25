@@ -989,3 +989,20 @@ def test_it_happened_of_a_step_that_failed_settles_nothing_of_it():
     run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
     happened = resolve(run, "submit:3", "accept_reconciled_result", {"orderId": "o-1"})
     assert controls(happened, "settle") == [] and run.state.active == ["hold#confirm"]
+
+
+def test_a_failure_beside_the_decision_is_kept_when_a_confirm_cannot_be_issued():
+    # The confirm reads a step that returned nothing it can read, so it can't even be sent.
+    run = Run(compiled([transaction([hold(), parallel(submit(), lookup())])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("lookup", "UNAVAILABLE", effect="none", generation=3)
+    state = run.state.model_copy(deep=True)
+    held = state.transactions["move"].participants
+    held[0] = held[0].model_copy(update={"scope": {}})
+    run.state = state
+    run.done("submit", {"orderId": "o-1"})
+    assert {name: item.code for name, item in run.state.incidents.items()} == {
+        "hold#confirm:0": "WV-TXN-CONFIRM-STUCK",
+        "lookup:3": "WV-TXN-AFTER-PIVOT-STUCK",
+    }

@@ -18,19 +18,39 @@
 what a person can decide about every incident of a transaction."""
 
 from functools import cache
-from typing import Any
+from typing import Any, NamedTuple
 from unittest.mock import patch
 
 import pytest
 from hypothesis import HealthCheck, given, settings
+from hypothesis import event as covers
 from hypothesis import strategies as st
-from transaction_support import Run, add, compiled, hold, lookup, notify, parallel, resolve, stored, submit, transaction
+from transaction_support import (
+    Run,
+    add,
+    compiled,
+    hold,
+    lookup,
+    notify,
+    parallel,
+    resolve,
+    stored,
+    submit,
+    submit_by_call,
+    transaction,
+)
 
 from firefly_weave.compiler.api import CompiledArtifact
-from firefly_weave.contracts.transactions import IN_DOUBT_CODES, TERMINAL_TRANSACTION_STATES, split_phase
+from firefly_weave.contracts.transactions import (
+    IN_DOUBT_CODES,
+    TERMINAL_TRANSACTION_STATES,
+    UNSETTLED_TRANSACTION_STATES,
+    must_say,
+    split_phase,
+)
 from firefly_weave.operations.exports import transition_digest
 from firefly_weave.runtime import kernel
-from firefly_weave.runtime.kernel import PreparedWorkflow, prepare, transition, unsaid_steps
+from firefly_weave.runtime.kernel import PreparedWorkflow, prepare, transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TaskIntent, Transition
 from firefly_weave.runtime.transactions import deadline_key, doubted_steps, incident_transaction, open_doubts
 
@@ -153,6 +173,9 @@ class Checked(Run):
         self.facts = facts
         # The attempt each step or phase is at.
         self.attempt: dict[str, int] = {}
+        # Which of the states the test is about this run reached.
+        self.reached: set[str] = set()
+        self.calls = {node.id for node in prepare(flow).ir.graph.nodes if node.kind == "callWorkflow"}
 
     def send(self, kind: str, /, **data: Any) -> Transition:
         before = self.state
@@ -161,6 +184,7 @@ class Checked(Run):
         again = transition(stored(before), event, self.flow)
         assert transition_digest(again) == transition_digest(result)
         self.failures_beside_wait_for_the_decision()
+        self.note(before, event)
         if self.state.status not in ENDED:
             self.doubts_and_names(before)
             self.incidents_are_somebodys()
@@ -168,6 +192,27 @@ class Checked(Run):
                 self.every_doubt_can_be_ended()
             self.no_result_is_lost(before, event)
         return result
+
+    def note(self, before: RunState, event: RuntimeEvent) -> None:
+        """Which states the run reached, so a run of the test says what it covered."""
+        kind, said = event.type, event.data.get("kind")
+        for key, item in self.state.transactions.items():
+            was = before.transactions.get(key)
+            if len(open_doubts(self.facts, self.state, key)) > 1:
+                self.reached.add("two doubts of one transaction")
+            if was is None:
+                continue
+            if was.failed_beside and item.decided_at_sequence is not None and was.decided_at_sequence is None:
+                self.reached.add("a commit with a failure beside it")
+            if said == "retry_safe" and was.resume and not item.resume and item.status == "committing":
+                self.reached.add("a body resumed by a retry")
+        unsettled = [item for item in before.transactions.values() if item.status in UNSETTLED_TRANSACTION_STATES]
+        if kind == "cancelled" and len(unsettled) > 1:
+            self.reached.add("a cancel with two open transactions")
+        if kind == "resumed" and self.state.ending is not None and before.ending is None and len(unsettled) > 1:
+            self.reached.add("a run failure beside another transaction")
+        if kind == "call_completed" and before.status == "suspended":
+            self.reached.add("a call that ended behind a doubt")
 
     def doubts_and_names(self, before: RunState) -> None:
         for key, item in self.state.transactions.items():
@@ -211,7 +256,7 @@ class Checked(Run):
     def no_result_is_lost(self, before: RunState, event: RuntimeEvent) -> None:
         waiting = [item.data["node_id"] for item in self.state.deferred_results]
         assert len(waiting) == len(set(waiting))
-        if event.type in {"task_completed", "step_failed"}:
+        if event.type in {"task_completed", "step_failed", "call_completed"}:
             # Applied (the run no longer waits for it), or deferred.
             assert event.data["node_id"] not in self.state.active or event.data["node_id"] in waiting
         for key, held in self.state.transactions.items():
@@ -231,16 +276,32 @@ class Checked(Run):
     def failing(self) -> list[str]:
         return sorted(item.node_id for item in self.state.incidents.values() if item.code == "WV-TASK-FAILED")
 
+    def late_calls(self) -> list[str]:
+        """The called steps whose time is up and whose run hasn't ended yet."""
+        held = {event.data.get("node_id") for event in self.state.deferred_results}
+        doubted = {item.node_id for item in self.state.incidents.values() if item.code == "WV-TXN-PIVOT-UNKNOWN"}
+        return sorted(key for key in self.state.active if key in self.calls & doubted and key not in held)
+
     def generation(self, key: str) -> int:
-        return self.attempt.get(key, 1)
+        return self.attempt.get(key, 0 if key in self.calls else 1)
 
     def finish(self, key: str) -> None:
-        self.done(key, output_of(key), generation=self.generation(key))
+        if key in self.calls:
+            self.called(key, "succeeded", output_of(key), generation=self.generation(key))
+        else:
+            self.done(key, output_of(key), generation=self.generation(key))
 
     def fail_for_good(self, key: str, effect: str) -> None:
-        self.failed(key, "UNAVAILABLE", effect=effect, generation=self.generation(key))
+        if key in self.calls:
+            failure = {"code": "UNAVAILABLE", "message": "The call failed."}
+            self.called(key, "failed", failure, effect=effect, generation=self.generation(key))
+        else:
+            self.failed(key, "UNAVAILABLE", effect=effect, generation=self.generation(key))
 
     def fail_attempt(self, key: str, effect: str) -> None:
+        if key in self.calls:
+            # A call has no attempts of its own: its run ends, well or badly.
+            return self.fail_for_good(key, effect)
         generation = self.generation(key)
         self.send("task_failed", node_id=key, generation=generation, output={"code": "UNAVAILABLE"}, effect=effect)
 
@@ -258,7 +319,15 @@ class Checked(Run):
             resolve(self, name, kind)
         elif item.code in IN_DOUBT_CODES and item.code != "WV-TXN-PIVOT-UNKNOWN":
             assert owner is not None
-            resolve(self, name, kind, self.said(owner, ending))
+            said = self.said(owner, ending)
+            if said["participants"]:
+                # A record that leaves the last of them out changes nothing.
+                short = Run(self.flow)
+                short.state, short.now = self.state, self.now
+                resolve(short, name, kind, {**said, "participants": said["participants"][:-1]})
+                assert short.state.incidents == self.state.incidents
+                assert short.state.transactions == self.state.transactions
+            resolve(self, name, kind, said)
         else:
             resolve(self, name, kind, output_of(item.node_id))
         if kind == "retry_safe" and item.node_id in self.state.active:
@@ -269,62 +338,186 @@ class Checked(Run):
         empty: dict[str, Any] = {"as": ending, "participants": []}
         if ending == "completed":
             empty["blockOutput"] = "moved"
-        held = self.txn(key)
-        modes = {item.key: item.mode for item in held.participants}
+        doubted = doubted_steps(self.facts, self.state, key)
         words = {"reserve": "confirmed"} if ending == "completed" else {}
         other = "done" if ending == "completed" else "undone"
         steps = [
-            {"instance_key": name, "outcome": words.get(modes[name], other)}
-            for name in unsaid_steps(held, empty, doubted_steps(self.facts, self.state, key))
+            {"instance_key": item.key, "outcome": words.get(item.mode, other)}
+            for item in self.txn(key).participants
+            if must_say(ending, item.mode, item.status, item.key in doubted)
         ]
         return {**empty, "participants": steps}
 
 
-# The bodies a doubt can come from: how many reservations, a read beside a step that changes data, a read beside the
-# step that can't be undone, how many steps run side by side after it, and a second transaction beside the first.
+class Body(NamedTuple):
+    """What a doubt can come from: reservations, a read beside a step that changes data, a read beside the step that
+    can't be undone, steps side by side after it, and a second transaction beside the first. The step that can't be
+    undone is an action, a called workflow with a time limit of its own, or left out."""
+
+    holds: int
+    read: bool = False
+    beside: bool = False
+    after: int = 0
+    second: bool = False
+    pivot: str = "action"
+
+
 BODIES = (
-    (2, False, False, 0, False),
-    (3, False, False, 2, False),
-    (2, False, True, 0, True),
-    (2, True, False, 3, True),
-    (3, True, True, 1, True),
-    (2, False, True, 2, False),
-    (0, False, False, 3, False),
-    (1, True, False, 0, False),
-    (0, True, True, 3, False),
-    (1, False, True, 1, True),
+    Body(2),
+    Body(3, after=2),
+    Body(2, beside=True, second=True),
+    Body(2, read=True, after=3, second=True),
+    Body(3, read=True, beside=True, after=1, second=True),
+    Body(2, beside=True, after=2),
+    Body(0, after=3),
+    Body(1, read=True),
+    Body(0, read=True, beside=True, after=3),
+    Body(1, beside=True, after=1, second=True),
+    Body(1, after=1, pivot="call"),
+    Body(2, beside=True, pivot="call"),
+    Body(1, after=1, second=True),
+    Body(1, second=True, pivot="none"),
 )
 
 
+# What the kernel prepares of each workflow: once, as a simulation does, not per transition.
+PREPARED: dict[int, PreparedWorkflow] = {}
+
+
 @cache
-def doubtful(
-    holds: int, read: bool, beside: bool, after: int, second: bool
-) -> tuple[CompiledArtifact, PreparedWorkflow]:
-    """The workflow of a body, and what the kernel prepares of it: once, as a simulation does, not per transition."""
-    steps = [hold(f"hold{index}") for index in range(holds)]
-    if read:
+def doubtful(body: Body) -> CompiledArtifact:
+    steps = [hold(f"hold{index}") for index in range(body.holds)]
+    if body.read:
         steps.append(parallel(add(), lookup("read"), identifier="pair"))
-    steps.append(parallel(submit(), lookup("beside"), identifier="decision") if beside else submit())
-    notices = [notify(f"notify{index}") for index in range(after)]
-    steps.extend(notices if after < 2 else [parallel(*notices, identifier="notices")])
+    if body.pivot != "none":
+        decides = submit_by_call() if body.pivot == "call" else submit()
+        steps.append(parallel(decides, lookup("beside"), identifier="decision") if body.beside else decides)
+    notices = [notify(f"notify{index}") for index in range(body.after)]
+    steps.extend(notices if body.after < 2 else [parallel(*notices, identifier="notices")])
     block = transaction(steps)
     # A second transaction, whose key the database gives back before the first one's.
     other = transaction([parallel(hold("hold9"), lookup("read9"), identifier="pair9")], identifier="aa")
-    flow = compiled([parallel(block, other, identifier="fork")] if second else [block])
-    return flow, prepare(flow)
+    flow = compiled([parallel(block, other, identifier="fork")] if body.second else [block])
+    PREPARED[id(flow)] = prepare(flow)
+    return flow
 
 
 DECISIONS = ("retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate")
 
 
-@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def started(body: Body) -> Checked:
+    run = Checked(doubtful(body))
+    run.start(2)
+    return run
+
+
+def two_doubts() -> Checked:
+    run = started(Body(2))
+    advance(run, "#confirm")
+    for key in run.flying():
+        run.fail_for_good(key, "none")
+    return run
+
+
+def a_failure_beside_the_decision() -> Checked:
+    run = started(Body(2, beside=True))
+    advance(run, "submit")
+    run.fail_for_good("beside", "none")
+    return run
+
+
+def a_commit_with_a_failure_beside_it() -> Checked:
+    run = a_failure_beside_the_decision()
+    run.finish("submit")
+    return run
+
+
+def a_stuck_read_whose_body_waits() -> Checked:
+    run = started(Body(1, beside=True, after=1))
+    advance(run, "submit")
+    run.finish("submit")
+    run.fail_for_good("beside", "none")
+    run.finish("hold0#confirm")
+    return run
+
+
+def a_body_resumed_by_a_retry() -> Checked:
+    run = a_stuck_read_whose_body_waits()
+    run.decide("beside:1", "retry_safe")
+    return run
+
+
+def two_open_transactions() -> Checked:
+    run = started(Body(1, read=True, after=1, second=True))
+    advance(run, "add")
+    return run
+
+
+def a_cancel_with_two_open_transactions() -> Checked:
+    run = two_open_transactions()
+    run.send("cancelled", reason="c")
+    return run
+
+
+def a_run_failure_beside_another_transaction() -> Checked:
+    """The last step of one transaction ends and the other's change fails, both in the event of a resume."""
+    return meet_in_a_resume(Body(1, after=1, second=True), "notify0")
+
+
+def a_run_failure_beside_a_transaction_it_undoes() -> Checked:
+    """The same beside a transaction without a step that can't be undone, which goes back with the run."""
+    return meet_in_a_resume(Body(1, second=True, pivot="none"), "hold0")
+
+
+def meet_in_a_resume(body: Body, last: str) -> Checked:
+    run = started(body)
+    advance(run, last)
+    run.send("paused", reason="p", control_revision=1)
+    run.finish(last)
+    run.fail_for_good("hold9", "none")
+    run.send("resumed", reason="r", control_revision=2)
+    return run
+
+
+def a_call_whose_time_is_up() -> Checked:
+    run = started(Body(1, after=1, pivot="call"))
+    advance(run, "submit")
+    run.fire("move#decide", started=True)
+    return run
+
+
+def a_call_that_ended_behind_a_doubt() -> Checked:
+    run = a_call_whose_time_is_up()
+    run.fail_for_good("submit", "unknown")
+    return run
+
+
+def anywhere(draw) -> Checked:
+    run = started(draw(st.sampled_from(BODIES)))
+    advance(run, draw(st.sampled_from(["", "add", "add", "submit", *["#confirm"] * 3, *["notify"] * 3])))
+    return run
+
+
+# Where a generated run begins: anywhere, or at a state that a generated run rarely reaches.
+STARTS = {
+    "anywhere": anywhere,
+    "two doubts": lambda draw: two_doubts(),
+    "a failure beside the decision": lambda draw: a_failure_beside_the_decision(),
+    "a stuck read": lambda draw: a_stuck_read_whose_body_waits(),
+    "two open transactions": lambda draw: two_open_transactions(),
+    "a run failure": lambda draw: draw(
+        st.sampled_from([a_run_failure_beside_another_transaction, a_run_failure_beside_a_transaction_it_undoes])
+    )(),
+    "a call whose time is up": lambda draw: a_call_whose_time_is_up(),
+}
+
+
+@pytest.mark.parametrize("start", STARTS)
+@settings(max_examples=20, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(data=st.data())
-def test_every_incident_of_a_transaction_can_be_resolved(data):
-    flow, prepared = doubtful(*data.draw(st.sampled_from(BODIES)))
-    with patch.object(kernel, "prepare", lambda artifact: prepared):
-        run = Checked(flow)
-        run.start(2)
-        advance(run, data.draw(st.sampled_from(["", "add", "add", "submit", *["#confirm"] * 3, *["notify"] * 3])))
+def test_every_incident_of_a_transaction_can_be_resolved(start, data):
+    with patch.object(kernel, "prepare", lambda artifact: PREPARED[id(artifact)]):
+        run = STARTS[start](data.draw)
         for _ in range(data.draw(st.sampled_from([0, 1, 2, 2, 3, 3]))):
             # Several things fail before anybody decides anything.
             if run.state.status not in ENDED and run.flying():
@@ -343,6 +536,8 @@ def test_every_incident_of_a_transaction_can_be_resolved(data):
             replayed = transition(state, event, run.flow)
             assert replayed.model_dump_json() == recorded.model_dump_json()
             state = replayed.state
+        for reached in sorted(run.reached):
+            covers(reached)
 
 
 @pytest.mark.parametrize(
@@ -356,11 +551,7 @@ def test_every_incident_of_a_transaction_can_be_resolved(data):
     ],
 )
 def test_what_failed_beside_the_decision_waits_for_it_and_no_longer(outcome, decision):
-    flow, _ = doubtful(2, False, True, 0, False)
-    run = Checked(flow)
-    run.start(2)
-    advance(run, "submit")
-    run.fail_for_good("beside", "none")
+    run = a_failure_beside_the_decision()
     assert [stuck.node_id for stuck in run.txn().failed_beside] == ["beside"]
     if outcome == "done":
         run.finish("submit")
@@ -370,6 +561,26 @@ def test_what_failed_beside_the_decision_waits_for_it_and_no_longer(outcome, dec
         assert [stuck.node_id for stuck in run.txn().failed_beside] == ["beside"]
         run.decide("submit:1", decision)
     assert run.txn().failed_beside == []
+
+
+@pytest.mark.parametrize(
+    ("make", "reached"),
+    [
+        (two_doubts, "two doubts of one transaction"),
+        (a_commit_with_a_failure_beside_it, "a commit with a failure beside it"),
+        (a_body_resumed_by_a_retry, "a body resumed by a retry"),
+        (a_cancel_with_two_open_transactions, "a cancel with two open transactions"),
+        (a_run_failure_beside_another_transaction, "a run failure beside another transaction"),
+        (a_run_failure_beside_a_transaction_it_undoes, "a run failure beside another transaction"),
+        (a_call_that_ended_behind_a_doubt, "a call that ended behind a doubt"),
+    ],
+)
+@pytest.mark.parametrize("decision", ["retry_safe", "completed", "compensated", "terminate"])
+def test_each_state_the_property_is_about_ends_with_any_decision(make, reached, decision):
+    run = make()
+    assert reached in run.reached
+    settle(run, decision)
+    assert run.state.status in ENDED, (run.state.status, run.state.active, run.state.incidents)
 
 
 def advance(run: Checked, until: str) -> None:
@@ -399,6 +610,8 @@ def act(run: Checked, draw, quiet: bool) -> None:
     choices = [] if quiet else ["resume" if run.state.manual_paused else "pause"]
     if flying:
         choices += ["complete"] * 3 + ["fail"] * 5
+    if run.late_calls():
+        choices += ["the late call ends"] * 3
     if failing:
         choices += ["recover", *["fail what failed for good"] * 3]
     if run.state.incidents:
@@ -412,6 +625,10 @@ def act(run: Checked, draw, quiet: bool) -> None:
             choices += [f"{key}#hold"] * often
         if item.settle_by is not None and item.status == "compensating":
             choices.append(deadline_key(key, "settle", item.generation))
+    for key, item in run.state.transactions.items():
+        # The time of a called step that can't be undone passes: the only way to its doubt with the call still running.
+        if item.decide_by is not None and item.status == "deciding" and run.calls & set(flying):
+            choices += [f"{key}#decide"] * 3
     choice = draw(st.sampled_from(choices))
     effect = draw(st.sampled_from(["none", "unknown"])) if "fail" in choice or choice == "recover" else "unknown"
     revision = run.state.control_revision + 1
@@ -429,12 +646,19 @@ def act(run: Checked, draw, quiet: bool) -> None:
         run.recover(draw(st.sampled_from(failing)), effect)
     elif choice == "fail what failed for good":
         run.fail_for_good(draw(st.sampled_from(failing)), effect)
+    elif choice == "the late call ends":
+        if draw(st.booleans()):
+            run.finish(run.late_calls()[0])
+        else:
+            run.fail_for_good(run.late_calls()[0], draw(st.sampled_from(["none", "unknown"])))
     elif choice == "decide":
         name = draw(st.sampled_from(sorted(run.state.incidents)))
         doubted = run.state.incidents[name].code in IN_DOUBT_CODES
         # Only the step that can't be undone, or one with an onError setting, can be said not to have happened.
         kind = draw(st.sampled_from(DECISIONS if doubted else [k for k in DECISIONS if not k.endswith("failure")]))
         run.decide(name, kind, draw(st.sampled_from(["completed", "compensated"])))
+    elif choice.endswith("#decide"):
+        run.fire(choice, started=True)
     else:
         run.fire(choice)
 
