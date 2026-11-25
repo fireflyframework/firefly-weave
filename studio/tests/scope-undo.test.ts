@@ -81,6 +81,8 @@ const { cases } = JSON.parse(
 const transactions = cases.filter(({ document }) =>
   /"kind": ?"transaction"/.test(JSON.stringify(document)),
 );
+if (transactions.length < 5)
+  throw new Error("The shared scope cases hold no transactions to compare.");
 const shown = ({
   ref,
   source,
@@ -155,9 +157,6 @@ const refs = (step: string, field: string) =>
   visibleRefs(MOVE, step, field, options).map((entry) => entry.ref);
 
 describe("the data a transaction's fields read, as the compiler offers it", () => {
-  it("is compared over the shared cases", () => {
-    expect(transactions.length).toBeGreaterThanOrEqual(5);
-  });
   for (const { name, document, path, result } of transactions)
     it(name, () => {
       const at = locateDiagnostic(path, document);
