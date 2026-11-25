@@ -918,3 +918,40 @@ async def test_it_didnt_happen_although_the_called_step_ended_after_its_time_was
     await platform.complete(await platform.lease("hold#cancel"))
     assert (await platform.state(run.id))["status"] == "failed"
     assert (await platform.record(run.id))["state"] == "cancelled"
+
+
+STOP = {"id": "stop", "kind": "fail", "code": "STOPPED", "message": "It can't go on."}
+
+
+@pytest.mark.parametrize("decision", ["terminate", "compensated"])
+async def test_a_decision_is_taken_while_the_end_of_another_transaction_waits(platform, reconciler, decision):
+    """Recovery of an unrelated read lets both transactions go on in one event: one has only to end, and the other stops
+    after its step that can't be undone."""
+    other = {**transaction(submit(), NOTIFY, STOP), "id": "other"}
+    block = beside(transaction(add()), other, LOOKUP, identifier="fork")
+    run = await platform.start(await platform.publish(workflow("move", [block])))
+    added = await platform.lease("add")
+    read = platform.leased.pop("lookup")
+    await platform.complete(platform.leased.pop("submit"))
+    notified = await platform.lease("notify")
+    await platform.fail(read, "UNAVAILABLE")
+    for lease in (added, notified):
+        await platform.complete(lease)
+    assert [event["data"]["node_id"] for event in (await platform.state(run.id))["deferred_results"]] == [
+        "add",
+        "notify",
+    ]
+    await platform.scan(6)
+    if "lookup:1" in (held := await by_key(platform, run.id)):
+        await resolve(platform, held["lookup:1"], "retry_safe")
+    state = await platform.state(run.id)
+    assert (state["parked"], state["transactions"]["move"]["status"]) == (["@join:move"], "open")
+    incident = (await by_key(platform, run.id))["stop:0"]
+    if decision == "terminate":
+        await resolve(platform, incident, "terminate", actor=reconciler)
+    else:
+        await reconcile(platform, incident, reconciler, undone("submit", "notify"))
+    assert await by_key(platform, run.id) == {}
+    await platform.complete(await platform.lease("add#undo"))
+    assert (await platform.state(run.id))["status"] == ("cancelled" if decision == "terminate" else "failed")
+    assert (await platform.record(run.id))["state"] == "compensated"

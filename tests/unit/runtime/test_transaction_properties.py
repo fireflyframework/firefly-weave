@@ -26,6 +26,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import event as covers
 from hypothesis import strategies as st
 from transaction_support import (
+    WRONG,
     Run,
     add,
     compiled,
@@ -213,6 +214,8 @@ class Checked(Run):
             self.reached.add("a run failure beside another transaction")
         if kind == "call_completed" and before.status == "suspended":
             self.reached.add("a call that ended behind a doubt")
+        if any(f"@join:{key}" in self.state.parked for key in self.state.transactions):
+            self.reached.add("the end of a transaction behind a doubt")
 
     def doubts_and_names(self, before: RunState) -> None:
         for key, item in self.state.transactions.items():
@@ -351,8 +354,9 @@ class Checked(Run):
 
 class Body(NamedTuple):
     """What a doubt can come from: reservations, a read beside a step that changes data, a read beside the step that
-    can't be undone, steps side by side after it, and a second transaction beside the first. The step that can't be
-    undone is an action, a called workflow with a time limit of its own, or left out."""
+    can't be undone, steps side by side after it, a last step that can't be carried out, and a second transaction beside
+    the first. The step that can't be undone is an action, a called workflow with a time limit of its own, or left
+    out."""
 
     holds: int
     read: bool = False
@@ -360,6 +364,7 @@ class Body(NamedTuple):
     after: int = 0
     second: bool = False
     pivot: str = "action"
+    wrong: bool = False
 
 
 BODIES = (
@@ -377,6 +382,8 @@ BODIES = (
     Body(2, beside=True, pivot="call"),
     Body(1, after=1, second=True),
     Body(1, second=True, pivot="none"),
+    Body(1, after=1, second=True, wrong=True),
+    Body(0, after=2, wrong=True),
 )
 
 
@@ -394,9 +401,12 @@ def doubtful(body: Body) -> CompiledArtifact:
         steps.append(parallel(decides, lookup("beside"), identifier="decision") if body.beside else decides)
     notices = [notify(f"notify{index}") for index in range(body.after)]
     steps.extend(notices if body.after < 2 else [parallel(*notices, identifier="notices")])
+    if body.wrong:
+        steps.append(WRONG)
     block = transaction(steps)
     # A second transaction, whose key the database gives back before the first one's.
-    other = transaction([parallel(hold("hold9"), lookup("read9"), identifier="pair9")], identifier="aa")
+    held = hold("hold9") if body.wrong else parallel(hold("hold9"), lookup("read9"), identifier="pair9")
+    other = transaction([held], identifier="aa")
     flow = compiled([parallel(block, other, identifier="fork")] if body.second else [block])
     PREPARED[id(flow)] = prepare(flow)
     return flow
@@ -469,6 +479,17 @@ def a_run_failure_beside_a_transaction_it_undoes() -> Checked:
     return meet_in_a_resume(Body(1, second=True, pivot="none"), "hold0")
 
 
+def the_end_of_a_transaction_behind_a_doubt() -> Checked:
+    """One transaction finishes its body, and the other fails after its point of no return, in the event of a resume."""
+    run = started(Body(1, after=1, second=True, wrong=True))
+    advance(run, "notify0")
+    run.send("paused", reason="p", control_revision=1)
+    run.finish("hold9")
+    run.finish("notify0")
+    run.send("resumed", reason="r", control_revision=2)
+    return run
+
+
 def meet_in_a_resume(body: Body, last: str) -> Checked:
     run = started(body)
     advance(run, last)
@@ -509,6 +530,7 @@ STARTS = {
         st.sampled_from([a_run_failure_beside_another_transaction, a_run_failure_beside_a_transaction_it_undoes])
     )(),
     "a call whose time is up": lambda draw: a_call_whose_time_is_up(),
+    "a join behind a doubt": lambda draw: the_end_of_a_transaction_behind_a_doubt(),
 }
 
 
@@ -573,6 +595,7 @@ def test_what_failed_beside_the_decision_waits_for_it_and_no_longer(outcome, dec
         (a_run_failure_beside_another_transaction, "a run failure beside another transaction"),
         (a_run_failure_beside_a_transaction_it_undoes, "a run failure beside another transaction"),
         (a_call_that_ended_behind_a_doubt, "a call that ended behind a doubt"),
+        (the_end_of_a_transaction_behind_a_doubt, "the end of a transaction behind a doubt"),
     ],
 )
 @pytest.mark.parametrize("decision", ["retry_safe", "completed", "compensated", "terminate"])
@@ -676,10 +699,12 @@ def settle(run: Checked, decision: str) -> None:
         elif doubts and run.state.incidents[doubts[0]].code == "WV-TXN-PIVOT-UNKNOWN":
             happened = decision != "compensated"
             run.decide(doubts[0], "accept_reconciled_result" if happened else "accept_reconciled_failure")
-        elif doubts and decision == "retry_safe":
+        elif doubts and decision == "retry_safe" and not doubts[0].startswith("wrong"):
             run.decide(doubts[0], "retry_safe")
         elif doubts:
-            run.decide(doubts[0], "accept_reconciled_result", decision)
+            # A step that can't be carried out fails every time it is tried again.
+            ending = "compensated" if decision == "compensated" else "completed"
+            run.decide(doubts[0], "accept_reconciled_result", ending)
         elif run.failing():
             run.recover(run.failing()[0], "unknown")
         elif run.flying():

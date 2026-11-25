@@ -20,16 +20,22 @@ back is applied when it lifts, or waits for the next one; work that stopped mean
 import pytest
 from transaction_support import (
     INPUT,
+    UNSET,
+    WRONG,
     Run,
     add,
     attempt_failed,
     compiled,
     completed_once,
     controls,
+    finish_phases,
     hold,
+    join_behind_a_doubt,
     lookup,
+    meet_behind_a_pause,
     notify,
     parallel,
+    record,
     resolve,
     submit,
     tasks,
@@ -439,3 +445,110 @@ def test_a_run_failure_keeps_the_join_of_a_loop_iteration_that_finished():
     assert run.txn("move[1]").status == "completed"
     run.done("notify[0]", {})
     assert run.state.status == "failed"
+
+
+# What a person decides about the transaction in doubt, and how the run then ends.
+DECISIONS = {
+    "Force end": ("terminate", UNSET, "cancelled"),
+    "completed": ("accept_reconciled_result", record("completed", {}), "succeeded"),
+    "compensated": (
+        "accept_reconciled_result",
+        record("compensated", {"submit": "undone", "notify": "undone"}),
+        "failed",
+    ),
+}
+# The step whose transaction only has to end, its output, the block's settings, and how it ends once it goes back.
+HELD = (hold(holdSeconds=600), {"holdId": "h-1"})
+BLOCKS = {
+    "hold": (*HELD, {}, "cancelled"),
+    "hold, on error": (*HELD, {"onError": "continue"}, "cancelled"),
+    "add": (add(), {"id": "a-1"}, {}, "compensated"),
+}
+
+
+@pytest.mark.parametrize("block", BLOCKS)
+@pytest.mark.parametrize("decision", DECISIONS)
+def test_a_decision_is_taken_while_the_end_of_another_transaction_waits(decision, block):
+    step, output, settings, gone_back = BLOCKS[block]
+    kind, said, ends = DECISIONS[decision]
+    run = join_behind_a_doubt(step, output, **settings)
+    resolve(run, "wrong:0", kind, said)
+    finish_phases(run)
+    assert (run.state.status, run.state.incidents) == (ends, {})
+    assert run.txn().status == ("completed" if decision == "completed" else gone_back)
+
+
+@pytest.mark.parametrize("block", BLOCKS)
+@pytest.mark.parametrize("undone", ["before", "after"])
+def test_force_end_is_taken_after_a_stop_undid_the_transaction_whose_end_waited(undone, block):
+    step, output, settings, gone_back = BLOCKS[block]
+    run = join_behind_a_doubt(step, output, **settings)
+    run.send("cancelled", reason="c")
+    if undone == "before":
+        finish_phases(run)
+    resolve(run, "wrong:0", "terminate")
+    finish_phases(run)
+    assert (run.state.status, run.state.incidents, run.txn().status) == ("cancelled", {}, gone_back)
+
+
+@pytest.mark.parametrize("settings", [{}, {"onError": "continue"}], ids=["no setting", "on error"])
+@pytest.mark.parametrize("undone", ["before", "after"])
+@pytest.mark.parametrize("decision", DECISIONS)
+def test_a_decision_is_taken_after_the_hold_of_the_transaction_whose_end_waited_expired(decision, undone, settings):
+    kind, said, ends = DECISIONS[decision]
+    run = join_behind_a_doubt(*HELD, **settings)
+    run.fire("move#hold")
+    assert run.state.active == ["hold#cancel"] and run.state.parked == []
+    if undone == "before":
+        finish_phases(run)
+        # It waits for the barrier once, however often it was due.
+        assert run.state.parked == ["@join:move"]
+    resolve(run, "wrong:0", kind, said)
+    finish_phases(run)
+    if decision == "completed" and not settings:
+        # The block that went back fails the run, as it does when nothing held it.
+        ends = "failed"
+    assert (run.state.status, run.state.incidents, run.txn().status) == (ends, {}, "cancelled")
+
+
+def test_force_end_is_taken_while_the_ends_of_loop_iterations_wait():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [1, 2]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold()])], "output": {"literal": None}},
+    }
+    other = transaction([submit(), notify(), WRONG], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]), {**INPUT, "items": [1]})
+    run.start(2)
+    run.done("submit", {"orderId": "o-1"})
+    meet_behind_a_pause(run, {"hold[0]": {"holdId": "h-1"}, "hold[1]": {"holdId": "h-2"}, "notify": {}})
+    assert run.state.parked == ["@join:move[0]", "@join:move[1]"]
+    resolve(run, "wrong:0", "terminate")
+    assert sorted(run.state.active) == ["hold[0]#cancel", "hold[1]#cancel"]
+    finish_phases(run)
+    assert run.state.status == "cancelled"
+    assert {run.txn(f"move[{index}]").status for index in (0, 1)} == {"cancelled"}
+
+
+def test_the_end_of_one_loop_iteration_still_waits_when_another_goes_back():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [60, 600]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold(holdSeconds=600)], onError="continue")], "output": {"literal": None}},
+    }
+    other = transaction([submit(), notify(), WRONG], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]), {**INPUT, "items": [1]})
+    run.start(2)
+    run.done("submit", {"orderId": "o-1"})
+    meet_behind_a_pause(run, {"hold[0]": {"holdId": "h-1"}, "hold[1]": {"holdId": "h-2"}, "notify": {}})
+    run.fire("move[0]#hold")
+    assert (run.state.active, run.state.parked) == (["hold[0]#cancel"], ["@join:move[1]"])
+    resolve(run, "wrong:0", *DECISIONS["completed"][:2])
+    finish_phases(run)
+    assert run.state.status == "succeeded"

@@ -56,6 +56,10 @@ REPLAYABLE = (
     "golden-move-then-notify/pivot-unknown-then-it-happened",
     "golden-move-read-later/confirm-stuck-then-reconciled-as-completed",
     "golden-move-in-parallel/settle-timeout",
+    "golden-move-two-holds/two-confirms-stuck-first-reconciled-resolved",
+    "golden-move-two-holds/two-confirms-stuck-first-retried-resolved",
+    "golden-move-two-holds/two-confirms-stuck-second-force-ended-resolved",
+    "golden-move-beside-another/a-run-failure-beside-a-transaction-that-finishes",
 )
 
 
@@ -237,4 +241,27 @@ NOT_REPLAYABLE = {
     "golden-move-elsewhere/cancelled-with-a-called-step-undone": (
         "a child the platform cancelled; a session's call mock answers at once, so the participant's effect differs"
     ),
+    "golden-move-in-parallel/hold-expired-while-a-body-step-waits-for-recovery-resolved": (
+        "an interim failure incident before the final failure"
+    ),
+    "golden-move-two-holds/two-confirms-stuck-in-a-run-of-an-earlier-release-resolved": (
+        "a decision of an earlier release, whose rules no session starts with"
+    ),
+    "golden-move-two-holds/confirm-stuck-beside-an-interim-failure-reconciled-resolved": "an interim failure incident",
+    "golden-move-two-holds/two-steps-after-the-pivot-fail-together-resolved": "a step that fails and then succeeds",
+    "golden-move-after-a-read/hold-expired-while-a-read-waits-for-recovery-resolved": "an interim failure incident",
+    "golden-move-read-beside/read-fails-beside-the-decision-resolved": "a step that fails and then succeeds",
+    "golden-move-read-beside/read-fails-beside-the-decision-that-fails": "the effect of a failed read",
+    "golden-move-called-decision/a-call-ends-badly-after-its-time-and-it-happened": (
+        "a called run that ends after the time to decide"
+    ),
+    "golden-move-called-decision/a-call-ends-badly-after-its-time-and-it-happened-earlier": (
+        "a called run that ends after the time to decide"
+    ),
+    "golden-move-beside-another/a-run-failure-beside-a-transaction-that-finishes-earlier": (
+        "the rules of an earlier release, which no session starts with"
+    ),
+    "golden-move-beside-one-that-stops/a-force-end-while-the-end-of-another-transaction-waits": "a pause",
+    "golden-move-beside-one-that-stops/a-force-end-while-the-end-of-another-transaction-waits-earlier": "a pause",
+    "golden-move-beside-one-that-stops/a-force-end-while-the-end-of-another-transaction-waits-resolved": "a pause",
 }

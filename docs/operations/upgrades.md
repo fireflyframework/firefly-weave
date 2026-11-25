@@ -729,11 +729,15 @@ replay to the same bytes.
 | An active incident of a transaction that is already `reconciled` or `force_ended`, or of a step the run no longer waits for | `retry_safe` runs nothing again, closes it, and the run goes on |
 | `suspended` with no active incident | Pause the run: its incident becomes active again and takes a decision |
 | `waiting` with nothing active and a transaction that stays `committing` | Cancel the run without undoing it. A plain cancel leaves it waiting |
+| An active `WV-RUNTIME-JOIN` or `WV-RUNTIME-ACTIVATION` incident after a resume, with another transaction that went back | `terminate`. A person decided the run while it was paused, and an earlier version then ran the end of that transaction too early, or twice |
 
-The last row covers three cases of earlier versions: a step lost behind a second
+The fourth row covers three cases of earlier versions: a step lost behind a second
 incident after the point of no return, a read that failed beside the step that
 can't be undone (also after a decision moved the run to this version's rules),
 and a run that failed in the moment another of its transactions finished.
+
+On an earlier version, if every decision on such an incident answers HTTP 409
+`WV-RUNTIME-RESOLUTION`, pause the run and then use Force end.
 
 **Before a rollback**, finish or cancel the runs that use transactions: an
 earlier server refuses the state of a run that follows this version's rules.

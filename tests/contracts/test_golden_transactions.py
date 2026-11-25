@@ -81,6 +81,12 @@ def test_the_transaction_corpus_records_every_source_once_and_every_outcome():
         "read-fails-beside-the-decision-that-fails": ("failed", "cancelled"),
         "a-call-ends-badly-after-its-time-and-it-happened": ("succeeded", "completed"),
         "a-run-failure-beside-a-transaction-that-finishes": ("failed", "completed"),
+        # The earlier rules of transactions: the decision is refused, the run waits, and the decision is refused.
+        "a-call-ends-badly-after-its-time-and-it-happened-earlier": ("suspended", "in_doubt"),
+        "a-run-failure-beside-a-transaction-that-finishes-earlier": ("waiting", "committing"),
+        "a-force-end-while-the-end-of-another-transaction-waits-earlier": ("suspended", "open"),
+        "a-force-end-while-the-end-of-another-transaction-waits": ("cancelled", "cancelled"),
+        "a-force-end-while-the-end-of-another-transaction-waits-resolved": ("cancelled", "cancelled"),
     }
 
 

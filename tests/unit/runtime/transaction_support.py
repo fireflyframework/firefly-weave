@@ -385,6 +385,38 @@ def after_pivot_pair(run_rules: int = 1, confirm: str = "is stuck") -> Run:
     return run
 
 
+# A step that can't be carried out: the run's input has no such item.
+WRONG = {"id": "wrong", "kind": "transform", "value": {"ref": "/input/items/4"}}
+
+
+def meet_behind_a_pause(run: Run, finishes: dict[str, Any]) -> None:
+    """These steps finish while the run is paused, so its resume takes their results in one event."""
+    run.send("paused", reason="p", control_revision=1)
+    for key, output in finishes.items():
+        run.done(key, output)
+    run.send("resumed", reason="p", control_revision=2)
+
+
+def join_behind_a_doubt(step: dict[str, Any], output: Any, rules: int = 2, **settings: Any) -> Run:
+    """``move`` finished its only step, and in the same event ``other`` came in doubt after its point of no return: the
+    end of ``move`` waits behind that incident, while nothing of it is decided."""
+    other = transaction([submit(), notify(), WRONG], identifier="other")
+    blocks = parallel(transaction([step], **settings), other, identifier="fork")
+    run = Run(compiled([blocks]), {**INPUT, "items": [1]})
+    run.start(rules)
+    run.done("submit", {"orderId": "o-1"})
+    meet_behind_a_pause(run, {step["id"]: output, "notify": {}})
+    assert (run.state.parked, run.txn().status, list(run.state.incidents)) == (["@join:move"], "open", ["wrong:0"])
+    return run
+
+
+def finish_phases(run: Run) -> None:
+    """Every confirm, release and undo that goes out is done."""
+    while phases := [key for key in run.state.active if "#" in key]:
+        for key in phases:
+            run.done(key, {})
+
+
 def stored(state: RunState) -> RunState:
     """The state as PostgreSQL gives it back: ``jsonb`` keeps an object's keys by length, then by bytes."""
 

@@ -125,6 +125,7 @@ NOTIFY = {
     "with": {"object": {"text": {"ref": "/input/moveId"}}},
     "irreversible": True,
 }
+STOP = {"id": "stop", "kind": "fail", "code": "STOPPED", "message": "It can't go on."}
 ELSEWHERE = {
     "id": "elsewhere",
     "kind": "callWorkflow",
@@ -262,10 +263,10 @@ def resolve(key: str, kind: str, code: str, output: Any = None) -> tuple[str, di
     return "incident_resolved", {**data, **({"output": output} if output is not None else {})}
 
 
-def decide(key: str, kind: str, code: str, output: Any = None) -> tuple[str, dict[str, Any]]:
+def decide(key: str, kind: str, code: str, output: Any = None, transaction: str = "move") -> tuple[str, dict[str, Any]]:
     """A resolution of this release: it also says the rules the run follows and the transaction it decides."""
     event, data = resolve(key, kind, code, output)
-    return event, {**data, "transaction_rules": 2, "transaction": "move"}
+    return event, {**data, "transaction_rules": 2, "transaction": transaction}
 
 
 def later(seconds: int) -> tuple[str, dict[str, Any]]:
@@ -295,6 +296,16 @@ BOTH_FAIL_AFTER = (
 )
 # A read fails for good while the step that can't be undone is in flight.
 READ_FAILED = (H, attempt_failed("lookup", "none"), failed("lookup", "REJECTED", "none"))
+
+
+# One transaction finishes its body in the event in which another stops after its step that can't be undone.
+END_WAITS = (
+    done("submit", {"orderId": "o-1"}),
+    ("paused", {"control_revision": 1, "reason": "look"}),
+    H,
+    done("notify", {}),
+    ("resumed", {"control_revision": 2, "reason": "go on"}),
+)
 
 
 def finished(*confirmed: str) -> dict[str, Any]:
@@ -672,6 +683,15 @@ SOURCES = (
                 ),
                 rules=2,
             ),
+            Scenario(
+                "a-call-ends-badly-after-its-time-and-it-happened-earlier",
+                (
+                    H,
+                    due("move#decide"),
+                    call_failed("submit"),
+                    resolve("submit:0", "accept_reconciled_result", "WV-TXN-PIVOT-UNKNOWN", {}),
+                ),
+            ),
         ),
     ),
     Source(
@@ -693,6 +713,49 @@ SOURCES = (
                     ("resumed", {"control_revision": 2, "reason": "go on"}),
                 ),
                 rules=2,
+            ),
+            Scenario(
+                "a-run-failure-beside-a-transaction-that-finishes-earlier",
+                (
+                    H,
+                    done("submit", {"orderId": "o-1"}),
+                    done("hold#confirm", {}),
+                    ("paused", {"control_revision": 1, "reason": "look"}),
+                    done("notify", {}),
+                    failed("add9", "REFUSED", "none"),
+                    ("resumed", {"control_revision": 2, "reason": "go on"}),
+                ),
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-beside-one-that-stops",
+        _workflow(
+            "golden-move-beside-one-that-stops",
+            [_beside(_transaction(hold()), {**_transaction(SUBMIT, NOTIFY, STOP), "id": "other"})],
+        ),
+        (
+            Scenario(
+                "a-force-end-while-the-end-of-another-transaction-waits",
+                (
+                    *END_WAITS,
+                    decide("stop:0", "terminate", "WV-TXN-AFTER-PIVOT-STUCK", transaction="other"),
+                    done("hold#cancel", {}),
+                ),
+                rules=2,
+            ),
+            Scenario(
+                "a-force-end-while-the-end-of-another-transaction-waits-earlier",
+                (*END_WAITS, resolve("stop:0", "terminate", "WV-TXN-AFTER-PIVOT-STUCK")),
+            ),
+            Scenario(
+                "a-force-end-while-the-end-of-another-transaction-waits-resolved",
+                (
+                    *END_WAITS,
+                    due("move#hold"),
+                    decide("stop:0", "terminate", "WV-TXN-AFTER-PIVOT-STUCK", transaction="other"),
+                    done("hold#cancel", {}),
+                ),
             ),
         ),
     ),

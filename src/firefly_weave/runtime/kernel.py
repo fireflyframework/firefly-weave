@@ -1043,6 +1043,11 @@ def _advance_owned(
             result.commands.append(ControlCommand(kind="settle", node_id=name))
         stopped(gone)
         queue[:] = [name for name in queue if not within_body(transaction, suffix, node_of(name), loop_suffix(name))]
+        if rules_2():
+            # No transaction owns its own join, so nothing above takes it: it is queued again once this one has ended.
+            join = transaction.join + suffix
+            queue[:] = [name for name in queue if name != join]
+            current_state.parked[:] = [name for name in current_state.parked if name != join]
 
     def abort(key: str, why: TransactionCause) -> None:
         transaction = record(key)
@@ -1568,6 +1573,19 @@ def _advance_owned(
             return False
         ahead = current_state.transactions.get(node.owner + loop_suffix(name))
         return ahead is not None and ahead.status in {"committing", "in_doubt"}
+
+    def drop_parked_joins() -> None:
+        """Leave a run that moves to the second rules as they would have left it: the first rules keep the join of a
+        transaction that goes back where it waits, and add it again once that one has ended."""
+        kept: list[str] = []
+        for name in current_state.parked:
+            node = nodes[node_of(name)]
+            if isinstance(node, JoinNode) and node.mode == "transaction":
+                block = current_state.transactions.get(node.owner + loop_suffix(name))
+                if name in kept or (block is not None and block.rollback and block.status in UNSETTLED):
+                    continue
+            kept.append(name)
+        current_state.parked[:] = kept
 
     def end_run(status: str, code: str | None = None, output: JsonValue = None) -> None:
         """End the run, or start ending it once its transactions settle: they are undone first, never abandoned."""
@@ -2488,6 +2506,8 @@ def _advance_owned(
                 except KernelError:
                     return refused_resolution()
                 if moves:
+                    if not rules_2():
+                        drop_parked_joins()
                     current_state = current_state.model_copy(update={"transaction_rules": TRANSACTION_RULES})
                 if prior is not None and prior.code in IN_DOUBT_CODES:
                     # A transaction in doubt moves only through the resolutions made for it.

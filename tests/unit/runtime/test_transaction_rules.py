@@ -21,17 +21,21 @@ from uuid import uuid4
 
 import pytest
 from transaction_support import (
+    UNSET,
     Run,
     add,
     after_pivot_pair,
     attempt_failed,
     compiled,
+    finish_phases,
     finished,
     hold,
+    join_behind_a_doubt,
     lookup,
     notify,
     one_stuck,
     parallel,
+    record,
     resolve,
     stored,
     submit,
@@ -373,3 +377,83 @@ def test_an_exported_event_keeps_its_rules():
     assert safe_event(started, run.flow).data == started.data
     withheld = {"reason", "evidence_reference"}
     assert safe_event(resolved, run.flow).data == {k: v for k, v in resolved.data.items() if k not in withheld}
+
+
+HELD = (hold(holdSeconds=600), {"holdId": "h-1"})
+ENDINGS = {
+    "Force end": ("terminate", UNSET),
+    "completed": ("accept_reconciled_result", record("completed", {})),
+    "compensated": (
+        "accept_reconciled_result",
+        record("compensated", {"submit": "undone", "notify": "undone"}),
+    ),
+}
+
+
+def earlier_join_behind_a_doubt(hold_state: str = "open", **settings) -> Run:
+    """A run of the first rules: the end of ``move`` waits behind a doubt, and its hold may have expired meanwhile."""
+    run = join_behind_a_doubt(*HELD, rules=1, **settings)
+    if hold_state != "open":
+        run.fire("move#hold")
+    if hold_state == "released":
+        finish_phases(run)
+    return run
+
+
+@pytest.mark.parametrize("decision", ["Force end", "compensated"])
+def test_the_first_rules_refuse_a_decision_that_undoes_a_transaction_whose_end_waits(decision):
+    run = earlier_join_behind_a_doubt()
+    resolve(run, "wrong:0", *ENDINGS[decision])
+    # The decision is refused, and it leaves the incident of the step that couldn't run.
+    assert run.state.incidents.keys() == {"wrong:0", "@join:move:0"}
+    assert run.state.incidents["@join:move:0"].code == "WV-RUNTIME-JOIN"
+    assert (run.txn().status, run.txn("other").status) == ("open", "in_doubt")
+
+
+def test_the_first_rules_keep_the_end_of_a_transaction_that_goes_back_and_add_it_again():
+    run = earlier_join_behind_a_doubt("expired")
+    assert run.state.parked == ["@join:move"]
+    finish_phases(run)
+    assert run.state.parked == ["@join:move", "@join:move"]
+
+
+@pytest.mark.parametrize("ending", ENDINGS)
+@pytest.mark.parametrize("settings", [{}, {"onError": "continue"}], ids=["no setting", "on error"])
+@pytest.mark.parametrize("hold_state", ["open", "expired", "released"])
+@pytest.mark.parametrize("paused", [False, True], ids=["as is", "paused"])
+def test_an_earlier_run_with_a_parked_join_takes_every_decision(ending, settings, hold_state, paused):
+    run = earlier_join_behind_a_doubt(hold_state, **settings)
+    if paused:
+        run.send("paused", reason="p", control_revision=3)
+    resolve(run, "wrong:0", *ENDINGS[ending], rules=2)
+    assert "wrong:0" not in run.state.incidents and run.state.transaction_rules == 2
+    finish_phases(run)
+    if run.state.manual_paused and run.state.status in {"waiting", "suspended"}:
+        run.send("resumed", reason="p", control_revision=4)
+        finish_phases(run)
+    assert run.state.status in {"cancelled", "failed", "succeeded"}
+    assert run.state.incidents == {} and run.txn().status in {"cancelled", "completed"}
+
+
+def test_a_refused_decision_leaves_the_parked_join():
+    run = earlier_join_behind_a_doubt("released")
+    before = run.state.model_copy(deep=True)
+    refused = resolve(run, "wrong:0", "accept_reconciled_result", {"as": "completed"}, rules=2)
+    assert unchanged(run, before) and refused.commands == []
+    assert (run.state.parked, run.state.transaction_rules) == (["@join:move", "@join:move"], 1)
+
+
+@pytest.mark.parametrize(
+    ("hold_state", "settings", "stopped_at"),
+    [("expired", {}, "@join:move:0"), ("released", {"onError": "continue"}, "@branch:fork:0:0")],
+)
+def test_an_earlier_run_that_was_decided_while_paused_ends_by_force(hold_state, settings, stopped_at):
+    # An earlier version took the decision, and the resume then ran the join it had kept, or ran it twice.
+    run = earlier_join_behind_a_doubt(hold_state, **settings)
+    run.send("paused", reason="p", control_revision=3)
+    resolve(run, "wrong:0", *ENDINGS["completed"])
+    run.send("resumed", reason="p", control_revision=4)
+    assert run.state.incidents.keys() == {stopped_at} and run.state.transaction_rules == 1
+    resolve(run, stopped_at, "terminate", rules=2)
+    finish_phases(run)
+    assert (run.state.status, run.state.incidents, run.txn().status) == ("cancelled", {}, "cancelled")
