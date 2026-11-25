@@ -208,7 +208,8 @@ async def deliver_revoked(
     """Report each participant task revoked before any worker claimed it: nothing was applied.
 
     Runs under the run's lock, like the delivery of call results; each report is one accepted event with a stable
-    identity.
+    identity. A task its run no longer waits for (a person ended its transaction) is cancelled and never reported: the
+    kernel refuses a result nobody waits for and would hold the run behind an incident.
     """
     from firefly_weave.compiler.canonical import canonical_digest
     from firefly_weave.runtime.kernel import transition_async as transition
@@ -217,7 +218,11 @@ async def deliver_revoked(
         f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND status='revoked' ORDER BY id FOR UPDATE",
         run=view.id,
     )
+    delivered = 0
     for row in rows:
+        if row["node_id"] not in view.state.active:
+            await repository.task_status(row["id"], "cancelled")
+            continue
         generations = await repository.rows(
             f"SELECT coalesce(max(generation),0) AS value FROM task_leases WHERE {SCOPE} AND task_id=:task",
             task=row["id"],
@@ -240,7 +245,8 @@ async def deliver_revoked(
         result = await transition(view.state, event, artifact)
         view = view.model_copy(update={"state": result.state})
         await repository.persist(view, event, result, canonical_digest({"revoked": str(row["id"])}))
-    return view, len(rows)
+        delivered += 1
+    return view, delivered
 
 
 async def child_effect(repository: RuntimeRepository, run_id: UUID, artifact: Mapping[str, Any]) -> str:
