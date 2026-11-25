@@ -535,9 +535,16 @@ class IncidentService:
                 transaction_key,
                 every=ends_every_transaction,
             )
-            closed = await repository.resolve_incidents(
-                previous.id, beside, actor.id, event.timestamp, recorded.model_copy(update={"output": None})
-            )
+            closed: list[str] = []
+            for was in (False, True):
+                # Each of them says for itself whether an earlier decision had left it.
+                keys = [
+                    key
+                    for key in beside
+                    if (facts is not None and leftover(facts, previous.state, previous.state.incidents[key])) is was
+                ]
+                said = recorded.model_copy(update={"output": None, "leftover": was})
+                closed += await repository.resolve_incidents(previous.id, keys, actor.id, event.timestamp, said)
             await repository.resolve_incidents(
                 previous.id, [incident["incident_key"]], actor.id, event.timestamp, recorded
             )
@@ -577,7 +584,7 @@ class IncidentService:
                     "receipt_id": str(request.receipt_id),
                     "evidence_reference": request.evidence_reference,
                     **({"transaction": transaction_key} if transaction_key is not None else {}),
-                    **({"closed": closed} if closed else {}),
+                    **({"closed": sorted(closed)} if closed else {}),
                     **({"leftover": True} if left else {}),
                     **(
                         {"as": request.output["as"]}

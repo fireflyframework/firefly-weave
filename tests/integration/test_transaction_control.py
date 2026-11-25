@@ -158,6 +158,61 @@ async def test_a_stop_that_closes_a_doubt_records_who_stopped_it(platform, recon
     assert row["revision"] > left["revision"]
 
 
+@pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_stop_of_a_run_too_large_keeps_what_an_earlier_decision_left(
+    platform, reconciler, monkeypatch, skip_undo, too_large
+):
+    from firefly_weave.runtime import kernel, repository
+
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    with monkeypatch.context() as large:
+        if too_large == "to read":
+            large.setattr(repository, "RUN_FETCH_BYTES", 1)
+        else:
+            large.setattr(kernel, "STATE_BYTES", 1)
+        await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=left["id"])
+    assert (row["status"], row["actor_id"]) == ("resolved", reconciler.id)
+    assert (row["resolution"]["kind"], row["resolution"].get("leftover")) == ("terminate", True)
+
+
+@pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
+async def test_a_stop_of_a_run_too_large_keeps_a_doubt_apart_from_what_was_left(
+    platform, reconciler, monkeypatch, too_large
+):
+    from firefly_weave.runtime import kernel, repository
+
+    run, incident = await confirm_stuck(platform)
+    with monkeypatch.context() as large:
+        if too_large == "to read":
+            large.setattr(repository, "RUN_FETCH_BYTES", 1)
+            await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+        else:
+            large.setattr(kernel, "STATE_BYTES", 1)
+            await resolve(platform, incident, "terminate", actor=reconciler)
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=incident["id"])
+    assert (row["status"], row["resolution"]["kind"]) == ("resolved", "terminate")
+    # It was still to be decided, and this stop decided it.
+    assert "leftover" not in row["resolution"]
+
+
+async def test_force_end_of_a_held_run_keeps_what_an_earlier_decision_left(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch, others=[other])
+    await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    with monkeypatch.context() as large:
+        large.setattr(kernel, "STATE_BYTES", 1)
+        await platform.scan()
+        held = (await by_key(platform, run.id))[HELD_INCIDENT]
+        await resolve(platform, held, "terminate", actor=reconciler)
+    ended = await by_key(platform, run.id, "resolved")
+    assert ended[left["incident_key"]]["resolution"]["leftover"] is True
+    assert "leftover" not in ended[HELD_INCIDENT]["resolution"]
+
+
 async def test_a_stop_closes_any_other_incident_without_a_person(platform, reconciler):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)

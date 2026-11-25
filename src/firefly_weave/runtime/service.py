@@ -17,6 +17,7 @@
 """Authorized run orchestration using caller-owned or service-owned transactions."""
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
@@ -59,7 +60,13 @@ from firefly_weave.runtime.kernel import KernelError, action_schemas, unsettled,
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TerminalControl
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
-from firefly_weave.runtime.transactions import HELD_INCIDENT, TRANSACTION_RULES, leftover, shapes
+from firefly_weave.runtime.transactions import (
+    HELD_INCIDENT,
+    TRANSACTION_RULES,
+    incident_transaction,
+    leftover,
+    shapes,
+)
 
 if TYPE_CHECKING:
     from firefly_weave.runtime.calls import ChildStart
@@ -146,6 +153,55 @@ def decided_by_stop(artifact: JsonObject, before: RunState, after: RunState, dou
     closed = {key: before.incidents[key] for key in doubts if key in before.incidents and key not in after.incidents}
     facts = shapes(workflow(import_artifact(artifact))) if closed else None
     return {key: facts is not None and leftover(facts, before, item) for key, item in closed.items()}
+
+
+async def decided_by_sql_stop(repository: RuntimeRepository, row: dict[str, Any], doubts: list[str]) -> dict[str, bool]:
+    """The incidents in doubt that the stop of a run too large for the kernel closes, all of them, and whether an
+    earlier decision had left each. Read from the transactions' records before the stop ends any."""
+    from functools import partial
+
+    from firefly_weave.operations.execution import execute_pure
+
+    facts = None
+    if doubts and row.get("artifact"):
+        try:
+            facts = shapes(workflow(await execute_pure(partial(import_artifact, row["artifact"]), control=True)))
+        except ValueError:
+            facts = None
+    if facts is None:
+        return dict.fromkeys(doubts, False)
+    ended = {
+        record["instance_key"]
+        for record in await repository.rows(
+            f"SELECT instance_key FROM run_transactions WHERE {SCOPE} AND run_id=:run "
+            "AND state IN ('reconciled','force_ended')",
+            run=row["id"],
+        )
+    }
+    incidents = await repository.rows(
+        f"SELECT incident_key,node_id,code FROM incidents WHERE {SCOPE} AND run_id=:run "
+        "AND incident_key=ANY(cast(:keys AS text[]))",
+        run=row["id"],
+        keys=doubts,
+    )
+    return {
+        item["incident_key"]: incident_transaction(facts, item["node_id"], item["code"]) in ended for item in incidents
+    }
+
+
+async def record_stop(
+    repository: RuntimeRepository,
+    run_id: UUID,
+    decided: Mapping[str, bool],
+    actor_id: UUID,
+    event: RuntimeEvent,
+    reason: str,
+) -> None:
+    """Record a stop on the incidents in doubt it closed, each with whether an earlier decision had left it."""
+    for left in (False, True):
+        keys = [key for key, was in decided.items() if was is left]
+        resolution = stopped_resolution(event, reason, left=left)
+        await repository.resolve_incidents(run_id, keys, actor_id, event.timestamp, resolution)
 
 
 async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:
@@ -737,13 +793,12 @@ class RuntimeService:
                     sequence=row["state"]["accepted_sequence"] + 1,
                     data={"actor_id": str(actor.id), "reason": request.reason, **skipped},
                 )
+                decided = await decided_by_sql_stop(repository, row, doubts)
                 if skip_undo:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
-                await repository.resolve_incidents(
-                    run_id, doubts, actor.id, event.timestamp, stopped_resolution(event, request.reason)
-                )
+                await record_stop(repository, run_id, decided, actor.id, event, request.reason)
                 await audit(
                     tx.session,
                     actor,
@@ -752,7 +807,12 @@ class RuntimeService:
                     scope=scope,
                     capability=capability,
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
+                    details={
+                        "external_effects_may_continue": True,
+                        "reason": request.reason,
+                        **skipped,
+                        **cascade,
+                    },
                 )
                 return capacity_ack
             from firefly_weave.runtime.admission import unavailable
@@ -798,13 +858,12 @@ class RuntimeService:
                     previous.state, event, None if quarantined else import_artifact(row["artifact"])
                 )
             except RuntimeCapacityError:
+                decided = await decided_by_sql_stop(repository, row, doubts)
                 if skip_undo:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
-                await repository.resolve_incidents(
-                    run_id, doubts, actor.id, event.timestamp, stopped_resolution(event, request.reason)
-                )
+                await record_stop(repository, run_id, decided, actor.id, event, request.reason)
                 await audit(
                     tx.session,
                     actor,
@@ -813,7 +872,12 @@ class RuntimeService:
                     scope=scope,
                     capability=capability,
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
+                    details={
+                        "external_effects_may_continue": True,
+                        "reason": request.reason,
+                        **skipped,
+                        **cascade,
+                    },
                 )
                 return capacity_ack
             draining = result.state.status not in TERMINAL
@@ -833,14 +897,11 @@ class RuntimeService:
             await repository.persist(view, event, result, event_hash(event), safe_response=ack)
             if isinstance(previous, RunView):
                 decided = decided_by_stop(row["artifact"], previous.state, result.state, doubts)
-                for left in (False, True):
-                    keys = [key for key, was in decided.items() if was is left]
-                    resolution = stopped_resolution(event, request.reason, left=left)
-                    await repository.resolve_incidents(run_id, keys, actor.id, event.timestamp, resolution)
+                reason = request.reason
             else:
                 # Its audit row names the code of the stop instead of a reason, and so do its incidents.
-                resolution = stopped_resolution(event, "WV-LEGACY-UNAVAILABLE")
-                await repository.resolve_incidents(run_id, doubts, actor.id, event.timestamp, resolution)
+                decided, reason = dict.fromkeys(doubts, False), "WV-LEGACY-UNAVAILABLE"
+            await record_stop(repository, run_id, decided, actor.id, event, reason)
             await audit(
                 tx.session,
                 actor,
