@@ -28,7 +28,7 @@ from uuid import uuid4
 import pytest
 from hypothesis import HealthCheck, given, reject, settings
 from hypothesis import strategies as st
-from transaction_support import INPUT, START, Run, add, compiled, hold, tasks, transaction
+from transaction_support import INPUT, START, Run, add, compiled, hold, submit, tasks, transaction
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.canonical import canonical_digest
@@ -45,6 +45,7 @@ from firefly_weave.runtime.transactions import STUCK
 ROLLED_BACK = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
 STOPPED = {"code": "STOPPED", "message": "The move was stopped."}
 FAIL = {"id": "stop", "kind": "fail", **STOPPED}
+CONTINUE = {"onError": "continue"}
 PATH = {"steps": [], "output": {"literal": "undone"}}
 LATER = {"id": "later", "kind": "transform", "value": {"literal": "later"}}
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
@@ -93,7 +94,16 @@ BODIES = {
     ],
     "a step after the fail step": [add(), FAIL, lookup("never")],
     "two steps and a fail step": [add(), hold(), FAIL],
+    "a fail step after the step that can't be undone": [add(), submit(), FAIL],
 }
+
+
+def each(identifier: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """A loop of two items that run at once."""
+    body = {"steps": steps, "output": {"literal": None}}
+    loop = {"kind": "forEach", "items": {"literal": [1, 2]}, "maxItems": 2, "concurrency": 2, "body": body}
+    return {"id": identifier, **loop}
+
 
 # Where the transaction stands in the workflow. An action before it, or beside it, is still the run's own.
 PLACES = {
@@ -105,6 +115,8 @@ PLACES = {
         lookup(onError="errorOutput", errorPath={"steps": [block], "output": {"literal": "the block's place"}}),
         LATER,
     ],
+    # The decision lets the loop's body end another way, as the compiler requires.
+    "in a decision of a loop": lambda block: [each("outer", [switch("choose-block", [block], [])]), LATER],
 }
 
 
@@ -118,27 +130,43 @@ def flow(body: str, place: str = "alone", *, continues: bool = True) -> Compiled
 
 
 def opened(artifact: CompiledArtifact) -> Run:
-    """Start the run and bring it to the open transaction, whose first step is in flight."""
+    """Start the run and bring it to its open transactions (one for each item of a loop), each with add in flight."""
     run = Run(artifact)
     run.start()
     if "look" in run.state.active:
         run.failed("look", "REJECTED", effect="none")
-    assert run.txn().status == "open" and "add" in run.state.active
+    assert len(adding(run)) == len(run.state.transactions) > 0
+    assert {record.status for record in run.state.transactions.values()} == {"open"}
     return run
+
+
+def adding(run: Run) -> list[str]:
+    return [key for key in run.state.active if node_of(key) == "add"]
+
+
+def rejected(run: Run) -> None:
+    """The first step of every transaction fails with nothing applied."""
+    for key in adding(run):
+        run.failed(key, "REJECTED", effect="none")
 
 
 @pytest.mark.parametrize("place", list(PLACES))
 @pytest.mark.parametrize("body", list(BODIES))
 def test_a_rollback_with_nothing_to_go_on_to_fails_the_run_as_without_the_setting(body, place):
     run = opened(flow(body, place))
-    ended = run.failed("add", "REJECTED", effect="none")
-    assert (run.txn().status, run.txn().cause.code) == ("cancelled", "REJECTED")
+    rejected(run)
+    assert {record.status for record in run.state.transactions.values()} == {"cancelled"}
+    # The first rollback ends the run, which undoes the transaction of a loop's other item.
+    first, *others = [record.cause.code for record in run.state.transactions.values()]
+    assert first == "REJECTED" and set(others) <= {"WV-TXN-ROLLED-BACK"}
     assert (run.state.status, run.state.incident, run.state.output) == ("failed", "WV-TXN-ROLLED-BACK", ROLLED_BACK)
     assert run.state.active == [] and run.state.incidents == {}
     # The block's failure was not handled: no step change says so, and no error object is left behind.
-    assert [change for change in ended.steps if change.node_id == "move"] == []
+    ends = [change for result in run.transitions for change in result.steps if change.node_id == "move"]
+    assert [change for change in ends if change.status == "failed"] == []
     plain = opened(flow(body, place, continues=False))
-    assert plain.failed("add", "REJECTED", effect="none").state == run.state
+    rejected(plain)
+    assert plain.state == run.state
 
 
 def test_the_last_undo_ends_the_run_when_nothing_follows_the_block():
@@ -208,28 +236,30 @@ def test_only_continue_on_a_block_with_nothing_after_it_is_left_out():
     assert output(can_end, onError="continue") == ("succeeded", "later")
 
 
-def reconcile(run: Run, ending: str) -> None:
-    """A person says how the transaction in doubt ended and what happened to each of its stuck steps."""
+def decide(run: Run, kind: str, **data: Any) -> None:
+    """A person's decision about the first transaction in doubt."""
     doubted = next(record for record in run.state.transactions.values() if record.status == "in_doubt")
     key = doubted.incident
     incident = run.state.incidents[key]
-    stuck = [item for item in doubted.participants if item.status in STUCK]
-    outcomes = {"compensated": "undone", "completed": "done"}
-    record = {
-        "as": ending,
-        "participants": [{"instance_key": item.key, "outcome": outcomes[ending]} for item in stuck],
-        **({"blockOutput": "moved"} if ending == "completed" else {}),
-    }
     run.send(
         "incident_resolved",
         incident_key=key,
         receipt_id=str(uuid4()),
         node_id=incident.node_id,
         generation=incident.generation,
-        kind="accept_reconciled_result",
-        output=record,
+        kind=kind,
         actor_id="person",
+        **data,
     )
+
+
+def reconcile(run: Run, ending: str) -> None:
+    """A person says how the transaction in doubt ended and what happened to each of its stuck steps."""
+    doubted = next(record for record in run.state.transactions.values() if record.status == "in_doubt")
+    outcome = {"compensated": "undone", "completed": "done"}[ending]
+    named = [{"instance_key": item.key, "outcome": outcome} for item in doubted.participants if item.status in STUCK]
+    output = {"blockOutput": "moved"} if ending == "completed" else {}
+    decide(run, "accept_reconciled_result", output={"as": ending, "participants": named, **output})
 
 
 @pytest.mark.parametrize(
@@ -255,7 +285,22 @@ def test_a_person_can_say_the_block_completed_only_when_the_run_is_ending(settin
     assert (ending.txn().reconciled_as, ending.state.status) == ("completed", "cancelled")
 
 
-OUTPUTS = {"add": {"id": "a-1"}, "hold": {"holdId": "h-1"}}
+@pytest.mark.parametrize("setting", [{}, CONTINUE], ids=["stop", "continue"])
+def test_after_the_step_that_cant_be_undone_the_fail_step_leaves_force_end(setting):
+    run = Run(compiled([transaction([hold(), submit(), FAIL], **setting), LATER]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    tell(run, "done", "hold#confirm")
+    assert (run.txn().status, run.state.incident) == ("in_doubt", "WV-TXN-AFTER-PIVOT-STUCK")
+    before = run.state.model_copy(deep=True)
+    tell(run, "say", "completed")
+    assert run.state == before.model_copy(update={"accepted_sequence": before.accepted_sequence + 1})
+    tell(run, "force")
+    assert (run.txn().status, run.state.status, run.state.incidents) == ("force_ended", "cancelled", {})
+
+
+OUTPUTS = {"add": {"id": "a-1"}, "hold": {"holdId": "h-1"}, "submit": {"orderId": "o-1"}}
 
 
 def tell(run: Run, kind: str, key: str = "") -> None:
@@ -272,6 +317,8 @@ def tell(run: Run, kind: str, key: str = "") -> None:
         run.send("cancelled", actor_id="person", reason="stop")
     elif kind == "say":
         reconcile(run, key)
+    elif kind == "force":
+        decide(run, "terminate")
     elif kind in {"succeeded", "stopped"}:
         # A called run's result: what it applied is unknown when it stopped.
         output = None if kind == "succeeded" else STOPPED
@@ -342,7 +389,6 @@ def call(identifier: str, **extra: Any) -> dict[str, Any]:
     }
 
 
-CONTINUE = {"onError": "continue"}
 SETTINGS = st.sampled_from([CONTINUE, {}, {"onError": "errorOutput", "errorPath": PATH}, CONTINUE])
 # The ways a block's body, or the branch beside it, goes on after its first step. Some always reach a fail step.
 TAILS = st.sampled_from(
@@ -364,6 +410,7 @@ def workflows(draw) -> CompiledArtifact:
     """A transaction in up to two containers, with every setting, beside called runs, waits and fail steps."""
     participants = [add(), hold(), call("called", compensate=add()["compensate"])]
     steps = draw(st.lists(st.sampled_from(participants), unique_by=lambda step: step["id"], min_size=1))
+    steps += draw(st.sampled_from([[], [submit()]]))
     block = transaction([*steps, *draw(TAILS)], **draw(SETTINGS))
     flow_ = [block, *draw(st.sampled_from([[], [LATER], [call("after")], [{**FAIL, "id": "last"}]]))]
     for depth, container in enumerate(
@@ -379,9 +426,8 @@ def workflows(draw) -> CompiledArtifact:
             path = {"steps": flow_, "output": {"literal": None}}
             flow_ = [lookup(outer, onError="errorOutput", errorPath=path)]
         else:
-            body = {"steps": flow_, "output": {"literal": None}}
-            loop = {"kind": "forEach", "items": {"literal": [1, 2]}, "maxItems": 2, "concurrency": 2, "body": body}
-            flow_ = [{"id": outer, **loop}]
+            # Without the decision the compiler refuses a loop whose body can never complete.
+            flow_ = [each(outer, [switch(f"{outer}-choice", flow_, beside)])]
     try:
         return compiled(flow_)
     except AssertionError:
@@ -407,7 +453,7 @@ def choices(run: Run) -> list[tuple[str, str]]:
     # Mostly results, and more failures than successes: a pause or a cancel ends most stories early.
     found *= 3
     if state.status == "suspended" and any(record.status == "in_doubt" for record in state.transactions.values()):
-        found += [("say", "compensated"), ("say", "completed")]
+        found += [("say", "compensated"), ("say", "completed"), ("force", "")]
     found.append(("resumed" if state.manual_paused else "paused", ""))
     if state.ending is None:
         found.append(("cancelled", ""))
