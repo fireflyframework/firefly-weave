@@ -23,10 +23,11 @@ from pathlib import Path
 import pytest
 from transaction_support import add, after_pivot_pair, compiled, hold, lookup, parallel, submit, transaction
 
-from firefly_weave.contracts.transactions import PARTICIPANT_STATUSES, UNDO_MODES, must_say
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, PARTICIPANT_STATUSES, UNDO_MODES, must_say
 from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.models import IncidentState, RunState
 from firefly_weave.runtime.transactions import (
+    closes_with_step,
     deadline_key,
     failure_effect,
     fold,
@@ -221,6 +222,12 @@ def test_an_incident_is_a_leftover_once_nothing_waits_for_it(status, active, cod
     found = shapes(workflow(run.flow))
     assert found is not None
     assert leftover(found, state, IncidentState(node_id="hold#confirm", generation=2, code=code)) is expected
+
+
+def test_an_incident_closes_with_its_step_unless_it_is_in_doubt_or_holds_a_refused_event():
+    codes = ["WV-TASK-FAILED", "WV-TASK-RETRIES-EXHAUSTED", "WV-SCHEMA-SECRET_VALUE", "WV-RUNTIME-EVENT"]
+    closing = [code for code in [*codes, *sorted(IN_DOUBT_CODES)] if closes_with_step(code)]
+    assert closing == ["WV-TASK-FAILED", "WV-TASK-RETRIES-EXHAUSTED", "WV-SCHEMA-SECRET_VALUE"]
 
 
 @pytest.mark.parametrize("code", ["WV-TASK-FAILED", "WV-TASK-RETRIES-EXHAUSTED"])
