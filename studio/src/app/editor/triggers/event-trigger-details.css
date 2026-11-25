@@ -292,7 +292,7 @@ button.et-remove:hover {
 .et-field input.et-input::placeholder {
   color: var(--subtle);
 }
-.et-section > .et-problem {
+.et-from > .et-problem {
   padding-left: var(--space-6);
 }
 
@@ -449,7 +449,7 @@ button.et-remove:hover {
   .et-callout-text button {
     min-height: 44px;
   }
-  .et-section > .et-problem {
+  .et-from > .et-problem {
     padding-left: 0;
   }
 }

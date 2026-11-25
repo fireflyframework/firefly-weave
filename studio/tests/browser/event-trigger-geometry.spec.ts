@@ -368,6 +368,15 @@ for (const size of SIZES)
       expect((await box(dialog.locator(".et-callout"))).bottom).toBeLessThan(
         (await box(dialog.locator(".et-rows"))).y,
       );
+      // What is wrong with the input starts where its box does.
+      const problem = dialog
+        .locator(".et-problem")
+        .filter({ hasText: "not the platform event" });
+      near(
+        (await box(problem.locator("weave-icon"))).x,
+        (await box(dialog.locator(".et-box"))).x,
+        "the input's error",
+      );
       expect(await clippedText(dialog)).toEqual([]);
       await expectNoPageScroll(page);
     });
