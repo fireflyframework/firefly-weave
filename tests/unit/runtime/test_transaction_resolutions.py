@@ -664,6 +664,14 @@ def test_a_step_that_failed_while_the_step_beside_it_decided_leaves_nothing_once
     assert (run.txn().status, run.state.status) == ("cancelled", "failed")
 
 
+def test_a_step_that_failed_before_anything_was_decided_goes_back_with_the_rest():
+    run = Run(compiled([transaction([hold(), lookup(), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    assert (run.txn().status, run.txn().failed_beside, run.state.active) == ("compensating", [], ["hold#cancel"])
+
+
 def test_a_step_that_failed_while_the_step_beside_it_was_unknown_is_stuck_once_that_one_happened():
     run = deciding(lookup())
     run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
