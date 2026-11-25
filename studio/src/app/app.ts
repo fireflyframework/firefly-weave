@@ -272,8 +272,7 @@ import {
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
-import { ApprovalWatch } from "./operate/clusters/approvals-inbox";
-import { approvable } from "./operate/clusters/change-request-model";
+import type { ApprovalWatch } from "./operate/clusters/approvals-inbox";
 import { Poller, browserEnvironment } from "./operate/operate-store";
 import { scopeKeyOf } from "./operate/operate-list";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -1355,9 +1354,10 @@ export class App implements CanvasHost {
   /**
    * The Clusters badge: change requests waiting for an approval this person
    * can give, read every 15 s while they may approve anything, with a notice
-   * for each new one.
+   * for each new one. It loads with the first account that may, not with the
+   * first page.
    */
-  readonly approvalWatch = new ApprovalWatch((path) => this.api.request(path));
+  private approvalWatch: ApprovalWatch | null = null;
   private readonly approvalPoller = new Poller(
     () => this.watchApprovals(),
     15000,
@@ -1384,10 +1384,14 @@ export class App implements CanvasHost {
     return this.approvalPoller.refresh();
   }
   private async watchApprovals() {
-    if (!this.mayApprove) {
-      this.approvalWatch.clear();
-      return;
-    }
+    if (!this.mayApprove) return this.approvalWatch?.clear();
+    const [{ ApprovalWatch }, { approvable }] = await Promise.all([
+      import("./operate/clusters/approvals-inbox"),
+      import("./operate/clusters/change-request-model"),
+    ]);
+    // Signed out while it loaded.
+    if (!this.mayApprove) return this.approvalWatch?.clear();
+    this.approvalWatch ??= new ApprovalWatch((path) => this.api.request(path));
     const viewer = this.identity?.principal_id;
     const scope = this.api.environment;
     const notice = await this.approvalWatch.load(scope, (row) =>
@@ -1417,7 +1421,7 @@ export class App implements CanvasHost {
     id: string,
   ): { count: number; critical: boolean; icon?: string; name: string } | null {
     if (id === "alerts") return this.alertWatch?.badge() ?? null;
-    const count = this.approvalWatch.count;
+    const count = this.approvalWatch?.count;
     return id === "clusters" && count
       ? {
           count,
