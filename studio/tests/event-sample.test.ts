@@ -243,6 +243,16 @@ const REFUSED: Refused[] = [
     "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
     changed("emitted_at", "2026-02-30T16:05:11Z"),
   ],
+  [
+    // No such hour: the next day's 0.
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", "2026-11-18T24:00:00Z"),
+  ],
+  [
+    // No such year.
+    "emitted_at must be a date and time, such as 2026-11-18T16:05:11Z.",
+    changed("emitted_at", "0000-11-18T16:05:11Z"),
+  ],
   ["transaction must be a group of fields.", changed("transaction", null)],
   [
     "transaction.workflow must be a group of fields.",
@@ -284,6 +294,20 @@ const REFUSED: Refused[] = [
     "transaction.business_key can have up to 200 characters.",
     changed("transaction.business_key", "x".repeat(300)),
     null,
+  ],
+  [
+    // A character cut in half, its first part or its second.
+    "transaction.business_key has a broken character, such as half an emoji.",
+    changed("transaction.business_key", "REF-\ud83d"),
+  ],
+  [
+    "transaction.instance_key has a broken character, such as half an emoji.",
+    changed("transaction.instance_key", "\ude00move"),
+  ],
+  [
+    "transaction.steps.done[0].step must be a step ID, such as add.",
+    changed("transaction.steps", steps([{ ...step, step: "\ud83d" }])),
+    "transaction.steps.done[0].step has a broken character, such as half an emoji.",
   ],
   [
     "transaction.cause must be a group of fields or null.",
@@ -406,6 +430,7 @@ describe.runIf(available)(
         changed("transaction.steps", steps([{ ...step, phase: null }])),
         changed("transaction.cause", { code: "WV-X", origin_code: null }),
         changed("emitted_at", "2026-11-18T16:05:11.123456+02:00"),
+        changed("emitted_at", "0001-11-18T23:05:11Z"),
         // Counted as the platform counts: 200 characters, 400 in UTF-16.
         changed("transaction.business_key", "𝄞".repeat(200)),
       ];

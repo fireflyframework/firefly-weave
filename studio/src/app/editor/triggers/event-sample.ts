@@ -119,8 +119,10 @@ const KNOWN: JsonObject = group({
 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A character cut in half, which no platform reads. */
+const BROKEN = /\p{Surrogate}/u;
 const DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+  /^(?!0000)(\d{4})-(\d{2})-(\d{2})T(?!24)\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
 function isDateTime(text: string): boolean {
   const parts = DATE_TIME.exec(text);
   if (!parts || Number.isNaN(Date.parse(text))) return false;
@@ -209,6 +211,8 @@ function problemAt(
     if (schema["format"] === "date-time" && !isDateTime(value)) return wrong();
     if (typeof pattern === "string" && !matches(pattern, value))
       return form ? wrong() : must("in the form the platform sends");
+    if (BROKEN.test(value))
+      return `${path} has a broken character, such as half an emoji.`;
   }
   if (
     typeof value === "number" &&
