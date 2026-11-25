@@ -211,7 +211,7 @@ RUN_STATUSES: Final = values_of(IncidentView, "run_status")
 RESOLUTIONS: Final = values_of(RecordedResolution, "kind")
 UNKNOWN_CODE_NOTE: Final = "No description for this code."
 LEFTOVER_NOTE: Final = (
-    "A person already ended this transaction. Retrying runs nothing again: it closes this incident, and the run goes on."
+    "A person already ended this transaction. Retrying runs nothing again: it closes this incident and the run goes on."
 )
 INCIDENT_FIELDS: Final = frozenset(
     {
