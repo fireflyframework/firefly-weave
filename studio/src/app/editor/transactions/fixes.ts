@@ -292,13 +292,18 @@ export function fixedText(
   fix: { kind: string; to?: "out" | "after" },
   id: string,
 ): string | null {
+  const step = placed(workflow, id)?.step;
   if (fix.kind === "clearUndo") return `Cleared how ${id} is undone.`;
-  if (fix.kind === "waitForCall") return `${id} waits for its result.`;
+  // A call that waits takes part in the transaction: how it is undone is the builder's.
+  if (fix.kind === "waitForCall")
+    return `${id} waits for its result.${step && undoChoiceOf(step) ? "" : " Choose how it's undone."}`;
   const target =
     fix.kind === "move" && fix.to && moveTarget(workflow, id, fix.to);
-  return target
-    ? `${moves(id, fix.to!, target.past).replace(/^Move/, "Moved")}.`
-    : null;
+  if (!target) return null;
+  const moved = moves(id, fix.to!, target.past).replace(/^Move/, "Moved");
+  return fix.to === "after" && step && clearUndo(step).length
+    ? `${moved} and cleared how it's undone.`
+    : `${moved}.`;
 }
 
 /** Makes a fix's change in the open workflow, as one undo step; false when it makes none. */
@@ -312,15 +317,33 @@ export function applyTransactionFix(
   if (fix.kind === "move" && fix.to) {
     const target = moveTarget(model.definition, id, fix.to);
     if (!target) return false;
-    model.move(id, target.owner, target.index);
+    model.batch(() => {
+      model.move(id, target.owner, target.index);
+      // Outside a transaction a step may not say how it is undone.
+      if (fix.to === "after") written(model, step, withoutUndo(step));
+    });
     return true;
   }
+  if (fix.kind === "clearUndo") return written(model, step, withoutUndo(step));
+  return (
+    fix.kind === "waitForCall" &&
+    written(model, step, { ...structuredClone(step), mode: "wait" })
+  );
+}
+
+/** A step without the fields that say how it is undone. */
+function withoutUndo(step: Step): Record<string, unknown> {
   const next = structuredClone(step) as Record<string, unknown>;
-  if (fix.kind === "clearUndo")
-    for (const { path } of clearUndo(step)) delete next[String(path[0])];
-  else if (fix.kind === "waitForCall") next["mode"] = "wait";
-  else return false;
+  for (const { path } of clearUndo(step)) delete next[String(path[0])];
+  return next;
+}
+/** Writes a step as it is to be; false when that is how it is. */
+function written(
+  model: StructuredCanvasAdapter,
+  step: Step,
+  next: Record<string, unknown>,
+): boolean {
   if (JSON.stringify(next) === JSON.stringify(step)) return false;
-  model.update(id, JSON.stringify(next));
+  model.update(step.id, JSON.stringify(next));
   return true;
 }

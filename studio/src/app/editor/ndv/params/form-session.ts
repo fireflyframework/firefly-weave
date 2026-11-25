@@ -158,6 +158,7 @@ import {
   CHANGED_SINCE,
   aboutNow,
   applyTransactionFix,
+  fixedText,
   type FindingPlace,
   type TransactionFix,
 } from "../../transactions/fixes";
@@ -1878,11 +1879,15 @@ export class FormSession {
     if (!step) return false;
     const { patch, removed } = writeUndo(step, choice);
     if (!this.commit(stepChanges(patch), "undo")) return false;
-    if (!removed.length) return true;
+    if (removed.length) this.sayDone(removedUndoText(removed));
+    return true;
+  }
+  /** Says what a change did, with Undo while the workflow stays as it left it. */
+  private sayDone(text: string): void {
     const { host, model, opened } = this;
     const revision = model.revision;
     host.notify(
-      removedUndoText(removed),
+      text,
       {
         label: "Undo",
         run: () =>
@@ -1895,17 +1900,20 @@ export class FormSession {
       },
       "neutral",
     );
-    return true;
   }
   /** A fix that changes where the step is or how it runs, as one undo step. */
   private change(fix: TransactionFix): void {
     if (this.controller.readOnlyReason(this.target)) return;
     if (!aboutNow(this.host)) return this.host.notify(CHANGED_SINCE);
-    if (fix.kind === "clearUndo") return void this.clearUndo();
-    this.host.perform(() => {
-      applyTransactionFix(this.model, fix, this.target);
-    });
+    const text = fixedText(this.model.definition, fix, this.target);
+    let changed = false;
+    if (fix.kind === "clearUndo") changed = this.clearUndo();
+    else
+      this.host.perform(() => {
+        changed = applyTransactionFix(this.model, fix, this.target);
+      });
     this.host.refreshView();
+    if (changed && text && !this.host.error) this.sayDone(text);
   }
   /** A field of this step, or of another one in its own step details. */
   private goTo(stepId: string, path: Path): void {

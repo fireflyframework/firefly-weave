@@ -75,9 +75,22 @@ catalog = CatalogSnapshot.from_definitions([load_definition(d) for d in fixture[
 out = {}
 for name, document in json.loads(sys.stdin.read()).items():
     result = json.loads(compile_source(json.dumps(document), format="json", catalog=catalog).to_bytes())
-    out[name] = [d for d in result["diagnostics"] if d["code"].startswith("WV-COMP-TXN_")]
+    out[name] = [d for d in result["diagnostics"] if d["code"].startswith(sys.argv[2])]
 print(json.dumps(out))
 `;
+/** What the platform's compiler finds in each workflow, of the codes that start so. */
+const compiled = <N extends string>(
+  workflows: Record<N, unknown>,
+  codes: string,
+) =>
+  JSON.parse(
+    execFileSync(python, ["-c", CHECK, CATALOG, codes], {
+      cwd: repository,
+      input: JSON.stringify(workflows),
+      encoding: "utf8",
+      timeout: 180_000,
+    }),
+  ) as Record<N, Finding[]>;
 
 const QUANTITY = {
   object: {
@@ -205,6 +218,7 @@ const WORKFLOWS = {
     move([hold(), submit(), { ...add({ irreversible: true }) }]),
     notify,
   ),
+  unsafeUndeclared: document(move([hold(), submit(), add({})])),
   undeclared: document(move([hold(), add({})])),
   wait: document(move([hold(), pause, submit()])),
   ownHoldWait: document(move([hold({ holdSeconds: 60 }), pause, submit()])),
@@ -270,14 +284,7 @@ const WORKFLOWS = {
 type Name = keyof typeof WORKFLOWS;
 const available = pythonAvailable();
 const found: Record<Name, Finding[]> = available
-  ? (JSON.parse(
-      execFileSync(python, ["-c", CHECK, CATALOG], {
-        cwd: repository,
-        input: JSON.stringify(WORKFLOWS),
-        encoding: "utf8",
-        timeout: 180_000,
-      }),
-    ) as Record<Name, Finding[]>)
+  ? compiled(WORKFLOWS, "WV-COMP-TXN_")
   : ({} as Record<Name, Finding[]>);
 
 /** The Diagnostics row of a finding in its workflow. */
@@ -417,8 +424,65 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
       "add",
       "notify",
     ]);
-    expect(made.toasts).toEqual(["Moved add after transaction move."]);
+    // Outside a transaction a step says nothing of how it is undone.
+    expect(made.toasts).toEqual([
+      "Moved add after transaction move and cleared how it's undone.",
+    ]);
+    const { irreversible: _, ...plain } = WORKFLOWS.unsafe.spec.steps[0][
+      "steps" as never
+    ][2] as Record<string, unknown>;
+    expect(made.model.definition.spec.steps[1]).toEqual(plain);
     oneStep(made, "unsafe");
+  });
+
+  it("says nothing of how it's undone for a step that hadn't said", async () => {
+    const made = await runs("unsafeUndeclared", "TXN_AFTER_PIVOT_UNSAFE");
+    expect(made.toasts).toEqual(["Moved add after transaction move."]);
+    expect(ids(made.model.definition.spec.steps)).toEqual(["move", "add"]);
+    oneStep(made, "unsafeUndeclared");
+  });
+
+  it("leaves no new error, whichever fix is made", async () => {
+    const changing = [
+      ["order", "TXN_ORDER"],
+      ["orderInPath", "TXN_ORDER"],
+      ["inLoop", "TXN_PIVOT_PLACEMENT"],
+      ["inBothLoops", "TXN_PIVOT_PLACEMENT"],
+      ["beside", "TXN_PIVOT_PLACEMENT"],
+      ["unsafe", "TXN_AFTER_PIVOT_UNSAFE"],
+      ["unsafeUndeclared", "TXN_AFTER_PIVOT_UNSAFE"],
+      ["shortHold", "TXN_HOLD_PIVOT"],
+      ["outside", "TXN_OUTSIDE"],
+      ["detached", "TXN_DETACH"],
+    ] as const;
+    const workflows: Record<string, unknown> = {};
+    for (const [name, code] of changing) {
+      workflows[`${name} before`] = WORKFLOWS[name];
+      workflows[`${name} after`] = (await runs(name, code)).model.definition;
+    }
+    const all = compiled(workflows, "WV-");
+    const errors = (key: string) =>
+      all[key].flatMap(({ code, severity }) =>
+        severity === "error" ? [code] : [],
+      );
+    const news = changing.map(([name]) => {
+      const rest = errors(`${name} before`);
+      const fresh = errors(`${name} after`).filter((code) => {
+        const at = rest.indexOf(code);
+        if (at >= 0) rest.splice(at, 1);
+        return at < 0;
+      });
+      return [name, fresh, rest.length > 0];
+    });
+    expect(news).toEqual(
+      changing.map(([name]) => [
+        name,
+        // A call that waits takes part: only a person says how it is undone.
+        name === "detached" ? ["WV-COMP-TXN_UNDECLARED"] : [],
+        // Its own finding is gone.
+        true,
+      ]),
+    );
   });
 
   it("opens How it's undone for a step without a choice, and never chooses", async () => {
@@ -541,7 +605,10 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
     expect(
       (detached.model.definition.spec.steps[0]["steps"] as Step[])[1]["mode"],
     ).toBe("wait");
-    expect(detached.toasts).toEqual(["call waits for its result."]);
+    // It takes part now, so it says what only a person can choose.
+    expect(detached.toasts).toEqual([
+      "call waits for its result. Choose how it's undone.",
+    ]);
     expect(row("detached", "TXN_DETACH").fix).toMatchObject({
       label: "Wait for its result",
       name: "Wait for its result: call",
@@ -676,10 +743,25 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
   };
 
   it("changes nothing from step details either, once the workflow changed", () => {
-    for (const [name, step, message] of [
-      ["unsafe", "add", /after the step that can't be undone/],
-      ["outside", "add", /only to steps inside a transaction/],
-      ["detached", "call", /./],
+    for (const [name, step, message, done] of [
+      [
+        "unsafe",
+        "add",
+        /after the step that can't be undone/,
+        "Moved add after transaction move and cleared how it's undone.",
+      ],
+      [
+        "outside",
+        "add",
+        /only to steps inside a transaction/,
+        "Cleared how add is undone.",
+      ],
+      [
+        "detached",
+        "call",
+        /./,
+        "call waits for its result. Choose how it's undone.",
+      ],
     ] as const) {
       const made = editor(name);
       const { form, issue } = stepDetails(made, name, step, message);
@@ -700,6 +782,10 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
       const again = stepDetails(made, name, step, message);
       again.form.runFix(again.issue);
       expect(made.model.source).not.toBe(after);
+      // It says what it did, with Undo, as Diagnostics does.
+      expect(made.toasts).toEqual([CHANGED_SINCE, done]);
+      made.undos[0]();
+      expect(made.model.source).toBe(after);
     }
   });
 
