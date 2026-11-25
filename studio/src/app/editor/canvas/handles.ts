@@ -19,7 +19,29 @@ SPDX-License-Identifier: Apache-2.0
 // handle, a "+", an empty-lane slot or a join (60 px on screen, as in n8n)
 // the drop is refused, because steps run in the order of their sequence; on
 // empty canvas it opens the step picker at that handle's insertion point.
-import { LTR, midpoint, type LtrLayout, type Point } from "./layout-ltr";
+// And which outputs take a larger tap on touch.
+import {
+  LTR,
+  midpoint,
+  type LtrHandle,
+  type LtrLayout,
+  type Point,
+} from "./layout-ltr";
+
+/**
+ * The step output that takes a 44 px tap on screen below 768 px or with a
+ * coarse pointer: Success or Error; null for any other, which keeps its
+ * circle. The only place that says so: the canvas draws it as data-tap, which
+ * canvas.css sizes from --zoom, and sets --zoom on these outputs alone, since
+ * each zoom event restyles every element that has it.
+ */
+export function touchTap({
+  key,
+  tone,
+}: Pick<LtrHandle, "key" | "tone">): "success" | "error" | null {
+  if (tone === "danger") return "error";
+  return key.endsWith(":path:success") ? "success" : null;
+}
 
 export const CONNECT_RADIUS = 60;
 /** The hit area of a "+", centered on its point. */

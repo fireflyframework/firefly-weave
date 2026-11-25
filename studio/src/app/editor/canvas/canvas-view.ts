@@ -106,7 +106,7 @@ import {
 import type { CanvasHost } from "./canvas-host";
 import { CanvasTools } from "./canvas-tools";
 import { EdgeLayer, type EdgeView, type InsertView } from "./edge-layer";
-import { DROP_REFUSED, dropOutcome } from "./handles";
+import { DROP_REFUSED, dropOutcome, touchTap } from "./handles";
 import {
   LTR,
   edgePath,
@@ -1161,6 +1161,7 @@ export class CanvasView implements OnInit, DoCheck {
   outputButton(key: string): InsertView | null {
     return this.locked() ? null : (this.targets().outputs.get(key) ?? null);
   }
+  readonly touchTap = touchTap;
   /** Draws a tip at its size on screen, whatever the zoom. */
   tipScale() {
     return 1 / this.view.zoom;
