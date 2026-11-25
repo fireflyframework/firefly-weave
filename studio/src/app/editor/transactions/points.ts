@@ -68,7 +68,10 @@ interface Place {
   reach: Reach;
   /** What the other branches of the parallel steps around it can reserve meanwhile. */
   beside: readonly Step[];
-  /** Outside every loop and parallel step: the platform lets only a step here decide. */
+  /**
+   * Outside every loop, and beside no parallel branch that holds a step that
+   * may change data: the platform lets only a step here decide.
+   */
   decides: boolean;
 }
 interface Walk {
@@ -123,9 +126,12 @@ function past(step: Step, from: Reach, plan: Walk, around: Around): Reach {
       break;
     case "parallel": {
       const reserves = own.map(({ branch }) => reservedIn(stepsIn(branch)));
+      const takePart = own.map(({ branch }) => takesPart(stepsIn(branch)));
       const ends = own.map((block, index) =>
         into(block, at, {
-          decides: false,
+          decides:
+            around.decides &&
+            !takePart.some((does, other) => does && other !== index),
           beside: [
             ...around.beside,
             ...reserves.filter((_, other) => other !== index).flat(),
@@ -160,6 +166,15 @@ function past(step: Step, from: Reach, plan: Walk, around: Around): Reach {
     if (block.kind === "errorPath") reach = either([reach, into(block, reach)]);
   return reach;
 }
+
+/** Whether a branch holds a step that may change data. */
+const takesPart = (steps: readonly Step[]): boolean =>
+  steps.some(
+    (step) =>
+      step.kind === "action" ||
+      (step.kind as string) === "callWorkflow" ||
+      blocksOf(step).some(({ branch }) => takesPart(stepsIn(branch))),
+  );
 
 /** What a branch can reserve while it can still be undone. */
 function reservedIn(steps: readonly Step[]): Step[] {

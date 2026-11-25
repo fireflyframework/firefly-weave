@@ -204,10 +204,30 @@ describe("points of no return", () => {
     ).toEqual(["submit"]);
   });
 
-  it("draws none inside a loop or a parallel step: the platform refuses it there", () => {
-    expect(points(fork("both", [last("submit")], [plain("build")]))).toEqual(
-      [],
-    );
+  it("is in a parallel branch when no other one holds a step that may change data", () => {
+    expect(points(fork("both", [last("submit")], [plain("build")]))).toEqual([
+      "submit",
+    ]);
+    // The platform refuses it there, however deep the other step is.
+    for (const other of [
+      reversible("add"),
+      decision("route", [reversible("add")], []),
+      guarded(plain("build"), [last("again")]),
+      { ...reversible("add"), kind: "callWorkflow" } as unknown as Step,
+    ])
+      expect(
+        points(fork("both", [last("submit")], [plain("note"), other])),
+      ).toEqual([]);
+    // Around it too.
+    expect(
+      points(
+        fork("out", [fork("in", [last("submit")], [])], [reversible("add")]),
+      ),
+    ).toEqual([]);
+    expect(points(loop("each", fork("in", [last("submit")], [])))).toEqual([]);
+  });
+
+  it("draws none inside a loop: the platform refuses it there", () => {
     expect(points(loop("each", last("submit")))).toEqual([]);
     // A loop may run no item, so what follows it can still decide.
     expect(points(loop("each", last("submit")), last("finish"))).toEqual([
@@ -215,7 +235,10 @@ describe("points of no return", () => {
     ]);
     // Every branch runs: after one that can't be undone, nothing can.
     expect(
-      points(fork("both", [last("submit")], [plain("build")]), last("finish")),
+      points(
+        fork("both", [last("submit")], [reversible("add")]),
+        last("finish"),
+      ),
     ).toEqual([]);
   });
 
