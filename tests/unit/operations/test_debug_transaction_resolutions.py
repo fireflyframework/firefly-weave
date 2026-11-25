@@ -723,3 +723,42 @@ def test_it_happened_of_a_call_that_never_ends_goes_on():
     simulator.resolve("submit:0", "accept_reconciled_result", {})
     view = simulator.continue_until_breakpoint()
     assert (view.status, record(view)["status"]) == ("succeeded", "completed")
+
+
+def waiting(simulator):
+    return [event.data.get("node_id") for event in simulator.data.pending]
+
+
+def late_call_beside_a_read():
+    """It happened, said a person: the time of the called step that can't be undone was up, and neither its result nor
+    that of a read in another branch had reached the run."""
+    only, artifact = callee("reverse-target-addition", [{"id": "only", "kind": "transform", "value": {"literal": 1}}])
+    block = transaction([hold(), submit_by_call(), notify()])
+    flow = compiled([parallel(a=[block], b=[lookup("first"), lookup("read")])], snapshot=snapshot_with(only))
+    read = {"count": 1}
+    mocks = {"node:hold": MOCKS["node:hold"], "node:notify": {}, "node:first": read, "node:read": read}
+    simulator = session(flow, mocks=mocks, workflows={"reverse-target-addition@1.0.0": called(artifact)})
+    while "submit" not in waiting(simulator):
+        simulator.next()
+    assert waiting(simulator) == ["read", "submit"]
+    simulator.advance_time(331)
+    while "submit:0" not in simulator.inspect().variables.get("incidents", {}):
+        simulator.next()
+    simulator.resolve("submit:0", "accept_reconciled_result", {})
+    simulator.next()
+    return simulator
+
+
+def test_a_late_calls_result_is_dropped_and_no_other():
+    simulator = late_call_beside_a_read()
+    assert waiting(simulator) == ["read", "hold#confirm"]
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("succeeded", "completed")
+    assert results(view).count("read") == results(view).count("notify") == 1
+
+
+def test_a_call_whose_late_result_was_dropped_has_returned():
+    simulator = late_call_beside_a_read()
+    before = simulator.inspect().boundaries
+    # Nothing of it is left to deliver, so there is nothing to run until it returns.
+    assert simulator.step_out("submit").boundaries == before
