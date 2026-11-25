@@ -138,7 +138,7 @@ function readsOf(
       if (alone && key === "literal") continue;
       const at = [...path, Array.isArray(value) ? Number(key) : key];
       const step =
-        alone && key === "ref" && typeof item === "string"
+        key === "ref" && typeof item === "string"
           ? /^\/steps\/([^/]+)(?:\/|$)/.exec(item)?.[1]
           : undefined;
       if (step !== undefined && ids.has(step))

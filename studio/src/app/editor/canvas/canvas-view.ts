@@ -310,6 +310,8 @@ interface GroupRequest {
   grouped: GroupedSteps;
 }
 const GROUP_CHANGED = "The workflow changed since. Select the steps again.";
+const TARGET_UNREAD =
+  "Studio couldn't read what this platform runs. Press Group in a transaction again.";
 
 /** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
 export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
@@ -2678,10 +2680,13 @@ export class CanvasView implements OnInit, DoCheck {
   );
   /** Why the target can't run transactions, once it is known. */
   private targetLacks: string | null = null;
+  /** What the target runs couldn't be read: no reason, and not known to run them. */
+  private targetUnread = false;
   private targetRead: Promise<void> | null = null;
   /**
    * Asks what the target runs, once for each selection of several steps: a
-   * read that failed is asked again with the next one, never by drawing.
+   * read that failed is asked again with the next one or with a press, never
+   * by drawing.
    */
   private askTarget() {
     const h = this.host();
@@ -2689,20 +2694,24 @@ export class CanvasView implements OnInit, DoCheck {
       import("../add-step/catalog-sources"),
       import("../add-step/entries"),
     ])
-      .then(async ([{ loadLanguage }, { gateReason }]) =>
-        gateReason(
-          "flow.transaction",
-          undefined,
-          true,
-          await loadLanguage(h.api, !!h.profile),
-          "transactions",
-        ),
-      )
-      .catch(() => null)
-      .then((reason) => {
-        this.targetLacks = reason;
-        this.cdr.markForCheck();
-      });
+      .then(async ([{ loadLanguage }, { gateReason }]) => {
+        const language = await loadLanguage(h.api, !!h.profile);
+        this.targetUnread = !language;
+        this.targetLacks =
+          language &&
+          gateReason(
+            "flow.transaction",
+            "transaction",
+            true,
+            language,
+            "transactions",
+          );
+      })
+      .catch(() => {
+        this.targetUnread = true;
+        this.targetLacks = null;
+      })
+      .then(() => this.cdr.markForCheck());
   }
   /** The steps waiting for an answer about the later reads grouping would break. */
   readonly grouping = signal<GroupRequest | null>(null);
@@ -2718,10 +2727,13 @@ export class CanvasView implements OnInit, DoCheck {
     const chosen = this.selection;
     const ids = topLevel(chosen, this.places()).join();
     const here = () => h.model === model && model.opened === opened;
-    if (!this.targetRead) this.askTarget();
+    if (!this.targetRead || this.targetUnread) this.askTarget();
     await this.targetRead;
     if (!here()) return;
-    const reason = this.lockedReason() ?? this.groupBlocked(chosen);
+    const reason =
+      this.lockedReason() ??
+      this.groupBlocked(chosen) ??
+      (this.targetUnread ? TARGET_UNREAD : null);
     if (reason) return h.notify(reason);
     if (!(await h.ensureApplied()) || !here()) return;
     const run = contiguity(chosen, this.places());

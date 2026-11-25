@@ -251,13 +251,71 @@ test.describe("grouping steps at 1440x900", () => {
   });
 });
 
+const LANGUAGE = "**/studio/contracts/language";
+
+test("a platform that can't be read gives no false reason, and each press asks again", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let answers = false;
+  let asked = 0;
+  await page.route(LANGUAGE, (route) => {
+    asked++;
+    return answers
+      ? route.fulfill({
+          json: { features: ["text.concat", "flow.transaction"] },
+        })
+      : route.fulfill({ status: 503, json: {} });
+  });
+  await openStepFixture(page, PLAIN);
+  const canvas = new CanvasPage(page);
+  await canvas.ready();
+  const before = asked;
+  await select(canvas, "hold", "add");
+  await expect.poll(() => asked).toBeGreaterThan(before);
+  await expect(groupButton(page)).not.toHaveAttribute("aria-disabled", "true");
+  await expect(groupButton(page)).not.toHaveAccessibleDescription(/Needs/);
+  const toast = page.locator(".toast-region");
+  const pressed = asked;
+  await groupButton(page).click();
+  await expect(toast).toContainText(
+    "Studio couldn't read what this platform runs. Press Group in a transaction again.",
+  );
+  expect(asked).toBeGreaterThan(pressed);
+  await expect(canvas.tile("transaction-1")).toHaveCount(0);
+  answers = true;
+  await groupButton(page).click();
+  await expect(toast).toContainText("Grouped 2 steps in transaction-1.");
+});
+
+test("a platform whose transactions Studio can't add yet says so, as Add a step does", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route(LANGUAGE, (route) =>
+    route.fulfill({
+      json: {
+        features: ["text.concat", "flow.transaction"],
+        step_kinds: [{ kind: "transaction", studio: "pending" }],
+      },
+    }),
+  );
+  await openStepFixture(page, PLAIN);
+  const canvas = new CanvasPage(page);
+  await canvas.ready();
+  await select(canvas, "hold", "add");
+  await expect(groupButton(page)).toHaveAccessibleDescription(
+    "Studio can't add transactions yet.",
+  );
+});
+
 test("steps that changed while the platform was asked are not grouped", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   let answer = () => {};
   const asked = new Promise<void>((done) => (answer = done));
-  await page.route("**/studio/contracts/language", async (route) => {
+  await page.route(LANGUAGE, async (route) => {
     await asked;
     await route.fulfill({
       json: { features: ["text.concat", "flow.transaction"] },
