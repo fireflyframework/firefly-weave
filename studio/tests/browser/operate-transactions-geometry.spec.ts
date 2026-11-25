@@ -319,6 +319,19 @@ for (const size of sizes)
       const [around, words] = [await box(held), await box(pill)];
       expect(words.x).toBeGreaterThanOrEqual(around.x + 12 - 0.5);
       expect(words.right).toBeLessThanOrEqual(around.right - 12 + 0.5);
+      // Beside its transaction's name it sits on the name's line; below it, it
+      // keeps the block's own distance to what follows.
+      const name = await box(held.getByRole("heading"));
+      const meta = await box(held.locator(".txn-meta"));
+      const beside = words.x > name.right;
+      if (size.width >= 1440) expect(beside).toBe(true);
+      if (size.width === 360) expect(beside).toBe(false);
+      if (beside)
+        expect(words.y + words.height / 2).toBeCloseTo(
+          name.y + name.height / 2,
+          0,
+        );
+      else expect(meta.y - words.bottom).toBeLessThanOrEqual(12.5);
       // Its lines stay inside the pill, too.
       const lines = await pill.evaluate((element) => {
         const range = document.createRange();

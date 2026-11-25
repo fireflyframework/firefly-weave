@@ -81,11 +81,13 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-label);
   color: var(--text);
 }
-/* A long state ("Waiting for submit, which can't be undone") wraps in a narrow
-   block instead of running out of it. */
+/* The state sits on its transaction's line, without the space a detail panel
+   leaves under a pill. A long one ("Waiting for submit, which can't be undone")
+   wraps in a narrow block instead of running out of it. */
 .txn-title .status-pill {
   height: auto;
   min-height: 22px;
+  margin: 0;
   white-space: normal;
 }
 .txn-title h4 code,
