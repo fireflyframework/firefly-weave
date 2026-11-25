@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
    compact 28 px face inside their targets. */
 weave-input-pane,
 weave-output-pane,
-weave-test-event-pane {
+weave-test-event-pane,
+weave-trigger-event-pane {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -423,12 +424,22 @@ weave-input-pane .pane-count {
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
 }
+/* A disabled button looks disabled here too. */
+.step-details button.pane-generate:disabled {
+  color: var(--disabled-ink);
+  background: var(--disabled-bg);
+  border-color: transparent;
+}
 .pane-also-source small {
   font: var(--type-caption);
   color: var(--muted);
 }
 .pane-generate {
   margin-bottom: var(--space-4);
+}
+/* What Studio replaced in what was entered, under the form that took it. */
+.pane-entered {
+  margin-top: var(--space-3);
 }
 .pane-json {
   margin: 0;

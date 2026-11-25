@@ -75,7 +75,7 @@ interface SampleForm {
         }
         <div aria-live="polite">
           @if (replaced(); as note) {
-            <p class="pane-empty-text">{{ note }}</p>
+            <p class="pane-empty-text pane-entered">{{ note }}</p>
           }
         </div>
       </div>

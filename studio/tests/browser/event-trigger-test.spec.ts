@@ -355,6 +355,19 @@ test.describe("a real platform event entered in another Test event pane", () => 
       .fill(JSON.stringify(pastedEvent()));
     await pane.getByRole("button", { name: "Use this sample" }).click();
     await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    // An event runs past a short pane, which scrolls to its end.
+    await page.setViewportSize({ width: 1440, height: 600 });
+    const end = await pane.locator(".sd-pane-body").evaluate((body) => {
+      body.scrollTop = body.scrollHeight;
+      const json = body.querySelector("pre")!.getBoundingClientRect();
+      return {
+        scrolled: body.scrollTop > 0,
+        below: json.bottom - body.getBoundingClientRect().bottom,
+      };
+    });
+    expect(end.scrolled).toBe(true);
+    expect(end.below).toBeLessThanOrEqual(0);
+    await page.setViewportSize({ width: 1440, height: 900 });
     await details.close();
     await nothingReal(page, details);
     expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
@@ -457,8 +470,16 @@ test.describe("a later step of a workflow a platform event starts", () => {
     await expect(generate).toBeDisabled();
     await expect(generate).toHaveAccessibleDescription(refused);
     await expect(paste).toBeDisabled();
+    const looks = () =>
+      generate.evaluate((button) => {
+        const { color, backgroundColor } = getComputedStyle(button);
+        return { color, backgroundColor };
+      });
+    const off = await looks();
     await dialog.getByRole("button", { name: "Reset the input" }).click();
     await expect(pane).not.toContainText(refused);
+    await expect(generate).toBeEnabled();
+    expect(await looks()).not.toEqual(off);
     await generate.click();
     await expect(
       pane.getByText("Sample ready. Execute workflow starts from it."),
