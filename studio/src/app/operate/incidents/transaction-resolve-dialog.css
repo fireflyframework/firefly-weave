@@ -36,7 +36,9 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-mono);
   color: var(--text);
 }
+/* One that appears comes into view clear of the dialog's sticky title. */
 .notice {
+  scroll-margin-top: 88px;
   color: var(--text);
 }
 .notice p {
@@ -53,6 +55,9 @@ SPDX-License-Identifier: Apache-2.0
 .notice > weave-icon {
   flex: none;
   margin-top: 2px;
+}
+.notice[data-tone="danger"] > weave-icon {
+  color: var(--danger-ink);
 }
 .spin {
   animation: spin 1s linear infinite;

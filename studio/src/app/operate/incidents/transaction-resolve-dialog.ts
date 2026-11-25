@@ -67,6 +67,9 @@ import {
 
 /** The platform refuses the result, or the record of how the transaction ended. */
 const OUTPUT = "WV-RUNTIME-OUTPUT";
+/** A field a person types in, as a checkbox or a radio isn't. */
+const TEXT_FIELD =
+  'textarea, input:not([type="checkbox"], [type="radio"])' as const;
 const ENDINGS = [
   { as: "compensated", label: "Undone" },
   { as: "completed", label: "Finished" },
@@ -85,7 +88,12 @@ const ENDINGS = [
       describedBy="decide-help"
       (dismiss)="dismiss.emit()"
     >
-      <form class="decide-form" novalidate (submit)="submit($event)">
+      <form
+        class="decide-form"
+        novalidate
+        (input)="noteTyping($event)"
+        (submit)="submit($event)"
+      >
         <p class="dialog-message" id="decide-help">{{ offer().help }}</p>
         <p class="context">
           @if (about(); as subject) {
@@ -94,30 +102,35 @@ const ENDINGS = [
           }
           {{ about() ? "run" : "Run" }} <code>{{ short() }}</code>
         </p>
+        <!-- What a person who types in a field is told without leaving it. -->
+        <p class="sr-only" aria-live="polite">{{ announced() }}</p>
         @if (notice(); as refused) {
-          <div class="notice" data-tone="danger" role="alert">
-            <p>{{ refused.message }}</p>
-            @if (refused.code) {
-              <p class="support-code">Support code: {{ refused.code }}</p>
-            }
-            @if (stale()) {
-              <button
-                type="button"
-                class="sm"
-                [attr.aria-busy]="refreshing() ? 'true' : null"
-                (click)="refresh.emit()"
-              >
-                @if (refreshing()) {
-                  <weave-icon name="spinner" [size]="16" class="spin" />
-                }
-                Refresh incident
-              </button>
-            }
+          <div class="notice" data-tone="danger" role="alert" tabindex="-1">
+            <weave-icon name="failCircle" [size]="16" />
+            <div>
+              <p>{{ refused.message }}</p>
+              @if (refused.code) {
+                <p class="support-code">Support code: {{ refused.code }}</p>
+              }
+              @if (stale()) {
+                <button
+                  type="button"
+                  class="sm"
+                  [attr.aria-busy]="refreshing() ? 'true' : null"
+                  (click)="refresh.emit()"
+                >
+                  @if (refreshing()) {
+                    <weave-icon name="spinner" [size]="16" class="spin" />
+                  }
+                  Refresh incident
+                </button>
+              }
+            </div>
           </div>
         }
         @if (action() === "mark_reconciled") {
           @if (rebuilt(); as told) {
-            <div class="notice" data-tone="info" role="status">
+            <div class="notice" data-tone="info" role="status" tabindex="-1">
               <weave-icon name="info" [size]="16" />
               <p>{{ told }}</p>
             </div>
@@ -361,6 +374,8 @@ export class TransactionResolveDialog {
   private readonly corrected = signal<PlainError | null>(null);
   /** The checklist was built again since a decision was sent last. */
   private readonly builtAgain = signal(false);
+  /** What the rebuilt checklist says, for a person who types in a field. */
+  readonly announced = signal("");
 
   /** The decision as the drawer offered it: the platform checks who may take it. */
   readonly offer = computed(() => {
@@ -537,14 +552,68 @@ export class TransactionResolveDialog {
       }
       read = now;
     });
-    // What was refused takes the focus, unless the person is in another field.
+    // What was refused takes the focus, unless the person types.
     effect(() => {
       const at = this.outputRefused();
-      if (at && !document.activeElement?.matches("input, textarea"))
+      if (at && !this.typedIn())
         this.focusWhenDrawn(
           at === "checklist" ? ".tick input" : "#decide-result",
         );
     });
+    // So does a notice, each time one appears: not when its words follow the
+    // ending the person chooses.
+    let told: PlainError | "rebuilt" | null = null;
+    effect(() => {
+      const refused = this.notice();
+      const now = refused ?? (this.rebuilt() ? "rebuilt" : null);
+      if (now && now !== told) this.tell(refused ? "alert" : "status");
+      told = now;
+    });
+  }
+
+  /** The person typed in a field since a decision was sent last. */
+  private typedSince = false;
+  noteTyping(event: Event) {
+    this.typedSince = (event.target as HTMLElement).matches(TEXT_FIELD);
+  }
+  /** The field the person is typing in. */
+  private typedIn(): HTMLElement | null {
+    const active = document.activeElement;
+    return this.typedSince &&
+      active instanceof HTMLElement &&
+      active.matches(TEXT_FIELD)
+      ? active
+      : null;
+  }
+  /**
+   * Brings a notice into view and the focus to it. A person who types in a
+   * field keeps it, and keeps it in view: the notice is announced.
+   */
+  private tell(role: "alert" | "status") {
+    afterNextRender(
+      () => {
+        const notice = this.element.nativeElement.querySelector<HTMLElement>(
+          `.notice[role="${role}"]`,
+        );
+        if (!notice || notice.contains(document.activeElement)) return;
+        const field = this.typedIn();
+        notice.scrollIntoView({ block: "nearest" });
+        if (!field) return notice.focus({ preventScroll: true });
+        // The footer grows with why the confirm waits, which its own measure
+        // learns only later.
+        const panel = field.closest(".modal-panel")!;
+        const footer = panel.querySelector(".dialog-footer")!;
+        panel.scrollTop += Math.max(
+          0,
+          field.getBoundingClientRect().bottom +
+            12 -
+            footer.getBoundingClientRect().top,
+        );
+        // An alert is announced as it appears.
+        if (role === "status") this.announced.set(this.rebuilt());
+      },
+      { injector: this.injector },
+    );
   }
 
   set(change: Partial<ReconcileDraft>) {
@@ -576,6 +645,8 @@ export class TransactionResolveDialog {
     const checked = this.checked();
     this.attempted.set(!("request" in checked));
     if ("request" in checked) {
+      this.typedSince = false;
+      this.announced.set("");
       this.builtAgain.set(false);
       this.decide.emit(checked.request);
     } else this.focusWhenDrawn(':is(input, textarea)[aria-invalid="true"]');

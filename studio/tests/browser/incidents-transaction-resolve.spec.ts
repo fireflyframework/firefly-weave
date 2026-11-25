@@ -21,7 +21,13 @@ SPDX-License-Identifier: Apache-2.0
 // refusal reads. The platform is mocked with its own codes.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { test, expect, type Page, type Route } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import type { IncidentView } from "../../src/app/operate/incidents/incidents-model";
 import {
   called,
@@ -1855,6 +1861,174 @@ test("an incident decided meanwhile leaves the dialog on refresh, and says so", 
   );
   await expect(title(page)).toBeFocused();
 });
+
+// --------------------------------------------- what a refusal says is seen
+
+/** Whole in the dialog, clear of its title and of its buttons. */
+const expectShown = (part: Locator) =>
+  expect
+    .poll(() =>
+      part.evaluate((element) => {
+        const panel = element.closest(".modal-panel")!;
+        const { top, bottom } = element.getBoundingClientRect();
+        const title = panel.querySelector(".modal-header")!;
+        const buttons = panel.querySelector(".dialog-footer")!;
+        return (
+          top >= title.getBoundingClientRect().bottom - 0.5 &&
+          bottom <= buttons.getBoundingClientRect().top + 0.5
+        );
+      }),
+    )
+    .toBe(true);
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 360, height: 640 },
+])
+  test.describe(`a refusal at ${size.width} px`, () => {
+    test.use({ viewport: size });
+
+    for (const [what, status, code, message] of [
+      [
+        "a step that runs again",
+        409,
+        "WV-RUNTIME-STATE",
+        "The latest attempt is still running",
+      ],
+      ["a lack of access", 403, "WV-FORBIDDEN", "Access denied"],
+      ["a lost answer", 503, "WV-UNAVAILABLE", "Unavailable"],
+      [
+        "another revision",
+        409,
+        "WV-INCIDENT-REVISION",
+        "Incident revision changed",
+      ],
+    ] as const)
+      test(`${what} takes the focus and comes into view, with its icon`, async ({
+        page,
+      }) => {
+        const platform = await opened(page, called);
+        await decisions(page, platform, (route) =>
+          refuse(route, status, code, message),
+        );
+        await undone(page);
+        await confirm(page, "Mark as reconciled").click();
+        const alert = dialog(page, "Mark as reconciled").getByRole("alert");
+        await expect(alert).toContainText(`Support code: ${code}`);
+        await expect(alert).toBeFocused();
+        await expectShown(alert);
+        await expect(
+          alert.locator("> weave-icon[name=failCircle]"),
+        ).toBeVisible();
+      });
+
+    test("a record that changed is rebuilt in view, after a refusal and after Refresh incident", async ({
+      page,
+    }) => {
+      const { platform, name, asked } = await refusedRecord(page, undefined, 2);
+      change(platform, twoConfirms("confirm_stuck"));
+      await confirm(page, name).click();
+      const told = asked.getByRole("status");
+      await expect(told).toContainText("rebuilt the checklist");
+      await expect(told).toBeFocused();
+      await expectShown(told);
+      // Choosing the other ending says it again without taking the focus.
+      await ending(page, name, "Undone").check();
+      await expect(told).toContainText("rebuilt the checklist");
+      await expect(ending(page, name, "Undone")).toBeFocused();
+    });
+
+    test("a record that couldn't be read is said in view, and rebuilt in view once it is", async ({
+      page,
+    }) => {
+      let failing = true;
+      const { platform, name, asked } = await refusedRecord(page, (route) =>
+        failing
+          ? refuse(route, 503, "WV-UNAVAILABLE", "Unavailable")
+          : route.fallback(),
+      );
+      await confirm(page, name).click();
+      const alert = asked.getByRole("alert");
+      await expect(alert).toContainText("couldn't read the incident again");
+      await expect(alert).toBeFocused();
+      await expectShown(alert);
+      // Read again and refused again, the person stays on its button.
+      const refresh = asked.getByRole("button", { name: "Refresh incident" });
+      await refresh.click();
+      await expect(refresh).not.toHaveAttribute("aria-busy");
+      await expect(refresh).toBeFocused();
+      failing = false;
+      change(platform, twoConfirms("confirm_stuck"));
+      await refresh.click();
+      const told = asked.getByRole("status");
+      await expect(told).toBeFocused();
+      await expectShown(told);
+    });
+
+    test("a refusal never takes a person's field while they type, and is announced", async ({
+      page,
+    }) => {
+      const { platform, name, asked } = await refusedRecord(page, undefined, 2);
+      const held: Route[] = [];
+      await page.route(`${environment}/incidents/*/resolve`, (route) => {
+        held.push(route);
+      });
+      await confirm(page, name).click();
+      await expect.poll(() => held.length).toBe(1);
+      const evidence = field(page, name, "Evidence reference");
+      // Where a person goes on typing: after what is there.
+      const atEnd = () =>
+        evidence.evaluate((input: HTMLInputElement) => {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        });
+      await atEnd();
+      await evidence.pressSequentially(" and 2314");
+      await refuse(held[0], 403, "WV-FORBIDDEN", "Access denied");
+      const alert = asked.getByRole("alert");
+      await expect(alert).toContainText("Support code: WV-FORBIDDEN");
+      await expect(evidence).toBeFocused();
+      await expectShown(evidence);
+      await evidence.pressSequentially(" too");
+      await expect(evidence).toHaveValue("OPS-2313 and 2314 too");
+      // Its record changed meanwhile: said to a screen reader where the person is.
+      change(platform, twoConfirms("confirm_stuck"));
+      await confirm(page, name).click();
+      await expect.poll(() => held.length).toBe(2);
+      await atEnd();
+      await evidence.pressSequentially(".");
+      await refuse(
+        held[1],
+        422,
+        "WV-RUNTIME-OUTPUT",
+        "The reconciliation record doesn't fit the transaction",
+      );
+      await expect(asked.getByRole("status")).toContainText(
+        "rebuilt the checklist",
+      );
+      await expect(evidence).toBeFocused();
+      await expectShown(evidence);
+      await expect(asked.locator("[aria-live=polite]")).toHaveText(
+        /^Studio read the incident again and rebuilt the checklist\./,
+      );
+    });
+
+    test("a refusal of a decision sent with Enter takes the focus from its field", async ({
+      page,
+    }) => {
+      const platform = await opened(page, called);
+      await decisions(page, platform, (route) =>
+        refuse(route, 403, "WV-FORBIDDEN", "Access denied"),
+      );
+      await undone(page);
+      await field(page, "Mark as reconciled", "Evidence reference").press(
+        "Enter",
+      );
+      const alert = dialog(page, "Mark as reconciled").getByRole("alert");
+      await expect(alert).toBeFocused();
+      await expectShown(alert);
+    });
+  });
 
 // ------------------------------------------------------ sent once, or again
 
