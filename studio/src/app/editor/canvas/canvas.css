@@ -419,6 +419,38 @@ weave-canvas-view,
 .canvas-v2 .frame-promise::before {
   content: "\00a0· ";
 }
+/* While a run shows, how the transaction stands, at the band's right end: its
+   words keep their room, and the header's text shortens before them. */
+.canvas-v2 .frame-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  margin-left: auto;
+  padding-left: 0.75em;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-v2 .frame-state weave-icon {
+  width: 1.2em;
+  height: 1.2em;
+}
+.canvas-v2 .frame-state .frame-live-dot {
+  width: 0.583em;
+  height: 0.583em;
+}
+.canvas-v2 .frame-state[data-tone="success"] {
+  color: var(--success-ink);
+}
+.canvas-v2 .frame-state[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+.canvas-v2 .frame-state[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.canvas-v2 .frame-state[data-tone="muted"] {
+  color: var(--muted);
+}
 /* No list yet: "loop-1 For each item in …" stays whole. */
 .canvas-v2 .frame-pending .frame-items {
   flex: none;
@@ -1015,6 +1047,14 @@ weave-canvas-view,
 .canvas-v2 svg.edges .edge-arrow.skipped {
   fill: var(--flow-line-dim);
 }
+/* The way into a step while it is undone: its arrow points back. */
+.canvas-v2 .edge.undoing {
+  stroke: var(--live);
+  stroke-dasharray: 6 4;
+}
+.canvas-v2 svg.edges .edge-arrow.undoing {
+  fill: var(--live);
+}
 .canvas-v2 .edge-hit {
   fill: none;
   stroke: transparent;
@@ -1534,6 +1574,9 @@ weave-canvas-view,
 }
 .canvas-v2 .tile-label span.tile-output[data-tone="info"] {
   color: var(--info-ink);
+}
+.canvas-v2 .tile-label span.tile-output[data-tone="success"] {
+  color: var(--success-ink);
 }
 .canvas-v2 .canvas-read-only {
   position: absolute;

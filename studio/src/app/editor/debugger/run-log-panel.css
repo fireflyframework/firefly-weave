@@ -255,6 +255,62 @@ SPDX-License-Identifier: Apache-2.0
 .run-log-in-path > .run-log-entry {
   padding-inline-start: calc(var(--space-3) + var(--path-depth, 1) * 24px);
 }
+/* Why a run stopped at a transaction: it was undone, or is in doubt, with the
+   platform's code in a smaller line. */
+.run-log-outcome[data-tone="danger"] weave-icon {
+  color: var(--danger-ink);
+}
+.run-log-outcome p {
+  margin: 0;
+}
+.run-log-outcome .run-log-outcome-detail {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font: var(--type-caption);
+  overflow-wrap: anywhere;
+}
+/* A transaction, after the step it followed, then what was undone, released
+   or confirmed, 24 px further in, in the order it ran. */
+.run-log-phases {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-log-transaction {
+  min-height: 36px;
+}
+.run-log-phase {
+  padding-inline-start: calc(var(--space-3) + 24px);
+}
+.run-log-in-path .run-log-phase {
+  padding-inline-start: calc(
+    var(--space-3) + 24px + var(--path-depth, 1) * 24px
+  );
+}
+/* Two columns, the words whole: a long name takes another line. */
+.run-log-transaction,
+.run-log-phase {
+  grid-template-columns: 16px fit-content(70%) minmax(0, 1fr);
+}
+.run-log-transaction .run-log-step,
+.run-log-phase .run-log-step,
+.run-log-transaction .run-log-summary,
+.run-log-phase .run-log-summary {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.run-log-entry[data-tone="success"] .run-log-icon {
+  color: var(--success-ink);
+}
+.run-log-entry[data-tone="warning"] .run-log-icon {
+  color: var(--warning-ink);
+}
+.run-log-entry[data-tone="danger"] :is(.run-log-icon, .run-log-summary) {
+  color: var(--danger-ink);
+}
+.run-log-entry[data-tone="live"] .run-log-icon {
+  color: var(--info-ink);
+}
 /* Called workflows: a raised row under the call, then its steps in a group
    with a rule on the left; each level inside goes 22 px further in. */
 .run-log-frames,

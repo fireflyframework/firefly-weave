@@ -46,6 +46,9 @@ export interface TileFacts extends StepFacts {
 export type BadgeKind =
   | "failed"
   | "handled"
+  | "stuck"
+  | "undone"
+  | "in-doubt"
   | "changed"
   | "added"
   | "error"

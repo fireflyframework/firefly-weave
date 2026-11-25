@@ -20,7 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 // frame. Pure, and only loaded with the editor's canvas.
 import type { Step } from "../../model";
 import { undoChoiceOf } from "../transactions/points";
-import type { UndoMode } from "../transactions/transaction-words";
+import type { FrameState } from "../transactions/rollback";
+import type {
+  TransactionState,
+  UndoMode,
+} from "../transactions/transaction-words";
 import type { StepFacts } from "./tile-facts";
 
 /** A transaction's promise, after its name and "Transaction" in its header. */
@@ -80,6 +84,24 @@ export function undoBadge(step: Step): UndoBadge | null {
 export function undoText(step: Step): string {
   const choice = undoChoiceOf(step);
   return choice ? UNDO[choice].text : "";
+}
+
+const STATE_ICONS: Partial<Record<TransactionState, string>> = {
+  completed: "ok",
+  compensated: "undo",
+  cancelled: "undo",
+  in_doubt: "critical",
+  reconciled: "ok",
+  force_ended: "off",
+};
+/** The icon beside how a transaction ended; null while it runs, which a live dot shows. */
+export const stateIcon = (state: TransactionState): string | null =>
+  STATE_ICONS[state] ?? null;
+/** What the frame's tooltip adds to its state: who acts on one in doubt. */
+export function stateText({ facts, text, item }: FrameState): string {
+  return facts.state === "in_doubt"
+    ? `${text}${item}. In a real run, someone resolves this in Operate.`
+    : `${text}${item}`;
 }
 
 /** The steps inside a transaction's own steps, at any depth; not its error path's. */

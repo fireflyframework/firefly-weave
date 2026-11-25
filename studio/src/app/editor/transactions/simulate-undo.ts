@@ -24,7 +24,6 @@ import {
   codeSuggestions,
   effectDefault,
 } from "../ndv/panes/simulate-failure";
-import { POLICY } from "../ndv/kinds/forms/transaction-forms";
 import type { Json } from "../ndv/registry";
 import { instanceStep } from "../state/instance-keys";
 import type { ErrorEntry } from "../state/test-data";
@@ -36,6 +35,7 @@ import {
   transactionHolding,
 } from "./phases";
 import { afterPointOfNoReturn, undoChoiceOf } from "./points";
+import { triesOf } from "./policy";
 import { phaseRowText, type UndoMode } from "./transaction-words";
 
 export type Effect = "none" | "unknown";
@@ -84,15 +84,6 @@ const nameOf = (uses: unknown) =>
   typeof uses === "string" && uses.lastIndexOf("@") > 0
     ? uses.slice(0, uses.lastIndexOf("@"))
     : String(uses ?? "");
-
-function triesOf(transaction: Step): number {
-  const policy = transaction["policy"] as
-    | { undoRetry?: { maxAttempts?: unknown } }
-    | null
-    | undefined;
-  const tries = policy?.undoRetry?.maxAttempts;
-  return typeof tries === "number" ? tries : POLICY.undoRetry.maxAttempts;
-}
 
 /** What Simulate a failure offers for a step inside a transaction; null for one outside. */
 export function transactionFailure(

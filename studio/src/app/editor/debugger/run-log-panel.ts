@@ -60,7 +60,9 @@ import {
   PhaseOutputDialog,
 } from "../transactions/phase-output-dialog";
 import { PHASE_NOUNS } from "../transactions/simulate-undo";
-import { LOOP_LIMIT, loopProgress } from "../canvas/run-state";
+import { simulatedRollback } from "../transactions/rollback";
+import { TRANSACTION_CODE_TEXT } from "../transactions/transaction-words";
+import { LOOP_LIMIT, loopProgress, type CanvasRun } from "../canvas/run-state";
 import { failureCodeText } from "../canvas/tile-facts";
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
 import { stepPointerOf } from "../formula/loops";
@@ -71,6 +73,7 @@ import {
   pausedOf,
   runFailureOf,
   stepsOf,
+  stoppedAt,
 } from "../canvas/trace-playback";
 import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
 import type { CalledRuns } from "../state/execute-request";
@@ -88,6 +91,8 @@ import type {
   StudioTestData,
 } from "../state/test-data";
 import { withCalleeMock, withScript } from "../state/test-data-ops";
+import { transactionSummary } from "../state/run-summary";
+import { withTransactions, type TransactionLog } from "./run-log-transactions";
 
 /** What the run log needs from the editor (the shell has every member). */
 export interface RunLogHost {
@@ -95,6 +100,8 @@ export interface RunLogHost {
   readonly execution: ExecutionService | null;
   readonly runLogOpen: Signal<boolean>;
   readonly runSession: Signal<HostSession | null>;
+  /** The last execution as the canvas plays it back. */
+  readonly playback?: Signal<CanvasRun | null>;
   /** Why the last Execute workflow didn't start, such as too many called workflows; null once one starts. */
   readonly executeRefusal?: Signal<string | null>;
   readonly breakpoints: Signal<ReadonlySet<string>>;
@@ -163,6 +170,8 @@ export interface RunLogEntry {
   };
   /** The workflows this step called, with what ran inside them. */
   frames?: FrameLog[];
+  /** The transactions undone or finished after it, with their undo steps. */
+  transactions?: TransactionLog[];
 }
 
 const STATUS_ICONS: Record<RunLogEntry["status"], string> = {
@@ -241,9 +250,7 @@ export function stoppedRow(
   definition: unknown,
 ): { step: string; code: string; reason: string | null } | null {
   if (response.status !== "failed") return null;
-  const entry = response.trace.find(
-    (each) => each.status === "failed" && !each.handled && !each.frame,
-  );
+  const entry = stoppedAt(response);
   if (!entry) return null;
   const code =
     runFailureOf(response, entry.nodeId, definition)?.code ??
@@ -301,13 +308,14 @@ export function loopLog(
   const entries = response.trace.filter((entry) => !entry.frame);
   // The step the run failed at, and its error, said once under its item:
   // the answer's, else a Fail step's own code and message. A failure a
-  // step's On error handled went on: it isn't where the run stopped.
-  const failedAt = entries.find(
-    (entry) => entry.status === "failed" && !entry.handled,
-  );
+  // step's On error handled went on: it isn't where the run stopped. One
+  // its transaction was undone for has its own error, not the transaction's.
+  const failedAt = stoppedAt(response);
+  const diagnostic = response.diagnostics?.[0];
   const error =
-    response.diagnostics?.[0] ??
-    (failedAt ? failCopy(definition, failedAt.nodeId) : undefined);
+    (TRANSACTION_CODE_TEXT[diagnostic?.code ?? ""] && failedAt?.error) ||
+    (diagnostic ??
+      (failedAt ? failCopy(definition, failedAt.nodeId) : undefined));
   return loopProgress(
     trace,
     trace.length,
@@ -342,8 +350,12 @@ export function loopLog(
       if (!item.steps.includes(entry.nodeId)) item.steps.push(entry.nodeId);
       item.last = entry.status;
       item.key = entry.instanceKey || entry.nodeId;
-      // The steps directly in this loop's body, paths included.
-      if (loopsAround(entry.nodeId).length === depth + 1)
+      // The steps directly in this loop's body, paths included; a transaction
+      // has its own row.
+      if (
+        loopsAround(entry.nodeId).length === depth + 1 &&
+        entry.kind !== "transaction"
+      )
         item.ran.push(position);
       const key = entry.instanceKey || entry.nodeId;
       if (entry.status === "failed" && entry.handled) {
@@ -677,11 +689,11 @@ export function runStatus(
       : `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
+    // A transaction in doubt is why it stopped, whichever step failed.
+    if (transactionSummary(response)?.inDoubt) return `Stopped · ${steps}`;
     // Where it stopped, past any failure a step's On error handled; a
     // called run's step (its frame) is the call's, which the call reports.
-    const failed = response.trace.find(
-      (entry) => entry.status === "failed" && !entry.handled && !entry.frame,
-    );
+    const failed = stoppedAt(response);
     // A loop that failed over its Up to, before any item.
     if (
       failed?.kind === "forEach" &&
@@ -738,6 +750,21 @@ export function runStatus(
       <p class="run-log-outcome">
         <weave-icon name="degraded" [size]="16" aria-hidden="true" />{{ said }}
       </p>
+    }
+    @if (outcome(); as said) {
+      <div class="run-log-outcome" data-tone="danger">
+        <weave-icon
+          [name]="said.inDoubt ? 'critical' : 'failCircle'"
+          [size]="16"
+          aria-hidden="true"
+        />
+        <div>
+          <p>{{ said.text }}</p>
+          @if (said.detail) {
+            <p class="run-log-outcome-detail">{{ said.detail }}</p>
+          }
+        </div>
+      </div>
     }
     @if (!host().runSession()) {
       @let sampled = !!host().execution?.sampledInput();
@@ -986,6 +1013,59 @@ export function runStatus(
               />
             }
           </li>
+          @for (one of entry.transactions ?? []; track one.key) {
+            <!-- After the step it followed: what was undone, in the order it ran. -->
+            <li
+              class="run-log-row"
+              [class.run-log-in-path]="!!entry.path"
+              [style.--path-depth]="
+                entry.path ? entry.path.owners.length : null
+              "
+            >
+              <button
+                type="button"
+                class="run-log-entry run-log-transaction"
+                [attr.data-transaction]="one.key"
+                [attr.data-tone]="one.tone"
+                [attr.aria-label]="one.label"
+                (click)="openItem(one.key)"
+              >
+                <weave-icon
+                  class="run-log-icon"
+                  [name]="one.icon"
+                  [size]="16"
+                  aria-hidden="true"
+                />
+                <strong class="run-log-step">{{ one.title }}</strong>
+                <span class="run-log-summary">{{ one.text }}</span>
+              </button>
+              @if (one.steps.length) {
+                <ul class="run-log-phases" [attr.aria-label]="one.title">
+                  @for (step of one.steps; track step.title) {
+                    <li>
+                      <button
+                        type="button"
+                        class="run-log-entry run-log-phase"
+                        [attr.data-phase]="step.key"
+                        [attr.data-tone]="step.tone"
+                        [attr.aria-label]="step.label"
+                        (click)="openItem(step.key)"
+                      >
+                        <weave-icon
+                          class="run-log-icon"
+                          [name]="step.icon"
+                          [size]="16"
+                          aria-hidden="true"
+                        />
+                        <strong class="run-log-step">{{ step.title }}</strong>
+                        <span class="run-log-summary">{{ step.text }}</span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            </li>
+          }
         }
       </ul>
     } @else {
@@ -1248,7 +1328,21 @@ export class RunLogPanel {
     const last = host.execution?.last();
     return last ? handledSentence(last) : null;
   }
-  readonly entries = computed((): RunLogEntry[] => {
+  /** The moment its playback is at, until it ended. */
+  private playing(): CanvasRun | null {
+    const run = this.host().playback?.() ?? null;
+    return run && !run.ended ? run : null;
+  }
+  /** "The transaction move is in doubt, so the simulated run stopped.", once the playback ended. */
+  outcome() {
+    const host = this.host();
+    if (host.runSession() || host.executeRefusal?.() || this.playing())
+      return null;
+    const last = host.execution?.last();
+    return last ? transactionSummary(last) : null;
+  }
+  /** A row for each step that ran, in the order they did. */
+  private readonly ran = computed((): RunLogEntry[] => {
     const host = this.host();
     const marks = host.breakpoints();
     const stale = host.staleEntries();
@@ -1342,16 +1436,34 @@ export class RunLogPanel {
           : {}),
       });
     }
+    return [...seen.values()];
+  });
+  readonly entries = computed((): RunLogEntry[] => {
+    const host = this.host();
+    let rows = this.ran();
+    const last = host.execution?.last();
+    if (host.runSession() || !last) return rows;
+    if (last.transactions?.length) {
+      // While it plays back, each undo step as it plays; then how it ended.
+      const playing = this.playing();
+      rows = withTransactions(
+        rows,
+        last,
+        playing?.transactions ?? simulatedRollback(last, host.model.definition),
+        !!playing || last.status === "blocked",
+        this.loopsAround(),
+      );
+    }
     // "Error path" heads the first row of each path, under its step.
-    const rows = [...seen.values()];
     const joined = (owners: readonly string[]) => owners.join("/") + "/";
-    rows.forEach((row, at) => {
+    const listed = rows.map((row, at) => {
       const before = joined(rows[at - 1]?.path?.owners ?? []);
       // Back from a path inside this one: no second heading.
-      if (row.path && !before.startsWith(joined(row.path.owners)))
-        row.path = { ...row.path, first: true };
+      return row.path && !before.startsWith(joined(row.path.owners))
+        ? { ...row, path: { ...row.path, first: true } }
+        : row;
     });
-    return withFrames(rows, this.calls());
+    return withFrames(listed, this.calls());
   });
   /** The loops around each step of the workflow, outermost first. */
   private loopsAround(): (stepId: string) => readonly string[] {

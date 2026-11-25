@@ -7700,10 +7700,7 @@ export class App implements CanvasHost {
     const tools = this.tools;
     if (!tools) return;
     clearTimeout(this.playTimer);
-    const reduced =
-      typeof matchMedia === "function" &&
-      matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const frames = tools.playbackFrames(response, reduced);
+    const frames = tools.playbackOf(response, this.model.definition);
     const draftId = this.draftId;
     this.runAnnouncement.set(null);
     let at = 0;

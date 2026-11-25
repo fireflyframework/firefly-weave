@@ -314,9 +314,10 @@ export async function openMoveToExecute(
     },
   ]);
   await page.getByRole("button", { name: "Load", exact: true }).click();
+  // The host checks it with the repository's Python, which a busy machine starts slowly.
   await expect(
     page.locator(".toast", { hasText: "Loaded the test data" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   const canvas = page.getByLabel("Workflow canvas", { exact: true });
   const show = page.getByRole("button", { name: "Show canvas", exact: true });
   await expect(canvas.or(show).first()).toBeVisible();

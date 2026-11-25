@@ -38,6 +38,7 @@ import {
   type Point,
   type TileShape,
 } from "./layout-ltr";
+import type { Tone } from "../transactions/transaction-words";
 import { frameHeaderHeight } from "./loop-frame";
 import type { TileBadge, TileBorders } from "./tile-facts";
 
@@ -60,6 +61,13 @@ export interface FrameView {
     tone: "live" | "done" | "failed" | "stopped" | "handled";
     progress: number | null;
   } | null;
+  /** A transaction's, while a run shows: "Undone", "Undoing · 1 of 2", "In doubt · action needed". */
+  state?: {
+    text: string;
+    tone: Tone;
+    /** Null while it runs: the live dot. */
+    icon: string | null;
+  } | null;
 }
 
 export interface TileView {
@@ -79,8 +87,11 @@ export interface TileView {
   note: string;
   /** What its data holds, under the label ("3 fields"); "" when it has none. */
   output: string;
-  /** On the Runs tab, the line names the run's fact: a failure's code in danger ink, a change in info ink. */
-  outputTone?: "danger" | "warning" | "info" | null;
+  /**
+   * In a run, the line names its fact: a failure's code in danger ink, a
+   * change in info ink, what a transaction made of the step in its own.
+   */
+  outputTone?: "danger" | "warning" | "info" | "success" | null;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;
@@ -163,6 +174,16 @@ export interface TileView {
             >
           } @else if (frame.suffix) {
             <span class="frame-suffix">{{ frame.suffix }}</span>
+          }
+          @if (frame.state; as state) {
+            <span class="frame-state" [attr.data-tone]="state.tone">
+              @if (state.icon; as icon) {
+                <weave-icon [name]="icon" />
+              } @else {
+                <span class="frame-live-dot" aria-hidden="true"></span>
+              }
+              {{ state.text }}</span
+            >
           }
         </span>
         @if (frame.run; as run) {

@@ -23,15 +23,9 @@ SPDX-License-Identifier: Apache-2.0
 import { jsonEqual } from "../../../../forms/core/json";
 import type { Step } from "../../../../model";
 import type { Edit, FieldSpec, FormSpec, Json } from "../../registry";
+import { POLICY } from "../../../transactions/policy";
 import { isRecord } from "../shared";
 import { BUSINESS_KEY_SCHEMA, durationParam } from "./shared";
-
-/** The platform's defaults (contracts/transactions.py), in the order it writes them. */
-export const POLICY = {
-  holdSeconds: 900,
-  undoRetry: { maxAttempts: 10, initialDelaySeconds: 2, maxDelaySeconds: 300 },
-  undoTimeoutSeconds: 86_400,
-};
 
 export const transactionFields = (): FieldSpec[] => [
   { path: ["output"], label: "Result" },

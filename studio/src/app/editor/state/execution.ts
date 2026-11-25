@@ -22,6 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 // firefly_weave.contracts.step_tests.
 import type { Diagnostic } from "../../api";
 import type { InstanceKey, Json } from "../ndv/registry";
+import type { Phase } from "../transactions/phase-keys";
+import type {
+  ParticipantStatus,
+  TransactionState,
+  UndoMode,
+} from "../transactions/transaction-words";
 import type {
   AiTurnsEntry,
   FrameKey,
@@ -157,12 +163,44 @@ export interface Blocked {
   /** The called workflow's frame the step is in; absent for a step of the executed workflow. */
   frame?: FrameKey;
 }
+/** One step of a transaction: how it is undone and where it stands. */
+export interface ParticipantTrace {
+  nodeId: string;
+  instanceKey: InstanceKey;
+  mode: UndoMode;
+  status: ParticipantStatus;
+  /** How often its last undo step ran. */
+  attempts?: number;
+}
+/** One transaction of the simulated workflow (local_contracts.py): keys, states and codes, no value. */
+export interface TransactionTrace {
+  instanceKey: InstanceKey;
+  nodeId: string;
+  state: TransactionState;
+  /** Why it left its normal path: the step instance that failed. */
+  cause?: { code?: string; instanceKey: InstanceKey };
+  incidentKey?: string;
+  participants: ParticipantTrace[];
+}
+/** One confirm, release or undo of a step of a transaction, in the order they ended. */
+export interface PhaseEntry {
+  /** The last trace entry before it; -1 before any. */
+  afterIndex: number;
+  nodeId: string;
+  /** The step's key and the undo step's segment: `add[2]#undo`. */
+  instanceKey: string;
+  phase: Phase;
+  status: "completed" | "failed" | "waiting";
+}
 export interface ExecuteResponse {
   status: ExecuteStatus;
   compile: CompileSummary;
   trace: TraceEntry[];
   loops?: LoopProgress[];
   frames?: FrameView[];
+  /** The workflow's transactions and the undo steps that ran, when it has any. */
+  transactions?: TransactionTrace[];
+  phases?: PhaseEntry[];
   selectedScope?: SelectedScope;
   blocked?: Blocked;
   variables?: JsonObject;

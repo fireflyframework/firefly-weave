@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // A run as the canvas draws it: where it is, what it finished, and whether
 // it is a simulation played back or a real run followed live. Only a real
 // run pulses; a simulated one shows its live border without the pulse.
+import type { TransactionRun } from "../transactions/rollback";
+
 export interface CanvasRun {
   mode: "simulated" | "real";
   status: string;
@@ -48,6 +50,12 @@ export interface CanvasRun {
    * the run is blocked there. Read once the playback ended.
    */
   paused?: Readonly<Record<string, number>>;
+  /** Steps whose failure a transaction was undone for, without stopping the run there. */
+  failed?: readonly string[];
+  /** What became of its transactions by now; absent without any. */
+  transactions?: TransactionRun;
+  /** The step whose undo or release plays now. */
+  undoing?: string;
 }
 /** One step of a simulated run's trace, as the playback reads it. */
 export interface TraceStep {
@@ -261,7 +269,7 @@ export interface HandledFailure {
   message: string;
   policy: "continue" | "errorOutput";
 }
-export type EdgeRun = "idle" | "live" | "taken" | "skipped";
+export type EdgeRun = "idle" | "live" | "taken" | "skipped" | "undoing";
 export const ENDED_STATUSES: readonly string[] = [
   "succeeded",
   "failed",
@@ -281,6 +289,7 @@ export function tileRun(id: string, run: CanvasRun | null): TileRun {
     if (runEnded(run)) return finished ? "done" : null;
     return run.status === "waiting" ? "waiting" : "live";
   }
+  if (run.failed?.includes(id)) return "failed";
   return finished ? "done" : null;
 }
 
@@ -298,7 +307,12 @@ export function groupsEntered(
 ): ReadonlySet<string> {
   const groups = new Set<string>();
   if (!run) return groups;
-  for (const id of [...run.current, ...run.active, ...run.done]) {
+  for (const id of [
+    ...run.current,
+    ...run.active,
+    ...run.done,
+    ...(run.failed ?? []),
+  ]) {
     let group = parentOf(id);
     // Stopping at a group already added: the ones above it are in too.
     while (group && !groups.has(group)) {
@@ -321,6 +335,10 @@ export function edgeRun(
   inside: ReadonlySet<string> = NO_GROUPS,
 ): EdgeRun {
   if (!run) return "idle";
+  // While a step is undone, the way into it is drawn back; the rest of the
+  // way there is done with.
+  if (run.undoing && edge.enters === run.undoing) return "undoing";
+  const ended = runEnded(run) || !!run.undoing;
   // A step's Success output: taken when it finished without a failure its
   // error path handled, in any item of the loops around it; when its error
   // path ran every time, the way it didn't take.
@@ -329,7 +347,7 @@ export function edgeRun(
       run.handled?.[edge.success]?.policy === "errorOutput" &&
       !run.alsoCompleted?.includes(edge.success);
     if (!handled && run.done.includes(edge.success))
-      return runEnded(run) ? "taken" : "live";
+      return ended ? "taken" : "live";
     return runEnded(run) && (handled || run.mode === "simulated")
       ? "skipped"
       : "idle";
@@ -341,13 +359,13 @@ export function edgeRun(
     reached(id) ||
     run.current.includes(id) ||
     run.active.includes(id) ||
+    !!run.failed?.includes(id) ||
     inside.has(id);
   const taken =
     (edge.leaves === null || reached(edge.leaves)) &&
     (edge.enters === null || here(edge.enters));
-  const ended = runEnded(run);
   if (taken) return ended ? "taken" : "live";
-  if (!ended) return "idle";
+  if (!runEnded(run)) return "idle";
   // A run that happened marks only the ways a finished step didn't take:
   // edges out of a failed step, or on from a step it never reached, stay
   // plain. A step new in the draft wasn't there to reach: the run went past

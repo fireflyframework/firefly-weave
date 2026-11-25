@@ -149,16 +149,26 @@ import { toolbarSpot } from "./toolbar-spot";
 import {
   TRANSACTION_PROMISE,
   pointOfNoReturnText,
+  stateIcon,
+  stateText,
   stepsInTransactions,
   transactionFacts,
   undoBadge,
   undoText,
 } from "./transaction-frame";
+import {
+  frameState,
+  stepState,
+  type FrameState,
+  type StepState,
+} from "../transactions/rollback";
+import type { Tone } from "../transactions/transaction-words";
 import { NodeTile, type FrameView, type TileView } from "./node-tile";
 import {
   edgeRun,
   groupsEntered,
   pulses,
+  runEnded,
   tileRun,
   type CanvasRun,
   type HandledFailure,
@@ -206,7 +216,6 @@ import {
 } from "../state/clipboard";
 import {
   runText,
-  tileBadge,
   runFact,
   handledStatus,
   tileBorders,
@@ -214,6 +223,7 @@ import {
   type StepFacts,
   type TileBorders,
 } from "./tile-facts";
+import { stepBadge, transactionTileRun } from "./transaction-tile";
 import { failureText } from "./error-lane";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
@@ -236,7 +246,8 @@ const LISTENING = "Listening for test event";
 function frameView(
   step: Step,
   frame: LtrFrame,
-  run: FrameView["run"] = null,
+  run: FrameView["run"],
+  state: FrameState | null | undefined,
 ): FrameView {
   if (frame.transaction)
     return {
@@ -245,7 +256,14 @@ function frameView(
       items: "",
       pending: false,
       suffix: "",
-      run,
+      // An open one has no words: its live border shows it runs.
+      state: state?.text
+        ? {
+            text: state.text + state.item,
+            tone: state.tone,
+            icon: stateIcon(state.facts.state),
+          }
+        : null,
     };
   const { items, suffix } = loopHeaderParts(step);
   return {
@@ -292,6 +310,23 @@ const LOOP_TILE_RUN: Readonly<Record<LoopRun["status"], TileRun>> = {
   done: "done",
   paused: null,
 };
+
+/** The ink of the line that says what a transaction made of a step; "Done" reads as any result does. */
+const STEP_INK: Readonly<Record<Tone, TileView["outputTone"]>> = {
+  live: "info",
+  success: "success",
+  warning: "warning",
+  danger: "danger",
+  muted: null,
+};
+/** That line: "Undone", "Still reserved", "Confirmed". */
+const transactionFact = ({ status, text, tone }: StepState) =>
+  text
+    ? {
+        text,
+        tone: status === "done" && tone === "success" ? null : STEP_INK[tone],
+      }
+    : null;
 
 const modified = (event: KeyboardEvent) =>
   event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
@@ -755,12 +790,23 @@ export class CanvasView implements OnInit, DoCheck {
       );
       // In a simulation played back, each loop's progress at this frame.
       const progress = this.loopRuns(layout, run);
+      const transactions = run?.transactions;
+      const going = !!run && !runEnded(run);
       return layout.tiles.map((tile) => {
         const loopRun = progress?.filter((each) => each.id === tile.id).at(-1);
+        // Where its transaction left a step, and where a transaction stands.
+        const left =
+          transactions && tile.step
+            ? stepState(transactions, tile.id, going)
+            : null;
+        const stands =
+          transactions && frames.get(tile.id)?.transaction
+            ? frameState(transactions, tile.id, going)
+            : null;
         const state = loopRun
           ? LOOP_TILE_RUN[loopRun.status]
           : tile.step
-            ? tileRun(tile.id, run)
+            ? transactionTileRun(tileRun(tile.id, run), stands ?? left)
             : null;
         return this.tileView(
           tile,
@@ -799,6 +845,8 @@ export class CanvasView implements OnInit, DoCheck {
             loop: loopRun,
             ended: !!run?.ended,
             undone: undone.has(tile.id),
+            left,
+            stands,
           },
         );
       });
@@ -858,6 +906,10 @@ export class CanvasView implements OnInit, DoCheck {
       ended?: boolean;
       /** A step of a transaction, while no run shows: it says how it is undone. */
       undone?: boolean;
+      /** In a run: where its transaction left the step. */
+      left?: StepState | null;
+      /** In a run: where the transaction stands. */
+      stands?: FrameState | null;
     },
   ): TileView {
     const h = this.host();
@@ -945,7 +997,7 @@ export class CanvasView implements OnInit, DoCheck {
               }
             : null;
     const frame = state.frame
-      ? frameView(tile.step, state.frame, frameRun)
+      ? frameView(tile.step, state.frame, frameRun, state.stands)
       : null;
     const summary = frame?.promise
       ? frame.promise
@@ -991,10 +1043,14 @@ export class CanvasView implements OnInit, DoCheck {
           selected: state.selected,
           simulated: !!state.simulated,
         };
-    // A frame's header shows what the block needs, not how its steps ran.
-    const badge = state.frame
-      ? frameBadge(tileBadge(shown), state.frame.transaction)
-      : tileBadge(shown);
+    // A frame's header shows what the block needs, not how its steps ran. A
+    // transaction that failed says how it ended in its header.
+    const own = stepBadge(shown, state.left);
+    const badge = !state.frame
+      ? own
+      : state.stands && own?.kind === "failed"
+        ? null
+        : frameBadge(own, state.frame.transaction);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
     // A loop the run finished says how many items it had under its frame;
@@ -1013,16 +1069,19 @@ export class CanvasView implements OnInit, DoCheck {
         }
       : state.run === "handled"
         ? runFact(shown)
-        : recordedRun
-          ? null
-          : recorded
-            ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-            : null;
+        : state.left
+          ? transactionFact(state.left)
+          : recordedRun
+            ? null
+            : recorded
+              ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+              : null;
     // The Runs tab draws the run only: nothing from the editor's executions.
-    // A loop's frame says nothing under it while its playback runs.
+    // A frame says nothing under it while its playback runs.
     const runLine = fact
       ? fact.text
-      : this.viewingRuns() || (state.frame && state.loop && !state.ended)
+      : this.viewingRuns() ||
+          (state.frame && (state.loop || state.stands) && !state.ended)
         ? ""
         : (h.summaryOf?.(tile.id) ?? "");
     // A call that doesn't wait says so on its own line while no run line shows.
@@ -1035,6 +1094,10 @@ export class CanvasView implements OnInit, DoCheck {
     const failure = failureText(tile.step);
     const continues = !runLine && tile.step["onError"] === "continue";
     const undo = state.undone ? undoBadge(tile.step) : null;
+    // What a transaction does now is its own word, not "Running".
+    const lives =
+      (!!frame?.state && frame.state.tone === "live") ||
+      (state.left?.tone === "live" && !!state.left.text);
     return {
       ...common,
       step: true,
@@ -1060,12 +1123,17 @@ export class CanvasView implements OnInit, DoCheck {
         ]
           .filter(Boolean)
           .join(", "),
-        status:
+        status: [
           note ||
-          runText(state.run, tile.kind) ||
-          handledStatus(shown) ||
-          badge?.text ||
-          "",
+            (lives ? "" : runText(state.run, tile.kind)) ||
+            handledStatus(shown) ||
+            badge?.text,
+          lives || state.stands || state.left?.status === "unknown"
+            ? (frame?.state?.text ?? state.left?.text)
+            : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
         index: tile.index,
         count: tile.count,
         place: undo ? `${tile.place}, ${undoText(tile.step)}` : tile.place,
@@ -1077,6 +1145,7 @@ export class CanvasView implements OnInit, DoCheck {
             ? `${tile.id}: ${summary}`
             : `${tile.id}, ${kindLabel}`,
         note || badge?.text,
+        state.stands ? stateText(state.stands) : "",
       ]
         .filter(Boolean)
         .join(". "),

@@ -69,7 +69,7 @@ export interface EdgeView {
           refY="5"
           markerWidth="6"
           markerHeight="6"
-          orient="auto"
+          orient="auto-start-reverse"
         >
           <path [attr.class]="'edge-arrow ' + state" d="M0 0L10 5L0 10Z" />
         </marker>
@@ -87,11 +87,8 @@ export interface EdgeView {
         "
         [attr.d]="item.d"
         [attr.data-edge-line]="item.edge.key"
-        [attr.marker-end]="
-          item.edge.shape === 'fan' || !item.arrow
-            ? null
-            : 'url(#canvas-arrow-' + item.state + ')'
-        "
+        [attr.marker-start]="item.state === 'undoing' ? arrow(item) : null"
+        [attr.marker-end]="item.state === 'undoing' ? null : arrow(item)"
       />
     }
   </svg>`,
@@ -101,5 +98,11 @@ export class EdgeLayer {
   /** The drawing's size in canvas units. */
   width = input.required<number>();
   height = input.required<number>();
-  readonly states = ["idle", "live", "taken", "skipped"] as const;
+  readonly states = ["idle", "live", "taken", "skipped", "undoing"] as const;
+  /** Its arrowhead: at its end, or turned back at its start while the step it enters is undone. */
+  arrow(item: EdgeView): string | null {
+    return item.edge.shape === "fan" || !item.arrow
+      ? null
+      : `url(#canvas-arrow-${item.state})`;
+  }
 }

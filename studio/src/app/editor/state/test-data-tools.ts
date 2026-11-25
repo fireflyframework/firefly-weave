@@ -24,7 +24,9 @@ import type { Json } from "../ndv/registry";
 import { fingerprints, type StepFingerprints } from "./fingerprints";
 import { contractOf, ownedContract, pinsView, staleText } from "./pins-stale";
 import type { StudioTestData } from "./test-data";
+import { playbackFrames } from "../canvas/trace-playback";
 import { TestDataService, type TestDataHost } from "./test-data-service";
+import type { ExecuteResponse } from "./execution";
 import { ExecutionService, type ExecutionHost } from "./execution-service";
 import { checkInputsOf } from "./test-data-inputs";
 import type { CheckInputs } from "./test-data-check";
@@ -59,10 +61,17 @@ export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
 export {
   finalAnnouncement,
-  playbackFrames,
   PLAYBACK_STEP_MS,
   runFailureOf,
 } from "../canvas/trace-playback";
+/** The answer's playback on this page: only how it ended with reduced motion. */
+export const playbackOf = (response: ExecuteResponse, workflow: Workflow) =>
+  playbackFrames(
+    response,
+    typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches,
+    workflow,
+  );
 export { summaryLine } from "./run-summary";
 export { findStep } from "../ndv/step-walk";
 export { branchVariables, staleResults } from "./last-results";
