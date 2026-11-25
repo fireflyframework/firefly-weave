@@ -46,6 +46,7 @@ from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
+from firefly_weave.runtime.settlement import UNFINISHED_TASK_STATUSES
 from firefly_weave.runtime.step_failures import LEASE_EXPIRED, attempt_outcomes, failure_data, final_failure
 from firefly_weave.runtime.transactions import in_transaction, shapes
 from firefly_weave.runtime.waits import TERMINAL
@@ -265,8 +266,10 @@ class RecoveryService:
                 # the attempt is retired with nothing to report, so recovery goes on with other work. A task whose
                 # incident is still open keeps its status, which lets a person close that incident.
                 await self.tasks.retire_attempt(tx, identifier, attempt["generation"])
-                if node_incident is None:
+                if node_incident is None and task["status"] in UNFINISHED_TASK_STATUSES:
                     await repository.task_status(identifier, "cancelled")
+                # Counted, because nothing else shows it: a run that lost a step it still needs would wait unseen.
+                tx.record("recovery", "recovery.retired", "cancelled")
                 continue
             if (
                 view.state.status in TERMINAL

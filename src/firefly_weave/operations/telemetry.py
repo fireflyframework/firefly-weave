@@ -52,6 +52,7 @@ LABELS = ("operation", "status", "error_code")
 OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
     {
         "recovery",
+        "recovery.retired",
         "deadline",
         "outbox",
         "provider",

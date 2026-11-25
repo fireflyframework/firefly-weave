@@ -23,10 +23,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import TracerProvider
 from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.telemetry import TelemetryService, WeaveMetricsRecorder
 
 pytestmark = pytest.mark.integration
 
@@ -226,6 +230,19 @@ async def left_running(platform, reconciler):
     return run, confirm
 
 
+def recoveries(reader: InMemoryMetricReader) -> list[tuple[str, str, str, int]]:
+    """Each series of the recoveries counter, with its count."""
+    data = reader.get_metrics_data()
+    return [
+        (point.attributes["operation"], point.attributes["status"], point.attributes["error_code"], point.value)
+        for resource in (data.resource_metrics if data else [])
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == "weave.recoveries"
+        for point in metric.data.data_points
+    ]
+
+
 async def test_an_unclaimed_confirm_of_a_reconciled_transaction_is_never_reported_and_the_run_goes_on(
     platform, reconciler
 ):
@@ -412,14 +429,35 @@ async def test_a_force_end_never_waits_for_a_failure_to_be_handled(platform, rec
     assert (await platform.record(run.id))["state"] == "force_ended"
 
 
-async def test_recovery_retires_the_attempt_an_earlier_version_left_running(platform, reconciler):
+async def test_recovery_retires_and_counts_the_attempt_an_earlier_version_left_running(
+    platform, reconciler, monkeypatch
+):
     run, confirm = await left_running(platform, reconciler)
-    await platform.scan()
+    reader = InMemoryMetricReader()
+    meters = MeterProvider(metric_readers=[reader], shutdown_on_exit=False)
+    telemetry = TelemetryService(WeaveMetricsRecorder(meters), TracerProvider(shutdown_on_exit=False))
+    with monkeypatch.context() as measured:
+        measured.setattr(platform.definitions.uow, "telemetry", telemetry)
+        await platform.scan()
+    assert recoveries(reader) == [("recovery.retired", "cancelled", "none", 1)]
     assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
     assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")
     assert await reported(platform, run.id, "hold2#confirm") == []
     await recovery_reaches_another_run(platform)
     await goes_on(platform, run.id, "pause")
+
+
+async def test_recovery_cancels_only_an_unfinished_task_its_run_no_longer_waits_for(platform, reconciler):
+    run, confirm = await left_running(platform, reconciler)
+    unfinished = ("ready", "leased", "retry_pending", "incident", "failed", "revoked")
+    ends = dict.fromkeys(unfinished, "cancelled") | {"completed": "completed"}
+    for status, end in ends.items():
+        await leave(platform, confirm, status)
+        # Task recovery alone: the scan's delivery of unclaimed work would end a revoked task first.
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.recovery._recover(tx, "retry")
+        assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"], status
+        assert (await task(platform, run.id, "hold2#confirm"))[0] == end, status
 
 
 @pytest.mark.parametrize("decision", ["retry_safe", "accept_reconciled_result"])

@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 # The code a participant task reports when its transaction went back before any worker claimed it.
 REVOKED_CODE = "WV-TXN-ROLLED-BACK"
 _WORKER_TASK_STATUSES = ("ready", "leased", "retry_pending", "incident", "failed")
+# A task nothing has ended yet; a revoked one still waits to be reported.
+UNFINISHED_TASK_STATUSES = (*_WORKER_TASK_STATUSES, "revoked")
 _ORDER = " ".join(f"WHEN '{state}' THEN {index}" for index, state in enumerate(TRANSACTION_STATE_ORDER))
 
 
