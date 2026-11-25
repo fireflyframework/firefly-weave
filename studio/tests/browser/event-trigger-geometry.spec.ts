@@ -180,6 +180,34 @@ test("at 200% zoom the sheet leaves the field it belongs to in view, and scrolls
   }
 });
 
+test("a field under the sticky bars scrolls in by no more than it takes", async ({
+  page,
+}) => {
+  test.skip(!hasPython, "needs the repository's Python");
+  await page.setViewportSize({ width: 640, height: 360 });
+  const details = await openNotifyTeam(page, { spec: ONLY });
+  const dialog = await openEventTrigger(page, details);
+  await pane(details, "Parameters");
+  await dialog.locator(".et-field").scrollIntoViewIfNeeded();
+  const { top } = await paneRoom(dialog);
+  await dialog.locator(".et-field").evaluate((item, by) => {
+    let scroller = item.parentElement!;
+    while (!/auto|scroll/.test(getComputedStyle(scroller).overflowY))
+      scroller = scroller.parentElement!;
+    scroller.scrollBy({ top: item.getBoundingClientRect().top - by });
+  }, top - 20);
+  const before = await box(dialog.locator(".et-field"));
+  near(before.y, top - 20, "under the bars");
+  // A press on what shows of it.
+  await page.mouse.click(before.x + 60, before.bottom - 8);
+  await expect(
+    dialog.getByRole("combobox", { name: "Add a workflow" }),
+  ).toBeFocused();
+  await expect
+    .poll(async () => (await box(dialog.locator(".et-field"))).y)
+    .toBeCloseTo(top + RING, 0);
+});
+
 for (const size of SIZES)
   test.describe(`Reacting to a platform event at ${size.tag}`, () => {
     test.skip(!hasPython, "needs the repository's Python");

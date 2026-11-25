@@ -332,10 +332,11 @@ export class EventTriggerDetails {
             if (problem)
               last = Math.max(last, problem.getBoundingClientRect().bottom);
           }
-          // Its top first, when there isn't room for both.
-          const by = Math.min(last - end, top - RING - view.top);
-          if (last > end || top - RING < view.top)
-            scroller.scrollBy({ top: by });
+          // No further than it takes, and never past its top.
+          const room = top - RING - view.top;
+          scroller.scrollBy({
+            top: room < 0 ? room : Math.min(room, Math.max(0, last - end)),
+          });
         }),
       { injector: this.injector },
     );
