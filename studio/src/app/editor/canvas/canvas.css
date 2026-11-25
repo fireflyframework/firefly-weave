@@ -236,10 +236,10 @@ weave-canvas-view,
   pointer-events: none;
 }
 
-/* A loop: a frame around the steps it repeats, whose header band is the
-   loop's tile: the loop has no tile of its own. The frame has no fill, so
+/* A loop or a transaction: a frame around its steps, whose header band is
+   its tile: the block has no tile of its own. The frame has no fill, so
    the canvas shows through, and its border is the edges' dim stroke; only
-   selected, live and error color it. The header names the loop and its list
+   selected, live and error color it. A loop's header names it and its list
    on one line and shortens instead of wrapping: "For each item in" goes
    first (from sight only), then the at-a-time suffix, then the list down to
    2.5 em; the name keeps at most 40% and never goes. Its text draws larger
@@ -396,6 +396,23 @@ weave-canvas-view,
   .canvas-v2 .frame-progress::after {
     transition: none;
   }
+}
+/* A transaction's header: its promise shortens first, then its name; the
+   word "Transaction" never does. */
+.canvas-v2 .frame-transaction .frame-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.canvas-v2 .frame-kind {
+  flex: none;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-v2 .frame-promise {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* No list yet: "loop-1 For each item in …" stays whole. */
 .canvas-v2 .frame-pending .frame-items {
@@ -627,6 +644,11 @@ weave-canvas-view,
      below. */
   .canvas-v2 .handle[data-tap="success"]::before {
     inset-block: calc(4px - var(--hit) / 4) calc(4px - var(--hit) * 0.75);
+  }
+  /* On a frame's border the area starts 12 units in, where the last "+"
+     inside the frame ends. */
+  .canvas-v2 .handle[data-tap].on-frame::before {
+    inset-inline: -8px calc(16px - var(--hit));
   }
   .canvas-v2 .lane-slot::before {
     content: "";

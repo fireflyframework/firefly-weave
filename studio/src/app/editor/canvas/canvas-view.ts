@@ -127,6 +127,7 @@ import {
   type Insertion,
   type LtrBounds,
   type LtrFrame,
+  type LtrHandle,
   type LtrLayout,
   type LtrTile,
   type Point,
@@ -144,6 +145,7 @@ import {
 } from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
+import { TRANSACTION_PROMISE, transactionFacts } from "./transaction-frame";
 import { NodeTile, type FrameView, type TileView } from "./node-tile";
 import {
   edgeRun,
@@ -221,12 +223,21 @@ const activatedIntent = (intent: TriggerIntent | null) =>
 const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
 const LISTENING = "Listening for test event";
 
-/** What a loop's frame draws around its body, from its layout. */
+/** What a frame draws around its steps, from its layout. */
 function frameView(
   step: Step,
   frame: LtrFrame,
   run: FrameView["run"] = null,
 ): FrameView {
+  if (frame.transaction)
+    return {
+      height: frame.height,
+      promise: TRANSACTION_PROMISE,
+      items: "",
+      pending: false,
+      suffix: "",
+      run,
+    };
   const { items, suffix } = loopHeaderParts(step);
   return {
     height: frame.height,
@@ -235,6 +246,17 @@ function frameView(
     suffix,
     run,
   };
+}
+/** A frame's facts for the badge on its header. */
+function frameFacts(
+  tile: LtrTile,
+  frame: LtrFrame | undefined,
+  facts: StepFacts,
+): StepFacts {
+  if (!tile.step || !frame) return facts;
+  return frame.transaction
+    ? transactionFacts(tile.step, facts)
+    : loopFacts(tile.step, facts);
 }
 /** A loop's run, as its header says it: its words, its tone and how far it is. */
 function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
@@ -710,7 +732,7 @@ export class CanvasView implements OnInit, DoCheck {
       const places = this.places();
       const frames = new Map(layout.frames.map((frame) => [frame.id, frame]));
       // A selected decision or parallel step shows every step inside it as
-      // selected; a selected loop's frame says its steps come with it.
+      // selected; a selected frame says its steps come with it.
       const chosen = drawnSelected(
         covered(selection, places),
         selection.ids,
@@ -733,10 +755,13 @@ export class CanvasView implements OnInit, DoCheck {
             tile,
             this.withPasteGaps(
               tile,
-              // A loop without a list says it needs one on its header.
-              tile.step?.kind === "forEach"
-                ? loopFacts(tile.step, facts.get(tile.id) ?? NO_FACTS)
-                : (facts.get(tile.id) ?? NO_FACTS),
+              // A loop without a list, or a transaction without steps, says
+              // what it needs on its header.
+              frameFacts(
+                tile,
+                frames.get(tile.id),
+                facts.get(tile.id) ?? NO_FACTS,
+              ),
             ),
           ),
           {
@@ -810,7 +835,7 @@ export class CanvasView implements OnInit, DoCheck {
       handled?: HandledFailure;
       /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
       recorded?: RecordedRun | null;
-      /** A loop's frame: the tile is its header band. */
+      /** A loop's or a transaction's frame: the tile is its header band. */
       frame?: LtrFrame;
       /** A loop's progress in the simulation played back. */
       loop?: LoopRun;
@@ -905,15 +930,17 @@ export class CanvasView implements OnInit, DoCheck {
     const frame = state.frame
       ? frameView(tile.step, state.frame, frameRun)
       : null;
-    const summary = frame
-      ? `For each item in ${frame.items}${
-          frameRun
-            ? ` · ${frameRun.text}`
-            : frame.suffix
-              ? ` ${frame.suffix}`
-              : ""
-        }`
-      : (descriptor?.summary(tile.step, ctx) ?? "");
+    const summary = frame?.promise
+      ? frame.promise
+      : frame
+        ? `For each item in ${frame.items}${
+            frameRun
+              ? ` · ${frameRun.text}`
+              : frame.suffix
+                ? ` ${frame.suffix}`
+                : ""
+          }`
+        : (descriptor?.summary(tile.step, ctx) ?? "");
     // A run that happened shows what it did, not the draft's errors, setup or pins.
     const shown = recorded
       ? {
@@ -947,8 +974,10 @@ export class CanvasView implements OnInit, DoCheck {
           selected: state.selected,
           simulated: !!state.simulated,
         };
-    // A loop's header shows what the loop needs, not how its items ran.
-    const badge = state.frame ? frameBadge(tileBadge(shown)) : tileBadge(shown);
+    // A frame's header shows what the block needs, not how its steps ran.
+    const badge = state.frame
+      ? frameBadge(tileBadge(shown), state.frame.transaction)
+      : tileBadge(shown);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
     // A loop the run finished says how many items it had under its frame;
@@ -1021,7 +1050,11 @@ export class CanvasView implements OnInit, DoCheck {
         place: tile.place,
       }),
       tooltip: [
-        frame ? `${tile.id}: ${summary}` : `${tile.id}, ${kindLabel}`,
+        frame?.promise
+          ? `${tile.id}: ${kindLabel} · ${summary}`
+          : frame
+            ? `${tile.id}: ${summary}`
+            : `${tile.id}, ${kindLabel}`,
         note || badge?.text,
       ]
         .filter(Boolean)
@@ -1202,14 +1235,14 @@ export class CanvasView implements OnInit, DoCheck {
       // A run records a decision or parallel step only when it finishes, so
       // the way into one counts once the run is at a step inside it.
       const inside = groupsEntered(run, (id) => places.get(id)?.parent ?? null);
-      const loops = new Set(layout.frames.map((frame) => frame.id));
+      const frames = this.framesMemo(layout);
       return layout.edges.map((edge) => ({
         edge,
         d: edgePath(edge),
         state: edgeRun(edge, run, inside),
         shown: hovered === edge.key,
         plus: locked ? null : (onEdges.get(edge.key) ?? null),
-        arrow: !endsAtFrame(edge, loops),
+        arrow: !endsAtFrame(edge, frames),
       }));
     },
   );
@@ -1223,12 +1256,21 @@ export class CanvasView implements OnInit, DoCheck {
       this.places(),
     );
   }
-  private readonly loopsMemo = memo(
-    (layout: LtrLayout) => new Set(layout.frames.map((frame) => frame.id)),
+  private readonly framesMemo = memo(
+    (layout: LtrLayout) =>
+      new Map(layout.frames.map((frame) => [frame.id, frame])),
   );
-  /** The loops around each step, outermost first, read from the layout. */
-  private loopsAroundOf(layout: LtrLayout) {
-    const loops = this.loopsMemo(layout);
+  private readonly loopsMemo = memo(
+    (layout: LtrLayout) =>
+      new Set(
+        layout.frames.flatMap((frame) => (frame.transaction ? [] : [frame.id])),
+      ),
+  );
+  /** The frames (by default, the loops) around each step, outermost first, read from the layout. */
+  private loopsAroundOf(
+    layout: LtrLayout,
+    frames: { has(id: string): boolean } = this.loopsMemo(layout),
+  ) {
     const places = this.places();
     return (id: string): readonly string[] => {
       const around: string[] = [];
@@ -1237,7 +1279,7 @@ export class CanvasView implements OnInit, DoCheck {
         parent;
         parent = places.get(parent)?.parent ?? null
       )
-        if (loops.has(parent)) around.unshift(parent);
+        if (frames.has(parent)) around.unshift(parent);
       return around;
     };
   }
@@ -1279,9 +1321,17 @@ export class CanvasView implements OnInit, DoCheck {
       this.loopSaidAt = now;
     }
   }
-  /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
-  handleOffset(tile: string): number {
-    return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;
+  /** A frame's one output dot sits 8 units out from it, clear of its last "+". */
+  handleOffset(output: LtrHandle): number {
+    return this.atFrame(output) && !output.label ? 8 : 0;
+  }
+  /** A transaction's Success and Error outputs sit on its frame's border. */
+  onFrame(output: LtrHandle): boolean {
+    return this.atFrame(output) && !!output.label;
+  }
+  private atFrame({ tile, x }: LtrHandle): boolean {
+    const frame = this.framesMemo(this.layout()).get(tile);
+    return !!frame && x === frame.x + frame.width;
   }
   /**
    * A loop's run in a recorded run: the one in the items picked on the
@@ -2247,9 +2297,9 @@ export class CanvasView implements OnInit, DoCheck {
     return { width, height };
   }
   /**
-   * Frames the run Execute workflow plays back in a workflow with loops: the
-   * whole workflow at 55% or more; else the loop holding the step it failed
-   * or is at (else the last it finished); else that step at 60%.
+   * Frames the run Execute workflow plays back in a workflow with loops or
+   * transactions: the whole workflow at 55% or more; else the one holding the
+   * step it failed or is at (else the last it finished); else that step at 60%.
    */
   private frameExecution() {
     const run = this.host().canvasRun();
@@ -2257,19 +2307,20 @@ export class CanvasView implements OnInit, DoCheck {
     if (run?.mode !== "simulated" || !run.trace) return;
     if (!this.ready || !root.clientWidth) return;
     const layout = this.layout();
-    // Workflows without loops keep their steps in sight as before (keepRunInView).
+    // Workflows without frames keep their steps in sight as before (keepRunInView).
     if (!layout.frames.length) return;
+    const frames = this.framesMemo(layout);
     const order = layout.tiles.map((tile) => tile.id);
     const at =
       run.current.find((id) => order.includes(id)) ??
       [...order].reverse().find((id) => run.done.includes(id)) ??
       null;
-    const loopId = at
-      ? layout.frames.some((frame) => frame.id === at)
+    const around = at
+      ? frames.has(at)
         ? at
-        : this.loopsAroundOf(layout)(at).at(-1)
+        : this.loopsAroundOf(layout, frames)(at).at(-1)
       : undefined;
-    const loop = layout.frames.find((frame) => frame.id === loopId);
+    const frame = around ? frames.get(around) : undefined;
     const tile = layout.tiles.find((item) => item.id === at);
     const halves = this.labelTextHalves(layout);
     const outlineAt = (zoom: number) => {
@@ -2284,8 +2335,8 @@ export class CanvasView implements OnInit, DoCheck {
     this.framedView = this.frameView(
       frameExecuted(
         outlineAt,
-        loop
-          ? { x: loop.x, y: loop.y, width: loop.width, height: loop.height }
+        frame
+          ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
           : null,
         tile
           ? {
@@ -2411,7 +2462,7 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
       return;
-    // A run of a workflow with loops is framed as Execute workflow frames it.
+    // A run of a workflow with frames is framed as Execute workflow frames it.
     if (h.canvasRun()?.trace && this.layout().frames.length) return;
     const frame = root.getBoundingClientRect();
     // Tiles as drawn (body, label, summary line), in world units.
@@ -2573,7 +2624,7 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (!tile || !root.clientWidth) return;
     const size = { width: root.clientWidth, height: root.clientHeight };
-    // A loop shows its whole frame; where that misses with the usual
+    // A frame shows whole; where that misses with the usual
     // margin, with less, and else from its header's start.
     const frame = layout.frames.find((item) => item.id === id);
     const rect = frame
@@ -2932,19 +2983,19 @@ export class CanvasView implements OnInit, DoCheck {
     const pending = this.pendingFocus;
     const slotFor = pending
       ? pending.slot
-        ? pending.id
-        : undefined
-      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
+        ? this.bodySlot(pending.id)
+        : ""
+      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["insertOwner"];
     if (slotFor && this.slotKey(event, slotFor)) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    // On its way to an empty loop's Add a step, keys act on that slot:
+    // On its way to an empty frame's Add a step, keys act on that slot:
     // Enter opens it, and the commands about steps wait for it.
     if (pending?.slot && event.key === "Enter" && !modified(event)) {
       const slot = this.root().nativeElement.querySelector<HTMLElement>(
-        this.slotSelector(pending.id),
+        this.slotSelector(this.bodySlot(pending.id)),
       );
       this.pendingFocus = null;
       if (slot) this.insertAt(slot);
@@ -3149,13 +3200,14 @@ export class CanvasView implements OnInit, DoCheck {
   private moveFocus(
     from: string,
     direction: Direction,
-    /** From an empty loop's slot: on past the loop. */
+    /** From an empty frame's slot: on past the frame. */
     pastBody = false,
   ): boolean {
     const start = from || this.active();
-    // An empty loop's "Add a step" is the way into its body.
-    if (direction === "next" && !pastBody && this.emptyLoop(start)) {
-      this.focusLater(start, this.slotSelector(start), true);
+    // An empty frame's "Add a step" is the way into it.
+    const slot = direction === "next" && !pastBody && this.bodySlot(start);
+    if (slot) {
+      this.focusLater(start, this.slotSelector(slot), true);
       return true;
     }
     const next = neighbor(this.layout(), start, direction);
@@ -3193,28 +3245,31 @@ export class CanvasView implements OnInit, DoCheck {
   private focusTileLater(id: string) {
     this.focusLater(id, `[data-tile="${CSS.escape(id)}"] .tile-body`);
   }
-  /** A loop whose body is empty: its frame holds an "Add a step" slot. */
-  private emptyLoop(id: string): boolean {
-    return this.layout().slots.some(
-      (slot) => slot.tile === id && slot.owner === `${id}/body`,
+  /** The sequence a loop's or a transaction's "Add a step" slot adds to, while its frame is empty; else "". */
+  private bodySlot(id: string): string {
+    return (
+      this.layout().slots.find(
+        ({ owner }) => owner === `${id}/body` || owner === `${id}/steps`,
+      )?.owner ?? ""
     );
   }
-  private slotSelector(loop: string): string {
-    return `.lane-slot[data-slot-for="${CSS.escape(loop)}"]`;
+  private slotSelector(owner: string): string {
+    return `.lane-slot[data-insert-owner="${CSS.escape(owner)}"]`;
   }
   /**
-   * ← and → on an empty loop's "Add a step": back to the loop's header, or
-   * on past the loop, as from a body's last step. Enter is the button's own.
+   * ← and → on an empty frame's "Add a step": back to the frame's header, or
+   * on past it, as from its last step. Enter is the button's own.
    */
-  private slotKey(event: KeyboardEvent, loop: string): boolean {
+  private slotKey(event: KeyboardEvent, owner: string): boolean {
     if (modified(event)) return false;
-    if (!this.emptyLoop(loop)) return false;
+    const id = owner.slice(0, owner.indexOf("/"));
+    if (!id || this.bodySlot(id) !== owner) return false;
     if (event.key === "ArrowLeft") {
-      if (this.places().has(loop)) this.choose(only(loop));
-      this.focusTileLater(loop);
+      if (this.places().has(id)) this.choose(only(id));
+      this.focusTileLater(id);
       return true;
     }
-    if (event.key === "ArrowRight") return this.moveFocus(loop, "next", true);
+    if (event.key === "ArrowRight") return this.moveFocus(id, "next", true);
     return false;
   }
   /**

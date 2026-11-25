@@ -201,6 +201,42 @@ for (const size of [
 test.describe("adding a step inside a transaction", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("an empty transaction's slot adds its first step, and Transaction says why it can't be one", async ({
+    page,
+  }) => {
+    const canvas = await open(
+      page,
+      workflow(`    - id: move
+      kind: transaction
+      steps: []
+      output: {literal: null}
+`),
+    );
+    await canvas.insertTarget("Add a step to transaction move").click();
+    const panel = new AddStepPanel(page);
+    await expect(panel.search).toBeFocused();
+    await panel.option("Flow").click();
+    const entry = panel.option("Transaction");
+    await expect(entry).toHaveAttribute("aria-disabled", "true");
+    await expect(entry).toContainText(
+      "A transaction can't contain another transaction.",
+    );
+    await page.keyboard.press("ArrowLeft");
+    await panel.choose("Send email");
+    await expect(
+      page.getByRole("dialog", { name: "Step details: send-email" }),
+    ).toBeVisible();
+    await canvas.closeInspector();
+    // The frame holds it, and asks for nothing more.
+    await expect(
+      canvas.insertTarget("Add a step at the end of transaction move"),
+    ).toBeVisible();
+    await expect(canvas.tile("move").locator(".tile-badge")).toHaveCount(0);
+    const steps = await stepsOf(page);
+    expect(steps.map((step) => step.id)).toEqual(["lookup", "move"]);
+    expect(steps[1].steps!.map((step) => step.id)).toEqual(["send-email"]);
+  });
+
   test("inside a transaction, Send email goes into its own steps and Transaction says why it can't", async ({
     page,
   }) => {

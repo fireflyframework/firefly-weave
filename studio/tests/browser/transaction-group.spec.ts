@@ -114,7 +114,10 @@ test.describe("grouping steps at 1440x900", () => {
     const toast = page.locator(".toast-region");
     await expect(toast).toContainText("Grouped 2 steps in transaction-1.");
     await expect(canvas.tileBody("transaction-1")).toBeFocused();
-    await expect(canvas.tile("transaction-1")).toContainText("2 steps");
+    for (const id of ["hold", "add"])
+      await expect(canvas.tileBody(id)).toHaveAccessibleName(
+        /of 2 in Transaction transaction-1$/,
+      );
     const [block, move] = await stepsOf(page);
     expect(block).toEqual({
       id: "transaction-1",

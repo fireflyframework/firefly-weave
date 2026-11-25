@@ -40,6 +40,10 @@ export const FRAME = {
   bottom: 24,
   /** The narrowest frame, so a just-added loop's header fits whole at 60%. */
   minWidth: 360,
+  /** A transaction's narrowest, so a new one's header shows whole at 100%. */
+  transactionWidth: 520,
+  /** A frame's Error output sits this far above its bottom, on its right border. */
+  errHandle: 24,
   /** Under a frame: its own label line (the loop's result once it ran) and a gap. */
   after: 48,
 } as const;
@@ -87,10 +91,10 @@ export function frameHeaderHeight(zoom: number): number {
  */
 export function endsAtFrame(
   edge: { key: string; enters: string | null },
-  loops: ReadonlySet<string>,
+  frames: { has(id: string): boolean },
 ): boolean {
   return (
-    (edge.enters !== null && loops.has(edge.enters)) ||
+    (edge.enters !== null && frames.has(edge.enters)) ||
     edge.key.slice(edge.key.lastIndexOf(">") + 1).startsWith("$exit:")
   );
 }
@@ -184,12 +188,17 @@ export function loopFacts(step: Step, facts: StepFacts): StepFacts {
 }
 
 /**
- * The badge a loop's header shows: what the loop itself needs (setup, an
- * error or a warning in its settings). How a run went shows on the steps
- * inside and in the header's run status, never twice on the frame.
+ * The badge a frame's header shows: what the block itself needs (setup, an
+ * error or a warning in its settings). How a loop's run went shows on the
+ * steps inside and in the header's run status, never twice on the frame. A
+ * transaction's own failure shows on it.
  */
-export function frameBadge(badge: TileBadge | null): TileBadge | null {
-  return badge && ["setup", "error", "warning"].includes(badge.kind)
-    ? badge
-    : null;
+export function frameBadge(
+  badge: TileBadge | null,
+  transaction = false,
+): TileBadge | null {
+  const kept = transaction
+    ? ["failed", "handled", "setup", "error", "warning"]
+    : ["setup", "error", "warning"];
+  return badge && kept.includes(badge.kind) ? badge : null;
 }

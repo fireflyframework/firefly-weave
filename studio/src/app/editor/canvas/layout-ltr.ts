@@ -26,6 +26,7 @@ import type { NodeRole } from "../ndv/registry";
 import { blocksOf, type BlockKind } from "../step-blocks";
 import { errorLane, type ErrorLane } from "./error-lane";
 import { FRAME, loopHeader } from "./loop-frame";
+import { TRANSACTION_HEADER, isTransaction } from "./transaction-frame";
 
 /** Sizes in canvas units: one unit is one CSS pixel at 100% zoom. */
 export const LTR = {
@@ -233,16 +234,18 @@ export interface LtrSubNodeRow {
   step: string;
   chips: LtrChip[];
 }
-/** A loop's frame around its body, in canvas units; its header band is the loop's tile. */
+/** A loop's or a transaction's frame around its steps, in canvas units; its header band is its tile. */
 export interface LtrFrame {
   id: string;
+  /** Set on a transaction's frame; a loop's has none. */
+  transaction?: true;
   x: number;
   y: number;
   width: number;
   height: number;
-  /** "For each item in input.orders · up to 4 at a time". */
+  /** "For each item in input.orders · up to 4 at a time"; a transaction's promise. */
   header: string;
-  /** The loop's own depth: 0 in the main sequence. */
+  /** The block's own depth: 0 in the main sequence. */
   depth: number;
 }
 export interface LtrBounds {
@@ -290,12 +293,15 @@ const stepsOf = (branch: unknown): Step[] => {
   const steps = record(branch)["steps"];
   return Array.isArray(steps) ? (steps as Step[]) : [];
 };
+/** A block drawn as a frame around its steps: a loop or a transaction. */
+const isFrame = (step: Step) => step.kind === "forEach" || isTransaction(step);
 const isGroup = (step: Step) =>
-  step.kind === "switch" || step.kind === "parallel" || step.kind === "forEach";
+  step.kind === "switch" || step.kind === "parallel" || isFrame(step);
 
 /**
  * A step's lanes in order, its blocks: a decision's cases then Otherwise, a
- * parallel step's branches, a loop's body, or a step's error path.
+ * parallel step's branches, a loop's or a transaction's own steps, or a
+ * step's error path.
  */
 export function lanesOf(
   step: Step,
@@ -306,14 +312,22 @@ export function lanesOf(
     kind: block.kind,
   }));
 }
-/** The error path a step's Error output leads to; groups have none. */
-const errorPathOf = (step: Step) => (isGroup(step) ? null : errorLane(step));
+/** The error path a step's Error output leads to; of the groups, only a transaction has one. */
+const errorPathOf = (step: Step) =>
+  isGroup(step) && !isTransaction(step) ? null : errorLane(step);
+/** A frame's own steps: a loop's body, a transaction's. */
+const bodyOf = (step: Step) => lanesOf(step)[0].steps;
 
-/** Whether a run can get past these steps: no Fail on the way, and a way through each group. */
+/**
+ * Whether a run can get past these steps: no Fail on the way, and a way
+ * through each group. A transaction that continues when it is undone is
+ * always one, and its error path is another way past it.
+ */
 export function completes(steps: readonly Step[]): boolean {
   return steps.every((step) => {
     if (step.kind === "fail") return false;
     if (!isGroup(step)) return true;
+    if (isTransaction(step) && step["onError"] === "continue") return true;
     const lanes = lanesOf(step);
     return step.kind === "parallel"
       ? lanes.every((lane) => completes(lane.steps))
@@ -396,12 +410,14 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       : LTR.slot + LTR.edge;
   const laneHeight = (steps: readonly Step[]): number =>
     Math.max(LTR.lane, ...steps.map(height));
-  /** A loop's frame width: its body 64 in from each side, never under the minimum. */
-  const frameWidth = (body: readonly Step[]): number =>
-    Math.max(
-      FRAME.minWidth,
+  /** A frame's width: its steps 64 in from each side, never under its header's minimum. */
+  const frameWidth = (step: Step): number => {
+    const body = bodyOf(step);
+    return Math.max(
+      isTransaction(step) ? FRAME.transactionWidth : FRAME.minWidth,
       2 * FRAME.side + (body.length ? laneWidth(body) - LTR.edge : LTR.slot),
     );
+  };
   function advance(step: Step): number {
     let width = widths.get(step);
     if (width === undefined) {
@@ -415,31 +431,30 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           ? 2 * (LTR.bar + LTR.edge) + inner
           : step.kind === "switch"
             ? LTR.tile + 2 * LTR.edge + inner
-            : step.kind === "forEach"
-              ? frameWidth(lanesOf(step)[0].steps) + LTR.edge
-              : // A step with an error path joins its two outputs after the path.
-                (agent(step) ? LTR.agentWidth : LTR.tile) +
-                LTR.edge +
-                (errors ? LTR.edge + laneWidth(errors.steps) : 0);
+            : // A step with an error path joins its two outputs after the path.
+              (isFrame(step)
+                ? frameWidth(step)
+                : agent(step)
+                  ? LTR.agentWidth
+                  : LTR.tile) +
+              LTR.edge +
+              (errors ? LTR.edge + laneWidth(errors.steps) : 0);
       widths.set(step, width);
     }
     return width;
   }
   /**
-   * How far a step draws above its row: a loop's header and the gap under
-   * it (and those of the loops inside it); a group, what its first lane
+   * How far a step draws above its row: a frame's header and the gap under
+   * it (and those of the frames inside it); a group, what its first lane
    * draws above the group's row. Lanes after the first make room for theirs.
    */
   function rise(step: Step): number {
     let value = rises.get(step);
     if (value === undefined) {
-      const lanes = lanesOf(step);
-      value =
-        step.kind === "forEach"
-          ? FRAME.header + FRAME.top + riseOf(lanes[0].steps)
-          : isGroup(step)
-            ? riseOf(lanes[0]?.steps ?? [])
-            : 0;
+      const inner = riseOf(
+        isGroup(step) ? (lanesOf(step)[0]?.steps ?? []) : [],
+      );
+      value = isFrame(step) ? FRAME.header + FRAME.top + inner : inner;
       rises.set(step, value);
     }
     return value;
@@ -450,8 +465,11 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
   function drop(step: Step): number {
     let value = drops.get(step);
     if (value === undefined) {
-      if (step.kind === "forEach")
-        value = dropOf(lanesOf(step)[0].steps) + FRAME.bottom;
+      const errors = errorPathOf(step);
+      if (isFrame(step))
+        value = errors
+          ? errorRow(step, errors) + dropOf(errors.steps)
+          : frameDrop(step);
       else if (isGroup(step)) {
         let offset = 0;
         value = 0;
@@ -464,11 +482,10 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         value =
           (agent(step) ? LTR.tile + LTR.subNodeRow : LTR.tile) + FRAME.labels;
         // Its error path one lane down, after the frames its steps draw above it.
-        const errors = errorPathOf(step);
         if (errors)
           value = Math.max(
             value,
-            LTR.lane + riseOf(errors.steps) + dropOf(errors.steps),
+            errorRow(step, errors) + dropOf(errors.steps),
           );
       }
       drops.set(step, value);
@@ -477,11 +494,24 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
   }
   const dropOf = (steps: readonly Step[]): number =>
     Math.max(LTR.tile + FRAME.labels, ...steps.map(drop));
+  /** From a frame's row to its bottom border. */
+  const frameDrop = (step: Step): number => dropOf(bodyOf(step)) + FRAME.bottom;
+  /**
+   * From a step's row down to its error path's: one lane, or past its frame
+   * and the room under it, and after the frames the path draws above its row.
+   */
+  const errorRow = (step: Step, errors: ErrorLane): number =>
+    (isFrame(step) ? frameDrop(step) + FRAME.after : LTR.lane) +
+    riseOf(errors.steps);
   function height(step: Step): number {
     let value = heights.get(step);
     if (value === undefined) {
-      value =
-        step.kind === "forEach"
+      const errors = errorPathOf(step);
+      value = errors
+        ? errorRow(step, errors) +
+          laneHeight(errors.steps) +
+          (agent(step) ? LTR.agentLane - LTR.lane : 0)
+        : isFrame(step)
           ? Math.max(LTR.lane, drop(step) + FRAME.after)
           : isGroup(step)
             ? Math.max(
@@ -494,15 +524,13 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
                   0,
                 ),
               )
-            : (agent(step) ? LTR.agentLane : LTR.lane) +
-              guardedHeight(errorPathOf(step));
+            : agent(step)
+              ? LTR.agentLane
+              : LTR.lane;
       heights.set(step, value);
     }
     return value;
   }
-  /** The rows an error path adds under its step's row. */
-  const guardedHeight = (errors: ErrorLane | null): number =>
-    errors ? riseOf(errors.steps) + laneHeight(errors.steps) : 0;
   let order = 0;
 
   function sequence(
@@ -530,7 +558,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         place,
         after: step.kind === "fail" ? null : { owner, index: index + 1 },
       };
-      if (step.kind === "forEach") placed.push(loop(step, base, x, top));
+      if (isFrame(step)) placed.push(framed(step, base, x, top));
       else if (isGroup(step)) placed.push(group(step, base, x, top));
       else {
         const role = roleOf(step);
@@ -561,7 +589,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         const errors = errorPathOf(step);
         placed.push(
           errors
-            ? outputs(step, errors, base, x + width, top)
+            ? outputs(step, errors, base, x, x + width, top)
             : {
                 id: step.id,
                 in: { x, y: top + MID },
@@ -604,16 +632,23 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
 
   /**
    * A step that continues with error output: Success on its row, straight
-   * to the join after it, and Error one lane below, leading to its error
-   * path, which merges into the same join. Laid out like a decision's paths.
+   * to the join after it, and Error below, leading to its error path, which
+   * merges into the same join. A tile's two outputs fan out of it, as a
+   * decision's paths do; a frame's sit on its right border, Error near its
+   * bottom, and its error path runs below the frame.
    */
   function outputs(
     step: Step,
     errors: ErrorLane,
     base: TileBase,
+    left: number,
     right: number,
     top: number,
   ): Placed {
+    const frame = isFrame(step);
+    const handleX = frame ? right : right + LTR.rail;
+    /** A frame's outputs are clear of its border; a tile's labels start at the output. */
+    const labelX = frame ? right + 6 : handleX - 6;
     const lanesLeft = right + LTR.edge;
     const end = lanesLeft + laneWidth(errors.steps);
     const join: Point = { x: end - 6, y: top + MID };
@@ -630,7 +665,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       const handle: LtrHandle = {
         key: `${step.id}:path:${key}`,
         tile: step.id,
-        x: right + LTR.rail,
+        x: handleX,
         y,
         insert,
         label,
@@ -639,24 +674,25 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         ...(tone === "danger" ? { tone } : {}),
       };
       layout.handles.push(handle);
-      layout.edges.push({
-        key: `${step.id}>${handle.key}`,
-        tile: step.id,
-        shape: "fan",
-        a: { x: right, y: top + MID },
-        b: { x: handle.x - 6, y },
-        insert: null,
-        name: null,
-        leaves: null,
-        enters,
-        ...(key === "success" ? { success: step.id } : {}),
-      });
+      if (!frame)
+        layout.edges.push({
+          key: `${step.id}>${handle.key}`,
+          tile: step.id,
+          shape: "fan",
+          a: { x: right, y: top + MID },
+          b: { x: handle.x - 6, y },
+          insert: null,
+          name: null,
+          leaves: null,
+          enters,
+          ...(key === "success" ? { success: step.id } : {}),
+        });
       layout.labels.push({
         owner,
         text: label,
-        x: handle.x - 6,
+        x: labelX,
         y: y - LTR.pathLabelRise - LTR.line,
-        width: lanesLeft - 8 - (handle.x - 6),
+        width: lanesLeft - 8 - labelX,
         tone,
       });
       return handle;
@@ -671,25 +707,26 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       `${step.id}/success`,
       null,
     );
-    layout.edges.push({
-      key: `${success.key}>$join:${step.id}`,
-      tile: step.id,
-      shape: "curve",
-      a: { x: success.x + 6, y: success.y },
-      b: join,
-      insert: null,
-      name: null,
-      leaves: step.id,
-      enters: null,
-      success: step.id,
-    });
-    // The error lane makes room for the frames its steps draw above its row.
-    const laneTop = top + LTR.lane + riseOf(errors.steps);
+    // A frame whose steps always stop has no way out through Success.
+    if (!frame || completes(bodyOf(step)))
+      layout.edges.push({
+        key: `${success.key}>$join:${step.id}`,
+        tile: step.id,
+        shape: "curve",
+        a: { x: success.x + 6, y: success.y },
+        b: join,
+        insert: null,
+        name: null,
+        leaves: step.id,
+        enters: null,
+        success: step.id,
+      });
+    const laneTop = top + errorRow(step, errors);
     const y = laneTop + MID;
     const first = errors.steps[0]?.id ?? null;
     const error = output(
       errors.owner.slice(step.id.length + 1),
-      y,
+      frame ? top + frameDrop(step) - FRAME.errHandle : y,
       "Error",
       { owner: errors.owner, index: 0 },
       errors.handleName,
@@ -712,7 +749,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           key: `${error.key}>$slot:${errors.owner}`,
           tile: step.id,
           shape: "curve",
-          a: { x: error.x + 6, y },
+          a: { x: error.x + 6, y: error.y },
           b: { x: lanesLeft, y },
           insert: null,
           name: null,
@@ -745,7 +782,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         key: `${error.key}>${first}`,
         tile: step.id,
         shape: "curve",
-        a: { x: error.x + 6, y },
+        a: { x: error.x + 6, y: error.y },
         b: inner.placed[0].in,
         insert: error.insert,
         name: `Insert a step between ${step.id} and ${first}`,
@@ -768,11 +805,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     }
     return {
       id: step.id,
-      in: {
-        x: right - (agent(step) ? LTR.agentWidth : LTR.tile),
-        y: top + MID,
-      },
-      out: { x: end, y: top + MID },
+      in: { x: left, y: top + MID },
+      out: completes([step]) ? { x: end, y: top + MID } : null,
       group: true,
     };
   }
@@ -930,24 +964,31 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
   }
 
   /**
-   * A loop: a frame around its body, whose header is the loop's tile. Its
-   * steps sit on the loop's own row; edges cross the frame's sides there.
+   * A loop or a transaction: a frame around its steps, whose header is its
+   * tile. Its steps sit on its own row; edges cross the frame's sides there.
    */
-  function loop(step: Step, base: TileBase, x: number, top: number): Placed {
-    const body = lanesOf(step)[0].steps;
-    const owner = `${step.id}/body`;
-    const place = `For each item of ${step.id}`;
-    const width = frameWidth(body);
+  function framed(step: Step, base: TileBase, x: number, top: number): Placed {
+    const { name, steps: body } = lanesOf(step)[0];
+    const owner = `${step.id}/${name}`;
+    const transaction = isTransaction(step);
+    /** Where a step in it is, and how a "+" in it names it. */
+    const place = transaction
+      ? `Transaction ${step.id}`
+      : `For each item of ${step.id}`;
+    const within = transaction ? `transaction ${step.id}` : place;
+    const errors = errorPathOf(step);
+    const width = frameWidth(step);
     const y = top + MID;
     const frameTop = top - rise(step);
-    const bottom = top + drop(step);
+    const bottom = top + frameDrop(step);
     layout.frames.push({
       id: step.id,
+      ...(transaction ? { transaction: true as const } : {}),
       x,
       y: frameTop,
       width,
       height: bottom - frameTop,
-      header: loopHeader(step),
+      header: transaction ? TRANSACTION_HEADER : loopHeader(step),
       depth: base.depth,
     });
     layout.tiles.push({
@@ -965,7 +1006,17 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
     const left = x + FRAME.side;
     const right = x + width;
     const entry = { x, y };
-    const exit = { x: right, y };
+    /** Its steps' way out: its right side, or the Success output on it. */
+    const exit = { x: errors ? right - 6 : right, y };
+    const placed = (through: boolean): Placed =>
+      errors
+        ? outputs(step, errors, base, x, right, top)
+        : {
+            id: step.id,
+            in: entry,
+            out: through ? { x: right, y } : null,
+            group: true,
+          };
     const start = { owner, index: 0 };
     if (!body.length) {
       layout.slots.push({
@@ -973,8 +1024,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         tile: step.id,
         x: left,
         y: y - LTR.slot / 2,
-        label: "For each item",
-        name: `Add a step to ${place}`,
+        label: transaction ? "Transaction" : "For each item",
+        name: `Add a step to ${within}`,
         insert: start,
       });
       layout.edges.push(
@@ -1001,7 +1052,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           enters: null,
         },
       );
-      return { id: step.id, in: entry, out: exit, group: true };
+      return placed(true);
     }
     const inner = sequence(
       body,
@@ -1011,7 +1062,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       left,
       top,
       place,
-      `Add a step at the end of ${place}`,
+      `Add a step at the end of ${within}`,
     );
     const first = inner.placed[0];
     layout.edges.push({
@@ -1021,30 +1072,24 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       a: entry,
       b: first.in,
       insert: start,
-      name: `Insert a step at the start of ${place}`,
+      name: `Insert a step at the start of ${within}`,
       leaves: null,
       enters: first.id,
     });
     const last = inner.placed[inner.placed.length - 1];
-    const through = !!last.out && completes(body);
-    if (through)
+    if (last.out && completes(body))
       layout.edges.push({
         key: `${last.id}>$exit:${step.id}`,
         tile: last.id,
         shape: "curve",
-        a: { x: last.out!.x + 6, y: last.out!.y },
+        a: { x: last.out.x + 6, y: last.out.y },
         b: exit,
         insert: null,
         name: null,
         leaves: last.id,
         enters: null,
       });
-    return {
-      id: step.id,
-      in: entry,
-      out: through ? exit : null,
-      group: true,
-    };
+    return placed(completes([step]));
   }
 
   const steps = workflow.spec.steps ?? [];

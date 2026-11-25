@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // One tile: its card (shape by role, icon, corner badge) and its label
-// block. A loop's tile is the header band of its frame, and draws the frame
-// around its body too. The canvas places it and handles its clicks; the
+// block. A loop's or a transaction's tile is the header band of its frame,
+// and draws the frame around its steps too. The canvas places it and handles its clicks; the
 // tile only draws.
 import {
   ChangeDetectionStrategy,
@@ -41,10 +41,12 @@ import {
 import { frameHeaderHeight } from "./loop-frame";
 import type { TileBadge, TileBorders } from "./tile-facts";
 
-/** A loop's frame: its tile is the header band at the frame's top. */
+/** A loop's or a transaction's frame: its tile is the header band at the frame's top. */
 export interface FrameView {
   /** The whole frame's height, in canvas units. */
   height: number;
+  /** A transaction's: what it promises, after "Transaction". A loop's says the rest. */
+  promise?: string;
   /** The list as a formula prints it; "…" until it is chosen. */
   items: string;
   /** No list yet: "loop-1 For each item in …" stays whole. */
@@ -91,7 +93,7 @@ export interface TileView {
   listening?: boolean;
   selected: boolean;
   tabIndex: 0 | -1;
-  /** Set on a loop's tile. */
+  /** Set on a loop's or a transaction's tile. */
   frame?: FrameView | null;
 }
 
@@ -101,12 +103,13 @@ export interface TileView {
   imports: [Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `@let v = view();
-    <!-- A loop's header shows its whole sentence in the canvas's own tooltip, on hover and on keyboard focus. -->
+    <!-- A frame's header shows its whole sentence in the canvas's own tooltip, on hover and on keyboard focus. -->
     <button
       type="button"
       class="tile-body f-drag-blocker"
       data-action="tile"
       [class.frame-header]="!!v.frame"
+      [class.frame-transaction]="!!v.frame?.promise"
       [class.frame-pending]="!!v.frame?.pending"
       [class.frame-tight]="tight()"
       [class.frame-crowded]="crowded()"
@@ -130,10 +133,18 @@ export interface TileView {
       ></span>
       @if (v.frame; as frame) {
         <span class="frame-title" #frameTitle>
-          <weave-icon class="frame-icon" name="forEach" />
+          <weave-icon
+            class="frame-icon"
+            [name]="frame.promise ? 'transaction' : 'forEach'"
+          />
           <span class="frame-name">{{ v.title }}</span>
-          <span class="frame-lead">For each item in</span>
-          <span class="frame-items">{{ frame.items }}</span>
+          @if (frame.promise) {
+            <span class="frame-kind">Transaction</span>
+            <span class="frame-promise">&nbsp;· {{ frame.promise }}</span>
+          } @else {
+            <span class="frame-lead">For each item in</span>
+            <span class="frame-items">{{ frame.items }}</span>
+          }
           <!-- A run's status takes the at-a-time suffix's place and never shortens. -->
           @if (frame.run; as run) {
             <span class="frame-run" [attr.data-tone]="run.tone"
@@ -208,7 +219,7 @@ export interface TileView {
     @if (v.kind !== "trigger" && !v.frame) {
       <span class="handle handle-in" aria-hidden="true"></span>
     }
-    <!-- A loop's name and list are in its header: under the frame, only what its data holds and its note. -->
+    <!-- A frame's name is in its header: under the frame, only what its data holds and its note. -->
     @if (v.frame ? v.output || v.note : v.title) {
       <div
         class="tile-label"
@@ -259,7 +270,7 @@ export class NodeTile {
   focusWidth() {
     return Math.ceil(2 / this.zoom());
   }
-  /** A loop's header band keeps 24 px on screen as the canvas zooms out. */
+  /** A frame's header band keeps 24 px on screen as the canvas zooms out. */
   readonly frameBand = computed(() => frameHeaderHeight(this.zoom()));
   /**
    * A loop's whole header doesn't fit its band: "For each item in" leaves
