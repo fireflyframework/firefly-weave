@@ -63,11 +63,15 @@ class Machine:
         return value
 
 
-def run(machine: Machine, monkeypatch: pytest.MonkeyPatch, *, searches: int = 1) -> list[str]:
-    """The codes of validating ``searches`` strings against a pattern on ``machine``."""
+def run(machine: Machine, monkeypatch: pytest.MonkeyPatch, *, searches: int = 1, own_clock: bool = False) -> list[str]:
+    """The codes of validating ``searches`` strings against a pattern on ``machine``.
+
+    With ``own_clock``, the budget allows for the CPU clock of the computer that runs the test.
+    """
     monkeypatch.setattr(schemas, "time", machine)
     monkeypatch.setattr(schemas, "_pattern", lambda *_, **__: machine)
-    monkeypatch.setattr(schemas, "_CPU_STEP", machine.step, raising=False)
+    if not own_clock:
+        monkeypatch.setattr(schemas, "_CPU_STEP", machine.step, raising=False)
     # A validator alone, so that redaction's own searches do not count twice.
     limits = SchemaLimits()
     return [issue.code for issue in schemas._payload({"items": {"pattern": "a"}}, ["a"] * searches, {}, limits)]
@@ -298,7 +302,7 @@ def test_a_search_of_a_long_string_lets_the_other_threads_of_the_process_run():
     assert longest < lasted / 2, (longest, lasted)
 
 
-def test_the_cpu_clock_moves_by_no_more_than_the_step_the_budget_allows_for():
+def test_a_search_near_its_limit_is_judged_by_this_computers_own_cpu_clock(monkeypatch):
     steps = []
     for _ in range(5):
         before = time.thread_time()
@@ -306,6 +310,20 @@ def test_the_cpu_clock_moves_by_no_more_than_the_step_the_budget_allows_for():
             pass
         steps.append(now - before)
     # The smallest one: a virtual machine may charge its own pauses to a thread.
-    assert 0 < min(steps) <= max(schemas._CPU_STEP, 0.001) * 1.01
-    # Only Windows needs an allowance.
-    assert sys.platform == "win32" or schemas._CPU_STEP == 0
+    step = min(steps)
+
+    def validated(spent: float) -> list[str]:
+        """The codes of two searches of ``spent`` seconds of CPU and 200 ms, the first one as the clock moves."""
+        machine = Machine(0.0, step=step)
+        machine.cpu = step * 0.999
+
+        def search(value: str, *, timeout: float, concurrent: bool | None = None) -> object:
+            machine.cpu += spent
+            machine.elapsed += 0.2
+            return value
+
+        machine.search = search  # type: ignore[method-assign]
+        return run(machine, monkeypatch, searches=2, own_clock=True)
+
+    assert validated(0.009) == []
+    assert validated(0.01 + 3 * step) == REFUSED
