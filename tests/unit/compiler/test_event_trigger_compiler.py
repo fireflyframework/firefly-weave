@@ -277,7 +277,7 @@ def test_a_platform_event_reference_outside_a_schema_adds_no_dependency():
 def test_the_platform_advertises_platform_event_triggers():
     assert "flow.eventTrigger" in COMPILED_FEATURES and "flow.eventTrigger" in ADVERTISED_FEATURES
     trigger = next(entry for entry in language_manifest().workflow_fields if entry.name == "eventTrigger")
-    assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "pending")
+    assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "ready")
 
 
 def test_the_platform_event_view_is_frozen_and_fits_the_schema_profile():
