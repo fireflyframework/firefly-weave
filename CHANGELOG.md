@@ -31,9 +31,33 @@ SPDX-License-Identifier: Apache-2.0
   published on 0.1.0a19 change, so publishing one again gives a new artifact;
   published artifacts keep running as they are, and workflows that don't
   reference a platform schema keep their bytes.
+- Weave no longer refuses a valid document, run input, or worker output with
+  `WV-SCHEMA-RESOURCE_LIMIT` because other work keeps the processor busy: the
+  time that schema patterns may take is now the CPU time of the thread that
+  validates (10 ms a match, 100 ms a validation, as before), and a match that
+  stops before it spends that time is tried again, up to 8 times. A match that
+  still can't finish, such as one on a long string in a process that is busy
+  running Python, is refused as before. A runaway pattern is still refused, with
+  the same code and message.
 
 ### Runs, incidents, and workers
 
+- Undoing a transaction with **Continue** whose block can never complete,
+  because every way through it reaches a Fail step, now fails the run with
+  `WV-TXN-ROLLED-BACK`, as without the setting. Continue has nothing to go on
+  to, even when a step is written after the block; Continue with error output
+  does go on. After the upgrade, a run that is already being undone ends the same
+  way when its undo is done, at recovery's next scan or the worker's next report,
+  and no recorded history changes. Marking such a transaction as reconciled with
+  `completed` answers HTTP 422 `WV-RUNTIME-OUTPUT` instead of HTTP 500 while the
+  run would go on after the block, and says to use Force end unless everything
+  was undone; `compensated` and Force end work as before.
+- Recovery works on each run, call, and event-triggered start on its own. When
+  the work of one raises an unexpected error or its write is refused, recovery
+  records nothing for it, logs its ID and environment with the error's type,
+  code, and line, counts it in the new `weave.recovery_failures` metric, and
+  tries it again after 5 seconds, doubling up to 5 minutes. The loop's health
+  doesn't show these failures, so alert on the metric.
 - Two decisions sent at once on one incident no longer answer HTTP 429
   `WV-OPERATION-CAPACITY` when the first takes more than 250 ms: the later one
   waits up to 2 seconds for it, then answers HTTP 409 `WV-INCIDENT-REVISION`. A
@@ -92,6 +116,28 @@ SPDX-License-Identifier: Apache-2.0
   `409 WV-REVISION` and leaves the trigger running, and the answer carries the
   stopped trigger's revision as its `ETag`. A stop without `If-Match` works as
   before.
+- A transaction inside a Loop over items records how it ended, also when it ends
+  together with its item, debug sessions list it, and its run can be purged.
+  **Behavior change:** such a transaction now sends `transaction.completed`,
+  `transaction.compensated`, `transaction.cancelled` or `transaction.reconciled`,
+  once per item, so event subscriptions receive it and the workflows whose event
+  trigger listens to it start. `transaction.in_doubt` and
+  `transaction.force_ended` were already sent. The server repairs the records
+  that earlier versions left open, without sending their events.
+- A purge that Weave refuses because it had no time to read how every transaction
+  of the run ended keeps whole records or none, and its
+  `WV-RUN-PURGE-BLOCKED` says which: purge the run again, or make room first when
+  the project's storage is full. It also names a transaction whose outcome the
+  run's history doesn't show. A run too large to load is no longer kept from
+  stopping by a record of an ended transaction.
+- Marking a transaction as reconciled, or force ending it, while another of its
+  steps or confirms is queued or claimed no longer suspends the run with
+  `WV-RUNTIME-EVENT` or stops the environment's recovery. That work is canceled,
+  its lease is revoked, a late report answers `409 WV-LEASE`, and the run goes on
+  or ends as decided. Environments an earlier version left stuck recover by
+  themselves. Mark as reconciled answers `409 WV-RUNTIME-STATE` while a failed
+  attempt of one of the transaction's steps is still handled: send it again after
+  the next recovery scan. Force end doesn't wait.
 
 ### Operations
 
@@ -183,6 +229,28 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- Studio builds workflows that start from platform events, for example to tell a
+  team that a transaction needs attention. **+ › Triggers › Platform event** adds
+  the trigger; its step details choose the events and the workflows, check the
+  workflow's input, and generate or paste a sample event for test runs. Activating
+  the workflow creates the trigger, moves it to the new version, or replaces it
+  when the version reacts to other events or workflows: the dialog shows what
+  reacts now beside what will, asks before a stop that skips waiting events, names
+  the events a stop ends when the two triggers share none, and offers a stop it still
+  owes at the next activation.
+  The **Starts** tab shows what the trigger started, why an event started nothing,
+  **Open run**, and **Stop it** for a second trigger that still reacts. Diagnostics
+  opens the trigger on what fixes it. See "React to a transaction" in the Studio
+  guide.
+- Studio activates a later version of a workflow on a platform: it names the
+  activation it replaces, says when someone activated the workflow meanwhile, and
+  activates only in the environment, and as the person, its dialog opened with.
+  Before, the platform refused every activation after the first. Each trigger's
+  result after an activation has an icon.
+- Test data, pasted or loaded from a file, no longer keeps a real platform event's
+  event, run, and incident IDs.
+- In step details, a field's name shows whole beside its test value, and **Docs**
+  is no longer one of the tabs for screen readers.
 - Studio handles step errors. A step's **On error** setting (stop the run,
   continue, or continue with error output) and its **Result on error** are in
   step details; the canvas draws an error path under the step with its Success
@@ -395,6 +463,11 @@ SPDX-License-Identifier: Apache-2.0
   upgrade guide for its locks and run time.
 - `0048_operations_step_fact_keys` adds a partial index on `step_facts` for agent
   and transaction phase keys, which the agent log reads as key ranges.
+- `0049_unsettled_transactions` adds a partial index on `run_transactions` that
+  holds only the unsettled records, which the operations loop repairs. A server
+  of an earlier version can't read a debug session that holds ended transactions
+  of a loop. See the upgrade guide for what to check first and what the repair
+  does.
 - `0043_operations_logs` adds the empty `execution_logs` and
   `execution_log_days` tables and adds the role check again with the same
   roles; see the upgrade guide. Upgrade CLIs and SDKs with the server:

@@ -297,3 +297,22 @@ export function formatProblem(widget: Widget, text: string, label: string) {
 /** A data reference must be a JSON pointer; the compiler decides what it may read. */
 export const validReference = (text: string) =>
   text.startsWith("/") && isPointer(text);
+
+/**
+ * Where the caret at `at` in `text` goes in `next`, the same text laid out
+ * again with some values changed: after the same characters, or before the
+ * same ones where those before it changed. Spaces don't count.
+ */
+export function caretAfter(text: string, at: number, next: string): number {
+  const solid = (part: string) => part.replace(/\s+/g, "");
+  const before = solid(text.slice(0, at));
+  const whole = solid(next);
+  let left = whole.startsWith(before)
+    ? before.length
+    : whole.length - solid(text.slice(at)).length;
+  for (let index = 0; index < next.length; index++) {
+    if (left <= 0) return index;
+    if (/\S/.test(next[index]!)) left--;
+  }
+  return next.length;
+}

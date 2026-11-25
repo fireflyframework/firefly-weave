@@ -28,7 +28,7 @@ import {
   viewLabels,
 } from "./add-step-fixtures";
 
-const sevenTriggers = [
+const eightTriggers = [
   "Manual form",
   "Webhook",
   "Schedule",
@@ -36,6 +36,7 @@ const sevenTriggers = [
   "Email",
   "App event",
   "Called by a workflow",
+  "Platform event",
 ];
 const fileSteps = [
   "List files",
@@ -47,7 +48,7 @@ const fileSteps = [
 ];
 
 describe("the trigger view", () => {
-  it("starts an empty workflow with the seven triggers, then Start from a template", () => {
+  it("starts an empty workflow with the eight triggers, then Start from a template", () => {
     const catalog = buildCatalog(catalogInput({ hasSteps: false }));
     const view = catalog.views.get("triggers")!;
     expect(view.title).toBe("What triggers this workflow?");
@@ -59,7 +60,7 @@ describe("the trigger view", () => {
       "Not sure yet?",
     ]);
     expect(viewLabels(catalog, "triggers")).toEqual([
-      ...sevenTriggers,
+      ...eightTriggers,
       "Start from a template",
     ]);
     expect(entryById(catalog, "trigger:webhook").disabled).toBeNull();
@@ -75,7 +76,7 @@ describe("the trigger view", () => {
     expect(entryById(withSteps, "trigger:manual").disabled).toBe(
       "This workflow already starts from its input form.",
     );
-    expect(viewLabels(withSteps, "add-trigger")).toEqual(sevenTriggers);
+    expect(viewLabels(withSteps, "add-trigger")).toEqual(eightTriggers);
     const callable = buildCatalog(
       catalogInput({
         triggers: [{ id: "trigger-0000000a", kind: "called" }],

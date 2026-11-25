@@ -30,6 +30,7 @@ import type { KindContext } from "../ndv/registry";
 import type { Insertion } from "./layout-ltr";
 import type { CanvasRun } from "./run-state";
 import type { StepFacts } from "./tile-facts";
+import type { CheckedInput } from "../triggers/event-trigger";
 
 export type WorkflowSection = "spec/inputSchema" | "spec/output";
 
@@ -52,6 +53,11 @@ export interface CanvasHost {
   /** The step "Move to…" is placing, or "". */
   readonly connectingNode: string;
   showTemplates: boolean;
+  /** What the last check found, and the definition it read. */
+  readonly diagnostics?: {
+    readonly diagnostics: CheckedInput["diagnostics"];
+  } | null;
+  readonly diagnosticsDefinition?: unknown;
   /** Errors, warnings and setup per step; the same map until they change. */
   canvasFacts(): ReadonlyMap<string, StepFacts>;
   /** The run the canvas draws, or null; the same object until it changes. */

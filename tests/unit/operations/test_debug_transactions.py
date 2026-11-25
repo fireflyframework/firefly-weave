@@ -357,3 +357,108 @@ def test_a_session_over_its_limits_with_transactions_keeps_its_state():
         simulator.continue_until_breakpoint()
     assert raised.value.code == "WV-DEBUG-LIMIT"
     assert simulator.serialize() == before
+
+
+def loop_of(*steps, concurrency=1):
+    return compiled([each([transaction(list(steps), onError="continue")], concurrency=concurrency)])
+
+
+def ended(view):
+    return [(entry.instance_key, entry.state) for entry in view.transactions]
+
+
+@pytest.mark.parametrize("items", [1, 3])
+def test_the_view_keeps_the_transactions_of_a_loop_as_they_ended(items):
+    flow = loop_of(hold(), add(), submit())
+    refused = {"node:submit": ScriptedError(code="REFUSED", effect="none")}
+    mocks = {key: value for key, value in mocks_for(flow).items() if key not in refused}
+    simulator = Simulator(
+        flow, mocks=mocks, errors=refused, input={**INPUT, "items": list(range(1, items + 1))}, now=NOW
+    )
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "succeeded" and "transactions" not in view.variables
+    assert ended(view) == [(f"move[{index}]", "compensated") for index in range(items)]
+    for index, entry in enumerate(view.transactions):
+        assert entry.cause.instance_key == f"submit[{index}]"
+        assert [(item.instance_key, item.status) for item in entry.participants] == [
+            (f"hold[{index}]", "cancelled"),
+            (f"add[{index}]", "undone"),
+            (f"submit[{index}]", "failed"),
+        ]
+    # What the session keeps of them carries no values.
+    assert "scope" not in json.dumps(json.loads(simulator.serialize())["ended"])
+
+
+def test_the_view_lists_the_transactions_of_a_loop_in_the_order_they_opened():
+    flow = loop_of(hold(), add(), submit(), concurrency=2)
+    # The first item waits for its addition while the second one ends and the third one opens and ends.
+    simulator = Simulator(
+        flow,
+        mocks={key: value for key, value in mocks_for(flow).items() if key != "node:add"}
+        | {"node:add[1]": {"id": "a"}, "node:add[2]": {"id": "a"}},
+        input={**INPUT, "items": [1, 2, 3]},
+        now=NOW,
+        pending=["node:add[0]"],
+    )
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "waiting"
+    assert ended(view) == [("move[0]", "open"), ("move[1]", "completed"), ("move[2]", "completed")]
+
+
+def test_a_session_stored_in_the_middle_of_the_event_that_ends_an_iteration_keeps_its_transaction():
+    from firefly_weave.operations.debug.models import DebugCommand
+
+    flow = loop_of(hold(), add(), submit())
+    simulator = Simulator(flow, mocks=mocks_for(flow), input={**INPUT, "items": [1, 2]}, now=NOW)
+    simulator.set_breakpoints(["hold[1]"])
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, view.selected_node) == ("paused", "hold[1]")
+    assert ended(view) == [("move[0]", "completed"), ("move[1]", "open")]
+    restored = Simulator.restore(simulator.serialize())
+    assert restored.inspect() == view
+    view = restored.command(DebugCommand(kind="continue"))
+    assert view.status == "succeeded"
+    assert ended(view) == [("move[0]", "completed"), ("move[1]", "completed")]
+    assert view == simulator.command(DebugCommand(kind="continue"))
+
+
+def test_an_event_that_is_refused_ends_no_transaction_in_the_view():
+    # The third item can't be evaluated outside any transaction, so the event that ended the second one is refused.
+    shape = {
+        "id": "shape",
+        "kind": "switch",
+        "cases": [
+            {
+                "when": {"op": {"name": "eq", "args": [{"ref": "/index"}, {"literal": 2}]}},
+                "steps": [{"id": "wrong", "kind": "transform", "value": {"ref": "/input/items/4"}}],
+                "output": {"literal": 1},
+            }
+        ],
+        "default": {"steps": [], "output": {"literal": 2}},
+    }
+    flow = compiled([each([shape, transaction([hold(), add()], onError="continue")], concurrency=1)])
+    simulator = Simulator(flow, mocks=mocks_for(flow), input={**INPUT, "items": [1, 2, 3]}, now=NOW)
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "suspended"
+    assert ended(view) == [("move[0]", "completed"), ("move[1]", "committing")]
+    assert list(json.loads(simulator.serialize())["ended"]) == ["move[0]"]
+
+
+def test_a_called_workflow_keeps_the_transactions_of_its_loop_in_its_frame():
+    body = each([transaction([hold(), submit()])], concurrency=1)
+    body["items"] = {"literal": [1, 2]}
+    inside, artifact = callee("move-inside", [body])
+    step = {
+        "id": "inside",
+        "kind": "callWorkflow",
+        "uses": "move-inside@1.0.0",
+        "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+    }
+    called = CalledWorkflow(
+        artifact=json.loads(artifact.to_bytes()),
+        mocks={"node:hold": {"holdId": "h-9"}, "node:submit": {"orderId": "o-9"}},
+    )
+    _, view = run(compiled([step], snapshot=snapshot_with(inside)), {}, workflows={"move-inside@1.0.0": called})
+    [frame] = view.frames
+    assert (view.status, view.transactions) == ("succeeded", [])
+    assert ended(frame) == [("move[0]", "completed"), ("move[1]", "completed")]

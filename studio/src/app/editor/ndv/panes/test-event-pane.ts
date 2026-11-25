@@ -27,9 +27,12 @@ import {
 import { Icon } from "../../../icon";
 import { TaskForm } from "../../../task-form";
 import type { Schema } from "../../../task-schema";
-import { canonicalJson } from "../../../forms/core/json";
+import { canonicalJson, type JsonObject } from "../../../forms/core/json";
 import { resolveSchema } from "../../../forms/core/resolve";
 import type { FormSession } from "../params/form-session";
+import { enteredNote } from "../../triggers/event-sample";
+import { declaredSample } from "../../triggers/event-trigger";
+import { isPlatformEventInput, sampleId } from "../../triggers/platform-event";
 import type { Json } from "../registry";
 import { sampleFromSchema } from "./sample";
 
@@ -63,13 +66,19 @@ interface SampleForm {
         }
         @for (form of forms(); track form) {
           <weave-task-form
+            #shown
             choiceIcon="chevronDown"
             [schema]="form.schema"
             [schemaRoot]="form.root"
             [initialData]="form.initial"
-            (dataChange)="changed($event, form)"
+            (dataChange)="changed($event, form, shown)"
           />
         }
+        <div aria-live="polite">
+          @if (replaced(); as note) {
+            <p class="pane-empty-text pane-entered">{{ note }}</p>
+          }
+        </div>
       </div>
     </div>`,
 })
@@ -83,6 +92,12 @@ export class TestEventPane {
     return this.session().controller.testData.place().kind === "memory"
       ? "Test input is kept until you close this workflow."
       : "Test input is saved with this workflow.";
+  }
+  /** What Studio replaced in the test event, and why; "" when it replaced nothing, or a later change was refused. */
+  replaced(): string {
+    return this.problem()
+      ? ""
+      : enteredNote(this.session().controller.replacedIds());
   }
   private schema(): unknown {
     return this.session().host.model.definition.spec["inputSchema"] ?? {};
@@ -137,7 +152,13 @@ export class TestEventPane {
     const form = this.forms()[0];
     if (!this.owns(form)) return;
     try {
-      const sample = sampleFromSchema(this.schema());
+      // The platform event's schema has only its name here: no sample of it.
+      const sample = isPlatformEventInput(this.schema())
+        ? declaredSample(form.session.host.model.definition, {
+            now: new Date(),
+            id: sampleId,
+          })
+        : sampleFromSchema(this.schema());
       if (!this.owns(form)) return;
       // The form on show is replaced: its own late writes (defaults) don't count.
       this.form = null;
@@ -159,11 +180,24 @@ export class TestEventPane {
       if (this.owns(form)) this.problem.set((error as Error).message);
     }
   }
-  async changed(data: Record<string, unknown>, form: SampleForm) {
+  /** The last change, of several on their way. */
+  private turn = 0;
+  async changed(
+    data: Record<string, unknown>,
+    form: SampleForm,
+    shown: TaskForm,
+  ) {
     if (!this.owns(form)) return;
-    const refused = await form.session.controller.setTestEvent(
+    const turn = ++this.turn;
+    const { controller } = form.session;
+    const refused = await controller.setTestEvent(
       (form.wrapped ? data["value"] : data) as Json | undefined,
     );
-    if (this.owns(form)) this.problem.set(refused ?? "");
+    if (!this.owns(form)) return;
+    this.problem.set(refused ?? "");
+    if (refused || turn !== this.turn) return;
+    // The form shows the sample IDs the event is kept with, not the real ones.
+    const sampled = controller.withoutRealIds(data as JsonObject);
+    if (sampled) shown.showData(sampled as JsonObject);
   }
 }

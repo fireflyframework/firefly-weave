@@ -117,6 +117,10 @@ def handle(path, raw, method="POST", match=None):
         from firefly_weave.compiler.api import compile_source
         body = json.loads(raw)
         return json.loads(compile_source(body["source"], format=body["format"], catalog=test_catalog(body["definitions"], body.get("tasks", []))).to_bytes())
+    if path == "/studio/contracts/platform-event":
+        from firefly_weave.compiler.platform_catalog import platform_schema_bundle
+        from firefly_weave.contracts.transaction_resolve import PLATFORM_EVENT_SCHEMA
+        return platform_schema_bundle()[PLATFORM_EVENT_SCHEMA]
     if path == "/studio/local/validate":
         from firefly_weave.compiler.api import validate_authoring
         from firefly_weave.studio.host import ValidationRequest
@@ -341,20 +345,6 @@ export async function platformCompile(body: {
   return reply.body as Record<string, unknown>;
 }
 
-/** Answers the Studio host's own check of a workflow with the real Python code. */
-export async function hostValidate(page: Page) {
-  await ask("/test/ready", "{}");
-  await page.route("**/studio/local/validate", async (route) => {
-    const reply = await ask(
-      "/studio/local/validate",
-      route.request().postData() ?? "{}",
-    );
-    await route
-      .fulfill({ status: reply.status, json: reply.body })
-      .catch(() => undefined);
-  });
-}
-
 /** Answers the Studio host's own check of test data with the real Python code. */
 export async function hostChecksTestData(page: Page) {
   await ask("/test/ready", "{}");
@@ -367,6 +357,31 @@ export async function hostChecksTestData(page: Page) {
       .fulfill({ status: reply.status, json: reply.body })
       .catch(() => undefined);
   });
+}
+
+/** The platform event's view, answered by the repository's Python as the host's contract route does. */
+export async function routePlatformEvent(page: Page) {
+  await page.route("**/studio/contracts/platform-event", async (route) => {
+    const reply = await ask("/studio/contracts/platform-event", "{}");
+    await route
+      .fulfill({ status: reply.status, json: reply.body })
+      .catch(() => undefined);
+  });
+  await ask("/test/ready", "{}");
+}
+
+/** Local checks answered by the repository's compiler, as the host's validate route does. */
+export async function routeValidate(page: Page) {
+  await page.route("**/studio/local/validate", async (route) => {
+    const reply = await ask(
+      "/studio/local/validate",
+      route.request().postData() ?? "{}",
+    );
+    await route
+      .fulfill({ status: reply.status, json: reply.body })
+      .catch(() => undefined);
+  });
+  await ask("/test/ready", "{}");
 }
 
 /** Answers /studio/local/{http-action,openapi/*,debug/*,decision/evaluate} with the real Python code. */

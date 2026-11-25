@@ -26,7 +26,7 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
-import { hasPython, hostValidate } from "./local-authoring";
+import { hasPython, routeValidate } from "./local-authoring";
 import { applySource } from "./owned-actions";
 import type { StepDetailsPage } from "./step-details-po";
 import {
@@ -87,7 +87,7 @@ test.describe("a transaction's problems at 1440x900", () => {
     const details = await openMove(page, moveWorkflow(HOLD + SUBMIT + ADD), {
       start: async (p) => {
         await offline(p);
-        await hostValidate(p);
+        await routeValidate(p);
       },
     });
     const list = await diagnostics(page);

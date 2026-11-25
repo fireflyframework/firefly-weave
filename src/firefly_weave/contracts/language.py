@@ -245,7 +245,7 @@ _WORKFLOW_FIELD_MARKS: Final[tuple[tuple[str, StudioMark], ...]] = (
     ("steps", "ready"),
     ("output", "ready"),
     ("callable", "ready"),
-    ("eventTrigger", "pending"),
+    ("eventTrigger", "ready"),
 )
 WORKFLOW_FIELDS: Final[tuple[ManifestWorkflowField, ...]] = tuple(
     ManifestWorkflowField.model_validate(

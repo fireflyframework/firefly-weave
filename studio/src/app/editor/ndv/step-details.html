@@ -341,40 +341,62 @@ SPDX-License-Identifier: Apache-2.0
           }
         </div>
       </header>
-      <div
-        class="sd-tabs"
-        role="tablist"
-        aria-label="Step details sections"
-        (keydown)="tabKey($event)"
-      >
-        <button
-          type="button"
-          role="tab"
-          id="sd-tab-parameters"
-          aria-controls="sd-panel-parameters"
-          [attr.aria-selected]="tab() === 'parameters'"
-          [attr.tabindex]="tab() === 'parameters' ? 0 : -1"
-          (click)="selectTab('parameters')"
+      <div class="sd-tabs">
+        <!-- The tab list holds only tabs: Docs is a link beside it. -->
+        <div
+          class="sd-tablist"
+          role="tablist"
+          aria-label="Step details sections"
+          (keydown)="tabKey($event)"
         >
-          Parameters
-        </button>
-        @if (target() !== "$end") {
           <button
             type="button"
             role="tab"
-            id="sd-tab-settings"
-            aria-controls="sd-panel-settings"
-            [attr.aria-selected]="tab() === 'settings'"
-            [attr.tabindex]="tab() === 'settings' ? 0 : -1"
-            [attr.aria-label]="settingsChanged() ? 'Settings, changed' : null"
-            (click)="selectTab('settings')"
+            id="sd-tab-parameters"
+            aria-controls="sd-panel-parameters"
+            [attr.aria-selected]="tab() === 'parameters'"
+            [attr.tabindex]="tab() === 'parameters' ? 0 : -1"
+            (click)="selectTab('parameters')"
           >
-            Settings
-            @if (settingsChanged()) {
-              <span class="sd-dot" aria-hidden="true"></span>
-            }
+            Parameters
           </button>
-        }
+          @if (startsTrigger()) {
+            <button
+              type="button"
+              role="tab"
+              id="sd-tab-starts"
+              aria-controls="sd-panel-starts"
+              [attr.aria-selected]="tab() === 'starts'"
+              [attr.tabindex]="tab() === 'starts' ? 0 : -1"
+              [attr.aria-label]="
+                startsOwed() ? 'Starts, needs attention' : null
+              "
+              (click)="selectTab('starts')"
+            >
+              Starts
+              @if (startsOwed()) {
+                <span class="sd-dot sd-dot-warning" aria-hidden="true"></span>
+              }
+            </button>
+          }
+          @if (target() !== "$end") {
+            <button
+              type="button"
+              role="tab"
+              id="sd-tab-settings"
+              aria-controls="sd-panel-settings"
+              [attr.aria-selected]="tab() === 'settings'"
+              [attr.tabindex]="tab() === 'settings' ? 0 : -1"
+              [attr.aria-label]="settingsChanged() ? 'Settings, changed' : null"
+              (click)="selectTab('settings')"
+            >
+              Settings
+              @if (settingsChanged()) {
+                <span class="sd-dot" aria-hidden="true"></span>
+              }
+            </button>
+          }
+        </div>
         <span class="sd-spacer"></span>
         <a
           class="sd-docs"
@@ -410,6 +432,25 @@ SPDX-License-Identifier: Apache-2.0
           <weave-parameter-form [session]="session()" name="parameters" />
         }
       </div>
+      @if (startsTrigger(); as choice) {
+        <div
+          class="sd-tabpanel"
+          role="tabpanel"
+          id="sd-panel-starts"
+          aria-labelledby="sd-tab-starts"
+          [hidden]="tab() !== 'starts'"
+        >
+          <!-- Read when it is first shown, then kept while these step details are open. -->
+          @defer (when tab() === "starts") {
+            <weave-event-starts-tab
+              [session]="session()"
+              [trigger]="choice"
+              (owes)="startsRead.set($event)"
+              (openRun)="openStartedRun($event)"
+            />
+          }
+        </div>
+      }
       <div
         class="sd-tabpanel"
         role="tabpanel"

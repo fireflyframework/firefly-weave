@@ -28,13 +28,18 @@ import {
   signal,
   type OnInit,
 } from "@angular/core";
-import { ApiError, type Diagnostic, type StudioApi } from "../../api";
+import { ApiError, type Diagnostic, placeOf, type StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { Workflow } from "../../model";
+import {
+  readDeclaration,
+  type EventDeclaration,
+} from "../triggers/event-trigger";
 import type { CanvasSidecar, TriggerIntent } from "../state/canvas-sidecar";
 import { triggerIntents } from "../state/canvas-sidecar";
 import { missingFeatures } from "./activation-rows";
+import { activationRun } from "./activation-run";
 import {
   callPins,
   calledReferenceSites,
@@ -44,7 +49,20 @@ import {
   type CalleeVersion,
 } from "./callee-pins";
 import {
+  EventActivationRow,
+  type EventRowAnswer,
+} from "./event-activation-row";
+import { joined } from "./event-bindings";
+import {
+  eventResultView,
+  eventRowView,
+  otherResultView,
+  uncheckedView,
+  type EventRowView,
+} from "./event-rows";
+import {
   triggerPlan,
+  withStop,
   type PlanActivation,
   type TriggerRow,
 } from "./trigger-plan";
@@ -53,11 +71,13 @@ import {
   type BindableItem,
 } from "../connections/connections-api";
 import {
-  actionable,
   attention,
+  chooseResult,
   connectionNeed,
   type ConnectionNeed,
+  needsSync,
   retryResult,
+  syncHeld,
   syncTriggers,
   withStoredResources,
   type SyncContext,
@@ -68,10 +88,13 @@ import {
   listTriggerResources,
   type ResourceKind,
   type ResourceList,
+  type TriggerResource,
 } from "./trigger-resources-api";
 
 /** Pages read of each list the dialog checks (published versions, activations). */
 const MAX_PAGES = 10;
+/** Activations per page, and pages read: the list keeps no order, so the newest can be on any of them. */
+const ACTIVATIONS = { limit: 100, pages: 100 };
 
 const PLURALS: Record<ResourceKind, string> = {
   webhook: "webhooks",
@@ -79,6 +102,7 @@ const PLURALS: Record<ResourceKind, string> = {
   broker: "Kafka triggers",
   email: "email sources",
   provider: "app event sources",
+  event: "platform event triggers",
 };
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -88,6 +112,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 @Component({
   selector: "weave-activation-steps",
   standalone: true,
+  imports: [EventActivationRow],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `@if (state() === "loading") {
       <p class="dialog-status" role="status">
@@ -116,20 +141,21 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
             @let result = results().get($index);
             <li
               class="activation-row"
+              [class.event-row]="views().has($index)"
+              [attr.data-row]="$index"
               [attr.data-kind]="result ? result.status : row.kind"
+              [attr.aria-label]="row.event && !synced() ? row.text : null"
             >
-              <span [id]="'trigger-row-' + $index">{{
-                result ? result.text : row.text
-              }}</span>
-              @if (result?.status === "failed") {
-                <button
-                  type="button"
-                  class="sm"
-                  [disabled]="retrying() === $index"
-                  (click)="retry($index)"
-                >
-                  Retry
-                </button>
+              @if (views().get($index); as view) {
+                <weave-event-activation-row
+                  [view]="view"
+                  [textId]="'trigger-row-' + $index"
+                  [busy]="acting()"
+                  (stop)="stopIt($index, $event)"
+                  (answer)="answer($index, $event)"
+                />
+              } @else {
+                <span [id]="'trigger-row-' + $index">{{ row.text }}</span>
               }
               @if (row.kind === "schedule-input" && row.intentId) {
                 <!-- The way to fix it: the schedule's step details, where its run input is. -->
@@ -145,6 +171,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
               <!-- An email source has no stop operation: it keeps running. -->
               @if (
                 !synced() &&
+                !row.event &&
                 row.kind === "left-behind" &&
                 row.resourceKind !== "email"
               ) {
@@ -201,8 +228,14 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
               }
             </li>
           }
-          @for (failure of failures(); track failure) {
-            <li class="activation-row" data-kind="failed">{{ failure }}</li>
+          @for (failure of failures(); track failure.lead) {
+            <li class="activation-row event-row" data-kind="failed">
+              <!-- What activating does to it is said until it is done. -->
+              <weave-event-activation-row
+                [view]="synced() ? { ...failure, detail: null } : failure"
+                [textId]="'trigger-failure-' + $index"
+              />
+            </li>
           }
         </ul>
       }
@@ -231,17 +264,16 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       border-radius: var(--radius-sm);
       overflow-wrap: anywhere;
     }
+    /* A row with a lead and a detail lays its own text and controls out. */
+    .activation-row.event-row {
+      align-items: flex-start;
+      padding: 10px var(--space-3);
+    }
     .activation-row[data-kind="blocked"],
     .activation-row[data-kind="schedule-input"],
     .activation-row[data-kind="missing"],
-    .activation-row[data-kind="not-callable"],
-    .activation-row[data-kind="failed"] {
+    .activation-row[data-kind="not-callable"] {
       color: var(--danger-ink);
-    }
-    .activation-row[data-kind="created"],
-    .activation-row[data-kind="moved"],
-    .activation-row[data-kind="stopped"] {
-      color: var(--success-ink, var(--text));
     }
     .activation-connection {
       display: grid;
@@ -269,7 +301,12 @@ export class ActivationSteps implements OnInit {
   readonly canvas = input.required<CanvasSidecar>();
   /** The published version being activated. */
   readonly versionId = input("");
-  readonly environment = input<{ id: string; name: string } | null>(null);
+  /** The environment, as the dialog names it, and `short` as a sentence does ("development"). */
+  readonly environment = input<{
+    id: string;
+    name: string;
+    short?: string | null;
+  } | null>(null);
   /** The editor's last check of the workflow, for a callee that refuses this caller. */
   readonly diagnostics = input<readonly Diagnostic[]>([]);
 
@@ -277,21 +314,53 @@ export class ActivationSteps implements OnInit {
   readonly stop = signal<string | null>(null);
   readonly callees = signal<CalleeRow[]>([]);
   readonly triggers = signal<TriggerRow[]>([]);
-  readonly failures = signal<string[]>([]);
+  /** What couldn't be checked, so Studio leaves it as it is. */
+  readonly failures = signal<EventRowView[]>([]);
+  /**
+   * The revision of the workflow's newest activation here, which the next one
+   * replaces; null when it has none, undefined when Studio can't read it.
+   */
+  readonly replaces = signal<number | null | undefined>(undefined);
+  /** The person may not read the activations here. */
+  readonly replacesForbidden = signal(false);
   /** After the activation: what happened to each trigger row, by its place in the list. */
   readonly results = signal<ReadonlyMap<number, SyncResult>>(new Map());
   readonly synced = signal(false);
-  readonly retrying = signal<number | null>(null);
+  /** While a row's Retry, Stop it or answer runs. */
+  readonly acting = signal(false);
   private context: SyncContext | null = null;
+  /** Where what the dialog shows was read, and as whom. */
+  private place: string | null = null;
+  /** What a row shows with its icon, its detail and its controls, by its place in the list: a platform event trigger's, and what happened to any other. */
+  readonly views = computed(
+    () =>
+      new Map(
+        this.triggers().flatMap((row, index): [number, EventRowView][] => {
+          const result = this.results().get(index);
+          if (row.event)
+            return [
+              [
+                index,
+                this.synced()
+                  ? eventResultView(row.event, result?.event ?? null)
+                  : eventRowView(row.event),
+              ],
+            ];
+          return result
+            ? [[index, otherResultView(result.status, result.text)]]
+            : [];
+        }),
+      ),
+  );
   /** For each new trigger that runs on a connection, by its place in the list: what it can run on. */
   readonly connectionsFor = signal<ReadonlyMap<number, TriggerConnection>>(
     new Map(),
   );
   /** The connection revision chosen for each new trigger, by trigger choice. */
   readonly connectionChoices = signal<Readonly<Record<string, string>>>({});
-  /** Called after each Retry, so the dialog can keep what it made. */
-  retried: () => void = () => undefined;
-  /** True while the activation request runs: nothing may open behind the dialog. */
+  /** Called after each Retry, Stop it or answer, with its row, so the dialog can keep what it did. */
+  retried: (row: number) => void = () => undefined;
+  /** True while the dialog has to stay open: nothing may open behind it. */
   readonly busy = signal(false);
   /** Opens a trigger choice's step details; the dialog closes first. */
   openTrigger: (intentId: string) => void = () => undefined;
@@ -319,7 +388,7 @@ export class ActivationSteps implements OnInit {
   }
   /** Whether any trigger row changes something once the activation succeeds. */
   needsSync(): boolean {
-    return this.triggers().some(actionable);
+    return needsSync(this.triggers());
   }
   chooseConnection(intentId: string, revisionId: string) {
     this.connectionChoices.update((choices) => ({
@@ -331,38 +400,57 @@ export class ActivationSteps implements OnInit {
   async sync(activationId: string): Promise<void> {
     this.context = {
       api: this.api(),
+      place: this.place,
       activationId,
       environmentId: this.environment()?.id ?? "",
+      environment: this.environment()?.short || this.environment()?.name,
       inputSchema: this.activatedVersion().inputSchema,
       intents: triggerIntents(this.canvas()),
       connections: { ...this.connectionChoices() },
     };
     this.synced.set(true);
-    const rows = this.triggers();
-    for (const [index, row] of rows.entries()) {
-      if (!actionable(row)) continue;
-      const [result] = await syncTriggers([row], this.context);
-      this.results.update((map) => new Map(map).set(index, result));
-    }
+    await syncTriggers(this.triggers(), this.context, this.keep);
   }
-  async retry(index: number) {
+  private readonly keep = (index: number, result: SyncResult) =>
+    this.results.update((map) => new Map(map).set(index, result));
+  /** A row's button: Retry and Stop it try it once more, the two answers say what to do with a trigger whose events wait. */
+  async answer(index: number, answer: EventRowAnswer) {
     const result = this.results().get(index);
-    if (!result || !this.context) return;
-    this.retrying.set(index);
+    const context = this.context;
+    if (!result || !context || this.acting()) return;
+    this.acting.set(true);
     try {
-      const next = await retryResult(result, this.context);
-      this.results.update((map) => new Map(map).set(index, next));
-      this.retried();
+      this.keep(
+        index,
+        answer === "retry"
+          ? await retryResult(result, context)
+          : await chooseResult(result, answer, context),
+      );
+      // The duplicates that waited for the declared trigger are stopped now.
+      await syncHeld(this.triggers(), this.results(), context, this.keep);
     } finally {
-      this.retrying.set(null);
+      this.acting.set(false);
+      this.retried(index);
     }
   }
+  /** "Done keeps notify-team for now.", while a trigger's waiting events are still to be chosen; null otherwise. */
+  readonly doneKeeps = computed(() => {
+    const names = this.triggers().flatMap(({ event }, index) =>
+      this.results().get(index)?.status === "waiting" &&
+      event &&
+      "binding" in event
+        ? [event.binding.name]
+        : [],
+    );
+    return names.length ? `Done keeps ${joined(names)} for now.` : null;
+  });
   /** The trigger choices with what was created or moved kept for this environment. */
   storedIntents(): TriggerIntent[] {
     return withStoredResources(
       triggerIntents(this.canvas()),
       this.environment()?.id ?? "",
       [...this.results().values()],
+      this.triggers(),
     );
   }
   /** "1 trigger needs attention.", or null. */
@@ -371,7 +459,7 @@ export class ActivationSteps implements OnInit {
   }
   stopIt(index: number, stop: boolean) {
     this.triggers.update((rows) =>
-      rows.map((row, at) => (at === index ? { ...row, stop } : row)),
+      rows.map((row, at) => (at === index ? withStop(row, stop) : row)),
     );
   }
 
@@ -390,6 +478,34 @@ export class ActivationSteps implements OnInit {
     return items;
   }
 
+  /** The activations here, and whether these are all of them. */
+  private async activationsHere(): Promise<{
+    items: Record<string, unknown>[];
+    complete: boolean;
+  }> {
+    const items: Record<string, unknown>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < ACTIVATIONS.pages; page++) {
+      const answer = await this.api().page(
+        "activations",
+        true,
+        cursor,
+        {},
+        ACTIVATIONS.limit,
+      );
+      items.push(...answer.items);
+      if (!answer.next_cursor) return { items, complete: true };
+      cursor = answer.next_cursor;
+    }
+    return { items, complete: false };
+  }
+
+  /** One activation as the plan knows it: the workflow and version it runs. */
+  private async activation(id: string): Promise<PlanActivation> {
+    const api = this.api();
+    return { id, ...(await activationRun(api, api.environment, id)) };
+  }
+
   /** The published version's export: its definition and compiled artifact; null when it can't be read. */
   private exported: unknown = null;
   /**
@@ -397,20 +513,35 @@ export class ActivationSteps implements OnInit {
    * from its export; the editor's only when the export can't be read (the
    * draft may have changed since it was published).
    */
-  private activatedVersion(): { version: string; inputSchema: JsonObject } {
+  private activatedVersion(): {
+    name: string;
+    version: string;
+    inputSchema: JsonObject;
+    declaration: EventDeclaration | null;
+  } {
     const definition = this.definition();
     const document = record(record(this.exported)["document"]);
     const published = record(document["spec"]);
-    const version = text(record(document["metadata"])["version"]);
+    const metadata = record(document["metadata"]);
+    const version = text(metadata["version"]);
     const inputSchema =
       "inputSchema" in published
         ? published["inputSchema"]
         : definition.spec["inputSchema"];
     return {
+      name: text(metadata["name"]) || definition.metadata.name,
       version: version || definition.metadata.version,
       inputSchema: isJsonObject(inputSchema) ? (inputSchema as JsonObject) : {},
+      // A version that says what its steps are says what events it declares.
+      declaration: readDeclaration(
+        "steps" in published
+          ? { ...definition, spec: published as Workflow["spec"] }
+          : definition,
+      ),
     };
   }
+  /** The platform's features; null when they can't be read. */
+  private platformFeatures: readonly unknown[] | null = null;
   /** The platform's features, and the workflow's from its compiled export; null when either can't be read. */
   private async features(): Promise<string | null> {
     const api = this.api();
@@ -425,6 +556,7 @@ export class ActivationSteps implements OnInit {
       ]);
       this.exported = exported;
       const platform = record(manifest)["features"];
+      if (Array.isArray(platform)) this.platformFeatures = platform;
       const used = record(record(record(exported)["artifact"])["executable"])[
         "features"
       ];
@@ -441,6 +573,7 @@ export class ActivationSteps implements OnInit {
 
   async load() {
     this.state.set("loading");
+    this.place = placeOf(this.api());
     const stopped = await this.features();
     if (stopped) {
       this.stop.set(stopped);
@@ -454,26 +587,83 @@ export class ActivationSteps implements OnInit {
       record(record(document)["spec"])["steps"] ? document : definition,
     );
     const intents = triggerIntents(this.canvas());
-    const resourceful = intents.some(
-      (intent) => intent.kind !== "manual" && intent.kind !== "called",
-    );
-    let versions: Record<string, unknown>[] = [];
-    let activations: Record<string, unknown>[] = [];
-    const failures: string[] = [];
-    try {
-      [versions, activations] = await Promise.all([
-        sites.length || resourceful
-          ? this.pages("workflows", false)
-          : Promise.resolve([]),
-        sites.length || resourceful
-          ? this.pages("activations", true)
-          : Promise.resolve([]),
-      ]);
-    } catch (error) {
-      failures.push(
-        `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+    const version = this.activatedVersion();
+    const reacts =
+      version.declaration !== null ||
+      intents.some((intent) => intent.kind === "event");
+    const resourceful =
+      reacts ||
+      intents.some(
+        (intent) => intent.kind !== "manual" && intent.kind !== "called",
       );
-    }
+    const resources: Partial<Record<ResourceKind, ResourceList>> = {};
+    const unread = new Set<ResourceKind>();
+    const failures: EventRowView[] = [];
+    const unreadable = (kind: ResourceKind, error: unknown) => {
+      // A list that can't be read can't be checked: its triggers aren't planned.
+      resources[kind] = { items: [], truncated: true };
+      unread.add(kind);
+      failures.push(
+        error instanceof ApiError && error.status === 403
+          ? uncheckedView(
+              `You can't check the ${PLURALS[kind]} here, so Studio leaves them as they are.`,
+            )
+          : uncheckedView(
+              `Couldn't check the ${PLURALS[kind]}: ${describeError(error).message}`,
+              "If you activate now, Studio leaves them as they are. To check them first, close this and activate again.",
+            ),
+      );
+    };
+    // A version that declares no platform event may still have a trigger an
+    // earlier one left reacting, which only the platform knows.
+    if (this.platformFeatures?.includes("flow.eventTrigger") ?? reacts)
+      try {
+        resources.event = await listTriggerResources(this.api(), "event");
+      } catch (error) {
+        if (reacts) unreadable("event", error);
+      }
+    const mine = (resources.event?.items ?? []).filter(
+      (item) =>
+        !item.disabled &&
+        (item as TriggerResource<"event">).view.workflow_name === version.name,
+    );
+    const checked = sites.length > 0 || resourceful || mine.length > 0;
+    let known = true;
+    const couldnt = (error: unknown) => {
+      if (known && checked)
+        failures.push(
+          uncheckedView(
+            `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+          ),
+        );
+      known = false;
+    };
+    const [versions, here] = await Promise.all([
+      checked
+        ? this.pages("workflows", false).catch((error: unknown) => {
+            couldnt(error);
+            return [];
+          })
+        : [],
+      this.activationsHere().catch((error: unknown) => {
+        couldnt(error);
+        this.replacesForbidden.set(
+          error instanceof ApiError && error.status === 403,
+        );
+        return { items: [], complete: false };
+      }),
+    ]);
+    const activations = known ? here.items : [];
+    if (here.complete)
+      this.replaces.set(
+        here.items.reduce<number | null>(
+          (newest, item) =>
+            text(item["name"]) === version.name
+              ? Math.max(newest ?? 0, Number(item["revision"]) || 0)
+              : newest,
+          null,
+        ),
+      );
     const published: CalleeVersion[] = versions
       .filter((item) => text(item["id"]) && text(item["version"]))
       .map((item) => ({
@@ -482,7 +672,7 @@ export class ActivationSteps implements OnInit {
         version: text(item["version"]),
       }));
     const byVersionId = new Map(published.map((item) => [item.id, item]));
-    const known: CalleeActivation[] = activations.map((item) => ({
+    const callable: CalleeActivation[] = activations.map((item) => ({
       id: text(item["id"]),
       name: text(item["name"]),
       revision: Number(item["revision"]) || 0,
@@ -493,42 +683,51 @@ export class ActivationSteps implements OnInit {
         : {}),
     }));
     this.callees.set(
-      proposePins(sites, published, known, [...this.diagnostics()]),
+      proposePins(sites, published, callable, [...this.diagnostics()]),
     );
-    if (resourceful && !failures.length) {
-      const resources: Partial<Record<ResourceKind, ResourceList>> = {};
-      const unread = new Set<ResourceKind>();
-      await Promise.all(
-        RESOURCE_KINDS.map(async (kind) => {
-          try {
-            resources[kind] = await listTriggerResources(this.api(), kind);
-          } catch (error) {
-            // A list that can't be read can't be checked: its triggers aren't planned.
-            resources[kind] = { items: [], truncated: true };
-            unread.add(kind);
-            failures.push(
-              error instanceof ApiError && error.status === 403
-                ? `You can't check the ${PLURALS[kind]} here, so Studio leaves them as they are.`
-                : `Couldn't check the ${PLURALS[kind]}: ${describeError(error).message}`,
-            );
-          }
-        }),
-      );
+    if ((resourceful || mine.length) && known) {
+      if (resourceful)
+        await Promise.all(
+          RESOURCE_KINDS.filter((kind) => kind !== "event").map(
+            async (kind) => {
+              try {
+                resources[kind] = await listTriggerResources(this.api(), kind);
+              } catch (error) {
+                unreadable(kind, error);
+              }
+            },
+          ),
+        );
       const tooLong = RESOURCE_KINDS.some(
         (kind) => resources[kind]?.truncated && !unread.has(kind),
       );
-      const planActivations: PlanActivation[] = known.map((item) => ({
+      const planActivations: PlanActivation[] = callable.map((item) => ({
         id: item.id,
         workflow: item.name,
         version: byVersionId.get(item.versionId)?.version ?? "",
       }));
+      // A trigger whose activation is past the pages read is still this
+      // workflow's: without it Studio would make a second one beside it.
+      const listed = new Set(callable.map((item) => item.id));
+      try {
+        planActivations.push(
+          ...(await Promise.all(
+            mine
+              .filter((item) => !listed.has(item.activationId ?? ""))
+              .map((item) => this.activation(item.activationId ?? "")),
+          )),
+        );
+      } catch (error) {
+        unreadable("event", error);
+      }
       this.triggers.set(
         triggerPlan({
           intents,
           resources,
           activations: planActivations,
-          workflow: definition.metadata.name,
-          version: this.activatedVersion(),
+          workflow: version.name,
+          version,
+          declaration: version.declaration,
           environmentId: this.environment()?.id ?? "",
         }).filter((row) => row.kind !== "truncated" || tooLong),
       );

@@ -269,7 +269,7 @@ const appEventForm = (): FormSpec => ({
   ],
 });
 
-/** The settings form of a trigger's step details; a manual form and a called workflow have their own. */
+/** The settings form of a trigger's step details; a manual form, a called workflow and a platform event have their own. */
 export function triggerForm(kind: TriggerKind): FormSpec {
   switch (kind) {
     case "webhook":
@@ -284,6 +284,7 @@ export function triggerForm(kind: TriggerKind): FormSpec {
       return appEventForm();
     case "manual":
     case "called":
+    case "event":
       return { fields: [] };
   }
 }
@@ -361,6 +362,8 @@ export function triggerProblems(intent: TriggerIntent): Record<string, string> {
     case "email":
     case "manual":
     case "called":
+    // The definition holds a platform event's settings, not the choice.
+    case "event":
       break;
   }
   return problems;

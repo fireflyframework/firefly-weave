@@ -24,6 +24,8 @@ import { ERROR_PATH, blocksOf } from "../editor/step-blocks";
 import { WORKFLOW } from "../forms/core/scope";
 import type { Step } from "../model";
 
+/** A part of the Platform event trigger's Parameters. */
+export type EventPart = "events" | "from" | "input";
 export interface DiagnosticLocation {
   /** The step to select, or `WORKFLOW` for workflow settings. */
   stepId: string;
@@ -49,6 +51,8 @@ export interface DiagnosticLocation {
   dataPath: string[];
   /** False when the pointer no longer matches the definition and an ancestor was chosen. */
   exact: boolean;
+  /** A problem of the Platform event trigger: the part of its Parameters that fixes it. */
+  event?: EventPart;
 }
 
 type JsonObject = Record<string, unknown>;

@@ -155,6 +155,9 @@ import {
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import { reservedActionNames } from "./owned/insert-owned";
 import { SettingsTab } from "./settings/settings-tab";
+import { pendingStopsOf } from "../activation/stored-resources";
+import { handOverLinkedRun } from "../runs-tab/run-links";
+import { EventStartsTab } from "../triggers/event-starts-tab";
 import { retryOn, settingsChanged } from "./settings/settings-rules";
 import { stepNotesOf, type TriggerIntent } from "../state/canvas-sidecar";
 import {
@@ -325,6 +328,7 @@ const visible = (element: HTMLElement): boolean =>
     ExecutePathDialog,
     PhaseOutputDialog,
     SimulateFailureDialog,
+    EventStartsTab,
     SettingsTab,
     IssuesIndicator,
   ],
@@ -402,7 +406,12 @@ export class StepDetails {
   private readonly injector = inject(Injector);
   private readonly dialog =
     viewChild.required<ElementRef<HTMLElement>>("dialog");
-  readonly tab = signal<StepDetailsTab>("parameters");
+  private readonly chosenTab = signal<StepDetailsTab>("parameters");
+  /** The tab shown: Parameters where the one chosen isn't offered. */
+  tab(): StepDetailsTab {
+    const chosen = this.chosenTab();
+    return chosen === "starts" && !this.startsTrigger() ? "parameters" : chosen;
+  }
   readonly renaming = signal<string | null>(null);
   renameText = "";
   private readonly renames: { from: string; to: string }[] = [];
@@ -564,7 +573,8 @@ export class StepDetails {
       this.details.opening();
       const request = this.request();
       untracked(() => {
-        this.tab.set(request.tab);
+        this.chosenTab.set(request.tab);
+        this.startsRead.set(null);
         this.renaming.set(null);
         // Opening a step shows its form; the grid opens from Edit table.
         this.controller().parameterComponent.set(null);
@@ -1894,7 +1904,7 @@ export class StepDetails {
       return;
     }
     if (this.tab() !== field.tab) {
-      this.tab.set(field.tab);
+      this.chosenTab.set(field.tab);
       afterNextRender(() => this.focusField(field, open, press), {
         injector: this.injector,
       });
@@ -2286,7 +2296,33 @@ export class StepDetails {
     return value.mode === "fixed" ? value.value : undefined;
   }
   selectTab(tab: StepDetailsTab) {
-    this.tab.set(tab);
+    this.chosenTab.set(tab);
+  }
+  /** The platform event trigger these step details show what it started of; null for any other step. */
+  startsTrigger(): TriggerIntent | null {
+    const choice = this.triggerChoice();
+    return choice?.kind === "event" &&
+      this.controller().features().includes("flow.eventTrigger")
+      ? choice
+      : null;
+  }
+  /** Open run: a run the trigger started, on the Runs tab in place of these step details. */
+  openStartedRun(run: string) {
+    this.guard(() => {
+      const host = this.host();
+      this.closeNow();
+      handOverLinkedRun(host.draftId ?? "", run);
+      void host.selectTab?.("Runs");
+    });
+  }
+  /** What the platform says of the stop still owed, once Starts read it; null before. */
+  readonly startsRead = signal<boolean | null>(null);
+  /** Whether a stop is owed in this environment. */
+  startsOwed(): boolean {
+    const choice = this.startsTrigger();
+    const environment = this.host().profile?.environmentId;
+    if (!choice || !environment) return false;
+    return this.startsRead() ?? pendingStopsOf(choice, environment).length > 0;
   }
   tabKey(event: KeyboardEvent) {
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
@@ -2428,7 +2464,7 @@ export class StepDetails {
     let found: HTMLElement | null = null;
     if (focus.kind === "field") {
       if (this.tab() !== focus.tab) {
-        this.tab.set(focus.tab);
+        this.chosenTab.set(focus.tab);
         afterNextRender(() => this.applyFocus(focus), {
           injector: this.injector,
         });
@@ -2440,6 +2476,13 @@ export class StepDetails {
     } else if (focus.kind === "firstRequiredEmpty")
       found = control(
         panel?.querySelector("[data-param][data-required-empty]"),
+      );
+    else if (focus.kind === "path")
+      // A part of a panel that isn't a form of fields, by its path.
+      found = control(
+        panel?.querySelector(
+          `[data-focus-path="${CSS.escape(focus.path.join("/"))}"]`,
+        ),
       );
     else if (focus.kind === "region") {
       const region = root.querySelector<HTMLElement>(
@@ -2609,7 +2652,7 @@ export class StepDetails {
       menu.row.focus();
       return;
     }
-    this.tab.set("parameters");
+    this.chosenTab.set("parameters");
     if (this.layout() === "sheet") this.pane.set("parameters");
     setTimeout(() => {
       if (

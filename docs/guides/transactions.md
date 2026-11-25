@@ -102,14 +102,28 @@ but a person's decision moves it. Check the other systems first, then choose:
 | Decision | Kind | When |
 | --- | --- | --- |
 | **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. An action runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped. An undo or confirm that calls a workflow starts a new child run instead, whose steps get new operation keys, so that workflow must receive `/participant/operationKey` in its `with` and refuse a duplicate by it |
-| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read |
+| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read. While the run would go on after the block, `completed` is refused (HTTP 422) when the block can never complete, because every way through it reaches a Fail step: use Force end, or `compensated` if everything was undone |
 | **It happened** | `accept_reconciled_result` with the step's output | The order went through. Weave confirms the reservations and runs the steps after it |
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
 
-A late result of work a person already ended changes nothing; it is counted
-(`weave.transaction_phases`, operation `transaction.late_result`), because it may
-mean the record was wrong. Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
+Mark as reconciled is refused (HTTP 409 `WV-RUNTIME-STATE`) while an attempt of
+one of the transaction's steps has just failed and Weave still handles that
+failure: wait a moment and send it again. Only a failure that Weave still
+handles is refused. When the rollback stops a failed step first (for example,
+the hold time passes or the run is canceled), that step is never tried again, so
+it doesn't delay your decision, but its `WV-TASK-FAILED` incident stays open
+until the run ends. After a `completed` record, a run that isn't already ending
+stays suspended behind that incident, and you can only end it: cancel the run,
+or resolve the incident with `terminate`.
+
+Once a person ends a transaction, a late result of its work changes nothing: a
+worker's report is refused with HTTP 409 `WV-LEASE` (or, when the run ended
+failed or canceled and the lease had not expired, kept as an `ignored` receipt),
+and a called workflow's result stays with its call. Weave doesn't count these,
+so if a worker logs one, check the record against the systems involved.
+
+Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
 an audited reason, and (except Force end) an evidence reference. See
 [Incident operations](../reference/incident-operations.md#transactions-in-doubt)
 for the request bodies.
@@ -130,6 +144,20 @@ tell a team that a move is in doubt or to open a ticket. The events are
 `transaction.completed`, `transaction.compensated`, `transaction.cancelled`,
 `transaction.in_doubt`, `transaction.reconciled`, and
 `transaction.force_ended`.
+
+![From choosing events in Studio to the runs a transaction event starts](../diagrams/react-to-a-transaction.svg)
+
+**How to read this diagram:** Read down. Someone creates the trigger once; each
+event of a matching transaction then starts one run as the trigger's owner.
+
+[Open diagram at full size](../diagrams/react-to-a-transaction.svg).
+
+**From Studio,** add the **Platform event** trigger: Studio writes the
+declaration and the input below, tests the workflow with a sample event, creates
+or moves the trigger when you activate, and lists what it started under
+**Starts**. [React to a transaction in Studio](studio.md#react-to-a-transaction)
+has the steps. The rest of this section does the same with a definition file and
+the command line.
 
 ### Declare the events the workflow accepts
 

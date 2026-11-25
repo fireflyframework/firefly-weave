@@ -16,15 +16,18 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The platform resources behind a workflow's triggers, in one environment:
-// webhooks, schedules, Kafka triggers, email sources and app event sources.
-// Studio lists them to find the ones this workflow's activations run, creates
-// them after an activation, and moves them to the next activation with the
-// revision it read, so a webhook keeps its URL across versions.
+// webhooks, schedules, Kafka triggers, email sources, app event sources and
+// platform event triggers. Studio lists them to find the ones this workflow's
+// activations run, creates them after an activation, and moves them to the
+// next activation with the revision it read, so a webhook keeps its URL
+// across versions. A platform event trigger is only listed here: what
+// activating does to it is in event-bindings.ts.
 import { ApiError, type StudioApi } from "../../api";
 import type { Json, JsonObject } from "../../forms/core/json";
 import type { TriggerIntent, TriggerKind } from "../state/canvas-sidecar";
+import type { EventTriggerView } from "./event-bindings";
 
-/** The trigger kinds that have a platform resource. */
+/** The trigger kinds whose platform resource Studio lists here. */
 export type ResourceKind = Exclude<TriggerKind, "manual" | "called">;
 export const RESOURCE_KINDS: readonly ResourceKind[] = [
   "webhook",
@@ -32,14 +35,19 @@ export const RESOURCE_KINDS: readonly ResourceKind[] = [
   "broker",
   "email",
   "provider",
+  "event",
 ];
+export const TOO_MANY_TRIGGERS =
+  "Too many triggers to check here. Use the CLI.";
+/** The kinds Studio sets up here; a platform event trigger's rules are its own (event-bindings.ts). */
+export type SetUpKind = Exclude<ResourceKind, "event">;
 /** The kinds that move with `POST …/retarget`; a schedule moves by saving it. */
-export type RetargetKind = Exclude<ResourceKind, "schedule">;
+export type RetargetKind = Exclude<SetUpKind, "schedule">;
 
 /** What this client needs from `StudioApi`. */
 export type TriggerApi = Pick<
   StudioApi,
-  "environment" | "page" | "request" | "mutate"
+  "environment" | "page" | "request" | "mutate" | "expectedPrincipal"
 >;
 
 /** `triggers.read`. */
@@ -124,6 +132,7 @@ export interface ResourceViews {
   broker: BrokerTriggerView;
   email: EmailSourceView;
   provider: ProviderSourceView;
+  event: EventTriggerView;
 }
 
 /** One platform resource, with what matching and moving it needs. */
@@ -189,6 +198,7 @@ const COLLECTIONS: Record<ResourceKind, string> = {
   broker: "broker-triggers",
   email: "email/sources",
   provider: "provider-sources",
+  event: "event-triggers",
 };
 
 const path = (api: TriggerApi, kind: ResourceKind, id?: string) =>
@@ -403,7 +413,7 @@ async function presence(
  */
 export async function stopResource(
   api: TriggerApi,
-  kind: ResourceKind,
+  kind: SetUpKind,
   id: string,
   revision: number,
 ): Promise<{ ok: true } | { ok: false; refusal: ResourceRefusal }> {
@@ -457,7 +467,7 @@ const incomplete = (message: string): ResourceOutcome<never> => ({
 
 /** The request that creates the resource for a trigger choice, or what is still to be chosen. */
 function creation(
-  intent: TriggerIntent & { kind: ResourceKind },
+  intent: TriggerIntent & { kind: SetUpKind },
   target: ResourceTarget,
 ): { body: Record<string, unknown> } | { missing: string } {
   const start = { kind: "run", activation_id: target.activationId };
@@ -558,7 +568,7 @@ function creation(
 }
 
 /** Create the resource a trigger choice describes, for the activation that just succeeded. */
-export async function createResource<K extends ResourceKind>(
+export async function createResource<K extends SetUpKind>(
   api: TriggerApi,
   intent: TriggerIntent & { kind: K },
   target: ResourceTarget,

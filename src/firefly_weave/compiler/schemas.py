@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 import time
 from collections.abc import Callable, Iterable, Iterator
 from decimal import Decimal
@@ -55,6 +56,16 @@ from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonVal
 _DEFAULT_LIMITS = SchemaLimits()
 _LOCAL_NAME = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
 _FORMATS = FormatChecker(formats=sorted(SUPPORTED_FORMATS))
+# A search that the engine stops before its thread spent the CPU budget is tried again, each time with twice the time.
+_SEARCH_TRIES = 8
+# What the stopped tries of one validation may last together, in seconds for each second of its CPU budget.
+_WAIT_PER_CPU_SECOND = 100
+# The largest search, as the length of its pattern times the length of its string, that keeps the interpreter. The
+# slowest one of this size measured keeps it for 44 ms. At a quarter of it, 20 ms, a valid string of 8,000 characters
+# can still use up its tries beside two threads busy in Python, as a larger search can at this size.
+_HELD_SEARCH = 262_144
+# How far the thread's CPU clock moves at a time: Windows charges a whole tick to the thread that runs at its end.
+_CPU_STEP = 1 / 64 if sys.platform == "win32" else 0.0
 
 
 class _Failure(Exception):
@@ -397,7 +408,8 @@ class _Budget:
     def __init__(self, limits: SchemaLimits) -> None:
         self.limits = limits
         self.work = 0
-        self.regex_seconds = 0.0
+        self.regex_seconds = self.regex_cpu = self.regex_elapsed = 0.0
+        self.regex_waited = 0.0
         self.patterns: dict[str, regex.Pattern[str]] = {}
 
     def charge(self, work: int = 1) -> None:
@@ -411,16 +423,41 @@ class _Budget:
         if compiled is None:
             compiled = _pattern(pattern, self.limits, "", charge=self.charge)
             self.patterns[pattern] = compiled
-        remaining = self.limits.max_regex_seconds - self.regex_seconds
-        if remaining <= 0:
+        allowed = min(self.limits.regex_timeout_seconds, self.limits.max_regex_seconds - self.regex_seconds)
+        # The engine takes a negative timeout as none.
+        if allowed <= 0:
             raise _Failure("RESOURCE_LIMIT")
-        start = time.monotonic()
-        try:
-            return compiled.search(value, timeout=min(self.limits.regex_timeout_seconds, remaining)) is not None
-        except TimeoutError:
-            raise _Failure("RESOURCE_LIMIT") from None
-        finally:
-            self.regex_seconds += time.monotonic() - start
+        # The engine's timeout only interrupts a search. It counts elapsed time on Windows, and elsewhere the CPU time
+        # of every thread in the process, so on a busy machine it also stops searches that spent almost nothing. The
+        # answer depends on the CPU time of this thread alone, and a try that was stopped early is never charged.
+        # The engine would also let other threads run every few hundred steps of a search, and wait for all of them each
+        # time, so a small search keeps the interpreter instead. A larger one lets them run, because the engine can go
+        # through a long string without letting them.
+        concurrent = None if len(pattern) * len(value) > _HELD_SEARCH else False
+        for attempt in range(_SEARCH_TRIES):
+            started, cpu_started = time.perf_counter(), time.thread_time()
+            try:
+                found: bool | None = (
+                    compiled.search(value, timeout=allowed * 2**attempt, concurrent=concurrent) is not None
+                )
+            except TimeoutError:
+                found = None
+            cpu, elapsed = time.thread_time() - cpu_started, time.perf_counter() - started
+            # One thread never spends more CPU time than passes, whatever a stepped clock says.
+            spent = min(cpu, elapsed)
+            if spent - _CPU_STEP >= allowed:
+                break
+            if found is not None:
+                self.regex_cpu += cpu
+                self.regex_elapsed += elapsed
+                # A stepped clock shows nothing of most small searches and a whole step of a few, so only the sums tell
+                # what all of them spent. Two steps are left out, because the sum can be off by about that much.
+                self.regex_seconds = min(self.regex_cpu - 2 * _CPU_STEP, self.regex_elapsed)
+                return found
+            self.regex_waited += elapsed
+            if self.regex_waited >= self.limits.max_regex_seconds * _WAIT_PER_CPU_SECOND:
+                break
+        raise _Failure("RESOURCE_LIMIT")
 
 
 def _validator(budget: _Budget, *, strict_integer: bool = False) -> Any:

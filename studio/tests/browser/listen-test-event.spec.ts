@@ -56,7 +56,7 @@ interface Listening {
   receive(): void;
 }
 /** The platform's test activations, its listen route, and the run a signed request starts. */
-async function routeListening(page: Page): Promise<Listening> {
+async function routeListening(page: Page, input: unknown): Promise<Listening> {
   let received = false;
   const recorded: Listening = {
     listens: [],
@@ -77,7 +77,7 @@ async function routeListening(page: Page): Promise<Listening> {
         state: {
           ...(run.view["state"] as Record<string, unknown>),
           status: "running",
-          input: { customerId: "c-77" },
+          input,
         },
       },
     },
@@ -130,7 +130,11 @@ async function routeListening(page: Page): Promise<Listening> {
 }
 
 /** The webhook workflow open, connected to Production, with its trigger's step details open. */
-async function openWebhook(page: Page, policy?: "disabled") {
+async function openWebhook(
+  page: Page,
+  policy?: "disabled",
+  input: unknown = { customerId: "c-77" },
+) {
   await openConnected(page, {
     bindable: { [PRODUCTION]: [] },
     // Listening creates a test URL: the step tester and trigger manager roles.
@@ -143,7 +147,7 @@ async function openWebhook(page: Page, policy?: "disabled") {
     ...(policy ? { policy: { [PRODUCTION]: policy } } : {}),
   });
   // Registered after connecting, so they answer before the fake host does.
-  const listening = await routeListening(page);
+  const listening = await routeListening(page, input);
   const steps = await routeStepTests(page, { starts: [], views: [] });
   await page.getByLabel("Choose a workflow file").setInputFiles([
     workflow,
@@ -235,6 +239,49 @@ test("a webhook listens on a test URL with a signed cURL, and the event's payloa
       runId: RUN_IDS.test,
     });
   await expect(tileShape(page)).not.toHaveClass(/\blistening\b/);
+});
+
+test("a real platform event a test call brings becomes the test input with sample IDs", async ({
+  page,
+}) => {
+  const REAL = {
+    event: "a3d0c1b2-1111-4222-8333-000000000001",
+    run: "a3d0c1b2-1111-4222-8333-000000000002",
+    incident: "a3d0c1b2-1111-4222-8333-000000000003",
+  };
+  const { dialog, steps, listening } = await openWebhook(page, undefined, {
+    customerId: "c-77",
+    event: {
+      version: "weave/platform-event-v1",
+      event_id: REAL.event,
+      type: "transaction.in_doubt",
+      transaction: {
+        run_id: REAL.run,
+        incident_id: REAL.incident,
+        instance_key: "move",
+        business_key: "REF-4410",
+        state: "in_doubt",
+      },
+    },
+  });
+  await dialog
+    .locator(".sd-actions")
+    .getByRole("button", { name: "Listen for test event", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("textbox", { name: "Make a POST request to:" }),
+  ).toHaveValue(TEST_URL);
+  listening.receive();
+  const saved = () =>
+    steps.documents.map((request) => request.postData() ?? "");
+  await expect
+    .poll(() => saved().filter((body) => body.includes("REF-4410")).length, {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0);
+  expect(saved().at(-1)).toContain('"source":"test-call"');
+  for (const id of Object.values(REAL))
+    expect(saved().filter((body) => body.includes(id))).toEqual([]);
 });
 
 test("Stop listening retires the test URL, and the tile stops pulsing", async ({

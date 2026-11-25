@@ -315,6 +315,11 @@ class PreparedWorkflow:
     transactions: TransactionShapes | None = None
 
 
+def completes(ir: WorkflowIR, block: TransactionNode) -> bool:
+    """Whether a transaction's block can complete. Nothing follows one whose every way through reaches a fail step."""
+    return any(node.id == block.join and isinstance(node, JoinNode) and node.completes for node in ir.graph.nodes)
+
+
 def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
     ir = workflow(artifact)
     sizes: dict[str, int] = {}
@@ -339,9 +344,14 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
                 for node in body
             ):
                 nested.add(loop.id)
+    nodes = {node.id: node for node in ir.graph.nodes}
+    for block in ir.graph.nodes:
+        if isinstance(block, TransactionNode) and block.on_error == "continue" and not completes(ir, block):
+            # There is no step to continue with: its failures count as without the setting.
+            nodes[block.id] = block.model_copy(update={"on_error": None})
     return PreparedWorkflow(
         ir=ir,
-        nodes=MappingProxyType({node.id: node for node in ir.graph.nodes}),
+        nodes=MappingProxyType(nodes),
         successors=MappingProxyType({edge.source: edge.target for edge in ir.graph.edges if edge.kind == "next"}),
         body_sizes=MappingProxyType(sizes),
         body_intents=MappingProxyType(intents),
@@ -482,8 +492,13 @@ def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple
     return ending, outcomes, output
 
 
-def block_output(ir: WorkflowIR, node: TransactionNode, value: JsonValue) -> None:
-    """Validate an output a person gave a transaction's block against the block's own output schema."""
+def block_output(ir: WorkflowIR, node: TransactionNode, value: JsonValue, *, goes_on: bool) -> None:
+    """Validate an output a person gave a transaction's block against the block's own output schema.
+
+    A run that ``goes_on`` after the block needs a step after it, which a block that can never complete doesn't have.
+    """
+    if goes_on and not completes(ir, node):
+        raise KernelError("WV-RUNTIME-OUTPUT")
     for item in ir.guards:
         if item.path == f"{node.path}/output" and item.purpose == "branch_output":
             validate(ir, ir.schemas[item.schema_ref], value)
@@ -507,6 +522,9 @@ class KernelCursor(ContractModel):
     # reduced again, and each of them fails as its onError setting says, or fails its transaction, instead of being
     # evaluated.
     failing: dict[str, str] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # What the event's result has released so far: a result's released records are never stored, and a cursor is. Empty
+    # between events.
+    released: dict[str, TransactionRecord] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> KernelCursor:
@@ -638,6 +656,9 @@ def _advance_owned(
     if state.status not in {"queued", "waiting", "suspended"}:
         raise KernelError("WV-RUNTIME-STATE")
     result = cursor.result
+    if cursor.released and not result.released:
+        # The cursor was stored in the middle of its event and read back.
+        result.released.update(cursor.released)
     current_state = result.state
     if not cursor.admitted:
         current_state = current_state.model_copy(update={"accepted_sequence": event.sequence})
@@ -657,6 +678,7 @@ def _advance_owned(
                 "current": current,
                 "turn_units": 0 if done else units,
                 "turn_intents": 0 if done else reserved,
+                "released": {} if done else value.released,
             }
         )
 
@@ -759,7 +781,8 @@ def _advance_owned(
             queue.append(node.target + within)
 
     def release(node: ForEachNode, key: str, index: int) -> None:
-        """Delete an iteration's frame and every frame, join and loop that its body created."""
+        """Delete an iteration's frame and every frame, join, loop and transaction that its body created; the result
+        hands on the final record of each transaction."""
         within = iteration_suffix(loop_suffix(key), index)
         del current_state.branches[branch_key(node.id, "body", within)]
         body = [*node.scope, node.id, "body"]
@@ -780,7 +803,7 @@ def _advance_owned(
         for name in [name for name in current_state.joins if inside(node_of(name), loop_suffix(name))]:
             del current_state.joins[name]
         for name in [name for name in current_state.transactions if inside(node_of(name), loop_suffix(name))]:
-            del current_state.transactions[name]
+            result.released[name] = current_state.transactions.pop(name)
         growing = growing_containers.get()
         for name in [name for name in current_state.loops if inside(node_of(name), loop_suffix(name))]:
             if growing is not None:
@@ -1532,7 +1555,8 @@ def _advance_owned(
         """Check a reconciliation record against the transaction: how it ended, each step's outcome, its output."""
         ending, outcomes, output = check_reconciliation(record(key), value)
         if ending == "completed":
-            block_output(ir, cast(TransactionNode, nodes[node_of(key)]), output)
+            block = cast(TransactionNode, nodes[node_of(key)])
+            block_output(ir, block, output, goes_on=current_state.ending is None)
         return ending, outcomes, output
 
     def force_end(key: str) -> None:
@@ -3013,6 +3037,7 @@ def _advance_owned(
                     "turn_units": 0,
                     "turn_intents": 0,
                     "failing": {**failing, current: code},
+                    "released": {},
                 }
             )
         current_state = state.model_copy(deep=True)

@@ -25,6 +25,7 @@ import {
   transactionFix,
   type TransactionFix,
 } from "../editor/transactions/fixes";
+import { eventPlace, eventProblem } from "../editor/triggers/event-diagnostics";
 import { Icon } from "../icon";
 import type { Workflow } from "../model";
 import { describeDiagnostic, type DiagnosticView } from "./diagnostic-copy";
@@ -223,10 +224,15 @@ export function suggestedChange(
   return value ? { stepId: where.stepId, value } : null;
 }
 
-/** Diagnostic rows: errors and warnings as rows, notes summarized after them. */
+/**
+ * Diagnostic rows: errors and warnings as rows, notes summarized after them.
+ * With step details, a problem of the Platform event trigger reads as the
+ * trigger says it and opens the trigger.
+ */
 export function diagnosticRows(
   diagnostics: readonly DiagnosticInput[],
   definition: unknown,
+  stepDetails = false,
 ): { problems: Row[]; notes: Row[] } {
   const problems: Row[] = [],
     notes: Row[] = [];
@@ -256,10 +262,18 @@ export function diagnosticRows(
         workflow: definition as Workflow,
       },
     );
+    const event = stepDetails ? eventProblem(diagnostic, definition) : null;
     const row: Row = {
-      view,
-      location,
-      where: location ? placeOf(location, kind, view.code) : "",
+      view: event?.text
+        ? { ...view, text: event.text, hint: event.hint }
+        : view,
+      location:
+        location && event ? { ...location, event: event.part } : location,
+      where: event
+        ? eventPlace(event.part)
+        : location
+          ? placeOf(location, kind, view.code)
+          : "",
       change: fix === undefined ? change : null,
       fix: fix ?? null,
     };
@@ -418,6 +432,8 @@ export class DiagnosticsList {
   /** The workflow definition the diagnostic pointers refer to. */
   definition = input<unknown>(null);
   readonly = input(false);
+  /** Whether step details can open what a problem is of. */
+  stepDetails = input(false);
   locate = output<DiagnosticLocation>();
   apply = output<SuggestedChange>();
   /** A transaction finding's fix was chosen. */
@@ -426,7 +442,9 @@ export class DiagnosticsList {
   changes({ kind }: TransactionFix): boolean {
     return ["suggestion", "move", "clearUndo", "waitForCall"].includes(kind);
   }
-  rows = computed(() => diagnosticRows(this.diagnostics(), this.definition()));
+  rows = computed(() =>
+    diagnosticRows(this.diagnostics(), this.definition(), this.stepDetails()),
+  );
   severity(value: keyof typeof severityLabels) {
     return severityLabels[value];
   }

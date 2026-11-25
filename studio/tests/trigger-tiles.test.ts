@@ -68,6 +68,20 @@ describe("trigger tiles", () => {
     expect(triggerTile("called", workflow).subtitle).toBe("Only 1 workflow");
   });
 
+  it("says which events start the workflow and how many workflows they come from", () => {
+    const workflow = freshWorkflow();
+    workflow.spec["eventTrigger"] = {
+      events: ["transaction.in_doubt"],
+      from: ["move-between-systems"],
+    };
+    expect(triggerTile("event", workflow)).toEqual({
+      icon: "signal",
+      title: "Platform event",
+      subtitle: "Needs attention · 1 workflow",
+      name: "Platform event trigger: Needs attention, from move-between-systems",
+    });
+  });
+
   it("says a trigger is set up at activation until it is activated with the settings it has now", () => {
     const workflow = freshWorkflow();
     // The canvas passes the choice only once an activation took its settings.

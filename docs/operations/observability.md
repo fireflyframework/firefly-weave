@@ -167,7 +167,7 @@ seconds.
 
 | Type | Instruments |
 | --- | --- |
-| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.loop_iterations`, `weave.loop_yields`, `weave.calls`, `weave.telemetry_dropped`, `weave.queue_unknown` |
+| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.recovery_failures`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.loop_iterations`, `weave.loop_yields`, `weave.calls`, `weave.telemetry_dropped`, `weave.queue_unknown` |
 | Histograms | `weave.duration`, `weave.queue_age` |
 | Gauges | `weave.inventory`, `weave.inventory_freshness` |
 
@@ -180,6 +180,38 @@ an unavailable or oversized run. The failure itself is counted once, as the
 run's outcome. `weave.loop_yields` counts the times a loop paused to continue
 in a later event.
 
+**Recovery failures.** `weave.recovery_failures` counts the work recovery put
+off because it raised an unexpected error or its own write was refused:
+operation `recovery.deadline`, `recovery.cancel`, `recovery.expired`,
+`recovery.retry`, `recovery.dispatch`, or `recovery.event_start`. Status
+`rejected` is a retry or an unclaimed task that PostgreSQL refuses for now,
+because a byte quota or the run's reserve is spent or a record is busy; every
+other failure is `failed`. Nothing of that work is recorded, and the rest of the
+environment goes on.
+
+- **Alert on it.** The recovery loop stays healthy, so its health doesn't show
+  these failures. In your monitoring system, alert on status `failed`: a steady
+  count means that a run is stuck on a defect or on data that Weave refuses. A
+  `rejected` count that stays for more than a few minutes means that a quota
+  must be raised or a run canceled.
+- **Find the run.** Each failure is logged once, with the environment, the run,
+  the error's type and code, and the file and line in Weave that raised it,
+  never its message or a value. A called run is logged with the run that called
+  it, and an event-triggered start with its trigger.
+- **Expect delays.** The work is tried again at the first scan after 5 seconds,
+  then 10, doubling up to 5 minutes. A failing run's time limits, timers, and
+  retries can therefore be noticed up to 5 minutes late, and a raised quota too.
+  Each replica keeps its own waits in memory.
+- **Cancel the run.** Canceling it ends its failures only when the cancel itself
+  succeeds. A refused cancel answers the refusal's own status. One that raises
+  an unexpected error answers HTTP 500, records nothing, and leaves the run as
+  it was: report it with the log line. A run undoes its open transactions before
+  it ends, and that work can fail too. Canceling a calling run ends the failures
+  of a call it waits for, and disabling a trigger ends those of its starts.
+
+Failures of the database or of the platform itself show in the recovery loop's
+health.
+
 **Workflow calls.** `weave.calls` counts each call's outcome once, with
 `operation: call.wait` or `call.detach` and `status: ok`, `failed`,
 `cancelled`, `timed_out`, or `rejected` (a child that could not start). A
@@ -189,6 +221,11 @@ time from a call's request to its child's start, and `call.delivery`, the time
 from the child's end to the caller's receipt of its result. A growing
 `call.dispatch` age is the sign of a call backlog; there is no separate gauge
 of pending calls.
+
+**Recovery.** `weave.recoveries` counts, with `operation: recovery.retired` and
+`status: cancelled`, each attempt that recovery retires because its run no longer
+waits for the step. A steady count without transactions that a person ended needs
+a look.
 
 **Only three attributes.** Metrics carry `operation`, `status`, and
 `error_code`. Operations come from the public operation manifest plus a few fixed

@@ -26,7 +26,6 @@ import {
   type CanvasSidecar,
   type TriggerIntent,
 } from "./editor/state/canvas-sidecar";
-import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { triggerChoiceTarget } from "./editor/triggers/trigger-target";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
 import type { AlertWatch } from "./operate/alerts/alert-watch";
@@ -140,8 +139,14 @@ import {
   stateLabel,
 } from "./connection";
 import { HomeDashboard } from "./home-dashboard";
-import { ApiError, StudioApi, Validation, Session } from "./api";
-import { Autofocus, DialogHost, DialogService, Modal } from "./dialog";
+import { ApiError, placeOf, StudioApi, Validation, Session } from "./api";
+import {
+  Autofocus,
+  DialogHost,
+  DialogService,
+  Modal,
+  type DialogOptions,
+} from "./dialog";
 import { commandNotLoaded, describeError, PlainError } from "./errors";
 import {
   ExportedFile,
@@ -149,7 +154,11 @@ import {
   exportNotice,
   isDesktopShell,
 } from "./export-file";
-import { type ActivationBindings, ActivationDialog } from "./activation-dialog";
+import {
+  type ActivationAsk,
+  ActivationDialog,
+  type ActivationFailure,
+} from "./activation-dialog";
 import {
   StepPicker,
   type AnchorRect,
@@ -267,8 +276,7 @@ import {
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
-import { ApprovalWatch } from "./operate/clusters/approvals-inbox";
-import { approvable } from "./operate/clusters/change-request-model";
+import type { ApprovalWatch } from "./operate/clusters/approvals-inbox";
 import { Poller, browserEnvironment } from "./operate/operate-store";
 import { scopeKeyOf } from "./operate/operate-list";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -437,6 +445,9 @@ function store(key: string, value: string) {
     // Not kept: a convenience only.
   }
 }
+/** A trigger's name; the words about triggers load with the editor, not with the first page. */
+const triggerLabel = async (kind: TriggerKind) =>
+  (await import("./editor/canvas/trigger-tiles")).TRIGGER_LABELS[kind];
 /** JSON with sorted keys, so equal documents compare equal. */
 const canonicalJson = (value: unknown): string =>
   JSON.stringify(value, (_, v: unknown) =>
@@ -1120,7 +1131,7 @@ export class App implements CanvasHost {
   exportFallback: ExportedFile[] | null = null;
   showActivation = false;
   /** Why the last activation failed, shown inside the activation dialog. */
-  activationError: { message: string; code: string } | null = null;
+  activationError: ActivationFailure | null = null;
   private inspectorTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingInspector: {
     scope: "step" | "workflow" | "rename";
@@ -1347,9 +1358,10 @@ export class App implements CanvasHost {
   /**
    * The Clusters badge: change requests waiting for an approval this person
    * can give, read every 15 s while they may approve anything, with a notice
-   * for each new one.
+   * for each new one. It loads with the first account that may, not with the
+   * first page.
    */
-  readonly approvalWatch = new ApprovalWatch((path) => this.api.request(path));
+  private approvalWatch: ApprovalWatch | null = null;
   private readonly approvalPoller = new Poller(
     () => this.watchApprovals(),
     15000,
@@ -1376,10 +1388,14 @@ export class App implements CanvasHost {
     return this.approvalPoller.refresh();
   }
   private async watchApprovals() {
-    if (!this.mayApprove) {
-      this.approvalWatch.clear();
-      return;
-    }
+    if (!this.mayApprove) return this.approvalWatch?.clear();
+    const [{ ApprovalWatch }, { approvable }] = await Promise.all([
+      import("./operate/clusters/approvals-inbox"),
+      import("./operate/clusters/change-request-model"),
+    ]);
+    // Signed out while it loaded.
+    if (!this.mayApprove) return this.approvalWatch?.clear();
+    this.approvalWatch ??= new ApprovalWatch((path) => this.api.request(path));
     const viewer = this.identity?.principal_id;
     const scope = this.api.environment;
     const notice = await this.approvalWatch.load(scope, (row) =>
@@ -1409,7 +1425,7 @@ export class App implements CanvasHost {
     id: string,
   ): { count: number; critical: boolean; icon?: string; name: string } | null {
     if (id === "alerts") return this.alertWatch?.badge() ?? null;
-    const count = this.approvalWatch.count;
+    const count = this.approvalWatch?.count;
     return id === "clusters" && count
       ? {
           count,
@@ -3779,6 +3795,16 @@ export class App implements CanvasHost {
   }
   /** Opens the step (or the workflow settings) a diagnostic names and focuses its field. */
   async openDiagnostic(location: DiagnosticLocation) {
+    const trigger =
+      location.event &&
+      triggerIntents(this.model.canvas).find(({ kind }) => kind === "event");
+    if (trigger && stepDetailsEnabled(this as StepDetailsHost)) {
+      await this.openStepDetails(triggerChoiceTarget(trigger.id), {
+        revealAll: true,
+        focus: { kind: "path", path: ["eventTrigger", location.event!] },
+      });
+      return;
+    }
     if (
       stepDetailsEnabled(this as StepDetailsHost) &&
       location.stepId !== "$workflow"
@@ -4183,7 +4209,7 @@ export class App implements CanvasHost {
     )?.kind;
     if (kind)
       this.notify(
-        `${TRIGGER_LABELS[kind]} is set up when you activate this workflow.`,
+        `${await triggerLabel(kind)} is set up when you activate this workflow.`,
       );
   }
   /** The workflow settings, focused on Inputs or Result. */
@@ -4268,9 +4294,13 @@ export class App implements CanvasHost {
   ): Promise<InsertOutcome> {
     const { insertEntry } = await import("./editor/add-step/insert");
     const current = this.insertOwner();
+    const locked = () => this.editingLocked;
     const host: InsertHost = {
       model: this.model,
-      editingLocked: this.editingLocked,
+      // Read again after each answer it waits for.
+      get editingLocked() {
+        return locked();
+      },
       ensureApplied: () => this.ensureApplied(),
       edit: (change) => {
         this.perform(change);
@@ -4278,11 +4308,12 @@ export class App implements CanvasHost {
         return this.error;
       },
       notify: (text) => this.notify(text),
+      confirm: (question) => this.dialogs.confirm(question),
       openInserted: (id) => {
         this.revealSelected();
         this.openInserted(id, current);
       },
-      openTrigger: (id, kind) => this.openChosenTrigger(id, kind, current),
+      openTrigger: (id, kind) => void this.openChosenTrigger(id, kind, current),
       insertCommon: (common, at, connector, still) =>
         this.insertCommon(common, at, () => current() && still(), connector),
       insertPublished: async (uses, id, at, still) => {
@@ -4308,7 +4339,7 @@ export class App implements CanvasHost {
     return insertEntry(host, entry, request);
   }
   /** A trigger chosen in Add a step: the input form opens its details; another one's tile takes focus. */
-  private openChosenTrigger(
+  private async openChosenTrigger(
     id: string,
     kind: TriggerKind,
     current: () => boolean,
@@ -4322,8 +4353,10 @@ export class App implements CanvasHost {
       void this.openStepDetails(triggerChoiceTarget(id));
       return;
     }
+    const label = await triggerLabel(kind);
+    if (!current()) return;
     this.notify(
-      `Added the ${TRIGGER_LABELS[kind]} trigger. Set it up when you activate the workflow.`,
+      `Added the ${label} trigger. Set it up when you activate the workflow.`,
     );
     this.cdr.markForCheck();
     afterNextRender(
@@ -4358,19 +4391,43 @@ export class App implements CanvasHost {
     );
     return !this.error;
   }
-  /** Removes a trigger choice; Called by a workflow asks first, because callers depend on it. */
+  /** What to ask before a trigger choice goes, or null to ask nothing. */
+  private async removalQuestion(
+    intent: TriggerIntent,
+  ): Promise<DialogOptions | null> {
+    if (intent.kind === "called")
+      return (
+        await import("./editor/calls/call-sources")
+      ).calledRemovalQuestion(this, this.model.definition);
+    if (intent.kind === "event")
+      return (
+        await import("./editor/triggers/event-removal")
+      ).eventRemovalQuestion(this, intent, this.model.definition);
+    return null;
+  }
+  /** The triggers whose removal is being asked about: each is asked about once. */
+  private readonly removals = new Set<TriggerIntent>();
+  /**
+   * Removes a trigger choice. Called by a workflow asks first, because callers
+   * depend on it; so does Platform event while a trigger created for it reacts.
+   */
   async removeTrigger(id: string) {
-    const intent = this.model.canvas.triggers?.find((item) => item.id === id);
-    if (!intent || this.editingLocked || this.model.readonly) return;
-    if (
-      intent.kind === "called" &&
-      !(await this.dialogs.confirm(
-        await (
-          await import("./editor/calls/call-sources")
-        ).calledRemovalQuestion(this, this.model.definition),
-      ))
-    )
-      return;
+    const model = this.model;
+    const opened = model.opened;
+    const intent = model.canvas.triggers?.find((item) => item.id === id);
+    if (!intent || this.editingLocked || model.readonly) return;
+    if (this.removals.has(intent)) return;
+    this.removals.add(intent);
+    // Another workflow opened while it waited: its triggers stay.
+    const gone = () => this.model !== model || model.opened !== opened;
+    try {
+      const question = await this.removalQuestion(intent);
+      if (gone() || (question && !(await this.dialogs.confirm(question))))
+        return;
+    } finally {
+      this.removals.delete(intent);
+    }
+    if (gone()) return;
     let change: ReturnType<typeof removeTrigger>;
     try {
       change = removeTrigger(this.model.canvas, this.model.definition, id);
@@ -4386,7 +4443,7 @@ export class App implements CanvasHost {
     )
       return;
     const revision = this.model.revision;
-    this.notify(`Removed the ${TRIGGER_LABELS[intent.kind]} trigger.`, {
+    this.notify(`Removed the ${await triggerLabel(intent.kind)} trigger.`, {
       label: "Undo",
       run: () => {
         if (this.model.revision !== revision)
@@ -8516,7 +8573,13 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied())) return;
     if (!this.published || !this.profile) return;
     this.activationError = null;
+    this.activationPlace = placeOf(this.api);
     this.showActivation = true;
+  }
+  /** Where, and as who, the activation dialog was opened: what it shows was read there. */
+  private activationPlace: string | null = null;
+  private get publishedText() {
+    return `${String(this.published?.["name"] ?? this.model.definition.metadata.name)} ${String(this.published?.["version"] ?? this.model.definition.metadata.version)}`;
   }
   closeActivation() {
     if (this.busy) return;
@@ -8548,20 +8611,14 @@ export class App implements CanvasHost {
     if (event.intents)
       this.changeCanvas(withTriggerIntents(this.model.canvas, event.intents));
     if (!event.first) return;
-    const name = String(
-      this.published?.["name"] ?? this.model.definition.metadata.name,
-    );
-    const version = String(
-      this.published?.["version"] ?? this.model.definition.metadata.version,
-    );
     if (event.attention) {
-      this.notify(`Activated ${name} ${version}. ${event.attention}`);
+      this.notify(`Activated ${this.publishedText}. ${event.attention}`);
       this.cdr.markForCheck();
       return;
     }
     this.closeActivation();
     this.notify(
-      `Activated ${name} ${version} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
+      `Activated ${this.publishedText} in ${this.workspaceText || this.environmentLabel || "this environment"}.`,
       { label: "Start run", run: () => void this.runCommand("run") },
     );
     this.cdr.markForCheck();
@@ -8592,9 +8649,18 @@ export class App implements CanvasHost {
     return [...types];
   }
   /** The dialog stays open while the request runs and closes only on success. */
-  async confirmActivation(bindings: ActivationBindings) {
+  async confirmActivation({ bindings, replaces }: ActivationAsk) {
     if (!this.published || !this.profile || this.busy) return;
     this.activationError = null;
+    if (placeOf(this.api) !== this.activationPlace) {
+      this.activationError = {
+        message: `${this.publishedText} wasn't activated: the environment or the account changed since you opened this. Close this and activate again.`,
+        code: "",
+        reopen: true,
+      };
+      this.cdr.markForCheck();
+      return;
+    }
     const scope = {
       tenant_id: this.profile.tenantId,
       project_id: this.profile.projectId,
@@ -8611,7 +8677,7 @@ export class App implements CanvasHost {
           artifact_digest: this.published["digest"],
           scope,
         },
-        undefined,
+        replaces,
         "Activate version",
       );
       // The dialog sets the triggers up, then this closes it (activationTriggers).
@@ -8621,7 +8687,7 @@ export class App implements CanvasHost {
         // No activation to set triggers up for: say so instead of guessing one.
         this.closeActivation();
         this.notify(
-          `Activated ${String(this.published["name"] ?? this.model.definition.metadata.name)} ${String(this.published["version"] ?? this.model.definition.metadata.version)}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
+          `Activated ${this.publishedText}. Studio didn't set up its triggers: the platform's answer didn't name the activation.`,
         );
       }
     } catch (e) {
@@ -9370,7 +9436,8 @@ export class App implements CanvasHost {
   }
   /**
    * A workflow opened with its .testdata.json: Load or Not now. The file is
-   * read as any test data and every entry is checked (secrets never stay).
+   * read as any test data and every entry is checked (secrets never stay, nor
+   * the IDs of a real platform event).
    */
   private async offerTestDataFile(text: string) {
     const opened = this.model.opened;
@@ -9393,7 +9460,7 @@ export class App implements CanvasHost {
     }
     const tools = await this.loadTools().catch(() => null);
     if (!tools || !still()) return;
-    const { entriesOf, pruneEntries } = tools.testDataOps;
+    const { pruneEntries } = tools.testDataOps;
     const reading = tools.readTestData(value);
     if (!reading.ok) {
       this.notify(
@@ -9412,11 +9479,13 @@ export class App implements CanvasHost {
       (id) => steps.has(id),
       new Date().toISOString(),
     );
-    const outcome = await (
-      await this.requireTestData()
-    ).change(
+    const service = await this.requireTestData();
+    if (!still()) return;
+    const outcome = await tools.keepFile(
+      service,
       data,
-      entriesOf(data).map((entry) => entry.path),
+      this.model.definition,
+      this.api,
     );
     if (!still()) return;
     if (outcome.ok) {

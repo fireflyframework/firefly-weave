@@ -24,7 +24,7 @@ import { Injectable, signal } from "@angular/core";
 import type { Phase } from "../transactions/phase-keys";
 import type { Path } from "./registry";
 
-export type StepDetailsTab = "parameters" | "settings";
+export type StepDetailsTab = "parameters" | "starts" | "settings";
 export type Region = "header" | "input" | "parameters" | "output";
 export type FocusTarget =
   | { kind: "first" }

@@ -269,7 +269,7 @@ one of these decisions closes it; a plain cancel is refused with HTTP 409
 | Decision | `kind` | Needs | Effect |
 | --- | --- | --- | --- |
 | Retry the undo, the confirm, or a step after the point of no return | `retry_safe` | `incident.resolve` | The stuck step's task is made ready again with the same operation key and a fresh time limit (`undoTimeoutSeconds` for an undo, confirm or cancel); a called undo starts the next generation of its call. Refused for the step that can't be undone. After a settle timeout, it waits again for the steps still in flight |
-| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every stuck step must be named; `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
+| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every stuck step must be named; `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. While the run would go on after the block, `completed` is refused (`422 WV-RUNTIME-OUTPUT`) when the block can never complete, because every way through it reaches a Fail step. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
 | It happened (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is the step's own output; the transaction goes ahead: confirms, then the steps after it |
 | It didn't happen (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_failure` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | The transaction undoes the steps before it |
 | Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
@@ -278,9 +278,21 @@ Any decision while the stuck step's latest attempt or child run is still running
 is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
 in flight are what you decide about: Mark as reconciled and Force end settle
 them (their leases are revoked and their child runs asked to stop), they don't
-wait for them. A record that doesn't fit the
-transaction answers HTTP 422 `WV-RUNTIME-OUTPUT`. The audit record adds the
-transaction's key and, for a reconciliation, how it ended.
+wait for them. Mark as reconciled is also refused (HTTP 409 `WV-RUNTIME-STATE`)
+while an attempt of any step, confirm, cancel, or undo of the transaction has
+failed and recovery hasn't decided what follows; send it again after the next
+recovery scan. Only a failure that recovery still handles is refused. Force end
+doesn't wait. A record that doesn't fit the transaction answers HTTP 422
+`WV-RUNTIME-OUTPUT`. The audit record adds the transaction's key and, for a
+reconciliation, how it ended.
+
+When the rollback stops a failed step before recovery decides what follows (for
+example, the hold time passes or the run is canceled), recovery no longer
+handles that failure. It never refuses a record, but its `WV-TASK-FAILED`
+incident stays open until the run ends. After a `completed` record, a run that
+isn't already ending stays `suspended` behind that incident: `terminate` is the
+only decision it takes, and the others answer HTTP 409. Such a run can only be
+ended: resolve the incident with `terminate`, or cancel the run.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them

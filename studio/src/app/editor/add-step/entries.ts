@@ -409,6 +409,8 @@ function triggerEntries(
       disabled = "This workflow already starts from its input form.";
     else if (kind === "called" && has("called"))
       disabled = "Other workflows can already call this one.";
+    else if (kind === "event" && has("event"))
+      disabled = "This workflow already starts from platform events.";
     else if (full)
       disabled = `A workflow can have at most ${MAX_TRIGGERS} triggers.`;
     else if (kind === "called") {
@@ -419,6 +421,13 @@ function triggerEntries(
           : language.pending.has("callable")
             ? "Studio can't make workflows callable yet."
             : null;
+    } else if (kind === "event") {
+      const language = input.language;
+      disabled = !language?.features.includes("flow.eventTrigger")
+        ? "Needs a platform with platform event triggers (flow.eventTrigger)"
+        : language.pending.has("eventTrigger")
+          ? "Studio can't edit platform event triggers yet."
+          : null;
     }
     return entry({
       id: `trigger:${kind}`,

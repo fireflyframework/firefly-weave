@@ -68,6 +68,9 @@ import {
   type PaneEntry,
   type TreeRow,
 } from "./views";
+import { triggerIntents } from "../../state/canvas-sidecar";
+import { isPlatformEventInput } from "../../triggers/platform-event";
+import { triggerChoiceTarget } from "../../triggers/trigger-target";
 import type { FormSession } from "../params/form-session";
 import { ndvRegistry, type Json } from "../registry";
 import { instanceStep } from "../../state/instance-keys";
@@ -625,7 +628,16 @@ export class InputPane implements OnInit {
   }
   /** Add test input: the trigger's Test event. */
   addTestInput() {
-    void this.session().host.openStepDetails("$trigger");
+    const { host } = this.session();
+    // A platform event's sample is built in its trigger's step details.
+    const event = triggerIntents(host.model.canvas).find(
+      (intent) => intent.kind === "event",
+    );
+    void host.openStepDetails(
+      event && isPlatformEventInput(host.model.definition.spec["inputSchema"])
+        ? triggerChoiceTarget(event.id)
+        : "$trigger",
+    );
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {

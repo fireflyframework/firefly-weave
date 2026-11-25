@@ -26,7 +26,7 @@ import { parse } from "yaml";
 import { repository } from "../python-path";
 import {
   hostChecksTestData,
-  hostValidate,
+  routeValidate,
   localAuthoring,
   platformCompile,
   type LocalCalls,
@@ -202,7 +202,7 @@ export async function connectedCatalog(
     const json = await platformCompile({ ...body, ...catalog });
     await route.fulfill({ json }).catch(() => undefined);
   });
-  await hostValidate(page);
+  await routeValidate(page);
 }
 /** Opens the workflow on that platform, on its canvas. */
 export const openConnectedMove = (

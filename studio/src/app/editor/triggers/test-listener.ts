@@ -26,7 +26,6 @@ import type { StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import type { Json } from "../../forms/core/json";
 import type { StepDetailsHost } from "../ndv/step-details-host";
-import { safeSample } from "../ndv/panes/sample";
 import { handOverLinkedRun } from "../runs-tab/run-links";
 import { readRunRecord } from "../runs-tab/run-record";
 import { withInput } from "../state/test-data-ops";
@@ -37,6 +36,8 @@ import type {
   DraftTestListen,
 } from "../state/execution";
 import type { ServiceOutcome } from "../state/test-activation-service";
+import { keptInput } from "./event-sample";
+import { eventFields } from "./platform-event";
 import { signedCurl } from "./webhook-help";
 
 /**
@@ -298,25 +299,31 @@ export class TestEventListener {
 }
 
 /**
- * A received test event: its payload becomes the workflow's test input, kept
- * as from a test call with the run it came from, and the run opens in the
- * Runs tab, which follows it over the draft.
+ * A received test event: its payload becomes the workflow's test input, as
+ * one a person enters does, kept as from a test call with the run it came
+ * from, and the run opens in the Runs tab, which follows it over the draft.
  */
 export async function keepTestEvent(
-  host: Pick<StepDetailsHost, "testData" | "model" | "draftId" | "selectTab">,
+  host: Pick<
+    StepDetailsHost,
+    "testData" | "model" | "draftId" | "selectTab" | "api"
+  >,
   event: ReceivedEvent,
   environmentId: string,
 ): Promise<void> {
   const service = host.testData;
-  // A secret field never reaches test data, nor anything it keeps.
-  const safe = safeSample(
-    host.model.definition.spec["inputSchema"],
-    event.input,
-  );
-  if (service && safe !== undefined) {
+  const kept =
+    service &&
+    keptInput(
+      host.model.definition.spec["inputSchema"],
+      event.input,
+      () => eventFields(host.api),
+      service.sampleIds,
+    );
+  if (kept && "value" in kept && kept.value !== undefined) {
     const next = withInput(
       service.data(),
-      safe,
+      kept.value,
       "test-call",
       new Date().toISOString(),
     );

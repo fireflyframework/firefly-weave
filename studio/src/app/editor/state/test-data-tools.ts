@@ -39,6 +39,9 @@ import {
   undoDefinitions,
   type CalleesHost,
 } from "../calls/callee-drafts";
+import type { StudioApi } from "../../api";
+import { eventFields } from "../triggers/platform-event";
+import { loadFileTestData } from "./test-data-file";
 import type { Workflow } from "../../model";
 export { checkInputsOf } from "./test-data-inputs";
 export { studioCallees } from "../calls/callee-drafts";
@@ -84,6 +87,18 @@ export function createExecutionService(host: ExecutionHost): ExecutionService {
 /** The open workflow's test data service, made here so it loads with the tools, after the first page. */
 export function createTestDataService(host: TestDataHost): TestDataService {
   return new TestDataService(host);
+}
+
+/** Keeps the test data saved in a file with the open workflow, or says why not. */
+export function keepFile(
+  service: TestDataService,
+  data: StudioTestData,
+  workflow: Workflow,
+  api: StudioApi,
+) {
+  return loadFileTestData(service, data, workflow.spec["inputSchema"], () =>
+    eventFields(api),
+  );
 }
 
 /** Every step's fingerprints for this workflow and test input. */
