@@ -33,6 +33,7 @@ from firefly_weave.access.service import audit
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
+from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.runtime.record_repair import PURGE_BYTES, Repair, read_repair, settle_for_purge, write_repair
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
@@ -43,6 +44,9 @@ from firefly_weave.runtime.waits import TERMINAL
 # the records it found one transaction writes when that time runs out.
 PURGE_SECONDS = 5.0
 PURGE_WRITES = 50
+# A check of an event goes on for a while in its thread after its purge ran out of time. Purges have slots of their own,
+# one of them spare, so such a check never takes a request's slot.
+PURGE_EXECUTION = ReservedSlots(2)
 
 # What a purge with no time left says of the records it read: it wrote all of them, or some, or there were none; or it
 # wrote nothing, because they need more room than there is, or because another change holds the run or its project.
@@ -118,6 +122,7 @@ class RunLifecycleService:
         try:
             async with (
                 asyncio.timeout(PURGE_SECONDS),
+                PURGE_EXECUTION.execution(),
                 self.runtime.definitions.transaction(scope, None, mutation=False) as tx,
             ):
                 self.runtime.require(await load_principal(tx.session, actor.id), scope, "run.purge", context)
@@ -129,6 +134,11 @@ class RunLifecycleService:
                 ):
                     await read_repair(repository, identifier, found, limit=PURGE_BYTES)
         except TimeoutError:
+            found.unfinished = True
+        except CatalogError as error:
+            # Checks that outlived earlier purges have every slot.
+            if not capacity_rejected(error):
+                raise
             found.unfinished = True
         return found
 

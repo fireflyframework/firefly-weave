@@ -21,7 +21,7 @@ import asyncio
 import logging
 import pkgutil
 import threading
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -713,6 +713,60 @@ async def test_a_purge_that_something_else_refuses_too_keeps_nothing_and_says_wh
         assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED") and said.startswith("Run has a live lease")
         # Nor is a history too large to read what refuses it.
         monkeypatch.setattr(lifecycle, "PURGE_BYTES", 100)
+
+
+async def test_a_check_that_outlived_its_purge_takes_no_slot_of_another_request(
+    platform, reconciler, earlier, slow, monkeypatch
+):
+    from firefly_weave.operations.execution import WORK_SLOTS, request_execution
+    from firefly_weave.runtime import lifecycle
+
+    run = await three_open(platform)
+    slow.when = lambda state, event: True
+    monkeypatch.setattr(lifecycle, "PURGE_SECONDS", 2.0)
+    async with request_execution():
+        await refused(platform, run.id, reconciler)
+    # The check still runs in its thread, and every slot of an ordinary request is free.
+    assert slow.asked and not slow.end.is_set()
+    async with AsyncExitStack() as requests:
+        for _ in range(WORK_SLOTS):
+            await requests.enter_async_context(request_execution())
+
+
+async def test_a_purge_that_finds_no_slot_for_a_check_is_out_of_time_and_keeps_what_it_read(
+    platform, reconciler, earlier, monkeypatch
+):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime import lifecycle, record_repair
+
+    current, checks = record_repair.read_moment, []
+
+    async def reading(repository, history, moment, **options):
+        # Checks of earlier purges take every slot after this purge's first one.
+        if len(checks) == 1:
+            for _ in range(lifecycle.PURGE_EXECUTION.size):
+                assert lifecycle.PURGE_EXECUTION.slots.acquire(blocking=False)
+        checks.append(moment)
+        return await current(repository, history, moment, **options)
+
+    run = await three_open(platform)
+    monkeypatch.setattr(record_repair, "read_moment", reading)
+    status, code, said = await refused(platform, run.id, reconciler)
+    assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED") and "it kept what it read, so purge it again" in said
+    assert list((await states(platform, run.id)).values()) == ["completed", "open", "open"]
+    for _ in range(lifecycle.PURGE_EXECUTION.size):
+        lifecycle.PURGE_EXECUTION.slots.release()
+
+    # Any other refusal of a read is the purge's own.
+    async def refusing(*values, **options):
+        raise CatalogError(409, "WV-OPERATION-UNAVAILABLE", "Operation unavailable")
+
+    monkeypatch.setattr(record_repair, "read_moment", refusing)
+    status, code, said = await refused(platform, run.id, reconciler, again=True)
+    assert (status, code) == (409, "WV-OPERATION-UNAVAILABLE")
+    monkeypatch.setattr(record_repair, "read_moment", current)
+    await purge(platform, run.id, reconciler, again=True)
+    assert await gone(platform, run.id)
 
 
 async def test_a_purge_names_a_history_too_large_to_read(platform, reconciler, earlier, monkeypatch):
