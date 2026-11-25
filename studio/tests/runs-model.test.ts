@@ -495,7 +495,6 @@ describe("runs and their transactions", () => {
     ["?range=36h", "Last 36 hours"],
     ["?range=1d", "Last 24 hours"],
     ["?range=2h", "Last 2 hours"],
-    ["?range=1h", "Last hour"],
     ["?started_after=2026-11-01T00%3A00%3A00Z", "Custom range"],
   ])("names the range of %s", (search, label) => {
     expect(rangeLabel(runsFiltersFromQuery(search).timeWindow)).toBe(label);
@@ -503,6 +502,7 @@ describe("runs and their transactions", () => {
 
   it.each([
     ["", "the last 24 hours"],
+    ["&range=1h", "the last hour"],
     ["&range=400d", "the last 400 days"],
     ["&started_after=2026-11-01T00%3A00%3A00Z", "this range"],
   ])(

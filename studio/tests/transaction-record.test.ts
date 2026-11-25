@@ -431,20 +431,27 @@ describe("the Transactions section", () => {
     });
   });
 
-  it.each([
-    ["compensating", "Undoing after add[2] failed: UNAVAILABLE"],
-    ["compensated", "Undone after add[2] failed: UNAVAILABLE"],
-    ["cancelled", "Undo started after add[2] failed: UNAVAILABLE"],
-    ["reconciled", "Undo started after add[2] failed: UNAVAILABLE"],
-    ["force_ended", "Undo started after add[2] failed: UNAVAILABLE"],
-    // Its undo began, whatever it came to since.
-    ["completed", "Undo started after add[2] failed: UNAVAILABLE"],
-  ] as const)(
-    "says of a %s transaction no more than that of its undo",
-    (state, text) => {
-      expect(causeText({ ...undone, state })).toBe(text);
-    },
-  );
+  it("says no more of a transaction's undo than its state does", () => {
+    const states = [
+      "compensating",
+      "compensated",
+      "cancelled",
+      "reconciled",
+      "force_ended",
+      // Its undo began, whatever it came to since.
+      "completed",
+    ] as const;
+    expect(
+      states.map((state) => [state, causeText({ ...undone, state })]),
+    ).toEqual([
+      ["compensating", "Undoing after add[2] failed: UNAVAILABLE"],
+      ["compensated", "Undone after add[2] failed: UNAVAILABLE"],
+      ["cancelled", "Undo started after add[2] failed: UNAVAILABLE"],
+      ["reconciled", "Undo started after add[2] failed: UNAVAILABLE"],
+      ["force_ended", "Undo started after add[2] failed: UNAVAILABLE"],
+      ["completed", "Undo started after add[2] failed: UNAVAILABLE"],
+    ]);
+  });
 
   it("says why a transaction left its path: the failed step, or what is in doubt", () => {
     expect(causeText(reconciled)).toBe(
