@@ -395,7 +395,9 @@ test("an incident decided meanwhile opens no dialog and says so", async ({
   });
   await offer(page, "Mark as reconciled").click();
   await expect(
-    page.getByText("Incident WV-TXN-UNDO-STUCK at add is no longer active."),
+    page.getByText(
+      "Incident WV-TXN-UNDO-STUCK at add is no longer active. The drawer shows how it was resolved.",
+    ),
   ).toBeVisible();
   await expect(drawer(page).locator("dt:text-is('Decision') + dd")).toHaveText(
     "Retry the undo",
@@ -543,7 +545,7 @@ test("Mark as reconciled names only what it still lacks, and drops the ticks of 
   await expect
     .poll(() => described(page, name))
     .toBe(
-      "To mark it as reconciled, choose how it ended, fill in Reason and fill in Evidence reference.",
+      "To mark it as reconciled, choose how it ended and fill in Reason and Evidence reference.",
     );
   await ending(page, name, "Undone").check();
   await expect(asked).toContainText("Check each step in its system");
@@ -598,7 +600,7 @@ test("Mark as reconciled names only what it still lacks, and drops the ticks of 
   await expect
     .poll(() => described(page, name))
     .toBe(
-      "To mark it as reconciled, tick 2 more lines, fill in Result of the transaction and fill in Evidence reference.",
+      "To mark it as reconciled, tick 2 more lines and fill in Result of the transaction and Evidence reference.",
     );
   await ending(page, name, "Undone").check();
   await expect(reversed).not.toBeChecked();
@@ -797,11 +799,11 @@ for (const [name, kind, output] of [
     expect(platform.reads).toEqual([ids.unknown]);
     const lead =
       name === "It happened"
-        ? "To record that it happened, fill in Result of the step, fill in Reason"
+        ? "To record that it happened, fill in Result of the step, Reason"
         : "To record that it didn't happen, fill in Reason";
     await expect
       .poll(() => described(page, name))
-      .toBe(`${lead} and fill in Evidence reference.`);
+      .toBe(`${lead} and Evidence reference.`);
     // Only Mark as reconciled asks about every step.
     await expect(asked.getByRole("checkbox")).toHaveCount(0);
     const result = asked.getByLabel("Result of the step (JSON)");
@@ -1085,7 +1087,7 @@ test("a refused record shows under the result, and everything typed stays", asyn
   await expect(result).toHaveAttribute("aria-invalid", "true");
   const error = asked.locator("#decide-result-error");
   await expect(error).toHaveText(
-    "The reconciliation record doesn't fit the transaction (WV-RUNTIME-OUTPUT)",
+    "The platform refused this record. Check the result and the lines you ticked, then try again. Support code: WV-RUNTIME-OUTPUT.",
   );
   await expect(result).toHaveAttribute(
     "aria-describedby",
@@ -1116,12 +1118,18 @@ test("a refused record shows under the result, and everything typed stays", asyn
   expect(sent[1].body.receipt_id).not.toBe(sent[0].body.receipt_id);
 });
 
-for (const [why, as, message] of [
-  ["that names a step", "Finished", "Nothing says how add ended"],
+for (const [why, as, message, words] of [
+  [
+    "that names a step",
+    "Finished",
+    "Nothing says how add ended",
+    "Nothing says how add ended (WV-RUNTIME-OUTPUT)",
+  ],
   [
     "of one that was undone",
     "Undone",
     "The reconciliation record doesn't fit the transaction",
+    "The platform refused this record. Check the lines you ticked, then try again. Support code: WV-RUNTIME-OUTPUT.",
   ],
 ] as const)
   test(`a refused record ${why} shows under the checklist`, async ({
@@ -1144,7 +1152,7 @@ for (const [why, as, message] of [
     const list = asked.getByRole("group", {
       name: "Check each step in its system",
     });
-    await expect(list).toContainText(`${message} (WV-RUNTIME-OUTPUT)`);
+    await expect(list).toContainText(words);
     await expect(list).toHaveAttribute("aria-invalid", "true");
     if (as === "Finished")
       await expect(
@@ -1273,7 +1281,7 @@ test("a refused record that is the same when read again keeps its ticks, and its
   tried.transaction!.participants[0].attempts = 3;
   await reads[0].fulfill({ json: tried });
   await expect(asked.locator("#decide-result-error")).toHaveText(
-    "The reconciliation record doesn't fit the transaction (WV-RUNTIME-OUTPUT)",
+    "The platform refused this record. Check the result and the lines you ticked, then try again. Support code: WV-RUNTIME-OUTPUT.",
   );
   await expect(asked).toContainText("Confirm failed after 3 tries");
   await expect(asked).not.toContainText("rebuilt the checklist");
@@ -1353,7 +1361,7 @@ test("a refused record that couldn't be read again is forgotten with its dialog,
   await expect
     .poll(() => described(page, name))
     .toBe(
-      "To mark it as reconciled, choose how it ended, fill in Reason and fill in Evidence reference.",
+      "To mark it as reconciled, choose how it ended and fill in Reason and Evidence reference.",
     );
 });
 
@@ -1393,7 +1401,7 @@ test("a refused record whose steps are all known when read again says so, with n
   const asked = dialog(page, name);
   const notice = asked.getByRole("status");
   await expect(notice).toHaveText(
-    "Studio read the incident again and it changed: no step is left to tick. Check it again, then decide; your reason and evidence are kept.",
+    "Studio read the incident again: nothing is left to tick for this ending. Check the ending, then decide; your reason and evidence are kept.",
   );
   await expect(asked.getByRole("checkbox")).toHaveCount(0);
   await expect(field(page, name, "Reason")).toHaveValue("Both are reversed");
@@ -1553,6 +1561,8 @@ test("a refused record whose incident was decided meanwhile leaves the dialog an
   await expect(
     page.getByText(
       "Incident WV-TXN-CONFIRM-STUCK at hold is no longer active.",
+      // Its answer says nothing of how, so neither does the notice.
+      { exact: true },
     ),
   ).toBeVisible();
   await expect(page.getByText("was not resolved")).toHaveCount(0);
@@ -1854,7 +1864,9 @@ test("an incident decided meanwhile leaves the dialog on refresh, and says so", 
     .click();
   await expect(dialog(page, "Mark as reconciled")).toHaveCount(0);
   await expect(
-    page.getByText("Incident WV-TXN-UNDO-STUCK at add is no longer active."),
+    page.getByText(
+      "Incident WV-TXN-UNDO-STUCK at add is no longer active. The drawer shows how it was resolved.",
+    ),
   ).toBeVisible();
   await expect(drawer(page).locator("dt:text-is('Decision') + dd")).toHaveText(
     "Force end",

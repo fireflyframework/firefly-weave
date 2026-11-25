@@ -481,7 +481,12 @@ const LEADS: Readonly<
   it_didnt_happen: "To record that it didn't happen",
   force_end: "To force end it",
 };
-function partText(part: MissingPart): string {
+/** "one", "one and two", "one, two and three". */
+const listed = (items: readonly string[]) =>
+  items.length > 1
+    ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+    : items.join("");
+function partText(part: Exclude<MissingPart, { kind: "field" }>): string {
   switch (part.kind) {
     case "as":
       return "choose how it ended";
@@ -489,8 +494,6 @@ function partText(part: MissingPart): string {
       return part.steps.length === 1
         ? `tick the line for \`${part.steps[0]}\``
         : `tick ${part.steps.length} more lines`;
-    case "field":
-      return `fill in ${part.label}`;
     case "typed":
       return "type the run ID";
     case "refresh":
@@ -499,7 +502,8 @@ function partText(part: MissingPart): string {
 }
 /**
  * Why a confirm waits, naming only what is missing; a step's name is between
- * backticks. Null when nothing is.
+ * backticks, and the fields, which follow each other, share one "fill in".
+ * Null when nothing is.
  */
 export function confirmReason(
   action: TransactionAction | "wait_again",
@@ -508,10 +512,17 @@ export function confirmReason(
 ): string | null {
   if (!missing.length) return null;
   const lead = action === "retry" ? `To ${retry.toLowerCase()}` : LEADS[action];
-  const parts = missing.map(partText);
-  const last = parts.pop()!;
-  const list = parts.length ? `${parts.join(", ")} and ${last}` : last;
-  return `${lead}, ${list}.`;
+  const fields = missing.flatMap((part) =>
+    part.kind === "field" ? [part.label] : [],
+  );
+  const parts = missing.flatMap((part) =>
+    part.kind !== "field"
+      ? [partText(part)]
+      : part.label === fields[0]
+        ? [`fill in ${listed(fields)}`]
+        : [],
+  );
+  return `${lead}, ${listed(parts)}.`;
 }
 
 /** How a refused decision reads; a refusal Studio has no words for keeps the platform's. */
@@ -525,19 +536,31 @@ export function explainDecision(
       message: `You need ${offer.needs.join(" and ")} in this environment. Ask an administrator in Settings › People and access.`,
     };
   // The same code says an incident is no longer active.
-  if (
-    refused.code === "WV-RUNTIME-STATE" &&
-    /still running|has not ended/.test(refused.message)
-  )
-    return {
-      ...refused,
-      message: "The step is running again. Wait for it to finish, then decide.",
-    };
+  if (refused.code === "WV-RUNTIME-STATE") {
+    const message = /still running|has not ended/.test(refused.message)
+      ? "The step is running again. Wait for it to finish, then decide."
+      : /still being handled/.test(refused.message)
+        ? "An attempt failed and Weave is still handling it. Wait a moment, then decide."
+        : null;
+    if (message) return { ...refused, message };
+  }
   return refused;
+}
+/** What the platform says of a record it has nothing more to say of. */
+const DOESNT_FIT = "The reconciliation record doesn't fit the transaction";
+/** How a refused record or result reads where it was typed. */
+export function refusedRecordText(
+  refused: PlainError,
+  as: ReconcileDraft["as"],
+): string {
+  if (refused.message !== DOESNT_FIT)
+    return `${refused.message} (${refused.code})`;
+  const result = as === "completed" ? "the result and " : "";
+  return `The platform refused this record. Check ${result}the lines you ticked, then try again. Support code: ${refused.code}.`;
 }
 /** What the platform says of a whole record: a step named like one of their words isn't meant. */
 const ABOUT_NO_STEP: ReadonlySet<string> = new Set([
-  "The reconciliation record doesn't fit the transaction",
+  DOESNT_FIT,
   "Resolution output exceeds runtime limits",
 ]);
 /** Whether a sentence names one of these steps: its whole key, with or without its phase. */

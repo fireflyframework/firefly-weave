@@ -59,6 +59,7 @@ import {
   confirmReason,
   endingHelp,
   outputRefusalAt,
+  refusedRecordText,
   transactionActions,
   type Checked,
   type ReconcileDraft,
@@ -469,7 +470,7 @@ export class TransactionResolveDialog {
     if (!this.builtAgain() || this.stale()) return "";
     return this.rows().length
       ? "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept."
-      : "Studio read the incident again and it changed: no step is left to tick. Check it again, then decide; your reason and evidence are kept.";
+      : "Studio read the incident again: nothing is left to tick for this ending. Check the ending, then decide; your reason and evidence are kept.";
   });
   /** Why the confirm waits; null when it can be pressed. */
   readonly waits = computed(() => {
@@ -505,7 +506,7 @@ export class TransactionResolveDialog {
   });
   readonly refusal = computed(() => {
     const failure = this.failure();
-    return failure ? `${failure.message} (${failure.code})` : "";
+    return failure ? refusedRecordText(failure, this.draft().as) : "";
   });
   /** A refusal no field shows; why the incident must be read again, until it is. */
   readonly notice = computed(() => {

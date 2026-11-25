@@ -33,6 +33,7 @@ import {
   endingHelp,
   explainDecision,
   outputRefusalAt,
+  refusedRecordText,
   retryLabel,
   transactionActions,
   type MissingPart,
@@ -959,7 +960,22 @@ describe("why a confirm waits", () => {
         field("Reason"),
       ),
     ).toBe(
-      "To mark it as reconciled, choose how it ended, tick 2 more lines, fill in Result of the transaction and fill in Reason.",
+      "To mark it as reconciled, choose how it ended, tick 2 more lines and fill in Result of the transaction and Reason.",
+    );
+    // Fields in a row share one "fill in".
+    expect(
+      confirmReason("it_happened", [
+        field("Result of the step"),
+        field("Reason"),
+        field("Evidence reference"),
+      ]),
+    ).toBe(
+      "To record that it happened, fill in Result of the step, Reason and Evidence reference.",
+    );
+    expect(
+      reason({ kind: "as" }, field("Reason"), field("Evidence reference")),
+    ).toBe(
+      "To mark it as reconciled, choose how it ended and fill in Reason and Evidence reference.",
     );
     expect(reason({ kind: "refresh" })).toBe(
       "To mark it as reconciled, refresh the incident.",
@@ -998,7 +1014,7 @@ describe("a refused decision", () => {
     message,
   });
 
-  it("says a step that is running again in plain words, and keeps the platform's words for any other state", () => {
+  it("says a step that is running again, or a failure still handled, in plain words, and keeps the platform's words for any other state", () => {
     const state = (message: string) =>
       explainDecision(
         refused(409, "WV-RUNTIME-STATE", message),
@@ -1014,6 +1030,34 @@ describe("a refused decision", () => {
     expect(state("Incident is no longer active")).toBe(
       "Incident is no longer active",
     );
+    expect(
+      state(
+        "An attempt of this transaction failed and that failure is still being handled; try again in a moment",
+      ),
+    ).toBe(
+      "An attempt failed and Weave is still handling it. Wait a moment, then decide.",
+    );
+  });
+
+  it("of a record the platform only says doesn't fit asks to check it, with a result only where there is one", () => {
+    const generic = refused(
+      422,
+      "WV-RUNTIME-OUTPUT",
+      "The reconciliation record doesn't fit the transaction",
+    );
+    expect(refusedRecordText(generic, "completed")).toBe(
+      "The platform refused this record. Check the result and the lines you ticked, then try again. Support code: WV-RUNTIME-OUTPUT.",
+    );
+    expect(refusedRecordText(generic, "compensated")).toBe(
+      "The platform refused this record. Check the lines you ticked, then try again. Support code: WV-RUNTIME-OUTPUT.",
+    );
+    for (const message of [
+      "Nothing says how add ended",
+      "Resolution output exceeds runtime limits",
+    ])
+      expect(refusedRecordText({ ...generic, message }, "completed")).toBe(
+        `${message} (WV-RUNTIME-OUTPUT)`,
+      );
   });
 
   it("names the access its decision needs", () => {
