@@ -45,6 +45,20 @@ the run, which then prints `Stage <name> failed.`, the node id of each failing
 test from pytest's short summary (never its output), and
 `Checks failed; inspect private evidence.`; each stage's log and a `checks.json`
 summary are in a new `build/checks-…` directory.
+
+A unit or contract test that takes more than 10 minutes counts as hung and ends
+the run. The gate names it as `FAILED` and prints where each of its threads
+waits: source files, lines, and functions, never output. An `async` test's thread
+shows only the event loop. To find the `await` it is stuck on, run that test alone
+with `uv run pytest --full-trace <node id>` and press Ctrl+C. A test that has
+already failed and then hangs in its teardown has no such limit: pytest stops its
+timer when a test fails, so that run ends at the stage's one-hour limit.
+
+The unit and contract stage also fails when a pytest worker stops early or no test
+passes, even if pytest itself exits 0. A crash or a leaked thread after the last
+test, as the worker's process exits, does not fail it; a hung or crashed test still
+does.
+
 For a focused change, first run
 its relevant suite; the integrated delivery must still pass the full gate. Do not
 update lock or upstream framework provenance casually to resolve an unrelated
