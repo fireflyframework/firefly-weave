@@ -1048,15 +1048,18 @@ export class CanvasView implements OnInit, DoCheck {
           : runLine,
       outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
-        id: failure ? `${tile.id}, ${failure}` : tile.id,
+        // A transaction's name holds its header's words as they show: the rest comes after them.
+        id: failure && !frame?.promise ? `${tile.id}, ${failure}` : tile.id,
         kindLabel,
-        // A loop's summary under its frame is in its name, whole.
-        summary:
-          state.frame && fact
-            ? `${summary}, ${fact.text}`
-            : detached
-              ? `${summary}, doesn't wait`
-              : summary,
+        // A frame's summary under it is in its name, whole.
+        summary: [
+          summary,
+          frame?.promise ? failure : "",
+          state.frame && fact ? fact.text : "",
+          detached ? "doesn't wait" : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
         status:
           note ||
           runText(state.run, tile.kind) ||

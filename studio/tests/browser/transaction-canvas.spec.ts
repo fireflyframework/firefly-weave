@@ -168,13 +168,22 @@ test.describe("transaction frames at 1440x900", () => {
     const head = canvas.tileBody("move");
     await expect(head.locator(".frame-name")).toHaveText("move");
     await expect(head.locator(".frame-kind")).toHaveText("Transaction");
-    await expect(head.locator(".frame-promise")).toHaveText(`· ${PROMISE}`);
+    await expect(head.locator(".frame-promise")).toHaveText(PROMISE);
     await expect(head.locator("weave-icon").first()).toHaveAttribute(
       "data-icon",
       "transaction",
     );
     await expect(head).toHaveAccessibleName(
       `move, Transaction, ${PROMISE}, step 2 of 3 in Main sequence`,
+    );
+    // Its name contains the words it shows, as they are said.
+    const words = (text: string) => text.replace(/[^\w']+/g, " ").trim();
+    const shown = await head
+      .locator(".frame-title")
+      .evaluate((element) => element.textContent ?? "");
+    expect(words(shown)).toBe(`move Transaction ${words(PROMISE)}`);
+    expect(words((await head.getAttribute("aria-label"))!)).toContain(
+      words(shown),
     );
     const outer = await box(frame(canvas, "move"));
     const band = await box(head);
@@ -198,6 +207,15 @@ test.describe("transaction frames at 1440x900", () => {
     await expect(
       canvas.root.locator('.frame-tip[data-frame-tip="move"]'),
     ).toHaveText(`move: Transaction · ${PROMISE}`);
+  });
+
+  test("what its failure does comes after the words the header shows", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, GUARDED);
+    await expect(canvas.tileBody("move")).toHaveAccessibleName(
+      `move, Transaction, ${PROMISE}, continues with error output, step 1 of 2 in Main sequence`,
+    );
   });
 
   test("a click on the header selects the transaction, and Enter opens its step details", async ({

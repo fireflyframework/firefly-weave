@@ -146,8 +146,8 @@ export interface TileView {
           />
           <span class="frame-name">{{ v.title }}</span>
           @if (frame.promise) {
-            <span class="frame-kind">Transaction</span>
-            <span class="frame-promise">&nbsp;· {{ frame.promise }}</span>
+            &ngsp;<span class="frame-kind">Transaction</span>&ngsp;
+            <span class="frame-promise">{{ frame.promise }}</span>
           } @else {
             <span class="frame-lead">For each item in</span>
             <span class="frame-items">{{ frame.items }}</span>

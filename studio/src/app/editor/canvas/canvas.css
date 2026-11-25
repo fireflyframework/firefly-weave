@@ -415,6 +415,10 @@ weave-canvas-view,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Drawn, not said: the header's name holds its words alone. */
+.canvas-v2 .frame-promise::before {
+  content: "\00a0· ";
+}
 /* No list yet: "loop-1 For each item in …" stays whole. */
 .canvas-v2 .frame-pending .frame-items {
   flex: none;
