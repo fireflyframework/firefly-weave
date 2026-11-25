@@ -42,8 +42,16 @@ if TYPE_CHECKING:
     from firefly_weave.operations.debug.models import DebugState, TransactionDebugView
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.operations.debug.transactions import PhaseTarget
+    from firefly_weave.runtime.kernel import PreparedWorkflow
     from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TransactionRecord
-    from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
+    from firefly_weave.runtime.transactions import TransactionShapes
+    from firefly_weave.studio.local_contracts import (
+        CompileSummary,
+        ExecuteRequest,
+        ExecuteResponse,
+        SimulationRequest,
+        TraceEntry,
+    )
 
 NULL: JsonObject = {"literal": None}
 
@@ -713,7 +721,7 @@ def simulator_for(
 
 @functools.cache
 def _watching_simulator() -> Any:
-    """The simulator the host runs, which keeps the last record of each of the workflow's transactions.
+    """The simulator the host runs, which keeps the last record of each transaction of each run.
 
     The runtime deletes a transaction's record from the run's state when its loop iteration is released, in the same
     event that ends it, and reports the final record nowhere else. This is the one place that works around it: once
@@ -724,14 +732,22 @@ def _watching_simulator() -> Any:
     class WatchingSimulator(Simulator):
         def __init__(self, artifact: CompiledArtifact, **options: Any) -> None:
             super().__init__(artifact, **options)
-            # By instance key, in the order the transactions opened.
-            self.transactions: dict[str, TransactionRecord] = {}
+            self._records: dict[str, dict[str, TransactionRecord]] = {}
+
+        def prepared_of(self, frame: str) -> PreparedWorkflow:
+            """The workflow a run executes: the simulated one ("") or a called run's."""
+            return self._workflow(frame).prepared
+
+        def transactions_of(self, frame: str) -> dict[str, TransactionRecord]:
+            """The last record of each transaction of a run, by instance key, in the order they opened."""
+            run = self._run(frame)
+            state = run.cursor.result.state if run.cursor is not None else cast("RunState", run.state)
+            return {**self._records.get(frame, {}), **state.transactions}
 
         def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
             moved = super()._step_run(key, run, event)
-            if not key:
-                state = run.cursor.result.state if run.cursor is not None else run.state
-                self.transactions.update(state.transactions)
+            state = run.cursor.result.state if run.cursor is not None else run.state
+            self._records.setdefault(key, {}).update(state.transactions)
             return moved
 
     return WatchingSimulator
@@ -952,7 +968,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             entry |= _handled_entry(handlers(frame), key, data.failures[path], data.outputs, frame)
         trace.append(TraceEntry.model_validate(entry))
     phases.extend(_unsettled_phases(view.variables, data, {cast(str, entry["instanceKey"]) for entry in phases}, trace))
-    kept = RunState(input=None, transactions=cast(Any, simulator).transactions)
+    records = cast(Any, simulator).transactions_of
+    kept = RunState(input=None, transactions=records(""))
     transactions = [_transaction_entry(record) for record in transaction_views(kept)]
     if _too_many(transactions, phases):
         return ExecuteResponse(status="limit", compile=summary, trace=[])
@@ -964,25 +981,42 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if failed:
         ended.add(None)
     # The failure each step of the simulated workflow reported last, and the actions its steps use.
-    reported = {
-        cast(str, event.data.get("node_id")): event.data for event in view.events if event.type == "step_failed"
-    }
+    reported = _reported(view.events)
     uses = {
         cast(str, step["id"]): cast(str, step["uses"])
         for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))
         if isinstance(step.get("uses"), str)
     }
-    for frame in ended:
+    for frame in [None, *shown]:
+        shapes = cast(Any, simulator).prepared_of(frame or "").transactions
+        stopped_by_transaction = False
+        handled: set[str | None] = set()
+        if shapes is not None:
+            # A run with transactions: what failed inside them, whatever settled after it.
+            handled = {_entry_key(entry) for entry in trace if entry.frame == frame and entry.handled is not None}
+            own_errors, own_uses = (request.errors, uses) if frame is None else ({}, {})
+            called = next((item for item in data.frames if item.key == frame), None)
+            reports = reported if called is None else _reported(called.events)
+            variables = view.variables if frame is None else frames[frame].variables
+            causes = _named_failures(records(frame or ""), variables)
+            stopped_by_transaction = (held if frame is None else held_frames.get(frame)) in IN_DOUBT_CODES
+            for index, update in _transaction_failures(trace, frame, shapes, causes, reports, own_errors, own_uses):
+                trace[index] = trace[index].model_copy(update=update)
+                stopped_by_transaction |= shapes.owner_key(_entry_key(trace[index])) not in handled
         last_of_run = next((i for i in reversed(range(len(trace))) if trace[i].frame == frame), None)
-        if last_of_run is not None and trace[last_of_run].status != "completed":
-            stopping = trace[last_of_run]
-            update: dict[str, Any] = {"status": "failed"}
-            if frame is None and stopping.handled is None:
-                key = stopping.instanceKey or stopping.nodeId
-                stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
-                if stopped is not None:
-                    update["error"] = stopped
-            trace[last_of_run] = stopping.model_copy(update=update)
+        if frame not in ended or last_of_run is None or stopped_by_transaction:
+            continue
+        stopping = trace[last_of_run]
+        key = _entry_key(stopping)
+        # A step left unfinished by a transaction whose failure was handled didn't stop the run.
+        if stopping.status == "completed" or (shapes is not None and shapes.owner_key(key) in handled):
+            continue
+        update = {"status": "failed"}
+        if frame is None and stopping.handled is None:
+            stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
+            if stopped is not None:
+                update["error"] = stopped
+        trace[last_of_run] = stopping.model_copy(update=update)
     own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
@@ -1375,6 +1409,72 @@ def _error_object(
         )
     except (TypeError, ValueError):
         return None
+
+
+def _entry_key(entry: TraceEntry) -> str:
+    """The instance key of a trace entry in its own run."""
+    return entry.instanceKey or entry.nodeId
+
+
+def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
+    """The failure each step instance of a run reported last."""
+    return {cast(str, event.data.get("node_id")): event.data for event in events if event.type == "step_failed"}
+
+
+def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:
+    """The code of each failure a run's transactions name, by the step instance it happened at: what they are undone
+    for, and what put them in doubt. A transaction itself failed only when its reservations expired: one that is
+    undone because its run ends didn't."""
+    named: dict[str, str] = {}
+    for incident in variables.get("incidents", {}).values():
+        named[incident["node_id"]] = incident.get("origin_code") or incident["code"]
+    for key, record in records.items():
+        for cause in (record.pending_abort, record.cause):
+            if cause is not None and (cause.instance_key != key or cause.code == "WV-TXN-HOLD-EXPIRED"):
+                named[cause.instance_key] = cause.code
+    return named
+
+
+def _transaction_failures(
+    trace: Sequence[TraceEntry],
+    frame: str | None,
+    shapes: TransactionShapes,
+    named: Mapping[str, str],
+    reported: Mapping[str, Mapping[str, Any]],
+    errors: Mapping[str, Any],
+    uses: Mapping[str, str],
+) -> Iterator[tuple[int, dict[str, Any]]]:
+    """The entries of a run that failed inside its transactions, and the transactions whose reservations expired,
+    with their status and error. The other steps of a transaction settle before it does, so a failed one is often not
+    the last of the trace: it is an entry without an output that reported a failure, or that a transaction names."""
+    for index, entry in enumerate(trace):
+        key = _entry_key(entry)
+        if entry.frame != frame or entry.status in {"completed", "failed"}:
+            continue
+        inside = shapes.owner_key(key) is not None
+        if not (inside and (key in reported or key in named)) and named.get(key) != "WV-TXN-HOLD-EXPIRED":
+            continue
+        error = _stopping_error(key, entry.kind, errors, uses, reported, None)
+        if error is None and key in named:
+            error = _named_error(key, entry.kind, named[key], sent="input" in entry.model_fields_set)
+        yield index, {"status": "failed"} | ({"error": error} if error is not None else {})
+
+
+def _named_error(key: str, kind: str, code: str, *, sent: bool) -> Any:
+    """The error of a failure a transaction names by its code only; None for a code not spelled as one."""
+    from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES
+    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
+    from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+
+    if re.fullmatch(ERROR_CODE_PATTERN[1:-1], code) is None:
+        return None
+    # As the runtime counts them: an action or a call that was never sent made no attempt.
+    tried = kind not in {"action", "callWorkflow"}
+    started = sent or (tried and code not in HANDLED_KERNEL_CODES)
+    attempts = 1 if sent or tried else 0
+    return _error_object(
+        key, code, "failed" if started else "not_started", attempts, message=TRANSACTION_MESSAGES.get(code)
+    )
 
 
 def _stopping_error(

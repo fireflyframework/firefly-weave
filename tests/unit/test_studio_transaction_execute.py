@@ -779,3 +779,156 @@ def test_a_transaction_in_a_called_workflow_that_didnt_settle_never_answers_comp
             "Studio couldn't simulate transaction move of inside, so the simulated run stopped there.",
         )
     ]
+
+
+# --- which step failed ------------------------------------------------------------------------------------------
+
+THREE = {"moveId": "M-1", "quantity": 2, "items": [1, 2, 3]}
+EVERY_ITEM = {"node:hold": {"holdId": "h-1"}, "node:add": {"id": "a-1"}, "node:submit": {"orderId": "o-1"}}
+SECOND_REFUSED = {"node:submit[1]": {"code": "REFUSED", "effect": "none"}}
+NOTE = {"id": "note", "kind": "transform", "value": {"literal": 1}}
+
+
+def looped(*steps: dict[str, Any], concurrency: int = 3, **settings: Any) -> str:
+    """A loop over the items with one transaction for each: hold, add and submit, or the steps given."""
+    body = transaction(list(steps) or [hold(), add(), submit()], **settings)
+    return source({**each([body], concurrency=concurrency), "maxItems": 5})
+
+
+def failures(answer: dict[str, Any], frame: str | None = None) -> dict[str, str | None]:
+    """The entries of a run that failed, each with its error's code."""
+    return {
+        entry["instanceKey"] or entry["nodeId"]: (entry.get("error") or {}).get("code")
+        for entry in answer["trace"]
+        if entry["status"] == "failed" and entry.get("frame") == frame
+    }
+
+
+ERROR_PATH = {"onError": "errorOutput", "errorPath": {"steps": [NOTE], "output": {"literal": None}}}
+
+
+@pytest.mark.parametrize("setting", [{"onError": "continue"}, ERROR_PATH], ids=["continue", "errorOutput"])
+def test_the_step_that_failed_in_a_transaction_whose_failure_is_handled_failed_too(setting):
+    answer = run_move(move(**setting), errors=REFUSED)
+    assert answer["status"] == "completed"
+    assert failures(answer) == {"move": "WV-TXN-ROLLED-BACK", "submit": "REFUSED"}
+    [submitted] = [entry for entry in answer["trace"] if entry["nodeId"] == "submit"]
+    assert submitted["error"] == {
+        "code": "REFUSED",
+        "message": "The step failed with code REFUSED.",
+        "outcome": "failed",
+        "attempts": 1,
+        "instanceKey": "submit",
+    }
+    assert "handled" not in submitted
+
+
+def test_a_step_that_fails_after_a_handled_transaction_is_the_one_that_stopped_the_run():
+    later = {"id": "later", "kind": "action", "uses": "target-system.add-quantity@1.0.0", "with": add()["with"]}
+    workflow = source(transaction([hold(), add(), submit()], onError="continue"), later)
+    answer = run_move(workflow, errors={**REFUSED, "node:later": {"code": "VALIDATION"}})
+    assert answer["status"] == "failed"
+    assert failures(answer) == {"move": "WV-TXN-ROLLED-BACK", "submit": "REFUSED", "later": "VALIDATION"}
+
+
+def test_a_step_a_handled_transaction_stopped_never_stopped_the_run():
+    # The workflow's output can't be built, after a transaction that left a wait behind when it was undone.
+    branches = parallel(x=[add()], y=[wait(300)])
+    document = json.loads(source(transaction([hold(), branches], onError="continue")))
+    document["spec"]["output"] = {"ref": "/input/items/5"}
+    answer = run_move(json.dumps(document), errors={"node:add": {"code": "UNAVAILABLE"}})
+    assert answer["status"] == "failed"
+    assert [entry["nodeId"] for entry in answer["trace"]][-1] == "pause"
+    assert failures(answer) == {"move": "WV-TXN-ROLLED-BACK", "add": "UNAVAILABLE"}
+
+
+def test_a_transform_that_fails_in_a_transaction_carries_its_error():
+    missing = {**NOTE, "value": {"ref": "/input/items/5"}}
+    answer = run_move(move(hold(), add(), missing))
+    assert failures(answer) == {"note": "WV-EXPR-MISSING"}
+    assert (answer["trace"][-1]["error"]["outcome"], answer["trace"][-1]["error"]["attempts"]) == ("not_started", 1)
+    handled = run_move(move(hold(), add(), NOTE, onError="continue"), errors={"node:note": {"code": "BAD"}})
+    assert failures(handled) == {"move": "WV-TXN-ROLLED-BACK", "note": "BAD"}
+
+
+def test_a_fail_step_in_a_transaction_failed_with_its_code():
+    assert failures(run_move(move(hold(), STOP))) == {"stop": "STOPPED"}
+    # A code of the author's own spelling is left out of the answer, here as in the transaction's cause.
+    assert failures(run_move(move(hold(), {**STOP, "code": "not-accepted"}))) == {"stop": None}
+
+
+@pytest.mark.parametrize("setting", [{}, {"onError": "continue"}], ids=["stops the run", "continues"])
+def test_the_item_whose_transaction_failed_failed_although_its_siblings_settled_first(setting):
+    answer = run_move(looped(**setting), input=THREE, mocks=EVERY_ITEM, errors=SECOND_REFUSED)
+    handled = {"move[1]": "WV-TXN-ROLLED-BACK"} if setting else {}
+    assert failures(answer) == {**handled, "submit[1]": "REFUSED"}
+
+
+def test_a_step_that_failed_in_a_parallel_step_failed_and_the_one_it_stopped_did_not():
+    branches = parallel(x=[add()], y=[wait(300)])
+    answer = run_move(move(hold(), branches), errors={"node:add": {"code": "UNAVAILABLE"}})
+    assert answer["status"] == "failed"
+    assert failures(answer) == {"add": "UNAVAILABLE"}
+    assert [entry["nodeId"] for entry in answer["trace"]][-1] == "pause"
+
+
+def test_an_expired_reservation_is_its_transactions_failure():
+    answer = run_move(move(hold(holdSeconds=60), add(), wait(3000)))
+    assert failures(answer) == {"move": "WV-TXN-HOLD-EXPIRED"}
+    [expired] = [entry for entry in answer["trace"] if entry["nodeId"] == "move"]
+    assert expired["error"]["message"] == "Reservations were about to expire before the transaction could finish."
+
+
+def test_a_step_that_wasnt_started_because_the_reservations_wouldnt_outlast_it_failed():
+    answer = run_move(move(hold(holdSeconds=120), wait(60), submit()))
+    assert failures(answer) == {"submit": "WV-TXN-HOLD-INSUFFICIENT"}
+    assert (answer["trace"][-1]["error"]["outcome"], answer["trace"][-1]["error"]["attempts"]) == ("not_started", 0)
+
+
+def test_a_called_step_whose_run_failed_carries_its_error():
+    answer = run_calling(move(hold(), add(), called_step()), STOP)
+    assert failures(answer) == {"call": "STOPPED"}
+    [called] = [entry for entry in answer["trace"] if entry["nodeId"] == "call"]
+    assert (called["error"]["outcome"], called["error"]["attempts"]) == ("failed", 1)
+
+
+def test_a_transaction_in_doubt_at_a_confirm_blames_no_step():
+    # The first item's reservation can't be confirmed while the steps of the other two are still running.
+    stuck = {"node:hold[0]#confirm": {"code": "DOWN", "attempts": 10}}
+    workflow = looped(hold(), submit(), wait(60))
+    mocks = {key: value for key, value in EVERY_ITEM.items() if key != "node:add"}
+    answer = run_move(workflow, input=THREE, mocks=mocks, errors=stuck)
+    assert (answer["status"], incidents(answer)[0][0]) == ("failed", "WV-TXN-CONFIRM-STUCK")
+    assert failures(answer) == {}
+
+
+def test_a_step_that_changes_nothing_and_fails_after_the_point_of_no_return_failed():
+    branches = parallel(x=[{**NOTE, "value": {"ref": "/input/items/5"}}], y=[wait(300)])
+    answer = run_move(move(hold(), submit(), branches))
+    assert incidents(answer)[0][0] == "WV-TXN-AFTER-PIVOT-STUCK"
+    assert failures(answer) == {"note": "WV-EXPR-MISSING"}
+
+
+def test_a_step_that_failed_in_a_transaction_of_a_called_workflow_failed_there():
+    branches = parallel(x=[STOP], y=[wait(300)])
+    answer = inside_a_call(hold(), add(), branches, definitions=fixture()["definitions"])
+    assert answer["status"] == "failed"
+    assert failures(answer, "call") == {"stop": "STOPPED"}
+
+
+def test_a_step_that_failed_in_a_transaction_a_called_workflow_handles_failed_there():
+    # The loop releases the record of each of its transactions as it ends, so the failure is read from the last one.
+    body = transaction([hold(), add(), {**NOTE, "value": {"ref": "/input/items/5"}}], onError="continue")
+    inside = json.loads(source(each([body], concurrency=1)))
+    called = {**inside, "metadata": {"name": "inside", "version": "1.0.0"}}
+    called["spec"] |= {"callable": {}, "timeoutSeconds": 300}
+    call = {**called_step(), "with": {"ref": "/input"}}
+    del call["compensate"]
+    answer = run_move(
+        source(call),
+        definitions=[*fixture()["definitions"], called],
+        workflows={"inside@1.0.0": {"mocks": {"node:hold": {"holdId": "h-1"}, "node:add": {"id": "a-1"}}}},
+        input={**THREE, "items": [1]},
+    )
+    assert answer["status"] == "completed", answer
+    assert failures(answer, "call") == {"move[0]": "WV-TXN-ROLLED-BACK", "note[0]": "WV-EXPR-MISSING"}
