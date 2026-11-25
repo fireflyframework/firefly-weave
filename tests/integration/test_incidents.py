@@ -132,6 +132,27 @@ async def failed_run(queued_task, task_service, transaction_factory, worker_ids,
     return queued_task
 
 
+@pytest.fixture
+async def other_failed_run(
+    failed_run, worker_setup, task_service, transaction_factory, worker_ids, services, access_db
+):
+    """A second run of the same workflow in the same environment, failed after the first, with its own incident."""
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.contracts.workers import TaskError
+    from firefly_weave.runtime.recovery import RecoveryService
+
+    _, runtime, _, actor, scope, activation, _ = worker_setup
+    run = await runtime.start(
+        actor, scope, StartRunRequest(activation_id=activation.id, input=4), "other run", context=AuditContext()
+    )
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[1], 1))[0]
+        await task_service.fail(tx, lease.proof, TaskError(completion_id=uuid4(), code="BUSINESS_REJECTED"))
+    await services(access_db[0]).resolve(RecoveryService).scan(scope, 100, actor=actor, context=AuditContext())
+    return run
+
+
 async def incident_for(client, headers, env_url, run):
     response = await client.get(f"{env_url}/runs/{run.id}/incidents", headers=headers)
     assert response.status_code == 200, response.text
@@ -201,6 +222,160 @@ async def test_resolution_receipt_revision_and_audit(client, operation_headers, 
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT count(*) FROM run_events WHERE type='incident_resolved'")) == 1
         assert await session.scalar(text("SELECT count(*) FROM access_audit WHERE action='incident.resolve'")) == 1
+
+
+def held_resolution(client, monkeypatch):
+    """Pause the first resolution after its work, inside its transaction, until the test releases it."""
+    import asyncio
+
+    from firefly_weave.operations.incidents import IncidentService
+
+    service = client._transport.app.state.pyfly.context.get_bean(IncidentService)
+    original = service.resolve
+    resolved, release = asyncio.Event(), asyncio.Event()
+
+    async def paused(*args, **kwargs):
+        view = await original(*args, **kwargs)
+        if not resolved.is_set():
+            resolved.set()
+            async with asyncio.timeout(10):
+                await release.wait()
+        return view
+
+    monkeypatch.setattr(service, "resolve", paused)
+    return resolved, release
+
+
+async def waiting_for_a_lock(access_db) -> None:
+    """Return once a session of this test's database waits for an advisory lock."""
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        async with access_db[1]() as session:
+            waiting = await session.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND wait_event_type='Lock' AND wait_event='advisory'"
+                )
+            )
+        if waiting:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("no resolution waited for a lock")
+
+
+async def test_a_resolution_sent_during_a_slow_one_waits_for_it_and_answers_revision_conflict(
+    client, operation_headers, env_url, failed_run, access_db, monkeypatch
+):
+    import asyncio
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    headers = {**operation_headers, "If-Match": str(incident["revision"])}
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(client.post(url, headers=headers, json=body))
+    await asyncio.wait_for(resolved.wait(), 10)
+    second = asyncio.create_task(client.post(url, headers=headers, json={**body, "receipt_id": str(uuid4())}))
+    await waiting_for_a_lock(access_db)
+    # Twice the time a change waits for the project's operation lock: the second request is still waiting.
+    await asyncio.wait({second}, timeout=0.5)
+    still_waiting = not second.done()
+    release.set()
+    winner, loser = await first, await second
+    assert still_waiting, loser.text
+    assert winner.status_code == 200, winner.text
+    assert loser.status_code == 409 and loser.json()["code"] == "WV-INCIDENT-REVISION", loser.text
+    async with access_db[1]() as session:
+        assert await session.scalar(text("SELECT count(*) FROM run_events WHERE type='incident_resolved'")) == 1
+
+
+async def test_a_resolution_still_refused_for_capacity_when_the_incident_stays_busy(
+    client, operation_headers, env_url, failed_run, access_db, monkeypatch
+):
+    import asyncio
+    import time
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    headers = {**operation_headers, "If-Match": str(incident["revision"])}
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(client.post(url, headers=headers, json=body))
+    await asyncio.wait_for(resolved.wait(), 10)
+    started = time.monotonic()
+    loser = await asyncio.wait_for(client.post(url, headers=headers, json={**body, "receipt_id": str(uuid4())}), 10)
+    waited = time.monotonic() - started
+    release.set()
+    assert (await first).status_code == 200
+    assert loser.status_code == 429 and loser.json()["code"] == "WV-OPERATION-CAPACITY", loser.text
+    # It waited out the incident's 2 s, well past the project lock's 250 ms, before it gave up.
+    assert waited >= 1.9, waited
+
+
+async def test_a_decision_on_another_incident_waits_only_for_the_project_lock(
+    client, operation_headers, env_url, failed_run, other_failed_run, monkeypatch
+):
+    import asyncio
+    import time
+
+    held = await incident_for(client, operation_headers, env_url, failed_run)
+    other = await incident_for(client, operation_headers, env_url, other_failed_run)
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    first = asyncio.create_task(
+        client.post(
+            f"{env_url}/incidents/{held['id']}/resolve",
+            headers={**operation_headers, "If-Match": str(held["revision"])},
+            json=body,
+        )
+    )
+    await asyncio.wait_for(resolved.wait(), 10)
+    started = time.monotonic()
+    refused = await asyncio.wait_for(
+        client.post(
+            f"{env_url}/incidents/{other['id']}/resolve",
+            headers={**operation_headers, "If-Match": str(other["revision"])},
+            json={**body, "receipt_id": str(uuid4())},
+        ),
+        10,
+    )
+    waited = time.monotonic() - started
+    release.set()
+    assert (await first).status_code == 200
+    assert refused.status_code == 429 and refused.json()["code"] == "WV-OPERATION-CAPACITY", refused.text
+    # Another incident has its own lock, so the decision waits only for the project's 250 ms, not an incident's 2 s.
+    assert waited < 1.0, waited
+
+
+async def test_a_resolution_without_the_grant_is_refused_before_it_waits_for_a_running_decision(
+    client, operation_headers, other_headers, env_url, failed_run, monkeypatch
+):
+    import asyncio
+
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    url = f"{env_url}/incidents/{incident['id']}/resolve"
+    body = {"kind": "terminate", "reason": "stop", "receipt_id": str(uuid4())}
+    resolved, release = held_resolution(client, monkeypatch)
+    held = asyncio.create_task(
+        client.post(url, headers={**operation_headers, "If-Match": str(incident["revision"])}, json=body)
+    )
+    await asyncio.wait_for(resolved.wait(), 10)
+    # The running decision holds the incident's lock and the project's; a caller with no grant on the project must
+    # not queue for either, or it could delay real decisions and learn that one is running.
+    refused = await asyncio.wait_for(
+        client.post(
+            url,
+            headers={**other_headers, "If-Match": str(incident["revision"])},
+            json={**body, "receipt_id": str(uuid4())},
+        ),
+        10,
+    )
+    release.set()
+    assert (await held).status_code == 200
+    assert refused.status_code == 403 and refused.json()["code"] == "WV-FORBIDDEN", refused.text
 
 
 @pytest.mark.parametrize("worker_runtime_fixture", ["safe"], indirect=True)
