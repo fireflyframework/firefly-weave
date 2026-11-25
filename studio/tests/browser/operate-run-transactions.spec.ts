@@ -490,6 +490,53 @@ test("a run with more than 50 transactions shows the first 50 and reads more on 
   ).toHaveCount(0);
 });
 
+test("a workflow Studio can't draw is named, and no other workflow's graph stands for it", async ({
+  page,
+}) => {
+  const version = "6d7e8f90-a1b2-4c3d-8e4f-5a6b7c8d9e03";
+  await platform(page);
+  await page.route(`${environment}/runs/${loopRunId}`, (route) =>
+    route.fulfill({
+      json: {
+        id: loopRunId,
+        activation: {
+          id: "act",
+          name: "move-each",
+          revision: 1,
+          request: { version_id: version },
+        },
+        state: { status: "suspended", active: [], input: {} },
+      },
+    }),
+  );
+  // A step kind of a newer platform.
+  await page.route(`**/projects/project/workflows/${version}/export`, (route) =>
+    route.fulfill({
+      json: {
+        id: version,
+        document: {
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "move-each", version: "1.0.0" },
+          spec: {
+            inputSchema: {},
+            outputSchema: {},
+            steps: [{ id: "later", kind: "fromALaterPlatform" }],
+            output: { literal: {} },
+          },
+        },
+      },
+    }),
+  );
+  await openRun(page);
+  const graph = page.getByRole("region", { name: "Workflow move-each 1.0.0" });
+  await expect(graph).toContainText("Studio can't draw this workflow.");
+  await expect(page.locator(".run-graph")).toHaveCount(0);
+  await expect(page.getByText("untitled-workflow")).toHaveCount(0);
+  // The rest of the run is there.
+  await expect(section(page).locator(".txn-summary")).toBeVisible();
+});
+
 test("a run without transactions shows no Transactions section", async ({
   page,
 }) => {

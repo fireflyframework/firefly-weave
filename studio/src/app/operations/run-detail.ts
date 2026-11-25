@@ -281,7 +281,12 @@ const isRecord = (value: unknown): value is Json =>
         (cancel)="actions.retry = null"
       />
     }
-    @if (h.runCanvas; as canvas) {
+    @if (h.runCanvas?.error) {
+      <section class="run-workflow" aria-labelledby="run-graph-title">
+        <h3 id="run-graph-title">Workflow {{ workflowName() }}</h3>
+        <p class="run-undrawn">Studio can't draw this workflow.</p>
+      </section>
+    } @else if (h.runCanvas; as canvas) {
       <section class="run-workflow" aria-labelledby="run-graph-title">
         <h3 id="run-graph-title">Workflow {{ workflowName() }}</h3>
         <div
@@ -582,9 +587,14 @@ export class RunDetail implements DoCheck, OnDestroy {
       `Run ${shortId(run["id"])}`
     );
   }
-  /** The workflow version the run's graph shows. */
+  /** The workflow version the run's graph shows; a graph Studio can't draw holds another. */
   workflowName() {
-    const metadata = this.host().runCanvas?.definition.metadata;
+    const canvas = this.host().runCanvas;
+    if (canvas?.error)
+      return runWorkflow(this.run(), {
+        versions: this.host().workflowVersions,
+      });
+    const metadata = canvas?.definition.metadata;
     return metadata ? `${metadata.name} ${metadata.version}` : "";
   }
   activationRevision() {
