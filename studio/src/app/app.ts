@@ -442,10 +442,10 @@ function store(key: string, value: string) {
     // Not kept: a convenience only.
   }
 }
-/** JSON with sorted keys, so equal documents compare equal. */
 /** A trigger's name; the words about triggers load with the editor, not with the first page. */
 const triggerLabel = async (kind: TriggerKind) =>
   (await import("./editor/canvas/trigger-tiles")).TRIGGER_LABELS[kind];
+/** JSON with sorted keys, so equal documents compare equal. */
 const canonicalJson = (value: unknown): string =>
   JSON.stringify(value, (_, v: unknown) =>
     v && typeof v === "object" && !Array.isArray(v)
