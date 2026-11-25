@@ -52,7 +52,8 @@ const published = (name: string, version: string) => ({
   },
   digest: "0".repeat(64),
 });
-const LOCK = {
+/** The project's published workflows, as the catalog lock holds them. */
+export const LOCK = {
   definitions: [
     published("move-between-systems", "1.4.0"),
     published("move-files-nightly", "2.3.0"),
