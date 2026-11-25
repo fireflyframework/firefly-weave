@@ -1438,6 +1438,52 @@ test("a result corrected while the refused record is unread isn't refused once i
   expect(sent).toHaveLength(2);
 });
 
+for (const [what, correct] of [
+  [
+    "a result corrected",
+    (page: Page) =>
+      field(
+        page,
+        "Mark as reconciled",
+        "Result of the transaction (JSON)",
+      ).fill('{"moved": true}'),
+  ],
+  [
+    "another ending chosen",
+    (page: Page) => ending(page, "Mark as reconciled", "Undone").check(),
+  ],
+] as const)
+  test(`${what} while a refused record is read again isn't refused once it reads the same`, async ({
+    page,
+  }) => {
+    const reads: Route[] = [];
+    const { sent, name, asked } = await refusedRecord(page, (route) => {
+      reads.push(route);
+    });
+    await confirm(page, name).click();
+    await expect.poll(() => reads.length).toBe(1);
+    await drawn(page);
+    await correct(page);
+    await drawn(page);
+    // It is still read without asking: there is nothing to refresh.
+    await expect(
+      asked.getByRole("button", { name: "Resolving…" }),
+    ).toBeVisible();
+    await expect(asked).not.toContainText("refresh the incident");
+    await expect(
+      asked.getByRole("button", { name: "Refresh incident" }),
+    ).toHaveCount(0);
+    await reads[0].fulfill({ json: twoConfirms("confirming") });
+    await expect(confirm(page, name)).toBeVisible();
+    await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
+    await expect(asked.locator("[aria-invalid=true]")).toHaveCount(0);
+    // What was corrected is sent as it is now.
+    await tickAll(page);
+    await confirm(page, name).click();
+    await expect(asked).toHaveCount(0);
+    expect(sent).toHaveLength(2);
+  });
+
 test("another decision is sent while a refused record is read again, and only it says how it went", async ({
   page,
 }) => {

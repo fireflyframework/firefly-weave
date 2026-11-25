@@ -328,8 +328,10 @@ export class TransactionResolveDialog {
   failure = input<PlainError | null>(null);
   /** The incident is being read again. */
   refreshing = input(false);
-  /** Why a record was refused that may be of steps that changed: the incident couldn't be read to tell. */
+  /** Why a record was refused that may be of steps that changed: the incident hasn't been read to tell. */
   unread = input<PlainError | null>(null);
+  /** It is being read without asking: there is nothing to refresh yet. */
+  rereading = input(false);
   decide = output<ResolutionRequest>();
   dismiss = output<void>();
   refresh = output<void>();
@@ -444,7 +446,8 @@ export class TransactionResolveDialog {
   /** The incident changed, or may have: nothing is sent until it is read again. */
   readonly stale = computed(
     () =>
-      !!this.unread() || this.outdated()?.revision === this.incident().revision,
+      (!!this.unread() && !this.rereading()) ||
+      this.outdated()?.revision === this.incident().revision,
   );
   /** What to do now that its checklist was built again, even with no step left on it. */
   readonly rebuilt = computed(() => {

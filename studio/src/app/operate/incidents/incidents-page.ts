@@ -626,7 +626,8 @@ interface Band {
           [busy]="sending.has(selected.id) || rereading"
           [failure]="failure"
           [refreshing]="refreshing"
-          [unread]="rereading ? null : refusedRecord"
+          [unread]="refusedRecord"
+          [rereading]="rereading"
           (decide)="resolve($event)"
           (dismiss)="stopDeciding(action)"
           (refresh)="reloadIncident()"
@@ -1718,6 +1719,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         stillAsked()
       ) {
         this.refusedRecord = explained;
+        // The dialog learns what was refused before anything in it changes.
+        this.cdr.markForCheck();
         if (await this.reloadIncident()) return;
         // A later decision says how it went itself.
         if (this.lastSent.get(incident.id) !== receipt) return;
