@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field, PrivateAttr
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agent_conversations import ConversationKeyHash, ConversationWorkflow
@@ -398,3 +398,16 @@ class Transition(ContractModel):
         default_factory=list
     )
     steps: list[StepChange] = Field(default_factory=list)
+    # Never stored, measured, digested or read back: a transition's bytes say only what its state and commands hold.
+    _released: dict[str, TransactionRecord] = PrivateAttr(default_factory=dict)
+
+    @property
+    def released(self) -> dict[str, TransactionRecord]:
+        """The final record of each transaction this transition released from its state with the loop iteration that
+        held it, by instance key. Whoever persists or shows a transition reads them here: they are nowhere else."""
+        return self._released
+
+    def transaction(self, key: str) -> TransactionRecord:
+        """The record of a transaction this transition changed: the state's, or the final one it released."""
+        held = self.state.transactions.get(key)
+        return self._released[key] if held is None else held

@@ -125,6 +125,8 @@ class FrameState(ContractModel):
     # The call's attempt: above 0 for a person's retry of a called confirm, cancel or undo, or of a called step
     # after the point of no return.
     generation: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
+    # The transactions whose loop iteration ended, as they ended, by instance key: the run's state no longer holds them.
+    ended: dict[str, "TransactionDebugView"] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 class PersonTask(ContractModel):
@@ -178,6 +180,9 @@ class DebugState(ContractModel):
     # How many values of each mock sequence the session gave out, by mock key, prefixed with the frame key inside
     # called workflows. Omitted when none, so stored sessions keep their bytes.
     consumed: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # The transactions whose loop iteration ended, as they ended, by instance key: the run's state no longer holds them.
+    # Omitted when none, so stored sessions keep their bytes.
+    ended: dict[str, "TransactionDebugView"] = Field(default_factory=dict, exclude_if=lambda v: not v)
     # The tasks AI agents gave people that nobody has answered yet, by instance key, prefixed like ``inputs``.
     asks: dict[str, PersonTask] = Field(default_factory=dict, exclude_if=lambda v: not v)
 

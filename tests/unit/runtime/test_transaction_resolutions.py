@@ -36,6 +36,7 @@ from transaction_support import (
 )
 
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+from firefly_weave.runtime.kernel import workflow
 from firefly_weave.runtime.models import Transition
 
 ROLLED_BACK = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
@@ -329,6 +330,106 @@ def test_a_late_result_of_work_a_person_ended_changes_nothing():
     assert controls(ended, "settle") == ["hold2#confirm"] and run.state.active == ["pause"]
     late = run.done("hold2#confirm", {})
     assert late.steps == [] and run.state.incidents == {} and run.state.active == ["pause"]
+
+
+def lookup() -> dict[str, Any]:
+    """A step that changes nothing."""
+    read = {"object": {"reference": {"ref": "/input/moveId"}}}
+    return {"id": "lookup", "kind": "action", "uses": "reports.lookup@1.0.0", "with": read}
+
+
+def attempt_failed(run: Run, key: str) -> None:
+    """A worker reported that its attempt failed, and recovery hasn't looked at it yet."""
+    run.send("task_failed", node_id=key, generation=1, output={"code": "UNAVAILABLE"}, effect="unknown")
+    assert run.state.incidents[f"{key}:1"].code == "WV-TASK-FAILED"
+
+
+def waits_for_a_failure(run: Run, key: str) -> bool:
+    from firefly_weave.operations.incidents import failure_in_progress
+
+    return failure_in_progress(workflow(run.flow), run.state, key)
+
+
+def test_a_reconcile_waits_for_the_failed_attempt_of_a_step_of_its_transaction_in_its_own_iteration():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [1, 2]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold(), add()])], "output": {"literal": None}},
+    }
+    run = Run(compiled([each]))
+    run.start()
+    assert not waits_for_a_failure(run, "move[1]")
+    attempt_failed(run, "hold[1]")
+    assert waits_for_a_failure(run, "move[1]")
+    assert not waits_for_a_failure(run, "move[0]")
+
+
+def test_a_reconcile_waits_for_the_failed_attempt_of_a_confirm_and_not_for_the_confirm_already_stuck():
+    run = Run(compiled([transaction([hold(), hold("hold2"), add(), submit()])]))
+    run.start()
+    for key, output in (("hold", {"holdId": "h-1"}), ("hold2", {"holdId": "h-2"}), ("add", {"id": "a-1"})):
+        run.done(key, output)
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert not waits_for_a_failure(run, "move")
+    attempt_failed(run, "hold2#confirm")
+    assert waits_for_a_failure(run, "move")
+
+
+@pytest.mark.parametrize("inside", [True, False])
+def test_a_reconcile_waits_for_the_failed_attempt_of_a_step_that_changes_nothing_only_inside_its_transaction(inside):
+    read = {"steps": [lookup()], "output": {"literal": None}}
+    moves = {"steps": [transaction([hold(), add()])], "output": {"literal": None}}
+    inner = {"steps": [hold(), add()], "output": {"literal": None}}
+    fork = {
+        "id": "fork",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {"a": inner if inside else moves, "b": read},
+    }
+    run = Run(compiled([transaction([fork])] if inside else [fork]))
+    run.start()
+    attempt_failed(run, "lookup")
+    assert waits_for_a_failure(run, "move") is inside
+
+
+def test_a_reconcile_never_waits_for_the_failed_attempt_of_a_step_the_rollback_stopped():
+    moves = {"steps": [transaction([hold(holdSeconds=600), lookup(), add()])], "output": {"literal": None}}
+    wait = {"steps": [{"id": "pause", "kind": "wait", "durationSeconds": 3600}], "output": {"literal": None}}
+    run = Run(compiled([{"id": "fork", "kind": "parallel", "concurrency": 2, "branches": {"a": moves, "b": wait}}]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    attempt_failed(run, "lookup")
+    assert waits_for_a_failure(run, "move")
+    run.fire("move#hold")
+    run.failed("hold#cancel", "REJECTED", effect="none", generation=10)
+    # Recovery never decides the stopped step, so its incident stays open while the other branch still waits.
+    assert (run.txn().status, run.state.active) == ("in_doubt", ["pause"])
+    assert sorted(run.state.incidents) == ["hold#cancel:10", "lookup:1"]
+    assert not waits_for_a_failure(run, "move")
+
+
+def test_a_reconcile_never_waits_for_an_incident_that_recovery_leaves_to_a_person():
+    branches = {
+        "a": {"steps": [notify()], "output": {"literal": None}},
+        "b": {"steps": [lookup()], "output": {"literal": None}},
+    }
+    after = {"id": "fork", "kind": "parallel", "concurrency": 2, "branches": branches}
+    run = Run(compiled([transaction([hold(), add(), submit(), after])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    run.failed("notify", "UNAVAILABLE", effect="unknown", generation=4)
+    # The read's output was refused: that incident is final, and the step stays active behind it.
+    run.send("incident_opened", node_id="lookup", generation=1, code="WV-RUNTIME-OUTPUT")
+    assert (run.txn().status, run.state.active) == ("in_doubt", ["lookup"])
+    assert sorted(run.state.incidents) == ["lookup:1", "notify:4"]
+    assert not waits_for_a_failure(run, "move")
 
 
 def test_a_reservation_marked_undone_is_recorded_as_released():

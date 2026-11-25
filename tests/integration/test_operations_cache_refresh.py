@@ -87,13 +87,15 @@ async def refresh(operations_case, scheduler_url):
         health,
     )
     loop.engine = create_async_engine(scheduler_url)
-    # Change request upkeep, the step test sweep, log pruning and the expired conversation sweep are tested on their
-    # own (test_change_request_retention.py, test_step_test_sweep.py, test_execution_log_prune.py,
-    # test_agent_conversations.py); these quanta time revalidation.
+    # Change request upkeep, the step test sweep, log pruning, the expired conversation sweep and the repair of
+    # transaction records are tested on their own (test_change_request_retention.py, test_step_test_sweep.py,
+    # test_execution_log_prune.py, test_agent_conversations.py, test_transaction_record_repair.py); these quanta time
+    # revalidation.
     loop.maintain_changes = no_upkeep  # type: ignore[method-assign]
     loop.sweep_step_tests = no_upkeep  # type: ignore[method-assign]
     loop.maintain_logs = no_upkeep  # type: ignore[method-assign]
     loop.forget_conversations = no_upkeep  # type: ignore[method-assign]
+    loop.repair_records = no_upkeep  # type: ignore[method-assign]
     # Quanta whose budget ran out: each can cut short at most the one refresh it was running.
     loop.cut_short = 0  # type: ignore[attr-defined]
     environment = loop._environment
