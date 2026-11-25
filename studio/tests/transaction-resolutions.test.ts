@@ -30,6 +30,7 @@ import {
   checklistChanged,
   checklistRows,
   confirmReason,
+  endingHelp,
   explainDecision,
   outputRefusalAt,
   retryLabel,
@@ -486,6 +487,32 @@ describe("the checklist", () => {
     expect(checklistRows(running, "completed")[0].sentence).toBe(
       "I confirmed add finished in the other system.",
     );
+  });
+});
+
+describe("how it ended", () => {
+  const undone = (incident: IncidentView) =>
+    endingHelp("compensated", incident.transaction);
+  const finished = (incident: IncidentView) =>
+    endingHelp("completed", incident.transaction);
+
+  it("undone reversed or released every step, and by hand those that can't be undone", () => {
+    expect(undone(undoStuck)).toBe("Every step was reversed or released.");
+    expect(undone(confirmStuck)).toBe(
+      "Every step was reversed or released. The step that can't be undone was reversed by hand.",
+    );
+    expect(undone(afterPivot("done"))).toBe(
+      "Every step was reversed or released. The steps that can't be undone were reversed by hand.",
+    );
+    // One that failed, or may not have happened, isn't done.
+    for (const status of ["failed", "unknown"] as const)
+      expect(undone(afterPivot(status))).toBe(undone(confirmStuck));
+    expect(undone(unknown)).toBe("Every step was reversed or released.");
+  });
+
+  it("finished went through, whatever its steps", () => {
+    for (const incident of [undoStuck, confirmStuck, held])
+      expect(finished(incident)).toBe("Every step went through.");
   });
 });
 

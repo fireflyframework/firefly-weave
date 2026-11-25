@@ -729,6 +729,17 @@ test("a step that failed after the point of no return is the one a finished tran
   await offer(page, name).click();
   await ending(page, name, "Undone").check();
   await expect(dialog(page, name).getByRole("checkbox")).toHaveCount(3);
+  // submit is done, and nothing undoes it but a person.
+  await expect(
+    ending(
+      page,
+      name,
+      "Undone Every step was reversed or released\\. The step that can't be undone was reversed by hand\\.$",
+    ),
+  ).toBeChecked();
+  await page.screenshot({
+    path: `${captures}/reconcile-after-pivot-1440.png`,
+  });
   await ending(page, name, "Finished").check();
   await expect(dialog(page, name).locator(".tick")).toContainText([
     "I confirmed notify finished in the other system.",

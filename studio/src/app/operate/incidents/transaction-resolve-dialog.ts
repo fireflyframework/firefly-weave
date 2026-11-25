@@ -57,6 +57,7 @@ import {
   checklistChanged,
   checklistRows,
   confirmReason,
+  endingHelp,
   outputRefusalAt,
   transactionActions,
   type Checked,
@@ -67,12 +68,8 @@ import {
 /** The platform refuses the result, or the record of how the transaction ended. */
 const OUTPUT = "WV-RUNTIME-OUTPUT";
 const ENDINGS = [
-  {
-    as: "compensated",
-    label: "Undone",
-    help: "Every step was reversed or released.",
-  },
-  { as: "completed", label: "Finished", help: "Every step went through." },
+  { as: "compensated", label: "Undone" },
+  { as: "completed", label: "Finished" },
 ] as const;
 
 @Component({
@@ -130,7 +127,7 @@ const ENDINGS = [
           }
           <fieldset class="endings">
             <legend>How did it end?</legend>
-            @for (ending of endings; track ending.as) {
+            @for (ending of endings(); track ending.as) {
               <label class="ending"
                 ><input
                   type="radio"
@@ -340,7 +337,12 @@ export class TransactionResolveDialog {
   dismiss = output<void>();
   refresh = output<void>();
 
-  readonly endings = ENDINGS;
+  readonly endings = computed(() =>
+    ENDINGS.map((ending) => ({
+      ...ending,
+      help: endingHelp(ending.as, this.incident().transaction),
+    })),
+  );
   readonly draft = signal<ReconcileDraft>({
     as: "",
     ticked: new Set(),

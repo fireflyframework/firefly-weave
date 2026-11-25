@@ -37,6 +37,7 @@ import {
   inDoubt,
   resolutionLabel,
   transactionStep,
+  type IncidentTransaction,
   type IncidentView,
   type ResolutionKind,
   type ResolutionRequest,
@@ -241,6 +242,24 @@ export function checklistRows(
       },
     ];
   });
+}
+
+/** What an ending says of every step; Weave reversed none that can't be undone. */
+export function endingHelp(
+  as: "compensated" | "completed",
+  transaction: IncidentTransaction | undefined,
+): string {
+  if (as === "completed") return "Every step went through.";
+  const happened = (transaction?.participants ?? []).filter(
+    ({ mode, status }) => mode === "irreversible" && status === "done",
+  ).length;
+  const byHand =
+    happened === 1
+      ? " The step that can't be undone was reversed by hand."
+      : happened
+        ? " The steps that can't be undone were reversed by hand."
+        : "";
+  return `Every step was reversed or released.${byHand}`;
 }
 
 /** What the person entered in Mark as reconciled. */
