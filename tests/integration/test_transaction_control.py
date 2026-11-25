@@ -23,18 +23,24 @@ from uuid import uuid4
 import pytest
 from stuck_transactions import (
     NOTIFY,
+    PAUSE,
     active,
     beside,
+    by_key,
     confirm_stuck,
+    due,
     left_by_an_earlier_version,
     resolve,
     stuck,
+    stuck_beside_a_called_confirm_that_ended,
+    with_a_called_step,
 )
 from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.runtime.transactions import HELD_INCIDENT
 
 pytestmark = pytest.mark.integration
 SATURATE = (
@@ -373,3 +379,84 @@ async def test_a_retry_after_the_point_of_no_return_waits_for_quota_like_forward
     with pytest.raises(CatalogError) as refused:
         await resolve(platform, held["notify:1"], "retry_safe")
     assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+
+
+APPROVAL = {
+    "id": "approval",
+    "kind": "signal",
+    "name": "approve",
+    "timeoutSeconds": 600,
+    "payloadSchema": {"type": "integer"},
+}
+
+
+async def a_wait_is_due(platform, run_id) -> None:
+    await due(platform, run_id, "pause", "waits", "pause")
+
+
+async def a_signal_is_kept(platform, run_id) -> None:
+    await platform.execute(
+        "INSERT INTO signal_receipts SELECT gen_random_uuid(),tenant_id,project_id,environment_id,id,'kept','approve',"
+        "'1',repeat('0',64),clock_timestamp(),false FROM runs WHERE id=:run",
+        run=run_id,
+    )
+
+
+@pytest.mark.parametrize("arrives", [a_wait_is_due, a_signal_is_kept])
+@pytest.mark.parametrize("held", [False, True], ids=["stuck confirm", "held for its size"])
+async def test_force_end_of_a_run_too_large_for_the_kernel_applies_nothing_else(
+    platform, reconciler, monkeypatch, held, arrives
+):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    block = beside(transaction(hold(), submit()), other, PAUSE, APPROVAL)
+    run = await platform.start(await platform.publish(workflow("move", [block])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(platform.leased.pop("hold3"))
+    await platform.complete(await platform.lease("submit"))
+    await stuck(platform, run.id, "hold#confirm")
+    if held:
+        await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    monkeypatch.setattr(kernel, "STATE_BYTES", 1)
+    if held:
+        await platform.scan()
+    await arrives(platform, run.id)
+    rows = await by_key(platform, run.id)
+    assert (HELD_INCIDENT in rows) is held
+    # It can't be applied, and nothing has to be before a run ends: the first Force end is taken.
+    await resolve(platform, rows[HELD_INCIDENT if held else "hold#confirm:1"], "terminate", actor=reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert {(await platform.record(run.id, key))["state"] for key in ("move", "other")} == {"force_ended"}
+
+
+async def test_force_end_of_a_run_too_large_for_the_kernel_applies_no_called_result(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    run, incident = await stuck_beside_a_called_confirm_that_ended(platform)
+    monkeypatch.setattr(kernel, "STATE_BYTES", 1)
+    await resolve(platform, incident, "terminate", actor=reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_force_end_applies_nothing_else_after_it_either(platform, reconciler, monkeypatch):
+    """Force end leaves another transaction to undo, and what that one waits for is too large to apply."""
+    from firefly_weave.runtime import kernel
+    from firefly_weave.runtime.capacity import RuntimeCapacityError
+
+    async def too_large(*_):
+        raise RuntimeCapacityError()
+
+    run, held, cancel_child = await with_a_called_step(platform)
+    await cancel_child()
+    applies = kernel.transition_async
+    monkeypatch.setattr(kernel, "transition_async", too_large)
+    await resolve(platform, held, "terminate", actor=reconciler)
+    state = await platform.state(run.id)
+    assert (state["status"], state["ending"]["status"]) == ("waiting", "cancelled")
+    monkeypatch.setattr(kernel, "transition_async", applies)
+    await platform.scan()
+    await platform.complete(await platform.lease("hold3#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id, "other"))["state"] == "cancelled"

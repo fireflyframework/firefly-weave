@@ -244,8 +244,12 @@ class IncidentService:
                 raise CatalogError(409, "WV-INCIDENT-REVISION", "Incident revision changed")
             # What fell due is applied before the decision, so the person must have read what it left. A refused
             # decision applies none of it: the next scan does, and the person reads it then. A run that recovery
-            # leaves alone is decided as it was read, or its decision would wait for a scan that never comes.
-            await settle(repository, row, terminal_only=await repository.capacity_blocked(row["id"]))
+            # leaves alone is decided as it was read, or its decision would wait for a scan that never comes. Force
+            # end needs nothing but what ends the run either, so a run too large to take the rest still ends.
+            only_ends = (request.kind == "terminate" and incident["code"] in IN_DOUBT_CODES) or (
+                await repository.capacity_blocked(row["id"])
+            )
+            await settle(repository, row, terminal_only=only_ends)
             row = await repository.run(row["id"])
             previous = view_of(row)
             incident = (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0]
@@ -545,7 +549,7 @@ class IncidentService:
                     ),
                 },
             )
-            await settle(repository, await repository.run(previous.id))
+            await settle(repository, await repository.run(previous.id), terminal_only=only_ends)
             return resolved
 
     async def read(

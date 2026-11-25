@@ -185,6 +185,35 @@ async def due(platform, run_id, wait: str, *field: str) -> None:
     )
 
 
+async def with_a_called_step(platform):
+    """A stuck confirm beside another transaction whose step that can't be undone is a called run that still runs; and
+    how to cancel that run."""
+    order = await platform.publish(workflow("slow-order", [LOOKUP], callable_=True, timeout=300))
+    call = {
+        "id": "order",
+        "kind": "callWorkflow",
+        "uses": "slow-order@1.0.0",
+        "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+        "irreversible": True,
+    }
+    other = {**transaction(hold("hold3"), call), "id": "other"}
+    block = beside(transaction(hold(), submit()), other, identifier="fork")
+    run = await platform.start(await platform.publish(workflow("move", [block]), **{"slow-order": order.id}))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(platform.leased.pop("hold3"))
+    await platform.complete(await platform.lease("submit"))
+    held = await stuck(platform, run.id, "hold#confirm")
+    [call] = await platform.query("SELECT child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+
+    async def cancel_child() -> None:
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, call["child_run_id"], "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+
+    return run, held["hold#confirm:1"], cancel_child
+
+
 async def confirm_stuck(platform):
     run = await platform.start(await platform.publish(workflow("move", [transaction(hold(), submit())])))
     for key in ("hold", "submit"):
