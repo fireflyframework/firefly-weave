@@ -34,7 +34,11 @@ import {
 import type { Step } from "../../../model";
 import type { ErrorEntry } from "../../state/test-data";
 import type { Json } from "../registry";
-import { PLATFORM_FAILURES } from "../../state/failure-codes";
+import {
+  PLATFORM_FAILURES,
+  genericFailureMessage,
+} from "../../state/failure-codes";
+import { simulatedOutcome } from "./simulate-failure";
 import { uiKey, type BrowserStorage } from "../../state/browser-store";
 import { studioStorage } from "../../state/studio-storage";
 import { isFileSchema } from "../../../forms/core/file-reference";
@@ -201,15 +205,24 @@ export function inputSources(scope: {
     { id: "input", label: "Workflow input", detail: "", icon: "source" },
   ];
 }
-/** A simulated failure as the platform reports the step's error: its message, outcome and attempts. */
-export function errorData(failure: ErrorEntry): Json {
+/**
+ * A simulated failure of `step` as the platform reports its error: its
+ * message, outcome, attempts and instance. A transform's or a decision
+ * table's failure didn't start, whatever outcome the test data holds.
+ */
+export function errorData(
+  failure: ErrorEntry,
+  step: Step | null,
+  instanceKey: string,
+): Record<string, Json> {
   return {
     code: failure.code,
     message:
       PLATFORM_FAILURES.find((item) => item.code === failure.code)?.message ??
-      `The step failed with code ${failure.code}.`,
-    outcome: failure.outcome ?? "failed",
+      genericFailureMessage(failure.code),
+    outcome: (step && simulatedOutcome(step)) ?? failure.outcome ?? "failed",
     attempts: failure.attempts ?? 1,
+    instanceKey,
   };
 }
 /** An entry of what a step can read: the offline scope's, or the host's inside a loop body, with the loop's item and position. */

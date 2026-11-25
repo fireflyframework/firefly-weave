@@ -1209,15 +1209,16 @@ export class StepDetailsController {
         const key = this.pinKey(id);
         const simulated = this.failureOf(key);
         const handled = this.handledResult(id)?.failure;
-        const error: Record<string, Json> | undefined = simulated
-          ? (errorData(simulated) as Record<string, Json>)
-          : handled && {
-              code: handled.code,
-              message: handled.message,
-              outcome: handled.outcome,
-              attempts: handled.attempts,
-            };
-        return error && { ...error, instanceKey: key };
+        if (simulated) return errorData(simulated, this.step(id), key);
+        return (
+          handled && {
+            code: handled.code,
+            message: handled.message,
+            outcome: handled.outcome,
+            attempts: handled.attempts,
+            instanceKey: key,
+          }
+        );
       },
       stamp: () => [
         this.run()?.version() ?? null,

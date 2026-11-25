@@ -590,8 +590,11 @@ export class InputPane implements OnInit {
       const id = source.slice(6);
       const data = controller.testData;
       data.version();
-      const found = failureOf(data.data(), controller.pinKey(id));
-      return found ? errorData(found.entry) : undefined;
+      const key = controller.pinKey(id);
+      const found = failureOf(data.data(), key);
+      return found
+        ? errorData(found.entry, controller.step(id), key)
+        : undefined;
     }
     if (source.startsWith("step:"))
       // Inside a loop, the earlier step's data for the item picked.

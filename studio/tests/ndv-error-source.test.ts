@@ -80,19 +80,41 @@ describe("the Input pane inside an error path", () => {
   });
 
   it("reads the simulated failure as the platform reports the error", () => {
-    expect(errorData({ code: "WV-EXPR-MISSING" })).toEqual({
-      code: "WV-EXPR-MISSING",
-      message: "A value the step reads is missing.",
-      outcome: "failed",
-      attempts: 1,
-    });
+    const fetch: Step = { id: "fetch", kind: "action" };
+    expect(errorData({ code: "WV-EXPR-MISSING" }, fetch, "node:fetch")).toEqual(
+      {
+        code: "WV-EXPR-MISSING",
+        message: "A value the step reads is missing.",
+        outcome: "failed",
+        attempts: 1,
+        instanceKey: "node:fetch",
+      },
+    );
     expect(
-      errorData({ code: "REQUEST_REFUSED", outcome: "unknown", attempts: 3 }),
+      errorData(
+        { code: "REQUEST_REFUSED", outcome: "unknown", attempts: 3 },
+        fetch,
+        "node:fetch",
+      ),
     ).toEqual({
       code: "REQUEST_REFUSED",
       message: "The step failed with code REQUEST_REFUSED.",
       outcome: "unknown",
       attempts: 3,
+      instanceKey: "node:fetch",
     });
+  });
+
+  it("reports a transform's or a decision table's failure as not started, as the platform does", () => {
+    for (const kind of ["transform", "decisionTable"])
+      for (const outcome of [undefined, "failed"] as const)
+        expect(
+          errorData(
+            { code: "WV-EXPR-MISSING", ...(outcome ? { outcome } : {}) },
+            { id: "submit", kind } as Step,
+            "node:submit",
+          ),
+          `${kind} with ${outcome ?? "no"} outcome`,
+        ).toMatchObject({ outcome: "not_started" });
   });
 });
