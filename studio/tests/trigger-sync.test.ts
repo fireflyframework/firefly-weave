@@ -611,7 +611,7 @@ describe("a platform event trigger after an activation", () => {
     expect(statuses(refused)).toEqual([
       [
         "failed",
-        "Couldn't create notify-team: you need to manage triggers, start runs and read runs in development.",
+        "Couldn't create notify-team: you need permission to manage triggers, start runs and read runs in development.",
       ],
     ]);
     expect(attention(refused)).toBe("1 trigger needs attention.");

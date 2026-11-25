@@ -478,13 +478,31 @@ describe("a row after activating", () => {
     platform.capabilities.delete("run.start");
     expect(await shown(platform, row(planned(platform), "create"))).toEqual({
       ...PLAIN,
-      lead: "Couldn't create notify-team: you need to manage triggers, start runs and read runs in development.",
+      lead: "Couldn't create notify-team: you need permission to manage triggers, start runs and read runs in development.",
       detail:
         "Ask an administrator for these permissions, then activate again.",
       tone: "danger",
       icon: "failCircle",
     });
   });
+
+  it.each<[string, EventDeclaration, "retarget" | "replace"]>([
+    ["move", ATTENTION, "retarget"],
+    ["replace", WIDER, "replace"],
+  ])(
+    "says which trigger still reacts when the person may not %s it",
+    async (_what, declaration, kind) => {
+      const platform = seeded(STORED);
+      platform.capabilities.delete("run.start");
+      const rows = planned(platform, { storedId: "t-1", declaration });
+      expect(await shown(platform, row(rows, kind))).toMatchObject({
+        detail:
+          "notify-team still reacts for 1.1.0. Ask an administrator for these permissions, then activate again.",
+        tone: "danger",
+        action: null,
+      });
+    },
+  );
 
   it("offers Stop it again when the old trigger couldn't be stopped", async () => {
     const platform = seeded(STORED);
@@ -519,7 +537,7 @@ describe("a row after activating", () => {
     const duplicate = row(planned(platform, { storedId: "t-1" }), "duplicate");
     expect(await shown(platform, duplicate)).toEqual({
       ...PLAIN,
-      lead: "Couldn't stop notify-team-2: you need to manage triggers in development.",
+      lead: "Couldn't stop notify-team-2: you need permission to manage triggers in development.",
       detail: "Ask an administrator to stop it, or for the permission.",
       tone: "warning",
       icon: "warning",

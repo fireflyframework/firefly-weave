@@ -353,10 +353,10 @@ test("a trigger that may resolve transactions says so, and so does its refusal",
   ]);
   await activate(dialog);
   await expect(eventRows(dialog)).toContainText([
-    /Couldn't create notify-team-2: you need to manage triggers, start runs and read runs and reconcile transactions in development\./,
+    /Couldn't create notify-team-2: you need permission to manage triggers, start runs, read runs and reconcile transactions in development\./,
   ]);
   await expect(eventRows(dialog)).toContainText([
-    "Ask an administrator for these permissions, then activate again.",
+    "notify-team still reacts for 1.1.0. Ask an administrator for these permissions, then activate again.",
   ]);
   // Trying again changes nothing while the permission is missing.
   await expect(dialog.getByRole("button", { name: "Retry" })).toHaveCount(0);

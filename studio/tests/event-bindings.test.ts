@@ -174,7 +174,7 @@ describe("creating the trigger", () => {
       status: "failed",
       retry: "create",
       forbidden: true,
-      text: "Couldn't create notify-team: you need to manage triggers, start runs and read runs in local.",
+      text: "Couldn't create notify-team: you need permission to manage triggers, start runs and read runs in local.",
     });
   });
 
@@ -677,7 +677,7 @@ describe("replacing the trigger when the version reacts to other events", () => 
     expect(refused).toMatchObject({
       status: "failed",
       forbidden: true,
-      text: "Couldn't create notify-team-2: you need to manage triggers, start runs and read runs and reconcile transactions in local.",
+      text: "Couldn't create notify-team-2: you need permission to manage triggers, start runs, read runs and reconcile transactions in local.",
     });
     platform.capabilities.add("transaction.reconcile");
     expect(await apply(platform, row)).toMatchObject({ status: "replaced" });

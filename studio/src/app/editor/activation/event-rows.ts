@@ -199,8 +199,11 @@ const stillReacting = (row: EventRow) => {
   return said ? `B${said.slice(1)}` : keepsRunning(row);
 };
 
+const stillReacts = (
+  row: Extract<EventRow, { kind: "retarget" | "replace" }>,
+) => `${row.binding.name} still reacts for ${row.from}.`;
 const unchanged = (row: Extract<EventRow, { kind: "retarget" | "replace" }>) =>
-  `Nothing changed: ${row.binding.name} still reacts for ${row.from}.`;
+  `Nothing changed: ${stillReacts(row)}`;
 
 function resultDetail(row: EventRow, result: EventResult): string | null {
   switch (result.status) {
@@ -238,7 +241,11 @@ function resultDetail(row: EventRow, result: EventResult): string | null {
           ? "Ask an administrator to stop it, or for the permission."
           : stillReacting(row);
       if (result.forbidden)
-        return "Ask an administrator for these permissions, then activate again.";
+        return `${
+          row.kind === "retarget" || row.kind === "replace"
+            ? `${stillReacts(row)} `
+            : ""
+        }Ask an administrator for these permissions, then activate again.`;
       if (row.kind === "retarget" || row.kind === "create") {
         if (result.unknown)
           return `Retry first checks whether it was ${row.kind === "create" ? "created" : "moved"}.`;
@@ -246,7 +253,7 @@ function resultDetail(row: EventRow, result: EventResult): string | null {
       }
       if (row.kind !== "replace") return null;
       return result.unknown
-        ? `${row.binding.name} still reacts for ${row.from}. Retry first checks whether ${result.asked} was created.`
+        ? `${stillReacts(row)} Retry first checks whether ${result.asked} was created.`
         : unchanged(row);
     default:
       return null;

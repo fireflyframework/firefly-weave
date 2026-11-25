@@ -605,9 +605,9 @@ function failure(error: unknown): { forbidden?: true; unknown?: true } {
 /** Why a create or move was refused, with the permissions a 403 means. */
 function refusedFor(error: unknown, where: string, reconciles: boolean) {
   if (isForbidden(error))
-    return reconciles
-      ? `you need to manage triggers, start runs and read runs and reconcile transactions in ${where}.`
-      : `you need to manage triggers, start runs and read runs in ${where}.`;
+    return `you need permission to manage triggers, start runs${
+      reconciles ? ", read runs and reconcile transactions" : " and read runs"
+    } in ${where}.`;
   return (
     (error instanceof ApiError ? CREATE_REFUSALS[error.code] : undefined) ??
     withPeriod(describeError(error).message)
@@ -615,7 +615,7 @@ function refusedFor(error: unknown, where: string, reconciles: boolean) {
 }
 const stopRefused = (error: unknown, where: string) =>
   isForbidden(error)
-    ? `you need to manage triggers in ${where}.`
+    ? `you need permission to manage triggers in ${where}.`
     : withPeriod(describeError(error).message);
 const changedText = (name: string) =>
   `${name} changed since you opened this. Review it.`;

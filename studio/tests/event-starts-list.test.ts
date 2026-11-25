@@ -679,7 +679,7 @@ describe("a stop Studio still owes", () => {
     await f.list.stop();
     expect(callout(f)).toEqual({
       tone: "danger",
-      lead: "Couldn't stop notify-team: you need to manage triggers in development.",
+      lead: "Couldn't stop notify-team: you need permission to manage triggers in development.",
       detail: "Ask an administrator to stop it, or for the permission.",
       actions: [],
       busy: false,
