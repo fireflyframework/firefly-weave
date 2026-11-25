@@ -184,17 +184,20 @@ const isRecord = (value: unknown): value is Json =>
           Pause run
         </button>
       }
+      <!-- While the platform would refuse a cancel it stays here, focusable, saying why. -->
       @if (!h.runTerminal() && h.can("run.cancel", id)) {
+        @let held = actions.held();
         <button
           class="danger"
+          [attr.aria-disabled]="held ? 'true' : null"
+          [attr.aria-describedby]="held ? 'cancel-blocked-reason' : null"
           [disabled]="h.busy !== '' || h.unknownCommand"
-          (click)="actions.cancel()"
+          (click)="held ? null : actions.cancel()"
         >
           Cancel run
         </button>
       }
       @if (actions.withoutUndoing(); as offer) {
-        <!-- While a transaction is in doubt it stays here, focusable, saying why. -->
         <button
           class="danger"
           [attr.aria-disabled]="offer.blocked ? 'true' : null"
@@ -223,13 +226,13 @@ const isRecord = (value: unknown): value is Json =>
         <weave-icon name="download" [size]="16" />Export history
       </button>
     </div>
-    @if (actions.withoutUndoing()?.blocked; as blocked) {
+    @if (actions.waits(); as wait) {
       <p class="cancel-blocked">
         <weave-icon name="warning" [size]="16" /><span
           id="cancel-blocked-reason"
-          >{{ blocked.text }}</span
+          >{{ wait.text }}</span
         >
-        @if (blocked.incidentId; as incident) {
+        @if (wait.incidentId; as incident) {
           <button
             type="button"
             class="text-link"

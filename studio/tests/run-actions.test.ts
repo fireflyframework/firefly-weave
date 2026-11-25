@@ -739,6 +739,72 @@ describe("Cancel run on a run with transactions", () => {
   });
 });
 
+describe("a run held whole", () => {
+  const HELD_LINE =
+    "This run is held, so it can't be canceled. Force end it from its incident.";
+  const holding = (id: string, status: string): Json => ({
+    id,
+    state: {
+      status,
+      incident: "WV-TASK-AMBIGUOUS",
+      incidents: {
+        "0send:0": { node_id: "send", code: "WV-TASK-AMBIGUOUS" },
+        "@transactions:0": {
+          node_id: "@transactions",
+          code: "WV-TXN-RUN-OVERSIZED",
+        },
+      },
+    },
+  });
+
+  it("sends and reads nothing for a cancel the platform would refuse, and says why under the row", async () => {
+    const s = shell();
+    s.host.selectedRecord = holding(first, "suspended");
+    s.actions.know(first, [open], true);
+    expect(s.actions.held()).toBe(true);
+    expect(s.actions.waits()).toEqual({ text: HELD_LINE, incidentId: null });
+    expect(s.actions.withoutUndoing()).toEqual({
+      blocked: { text: HELD_LINE, incidentId: null },
+    });
+    await s.actions.cancel();
+    await s.actions.cancelWithoutUndoing();
+    expect(s.calls.transactionReads).toEqual([]);
+    expect(s.calls.forms).toBe(0);
+    expect(s.calls.sent).toEqual([]);
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.notices).toEqual([]);
+  });
+
+  it("says so once, also while one of its transactions is in doubt", () => {
+    const s = shell();
+    s.host.selectedRecord = holding(first, "suspended");
+    s.actions.know(first, [open, inDoubt], true);
+    expect(s.actions.waits()).toEqual({ text: HELD_LINE, incidentId: null });
+  });
+
+  it("says nothing to a person who can't cancel it, nor of a run that ended", () => {
+    const s = shell();
+    s.host.selectedRecord = holding(first, "suspended");
+    s.host.can = (capability: string) => capability !== "run.cancel";
+    expect(s.actions.waits()).toBeNull();
+    s.host.can = () => true;
+    s.host.selectedRecord = holding(first, "cancelled");
+    expect(s.actions.held()).toBe(false);
+    expect(s.actions.waits()).toBeNull();
+  });
+
+  it("is no run with another incident: its line is the one of a transaction in doubt, or none", () => {
+    const s = shell();
+    expect(s.actions.held()).toBe(false);
+    expect(s.actions.waits()).toBeNull();
+    s.actions.know(first, [open, inDoubt], true);
+    expect(s.actions.waits()).toEqual({
+      text: IN_DOUBT_LINE,
+      incidentId: incident,
+    });
+  });
+});
+
 describe("Cancel without undoing", () => {
   it("is offered only with run.cancel, transaction.reconcile and a transaction not settled", () => {
     const s = shell();

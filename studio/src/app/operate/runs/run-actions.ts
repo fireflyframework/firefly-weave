@@ -32,6 +32,7 @@ import type { StartRunRequest } from "../../run/start-run-dialog";
 import { MAX_PAGES, REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
 import {
+  HELD_RUN,
   UNSETTLED,
   readRunTransactions,
   type RunTransactionView,
@@ -57,6 +58,20 @@ export function runState(run: Json): string {
 }
 export function isTerminal(run: Json) {
   return terminalRunStatuses.includes(runState(run) as RunStatus);
+}
+
+/**
+ * Whether the run is held whole, as too large to undo its transactions: the
+ * platform refuses to cancel it, with or without undoing.
+ */
+function isHeld(run: Json): boolean {
+  const state = isRecord(run["state"]) ? run["state"] : {};
+  return (
+    isRecord(state["incidents"]) &&
+    Object.values(state["incidents"]).some(
+      (incident) => isRecord(incident) && incident["code"] === HELD_RUN,
+    )
+  );
 }
 
 /** The signal name a waiting run expects, from its active signal step. */
@@ -186,6 +201,14 @@ export const UNDO_FIRST =
 /** Why Cancel without undoing waits while a transaction is in doubt. */
 export const IN_DOUBT_LINE =
   "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.";
+/** Why neither cancel can be sent for a run held whole. */
+export const HELD_LINE =
+  "This run is held, so it can't be canceled. Force end it from its incident.";
+/** Why a cancel waits, and the incident to resolve first when one is known. */
+export interface CancelWait {
+  text: string;
+  incidentId: string | null;
+}
 const STAYS = "Steps already done stay done in other systems.";
 
 /**
@@ -370,6 +393,7 @@ export class RunActions {
       !target ||
       host.busy ||
       isTerminal(this.run()) ||
+      this.held() ||
       !host.can("run.cancel", target.id)
     )
       return;
@@ -463,16 +487,27 @@ export class RunActions {
     }
   }
 
+  /** Whether the open run is held whole: neither cancel is sent for it. */
+  held(): boolean {
+    const run = this.run();
+    return !isTerminal(run) && isHeld(run);
+  }
+  /** Why a cancel of the open run waits, for the line under the action row. */
+  waits(): CancelWait | null {
+    if (!this.held()) return this.withoutUndoing()?.blocked ?? null;
+    return this.host().can("run.cancel", text(this.run()["id"]))
+      ? { text: HELD_LINE, incidentId: null }
+      : null;
+  }
+
   /**
    * Cancel without undoing, offered with run.cancel and transaction.reconcile
    * while a transaction of the run hasn't settled, or while some of its
    * transactions are unread, where one may not have: pressing it reads every
-   * page, which decides. `blocked` says why it waits while one is in doubt.
-   * Null when it isn't offered.
+   * page, which decides. `blocked` says why it waits while one is in doubt, or
+   * while the run is held whole. Null when it isn't offered.
    */
-  withoutUndoing(): {
-    blocked: { text: string; incidentId: string | null } | null;
-  } | null {
+  withoutUndoing(): { blocked: CancelWait | null } | null {
     const host = this.host();
     const run = this.run();
     const id = text(run["id"]);
@@ -485,6 +520,7 @@ export class RunActions {
       !known.views.some((view) => UNSETTLED.includes(view.state))
     )
       return null;
+    if (this.held()) return { blocked: { text: HELD_LINE, incidentId: null } };
     const doubt = known.views.find((view) => view.state === "in_doubt");
     return {
       blocked: doubt
@@ -506,6 +542,7 @@ export class RunActions {
       !target ||
       host.busy ||
       isTerminal(this.run()) ||
+      this.held() ||
       !host.can("run.cancel", target.id) ||
       !host.can("transaction.reconcile", target.id)
     )
