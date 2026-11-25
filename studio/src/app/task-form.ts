@@ -1321,19 +1321,35 @@ export class TaskForm implements OnChanges {
     const active = host.ownerDocument.activeElement as HTMLInputElement | null;
     const index = controls().findIndex((control) => control === active);
     if (!active || index < 0) return () => undefined;
-    const { value, selectionStart, selectionEnd, scrollTop } = active;
+    const { value, selectionStart, selectionEnd } = active;
     return () => {
       const control = controls()[index];
       if (!control) return;
       if (control !== host.ownerDocument.activeElement)
         control.focus({ preventScroll: true });
       if (typeof selectionStart !== "number" || control.value === value) return;
+      const end = caretAfter(
+        value,
+        selectionEnd ?? selectionStart,
+        control.value,
+      );
+      if (control.tagName === "TEXTAREA") this.scrollTo(control, end);
       control.setSelectionRange(
         caretAfter(value, selectionStart, control.value),
-        caretAfter(value, selectionEnd ?? selectionStart, control.value),
+        end,
       );
-      control.scrollTop = scrollTop;
     };
+  }
+  /** Scrolls a box as little as shows the line its text has at `at`. */
+  private scrollTo(box: HTMLInputElement, at: number): void {
+    const { value, clientHeight, scrollTop } = box;
+    // The text up to there is as tall as its line is low.
+    box.value = value.slice(0, at);
+    const bottom = box.scrollHeight;
+    box.value = value;
+    const shown = bottom > scrollTop && bottom <= scrollTop + clientHeight;
+    box.scrollTop =
+      bottom <= clientHeight ? 0 : shown ? scrollTop : bottom - clientHeight;
   }
   /**
    * The bound tree with `node` at `path`, or without the field. A single

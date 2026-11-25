@@ -324,9 +324,30 @@ test.describe("a real platform event entered in another Test event pane", () => 
       for (const id of Object.values(REAL)) expect(text).not.toContain(id);
       return text;
     };
+    /** How far the caret's line ends below the box's view, and how far above its end it starts. */
+    const caretLine = () =>
+      box.evaluate((element: HTMLTextAreaElement) => {
+        const copy = element.cloneNode() as HTMLTextAreaElement;
+        copy.style.cssText = `position: absolute; resize: none; height: 0; min-height: 0; width: ${element.offsetWidth}px`;
+        element.after(copy);
+        copy.value = element.value.slice(0, element.selectionEnd);
+        const bottom = copy.scrollHeight;
+        copy.remove();
+        const { scrollTop, clientHeight } = element;
+        return {
+          below: bottom - scrollTop - clientHeight,
+          above: scrollTop - bottom,
+        };
+      });
+    const inView = async () => {
+      const line = await caretLine();
+      expect(line.below).toBeLessThanOrEqual(1);
+      expect(line.above).toBeLessThan(0);
+    };
     const first = await held();
     await expect(box).toBeFocused();
     expect(await caret()).toBe(first);
+    await inView();
     // A real ID put back gets the sample ID it had, the caret right after it.
     await box.evaluate((element: HTMLTextAreaElement) => {
       const start = element.value.indexOf('"event_id": "') + 13;
@@ -336,6 +357,7 @@ test.describe("a real platform event entered in another Test event pane", () => 
     await expect(box).toHaveValue(first);
     await expect(box).toBeFocused();
     expect(await caret()).toMatch(/"event_id": "[0-9a-f-]{36}$/);
+    await inView();
     // A refused change says what is wrong, and no more what Studio replaced.
     await box.fill(JSON.stringify({ ...pastedEvent(), root_event_id: "x" }));
     await expect(pane.getByRole("alert")).toHaveText(
