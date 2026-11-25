@@ -32,7 +32,7 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
-from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.definitions import NAME_PATTERN, SEMVER_PATTERN, ActionDefinition, load_definition
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
@@ -317,7 +317,8 @@ def simulation_catalog(
             if kind not in ("action", "callWorkflow"):
                 continue
             used = ("Action" if kind == "action" else "Workflow", cast(str, operation["uses"]))
-            if used in merged.resources:
+            # Nothing can stand for a reference that isn't a name and a version: the compiler says what is wrong.
+            if used in merged.resources or re.fullmatch(f"{NAME_PATTERN}@{SEMVER_PATTERN}", used[1]) is None:
                 continue
             missing.add(used)
             if phase is not None:

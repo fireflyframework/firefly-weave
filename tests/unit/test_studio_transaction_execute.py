@@ -1423,6 +1423,21 @@ def test_a_called_undo_nobody_has_runs_on_a_stub():
     assert (states(answer)["move"][0], keys(answer)) == ("compensated", ["add#undo", "hold#cancel"])
 
 
+@pytest.mark.parametrize("uses", ["", "@", "noversion", "A B@1.0.0"])
+@pytest.mark.parametrize(
+    "phase, kind",
+    [("confirm", "action"), ("compensate", "action"), ("compensate", "callWorkflow"), (None, "action")],
+    ids=["a confirm", "an undo", "a called undo", "a step"],
+)
+def test_a_reference_that_isnt_a_name_and_a_version_answers_the_compilers_diagnostic(uses, phase, kind):
+    step = hold() if phase == "confirm" else add()
+    (step if phase is None else step[phase]).update(uses=uses, kind=kind)
+    workflow = move(step, submit())
+    stubbed, plain = (run_move(workflow, stubUnresolved=stubs)["compile"] for stubs in (True, False))
+    assert [item["code"] for item in stubbed["diagnostics"] if item["severity"] == "error"]
+    assert stubbed == plain
+
+
 # --- a called undo that can't run, and misfits --------------------------------------------------------------------
 
 
