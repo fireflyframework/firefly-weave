@@ -28,7 +28,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.operations.debug.transactions import PhaseTarget
     from firefly_weave.runtime.kernel import PreparedWorkflow
-    from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TransactionRecord
+    from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TransactionRecord
     from firefly_weave.runtime.transactions import TransactionShapes
     from firefly_weave.studio.local_contracts import (
         CompileSummary,
@@ -615,28 +615,32 @@ def _callees(request: SimulationRequest, catalog: CatalogSnapshot, stubs: Iterab
 
 def _called(
     artifact: Any, request: SimulationRequest, documents: Mapping[str, JsonObject], catalog: CatalogSnapshot
-) -> dict[str, Any]:
-    """Compiled called workflows the run reaches, with the mocks test data holds for their steps."""
+) -> tuple[dict[str, Any], set[str]]:
+    """Compiled called workflows the run reaches, with the mocks test data holds for their steps; and those the
+    request brings that don't read or compile."""
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.models import CalledWorkflow
 
     called: dict[str, Any] = {}
+    broken: set[str] = set()
     pending = [artifact]
     while pending:
         current = pending.pop()
         for dependency in _dependencies(current):
             reference = dependency.reference
-            if dependency.kind != "Workflow" or reference in called or reference not in documents:
+            if dependency.kind != "Workflow" or reference in called or reference not in request.workflows:
                 continue
-            result = compile_source(documents[reference], format="object", catalog=catalog)
-            if not result.ok or result.artifact is None:
+            document = documents.get(reference)
+            result = compile_source(document, format="object", catalog=catalog) if document is not None else None
+            if result is None or not result.ok or result.artifact is None:
+                broken.add(reference)
                 continue
             called[reference] = CalledWorkflow(
                 artifact=json.loads(result.artifact.to_bytes()),
                 mocks=dict(request.workflows[reference].mocks),
             )
             pending.append(result.artifact)
-    return called
+    return called, broken
 
 
 def _dependencies(artifact: Any) -> list[Any]:
@@ -738,7 +742,7 @@ def simulator_for(
     ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in request.scripts.aiTurns.items()}
     kept = _in_slice(document, whole, {k: v for k, v in request.mocks.items() if k not in misfits})
     mocks = with_ai_turns(artifact, kept, ai_turns)
-    workflows = _called(artifact, request, callees, catalog)
+    workflows, broken = _called(artifact, request, callees, catalog)
     errors = {
         key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts, effect=failure.effect)
         for key, failure in _in_slice(document, whole, request.errors).items()
@@ -747,6 +751,7 @@ def simulator_for(
         simulator = _watching_simulator()(
             artifact,
             target=target,
+            broken=broken - set(stubs),
             mocks=mocks,
             input=request.input,
             now=request.now,
@@ -784,12 +789,17 @@ def _watching_simulator() -> Any:
     from firefly_weave.compiler.ir import JoinNode
     from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.operations.debug.transactions import phase_target
     from firefly_weave.runtime.control import loop_suffix
     from firefly_weave.runtime.kernel import _advance_owned, begin
 
     class WatchingSimulator(Simulator):
-        def __init__(self, artifact: CompiledArtifact, *, target: str | None = None, **options: Any) -> None:
+        def __init__(
+            self, artifact: CompiledArtifact, *, target: str | None = None, broken: Collection[str] = (), **options: Any
+        ) -> None:
             super().__init__(artifact, **options)
+            # The called workflows of the request that don't compile.
+            self._broken = frozenset(broken)
             self._records: dict[str, dict[str, TransactionRecord]] = {}
             self._target = target
             shapes = self._prepared.transactions
@@ -822,6 +832,21 @@ def _watching_simulator() -> Any:
         def stopped(self) -> set[str]:
             """The transactions that stopped at the target, by instance key."""
             return set(self._stopped)
+
+        def broken_phase(self, frame: str, key: str) -> str | None:
+            """The called workflow of the request that a confirm, release or undo can't run, as it doesn't compile."""
+            phase = phase_target(self.prepared_of(frame), key)
+            return phase.reference if phase is not None and phase.reference in self._broken else None
+
+        def _call(self, key: str, run: Any, called: Any, command: CallIntent, *, generation: int | None = None) -> bool:
+            # A step's call asks for test data then. So does a confirm, release or undo, which would otherwise count
+            # as done with nothing to say.
+            if self.broken_phase(key, command.node_id) is not None:
+                answer = self._answer(key, command.node_id, (), retry=generation is not None)
+                if answer.kind == "none":
+                    self._missing("A called confirm, cancel or undo doesn't compile.", "Pin its output, or fix it.")
+                    return False
+            return super()._call(key, run, called, command, generation=generation)
 
         def _shown(self, key: str, record: TransactionRecord) -> TransactionRecord:
             state, held = self._stopped[key]
@@ -1205,7 +1230,11 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             what = f"The {named}" if named is not None else f"Step {step}"
             workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
             calling = _called_phase(inside)
-            if calling is not None:
+            broken = cast(Any, simulator).broken_phase(inside, last) if calling is None else None
+            if broken is not None:
+                within = f" in {workflow}" if workflow else ""
+                message = f"{what}{within} can't run, because {broken.rpartition('@')[0]} doesn't compile."
+            elif calling is not None:
                 # Inside a called confirm, release or undo: it is answered whole, where it is called.
                 inside, last = calling
                 message = f"The {_phase_name(last)} needs test data: step {step} of {workflow} has none."

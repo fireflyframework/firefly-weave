@@ -1262,6 +1262,7 @@ def test_a_failure_code_over_the_route_is_answered_as_a_cause(tmp_path):
 
 # --- stubs of confirms, releases and undos ----------------------------------------------------------------------
 
+
 def without(*names: str) -> list[dict[str, Any]]:
     return [item for item in fixture()["definitions"] if item["metadata"]["name"] not in names]
 
@@ -1290,3 +1291,54 @@ def test_a_called_undo_nobody_has_runs_on_a_stub():
     assert answer["compile"]["ok"], answer["compile"]["diagnostics"]
     assert answer["compile"]["stubs"] == [f"{UNDO}@1.0.0"]
     assert (states(answer)["move"][0], keys(answer)) == ("compensated", ["add#undo", "hold#cancel"])
+
+
+# --- a called undo that can't run, and misfits --------------------------------------------------------------------
+
+
+def broken_undo(**workflow: Any) -> ExecuteRequest:
+    """A move undone by a called workflow that the request brings and that doesn't compile."""
+    body = undo_by_call_request(DONE).model_dump(mode="json", by_alias=True, exclude_unset=True)
+    for item in body["definitions"]:
+        if item["metadata"]["name"] == UNDO:
+            item["spec"]["steps"] = [{**LOOKUP, "uses": "nobody.has@1.0.0"}]
+    body["workflows"] = {f"{UNDO}@1.0.0": {"mocks": {}, **workflow}}
+    return ExecuteRequest.model_validate_json(json.dumps(body))
+
+
+@pytest.mark.parametrize(
+    "workflow", [{}, {"source": "{", "format": "json"}], ids=["doesn't compile", "doesn't read as a workflow"]
+)
+def test_a_called_undo_in_the_request_that_doesnt_compile_never_counts_as_done(workflow):
+    answer = answered(broken_undo(**workflow))
+    assert answer["blocked"] == {
+        "reason": "missing_mock",
+        "nodeId": "add",
+        "instanceKey": "add#undo",
+        "message": "The undo of add can't run, because reverse-target-addition doesn't compile.",
+    }
+    assert [(phase["instanceKey"], phase["status"]) for phase in answer["phases"]] == [("add#undo", "waiting")]
+    assert states(answer)["move"] == ("compensating", {"hold": "done", "add": "undoing", "submit": "failed"})
+    # A pin stands for it.
+    body = broken_undo(**workflow)
+    pinned = answered(body.model_copy(update={"mocks": {**body.mocks, "node:add#undo": {}}}))
+    assert (keys(pinned), states(pinned)["move"][0]) == (["add#undo", "hold#cancel"], "compensated")
+
+
+def test_a_called_undo_of_a_called_workflow_that_doesnt_compile_never_counts_as_done():
+    undo, _ = callee(UNDO, [DONE])
+    undo["spec"]["steps"] = [{**LOOKUP, "uses": "nobody.has@1.0.0"}]
+    answer = inside_a_call(
+        hold(),
+        reverse_by_call(),
+        STOP,
+        definitions=[*without(UNDO), undo],
+        workflows={f"{UNDO}@1.0.0": {"mocks": {}}},
+    )
+    assert answer["blocked"] == {
+        "reason": "missing_mock",
+        "nodeId": "add",
+        "instanceKey": "add#undo",
+        "message": "The undo of add in inside can't run, because reverse-target-addition doesn't compile.",
+        "frame": "call",
+    }
