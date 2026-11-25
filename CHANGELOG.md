@@ -52,6 +52,12 @@ SPDX-License-Identifier: Apache-2.0
   `completed` answers HTTP 422 `WV-RUNTIME-OUTPUT` instead of HTTP 500 while the
   run would go on after the block, and says to use Force end unless everything
   was undone; `compensated` and Force end work as before.
+- Recovery works on each run, call, and event-triggered start on its own. When
+  the work of one raises an unexpected error or its write is refused, recovery
+  records nothing for it, logs its ID and environment with the error's type,
+  code, and line, counts it in the new `weave.recovery_failures` metric, and
+  tries it again after 5 seconds, doubling up to 5 minutes. The loop's health
+  doesn't show these failures, so alert on the metric.
 - Two decisions sent at once on one incident no longer answer HTTP 429
   `WV-OPERATION-CAPACITY` when the first takes more than 250 ms: the later one
   waits up to 2 seconds for it, then answers HTTP 409 `WV-INCIDENT-REVISION`. A
