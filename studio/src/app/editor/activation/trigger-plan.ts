@@ -175,7 +175,7 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
   };
 
   for (const intent of input.intents) {
-    if (intent.kind === "manual") continue;
+    if (intent.kind === "manual" || intent.kind === "event") continue;
     if (intent.kind === "called") {
       rows.push({
         kind: "called",

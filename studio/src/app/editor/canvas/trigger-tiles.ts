@@ -21,6 +21,11 @@ SPDX-License-Identifier: Apache-2.0
 import type { TriggerIntent } from "../state/canvas-sidecar";
 import type { Workflow } from "../../model";
 import type { CanvasSidecar } from "../state/canvas-sidecar";
+import {
+  eventTileName,
+  eventTileSubtitle,
+  readDeclaration,
+} from "../triggers/event-trigger";
 import type { TriggerKind } from "./layout-ltr";
 import { triggerSubtitle } from "./tile-facts";
 
@@ -32,6 +37,7 @@ export const TRIGGER_LABELS: Readonly<Record<TriggerKind, string>> = {
   email: "Email",
   provider: "App event",
   called: "Called by a workflow",
+  event: "Platform event",
 };
 export const TRIGGER_ICONS: Readonly<Record<TriggerKind, string>> = {
   manual: "manualTrigger",
@@ -41,6 +47,8 @@ export const TRIGGER_ICONS: Readonly<Record<TriggerKind, string>> = {
   email: "email",
   provider: "appEvent",
   called: "calledTrigger",
+  // The Runs tab's icon for the runs a platform event started.
+  event: "signal",
 };
 export const TRIGGER_DESCRIPTIONS: Readonly<Record<TriggerKind, string>> = {
   manual: "Start runs yourself, from a form for the input",
@@ -50,6 +58,7 @@ export const TRIGGER_DESCRIPTIONS: Readonly<Record<TriggerKind, string>> = {
   email: "Start a run when an email arrives",
   provider: "WhatsApp, Telegram or Teams events",
   called: "Run as a sub-workflow of other workflows",
+  event: "Start a run when a transaction needs attention",
 };
 export const TRIGGER_KEYWORDS: Readonly<Record<TriggerKind, string>> = {
   manual: "form manual start button input on demand",
@@ -59,19 +68,25 @@ export const TRIGGER_KEYWORDS: Readonly<Record<TriggerKind, string>> = {
   email: "mail inbox imap message",
   provider: "whatsapp telegram teams chat app message event",
   called: "sub-workflow subworkflow call execute workflow",
+  event:
+    "platform event transaction attention doubt undone canceled completed reconciled force ended react",
 };
 export const SET_UP_LATER = "Set up at activation";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-/** A trigger tile's icon, title (the trigger's name) and a short subtitle that fits the tile. */
+/**
+ * A trigger tile's icon, title (the trigger's name) and a short subtitle that
+ * fits the tile; `name` is its accessible name and tooltip when they say more
+ * than the subtitle has room for.
+ */
 export function triggerTile(
   kind: TriggerKind,
   workflow: Workflow,
   /** The trigger choice, when an activation took the settings it has now. */
   activated?: TriggerIntent,
-): { icon: string; title: string; subtitle: string } {
+): { icon: string; title: string; subtitle: string; name?: string } {
   const icon = TRIGGER_ICONS[kind];
   const title = TRIGGER_LABELS[kind];
   if (kind === "manual")
@@ -89,6 +104,15 @@ export function triggerTile(
       subtitle: callers
         ? `Only ${callers} ${callers === 1 ? "workflow" : "workflows"}`
         : "Any workflow",
+    };
+  }
+  if (kind === "event") {
+    const declaration = readDeclaration(workflow) ?? { events: [], from: null };
+    return {
+      icon,
+      title,
+      subtitle: eventTileSubtitle(declaration),
+      name: eventTileName(declaration),
     };
   }
   // Set up at activation until an activation took the settings it has now.

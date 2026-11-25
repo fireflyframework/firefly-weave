@@ -808,12 +808,14 @@ export class CanvasView implements OnInit, DoCheck {
         title: trigger ? trigger.title : "End",
         subtitle: state.listening ? LISTENING : (trigger?.subtitle ?? ""),
         name: trigger
-          ? `${trigger.title} trigger, ${state.listening ? LISTENING : trigger.subtitle}`
+          ? trigger.name && !state.listening
+            ? trigger.name
+            : `${trigger.title} trigger, ${state.listening ? LISTENING : trigger.subtitle}`
           : "End, workflow result",
         tooltip: trigger
           ? trigger.manual
             ? "Open the workflow inputs"
-            : `${trigger.title} · ${trigger.subtitle}`
+            : (trigger.name ?? `${trigger.title} · ${trigger.subtitle}`)
           : "Open the workflow result",
         badge: null,
         borders: state.listening ? LISTENING_BORDERS : NO_BORDERS,

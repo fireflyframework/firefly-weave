@@ -94,7 +94,8 @@ export type TriggerKind =
   | "broker"
   | "email"
   | "provider"
-  | "called";
+  | "called"
+  | "event";
 export interface TriggerInput {
   id: string;
   kind: TriggerKind;
@@ -1323,9 +1324,11 @@ export function labelScale(zoom: number): number {
  * A step's label block width in canvas units: 168 from 100% up; below, its
  * whole column less a visible gap, so a name has two lines of room. A
  * parallel step's bar is 76 units narrower than a tile, and so is its block.
+ * A trigger keeps its column at every zoom: its subtitle says what starts the
+ * workflow ("Needs attention · any workflow"), longer than a step's.
  */
 export function labelWidth(zoom: number, shape: TileShape = "square"): number {
-  if (zoom >= 1) return LTR.label;
+  if (zoom >= 1 && shape !== "trigger") return LTR.label;
   return shape === "fork"
     ? LTR.labelWide - (LTR.tile - LTR.bar)
     : LTR.labelWide;

@@ -29,7 +29,13 @@ import {
 import { ndvRegistry } from "../ndv/registry";
 import type { Insertion, TriggerKind } from "../canvas/layout-ltr";
 import { uniqueIdentifier } from "../ndv/params/identifiers";
-import { addTrigger, type TriggerChange } from "../state/canvas-sidecar";
+import type { DialogOptions } from "../../dialog";
+import { eventInputFit } from "../triggers/event-trigger";
+import {
+  addTrigger,
+  inputFitQuestion,
+  type TriggerChange,
+} from "./add-trigger";
 import type { PanelEntry, Preset } from "./entries";
 import { placeExists, type PlaceMark } from "./place";
 
@@ -44,6 +50,8 @@ export interface InsertHost {
   /** Runs a model edit and records it; the error sentence, or "" when it worked. */
   edit(change: () => void): string;
   notify(text: string): void;
+  /** Asks in a dialog; true for its main answer. */
+  confirm(question: DialogOptions): Promise<boolean>;
   /** After a step was inserted: its step details, on the first required empty field. */
   openInserted(id: string): void;
   /** After a trigger was chosen: its details (the input form), or its tile. */
@@ -147,6 +155,17 @@ export async function insertEntry(
     return "gone";
   }
   if (insert.kind === "trigger") {
+    let replaceInput = false;
+    const inputSchema = model.definition.spec["inputSchema"];
+    if (insert.trigger === "event" && eventInputFit(inputSchema) === "ask") {
+      const revision = model.revision;
+      replaceInput = await host.confirm(inputFitQuestion(inputSchema));
+      // The answer is about the workflow as it was when it was asked.
+      if (model.revision !== revision || host.editingLocked || moved()) {
+        host.notify(GONE);
+        return "gone";
+      }
+    }
     let change: TriggerChange;
     try {
       change = addTrigger(
@@ -154,6 +173,8 @@ export async function insertEntry(
         model.definition,
         insert.trigger,
         model.stepIdSet().size > 0,
+        undefined,
+        replaceInput,
       );
     } catch (error) {
       host.notify(error instanceof Error ? error.message : String(error));

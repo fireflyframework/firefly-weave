@@ -25,6 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 import { isJsonObject } from "../../forms/core/json";
 import type { Workflow } from "../../model";
 import {
+  EVENT_CHOICE_ORDER,
   EVENT_CHOICES,
   EVENT_TYPES,
   isPlatformEventInput,
@@ -115,6 +116,47 @@ export function eventSubtitle(declaration: EventDeclaration): string {
   return `${what} · ${where}`;
 }
 
+/** "Needs attention · 1 workflow", "3 events · any workflow": the tile's subtitle, counted so it fits. */
+export function eventTileSubtitle(declaration: EventDeclaration): string {
+  const { events, from } = declaration;
+  if (!events.length) return "No events chosen";
+  const what =
+    events.length === 1
+      ? EVENT_CHOICES[events[0]!].short
+      : `${events.length} events`;
+  const where =
+    from === null
+      ? "any workflow"
+      : from.length === 0
+        ? "no workflow"
+        : `${from.length} ${from.length === 1 ? "workflow" : "workflows"}`;
+  return `${what} · ${where}`;
+}
+
+const joined = (words: readonly string[]) =>
+  words.length < 2
+    ? words.join("")
+    : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+
+/** The tile's tooltip and accessible name: every event and every workflow, in full. */
+export function eventTileName(declaration: EventDeclaration): string {
+  const { events, from } = declaration;
+  const what = events.length
+    ? joined(
+        EVENT_CHOICE_ORDER.filter((type) => events.includes(type)).map(
+          (type) => EVENT_CHOICES[type].short,
+        ),
+      )
+    : "no events chosen";
+  const where =
+    from === null
+      ? "from any workflow in this project"
+      : from.length
+        ? `from ${joined(from)}`
+        : "no workflow named";
+  return `Platform event trigger: ${what}, ${where}`;
+}
+
 /** What the platform would refuse, by field; empty when nothing is wrong. */
 export function eventProblems(declaration: EventDeclaration): {
   events?: string;
@@ -152,17 +194,25 @@ export function loopWarning(
     : null;
 }
 
+/** An input that asks for nothing yet: none, an empty one, or a new workflow's. */
+function blank(inputSchema: unknown): boolean {
+  if (inputSchema === undefined || inputSchema === null) return true;
+  if (!isJsonObject(inputSchema)) return false;
+  const { type, properties, ...rest } = inputSchema;
+  return (
+    !Object.keys(rest).length &&
+    (type === undefined || type === "object") &&
+    (properties === undefined ||
+      (isJsonObject(properties) && !Object.keys(properties).length))
+  );
+}
+
 /**
  * What adding the trigger does to the workflow's input: set it to the
- * platform event when there is none, keep it when it is the platform event,
- * and ask before replacing any other input.
+ * platform event when it asks for nothing yet, keep it when it is the
+ * platform event, and ask before replacing any other input.
  */
 export function eventInputFit(inputSchema: unknown): "set" | "keep" | "ask" {
-  if (
-    inputSchema === undefined ||
-    inputSchema === null ||
-    (isJsonObject(inputSchema) && Object.keys(inputSchema).length === 0)
-  )
-    return "set";
+  if (blank(inputSchema)) return "set";
   return isPlatformEventInput(inputSchema) ? "keep" : "ask";
 }

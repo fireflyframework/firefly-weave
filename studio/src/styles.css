@@ -1260,8 +1260,49 @@ dd {
 div.dialog-message p {
   margin: 0;
 }
-div.dialog-message p + p {
+div.dialog-message p + p,
+div.dialog-message ul + p {
   margin-top: var(--space-2);
+}
+/* What the question is about, in a bordered list: rows, or chips for names alone. */
+.dialog-items {
+  margin: var(--space-3) 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  list-style: none;
+  color: var(--text);
+}
+.dialog-items li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-3);
+}
+.dialog-items li + li {
+  border-top: 1px solid var(--line);
+}
+.dialog-items weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.dialog-items small {
+  margin-left: auto;
+  text-align: right;
+}
+.dialog-items.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 0;
+}
+.dialog-items.chips li {
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
 }
 .dialog-form label {
   margin: 16px 0 6px;

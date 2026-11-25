@@ -24,8 +24,8 @@ import { ApiError, type StudioApi } from "../../api";
 import type { Json, JsonObject } from "../../forms/core/json";
 import type { TriggerIntent, TriggerKind } from "../state/canvas-sidecar";
 
-/** The trigger kinds that have a platform resource. */
-export type ResourceKind = Exclude<TriggerKind, "manual" | "called">;
+/** The trigger kinds whose platform resource Studio lists here. */
+export type ResourceKind = Exclude<TriggerKind, "manual" | "called" | "event">;
 export const RESOURCE_KINDS: readonly ResourceKind[] = [
   "webhook",
   "schedule",

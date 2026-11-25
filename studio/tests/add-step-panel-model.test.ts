@@ -95,7 +95,7 @@ describe("moving through Add a step", () => {
       buildCatalog(catalogInput({ hasSteps: false })),
       true,
     );
-    expect(triggers.starts).toEqual([0, 7]);
-    expect(triggers.options).toHaveLength(8);
+    expect(triggers.starts).toEqual([0, 8]);
+    expect(triggers.options).toHaveLength(9);
   });
 });

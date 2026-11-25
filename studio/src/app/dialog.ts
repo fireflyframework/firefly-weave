@@ -261,9 +261,20 @@ export interface DialogField {
   /** Returns an error message, or an empty string when the value is acceptable. */
   validate?: (value: string) => string;
 }
+/** One line of what a dialog is about: a field that would go, a trigger that stays. */
+export interface DialogItem {
+  icon?: string;
+  text: string;
+  /** Beside the text at the row's end, such as where it runs. */
+  aside?: string;
+}
 export interface DialogOptions {
   title: string;
+  /** A blank line starts a paragraph. */
   message: string;
+  /** Listed after the message's first paragraph, as rows unless `itemStyle` says chips. */
+  items?: DialogItem[];
+  itemStyle?: "rows" | "chips";
   confirmLabel: string;
   cancelLabel?: string;
   /**
@@ -345,7 +356,7 @@ export class DialogService {
 @Component({
   selector: "weave-dialog-host",
   standalone: true,
-  imports: [Modal],
+  imports: [Icon, Modal],
   template: `@if (dialogs.current(); as request) {
     @for (key of [request]; track key) {
       <weave-modal
@@ -356,10 +367,29 @@ export class DialogService {
         <form class="dialog-form" (submit)="submit($event, request)">
           <!-- A blank line in the message starts a paragraph. -->
           @let paragraphs = paragraphsOf(request);
-          @if (paragraphs.length > 1) {
+          @let items = request.options.items;
+          @if (paragraphs.length > 1 || items) {
             <div [id]="messageId" class="dialog-message">
               @for (paragraph of paragraphs; track $index) {
                 <p>{{ paragraph }}</p>
+                @if ($first && items) {
+                  <ul
+                    class="dialog-items"
+                    [class.chips]="request.options.itemStyle === 'chips'"
+                  >
+                    @for (item of items; track $index) {
+                      <li>
+                        @if (item.icon) {
+                          <weave-icon [name]="item.icon" [size]="16" />
+                        }
+                        <span>{{ item.text }}</span>
+                        @if (item.aside) {
+                          <small>{{ item.aside }}</small>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
               }
             </div>
           } @else {

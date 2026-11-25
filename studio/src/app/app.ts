@@ -26,7 +26,6 @@ import {
   type CanvasSidecar,
   type TriggerIntent,
 } from "./editor/state/canvas-sidecar";
-import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { triggerChoiceTarget } from "./editor/triggers/trigger-target";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
 import type { AlertWatch } from "./operate/alerts/alert-watch";
@@ -141,7 +140,13 @@ import {
 } from "./connection";
 import { HomeDashboard } from "./home-dashboard";
 import { ApiError, StudioApi, Validation, Session } from "./api";
-import { Autofocus, DialogHost, DialogService, Modal } from "./dialog";
+import {
+  Autofocus,
+  DialogHost,
+  DialogService,
+  Modal,
+  type DialogOptions,
+} from "./dialog";
 import { commandNotLoaded, describeError, PlainError } from "./errors";
 import {
   ExportedFile,
@@ -438,6 +443,9 @@ function store(key: string, value: string) {
   }
 }
 /** JSON with sorted keys, so equal documents compare equal. */
+/** A trigger's name; the words about triggers load with the editor, not with the first page. */
+const triggerLabel = async (kind: TriggerKind) =>
+  (await import("./editor/canvas/trigger-tiles")).TRIGGER_LABELS[kind];
 const canonicalJson = (value: unknown): string =>
   JSON.stringify(value, (_, v: unknown) =>
     v && typeof v === "object" && !Array.isArray(v)
@@ -4178,7 +4186,7 @@ export class App implements CanvasHost {
     )?.kind;
     if (kind)
       this.notify(
-        `${TRIGGER_LABELS[kind]} is set up when you activate this workflow.`,
+        `${await triggerLabel(kind)} is set up when you activate this workflow.`,
       );
   }
   /** The workflow settings, focused on Inputs or Result. */
@@ -4273,11 +4281,12 @@ export class App implements CanvasHost {
         return this.error;
       },
       notify: (text) => this.notify(text),
+      confirm: (question) => this.dialogs.confirm(question),
       openInserted: (id) => {
         this.revealSelected();
         this.openInserted(id, current);
       },
-      openTrigger: (id, kind) => this.openChosenTrigger(id, kind, current),
+      openTrigger: (id, kind) => void this.openChosenTrigger(id, kind, current),
       insertCommon: (common, at, connector, still) =>
         this.insertCommon(common, at, () => current() && still(), connector),
       insertPublished: async (uses, id, at, still) => {
@@ -4303,7 +4312,7 @@ export class App implements CanvasHost {
     return insertEntry(host, entry, request);
   }
   /** A trigger chosen in Add a step: the input form opens its details; another one's tile takes focus. */
-  private openChosenTrigger(
+  private async openChosenTrigger(
     id: string,
     kind: TriggerKind,
     current: () => boolean,
@@ -4317,8 +4326,10 @@ export class App implements CanvasHost {
       void this.openStepDetails(triggerChoiceTarget(id));
       return;
     }
+    const label = await triggerLabel(kind);
+    if (!current()) return;
     this.notify(
-      `Added the ${TRIGGER_LABELS[kind]} trigger. Set it up when you activate the workflow.`,
+      `Added the ${label} trigger. Set it up when you activate the workflow.`,
     );
     this.cdr.markForCheck();
     afterNextRender(
@@ -4353,19 +4364,33 @@ export class App implements CanvasHost {
     );
     return !this.error;
   }
-  /** Removes a trigger choice; Called by a workflow asks first, because callers depend on it. */
+  /** What to ask before a trigger choice goes, or null to ask nothing. */
+  private async removalQuestion(
+    intent: TriggerIntent,
+  ): Promise<DialogOptions | null> {
+    if (intent.kind === "called")
+      return (
+        await import("./editor/calls/call-sources")
+      ).calledRemovalQuestion(this, this.model.definition);
+    if (intent.kind === "event")
+      return (
+        await import("./editor/triggers/event-removal")
+      ).eventRemovalQuestion(this, intent, this.model.definition);
+    return null;
+  }
+  /**
+   * Removes a trigger choice. Called by a workflow asks first, because callers
+   * depend on it; so does Platform event while a trigger created for it reacts.
+   */
   async removeTrigger(id: string) {
-    const intent = this.model.canvas.triggers?.find((item) => item.id === id);
-    if (!intent || this.editingLocked || this.model.readonly) return;
-    if (
-      intent.kind === "called" &&
-      !(await this.dialogs.confirm(
-        await (
-          await import("./editor/calls/call-sources")
-        ).calledRemovalQuestion(this, this.model.definition),
-      ))
-    )
-      return;
+    const model = this.model;
+    const opened = model.opened;
+    const intent = model.canvas.triggers?.find((item) => item.id === id);
+    if (!intent || this.editingLocked || model.readonly) return;
+    const question = await this.removalQuestion(intent);
+    if (question && !(await this.dialogs.confirm(question))) return;
+    // Another workflow opened while it waited: its triggers stay.
+    if (this.model !== model || model.opened !== opened) return;
     let change: ReturnType<typeof removeTrigger>;
     try {
       change = removeTrigger(this.model.canvas, this.model.definition, id);
@@ -4381,7 +4406,7 @@ export class App implements CanvasHost {
     )
       return;
     const revision = this.model.revision;
-    this.notify(`Removed the ${TRIGGER_LABELS[intent.kind]} trigger.`, {
+    this.notify(`Removed the ${await triggerLabel(intent.kind)} trigger.`, {
       label: "Undo",
       run: () => {
         if (this.model.revision !== revision)

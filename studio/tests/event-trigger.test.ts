@@ -27,6 +27,8 @@ import {
   eventInputFit,
   eventProblems,
   eventSubtitle,
+  eventTileName,
+  eventTileSubtitle,
   loopWarning,
   readDeclaration,
   withDeclaration,
@@ -290,10 +292,75 @@ describe("reacting to its own transactions", () => {
   });
 });
 
+describe("what the tile says", () => {
+  it.each<[string, EventDeclaration, string]>([
+    ["one event and one workflow", ATTENTION, "Needs attention · 1 workflow"],
+    [
+      "one event from any workflow",
+      { events: ["transaction.in_doubt"], from: null },
+      "Needs attention · any workflow",
+    ],
+    [
+      "several events",
+      {
+        events: [
+          "transaction.in_doubt",
+          "transaction.compensated",
+          "transaction.completed",
+        ],
+        from: null,
+      },
+      "3 events · any workflow",
+    ],
+    [
+      "several workflows",
+      {
+        events: ["transaction.in_doubt", "transaction.compensated"],
+        from: ["move-between-systems", "sync-records"],
+      },
+      "2 events · 2 workflows",
+    ],
+    ["no event", { events: [], from: ["sync-records"] }, "No events chosen"],
+    [
+      "no workflow named yet",
+      { events: ["transaction.in_doubt"], from: [] },
+      "Needs attention · no workflow",
+    ],
+  ])("counts %s, so the subtitle fits", (_name, declaration, subtitle) => {
+    expect(eventTileSubtitle(declaration)).toBe(subtitle);
+  });
+
+  it("names every event and workflow in full for the tooltip and the accessible name", () => {
+    expect(
+      eventTileName({
+        events: ["transaction.in_doubt", "transaction.compensated"],
+        from: ["move-between-systems", "sync-records"],
+      }),
+    ).toBe(
+      "Platform event trigger: Needs attention and Undone, from move-between-systems and sync-records",
+    );
+    expect(
+      eventTileName({ events: ["transaction.in_doubt"], from: null }),
+    ).toBe(
+      "Platform event trigger: Needs attention, from any workflow in this project",
+    );
+    expect(eventTileName({ events: [], from: [] })).toBe(
+      "Platform event trigger: no events chosen, no workflow named",
+    );
+  });
+});
+
 describe("whether the workflow's input takes the platform event", () => {
   it.each<[string, unknown, "set" | "keep" | "ask"]>([
     ["no input", undefined, "set"],
     ["an empty input", {}, "set"],
+    ["a new workflow's input", { type: "object" }, "set"],
+    ["a form without fields", { type: "object", properties: {} }, "set"],
+    [
+      "an input closed to any field",
+      { type: "object", additionalProperties: false },
+      "ask",
+    ],
     ["the platform event", { $ref: "weave.platform-event-v1" }, "keep"],
     [
       "a manual form's input",

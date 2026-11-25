@@ -954,6 +954,8 @@ describe("the left-to-right layout", () => {
     expect(labelWidth(2)).toBe(LTR.label);
     expect(labelWidth(1)).toBe(LTR.label);
     expect(labelWidth(1, "fork")).toBe(LTR.label);
+    // A trigger keeps its column: its subtitle says who starts the workflow.
+    expect(labelWidth(1, "trigger")).toBe(LTR.labelWide);
     expect(labelWidth(0.99)).toBe(LTR.labelWide);
     expect(labelWidth(0.5)).toBe(LTR.labelWide);
     expect(labelWidth(0.4, "square")).toBe(LTR.labelWide);
