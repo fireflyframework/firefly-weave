@@ -2022,6 +2022,31 @@ test.describe("transactions in doubt", () => {
     await expect(codes(high(page))).toHaveCount(4);
     await expect(codes(other(page))).toHaveCount(4);
   });
+
+  test("an incident Studio can't show keeps the band the platform lists it in", async ({
+    page,
+  }) => {
+    const hidden = "c1000000-0000-4000-8000-000000000001";
+    const platform = await incidentPlatform(page, {
+      items: [unknown, { id: hidden, unavailable: true }, ...others],
+      unavailableInDoubt: [hidden],
+    });
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "Unavailable incident",
+    ]);
+    await expect(high(page).locator(".band-count")).toHaveText("2 incidents");
+    const row = high(page).locator(".resource-row").nth(1);
+    await expect(row).toContainText("Studio can't show this incident.");
+    await expect(row.getByRole("button")).toHaveCount(0);
+    await expect(codes(other(page))).toHaveCount(4);
+    // Alone there, it still keeps the band.
+    platform.items = platform.items.filter((item) => item.id !== ids.unknown);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(codes(high(page))).toHaveText(["Unavailable incident"]);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
 });
 
 for (const size of [

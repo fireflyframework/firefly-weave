@@ -45,6 +45,11 @@ export async function incidentPlatform(
     capabilities?: string[];
     items?: IncidentRecord[];
     pageSize?: number;
+    /**
+     * The incidents it can't show that are of transactions in doubt: it
+     * splits by their code, which its answer doesn't say.
+     */
+    unavailableInDoubt?: string[];
   } = {},
 ): Promise<IncidentPlatform> {
   await page.clock.install({ time: new Date(NOW) });
@@ -68,7 +73,13 @@ export async function incidentPlatform(
     const priority = query.get("priority");
     const listed = platform.items.filter((item) => {
       const view = item as IncidentView;
-      if ("unavailable" in item) return priority !== "high";
+      if ("unavailable" in item)
+        return (
+          !priority ||
+          (options.unavailableInDoubt?.includes(item.id)
+            ? "high"
+            : "normal") === priority
+        );
       return (
         (!statuses.length || statuses.includes(view.status)) &&
         (!query.get("code") || view.code === query.get("code")) &&
