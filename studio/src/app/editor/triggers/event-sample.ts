@@ -349,8 +349,8 @@ function mapIds(
 /**
  * The value with sample IDs in place of the event, run and incident IDs of
  * every platform event in it, and which it replaced; IDs that are samples
- * already stay, and so does the rest. A real ID gets the sample ID it has in
- * `samples`, which keeps the new ones.
+ * already or empty stay, and so does the rest. A real ID gets the sample ID it
+ * has in `samples`, in capitals or not, which keeps the new ones.
  */
 export function withSampleIds<T extends Json>(
   value: T,
@@ -358,9 +358,10 @@ export function withSampleIds<T extends Json>(
 ): { value: T; replaced: ReplacedId[] } {
   const replaced = new Set<ReplacedId>();
   const mapped = mapIds(value, (name, id) => {
-    if (isSampleId(id)) return id;
+    // One a person is emptying, to type another, isn't a real ID.
+    if (isSampleId(id) || id === "") return id;
     replaced.add(name);
-    const real = canonicalJson(id);
+    const real = canonicalJson(typeof id === "string" ? id.toLowerCase() : id);
     const sample = samples.get(real) ?? sampleId();
     samples.set(real, sample);
     return sample;

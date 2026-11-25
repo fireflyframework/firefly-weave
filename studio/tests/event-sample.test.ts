@@ -94,6 +94,20 @@ describe("the IDs of an event entered as test data", () => {
     }
   });
 
+  it("become the same sample ID in capitals as in lower case", () => {
+    const samples = new Map<string, string>();
+    const { value } = withSampleIds(event(), samples);
+    const shouted = { ...event(), event_id: REAL_ID.toUpperCase() };
+    expect(withSampleIds(shouted, samples).value).toEqual(value);
+  });
+
+  it("stay empty while a person empties one: there is no real ID to replace", () => {
+    const emptied = { ...event(), event_id: "" };
+    const { value, replaced } = withSampleIds(emptied);
+    expect(value["event_id"]).toBe("");
+    expect(replaced).toEqual(["run", "incident"]);
+  });
+
   it("are only those it has: an incident that is missing or empty stays so", () => {
     const undone = event("transaction.compensated");
     const without = withSampleIds(undone);
