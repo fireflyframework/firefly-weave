@@ -358,6 +358,23 @@ SPDX-License-Identifier: Apache-2.0
         >
           Parameters
         </button>
+        @if (startsTrigger()) {
+          <button
+            type="button"
+            role="tab"
+            id="sd-tab-starts"
+            aria-controls="sd-panel-starts"
+            [attr.aria-selected]="tab() === 'starts'"
+            [attr.tabindex]="tab() === 'starts' ? 0 : -1"
+            [attr.aria-label]="startsOwed() ? 'Starts, needs attention' : null"
+            (click)="selectTab('starts')"
+          >
+            Starts
+            @if (startsOwed()) {
+              <span class="sd-dot sd-dot-warning" aria-hidden="true"></span>
+            }
+          </button>
+        }
         @if (target() !== "$end") {
           <button
             type="button"
@@ -410,6 +427,25 @@ SPDX-License-Identifier: Apache-2.0
           <weave-parameter-form [session]="session()" name="parameters" />
         }
       </div>
+      @if (startsTrigger(); as choice) {
+        <div
+          class="sd-tabpanel"
+          role="tabpanel"
+          id="sd-panel-starts"
+          aria-labelledby="sd-tab-starts"
+          [hidden]="tab() !== 'starts'"
+        >
+          <!-- Read when it is first shown, then kept while these step details are open. -->
+          @defer (when tab() === "starts") {
+            <weave-event-starts-tab
+              [session]="session()"
+              [trigger]="choice"
+              (owes)="startsRead.set($event)"
+              (openRun)="openStartedRun($event)"
+            />
+          }
+        </div>
+      }
       <div
         class="sd-tabpanel"
         role="tabpanel"

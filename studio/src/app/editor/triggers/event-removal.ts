@@ -25,6 +25,7 @@ import { isJsonObject } from "../../forms/core/json";
 import { shortId } from "../../format";
 import type { Workflow } from "../../model";
 import type { ToastService } from "../../toast";
+import { activationRun } from "../activation/activation-run";
 import type { EventTriggerView } from "../activation/event-bindings";
 import type { TriggerIntent } from "../state/canvas-sidecar";
 import { isPlatformEventInput } from "./platform-event";
@@ -88,13 +89,7 @@ async function versionOf(
   activationId: string,
 ): Promise<string | null> {
   try {
-    const activation = await host.api.request<{
-      request: { version_id: string };
-    }>(`${base}/activations/${encodeURIComponent(activationId)}`);
-    const version = await host.api.request<{ version: string }>(
-      `${host.api.project}/workflows/${encodeURIComponent(activation.request.version_id)}`,
-    );
-    return version.version;
+    return (await activationRun(host.api, base, activationId)).version || null;
   } catch {
     return null;
   }

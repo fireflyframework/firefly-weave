@@ -83,9 +83,9 @@ export const CAUSE_COPY: Readonly<Record<string, string>> = {
 export interface StartRow {
   id: string;
   tone: "ok" | "waiting" | "skipped" | "failed";
-  /** "Started run 9b1c4e2a", "Waiting to start", or why it started none. */
+  /** "Started run 9b1c4e2a", "Waiting to start", "Skipped" or "Couldn't start". */
   title: string;
-  /** "Needs attention in run 3fa2c1d0": the event and the run it came from. */
+  /** The event and the run it came from, or why it started no run. */
   detail: string;
   /** The run it started, for Open run. */
   runId?: string;
@@ -100,14 +100,14 @@ const reason = (code: string | undefined) =>
     ? ""
     : ((START_COPY as Readonly<Record<string, string>>)[code] ?? code);
 
-/** One line of the Starts list. */
-export function startRow(start: EventStart): StartRow {
+/** One line of the Starts list; `source` is the one workflow the trigger reacts to. */
+export function startRow(start: EventStart, source?: string): StartRow {
   const event = isPlatformEventType(start.event_type)
     ? EVENT_CHOICES[start.event_type].short
     : String(start.event_type);
   const row = {
     id: start.id,
-    detail: `${event} in run ${shortId(start.source_run_id)}`,
+    detail: `${event} in run ${shortId(start.source_run_id)}${source ? ` of ${source}` : ""}`,
     sourceRunId: start.source_run_id,
     at: start.requested_at,
   };
@@ -125,12 +125,22 @@ export function startRow(start: EventStart): StartRow {
     case "requested":
       return { ...row, tone: "waiting", title: "Waiting to start" };
     case "skipped":
-      return { ...row, tone: "skipped", title: reason(start.code) };
+      return {
+        ...row,
+        tone: "skipped",
+        title: "Skipped",
+        detail: reason(start.code),
+      };
     case "rejected": {
       const cause = start.cause;
       const why =
         cause === undefined ? "" : ` ${CAUSE_COPY[cause] ?? `(${cause})`}`;
-      return { ...row, tone: "failed", title: `${reason(start.code)}${why}` };
+      return {
+        ...row,
+        tone: "failed",
+        title: "Couldn't start",
+        detail: `${reason(start.code)}${why}`,
+      };
     }
   }
 }
@@ -152,7 +162,12 @@ export interface StartsOptions {
   now?: () => number;
   /** The trigger the person looks at now; an answer for another one is dropped. */
   current?: () => string | null | undefined;
+  /** The one workflow the trigger reacts to: every event came from it. */
+  source?: string;
 }
+
+/** How many starts a page shows. */
+const STARTS_PAGE = 20;
 
 export const STARTS_RETRY_MS = 5_000;
 export const STARTS_RETRY_MAX_MS = 60_000;
@@ -194,7 +209,7 @@ export async function readStarts(
   const kept = failed.get(key);
   if (kept && now() < kept.retryAt)
     return { failed: kept.message, retryAt: kept.retryAt };
-  const path = `${environment}/event-triggers/${encodeURIComponent(triggerId)}/starts?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+  const path = `${environment}/event-triggers/${encodeURIComponent(triggerId)}/starts?limit=${STARTS_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
   let answer: { items: unknown[]; next_cursor: string | null } | null = null;
   let error: unknown = null;
   try {
@@ -219,7 +234,9 @@ export async function readStarts(
   if (answer || refused) failed.delete(key);
   if (answer)
     return {
-      rows: answer.items.map((item) => startRow(item as EventStart)),
+      rows: answer.items.map((item) =>
+        startRow(item as EventStart, options.source),
+      ),
       next: answer.next_cursor,
     };
   if (refused) return { refused };

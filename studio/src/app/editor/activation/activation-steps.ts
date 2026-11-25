@@ -39,6 +39,7 @@ import {
 import type { CanvasSidecar, TriggerIntent } from "../state/canvas-sidecar";
 import { triggerIntents } from "../state/canvas-sidecar";
 import { missingFeatures } from "./activation-rows";
+import { activationRun } from "./activation-run";
 import {
   callPins,
   calledReferenceSites,
@@ -471,17 +472,7 @@ export class ActivationSteps implements OnInit {
   /** One activation as the plan knows it: the workflow and version it runs. */
   private async activation(id: string): Promise<PlanActivation> {
     const api = this.api();
-    const item = await api.request<Record<string, unknown>>(
-      `${api.environment}/activations/${encodeURIComponent(id)}`,
-    );
-    const version = await api.request<Record<string, unknown>>(
-      `${api.project}/workflows/${encodeURIComponent(text(record(item["request"])["version_id"]))}`,
-    );
-    return {
-      id,
-      workflow: text(item["name"]),
-      version: text(version["version"]),
-    };
+    return { id, ...(await activationRun(api, api.environment, id)) };
   }
 
   /** The published version's export: its definition and compiled artifact; null when it can't be read. */

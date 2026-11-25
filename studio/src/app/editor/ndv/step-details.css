@@ -266,6 +266,12 @@ weave-step-details {
   border-radius: 50%;
   background: var(--info-ink);
 }
+/* A platform event trigger's stop is still owed. */
+.sd-dot-warning {
+  width: 8px;
+  height: 8px;
+  background: var(--warning);
+}
 .sd-docs {
   display: inline-flex;
   align-items: baseline;

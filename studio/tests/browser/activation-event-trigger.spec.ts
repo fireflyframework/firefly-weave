@@ -28,6 +28,7 @@ import {
   eventRows,
   openFiles,
   openForActivation,
+  publish,
   STORED,
   storedIntent,
   WIDER,
@@ -182,6 +183,7 @@ test("a stop that would skip waiting events is asked; Done keeps the old trigger
   // After a reload, from the file the canvas is kept in.
   await page.goto("/");
   await openFiles(page, WIDER, [kept!]);
+  await publish(page);
   dialog = await activationDialog(page);
   const duplicate = dialog.getByRole("listitem", {
     name: "Two triggers start notify-team for the same events. Stop notify-team",
@@ -319,6 +321,24 @@ test("a stop still owed is kept with the workflow when the dialog closes", async
   ).toBeChecked();
 });
 
+test("a stop owed for a trigger that is gone is forgotten at the next activation", async ({
+  page,
+}) => {
+  await openForActivation(page, {
+    seeds: [STORED],
+    pendingStops: [
+      { triggerId: "t-gone", revision: 1, activationId: "a-older" },
+    ],
+  });
+  const dialog = await activationDialog(page);
+  await expect(eventRows(dialog)).toHaveCount(1);
+  await activate(dialog);
+  await expect(dialog).toHaveCount(0);
+  const kept = await storedIntent(page);
+  expect(kept).toMatchObject({ resources: { development: "t-1" } });
+  expect(kept).not.toHaveProperty("pendingStops");
+});
+
 test("a trigger that may resolve transactions says so, and so does its refusal", async ({
   page,
 }) => {
@@ -433,6 +453,54 @@ test("a version without platform events still offers to stop the trigger that ke
   await activate(dialog);
   await expect(dialog).toHaveCount(0);
   expect(platform.writes()).toEqual([DISABLE]);
+});
+
+test("the trigger reacts as the published version does, not as the draft edited since", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page, { published: WIDER });
+  const dialog = await activationDialog(page);
+  await expect(eventRows(dialog)).toContainText([
+    "For Needs attention and Undone · from any workflow in this project.",
+  ]);
+  await activate(dialog);
+  await expect(dialog).toHaveCount(0);
+  expect(platform.enabled()).toMatchObject([
+    { events: ["transaction.compensated", "transaction.in_doubt"] },
+  ]);
+});
+
+test("the dialog can't be closed while its triggers are set up, so what is owed is kept", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page, {
+    declaration: WIDER,
+    seeds: [STORED],
+  });
+  platform.refuse.set(
+    DISABLE,
+    refusal(503, "WV-UNAVAILABLE", "The platform didn't answer in time."),
+  );
+  let answer = () => undefined as void;
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  let asked = false;
+  await page.route("**/event-triggers/t-1/disable", async (route) => {
+    asked = true;
+    await held;
+    await route.fallback();
+  });
+  const dialog = await activationDialog(page);
+  await activate(dialog);
+  await expect.poll(() => asked).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toContainText("Setting up the triggers…");
+  answer();
+  await expect(dialog.getByRole("button", { name: "Stop it" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expect(await storedIntent(page)).toMatchObject({
+    pendingStops: { development: [{ triggerId: "t-1" }] },
+  });
 });
 
 test("a trigger of an activation past the list's pages is still this workflow's", async ({

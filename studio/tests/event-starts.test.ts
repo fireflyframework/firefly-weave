@@ -104,6 +104,12 @@ describe("the platform's words for what a trigger started", () => {
     });
   });
 
+  it("names the workflow the event came from when the trigger reacts to one", () => {
+    expect(startRow(start(), "move-between-systems").detail).toBe(
+      "Needs attention in run 3fa2c1d0 of move-between-systems",
+    );
+  });
+
   it("says a start is waiting", () => {
     expect(startRow(start({ event_type: "transaction.compensated" }))).toEqual({
       id: "s-1",
@@ -122,8 +128,8 @@ describe("the platform's words for what a trigger started", () => {
   ] as const)("says why %s skipped a start", (code) => {
     expect(startRow(start({ status: "skipped", code }))).toMatchObject({
       tone: "skipped",
-      title: corpus.starts[code],
-      detail: "Needs attention in run 3fa2c1d0",
+      title: "Skipped",
+      detail: corpus.starts[code],
     });
   });
 
@@ -144,10 +150,10 @@ describe("the platform's words for what a trigger started", () => {
       "WV-RUNTIME-LIMIT",
       "The triggered workflow couldn't start. (WV-RUNTIME-LIMIT)",
     ],
-  ])("says why a start was rejected for %s", (cause, title) => {
+  ])("says why a start was rejected for %s", (cause, detail) => {
     expect(
       startRow(start({ status: "rejected", code: "WV-TRIGGER-START", cause })),
-    ).toMatchObject({ tone: "failed", title });
+    ).toMatchObject({ tone: "failed", title: "Couldn't start", detail });
   });
 
   it("says a start expired without a cause", () => {
@@ -155,24 +161,20 @@ describe("the platform's words for what a trigger started", () => {
       startRow(start({ status: "rejected", code: "WV-TRIGGER-START-EXPIRED" })),
     ).toMatchObject({
       tone: "failed",
-      title:
+      title: "Couldn't start",
+      detail:
         "The workflow couldn't start within a day of the event, so the event no longer starts it.",
     });
   });
 
   it("shows a code or an event type it doesn't know as it is", () => {
     expect(
-      startRow(
-        start({
-          status: "skipped",
-          code: "WV-TRIGGER-NEW" as never,
-          event_type: "transaction.paused" as never,
-        }),
-      ),
-    ).toMatchObject({
-      title: "WV-TRIGGER-NEW",
-      detail: "transaction.paused in run 3fa2c1d0",
-    });
+      startRow(start({ status: "skipped", code: "WV-TRIGGER-NEW" as never }))
+        .detail,
+    ).toBe("WV-TRIGGER-NEW");
+    expect(
+      startRow(start({ event_type: "transaction.paused" as never })).detail,
+    ).toBe("transaction.paused in run 3fa2c1d0");
   });
 
   it("counts the starts still waiting", () => {
@@ -183,7 +185,7 @@ describe("the platform's words for what a trigger started", () => {
           start({ status: "started", run_id: RUN }),
           start({ id: "s-3" }),
           start({ status: "skipped", code: "WV-TRIGGER-DISABLED" }),
-        ].map(startRow),
+        ].map((item) => startRow(item)),
       ),
     ).toBe(2);
   });
@@ -204,9 +206,17 @@ describe("reading what a trigger started", () => {
     const second = await readStarts(api, "t-1", "c-2");
     expect(second).toMatchObject({ rows: [{ id: "s-3" }], next: null });
     expect(api.asked).toEqual([
-      `${ENV}/event-triggers/t-1/starts?limit=50`,
-      `${ENV}/event-triggers/t-1/starts?limit=50&cursor=c-2`,
+      `${ENV}/event-triggers/t-1/starts?limit=20`,
+      `${ENV}/event-triggers/t-1/starts?limit=20&cursor=c-2`,
     ]);
+  });
+
+  it("names the source it is given on every row", async () => {
+    const api = new FakeStarts([{ items: [start()], next_cursor: null }]);
+    const page = await readStarts(api, "t-1", undefined, { source: "move" });
+    expect("rows" in page && page.rows[0]!.detail).toBe(
+      "Needs attention in run 3fa2c1d0 of move",
+    );
   });
 
   it.each([

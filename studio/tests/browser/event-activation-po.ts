@@ -29,9 +29,13 @@ import { stringify } from "yaml";
 import { ApiError } from "../../src/app/api";
 import { ENV, FakePlatform, type Seed } from "../event-platform";
 import { versionId } from "./activation-po";
-import { REFERENCE } from "./event-trigger-po";
+import { openEventTrigger, REFERENCE } from "./event-trigger-po";
 import { routePlatformEvent } from "./local-authoring";
-import { withLanguageFeatures, withNewEditor } from "./step-details-po";
+import {
+  StepDetailsPage,
+  withLanguageFeatures,
+  withNewEditor,
+} from "./step-details-po";
 import { allCapabilities, command, connected } from "./support";
 
 export const EVENT_INTENT = "trigger-5f6a7b8c";
@@ -79,6 +83,8 @@ const activation = (id: string, name: string, version_id: string) => ({
 export interface EventActivationOptions {
   /** What the version declares; null when it reacts to no platform event. */
   declaration?: Record<string, unknown> | null;
+  /** What the published version declares, when the draft was edited since. */
+  published?: Record<string, unknown> | null;
   seeds?: Seed[];
   /** The trigger this environment stored; "t-1" by default, null for none. */
   stored?: string | null;
@@ -165,6 +171,23 @@ export async function openForActivation(
   page: Page,
   options: EventActivationOptions = {},
 ): Promise<EventActivation> {
+  const opened = await openConnected(page, options);
+  await publish(page);
+  return opened;
+}
+export async function publish(page: Page) {
+  await command(page, "Publish…");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Publish version" })
+    .click();
+}
+
+/** Opens notify-team with its trigger choices, connected to its environment. */
+export async function openConnected(
+  page: Page,
+  options: EventActivationOptions = {},
+): Promise<EventActivation> {
   const declaration =
     options.declaration === undefined ? ATTENTION : options.declaration;
   const platform = new FakePlatform();
@@ -195,23 +218,25 @@ export async function openForActivation(
       json: activation("a-new", "notify-team", versionId),
     });
   });
-  // An old activation, past the pages of the list the dialog reads.
-  await page.route(
-    "**/environments/development/activations/a-unlisted",
-    (route) =>
-      options.unlisted === "unreadable"
-        ? route.fulfill({
-            status: 503,
-            json: { code: "WV-UNAVAILABLE", message: "Try again later." },
-          })
-        : route.fulfill({
-            json: activation("a-unlisted", "notify-team", VERSIONS[2]!.id),
-          }),
-  );
-  await page.route(
-    `**/projects/project/workflows/${VERSIONS[2]!.id}`,
-    (route) => route.fulfill({ json: VERSIONS[2] }),
-  );
+  // One activation, or one version, by its ID: an old activation is past the
+  // pages of the list the dialog reads.
+  await page.route("**/environments/development/activations/*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+    const found =
+      id === "a-unlisted"
+        ? activation("a-unlisted", "notify-team", VERSIONS[2]!.id)
+        : activations.find((item) => item.id === id);
+    return options.unlisted === "unreadable" || !found
+      ? route.fulfill({
+          status: 503,
+          json: { code: "WV-UNAVAILABLE", message: "Try again later." },
+        })
+      : route.fulfill({ json: found });
+  });
+  for (const version of VERSIONS)
+    await page.route(`**/projects/project/workflows/${version.id}`, (route) =>
+      route.fulfill({ json: version }),
+    );
   await page.route("**/projects/project/workflows?*", (route) =>
     route.fulfill({
       json: {
@@ -238,7 +263,9 @@ export async function openForActivation(
             apiVersion: "weave/v1alpha1",
             kind: "Workflow",
             metadata: { name: "notify-team", version: "1.2.0" },
-            spec: specOf(declaration),
+            spec: specOf(
+              options.published === undefined ? declaration : options.published,
+            ),
           },
           artifact: {
             executable: {
@@ -271,7 +298,7 @@ export async function openForActivation(
   return { platform, asked };
 }
 
-/** Opens the workflow with these trigger choices and publishes it. */
+/** Opens the workflow's files with these trigger choices. */
 export async function openFiles(
   page: Page,
   declaration: Record<string, unknown> | null,
@@ -296,12 +323,32 @@ export async function openFiles(
     },
   ]);
   await expect(page.locator(".editor-bar")).toBeVisible();
-  await command(page, "Publish…");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Publish version" })
-    .click();
 }
+
+/** The Starts tab of the Platform event trigger's step details, opened. */
+export async function openStarts(
+  page: Page,
+  options: EventActivationOptions = {},
+): Promise<EventActivation & { dialog: Locator; panel: Locator }> {
+  const opened = await openConnected(page, options);
+  return { ...opened, ...(await showStarts(page)) };
+}
+export async function showStarts(
+  page: Page,
+  before: (tab: Locator) => Promise<void> = async () => undefined,
+) {
+  const details = new StepDetailsPage(page);
+  const canvas = page.getByLabel("Workflow canvas", { exact: true });
+  const show = page.getByRole("button", { name: "Show canvas", exact: true });
+  await expect(canvas.or(show).first()).toBeVisible();
+  if (await show.isVisible()) await show.click();
+  const dialog = await openEventTrigger(page, details);
+  await before(startsTab(dialog));
+  await startsTab(dialog).click();
+  return { dialog, panel: dialog.getByRole("tabpanel", { name: /^Starts/ }) };
+}
+export const startsTab = (dialog: Locator) =>
+  dialog.getByRole("tab", { name: /^Starts/ });
 
 export async function activationDialog(page: Page): Promise<Locator> {
   await command(page, "Activate…");

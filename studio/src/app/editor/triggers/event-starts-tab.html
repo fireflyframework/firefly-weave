@@ -1,0 +1,174 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let now = state();
+@let said = callout();
+@if (connected()) {
+  <header class="es-head">
+    <div class="es-where">
+      <strong>In {{ environment() }}</strong>
+      @if (now.kind === "list") {
+        <span
+          >Trigger {{ now.trigger.name
+          }}{{
+            now.trigger.stopped
+              ? " · stopped"
+              : now.trigger.version
+                ? " · reacts for " + now.trigger.version
+                : ""
+          }}</span
+        >
+      }
+    </div>
+    @if (now.kind === "list") {
+      <span class="es-updated">{{
+        now.refreshing ? "Updating…" : "Updated " + ago(now.readAt)
+      }}</span>
+      <button
+        type="button"
+        class="icon-button es-refresh"
+        aria-label="Refresh the starts"
+        title="Refresh the starts"
+        (click)="refresh()"
+      >
+        <weave-icon name="refresh" [size]="16" />
+      </button>
+    }
+  </header>
+}
+@if (said) {
+  <div class="es-callout" [attr.data-tone]="said.tone" tabindex="-1">
+    <weave-icon [name]="calloutIcons[said.tone]" [size]="16" />
+    <div class="es-callout-text">
+      <div [id]="id + '-said'">
+        <strong>{{ said.lead }}</strong> <span>{{ said.detail }}</span>
+      </div>
+      @if (said.actions.length) {
+        <div class="es-callout-actions">
+          @for (action of said.actions; track action) {
+            <button
+              type="button"
+              class="sm"
+              [attr.aria-disabled]="said.busy || null"
+              [attr.aria-describedby]="id + '-said'"
+              (click)="act(action)"
+            >
+              @switch (action) {
+                @case ("stop") {
+                  Stop it
+                }
+                @case ("keep") {
+                  Keep it for now
+                }
+                @case ("now") {
+                  Stop now
+                }
+                @case ("refresh") {
+                  Refresh
+                }
+              }
+            </button>
+          }
+        </div>
+      }
+    </div>
+  </div>
+}
+@if (now.kind === "loading") {
+  <p class="es-empty" role="status">
+    <span class="loading-spinner small"></span>Loading what this trigger
+    started…
+  </p>
+} @else if (empty(); as nothing) {
+  <div class="es-empty" tabindex="-1">
+    <strong>{{ nothing.title }}</strong>
+    @if (nothing.detail) {
+      <span>{{ nothing.detail }}</span>
+    }
+    @if (nothing.retryIn !== null) {
+      <button
+        type="button"
+        class="sm"
+        [disabled]="nothing.retryIn > 0"
+        (click)="refresh()"
+      >
+        {{
+          nothing.retryIn > 0
+            ? "Try again in " + nothing.retryIn + " s"
+            : "Try again"
+        }}
+      </button>
+    }
+  </div>
+} @else if (now.kind === "list") {
+  <ul class="es-list" aria-label="Starts" tabindex="-1">
+    @for (row of now.rows; track row.id) {
+      <li
+        class="es-row"
+        [attr.data-tone]="row.tone"
+        [attr.data-start]="row.id"
+        tabindex="-1"
+      >
+        <weave-icon
+          class="es-icon"
+          [class.es-spin]="row.tone === 'waiting'"
+          [name]="icons[row.tone]"
+          [size]="16"
+        />
+        <div class="es-text">
+          <strong>{{ row.title }}</strong>
+          <span>{{ row.detail }}</span>
+        </div>
+        <time [attr.datetime]="iso(row.at)" [title]="exact(row.at)">{{
+          ago(row.at)
+        }}</time>
+        <div class="es-action">
+          @if (row.runId; as run) {
+            <button
+              type="button"
+              class="sm"
+              [attr.aria-label]="'Open run ' + shortId(run)"
+              (click)="openRun.emit(run)"
+            >
+              <weave-icon name="external" [size]="16" /><span>Open run</span>
+            </button>
+          }
+        </div>
+      </li>
+    }
+  </ul>
+}
+@if (now.kind === "list" && now.rows.length) {
+  <footer class="es-foot">
+    @if (now.next) {
+      <button
+        type="button"
+        [attr.aria-disabled]="now.more === 'loading' || null"
+        (click)="more()"
+      >
+        Show more
+      </button>
+    }
+    <span class="es-hint">
+      @if (now.more === "failed") {
+        Studio couldn't load more. Try again in a moment.
+      } @else {
+        Runs it started are also in the Runs tab, under Platform event.
+      }
+    </span>
+  </footer>
+}
