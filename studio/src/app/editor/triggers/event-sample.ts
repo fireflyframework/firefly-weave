@@ -409,7 +409,9 @@ export function keptInput(
   const problem = isPlatformEventInput(schema)
     ? eventProblem(safe, fields())
     : null;
-  return problem ? { problem } : withSampleIds(safe, samples);
+  if (problem) return { problem };
+  // The IDs go first: without its secret fields an event may not be known as one.
+  return { value: safeInput(schema, withSampleIds(value!, samples).value) };
 }
 
 /** "Studio replaced the event and run IDs with sample IDs."; "" when it replaced none. */

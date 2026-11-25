@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import type { Json, JsonObject } from "../src/app/forms/core/json";
 import {
   eventProblem,
+  keptInput,
   pastedEvent,
   replacedNote,
   SAMPLE_FIELD_PROBLEM,
@@ -509,6 +510,51 @@ describe.runIf(available)(
     });
   },
 );
+
+describe("what test data keeps of an event in an input with secret fields", () => {
+  const { version: _version, ...unversioned } = event();
+  const secret = { type: "string", "x-secret": true };
+  const facts = (properties: JsonObject): JsonObject => ({
+    type: "object",
+    properties,
+  });
+  it.each<[string, string[], JsonObject, JsonObject]>([
+    [
+      "its version and its state",
+      ["transaction", "state"],
+      { version: secret, transaction: facts({ state: secret }) },
+      event(),
+    ],
+    [
+      "its version, and its transaction can't be read",
+      ["transaction"],
+      { version: secret, transaction: { $ref: "shared.missing-v1" } },
+      event(),
+    ],
+    [
+      "its instance key, without a version",
+      ["transaction", "instance_key"],
+      { transaction: facts({ instance_key: secret }) },
+      unversioned,
+    ],
+  ])(
+    "keeps no real ID when the input hides %s",
+    (_what, hidden, properties, value) => {
+      const kept = keptInput(
+        { type: "object", properties },
+        value,
+        () => null,
+        new Map(),
+      );
+      const text = JSON.stringify(kept);
+      expect(text).not.toContain(REAL_ID);
+      expect(text).toContain("00000000-0000-4000-8000-");
+      // What the input hides stays hidden.
+      expect(kept).toHaveProperty("value.event_id");
+      expect(kept).not.toHaveProperty(["value", ...hidden]);
+    },
+  );
+});
 
 describe("a pasted event", () => {
   it("is refused when the text isn't a JSON object", () => {
