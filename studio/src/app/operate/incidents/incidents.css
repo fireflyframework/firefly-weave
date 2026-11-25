@@ -365,11 +365,6 @@ weave-operate-state {
     animation: none;
   }
 }
-@media (max-width: 767px), (pointer: coarse) {
-  .offer > button {
-    min-height: var(--control-touch);
-  }
-}
 
 /* The drawer: the run's last engine events. */
 .recent-events {
