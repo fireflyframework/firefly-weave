@@ -346,9 +346,11 @@ test("Open on a loaded partner reads nothing and moves the focus to its title", 
   );
 });
 
+/** An incident no page lists. */
+const elsewhere = "a2000000-0000-4000-8000-000000000002";
 /** A drawer on the caller's incident whose partner only incidents.read holds. */
-async function partnerElsewhere(page: Page) {
-  const platform = await incidentPlatform(page, { items: [caller, ...others] });
+async function partnerElsewhere(page: Page, items = [caller, ...others]) {
+  const platform = await incidentPlatform(page, { items });
   const reads: Route[] = [];
   await page.route(`${environment}/incidents/${ids.called}`, (route) => {
     reads.push(route);
@@ -447,6 +449,88 @@ test("leaving the incident drops its partner's read and its retries", async ({
   await expect(title(page)).toHaveText("Incident WV-TASK-FAILED");
   expect(reads).toHaveLength(2);
 });
+
+for (const [how, ask] of [
+  [
+    "the list's Open",
+    (page: Page) =>
+      page
+        .getByRole("button", {
+          name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 2f3e4d5c",
+        })
+        .click(),
+  ],
+  [
+    "the address",
+    (page: Page) =>
+      page.evaluate((id) => {
+        history.pushState(null, "", `/operate/incidents?incident=${id}`);
+        dispatchEvent(new PopStateEvent("popstate"));
+      }, elsewhere),
+  ],
+] as const)
+  test(`a partner's retry never opens over an incident asked for after it from ${how}`, async ({
+    page,
+  }) => {
+    // Another called run in doubt, whose caller no page lists.
+    const second: IncidentView = {
+      ...called,
+      id: "a2000000-0000-4000-8000-000000000003",
+      held_by: {
+        ...called.held_by!,
+        id: elsewhere,
+        run_id: "2f3e4d5c-0000-4000-8000-000000000002",
+      },
+    };
+    const { reads, openPartner } = await partnerElsewhere(page, [
+      caller,
+      second,
+      ...others,
+    ]);
+    const later: Route[] = [];
+    await page.route(`${environment}/incidents/${elsewhere}`, (route) => {
+      later.push(route);
+    });
+    await openPartner.click();
+    await expect.poll(() => reads.length).toBe(1);
+    await reads[0].fulfill(unavailable);
+    await expect(links(page, "Waits on").getByRole("alert")).toBeVisible();
+    await ask(page);
+    await expect.poll(() => later.length).not.toBe(0);
+    // It is on its way: the partner asked for before it isn't read again.
+    await expect(links(page, "Waits on").getByRole("alert")).toHaveCount(0);
+    await page.clock.fastForward(6_000);
+    expect(reads).toHaveLength(1);
+    await later[0].fulfill({
+      json: { ...caller, id: elsewhere, code: "WV-TXN-PIVOT-UNKNOWN" },
+    });
+    await expect(title(page)).toHaveText("Incident WV-TXN-PIVOT-UNKNOWN");
+  });
+
+for (const [where, field, moves] of [
+  ["the drawer", null, true],
+  ["a filter", "Workflow", false],
+] as const)
+  test(`a partner a retry reads opens while the focus is in ${where}, which ${moves ? "goes to its title" : "keeps it"}`, async ({
+    page,
+  }) => {
+    const { reads, openPartner } = await partnerElsewhere(page);
+    await openPartner.click();
+    await expect.poll(() => reads.length).toBe(1);
+    await reads[0].fulfill(unavailable);
+    await expect(links(page, "Waits on").getByRole("alert")).toBeVisible();
+    if (field) await page.getByLabel(field, { exact: true }).focus();
+    else await expect(openPartner).toBeFocused();
+    await page.clock.fastForward(5_500);
+    await expect.poll(() => reads.length).toBe(2);
+    await reads[1].fulfill({ json: called });
+    await expect(title(page)).toHaveText("Incident WV-TXN-UNDO-STUCK");
+    // A title takes it on the next turn.
+    await page.clock.runFor(100);
+    await expect(
+      field ? page.getByLabel(field, { exact: true }) : title(page),
+    ).toBeFocused();
+  });
 
 test("a partner on its way never opens under a decision", async ({ page }) => {
   const { reads, openPartner } = await partnerElsewhere(page);

@@ -1131,6 +1131,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   /** Opens another incident of a case: the one loaded, or through the address when no page lists it. */
   openLink(link: IncidentLink) {
+    this.forgetPartner();
     const loaded = this.incidents.find((item) => item.id === link.id);
     if (loaded && !isUnavailableIncident(loaded)) this.open(loaded);
     else
@@ -1156,6 +1157,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const scope = this.scope;
     const id = incidentFromQuery(location.search);
     if (!scope || !id || !this.host.identity || !this.readable) return;
+    this.forgetPartner();
     const generation = this.generation;
     this.opening = id;
     this.detailProblem = null;
@@ -1214,9 +1216,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   /**
    * Reads the related incident asked for, for the incident it was asked in
    * only. A failed read waits 5 s, doubling to 60 s; a refusal or an incident
-   * that can't be found is final.
+   * that can't be found is final. A retry nobody pressed (`waited`) moves the
+   * focus only within the drawer.
    */
-  async readPartner() {
+  async readPartner(waited = false) {
     const scope = this.scope;
     const asked = this.asked;
     if (!scope || !asked || this.partner?.reading) return;
@@ -1244,8 +1247,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (isUnavailableIncident(incident))
         say("Studio can't show this incident: its run can't be shown here.");
       else {
+        const takesFocus =
+          !waited || !!document.activeElement?.closest(".record-detail");
         this.open(incident);
-        this.focusTitle();
+        if (takesFocus) this.focusTitle();
       }
     } catch (error) {
       if (!current()) return;
@@ -1269,7 +1274,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         );
         asked.timer = setTimeout(() => {
           asked.timer = null;
-          if (current()) void this.readPartner();
+          if (current()) void this.readPartner(true);
         }, wait);
       }
     } finally {
