@@ -43,6 +43,7 @@ import {
   openYaml,
   shot,
 } from "./integrations-po";
+import { Activations } from "./platform-activations";
 
 test.beforeEach(async ({ page }) => {
   await withClassicDesigner(page);
@@ -339,17 +340,10 @@ async function platform(page: Page): Promise<Platform> {
       },
     });
   });
+  const activations = new Activations();
   await page.route(`${environment}/activations`, (r) => {
     state.activation = r.request().postDataJSON();
-    return r.fulfill({
-      status: 201,
-      json: {
-        id: "act-1",
-        name: "call-an-api",
-        revision: 1,
-        request: { version_id: versionId },
-      },
-    });
+    return r.fulfill(activations.create(r.request(), "call-an-api", "act-1"));
   });
   await page.route(`${environment}/runs`, (r) => {
     state.runs.push(r.request());

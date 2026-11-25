@@ -33,6 +33,7 @@ import {
   chooseAction,
   paletteIntegrations,
 } from "./integrations-po";
+import { Activations } from "./platform-activations";
 
 const contract = (page: Page) => page.locator(".integration-contract");
 const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
@@ -266,12 +267,12 @@ test("activation binds each connection slot to an environment connection", async
     }),
   );
   let activation: any = null;
+  const activations = new Activations();
   await page.route("**/environments/development/activations", (r) => {
     activation = r.request().postDataJSON();
-    return r.fulfill({
-      status: 201,
-      json: { id: "activation", name: "untitled-workflow", revision: 1 },
-    });
+    return r.fulfill(
+      activations.create(r.request(), "untitled-workflow", "activation"),
+    );
   });
   await newWorkflow(page);
   await insertStep(page, "Call an action");
@@ -380,15 +381,18 @@ test("activation keeps its dialog open while it runs and shows failures inline",
   );
   let calls = 0;
   let release = () => {};
+  const activations = new Activations();
   await page.route("**/environments/development/activations", async (r) => {
     const call = ++calls;
     await new Promise<void>((resolve) => (release = resolve));
-    return call === 1
-      ? r.fulfill({
-          status: 409,
-          json: { status: 409, code: "WV-CONNECTION", message: "x" },
-        })
-      : r.fulfill({ status: 201, json: { id: "activation", revision: 1 } });
+    return r.fulfill(
+      call === 1
+        ? {
+            status: 409,
+            json: { status: 409, code: "WV-CONNECTION", message: "x" },
+          }
+        : activations.create(r.request(), "untitled-workflow", "activation"),
+    );
   });
   await newWorkflow(page);
   await insertStep(page, "Call an action");

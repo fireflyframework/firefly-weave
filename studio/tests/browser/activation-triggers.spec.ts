@@ -22,7 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 import { readFile } from "node:fs/promises";
 import { expect, test, type Download, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { platform, routeWebhooks, versionId } from "./activation-po";
+import {
+  activationsOf,
+  platform,
+  routeWebhooks,
+  versionId,
+} from "./activation-po";
 import { command } from "./support";
 import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
@@ -495,11 +500,15 @@ test("an activation answer without an ID sets up no triggers, and says so", asyn
 }) => {
   await platform(page);
   const recorded = await routeWebhooks(page);
-  await page.route("**/environments/development/activations", (r) =>
-    r.request().method() === "POST"
-      ? r.fulfill({ status: 201, json: { name: "pets", revision: 1 } })
-      : r.fallback(),
-  );
+  await page.route("**/environments/development/activations", (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    const { status, json } = activationsOf(page).create(
+      r.request(),
+      "pets",
+      "activation",
+    );
+    return r.fulfill({ status, json: { ...json, id: undefined } });
+  });
   await open(page);
   const dialog = await activateDialog(page);
   await dialog
@@ -610,10 +619,7 @@ test("while the activation runs, Open schedule and the Connections link are off"
   await page.route("**/environments/development/activations", async (r) => {
     if (r.request().method() !== "POST") return r.fallback();
     await held;
-    await r.fulfill({
-      status: 201,
-      json: { id: "activation", name: "pets", revision: 1 },
-    });
+    await r.fallback();
   });
   await open(page, {
     ...canvas,
