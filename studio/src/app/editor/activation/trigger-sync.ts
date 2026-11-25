@@ -43,6 +43,7 @@ import {
   type EventRow,
   type EventStatus,
   type PendingStop,
+  type StayingTrigger,
 } from "./event-bindings";
 import { declinedResult, heldResult, keptResult } from "./event-rows";
 import { pendingStopsOf, withPendingStops } from "./stored-resources";
@@ -64,6 +65,8 @@ import {
 
 export interface SyncContext {
   api: TriggerApi;
+  /** The environment the version was activated in and who activated it, as `placeOf` names them. */
+  place: string | null;
   /** The activation that just succeeded. */
   activationId: string;
   environmentId: string;
@@ -123,6 +126,21 @@ export function connectionNeed(intent: TriggerIntent): ConnectionNeed | null {
   }
 }
 
+/**
+ * The environment Studio works in and who is signed in, right now; null
+ * without one. A row's requests go there, so none is sent once it isn't where
+ * the version was activated.
+ */
+export function placeOf(api: TriggerApi): string | null {
+  try {
+    return JSON.stringify([api.environment, api.replayGuard?.scope() ?? null]);
+  } catch {
+    return null;
+  }
+}
+const left = (context: SyncContext) =>
+  context.place === null || placeOf(context.api) !== context.place;
+
 /** Whether a row changes anything after the activation. */
 export const actionable = (row: TriggerRow): boolean =>
   row.event
@@ -131,6 +149,10 @@ export const actionable = (row: TriggerRow): boolean =>
       row.kind === "retarget" ||
       row.kind === "schedule-move" ||
       (row.kind === "left-behind" && row.stop === true);
+
+/** Whether there is anything to send or to keep after the activation: a duplicate the person unticked owes its stop. */
+export const needsSync = (rows: readonly TriggerRow[]): boolean =>
+  rows.some((row) => actionable(row) || row.event?.kind === "duplicate");
 
 const failed = (row: TriggerRow, text: string): SyncResult => ({
   row,
@@ -151,10 +173,14 @@ async function run(
   row: TriggerRow,
   context: SyncContext,
   fresh?: TriggerResource,
+  staying?: StayingTrigger,
 ): Promise<SyncResult> {
   const { api, activationId } = context;
   if (row.event)
-    return eventResult(row, await applyEvent(row.event, context, false));
+    return eventResult(
+      row,
+      await applyEvent(row.event, context, false, staying),
+    );
   const kind = row.resourceKind as SetUpKind | undefined;
   const intent = context.intents.find((item) => item.id === row.intentId);
   const resource = fresh ?? row.resource;
@@ -249,24 +275,57 @@ const applyEvent = (
   row: EventRow,
   context: SyncContext,
   stopWithWaiting: boolean,
+  staying?: StayingTrigger,
 ) =>
   applyEventRow(context.api, row, context.activationId, {
     stopWithWaiting,
     ...(context.environment ? { environment: context.environment } : {}),
+    ...(staying ? { staying } : {}),
   });
 
+/** What a row sets up, moves or stops: "webhook orders-in", "notify-team". */
+function subject(row: TriggerRow, context: SyncContext): string {
+  const { event } = row;
+  if (event) return "binding" in event ? event.binding.name : event.name;
+  const kind = row.resourceKind as SetUpKind | undefined;
+  const intent = context.intents.find((item) => item.id === row.intentId);
+  const name = row.resource?.name ?? (intent && text(intent, "name"));
+  const noun = kind ? NOUNS[kind] : "this trigger";
+  return name ? `${noun} ${name}` : `the ${noun}`;
+}
+/** Nothing is sent from elsewhere: what the row made and owes stays as it was. */
+function leftResult(
+  row: TriggerRow,
+  context: SyncContext,
+  before?: EventResult,
+): SyncResult {
+  const said = `Studio did nothing to ${subject(row, context)}: the environment or the account changed since you opened this.`;
+  if (!row.event) return { row, status: "changed", text: said };
+  const { id, made, pendingStop } = before ?? {};
+  return eventResult(row, {
+    status: "changed",
+    text: said,
+    ...(id ? { id } : {}),
+    ...(made ? { made } : {}),
+    ...(pendingStop === undefined ? {} : { pendingStop }),
+  });
+}
+
 /** A row run once; an answer lost on the way fails that row alone. */
-const attempt = (
+const attempt = async (
   row: TriggerRow,
   context: SyncContext,
   fresh?: TriggerResource,
-) =>
-  run(row, context, fresh).catch((error: unknown) =>
-    failed(
-      row,
-      `Couldn't set up this trigger: ${describeError(error).message}`,
-    ),
-  );
+  staying?: StayingTrigger,
+): Promise<SyncResult> =>
+  left(context)
+    ? leftResult(row, context)
+    : run(row, context, fresh, staying).catch((error: unknown) =>
+        failed(
+          row,
+          `Couldn't set up this trigger: ${describeError(error).message}`,
+        ),
+      );
 
 /** The row of the platform event trigger the version declares, when the activation changes it. */
 const declares = (row: TriggerRow) =>
@@ -276,6 +335,38 @@ const declares = (row: TriggerRow) =>
 /** Whether the declared trigger reacts for the version now, and nothing else waits on it. */
 const settled = (status: SyncStatus) =>
   status === "created" || status === "moved" || status === "replaced";
+
+/**
+ * The trigger that must still react when a duplicate stops: the declared one
+ * as it was set up, or the one Studio leaves as it is.
+ */
+function stays(
+  rows: readonly TriggerRow[],
+  declared: SyncResult | undefined,
+  context: SyncContext,
+): StayingTrigger | undefined {
+  const event = declared?.event;
+  if (event?.id && declared)
+    return {
+      id: event.id,
+      name: event.made ?? subject(declared.row, context),
+      activationId: context.activationId,
+    };
+  const blocked = rows.find((row) => row.event?.kind === "blocked")?.event;
+  if (!blocked || !("binding" in blocked)) return undefined;
+  const { id, name, activation_id, revision } = blocked.binding;
+  return { id, name, activationId: activation_id, revision };
+}
+/** What must still react for this row's later stop: what its first one checked, or the trigger its replace made. */
+function staysFor(
+  { row, event }: SyncResult,
+  context: SyncContext,
+): StayingTrigger | undefined {
+  if (row.event?.kind !== "replace") return event?.staying;
+  return event?.id && event.made
+    ? { id: event.id, name: event.made, activationId: context.activationId }
+    : undefined;
+}
 
 /**
  * Sets up every row that changes something, in order, telling each as it
@@ -289,17 +380,23 @@ export async function syncTriggers(
   each: (index: number, result: SyncResult) => void = () => undefined,
 ): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
-  let declared: SyncStatus | null = null;
+  let declared: SyncResult | undefined;
   for (const [index, row] of rows.entries()) {
     const duplicate = row.event?.kind === "duplicate" ? row.event : null;
     let result: SyncResult;
-    if (duplicate && declared !== null && !settled(declared))
+    if (duplicate && declared && !settled(declared.status))
       result = eventResult(row, heldResult(duplicate));
     else if (duplicate && !duplicate.stop)
       result = eventResult(row, declinedResult(duplicate));
-    else if (actionable(row)) result = await attempt(row, context);
+    else if (actionable(row))
+      result = await attempt(
+        row,
+        context,
+        undefined,
+        duplicate ? stays(rows, declared, context) : undefined,
+      );
     else continue;
-    if (declares(row)) declared = result.status;
+    if (declares(row)) declared = result;
     results.push(result);
     each(index, result);
   }
@@ -321,7 +418,7 @@ export async function syncHeld(
     each(
       index,
       row.event.stop
-        ? await attempt(row, context)
+        ? await attempt(row, context, undefined, stays(rows, declared, context))
         : eventResult(row, declinedResult(row.event)),
     );
   }
@@ -335,11 +432,11 @@ export async function chooseResult(
 ): Promise<SyncResult> {
   const { row, event } = result;
   if (!row.event || !event) return result;
+  if (choice === "keep") return eventResult(row, keptResult(row.event, event));
+  if (left(context)) return leftResult(row, context, event);
   return eventResult(
     row,
-    choice === "keep"
-      ? keptResult(row.event, event)
-      : await applyEvent(row.event, context, true),
+    await applyEvent(row.event, context, true, staysFor(result, context)),
   );
 }
 
@@ -350,8 +447,9 @@ export async function retryResult(
 ): Promise<SyncResult> {
   const { row } = result;
   const kind = row.resourceKind;
+  if (left(context)) return leftResult(row, context, result.event);
   if (row.kind === "create" || !row.resource || !kind || kind === "event")
-    return attempt(row, context);
+    return attempt(row, context, undefined, staysFor(result, context));
   try {
     const fresh = await readResource(context.api, kind, row.resource.id);
     return attempt(row, context, fresh);

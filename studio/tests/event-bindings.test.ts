@@ -42,6 +42,7 @@ import {
   requested,
   startedRuns,
   view,
+  type Seed,
 } from "./event-platform";
 
 const ACTIVATIONS: PlanActivation[] = [
@@ -323,11 +324,13 @@ describe("a create whose answer may have been lost", () => {
     const platform = new FakePlatform();
     const row = only(planFor(platform));
     platform.seed({ id: "t-ops", name: "ops-alerts", activation: "a-new" });
-    expect(await apply(platform, row)).toMatchObject({
-      status: "created",
-      id: "t-made-1",
-      text: "Created notify-team",
+    const result = await apply(platform, row);
+    expect(result.id).toBeUndefined();
+    expect(result).toMatchObject({
+      status: "changed",
+      text: "ops-alerts was created since you opened this. Review it.",
     });
+    expect(platform.writes()).toEqual([]);
   });
 
   it("only adopts a trigger equal in every respect", () => {
@@ -365,6 +368,77 @@ describe("a create whose answer may have been lost", () => {
     expect(
       sameTrigger(anyWorkflow as EventTriggerView, body, "notify-team"),
     ).toBe(false);
+  });
+});
+
+describe("someone who sets the trigger up at the same time", () => {
+  /** A trigger another person made since the dialog read the environment's. */
+  const THEIRS = {
+    id: "t-theirs",
+    name: "notify-team",
+    activation: "a-old",
+  };
+  const changed = {
+    status: "changed",
+    text: "notify-team was created since you opened this. Review it.",
+  };
+
+  it("creates nothing beside a trigger that already reacts as declared", async () => {
+    const platform = new FakePlatform();
+    const row = only(planFor(platform));
+    platform.seed(THEIRS);
+    expect(await apply(platform, row)).toEqual(changed);
+    expect(platform.writes()).toEqual([]);
+  });
+
+  it("creates nothing beside one made just before, once its name is taken", async () => {
+    const platform = new FakePlatform();
+    const row = only(planFor(platform));
+    platform.before.set("POST /event-triggers", () => platform.seed(THEIRS));
+    expect(await apply(platform, row)).toEqual(changed);
+    expect(platform.enabled().map((item) => item["id"])).toEqual(["t-theirs"]);
+    expect(platform.writes()).toEqual(["POST /event-triggers"]);
+  });
+
+  it("replaces nothing beside one, and stops nothing", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ id: "t-1", name: "notify-team", activation: "a-old" });
+    const row = only(
+      planFor(platform, { declaration: WIDER, storedId: "t-1" }),
+    );
+    platform.seed({
+      ...THEIRS,
+      name: "notify-team-2",
+      events: WIDER.events,
+      sources: undefined,
+    });
+    expect(await apply(platform, row)).toEqual({
+      status: "changed",
+      text: "notify-team-2 was created since you opened this. Review it.",
+    });
+    expect(platform.writes()).toEqual([]);
+  });
+
+  it.each<[string, Partial<Seed>]>([
+    ["reacts to other events", { events: ["transaction.completed"] }],
+    ["reacts to other workflows", { sources: ["sync-references"] }],
+    ["starts another workflow", { activation: "a-other" }],
+    ["was stopped", { disabled: true }],
+  ])("still creates it beside one that %s", async (_what, other) => {
+    const platform = new FakePlatform();
+    const row = only(planFor(platform));
+    platform.seed({ ...THEIRS, ...other });
+    expect(await apply(platform, row)).toMatchObject({ status: "created" });
+  });
+
+  it("still creates it beside one the dialog showed", async () => {
+    const platform = new FakePlatform();
+    platform.seed({ ...THEIRS, name: "ops-alerts" });
+    const rows = planFor(platform);
+    expect(rows.map((row) => row.kind)).toEqual(["create", "duplicate"]);
+    expect(await apply(platform, rows[0]!)).toMatchObject({
+      status: "created",
+    });
   });
 });
 

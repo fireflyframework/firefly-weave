@@ -66,11 +66,12 @@ import {
   type BindableItem,
 } from "../connections/connections-api";
 import {
-  actionable,
   attention,
   chooseResult,
   connectionNeed,
   type ConnectionNeed,
+  needsSync,
+  placeOf,
   retryResult,
   syncHeld,
   syncTriggers,
@@ -290,6 +291,9 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
     .activation-row[data-kind="failed"] {
       color: var(--danger-ink);
     }
+    .activation-row[data-kind="changed"] {
+      color: var(--warning-ink);
+    }
     .activation-row[data-kind="created"],
     .activation-row[data-kind="moved"],
     .activation-row[data-kind="stopped"] {
@@ -342,6 +346,8 @@ export class ActivationSteps implements OnInit {
   /** While a row's Retry, Stop it or answer runs. */
   readonly acting = signal(false);
   private context: SyncContext | null = null;
+  /** Where what the dialog shows was read, and as whom. */
+  private place: string | null = null;
   /** What each platform event trigger's row shows, by its place in the list. */
   readonly eventViews = computed(
     () =>
@@ -398,7 +404,7 @@ export class ActivationSteps implements OnInit {
   }
   /** Whether any trigger row changes something once the activation succeeds. */
   needsSync(): boolean {
-    return this.triggers().some(actionable);
+    return needsSync(this.triggers());
   }
   chooseConnection(intentId: string, revisionId: string) {
     this.connectionChoices.update((choices) => ({
@@ -410,6 +416,7 @@ export class ActivationSteps implements OnInit {
   async sync(activationId: string): Promise<void> {
     this.context = {
       api: this.api(),
+      place: this.place,
       activationId,
       environmentId: this.environment()?.id ?? "",
       environment: this.environment()?.short || this.environment()?.name,
@@ -560,6 +567,7 @@ export class ActivationSteps implements OnInit {
 
   async load() {
     this.state.set("loading");
+    this.place = placeOf(this.api());
     const stopped = await this.features();
     if (stopped) {
       this.stop.set(stopped);

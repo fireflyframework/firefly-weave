@@ -70,9 +70,13 @@ const SUCCESS = { tone: "success", icon: "ok" } as const;
 const DANGER = { tone: "danger", icon: "failCircle" } as const;
 const WARNING = { tone: "warning", icon: "warning" } as const;
 const LEFT_ALONE = { tone: "muted", icon: "lock" } as const;
-/** The icon of what happened to any other kind of trigger: set up or stopped, or not. */
+/** The icon of what happened to any other kind of trigger: set up or stopped, not, or left as it is. */
 export const resultIcon = (status: EventStatus): IconName =>
-  status === "failed" ? DANGER.icon : SUCCESS.icon;
+  status === "failed"
+    ? DANGER.icon
+    : status === "changed"
+      ? WARNING.icon
+      : SUCCESS.icon;
 
 /** "Needs attention and Undone": every event, in the order people choose them in. */
 const events = (declaration: EventDeclaration) =>
@@ -216,7 +220,13 @@ function resultDetail(row: EventRow, result: EventResult): string | null {
         ? "Activate again to create the platform event trigger this version declares."
         : null;
     case "changed":
-      return `Studio ${row.kind === "retarget" ? "moved" : "stopped"} nothing. Close this and activate again to see what it is now.`;
+      return `Studio ${
+        row.kind === "retarget"
+          ? "moved"
+          : (row.kind === "create" || row.kind === "replace") && !result.made
+            ? "created"
+            : "stopped"
+      } nothing. Close this and activate again to see what it is now.`;
     case "kept":
       return result.held
         ? "Studio stops it only after the trigger above is set up."

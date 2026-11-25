@@ -69,6 +69,12 @@ export const WORKFLOW_OF = new Map([
 export class FakePlatform implements TriggerApi {
   /** The environment the person has chosen in Studio; the platform serves only ENV. */
   environment = ENV;
+  /** Who is signed in. */
+  person = "person-1";
+  readonly replayGuard = {
+    settled: async () => undefined,
+    scope: () => this.person,
+  };
   readonly sent: Sent[] = [];
   readonly triggers: Wire[] = [];
   readonly starts = new Map<string, Wire[]>();

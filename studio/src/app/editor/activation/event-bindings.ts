@@ -84,6 +84,14 @@ export interface EventTriggerRequestBody {
 }
 /** A create as the dialog plans it, before the activation it starts exists. */
 export type EventTriggerAsk = Omit<EventTriggerRequestBody, "activation_id">;
+/** The trigger that has to keep reacting once another one stops. */
+export interface StayingTrigger {
+  id: string;
+  name: string;
+  activationId: string;
+  /** Its revision, when nothing was done to it. */
+  revision?: number;
+}
 
 export type EventRow =
   | {
@@ -92,6 +100,8 @@ export type EventRow =
       workflow: string;
       name: string;
       request: EventTriggerAsk;
+      /** Every trigger of the environment, as the plan read them. */
+      known: readonly string[];
       text: string;
     }
   | {
@@ -111,6 +121,7 @@ export type EventRow =
       workflow: string;
       name: string;
       request: EventTriggerAsk;
+      known: readonly string[];
       from: string;
       to: string;
       reconciles: boolean;
@@ -198,12 +209,16 @@ export interface EventResult {
   retry?: "create" | "stop";
   /** The stop Studio owes for this row's trigger; null clears it, absent leaves it as it is. */
   pendingStop?: PendingStop | null;
+  /** What must still react when the row's button stops its trigger later. */
+  staying?: StayingTrigger;
 }
 export interface ApplyOptions {
   /** The person chose Stop now: stop even when events wait to start. */
   stopWithWaiting?: boolean;
   /** The environment's name for sentences, such as "local". */
   environment?: string;
+  /** The trigger that must still react when this row's stops; a replace that has it already made its own. */
+  staying?: StayingTrigger;
 }
 
 export const AS_YOU =
@@ -324,6 +339,7 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
   const taken = new Set(
     input.bindings.filter((view) => !view.disabled).map((view) => view.name),
   );
+  const known = input.bindings.map((view) => view.id);
   const rows: EventRow[] = [];
   let found: EventTriggerView | undefined;
 
@@ -354,6 +370,7 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
             : { source_workflows: [...declaration.from] }),
           may_reconcile: false,
         },
+        known,
         text: `Create platform event trigger ${name} for ${eventSubtitle(declaration)}`,
       });
     } else if (typeof found.may_reconcile !== "boolean") {
@@ -404,6 +421,7 @@ export function eventBindingPlan(input: EventPlanInput): EventRow[] {
               : { source_workflows: [...declaration.from] }),
             may_reconcile: reconciles,
           },
+          known,
           from,
           to,
           reconciles,
@@ -570,6 +588,8 @@ const stopRefused = (error: unknown, where: string) =>
     : withPeriod(describeError(error).message);
 const changedText = (name: string) =>
   `${name} changed since you opened this. Review it.`;
+const madeText = (name: string) =>
+  `${name} was created since you opened this. Review it.`;
 const waitingText = (name: string, count: number | null) =>
   count === null
     ? `Studio can't check whether ${name} has events waiting to start.`
@@ -592,17 +612,20 @@ export function isStudioName(
  * Creates the trigger, adopting one an earlier attempt already made. It
  * lists first, so a create whose answer was lost is never made twice; on a
  * name conflict it lists again, adopts an equal trigger, or takes the next
- * free name and creates at most once more.
+ * free name and creates at most once more. A trigger that reacts as this one
+ * would and wasn't there when the dialog read them is someone else's: a second
+ * one would start the workflow twice, so nothing is created.
  */
 async function created(
   route: Routes,
-  ask: EventTriggerAsk,
+  row: Extract<EventRow, { kind: "create" | "replace" }>,
   activationId: string,
-  workflow: string,
 ): Promise<
-  | { ok: true; view: EventTriggerView }
+  | { ok: true; view: Pick<EventTriggerView, "id" | "name"> }
   | { ok: false; name: string; error: unknown }
+  | { ok: false; theirs: string }
 > {
+  const { request: ask, workflow, known } = row;
   let name = ask.name;
   for (let attempt = 0; ; attempt++) {
     let all: { items: EventTriggerView[]; truncated: boolean };
@@ -623,6 +646,17 @@ async function created(
         ),
     );
     if (earlier) return { ok: true, view: earlier };
+    const theirs = all.items.find(
+      (view) =>
+        !view.disabled &&
+        view.workflow_name === workflow &&
+        !known.includes(view.id) &&
+        reactsAs(view, {
+          events: ask.events,
+          from: ask.source_workflows ?? null,
+        }),
+    );
+    if (theirs) return { ok: false, theirs: theirs.name };
     const taken = new Set(
       all.items.filter((view) => !view.disabled).map((view) => view.name),
     );
@@ -670,25 +704,45 @@ async function waitingStarts(
 type Stop =
   | { kind: "stopped" }
   | { kind: "changed" }
+  /** The one that has to keep reacting doesn't, or is no longer as it was. */
+  | { kind: "alone" }
   | { kind: "waiting"; count: number | null }
   | { kind: "failed"; error: unknown };
 
 /**
  * Stops a trigger only as the dialog showed it: first, unless the person
  * chose Stop now, it checks that no event waits to start (a stop skips
- * them); then it reads the trigger again and stops it only when its revision
- * and activation are unchanged. The stop sends the revision the dialog read as
- * If-Match, so a trigger moved between that read and the stop keeps running
- * and counts as changed. A trigger already stopped or gone counts as stopped.
+ * them); then that the one that stays, if any, still reacts; then it reads the
+ * trigger again and stops it only when its revision and activation are
+ * unchanged. The stop sends the revision the dialog read as If-Match, so a
+ * trigger moved between that read and the stop keeps running and counts as
+ * changed. A trigger already stopped or gone counts as stopped.
  */
 async function stopped(
   route: Routes,
   view: EventTriggerView,
   checkWaiting: boolean,
+  staying?: StayingTrigger,
 ): Promise<Stop> {
   if (checkWaiting) {
     const count = await waitingStarts(route, view.id).catch(() => null);
     if (count !== 0) return { kind: "waiting", count };
+  }
+  if (staying) {
+    try {
+      const now = await route.read(staying.id);
+      if (
+        now.disabled ||
+        now.workflow_name !== view.workflow_name ||
+        now.activation_id !== staying.activationId ||
+        (staying.revision !== undefined && now.revision !== staying.revision)
+      )
+        return { kind: "alone" };
+    } catch (error) {
+      return error instanceof ApiError && error.status === 404
+        ? { kind: "alone" }
+        : { kind: "failed", error };
+    }
   }
   let fresh: EventTriggerView;
   try {
@@ -733,7 +787,9 @@ export async function applyEventRow(
   const checkWaiting = !options.stopWithWaiting;
 
   if (row.kind === "create") {
-    const made = await created(route, row.request, activationId, row.workflow);
+    const made = await created(route, row, activationId);
+    if ("theirs" in made)
+      return { status: "changed", text: madeText(made.theirs) };
     return made.ok
       ? {
           status: "created",
@@ -774,7 +830,12 @@ export async function applyEventRow(
 
   if (row.kind === "replace") {
     const old = row.binding;
-    const made = await created(route, row.request, activationId, row.workflow);
+    const { staying } = options;
+    const made = staying
+      ? { ok: true as const, view: staying }
+      : await created(route, row, activationId);
+    if ("theirs" in made)
+      return { status: "changed", text: madeText(made.theirs) };
     if (!made.ok)
       return {
         status: "failed",
@@ -785,8 +846,15 @@ export async function applyEventRow(
       };
     const name = made.view.name;
     const done = { id: made.view.id, made: name };
-    const stop = await stopped(route, old, checkWaiting);
+    const stop = await stopped(route, old, checkWaiting, staying);
     switch (stop.kind) {
+      case "alone":
+        return {
+          status: "changed",
+          ...done,
+          text: changedText(name),
+          pendingStop: owedStop(old),
+        };
       case "stopped":
         return {
           status: "replaced",
@@ -823,9 +891,20 @@ export async function applyEventRow(
 
   // A duplicate, a trigger left behind or one made outside Studio that the person wants stopped.
   const view = row.binding;
-  const owes = row.kind === "duplicate";
-  const stop = await stopped(route, view, checkWaiting);
+  const { staying } = options;
+  const later = {
+    ...(row.kind === "duplicate" ? { pendingStop: owedStop(view) } : {}),
+    ...(staying ? { staying } : {}),
+  };
+  const stop = await stopped(route, view, checkWaiting, staying);
   switch (stop.kind) {
+    case "alone":
+      return {
+        status: "changed",
+        id: view.id,
+        text: changedText(staying!.name),
+        pendingStop: owedStop(view),
+      };
     case "stopped":
       return {
         status: "stopped",
@@ -846,7 +925,7 @@ export async function applyEventRow(
         id: view.id,
         waiting: stop.count,
         text: waitingText(view.name, stop.count),
-        ...(owes ? { pendingStop: owedStop(view) } : {}),
+        ...later,
       };
     case "failed":
       return {
@@ -855,7 +934,7 @@ export async function applyEventRow(
         retry: "stop",
         ...failure(stop.error),
         text: `Couldn't stop ${view.name}: ${stopRefused(stop.error, where)}`,
-        ...(owes ? { pendingStop: owedStop(view) } : {}),
+        ...later,
       };
   }
 }

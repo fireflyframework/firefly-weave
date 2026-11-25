@@ -36,6 +36,8 @@ import {
   attention,
   chooseResult,
   connectionNeed,
+  needsSync,
+  placeOf,
   retryResult,
   settingsKey,
   syncHeld,
@@ -50,7 +52,8 @@ import { FakePlatform, refusal, requested, type Seed } from "./event-platform";
 const ENV = "/studio/api/api/v1/tenants/t/projects/p/environments/e";
 
 class FakeApi implements TriggerApi {
-  readonly environment = ENV;
+  environment = ENV;
+  readonly replayGuard = null;
   readonly calls: {
     method: string;
     path: string;
@@ -129,6 +132,7 @@ const context = (
   intents: TriggerIntent[] = [HOOK],
 ): SyncContext => ({
   api,
+  place: placeOf(api),
   activationId: "a-2",
   environmentId: "env-1",
   inputSchema: { type: "object" },
@@ -359,6 +363,44 @@ describe("setting up triggers after an activation", () => {
   });
 });
 
+describe("another environment or account chosen meanwhile", () => {
+  it("sets up, retries and stops nothing more there", async () => {
+    const api = new FakeApi();
+    const context_ = context(api, [HOOK, OLD]);
+    const rows: TriggerRow[] = [
+      {
+        kind: "create",
+        resourceKind: "webhook",
+        intentId: HOOK.id,
+        text: "Create webhook orders-in",
+      },
+      {
+        kind: "left-behind",
+        resourceKind: "webhook",
+        resource: resource("w-9", "orders-legacy", 3),
+        stop: true,
+        text: "Webhook orders-legacy keeps running on 1.0.0",
+      },
+    ];
+    api.answers = [new ApiError(500, { message: "Broken" })];
+    const [failed] = await syncTriggers(rows, context_, () => {
+      api.environment = `${ENV}-other`;
+    });
+    const sent = api.calls.length;
+    const nothing = (name: string) =>
+      `Studio did nothing to ${name}: the environment or the account changed since you opened this.`;
+    expect(await retryResult(failed!, context_)).toMatchObject({
+      status: "changed",
+      text: nothing("webhook orders-in"),
+    });
+    expect((await syncTriggers(rows, context_))[1]).toMatchObject({
+      status: "changed",
+      text: nothing("webhook orders-legacy"),
+    });
+    expect(api.calls).toHaveLength(sent);
+  });
+});
+
 describe("the connection a new trigger runs on", () => {
   it("is any version of the Kafka or email connector, or the app's exact package", () => {
     expect(
@@ -540,6 +582,7 @@ describe("a platform event trigger after an activation", () => {
     intents: TriggerIntent[],
   ): SyncContext => ({
     api: platform,
+    place: placeOf(platform),
     activationId: "a-new",
     environmentId: "env-1",
     environment: "development",
@@ -759,6 +802,259 @@ describe("a platform event trigger after an activation", () => {
     expect(statuses(results)).toEqual([["stopped", "Stopped notify-team-2"]]);
   });
 
+  it("owes the stop of a duplicate the person unticked beside a trigger it leaves as it is", async () => {
+    const platform = seeded({ ...OLD_ONE, mayReconcile: null }, SECOND);
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents).map((row) =>
+      row.kind === "duplicate" ? withStop(row, false) : row,
+    );
+    expect(rows.map((row) => row.kind)).toEqual(["blocked", "duplicate"]);
+    // Nothing is sent, but something is to be kept.
+    expect(rows.some(actionable)).toBe(false);
+    expect(needsSync(rows)).toBe(true);
+    const results = await syncTriggers(rows, within(platform, intents));
+    expect(platform.writes()).toEqual([]);
+    expect(keep(intents, results, rows)["pendingStops"]).toEqual({
+      "env-1": [{ triggerId: "t-2", revision: 1, activationId: "a-older" }],
+    });
+  });
+
+  it("has nothing to do for a trigger it leaves as it is", () => {
+    const platform = seeded({ ...OLD_ONE, mayReconcile: null });
+    const rows = rowsFor(platform, [stored()]);
+    expect(rows.map((row) => row.kind)).toEqual(["blocked"]);
+    expect(needsSync(rows)).toBe(false);
+  });
+
+  it("keeps a duplicate the person unticked while it was held, once the declared trigger is set up", async () => {
+    const platform = seeded(OLD_ONE, SECOND);
+    platform.refuse.set(
+      "POST /event-triggers/t-1/retarget",
+      refusal(500, "WV-INTERNAL", "Request failed"),
+    );
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents).map((row) =>
+      row.kind === "duplicate" ? withStop(row, false) : row,
+    );
+    const context = within(platform, intents);
+    const results = await syncTriggers(rows, context);
+    expect(results[1]!.event).toMatchObject({ held: true });
+    const byRow = new Map(results.map((result, index) => [index, result]));
+    byRow.set(0, await retryResult(results[0]!, context));
+    await syncHeld(rows, byRow, context, (index, result) =>
+      byRow.set(index, result),
+    );
+    expect(statuses([...byRow.values()])).toEqual([
+      ["moved", "Moved notify-team to 1.2.0"],
+      ["kept", "Kept notify-team-2 for now."],
+    ]);
+    expect(platform.find("t-2")!["disabled"]).toBe(false);
+    expect(keep(intents, [...byRow.values()], rows)["pendingStops"]).toEqual({
+      "env-1": [{ triggerId: "t-2", revision: 1, activationId: "a-older" }],
+    });
+  });
+
+  const WHY: [string, (platform: FakePlatform) => void][] = [
+    ["was stopped", (platform) => (platform.find("t-1")!["disabled"] = true)],
+    [
+      "moved to another version",
+      (platform) => (platform.find("t-1")!["activation_id"] = "a-old"),
+    ],
+    [
+      "starts another workflow",
+      (platform) =>
+        (platform.find("t-1")!["workflow_name"] = "sync-references"),
+    ],
+    [
+      "is gone",
+      (platform) =>
+        platform.triggers.splice(
+          platform.triggers.indexOf(platform.find("t-1")!),
+          1,
+        ),
+    ],
+  ];
+  it.each(WHY)(
+    "stops no duplicate later when the declared trigger %s",
+    async (_what, change) => {
+      const platform = seeded(OLD_ONE, SECOND);
+      platform.starts.set("t-2", [requested("s-1")]);
+      const intents = [stored()];
+      const rows = rowsFor(platform, intents);
+      const context = within(platform, intents);
+      const results = await syncTriggers(rows, context);
+      expect(results.map((result) => result.status)).toEqual([
+        "moved",
+        "waiting",
+      ]);
+      change(platform);
+      const answered = await chooseResult(results[1]!, "stop", context);
+      expect(statuses([answered])).toEqual([
+        ["changed", "notify-team changed since you opened this. Review it."],
+      ]);
+      expect(platform.find("t-2")!["disabled"]).toBe(false);
+      // It may be the only one that reacts now, and its stop stays owed.
+      expect(keep(intents, [results[0]!, answered], rows)).toMatchObject({
+        pendingStops: { "env-1": [{ triggerId: "t-2" }] },
+      });
+    },
+  );
+
+  it("stops no duplicate again after a failure when the declared trigger no longer reacts", async () => {
+    const platform = seeded(OLD_ONE, SECOND);
+    platform.refuse.set(
+      "POST /event-triggers/t-2/disable",
+      refusal(500, "WV-INTERNAL", "Request failed"),
+    );
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents);
+    const context = within(platform, intents);
+    const results = await syncTriggers(rows, context);
+    expect(results[1]).toMatchObject({ status: "failed" });
+    platform.find("t-1")!["disabled"] = true;
+    expect(await retryResult(results[1]!, context)).toMatchObject({
+      status: "changed",
+    });
+    expect(platform.find("t-2")!["disabled"]).toBe(false);
+  });
+
+  it("stops a duplicate beside a trigger it leaves as it is only while that one is as it was", async () => {
+    const platform = seeded({ ...OLD_ONE, mayReconcile: null }, SECOND);
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents);
+    platform.find("t-1")!["revision"] = 9;
+    const results = await syncTriggers(rows, within(platform, intents));
+    expect(statuses(results)).toEqual([
+      ["changed", "notify-team changed since you opened this. Review it."],
+    ]);
+    expect(platform.writes()).toEqual([]);
+  });
+
+  it("says why a duplicate wasn't stopped when the declared trigger can't be read, with Stop it", async () => {
+    const platform = seeded(OLD_ONE, SECOND);
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents);
+    const context = within(platform, intents);
+    platform.refuse.set(
+      "GET /event-triggers/t-1",
+      refusal(503, "WV-UNAVAILABLE", "Try again later"),
+    );
+    const results = await syncTriggers(rows, context);
+    expect(results[1]).toMatchObject({
+      status: "failed",
+      text: "Couldn't stop notify-team-2: Try again later.",
+      event: { retry: "stop", pendingStop: { triggerId: "t-2" } },
+    });
+    expect(await retryResult(results[1]!, context)).toMatchObject({
+      status: "stopped",
+    });
+  });
+
+  it("stops nothing later, and creates nothing, when the trigger a replace made no longer reacts", async () => {
+    const platform = seeded(OLD_ONE);
+    platform.starts.set("t-1", [requested("s-1")]);
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents, WIDER);
+    const context = within(platform, intents);
+    const [asked] = await syncTriggers(rows, context);
+    platform.find("t-made-1")!["disabled"] = true;
+    const answered = await chooseResult(asked!, "stop", context);
+    expect(statuses([answered])).toEqual([
+      ["changed", "notify-team-2 changed since you opened this. Review it."],
+    ]);
+    expect(platform.enabled().map((item) => item["id"])).toEqual(["t-1"]);
+    expect(platform.writes()).toEqual(["POST /event-triggers"]);
+    expect(keep(intents, [answered], rows)).toMatchObject({
+      resources: { "env-1": "t-made-1" },
+      pendingStops: { "env-1": [{ triggerId: "t-1" }] },
+    });
+  });
+
+  it("stops no held duplicate when the declared trigger stopped reacting once it was set up", async () => {
+    const platform = seeded(OLD_ONE, SECOND);
+    platform.refuse.set(
+      "POST /event-triggers/t-1/retarget",
+      refusal(500, "WV-INTERNAL", "Request failed"),
+    );
+    const intents = [stored()];
+    const rows = rowsFor(platform, intents);
+    const context = within(platform, intents);
+    const results = await syncTriggers(rows, context);
+    const byRow = new Map(results.map((result, index) => [index, result]));
+    byRow.set(0, await retryResult(results[0]!, context));
+    platform.find("t-1")!["disabled"] = true;
+    const seen: SyncResult[] = [];
+    await syncHeld(rows, byRow, context, (_index, result) => seen.push(result));
+    expect(seen.map((result) => result.status)).toEqual(["changed"]);
+    expect(platform.find("t-2")!["disabled"]).toBe(false);
+  });
+
+  const ELSEWHERE: [string, (platform: FakePlatform) => void][] = [
+    [
+      "another environment",
+      (platform) => (platform.environment = `${ENV}-other`),
+    ],
+    ["another account", (platform) => (platform.person = "person-2")],
+    [
+      "no environment",
+      (platform) =>
+        Object.defineProperty(platform, "environment", {
+          get: () => {
+            throw Error("Choose an environment.");
+          },
+        }),
+    ],
+  ];
+  it.each(ELSEWHERE)(
+    "sends nothing for a row's button in %s, and what it owes stays",
+    async (_what, leave) => {
+      const platform = seeded(OLD_ONE, SECOND);
+      platform.starts.set("t-2", [requested("s-1")]);
+      const intents = [stored()];
+      const rows = rowsFor(platform, intents);
+      const context = within(platform, intents);
+      const results = await syncTriggers(rows, context);
+      const sent = platform.sent.length;
+      leave(platform);
+      const elsewhere =
+        "Studio did nothing to notify-team-2: the environment or the account changed since you opened this.";
+      for (const answered of [
+        await chooseResult(results[1]!, "stop", context),
+        await retryResult({ ...results[1]!, status: "failed" }, context),
+      ]) {
+        expect(statuses([answered])).toEqual([["changed", elsewhere]]);
+        expect(keep(intents, [results[0]!, answered], rows)).toMatchObject({
+          resources: { "env-1": "t-1" },
+          pendingStops: { "env-1": [{ triggerId: "t-2" }] },
+        });
+      }
+      expect(platform.sent).toHaveLength(sent);
+      // Keep it for now asks nothing of the platform.
+      expect(await chooseResult(results[1]!, "keep", context)).toMatchObject({
+        status: "kept",
+      });
+    },
+  );
+  it.each(ELSEWHERE)(
+    "sends nothing more once the person is in %s while rows are set up",
+    async (_what, leave) => {
+      const platform = seeded(OLD_ONE, SECOND);
+      const intents = [stored()];
+      const rows = rowsFor(platform, intents);
+      const context = within(platform, intents);
+      const results = await syncTriggers(rows, context, () => leave(platform));
+      expect(results.map((result) => result.status)).toEqual([
+        "moved",
+        "changed",
+      ]);
+      expect(platform.writes()).toEqual(["POST /event-triggers/t-1/retarget"]);
+      expect(attention(results)).toBe("1 trigger needs attention.");
+      expect(keep(intents, results, rows)).toMatchObject({
+        resources: { "env-1": "t-1" },
+      });
+    },
+  );
+
   it("owes the stop of a duplicate the person unticked, and drops the stops that no longer count", async () => {
     const platform = seeded(OLD_ONE, SECOND);
     const intents = [
@@ -863,6 +1159,7 @@ describe("a platform event trigger after an activation", () => {
     const intents = [stored(), HOOK];
     const api: SyncContext["api"] = {
       environment: platform.environment,
+      replayGuard: platform.replayGuard,
       page: () => platform.page(),
       request: (path, method) => platform.request(path, method),
       mutate: async <T>(
@@ -903,6 +1200,7 @@ describe("a platform event trigger after an activation", () => {
     const hook = view("w-new", "orders-in", 1, "a-new");
     const api: SyncContext["api"] = {
       environment: platform.environment,
+      replayGuard: platform.replayGuard,
       page: () => platform.page(),
       request: (path, method) => platform.request(path, method),
       mutate: async <T>(
