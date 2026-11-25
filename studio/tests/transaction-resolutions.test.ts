@@ -27,6 +27,7 @@ import {
   checkReconcile,
   checkRetry,
   checkStepOutcome,
+  checklistChanged,
   checklistRows,
   confirmReason,
   explainDecision,
@@ -629,6 +630,66 @@ describe("Mark as reconciled", () => {
     });
     // What was typed is not touched in place: a dialog redraws from a new draft.
     expect(typed.ticked.size).toBe(3);
+  });
+
+  describe("read again at the same revision", () => {
+    const moved = (change: (item: Step) => Partial<Step>): IncidentView => ({
+      ...undoStuck,
+      transaction: {
+        ...undoStuck.transaction!,
+        participants: undoStuck.transaction!.participants.map((item) => ({
+          ...item,
+          ...change(item),
+        })),
+      },
+    });
+    const of = (key: string, change: Partial<Step>) =>
+      moved((item) => (item.instance_key === key ? change : {}));
+
+    it.each([
+      ["a step moved on", of("hold", { status: "confirming" })],
+      ["a step was tried again", of("add", { attempts: 4 })],
+      // Listed when finished only.
+      ["a step was skipped", of("add2", { status: "skipped" })],
+      [
+        "a step joined",
+        {
+          ...undoStuck,
+          transaction: {
+            ...undoStuck.transaction!,
+            participants: [
+              ...undoStuck.transaction!.participants,
+              step("add3", "compensate", "dispatched"),
+            ],
+          },
+        },
+      ],
+    ] as const)("has another checklist once %s", (_why, read) => {
+      expect(checklistChanged(undoStuck, read)).toBe(true);
+    });
+
+    it("has the same checklist while what it lists is the same", () => {
+      expect(
+        checklistChanged(
+          undoStuck,
+          moved(() => ({})),
+        ),
+      ).toBe(false);
+      // Nothing it lists says these.
+      expect(
+        checklistChanged(undoStuck, {
+          ...of("add2", { effect: "unknown" }),
+          run_status: "waiting",
+          updated_at: "2026-11-22T10:53:30Z",
+        }),
+      ).toBe(false);
+    });
+  });
+
+  it("has another checklist at another revision, whatever it lists", () => {
+    expect(checklistChanged(undoStuck, { ...undoStuck, revision: 2 })).toBe(
+      true,
+    );
   });
 });
 

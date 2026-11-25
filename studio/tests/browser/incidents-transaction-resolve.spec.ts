@@ -1100,6 +1100,240 @@ for (const [why, as, message] of [
     await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
   });
 
+/** A confirm stuck while another runs, or sticks too: never another revision. */
+const twoConfirms = (second: "confirming" | "confirm_stuck"): IncidentView => {
+  const [hold] = called.transaction!.participants;
+  return {
+    ...called,
+    code: "WV-TXN-CONFIRM-STUCK",
+    node_id: "hold",
+    instance_key: "hold#confirm",
+    transaction: {
+      ...called.transaction!,
+      participants: [
+        { ...hold, status: "confirm_stuck", attempts: 2 },
+        { ...hold, node_id: "hold2", instance_key: "hold2", status: second },
+        {
+          ...hold,
+          node_id: "submit",
+          instance_key: "submit",
+          mode: "irreversible",
+        },
+      ],
+    },
+  };
+};
+/** Mark as reconciled filled in as finished, which the platform refuses once or more. */
+async function refusedRecord(
+  page: Page,
+  answers?: (route: Route) => unknown,
+  times = 1,
+) {
+  const platform = await opened(page, twoConfirms("confirming"));
+  let refusals = 0;
+  const sent = await decisions(page, platform, async (route) => {
+    if (refusals++ >= times) return false;
+    return refuse(
+      route,
+      422,
+      "WV-RUNTIME-OUTPUT",
+      "The reconciliation record doesn't fit the transaction",
+    );
+  });
+  const name = "Mark as reconciled";
+  await offer(page, name).click();
+  await ending(page, name, "Finished").check();
+  await tickAll(page);
+  await field(page, name, "Result of the transaction (JSON)").fill("{}");
+  await field(page, name, "Reason").fill("Both are confirmed");
+  await field(page, name, "Evidence reference").fill("OPS-2313");
+  if (answers)
+    await page.route(`${environment}/incidents/${ids.called}`, answers);
+  return { platform, sent, name, asked: dialog(page, name) };
+}
+
+test("a record refused because it changed at the same revision is read again and rebuilt, and nothing typed is blamed", async ({
+  page,
+}) => {
+  const { platform, sent, name, asked } = await refusedRecord(
+    page,
+    undefined,
+    2,
+  );
+  change(platform, twoConfirms("confirm_stuck"));
+  platform.reads.length = 0;
+  await confirm(page, name).click();
+  await expect(asked).toContainText(
+    "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept.",
+  );
+  expect(platform.reads).toEqual([ids.called]);
+  await expect(asked.getByRole("alert")).toHaveCount(0);
+  const result = field(page, name, "Result of the transaction (JSON)");
+  await expect(result).not.toHaveAttribute("aria-invalid");
+  await expect(result).toHaveValue("{}");
+  await expect(field(page, name, "Reason")).toHaveValue("Both are confirmed");
+  await expect(asked.locator(".tick").nth(1)).toContainText("Confirm failed");
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).not.toBeChecked();
+  await expect
+    .poll(() => described(page, name))
+    .toBe("To mark it as reconciled, tick 2 more lines.");
+  await page.screenshot({ path: `${captures}/reconcile-moved-1440.png` });
+  await tickAll(page);
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1].revision).toBe('"1"');
+  expect(sent[1].body.receipt_id).not.toBe(sent[0].body.receipt_id);
+  // Refused again, the same when read again: now the result is to correct.
+  await expect(asked.locator("#decide-result-error")).toBeVisible();
+  await expect(asked).not.toContainText("rebuilt the checklist");
+  await result.fill('{"moved": true}');
+  await confirm(page, name).click();
+  await expect(asked).toHaveCount(0);
+  expect(sent).toHaveLength(3);
+});
+
+test("a refused record that is the same when read again keeps its ticks, and its result is to correct", async ({
+  page,
+}) => {
+  const reads: Route[] = [];
+  const { name, asked } = await refusedRecord(page, (route) => {
+    reads.push(route);
+  });
+  await confirm(page, name).click();
+  await expect.poll(() => reads.length).toBe(1);
+  // Nothing is blamed, and nothing else can be sent, until it is read.
+  await expect(asked.getByRole("button", { name: "Resolving…" })).toBeVisible();
+  await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
+  // Nor is there anything to refresh yet, whatever is typed meanwhile.
+  await field(page, name, "Reason").fill("Both are confirmed by hand");
+  await expect(asked).toContainText("26 / 2,000");
+  await expect(asked.locator(".confirm-reason")).toHaveCount(0);
+  await reads[0].fulfill({ json: twoConfirms("confirming") });
+  await expect(asked.locator("#decide-result-error")).toHaveText(
+    "The reconciliation record doesn't fit the transaction (WV-RUNTIME-OUTPUT)",
+  );
+  await expect(asked).not.toContainText("rebuilt the checklist");
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).toBeChecked();
+  await expect(confirm(page, name)).not.toHaveAttribute("aria-disabled");
+});
+
+test("a refused record that couldn't be read again blames nothing until it is", async ({
+  page,
+}) => {
+  let failing = true;
+  const { platform, sent, name, asked } = await refusedRecord(page, (route) =>
+    failing
+      ? refuse(route, 503, "WV-UNAVAILABLE", "Unavailable")
+      : route.fallback(),
+  );
+  await confirm(page, name).click();
+  const alert = asked.getByRole("alert");
+  await expect(alert).toContainText(
+    "The platform refused this record, and Studio couldn't read the incident again. Refresh it, check it again, then decide.",
+  );
+  await expect(alert).toContainText("Support code: WV-UNAVAILABLE");
+  await expect(
+    field(page, name, "Result of the transaction (JSON)"),
+  ).not.toHaveAttribute("aria-invalid");
+  await expect
+    .poll(() => described(page, name))
+    .toBe("To mark it as reconciled, refresh the incident.");
+  await page.screenshot({ path: `${captures}/reconcile-unread-1440.png` });
+  await confirm(page, name).evaluate((button: HTMLElement) => button.click());
+  expect(sent).toHaveLength(1);
+  const refresh = asked.getByRole("button", { name: "Refresh incident" });
+  await refresh.click();
+  // Still unread.
+  await expect(refresh).not.toHaveAttribute("aria-busy");
+  await expect(alert).toContainText("The platform refused this record");
+  failing = false;
+  change(platform, twoConfirms("confirm_stuck"));
+  await refresh.click();
+  await expect(asked).toContainText("rebuilt the checklist");
+  await expect(alert).toHaveCount(0);
+  await tickAll(page);
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(2);
+});
+
+test("a refused record that couldn't be read again is forgotten with its dialog, and shows once read the same", async ({
+  page,
+}) => {
+  let failing = true;
+  const { name, asked } = await refusedRecord(
+    page,
+    (route) =>
+      failing
+        ? refuse(route, 503, "WV-UNAVAILABLE", "Unavailable")
+        : route.fallback(),
+    2,
+  );
+  const alert = asked.getByRole("alert");
+  await confirm(page, name).click();
+  await expect(alert).toContainText("couldn't read the incident again");
+  failing = false;
+  // The same record: what was typed was refused after all.
+  await asked.getByRole("button", { name: "Refresh incident" }).click();
+  await expect(asked.locator("#decide-result-error")).toBeVisible();
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).toBeChecked();
+  failing = true;
+  await confirm(page, name).click();
+  await expect(alert).toContainText("couldn't read the incident again");
+  await page.keyboard.press("Escape");
+  failing = false;
+  await offer(page, name).click();
+  await expect(asked).toBeVisible();
+  await expect(alert).toHaveCount(0);
+  await expect
+    .poll(() => described(page, name))
+    .toBe(
+      "To mark it as reconciled, choose how it ended, fill in Reason and fill in Evidence reference.",
+    );
+});
+
+test("a refused record whose incident was decided meanwhile leaves the dialog and says so once", async ({
+  page,
+}) => {
+  const { platform, name, asked } = await refusedRecord(page);
+  change(platform, {
+    ...twoConfirms("confirming"),
+    status: "resolved",
+    revision: 2,
+  });
+  await confirm(page, name).click();
+  await expect(asked).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Incident WV-TXN-CONFIRM-STUCK at hold is no longer active.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("was not resolved")).toHaveCount(0);
+  await expect(title(page)).toBeFocused();
+});
+
+test("a refused record whose dialog was closed while it is read again is a notice", async ({
+  page,
+}) => {
+  const reads: Route[] = [];
+  const { name, asked } = await refusedRecord(page, (route) => {
+    reads.push(route);
+  });
+  await confirm(page, name).click();
+  await expect.poll(() => reads.length).toBe(1);
+  await page.keyboard.press("Escape");
+  await expect(asked).toHaveCount(0);
+  await reads[0].fulfill({ json: twoConfirms("confirm_stuck") });
+  await expect(
+    page.getByText(
+      "Incident WV-TXN-CONFIRM-STUCK at hold was not resolved. The reconciliation record doesn't fit the transaction",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("a refused result of the step shows under it", async ({ page }) => {
   const platform = await opened(page, unknown);
   await decisions(page, platform, (route) =>
@@ -1121,6 +1355,8 @@ test("a refused result of the step shows under it", async ({ page }) => {
   await expect(dialog(page, name)).toContainText(
     "The step's output violates its schema (WV-RUNTIME-OUTPUT)",
   );
+  // It is about no record: nothing is read again.
+  expect(platform.reads).toEqual([ids.unknown]);
 });
 
 test("a step that is running again says to wait", async ({ page }) => {

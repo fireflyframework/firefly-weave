@@ -101,6 +101,7 @@ import { ResolveIncidentDialog } from "./resolve-incident-dialog";
 import type { PartnerRead } from "./transaction-panel";
 import { TransactionResolveDialog } from "./transaction-resolve-dialog";
 import {
+  checklistChanged,
   explainDecision,
   transactionActions,
   type TransactionAction,
@@ -121,6 +122,9 @@ const READ_REFUSED =
   "You need incident.read in this environment. Ask an administrator in Settings › People and access.";
 const NOT_FOUND =
   "This incident can't be found. It may belong to another environment, or its run's data was deleted.";
+/** Why a record was refused isn't known until the incident it is of is read again. */
+const RECORD_UNREAD =
+  "The platform refused this record, and Studio couldn't read the incident again. Refresh it, check it again, then decide.";
 /** What never changes of an incident, which the platform's answer to a decision leaves out. */
 const unchanging = ({
   opened_at,
@@ -622,6 +626,7 @@ interface Band {
           [busy]="sending.has(selected.id)"
           [failure]="failure"
           [refreshing]="refreshing"
+          [unread]="!!refusedRecord && !sending.has(selected.id)"
           (decide)="resolve($event)"
           (dismiss)="stopDeciding(action)"
           (refresh)="reloadIncident()"
@@ -833,6 +838,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   readonly sending = new Set<string>();
   /** The last refusal, shown in the dialog of the incident it was for. */
   failure: PlainError | null = null;
+  /** Why a record of how a transaction ended was refused, until its incident is read again. */
+  refusedRecord: PlainError | null = null;
   /**
    * Per incident, the receipt of a decision whose answer was lost, with what
    * it was sent with (revision and decision). Sending the same again reuses
@@ -1560,6 +1567,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.resolving = false;
     this.deciding = null;
     this.failure = null;
+    this.refusedRecord = null;
     this.refreshing = false;
     this.dialogs++;
   }
@@ -1677,6 +1685,16 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
                 "Someone changed this incident since you opened it. Refresh it, check it again, then decide.",
             }
           : plain;
+      // A record may have been refused for steps that changed since it was
+      // read: it is read again before anything typed is blamed.
+      if (
+        offer?.action === "mark_reconciled" &&
+        plain.code === "WV-RUNTIME-OUTPUT" &&
+        stillAsked()
+      ) {
+        this.refusedRecord = explained;
+        if (await this.reloadIncident()) return;
+      }
       if (stillAsked()) this.failure = explained;
       else
         this.host.notify(
@@ -1695,13 +1713,15 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
    * A read that fails, or finds it gone, says so in the dialog instead of
    * leaving the old revision to fail again. A decision on a transaction in
    * doubt keeps why it was refused while it is read, and closes when it no
-   * longer fits.
+   * longer fits. A refused record is read again without asking: only what is
+   * still the same then was refused for what was typed. Answers false once the
+   * dialog it was read for is gone.
    */
-  async reloadIncident() {
+  async reloadIncident(): Promise<boolean> {
     const incident = this.selected;
     const scope = this.scope;
     const action = this.deciding;
-    if (!incident || !scope || this.refreshing) return;
+    if (!incident || !scope || this.refreshing) return false;
     const generation = this.generation;
     const dialog = this.dialogs;
     if (action) this.refreshing = true;
@@ -1716,7 +1736,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       const fresh = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(incident.id)}`,
       );
-      if (!current()) return;
+      if (!current()) return false;
       if (isUnavailableIncident(fresh))
         this.failure = {
           message:
@@ -1725,7 +1745,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           status: 0,
         };
       else if (action) {
-        this.failure = null;
+        this.failure = checklistChanged(incident, fresh)
+          ? null
+          : this.refusedRecord;
+        this.refusedRecord = null;
         this.readAgain(fresh, action);
       } else {
         this.selected = fresh;
@@ -1735,7 +1758,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           );
       }
     } catch (error) {
-      if (!current()) return;
+      if (!current()) return false;
       const plain = describeError(error);
       this.failure =
         plain.status === 404
@@ -1744,11 +1767,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
               message:
                 "Studio couldn't find this incident when it read it again. Close this dialog and look for it in the list.",
             }
-          : plain;
+          : this.refusedRecord
+            ? { ...plain, message: RECORD_UNREAD }
+            : plain;
     } finally {
       if (dialog === this.dialogs) this.refreshing = false;
       if (this.alive) this.cdr.markForCheck();
     }
+    return true;
   }
   /**
    * The platform's answer to a decision is the incident's own row: when it

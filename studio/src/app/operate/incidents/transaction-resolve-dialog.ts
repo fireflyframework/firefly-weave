@@ -54,6 +54,7 @@ import {
   checkReconcile,
   checkRetry,
   checkStepOutcome,
+  checklistChanged,
   checklistRows,
   confirmReason,
   outputRefusalAt,
@@ -333,6 +334,8 @@ export class TransactionResolveDialog {
   failure = input<PlainError | null>(null);
   /** The incident is being read again. */
   refreshing = input(false);
+  /** A refused record may be of steps that changed: the incident couldn't be read to tell. */
+  unread = input(false);
   decide = output<ResolutionRequest>();
   dismiss = output<void>();
   refresh = output<void>();
@@ -355,6 +358,8 @@ export class TransactionResolveDialog {
   } | null>(null);
   /** The refusal whose result, ticks or ending were changed since. */
   private readonly corrected = signal<PlainError | null>(null);
+  /** The checklist was built again since a decision was sent last. */
+  private readonly builtAgain = signal(false);
 
   /** The decision as the drawer offered it: the platform checks who may take it. */
   readonly offer = computed(() => {
@@ -437,13 +442,14 @@ export class TransactionResolveDialog {
     const checked = this.checked();
     return "problems" in checked ? checked.problems : {};
   });
-  /** The incident changed: nothing is sent until it is read again. */
+  /** The incident changed, or may have: nothing is sent until it is read again. */
   readonly stale = computed(
-    () => this.outdated()?.revision === this.incident().revision,
+    () =>
+      this.unread() || this.outdated()?.revision === this.incident().revision,
   );
   /** Its checklist was built again: each step is ticked again. */
   readonly rebuilt = computed(
-    () => this.outdated() !== null && !this.stale() && this.rows().length > 0,
+    () => this.builtAgain() && !this.stale() && this.rows().length > 0,
   );
   /** Why the confirm waits; null when it can be pressed. */
   readonly waits = computed(() => {
@@ -484,7 +490,10 @@ export class TransactionResolveDialog {
   /** A refusal no field shows; why the incident must be read again, until it is. */
   readonly notice = computed(() => {
     if (this.outputRefused()) return null;
-    return this.refused() ?? (this.stale() ? this.outdated()!.refused : null);
+    return (
+      this.refused() ??
+      (this.stale() ? (this.outdated()?.refused ?? null) : null)
+    );
   });
   readonly resultError = computed(() => {
     const { blockOutput, output } = this.problems() as Partial<
@@ -514,12 +523,14 @@ export class TransactionResolveDialog {
         });
     });
     // The steps of another record are checked again, whatever was ticked.
-    let revision: number | null = null;
+    let read: IncidentView | null = null;
     effect(() => {
-      const now = this.incident().revision;
-      if (revision !== null && revision !== now)
+      const now = this.incident();
+      if (read && checklistChanged(read, now)) {
         this.draft.update(afterRevisionRefresh);
-      revision = now;
+        this.builtAgain.set(true);
+      }
+      read = now;
     });
     // What was refused takes the focus, unless the person is in another field.
     effect(() => {
@@ -558,8 +569,10 @@ export class TransactionResolveDialog {
     if (this.busy() || this.waits()) return;
     const checked = this.checked();
     this.attempted.set(!("request" in checked));
-    if ("request" in checked) this.decide.emit(checked.request);
-    else this.focusWhenDrawn(':is(input, textarea)[aria-invalid="true"]');
+    if ("request" in checked) {
+      this.builtAgain.set(false);
+      this.decide.emit(checked.request);
+    } else this.focusWhenDrawn(':is(input, textarea)[aria-invalid="true"]');
   }
   private focusWhenDrawn(selector: string) {
     afterNextRender(

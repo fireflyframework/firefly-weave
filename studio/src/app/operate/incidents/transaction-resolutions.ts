@@ -346,6 +346,21 @@ export function checkReconcile(
     },
   };
 }
+/**
+ * Whether an incident read again asks about other steps, or says otherwise how
+ * Weave left one: its revision doesn't move with its transaction's record.
+ */
+export function checklistChanged(
+  before: IncidentView,
+  after: IncidentView,
+): boolean {
+  const lines = (incident: IncidentView) =>
+    JSON.stringify([
+      checklistRows(incident, "compensated"),
+      checklistRows(incident, "completed"),
+    ]);
+  return before.revision !== after.revision || lines(before) !== lines(after);
+}
 /** The draft once the incident is read again: its record may list other steps, so each is ticked again. */
 export function afterRevisionRefresh(draft: ReconcileDraft): ReconcileDraft {
   return { ...draft, ticked: new Set() };
