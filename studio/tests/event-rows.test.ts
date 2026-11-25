@@ -673,6 +673,24 @@ describe("a row after activating", () => {
     });
   });
 
+  it("says a replace stopped nothing when the old trigger changed once the new one was made", async () => {
+    const platform = seeded(STORED);
+    const replace = row(
+      planned(platform, { storedId: "t-1", declaration: WIDER }),
+      "replace",
+    );
+    platform.before.set("POST /event-triggers", () => {
+      const old = platform.find("t-1")!;
+      old["activation_id"] = "a-older";
+      old["revision"] = 9;
+    });
+    expect(await shown(platform, replace)).toMatchObject({
+      lead: "Created notify-team-2. notify-team changed since you opened this. Review it.",
+      detail:
+        "Studio stopped nothing. Close this and activate again to see what it is now.",
+    });
+  });
+
   it("gives every result of another kind of trigger its icon", () => {
     expect(
       (["created", "moved", "stopped", "failed", "changed"] as const).map(

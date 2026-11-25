@@ -1036,6 +1036,27 @@ describe("a platform event trigger after an activation", () => {
     },
   );
   it.each(ELSEWHERE)(
+    "keeps the trigger a replace made, and the stop it owes, in %s",
+    async (_what, leave) => {
+      const platform = seeded(OLD_ONE);
+      platform.starts.set("t-1", [requested("s-1")]);
+      const intents = [stored()];
+      const rows = rowsFor(platform, intents, WIDER);
+      const context = within(platform, intents);
+      const results = await syncTriggers(rows, context);
+      expect(results.map((result) => result.status)).toEqual(["waiting"]);
+      const sent = platform.sent.length;
+      leave(platform);
+      const answered = await chooseResult(results[0]!, "stop", context);
+      expect(answered.status).toBe("changed");
+      expect(platform.sent).toHaveLength(sent);
+      expect(keep(intents, [answered], rows)).toMatchObject({
+        resources: { "env-1": "t-made-1" },
+        pendingStops: { "env-1": [{ triggerId: "t-1" }] },
+      });
+    },
+  );
+  it.each(ELSEWHERE)(
     "sends nothing more once the person is in %s while rows are set up",
     async (_what, leave) => {
       const platform = seeded(OLD_ONE, SECOND);
