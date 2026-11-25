@@ -26,6 +26,7 @@ import {
   jsonEqual,
   type JsonObject,
 } from "../../forms/core/json";
+import { safeSample } from "../ndv/panes/sample";
 import { countLabel } from "../ndv/panes/views";
 import type { Json } from "../ndv/registry";
 import type { DataSource } from "../state/test-data";
@@ -33,6 +34,7 @@ import {
   EVENT_CHOICE_ORDER,
   EVENT_CHOICES,
   EVENT_TYPES,
+  isPlatformEventInput,
   isPlatformEventType,
   isSampleId,
   sampleId,
@@ -317,45 +319,93 @@ const FACTS_IDS: Readonly<Record<string, ReplacedId>> = {
 };
 const REPLACED_ORDER: readonly ReplacedId[] = ["event", "run", "incident"];
 
+/** The value with each ID of every platform event in it, at any depth, as `map` gives it. */
+function mapIds(
+  value: Json,
+  map: (name: ReplacedId, id: Json) => Json,
+  inEvent = false,
+): Json {
+  if (Array.isArray(value))
+    return value.map((item) => mapIds(item, map, inEvent));
+  if (!isJsonObject(value)) return value;
+  const event = isEvent(value);
+  const ids = { ...(event ? EVENT_IDS : {}), ...(inEvent ? FACTS_IDS : {}) };
+  return Object.fromEntries(
+    Object.entries(value).map(([key, held]) => [
+      key,
+      !hasOwn(ids, key)
+        ? mapIds(held, map, event && key === "transaction")
+        : held === null
+          ? held
+          : map(ids[key]!, held),
+    ]),
+  );
+}
+
 /**
  * The value with sample IDs in place of the event, run and incident IDs of
- * every platform event in it, at any depth, and which it replaced; IDs that
- * are samples already stay, and so does the rest. A real ID gets the sample
- * ID it has in `samples`, which keeps the new ones.
+ * every platform event in it, and which it replaced; IDs that are samples
+ * already stay, and so does the rest. A real ID gets the sample ID it has in
+ * `samples`, which keeps the new ones.
  */
 export function withSampleIds<T extends Json>(
   value: T,
   samples = new Map<string, string>(),
 ): { value: T; replaced: ReplacedId[] } {
-  const sampleOf = (real: Json): string => {
-    const key = canonicalJson(real);
-    const id = samples.get(key) ?? sampleId();
-    samples.set(key, id);
-    return id;
-  };
   const replaced = new Set<ReplacedId>();
-  const visit = (node: Json, inEvent: boolean): Json => {
-    if (Array.isArray(node)) return node.map((item) => visit(item, inEvent));
-    if (!isJsonObject(node)) return node;
-    const event = isEvent(node);
-    const ids = {
-      ...(event ? EVENT_IDS : {}),
-      ...(inEvent ? FACTS_IDS : {}),
-    };
-    return Object.fromEntries(
-      Object.entries(node).map(([key, held]) => {
-        if (!hasOwn(ids, key))
-          return [key, visit(held, event && key === "transaction")];
-        if (held === null || isSampleId(held)) return [key, held];
-        replaced.add(ids[key]!);
-        return [key, sampleOf(held)];
-      }),
-    );
-  };
-  return {
-    value: visit(value, false) as T,
-    replaced: REPLACED_ORDER.filter((name) => replaced.has(name)),
-  };
+  const mapped = mapIds(value, (name, id) => {
+    if (isSampleId(id)) return id;
+    replaced.add(name);
+    const real = canonicalJson(id);
+    const sample = samples.get(real) ?? sampleId();
+    samples.set(real, sample);
+    return sample;
+  });
+  return { value: mapped as T, replaced: inOrder(replaced) };
+}
+const inOrder = (replaced: ReadonlySet<ReplacedId>): ReplacedId[] =>
+  REPLACED_ORDER.filter((name) => replaced.has(name));
+
+/** Which IDs of the events in a value are those Studio put in place of real ones. */
+export function replacedIn(
+  value: Json | undefined,
+  samples: ReadonlyMap<string, string>,
+): ReplacedId[] {
+  if (value === undefined || !samples.size) return [];
+  const known = new Set<Json>(samples.values());
+  const replaced = new Set<ReplacedId>();
+  mapIds(value, (name, id) => {
+    if (known.has(id)) replaced.add(name);
+    return id;
+  });
+  return inOrder(replaced);
+}
+
+/** A test input without its secret fields; the platform event has none. */
+export const safeInput = (
+  schema: unknown,
+  value: Json | undefined,
+): Json | undefined =>
+  isPlatformEventInput(schema) ? value : safeSample(schema, value);
+
+/**
+ * What test data keeps of an input a person entered or a test call brought:
+ * never a secret field and, because test data is shared, no ID of a real
+ * event, run or incident, nor, in a workflow whose input is the platform
+ * event, a field that could hold one: a `problem` then.
+ */
+export function keptInput(
+  schema: unknown,
+  value: Json | undefined,
+  fields: () => JsonObject | null,
+  samples: Map<string, string>,
+): { value: Json | undefined } | { problem: string } {
+  const safe = safeInput(schema, value);
+  if (safe === undefined) return { value: safe };
+  const problem = isPlatformEventInput(schema)
+    ? eventProblem(safe, fields())
+    : null;
+  return problem ? { problem } : withSampleIds(safe, samples);
 }
 
 /** "Studio replaced the event and run IDs with sample IDs."; "" when it replaced none. */

@@ -206,6 +206,12 @@ export function currentPlatformEvent(
   return known;
 }
 
+/** The event's fields as the data picker lists them; null until they're read. */
+export function eventFields(api: Pick<StudioApi, "request">) {
+  const view = currentPlatformEvent(api);
+  return view?.state === "ready" ? eventFieldView(view.schema) : null;
+}
+
 /** The fields a builder looks for first; the others follow as the view lists them. */
 const FIELD_ORDER = [
   "type",

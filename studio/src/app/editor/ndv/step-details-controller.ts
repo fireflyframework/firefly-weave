@@ -29,7 +29,6 @@ import {
   canonicalJson,
   getAt,
   isJsonObject,
-  jsonEqual,
   parsePointer,
   type JsonObject,
 } from "../../forms/core/json";
@@ -76,14 +75,15 @@ import {
   triggerProblems,
 } from "../triggers/trigger-forms";
 import {
-  eventProblem,
+  keptInput,
+  replacedIn,
+  safeInput,
   withSampleIds,
   type ReplacedId,
 } from "../triggers/event-sample";
 import { eventTileFacts, type CheckedInput } from "../triggers/event-trigger";
 import {
-  currentPlatformEvent,
-  eventFieldView,
+  eventFields,
   isPlatformEventInput,
   namedSchemas,
   PLATFORM_EVENT_NAME,
@@ -474,17 +474,15 @@ export class StepDetailsController {
     const service = this.testData;
     service.version();
     if (this.stale()) return undefined;
-    return this.safeInput(service.data().input?.value);
+    return safeInput(
+      this.host.model.definition.spec["inputSchema"],
+      service.data().input?.value,
+    );
   }
   /** Where the test event came from: built, entered, a run or a test call; null without one. */
   testEventSource(): DataSource | null {
     if (this.testEvent() === undefined) return null;
     return this.testData.data().input?.source ?? "manual";
-  }
-  /** A test input without its secret fields; the platform event has none. */
-  private safeInput(value: Json | undefined): Json | undefined {
-    const schema = this.host.model.definition.spec["inputSchema"];
-    return isPlatformEventInput(schema) ? value : safeSample(schema, value);
   }
   /** Deferred pane work belongs to the workflow and connection that created it. */
   testEventOwner(): () => boolean {
@@ -525,56 +523,32 @@ export class StepDetailsController {
     if (this.stale()) return "This workflow's test data is still opening.";
     const service = this.testData;
     const now = new Date().toISOString();
+    const schema = this.host.model.definition.spec["inputSchema"];
     // A secret field never reaches the check, nor anything it keeps.
-    const safe = this.safeInput(value);
-    const entered =
-      source === "manual" ? this.enteredEvent(safe) : { value: safe };
-    if (entered.problem) return entered.problem;
+    const kept =
+      source === "manual"
+        ? keptInput(schema, value, () => this.eventFields(), service.sampleIds)
+        : { value: safeInput(schema, value) };
+    if ("problem" in kept) return kept.problem;
     const data = service.data();
     const outcome =
-      entered.value === undefined
+      kept.value === undefined
         ? await service.change(withoutInput(data, now), [])
-        : await service.change(withInput(data, entered.value, source, now), [
+        : await service.change(withInput(data, kept.value, source, now), [
             "/input",
           ]);
-    if (!outcome.ok) return outcome.message;
-    this.replaced.set({
-      value: entered.value,
-      ids: entered.replaced ?? [],
-    });
-    return null;
+    return outcome.ok ? null : outcome.message;
   }
-  /**
-   * What a person entered, whichever pane they entered it in: test data is
-   * shared, so no platform event in it keeps the IDs of a real event, run or
-   * incident, nor, in a workflow whose input it is, a field that could hold
-   * one.
-   */
-  private enteredEvent(value: Json | undefined): {
-    value: Json | undefined;
-    replaced?: readonly ReplacedId[];
-    problem?: string;
-  } {
-    const schema = this.host.model.definition.spec["inputSchema"];
-    if (value !== undefined && isPlatformEventInput(schema)) {
-      const problem = eventProblem(value, this.eventFields());
-      if (problem) return { value, problem };
-    }
-    return value === undefined
-      ? { value }
-      : withSampleIds(value, this.testData.sampleIds);
-  }
-  /** The IDs the last write of the test event replaced. */
-  private readonly replaced = signal<{
-    value: Json | undefined;
-    ids: readonly ReplacedId[];
-  } | null>(null);
-  /** The IDs Studio replaced in this test event as it was entered; none for one entered earlier. */
+  /** The IDs in the test event Studio put in place of real ones, as it was entered or received. */
   replacedIds(): readonly ReplacedId[] {
-    const last = this.replaced();
-    return last?.ids.length && jsonEqual(last.value, this.testEvent())
-      ? last.ids
-      : [];
+    return this.viewingRuns()
+      ? []
+      : replacedIn(this.testEvent(), this.testData.sampleIds);
+  }
+  /** What a person entered with its real IDs replaced; null when it has none. */
+  withoutRealIds(value: Json): Json | null {
+    const sampled = withSampleIds(value, this.testData.sampleIds);
+    return sampled.replaced.length ? sampled.value : null;
   }
   /** Every step's fingerprints now: the shell's (memoized), or computed here. */
   prints(): ReadonlyMap<string, StepFingerprints> {
@@ -2489,8 +2463,7 @@ export class StepDetailsController {
   }
   /** The platform event's fields as the Studio host serves them; null until they're read. */
   eventFields(): JsonObject | null {
-    const view = currentPlatformEvent(this.host.api);
-    return view?.state === "ready" ? eventFieldView(view.schema) : null;
+    return eventFields(this.host.api);
   }
   /** Those fields while the workflow's input is the event; null for another input. */
   eventView(): JsonObject | null {

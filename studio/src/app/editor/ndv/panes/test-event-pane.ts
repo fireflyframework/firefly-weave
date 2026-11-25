@@ -27,7 +27,7 @@ import {
 import { Icon } from "../../../icon";
 import { TaskForm } from "../../../task-form";
 import type { Schema } from "../../../task-schema";
-import { canonicalJson } from "../../../forms/core/json";
+import { canonicalJson, type JsonObject } from "../../../forms/core/json";
 import { resolveSchema } from "../../../forms/core/resolve";
 import type { FormSession } from "../params/form-session";
 import { enteredNote } from "../../triggers/event-sample";
@@ -193,12 +193,9 @@ export class TestEventPane {
     );
     if (!this.owns(form)) return;
     this.problem.set(refused ?? "");
-    // The form never keeps the real IDs it was given: it shows what is kept.
-    if (refused || turn !== this.turn || !controller.replacedIds().length)
-      return;
-    const kept = controller.testEvent();
-    shown.showData(
-      (form.wrapped ? { value: kept } : kept) as Record<string, unknown>,
-    );
+    if (refused || turn !== this.turn) return;
+    // The form shows the sample IDs the event is kept with, not the real ones.
+    const sampled = controller.withoutRealIds(data as JsonObject);
+    if (sampled) shown.showData(sampled as JsonObject);
   }
 }

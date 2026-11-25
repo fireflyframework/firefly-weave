@@ -55,6 +55,8 @@ import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import { eventCount } from "../src/app/editor/triggers/event-sample";
 import { EventSample } from "../src/app/editor/triggers/event-sample-pane";
 import { TriggerEventPane } from "../src/app/editor/triggers/test-event-pane";
+import { keepTestEvent } from "../src/app/editor/triggers/test-listener";
+import { takeLinkedRun } from "../src/app/editor/runs-tab/run-links";
 import { TaskForm } from "../src/app/task-form";
 
 afterAll(() => vi.unstubAllGlobals());
@@ -250,11 +252,12 @@ describe("the manual form's box", () => {
     await enter(realEvent());
     for (const id of Object.values(REAL)) expect(box()).not.toContain(id);
     expect(box()).toBe(JSON.stringify(kept(f.controller), null, 2));
-    // What comes next is an edit of that event.
+    // What comes next is an edit of that event, which Studio still says about.
     const next = JSON.parse(box()) as Event;
     next.transaction.business_key = "REF-5";
     await enter(next);
     expect(kept(f.controller)).toEqual(next);
+    expect(f.controller.replacedIds()).toEqual(["event", "run", "incident"]);
   });
 
   it("keeps the text a person types when nothing in it is replaced", async () => {
@@ -295,6 +298,32 @@ describe("the manual form's box", () => {
     type(text);
     await settled();
     expect(box()).toBe(JSON.stringify(kept(f.controller), null, 2));
+  });
+
+  it("keeps what is typed in a field that isn't kept, its real IDs replaced", async () => {
+    // A reference Studio can't read: nothing under it is kept.
+    const f = setup({
+      type: "object",
+      properties: {
+        event: { $ref: "acme.event-v1" },
+        note: { type: "string" },
+      },
+    });
+    const pane = runInInjectionContext(f.injector, () => new TestEventPane());
+    pane.session = signal(f.session) as never;
+    const owner = pane.forms()[0]!;
+    const shown: JsonObject[] = [];
+    await pane.changed({ event: realEvent(), note: "x" }, owner, {
+      showData: (data: JsonObject) => shown.push(data),
+    } as unknown as TaskForm);
+    expect(f.controller.testEvent()).toEqual({ note: "x" });
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({
+      note: "x",
+      event: { transaction: { business_key: "REF-4410" } },
+    });
+    for (const id of Object.values(REAL))
+      expect(JSON.stringify(shown)).not.toContain(id);
   });
 
   it("shows the last of two changes, never the first one's event over it", async () => {
@@ -353,6 +382,17 @@ it("says nothing of the IDs it replaced once the test event is another", async (
     { ...data, input: { value: { type: "x" }, source: "manual" } },
     [],
   );
+  expect(f.controller.replacedIds()).toEqual([]);
+});
+
+it("says nothing of the IDs it replaced over a run's own event", async () => {
+  const f = setup();
+  await f.controller.setTestEvent(realEvent() as Json);
+  const executed = f.controller.testEvent();
+  Object.assign(f.session.host, {
+    runData: { version: () => 0, input: () => executed },
+  });
+  expect(f.controller.testEvent()).toEqual(executed);
   expect(f.controller.replacedIds()).toEqual([]);
 });
 
@@ -460,6 +500,81 @@ describe("a real ID entered again", () => {
     await enter(realEvent());
     expect(kept(f.controller).event_id).toMatch(SAMPLE_ID);
     expect(kept(f.controller).event_id).not.toBe(first);
+  });
+});
+
+describe("a real platform event a test call brings", () => {
+  const RUN = "5a4b1dce-8baa-4cb0-8fa6-9e6a5b7c2d56";
+  const ENVIRONMENT = "d3c29f40-0322-4e38-8b2e-16e2d3f4afde";
+  /** A webhook or Kafka trigger, listening, received `input`. */
+  async function receive(f: ReturnType<typeof setup>, input: Json) {
+    const tabs: string[] = [];
+    await keepTestEvent(
+      {
+        testData: f.controller.testData,
+        model: f.model,
+        draftId: "draft-1",
+        api: f.session.host.api,
+        selectTab: async (tab: string) => void tabs.push(tab),
+      } as never,
+      { triggerId: "trigger-0000000b", runId: RUN, input },
+      ENVIRONMENT,
+    );
+    expect(takeLinkedRun("draft-1")).toBe(RUN);
+    expect(tabs).toEqual(["Runs"]);
+    return f.controller.testData.data().input;
+  }
+
+  it.each<[string, Json, unknown]>([
+    ["of a workflow with an input of its own", realEvent(), { type: "object" }],
+    [
+      "in a field of it",
+      { body: { events: [realEvent()] } },
+      { type: "object" },
+    ],
+    ["of a workflow whose input it is", realEvent(), undefined],
+  ])(
+    "gets sample IDs as the input %s, and the pane says so",
+    async (_where, input, schema) => {
+      const f = setup(schema);
+      const { pane } = kafkaPane(f);
+      expect(await receive(f, input)).toMatchObject({
+        source: "test-call",
+        runId: RUN,
+        runEnvironmentId: ENVIRONMENT,
+      });
+      const kept = JSON.stringify(f.controller.testData.data());
+      expect(kept).toContain("REF-4410");
+      for (const id of Object.values(REAL)) expect(kept).not.toContain(id);
+      expect(pane.replaced()).toBe(
+        "Studio replaced the event, run and incident IDs with sample IDs. Test data is shared with everyone who can test this workflow. Use a made-up business key.",
+      );
+    },
+  );
+
+  it("gets the sample IDs it has where a person entered it too", async () => {
+    const f = setup();
+    await kafkaPane(f).enter(realEvent());
+    const entered = kept(f.controller);
+    await receive(f, realEvent());
+    expect(kept(f.controller)).toEqual(entered);
+  });
+
+  it("isn't kept with a field the platform event hasn't", async () => {
+    const f = setup();
+    expect(
+      await receive(f, { ...realEvent(), root_event_id: REAL.event }),
+    ).toBeUndefined();
+  });
+
+  it("keeps none of the fields the input marks secret", async () => {
+    const f = setup({
+      type: "object",
+      properties: { token: { type: "string", "x-secret": true } },
+    });
+    expect(await receive(f, { token: "s3cret", id: "o-1" })).toMatchObject({
+      value: { id: "o-1" },
+    });
   });
 });
 
