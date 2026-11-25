@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The canvas selection: which steps are selected, which one has focus, and
 // whether they form one run of consecutive steps. Copy, cut, duplicate,
-// move and extract need such a run; delete and pinning work on any
+// move, extract and group need such a run; delete and pinning work on any
 // selection. A selected group brings every step inside it.
 
 /** Where a step sits: its sequence ("root" or "<group>/<lane>"), index and group. */
@@ -176,13 +176,20 @@ export function contiguity(
   };
 }
 
-export type RunCommand = "copy" | "cut" | "duplicate" | "move" | "extract";
+export type RunCommand =
+  | "copy"
+  | "cut"
+  | "duplicate"
+  | "move"
+  | "extract"
+  | "group";
 const VERBS: Record<RunCommand, string> = {
   copy: "Copy",
   cut: "Cut",
   duplicate: "Duplicate",
   move: "Move",
   extract: "Extract to sub-workflow",
+  group: "Group in a transaction",
 };
 /** Why a command that needs one run can't run on this selection; null when it can. */
 export function blockedReason(

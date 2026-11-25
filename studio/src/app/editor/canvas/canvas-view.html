@@ -484,6 +484,8 @@ SPDX-License-Identifier: Apache-2.0
         (copy)="copySelection(false)"
         [locked]="lockedReason()"
         (duplicate)="duplicateSelection()"
+        [groupBlocked]="groupBlocked()"
+        (group)="groupSelection()"
         (remove)="removeSelection()"
       />
     }
@@ -503,6 +505,17 @@ SPDX-License-Identifier: Apache-2.0
     {{ said?.urgent ? said.text : "" }}
   </p>
 </div>
+<!-- Outside the canvas's own element: its keys and presses aren't the canvas's. -->
+@if (grouping(); as request) {
+  @defer (on immediate) {
+    <weave-group-dialog
+      [count]="request.count"
+      [reads]="request.grouped.outsideReads"
+      [workflow]="request.workflow"
+      (closed)="groupAnswered($event)"
+    />
+  }
+}
 @if (sheetOpen) {
   <weave-modal
     heading="Keyboard shortcuts"

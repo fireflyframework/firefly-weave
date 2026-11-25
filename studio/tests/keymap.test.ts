@@ -179,9 +179,15 @@ describe("the shortcuts sheet", () => {
   it("lists every bound row and the differences from n8n", () => {
     const sheet = shortcutSheet("mac");
     const labels = sheet.flatMap((s) => s.entries.map((e) => e.label));
-    for (const row of KEYMAP.filter((r) => r.platform !== "other"))
+    for (const row of KEYMAP.filter(
+      (r) => r.platform !== "other" && r.keys.length,
+    ))
       for (const command of Object.values(row.commands))
         if (command) expect(labels, row.id).toContain(COMMAND_LABELS[command]);
+    // A command without a key isn't a shortcut.
+    const keyless = KEYMAP.filter((r) => !r.keys.length);
+    expect(keyless.map((r) => r.id)).toEqual(["group"]);
+    expect(labels).not.toContain(COMMAND_LABELS.groupInTransaction);
     const differences = sheet.find((s) => s.title === "Differences from n8n");
     expect(differences?.entries.map((e) => e.keys)).toContainEqual(["D"]);
     expect(differences?.entries.map((e) => e.keys)).toContainEqual(["Cmd+K"]);

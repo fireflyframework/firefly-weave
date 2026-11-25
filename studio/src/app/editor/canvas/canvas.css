@@ -1019,11 +1019,19 @@ weave-canvas-view,
   min-height: 0;
   padding: 0;
 }
+/* It measures the canvas, not the window: beside the inspector, or on a
+   phone, there is no room for every button in one row. */
+.canvas-v2 > weave-selection-toolbar {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  container: selection-toolbar / inline-size;
+  pointer-events: none;
+}
 .canvas-v2 .selection-toolbar {
   position: absolute;
   top: 12px;
   left: 50%;
-  z-index: 4;
   width: max-content;
   max-width: calc(100% - 24px);
   box-sizing: border-box;
@@ -1038,16 +1046,26 @@ weave-canvas-view,
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-2);
+  pointer-events: auto;
 }
-/* Copy and Duplicate move into More where the toolbar would wrap. */
-.canvas-v2 .selection-toolbar .selection-narrow {
+/* Commands move into More where the toolbar would wrap: Group first, then
+   Copy and Duplicate. */
+.canvas-v2 .selection-toolbar :is(.selection-medium, .selection-narrow) {
   display: none;
 }
-@media (max-width: 479px) {
+@container selection-toolbar (max-width: 599px) {
   .canvas-v2 .selection-toolbar {
     flex-wrap: nowrap;
   }
-  .canvas-v2 .selection-toolbar .selection-wide {
+  .canvas-v2 .selection-toolbar .selection-roomy {
+    display: none;
+  }
+  .canvas-v2 .selection-toolbar .selection-medium {
+    display: inline-flex;
+  }
+}
+@container selection-toolbar (max-width: 439px) {
+  .canvas-v2 .selection-toolbar :is(.selection-wide, .selection-medium) {
     display: none;
   }
   .canvas-v2 .selection-toolbar .selection-narrow {

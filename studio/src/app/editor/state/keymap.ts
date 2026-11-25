@@ -71,6 +71,7 @@ export type KeymapCommand =
   | "save"
   | "tidyLayout"
   | "extractSubWorkflow"
+  | "groupInTransaction"
   | "replaceAction"
   | "copyWebhookUrl"
   | "copyWebhookTestUrl"
@@ -346,6 +347,12 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["Alt+X"],
     commands: { canvas: "extractSubWorkflow", outline: "extractSubWorkflow" },
   },
+  {
+    id: "group",
+    // From the selection's toolbar and menu only.
+    keys: [],
+    commands: { canvas: "groupInTransaction" },
+  },
   { id: "replace", keys: ["R"], commands: { canvas: "replaceAction" } },
   {
     id: "webhook-url",
@@ -479,6 +486,7 @@ export const COMMAND_LABELS: Readonly<Record<KeymapCommand, string>> = {
   save: "Save the draft, or save to file",
   tidyLayout: "Tidy layout",
   extractSubWorkflow: "Extract the selection to a sub-workflow",
+  groupInTransaction: "Group the selection in a transaction",
   replaceAction: "Replace the action, keeping compatible mappings",
   copyWebhookUrl: "Copy the webhook production URL",
   copyWebhookTestUrl: "Copy the webhook test URL",
@@ -696,7 +704,8 @@ export function shortcutSheet(
     const byCommand = new Map<KeymapCommand, string[]>();
     for (const row of rows) {
       const command = row.commands[surface];
-      if (!command || !offered(command)) continue;
+      // A command without a key of its own isn't a shortcut.
+      if (!command || !offered(command) || !row.keys.length) continue;
       byCommand.set(command, [
         ...(byCommand.get(command) ?? []),
         ...row.keys.map((combo) => formatCombo(combo, platform)),

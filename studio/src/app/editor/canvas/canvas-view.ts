@@ -34,6 +34,7 @@ import {
   untracked,
   inject,
   input,
+  signal,
   viewChild,
   type DoCheck,
   type OnInit,
@@ -62,7 +63,12 @@ import { Modal } from "../../dialog";
 import { durationText } from "../../format";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
-import type { Step, Workflow } from "../../model";
+import {
+  nextFreeId,
+  type Step,
+  type StructuredCanvasAdapter,
+  type Workflow,
+} from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { memo } from "../memo";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
@@ -93,6 +99,7 @@ import { formatCombo, type KeymapCommand } from "../state/keymap";
 import {
   NO_SELECTION,
   blockedReason,
+  contiguity,
   covered,
   extended,
   moveAllowed,
@@ -169,6 +176,14 @@ import {
   type Box,
 } from "./tidy";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
+import {
+  applyGroup,
+  groupInTransaction,
+  nestedReason,
+  type GroupRun,
+  type GroupedSteps,
+} from "../transactions/group";
+import { GroupDialog } from "../transactions/group-dialog";
 import { ownedActionsOf } from "../ndv/owned/owned-store";
 import {
   CLIPBOARD_WEB_FORMAT,
@@ -284,6 +299,18 @@ interface ToolbarView {
   trigger: { intent: string | null; label: string; execute: boolean } | null;
 }
 
+/** Steps waiting to be grouped, in the workflow as it was when they were asked about. */
+interface GroupRequest {
+  model: StructuredCanvasAdapter;
+  opened: number;
+  revision: number;
+  workflow: Workflow;
+  run: GroupRun;
+  count: number;
+  grouped: GroupedSteps;
+}
+const GROUP_CHANGED = "The workflow changed since. Select the steps again.";
+
 /** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
 export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
 
@@ -302,6 +329,7 @@ export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
     SelectionToolbar,
     NotesLayer,
     ItemChip,
+    GroupDialog,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -373,6 +401,8 @@ export class CanvasView implements OnInit, DoCheck {
   private suppressClick = false;
   /** The selected steps and the one with focus. */
   selection: Selection = NO_SELECTION;
+  /** More than one step is selected: the selection toolbar shows. */
+  private several = false;
   /** The editor's selected step when the canvas last looked. */
   private seenSelected = "";
   /** Space is held: a drag pans. */
@@ -544,6 +574,9 @@ export class CanvasView implements OnInit, DoCheck {
     }
     this.syncSelection();
     this.sayLoopProgress();
+    const several = this.selectedCount() > 1;
+    if (several && !this.several) this.askTarget();
+    this.several = several;
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
@@ -1772,6 +1805,16 @@ export class CanvasView implements OnInit, DoCheck {
       ? descriptor.pinnable(step)
       : descriptor.pinnable;
   }
+  /** Group in a transaction in a selected step's menu: it groups the selection. */
+  private groupItem(): RowMenuItem {
+    const reason = this.lockedReason() ?? this.groupBlocked();
+    return {
+      label: "Group in a transaction",
+      blocked: !!reason,
+      ...(reason ? { detail: reason } : {}),
+      run: () => void this.groupSelection(),
+    };
+  }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();
     const id = tile.id;
@@ -1800,6 +1843,10 @@ export class CanvasView implements OnInit, DoCheck {
         disabled: locked,
         run: () => void h.duplicateSteps([id]),
       },
+      ...(this.selectedCount() > 1 &&
+      covered(this.selection, this.places()).has(id)
+        ? [this.groupItem()]
+        : []),
       { label: "Move to…", disabled: locked, run: () => h.startMove(id) },
       ...(tile.kind === "humanTask"
         ? [
@@ -2601,6 +2648,134 @@ export class CanvasView implements OnInit, DoCheck {
     if (reason) return this.host().notify(reason);
     await this.host().duplicateSteps(topLevel(this.selection, this.places()));
   }
+  /** Why Group in a transaction can't run on a selection, or null. */
+  groupBlocked(chosen: Selection = this.selection): string | null {
+    const h = this.host();
+    const places = this.places();
+    const run = contiguity(chosen, places);
+    return (
+      this.targetLacks ??
+      blockedReason("group", chosen, places) ??
+      (run.ok
+        ? this.nestedMemo(
+            h.tick(),
+            h.model.definition,
+            run.owner,
+            run.from,
+            run.to,
+          )
+        : null)
+    );
+  }
+  private readonly nestedMemo = memo(
+    (
+      _tick: number,
+      workflow: Workflow,
+      owner: string,
+      from: number,
+      to: number,
+    ) => nestedReason(workflow, { owner, from, to }),
+  );
+  /** Why the target can't run transactions, once it is known. */
+  private targetLacks: string | null = null;
+  private targetRead: Promise<void> | null = null;
+  /**
+   * Asks what the target runs, once for each selection of several steps: a
+   * read that failed is asked again with the next one, never by drawing.
+   */
+  private askTarget() {
+    const h = this.host();
+    this.targetRead = Promise.all([
+      import("../add-step/catalog-sources"),
+      import("../add-step/entries"),
+    ])
+      .then(async ([{ loadLanguage }, { gateReason }]) =>
+        gateReason(
+          "flow.transaction",
+          undefined,
+          true,
+          await loadLanguage(h.api, !!h.profile),
+          "transactions",
+        ),
+      )
+      .catch(() => null)
+      .then((reason) => {
+        this.targetLacks = reason;
+        this.cdr.markForCheck();
+      });
+  }
+  /** The steps waiting for an answer about the later reads grouping would break. */
+  readonly grouping = signal<GroupRequest | null>(null);
+  /**
+   * Groups the selected steps in a transaction as one undo step. Later reads
+   * of their data would break, so those are listed first, with Cancel ahead.
+   */
+  async groupSelection() {
+    const h = this.host();
+    const model = h.model;
+    const opened = model.opened;
+    // The steps asked about: an answer that arrives after they changed groups none.
+    const chosen = this.selection;
+    const ids = topLevel(chosen, this.places()).join();
+    const here = () => h.model === model && model.opened === opened;
+    if (!this.targetRead) this.askTarget();
+    await this.targetRead;
+    if (!here()) return;
+    const reason = this.lockedReason() ?? this.groupBlocked(chosen);
+    if (reason) return h.notify(reason);
+    if (!(await h.ensureApplied()) || !here()) return;
+    const run = contiguity(chosen, this.places());
+    if (!run.ok || run.ids.join() !== ids) return h.notify(GROUP_CHANGED);
+    const grouped = groupInTransaction(
+      model.definition,
+      run,
+      nextFreeId("transaction", model.stepIdSet()),
+    );
+    if ("refused" in grouped) return h.notify(grouped.refused);
+    const request: GroupRequest = {
+      model,
+      opened,
+      revision: model.revision,
+      workflow: model.definition,
+      run,
+      count: run.ids.length,
+      grouped,
+    };
+    if (grouped.outsideReads.length) this.grouping.set(request);
+    else this.applyGrouping(request);
+  }
+  groupAnswered(anyway: boolean) {
+    const request = this.grouping();
+    this.grouping.set(null);
+    if (request && anyway) this.applyGrouping(request);
+  }
+  private applyGrouping({
+    model,
+    opened,
+    revision,
+    run,
+    count,
+    grouped,
+  }: GroupRequest) {
+    const h = this.host();
+    const here = (at: number) =>
+      h.model === model && model.opened === opened && model.revision === at;
+    if (!here(revision)) return h.notify(GROUP_CHANGED);
+    h.perform(() => applyGroup(model, run, grouped));
+    if (h.error) return;
+    const id = model.selected;
+    const after = model.revision;
+    this.choose(only(id));
+    this.focusTileLater(id);
+    h.notify(`Grouped ${count} ${count === 1 ? "step" : "steps"} in ${id}.`, {
+      label: "Undo",
+      run: async () => {
+        const done = await h.undoIfUnchanged(() => here(after));
+        if (done === "changed")
+          h.notify("The workflow changed since. Use Undo in the toolbar.");
+      },
+    });
+  }
   async removeSelection() {
     const reason = this.lockedReason();
     if (reason) return this.host().notify(reason);
@@ -2840,6 +3015,9 @@ export class CanvasView implements OnInit, DoCheck {
         else void h.duplicateSteps(topLevel(chosen, places));
         return true;
       }
+      case "groupInTransaction":
+        void this.groupSelection();
+        return true;
       case "deleteSelection": {
         const chosen = focus.startsWith("$trigger:")
           ? this.intentOf(focus)
