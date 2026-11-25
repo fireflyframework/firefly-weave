@@ -67,6 +67,36 @@ async def test_the_summary_counts_transactions_in_doubt_and_undoing(operations_c
     assert section["oldest_undoing_seconds"] == pytest.approx(expected, abs=0.001)
 
 
+async def test_a_record_an_ended_run_left_is_not_counted(operations_case):
+    case = operations_case
+    now = await clock(case)
+    # Only an earlier version's run ended with its record unsettled: nobody can resolve it, so it must not alert.
+    for status in ("succeeded", "failed", "cancelled", "timed_out"):
+        ended = (await case.start(status)).id
+        await add_transaction(case, ended, "in_doubt", opened=now - timedelta(days=90))
+        await add_transaction(case, ended, "compensating", key="move[2]", opened=now - timedelta(days=90))
+        await owner_execute(
+            case, "UPDATE run_facts SET status=:status,ended_at=:at WHERE run_id=:run", status=status, at=now, run=ended
+        )
+    section = (await summarize(case, case.actor))["transactions"]
+    assert section == {"in_doubt": 0, "undoing": 0}
+    # A run that has not ended is counted in each of its statuses, and so is one whose status is unavailable.
+    for status in ("queued", "running", "waiting", "suspended"):
+        live = (await case.start(status)).id
+        await add_transaction(case, live, "in_doubt", opened=now)
+        await owner_execute(case, "UPDATE run_facts SET status=:status WHERE run_id=:run", status=status, run=live)
+    unknown = (await case.start("unknown")).id
+    await add_transaction(case, unknown, "compensating", opened=now - timedelta(minutes=5))
+    await owner_execute(
+        case, "UPDATE run_facts SET status=NULL,classification_state='unavailable' WHERE run_id=:run", run=unknown
+    )
+    body = await summarize(case, case.actor)
+    section = body["transactions"]
+    assert (section["in_doubt"], section["undoing"]) == (4, 1)
+    age = (datetime.fromisoformat(body["observed_at"]) - (now - timedelta(minutes=5))).total_seconds()
+    assert section["oldest_undoing_seconds"] == pytest.approx(age, abs=0.001)
+
+
 async def test_the_transactions_section_needs_run_read(operations_case):
     case = operations_case
     run = (await case.start()).id
@@ -130,7 +160,9 @@ async def test_an_in_doubt_incident_comes_first_among_attention_incidents(operat
     assert incidents[0]["title"] == "Transaction in doubt: WV-TXN-UNDO-STUCK at add"
     assert "T-1029" not in json.dumps(body["attention"])
     # A run whose metadata is withheld names neither the code nor the step.
-    await owner_execute(case, "UPDATE run_facts SET classification_state='unavailable' WHERE run_id=:run", run=doubt_run)
+    await owner_execute(
+        case, "UPDATE run_facts SET classification_state='unavailable' WHERE run_id=:run", run=doubt_run
+    )
     withheld = [item for item in (await summarize(case, case.actor))["attention"] if item["kind"] == "incident"]
     assert (withheld[0]["id"], withheld[0]["title"]) == (str(doubt), "Transaction in doubt")
 

@@ -488,14 +488,17 @@ async def read_incidents(reader: SectionReader) -> IncidentsSection:
 
 
 async def read_transactions(reader: SectionReader) -> TransactionsSection:
-    """Transactions in doubt and transactions being undone, from their records; test runs are left out. The oldest
-    one undoing is counted from when it opened, at the read's clock."""
+    """Transactions in doubt and transactions being undone, from their records; test runs are left out, and so are the
+    records that an earlier version left unsettled in ended runs: nobody can resolve those, and the operations loop
+    repairs them. A run whose status is unavailable isn't known to have ended, so it counts. The oldest one undoing is
+    counted from when it opened, at the read's clock."""
     row = await reader.row(
         "SELECT count(*) FILTER (WHERE t.state='in_doubt') AS in_doubt,"
         "count(*) FILTER (WHERE t.state='compensating') AS undoing,"
         f"extract(epoch FROM ({NOW}-min(t.opened_at) FILTER (WHERE t.state='compensating'))) AS oldest "
         f"FROM run_transactions t JOIN run_facts f ON {_SAME_SCOPE.format(a='f', b='t')} AND f.run_id=t.run_id "
-        f"WHERE {_SCOPE.format(alias='t.')} AND t.state IN ('in_doubt','compensating') AND NOT f.test"
+        f"WHERE {_SCOPE.format(alias='t.')} AND t.state IN ('in_doubt','compensating') AND NOT f.test "
+        "AND (f.status IS NULL OR f.status NOT IN ('succeeded','failed','cancelled','timed_out'))"
     )
     return TransactionsSection(
         in_doubt=int(row["in_doubt"]), undoing=int(row["undoing"]), oldest_undoing_seconds=_seconds(row["oldest"])
