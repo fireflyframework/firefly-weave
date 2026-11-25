@@ -100,6 +100,8 @@ import type { PartnerRead } from "./transaction-panel";
 const MAX_RANGE_MS = 400 * 86_400_000;
 /** What explains why the incident the address names couldn't be opened. */
 const UNOPENED = ".incident-unopened";
+/** Where the keyboard stops in the list as its rows change: each incident's control and the bands' headings. */
+const STOPS = "[data-incident], .band-heading h2";
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
 const noEvents: RecentEvents = {
@@ -151,7 +153,7 @@ interface Band {
   template: `
     <div class="operate-heading">
       <div>
-        <h1>Incidents</h1>
+        <h1 tabindex="-1">Incidents</h1>
         <p class="subtitle">
           Runs that stopped on an uncertain step and wait for your decision.
         </p>
@@ -404,7 +406,7 @@ interface Band {
                 [attr.aria-labelledby]="'incident-band-' + band.id"
               >
                 <div class="band-heading">
-                  <h2 [id]="'incident-band-' + band.id">
+                  <h2 [id]="'incident-band-' + band.id" tabindex="-1">
                     @if (band.id === "high") {
                       <weave-icon name="critical" [size]="16" />
                     }
@@ -818,8 +820,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   private opening = "";
   /** The listed incident whose control opened the drawer last. */
   openedFrom = "";
-  /** The listed incident whose control holds the focus as the page is drawn again. */
-  private focused = "";
+  /** Where that control is, or was while the list drew it. */
+  private opener: string[] = [];
+  /** Where the control of the list that holds the focus is, as the page is drawn again. */
+  private focused: string[] = [];
   private alive = true;
 
   get readable() {
@@ -1350,22 +1354,58 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       page.querySelector<HTMLElement>(control)
     );
   }
-  /** Closing the drawer over the list returns to the control that opened it, as it is drawn now. */
-  readonly drawerOpener = () => this.control(this.openedFrom);
+  /**
+   * Where a control of the list is, as the stops to look for once it is gone:
+   * itself, what follows it in its band, the band's heading, then the rest of
+   * the list, the nearest row first. A row is named by its incident, a heading
+   * by its ID.
+   */
+  private placeOf(control: HTMLElement): string[] {
+    const list = control.closest(".incident-list");
+    const band = control.closest(".incident-band");
+    const stops = [...(list?.querySelectorAll<HTMLElement>(STOPS) ?? [])];
+    const at = stops.indexOf(control);
+    const before = stops.slice(0, at).reverse();
+    const after = stops.slice(at + 1);
+    return [
+      control,
+      ...after.filter((stop) => band?.contains(stop)),
+      ...stops.filter((stop) => band?.contains(stop) && stop.id),
+      ...after,
+      ...before,
+    ].map((stop) => stop.dataset["incident"] ?? stop.id);
+  }
+  /** The first of these stops the list still draws, or the page's title. */
+  private land(place: string[]): HTMLElement | null {
+    const page = this.element.nativeElement;
+    for (const stop of place) {
+      const drawn =
+        this.control(stop) ??
+        page.querySelector<HTMLElement>(`.incident-band #${CSS.escape(stop)}`);
+      if (drawn) return drawn;
+    }
+    return place.length ? page.querySelector("h1") : null;
+  }
+  /** Closing the drawer over the list returns to the control that opened it, or to the next one once it is gone. */
+  readonly drawerOpener = () => this.land(this.opener);
   private holdFocus() {
-    const control = document.activeElement?.closest<HTMLElement>(
-      ".incident-list [data-incident]",
+    const focused = document.activeElement?.closest<HTMLElement>(
+      `.incident-list :is(${STOPS})`,
     );
-    if (control) this.focused = control.dataset["incident"] ?? "";
+    if (focused) this.focused = this.placeOf(focused);
+    const opener =
+      this.selected && this.openedFrom ? this.control(this.openedFrom) : null;
+    if (opener) this.opener = this.placeOf(opener);
   }
   /**
-   * A row can be drawn elsewhere: one list turns into bands, a case forms
-   * around it. The focus it took along goes to its incident's control there.
+   * A row can be drawn elsewhere (one list turns into bands, a case forms
+   * around it) or leave the list. The focus it took along goes to its
+   * incident's control there, or to the next stop.
    */
   private restoreFocus() {
-    if (this.focused && document.activeElement === document.body)
-      this.control(this.focused)?.focus({ preventScroll: true });
-    this.focused = "";
+    if (this.focused.length && document.activeElement === document.body)
+      this.land(this.focused)?.focus({ preventScroll: true });
+    this.focused = [];
   }
   /** The control that opened the incident is gone: its title takes the focus. */
   private focusTitle() {

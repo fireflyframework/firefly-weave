@@ -2464,6 +2464,95 @@ test.describe("a refresh keeps the keyboard focus on its incident", () => {
     await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
   });
 
+  const band = (page: Page, name: string) =>
+    page.getByRole("heading", { level: 2, name });
+  /** Incidents decided elsewhere, as the next refresh finds them gone. */
+  async function decidedElsewhere(
+    page: Page,
+    platform: IncidentPlatform,
+    ...gone: IncidentView[]
+  ) {
+    const out = new Set(gone.map((item) => item.id));
+    platform.items = platform.items.filter((item) => !out.has(item.id));
+    await refresh(page);
+    for (const id of out)
+      await expect(
+        page.locator(`.incident-list .row-open[data-incident="${id}"]`),
+      ).toHaveCount(0);
+  }
+  for (const [name, items, from, gone, to] of [
+    [
+      "one in a list gives it to the next row",
+      others,
+      "WV-TASK-FAILED at fetch",
+      [others[1]],
+      (page: Page) => row(page, "WV-TASK-LOST at send"),
+    ],
+    [
+      "one in a list gives it past the rows that go with it",
+      others,
+      "WV-TASK-FAILED at fetch",
+      [others[1], others[2]],
+      (page: Page) => row(page, "WV-TASK-AMBIGUOUS at write"),
+    ],
+    [
+      "the last of a list gives it to the row before it",
+      others,
+      "WV-TASK-AMBIGUOUS at write",
+      [others[3]],
+      (page: Page) => row(page, "WV-TASK-LOST at send"),
+    ],
+    [
+      "the only one gives it to the page's title",
+      [others[1]],
+      "WV-TASK-FAILED at fetch",
+      [others[1]],
+      (page: Page) => page.getByRole("heading", { level: 1 }),
+    ],
+    [
+      "one of a case gives it to the next of its band",
+      [unknown, caller, called, loop, ...others],
+      "WV-TXN-UNDO-STUCK at add",
+      [caller, called],
+      (page: Page) => row(page, "WV-TXN-CANCEL-STUCK at hold[3]"),
+    ],
+    [
+      "the last of a band gives it to the band's heading",
+      [unknown, loop, ...others],
+      "WV-TXN-CANCEL-STUCK at hold[3]",
+      [loop],
+      (page: Page) => band(page, "High priority"),
+    ],
+    [
+      "the last of Other incidents gives it to that heading",
+      [unknown, ...others],
+      "WV-TASK-AMBIGUOUS at write",
+      [others[3]],
+      (page: Page) => band(page, "Other incidents"),
+    ],
+    [
+      "the only one of a band gives it to the row after it",
+      [unknown, ...others],
+      "WV-TXN-PIVOT-UNKNOWN at submit",
+      [unknown],
+      (page: Page) => row(page, "WV-TASK-AMBIGUOUS at send"),
+    ],
+  ] as const)
+    test(`as incidents leave: ${name}`, async ({ page }) => {
+      const platform = await incidentPlatform(page, { items: [...items] });
+      await page.goto("/operate/incidents");
+      await row(page, from).focus();
+      await decidedElsewhere(page, platform, ...gone);
+      await expect(to(page)).toBeFocused();
+      // It is a place in the list like any other: the next refresh keeps it.
+      platform.items = [...platform.items, newest(others[0])];
+      await refresh(page);
+      await expect(codes(page.locator(".incident-list")).last()).toHaveText(
+        "WV-TASK-REFUSED",
+      );
+      await expect(to(page)).toBeFocused();
+    });
+
   test("and leaves it alone once the person moved it", async ({ page }) => {
     const platform = await incidentPlatform(page, { items: others });
     await page.goto("/operate/incidents");
@@ -2513,6 +2602,55 @@ test.describe("a refresh keeps the keyboard focus on its incident", () => {
         await page.keyboard.press("Escape");
         await expect(drawer).toHaveCount(0);
         await expect(opener).toBeFocused();
+      });
+
+    for (const [name, leave] of [
+      ["decided elsewhere", decidedElsewhere],
+      [
+        "decided in the sheet",
+        async (page: Page, platform: IncidentPlatform, gone: IncidentView) => {
+          await page.route(
+            `${environment}/incidents/${gone.id}/resolve`,
+            (route) => {
+              platform.items = platform.items.filter(
+                (item) => item.id !== gone.id,
+              );
+              return route.fulfill({
+                json: { ...gone, status: "resolved", revision: 2 },
+              });
+            },
+          );
+          await page
+            .locator("weave-incident-drawer")
+            .getByRole("button", { name: "Resolve incident", exact: true })
+            .click();
+          await endTheRun(page);
+          await expect(
+            page.getByRole("dialog", { name: "Resolve incident" }),
+          ).toHaveCount(0);
+          await expect(
+            page.locator(`.incident-list [data-incident="${gone.id}"]`),
+          ).toHaveCount(0);
+          await page.clock.runFor(100);
+        },
+      ],
+    ] as const)
+      test(`Escape returns to the next row once the incident is ${name}`, async ({
+        page,
+      }) => {
+        const platform = await incidentPlatform(page, { items: [...others] });
+        await page.goto("/operate/incidents");
+        await row(page, "WV-TASK-FAILED at fetch").focus();
+        await page.keyboard.press("Enter");
+        const title = page.locator("#incident-detail-title");
+        await expect(title).toBeFocused();
+        await leave(page, platform, others[1]);
+        await expect(title).toBeFocused();
+        // A later refresh, without it too.
+        await refresh(page);
+        await page.keyboard.press("Escape");
+        await expect(page.locator("weave-incident-drawer")).toHaveCount(0);
+        await expect(row(page, "WV-TASK-LOST at send")).toBeFocused();
       });
   });
 });
