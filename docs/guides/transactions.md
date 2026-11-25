@@ -96,13 +96,14 @@ When an undo or a confirm can't finish, or nobody knows whether the order went
 through, the transaction is **in doubt**. The run stops behind a high-priority
 incident (`WV-TXN-UNDO-STUCK`, `WV-TXN-CONFIRM-STUCK`,
 `WV-TXN-AFTER-PIVOT-STUCK`, `WV-TXN-PIVOT-UNKNOWN` or `WV-TXN-SETTLE-TIMEOUT`)
-whose `transaction` field lists each step and the ones still pending. Nothing
-but a person's decision moves it. Check the other systems first, then choose:
+whose `transaction` field lists each step and the ones still pending, and whose
+`origin_code` is the failed step's own code. Nothing but a person's decision
+moves it. Check the other systems first, then choose:
 
 | Decision | Kind | When |
 | --- | --- | --- |
 | **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. An action runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped. An undo or confirm that calls a workflow starts a new child run instead, whose steps get new operation keys, so that workflow must receive `/participant/operationKey` in its `with` and refuse a duplicate by it |
-| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read |
+| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to every step whose end Weave doesn't know for that ending; with `completed`, give the block's output, which later steps read |
 | **It happened** | `accept_reconciled_result` with the step's output | The order went through. Weave confirms the reservations and runs the steps after it |
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
@@ -111,7 +112,25 @@ A transaction can hold its run behind more than one incident, as when two
 confirms fail. Retry, It happened, and It didn't happen decide one incident at a
 time. Mark as reconciled and Force end decide the whole transaction: they close
 every open incident of it, a step's failure that Weave still handles included,
-and record your decision on each one.
+and record your decision on each one. When someone else's decision, or a step
+that finishes, changes the transaction while you decide, your decision is refused
+with HTTP 409 `WV-INCIDENT-REVISION`: read the incident again and check again.
+
+Two cases to know:
+
+- **A step fails beside the one that can't be undone.** A read in another branch
+  can fail for good while the order is in flight. Nothing is asked of you until
+  the order's result is known. When the order goes back, the read goes back with
+  it. When it goes through, the read is stuck behind
+  `WV-TXN-AFTER-PIVOT-STUCK`, like a step that fails after it: Retry it, mark the
+  transaction as reconciled, or force the end.
+- **An incident opens again.** A retried step that no worker takes in time fails
+  again. Its incident opens again at a higher revision, and it needs a new
+  decision; the earlier one stays in the audit record.
+
+A run that an earlier version left suspended can show an incident of a
+transaction that a person already ended. Retry closes it: nothing runs again, and
+the run goes on.
 
 Once a person ends a transaction, a late result of its work changes nothing: a
 worker's report is refused with HTTP 409 `WV-LEASE` (or, when the run ended

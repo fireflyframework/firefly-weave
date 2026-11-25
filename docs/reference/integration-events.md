@@ -81,7 +81,9 @@ transaction's instance key, its business key, its state, its `cause` (`code`,
 work the `phase` and its `attempts`), the in-doubt `incident_id`, and `test`.
 It carries no other business value. Each event ID is derived from the run, the
 transaction, its state and its revision, so a retried write never sends it
-twice. Subscribing to transaction events needs `run.read`.
+twice. A transaction that stays in doubt behind another of its incidents sends
+`transaction.in_doubt` again with that `incident_id`, so a subscriber learns
+which one to decide next. Subscribing to transaction events needs `run.read`.
 
 The event's `correlation_id` is the stable UUID of the source resource. The
 change, the immutable event, and every matching delivery intent commit in the

@@ -271,7 +271,7 @@ one of these decisions closes it; a plain cancel is refused with HTTP 409
 | Decision | `kind` | Needs | Effect |
 | --- | --- | --- | --- |
 | Retry the undo, the confirm, or a step after the point of no return | `retry_safe` | `incident.resolve` | The stuck step's task is made ready again with the same operation key and a fresh time limit (`undoTimeoutSeconds` for an undo, confirm or cancel); a called undo starts the next generation of its call. Refused for the step that can't be undone. After a settle timeout, it waits again for the steps still in flight |
-| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every stuck step must be named; `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
+| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every step whose end isn't known for that ending must be named ([below](#what-mark-as-reconciled-must-name)); `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
 | It happened (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is the step's own output; the transaction goes ahead: confirms, then the steps after it |
 | It didn't happen (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_failure` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | The transaction undoes the steps before it |
 | Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
@@ -280,9 +280,15 @@ Any decision while the stuck step's latest attempt or child run is still running
 is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
 in flight are what you decide about: Mark as reconciled and Force end settle
 them (their leases are revoked and their child runs asked to stop), they don't
-wait for them. A record that doesn't fit the transaction answers HTTP 422
-`WV-RUNTIME-OUTPUT`. The audit record adds the transaction's key and, for a
+wait for them. The audit record adds the transaction's key and, for a
 reconciliation, how it ended.
+
+A transaction can have more than one open incident. Retry, It happened, and It
+didn't happen decide one of them, and the transaction stays in doubt behind the
+others. The incidents of a transaction get a new revision when its state, the
+status of one of its steps, or the set of them changes, so a decision made on an
+older view answers HTTP 409 `WV-INCIDENT-REVISION`. An attempt that fails and is
+tried again raises no revision.
 
 A decision that ends a transaction, or stops steps of it, closes their open
 incidents too, a failure that recovery still handles included. Each one ends
@@ -290,12 +296,42 @@ incidents too, a failure that recovery still handles included. Each one ends
 reference, without an output, and at a higher revision. The audit record lists
 their IDs in `closed`.
 
+An incident can open again after it ended, at the same ID and a higher revision,
+with a new `opened_at` and without the earlier resolution: a retried confirm, for
+example, that no worker claims before its time passes. The earlier decision stays
+in its receipt and its audit record. A suspended run that shows no active
+incident at all, left by an earlier version, gets its incident back when someone
+pauses the run.
+
+`WV-TXN-AFTER-PIVOT-STUCK` also covers a step that failed beside the step that
+can't be undone, once that one went through. Until then the failure opens no
+incident. Such a step changes nothing, so a record can't name it. Retrying a step
+that fails at once again, such as a Fail step, answers HTTP 409
+`WV-RUNTIME-RESOLUTION`.
+
 A run that an earlier version left suspended can hold an incident with nothing
 left to decide: its transaction is already `reconciled` or `force_ended`, or the
 run no longer waits for its step. Such an incident takes `retry_safe`, which runs
 nothing again, closes it, and lets the run go on, and `terminate`, which ends the
 run. The two other kinds answer HTTP 409 `WV-RUNTIME-STATE`. The recorded
 resolution and the audit record say `leftover: true`.
+
+#### What Mark as reconciled must name
+
+A record names each step (`participants`) whose end Weave doesn't know for the
+ending you state, by the status the incident's `transaction` shows:
+
+| `as` | Must be named | Not asked |
+| --- | --- | --- |
+| `completed` | `dispatched`, `unknown`, `confirming`, `confirm_stuck`, `cancelling`, `cancelled`, `cancel_stuck`, `undoing`, `undone`, `undo_stuck`; `done` of a reservation; `failed` of a step in `stuck_steps` | `confirmed`, any other `done`, any other `failed`, `skipped`, `pending` |
+| `compensated` | `dispatched`, `unknown`, `done`, `confirming`, `confirmed`, `confirm_stuck`, `cancelling`, `cancel_stuck`, `undoing`, `undo_stuck` | `undone`, `cancelled`, `failed`, `skipped`, `pending` |
+
+A record that leaves one of them out answers HTTP 422
+`WV-TXN-RECONCILE-INCOMPLETE` with a message such as
+`Say what happened to: hold, add2.`, which lists the first 20 and counts the
+rest. A record that doesn't fit the transaction in another way answers HTTP 422
+`WV-RUNTIME-OUTPUT`. Neither changes anything. You may name more steps than
+these; a step that confirmed while you decided stays `confirmed`.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
@@ -451,7 +487,8 @@ Some runs created before the current admission policy cannot be shown safely.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), a reconciled result lacks `output` or `evidence_reference`, or `accept_reconciled_failure` was used for a step without an On error setting, without `evidence_reference`, for a call, or for a transaction in doubt other than `WV-TXN-PIVOT-UNKNOWN` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
-| HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
+| HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it, or its transaction changed | Read the incident again; decide only if it is still active |
+| HTTP 422 `WV-TXN-RECONCILE-INCOMPLETE` | The record leaves out a step whose end isn't known | Check the steps it names and add them; see [what Mark as reconciled must name](#what-mark-as-reconciled-must-name) |
 | A task incident keyed `send[2]:0` | A task failed in iteration 2 of a loop; the other iterations' results wait behind the incident | Decide it like any task incident; `retry_safe` retries only that iteration |
 | An incident at `support#2` or `support#2.1` | A turn or a tool call of the AI agent step `support` failed, and the agent waits behind the incident | See [AI agent incidents](#ai-agent-incidents) |
 | `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT` | A loop's list was not a list, was longer than `maxItems`, or its results exceeded the payload limit; see [loops at run time](compiler.md#loops-at-run-time) | Only `terminate` applies; fix the workflow and start a new run |
