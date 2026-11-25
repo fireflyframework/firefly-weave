@@ -351,6 +351,24 @@ def test_continue_lets_waits_pass_and_uses_test_answers_up_to_a_breakpoint():
     assert "shape" in paused.view.current_nodes
 
 
+def test_continue_never_has_the_whole_run_checked_for_each_wait(monkeypatch):
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    checked: list[int] = []
+    bounded = Simulator._bounded
+    monkeypatch.setattr(Simulator, "_bounded", lambda self: (checked.append(1), bounded(self))[1])
+    counts = []
+    for waits in (1, 4):
+        sessions = HostSessions()
+        steps = [{**PAUSE, "id": f"pause-{index}"} for index in range(waits)]
+        session = sessions.create(request(workflow(*steps), scripts={"autoAdvanceWaits": True}), None, now=0)
+        checked.clear()
+        finished = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1)
+        assert finished.view.status == "succeeded"
+        counts.append(len(checked))
+    assert counts[0] == counts[1]
+
+
 @pytest.mark.parametrize("scripted", [True, False], ids=["with test answers", "by hand"])
 def test_a_command_out_of_time_is_refused_and_the_session_stays_as_it_was(scripted):
     sessions = HostSessions()
