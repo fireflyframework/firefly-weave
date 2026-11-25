@@ -384,6 +384,119 @@ async def test_a_purge_repairs_its_own_run_at_a_full_byte_quota(platform, reconc
     assert await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run.id) == []
 
 
+async def three_open(platform):
+    """An ended run whose three transactions each went from open to completed in one event."""
+    run = await start(platform, [move(add())], 3)
+    for index in range(3):
+        await platform.complete(await platform.lease(f"add[{index}]"))
+    assert set((await states(platform, run.id)).values()) == {"open"}
+    return run
+
+
+async def test_a_purge_settles_more_records_than_one_read_takes_on_at_a_full_byte_quota(
+    platform, reconciler, earlier, monkeypatch
+):
+    from test_transaction_control import SATURATE
+
+    from firefly_weave.runtime import record_repair
+
+    monkeypatch.setattr(record_repair, "READ_KEYS", 2)
+    run = await three_open(platform)
+
+    async def full() -> None:
+        await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+
+    await purge(platform, run.id, reconciler, archived=full)
+    assert await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run.id) == []
+
+
+@pytest.mark.parametrize("quota", ["free", "full"])
+async def test_a_purge_that_runs_out_of_time_says_so_and_the_next_one_goes_on(
+    platform, reconciler, earlier, slow, monkeypatch, quota
+):
+    from test_transaction_control import SATURATE
+
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime import lifecycle
+
+    run = await three_open(platform)
+    last = await last_event(platform, run.id)
+    slow.when = lambda state, event: event.sequence == last and not slow.asked
+    monkeypatch.setattr(lifecycle, "PURGE_SECONDS", 2.0)
+
+    async def archived() -> None:
+        if quota == "full":
+            await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+
+    with pytest.raises(CatalogError) as refused:
+        await purge(platform, run.id, reconciler, archived=archived)
+    assert (refused.value.status, refused.value.code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert "purge it again" in str(refused.value) and "history doesn't show" not in str(refused.value)
+    # What it read is kept, so the next purge has only the rest to read.
+    kept = await records(platform, run.id)
+    assert {key: row["state"] for key, row in kept.items()} == {
+        "move[0]": "completed",
+        "move[1]": "completed",
+        "move[2]": "open",
+    }
+    # At a full quota a record has no room for the rest of what it says.
+    assert bool(kept["move[0]"]["participants"]) is (quota == "free")
+    await purge(platform, run.id, reconciler, again=True)
+    assert await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run.id) == []
+
+
+async def test_a_purge_names_a_history_too_large_to_read(platform, reconciler, earlier, monkeypatch):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime import lifecycle
+
+    run = await three_open(platform)
+    before = await records(platform, run.id)
+    monkeypatch.setattr(lifecycle, "PURGE_BYTES", 100)
+    with pytest.raises(CatalogError) as refused:
+        await purge(platform, run.id, reconciler)
+    assert (refused.value.status, refused.value.code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert "too large" in str(refused.value) and "history doesn't show" not in str(refused.value)
+    assert await records(platform, run.id) == before
+
+
+@pytest.mark.parametrize(
+    "problem,code",
+    [("another run", "WV-RUN-PURGE-CONFIRM"), ("an old revision", "WV-RUN-LIFECYCLE-REVISION")],
+)
+async def test_a_purge_that_is_refused_anyway_reads_no_history(
+    platform, reconciler, earlier, monkeypatch, problem, code
+):
+    from uuid import uuid4
+
+    from loop_transactions import AuditContext
+
+    from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest, RunPurgeRequest
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime import lifecycle
+
+    async def reading(*values, **options):
+        raise AssertionError("read")
+
+    run = await start(platform, BODY, 1)
+    await go_back(platform, "[0]")
+    monkeypatch.setattr(lifecycle, "read_repair", reading)
+    service = lifecycle.RunLifecycleService(platform.runtime)
+    archive = RunLifecycleRequest(expected_revision=0, reason="tidy")
+    await service.command(
+        reconciler, platform.scope, run.id, archive, "archive", action="archive", context=AuditContext()
+    )
+    request = RunPurgeRequest(
+        expected_revision=0 if problem == "an old revision" else 1,
+        reason="tidy",
+        confirm_run_id=uuid4() if problem == "another run" else run.id,
+    )
+    with pytest.raises(CatalogError) as refused:
+        await service.command(
+            reconciler, platform.scope, run.id, request, "purge", action="purge", context=AuditContext()
+        )
+    assert refused.value.code == code
+
+
 async def test_a_purge_still_refuses_a_run_whose_history_cannot_say_how_a_transaction_ended(
     platform, reconciler, earlier
 ):

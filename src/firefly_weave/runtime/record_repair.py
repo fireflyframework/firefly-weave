@@ -55,10 +55,11 @@ type Reason = Literal["unavailable", "no_event", "too_large", "too_slow", "no_ev
 @dataclass
 class Repair:
     """What a run's history says about its unsettled records: final records by key, each with when it was decided, and
-    the keys left as they are."""
+    the keys left as they are. ``unfinished`` when some of the history was not read."""
 
     records: dict[str, tuple[TransactionRecord, datetime | None]] = field(default_factory=dict)
     left: dict[str, Reason] = field(default_factory=dict)
+    unfinished: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,16 +183,16 @@ async def write_repair(repository: RuntimeRepository, run_id: UUID, repair: Repa
 
 
 async def settle_for_purge(repository: RuntimeRepository, run_id: UUID, repair: Repair) -> None:
-    """Settle the records of a run this transaction is about to delete. They keep only how their transactions ended, so
-    none of them grows: a purge, which is how a project at its quota frees room, needs none."""
-    for key, (record, _) in repair.records.items():
-        await repository.execute(
-            "UPDATE run_transactions SET state=:state,participants='[]'::jsonb,cause=NULL,business_key=NULL,"
-            f"decided_at=NULL WHERE {SCOPE} AND run_id=:run AND instance_key=:key AND state IN {UNSETTLED_SQL}",
-            run=run_id,
-            key=key,
-            state=record.status,
-        )
+    """Settle the records of a run that is being purged. They keep only how their transactions ended, so none of them
+    grows: a purge, which is how a project at its quota frees room, needs none."""
+    # Thousands of records in one statement, whose plan does not depend on how many of them the planner expects.
+    await repository.execute(
+        "UPDATE run_transactions SET state=cast(:states AS jsonb)->>instance_key,participants='[]'::jsonb,cause=NULL,"
+        f"business_key=NULL,decided_at=NULL WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} "
+        "AND cast(:states AS jsonb)->>instance_key IS NOT NULL",
+        run=run_id,
+        states=json.dumps({key: record.status for key, (record, _) in repair.records.items()}),
+    )
 
 
 def _artifact(row: Mapping[str, Any]) -> "CompiledArtifact | None":

@@ -116,8 +116,9 @@ async def run_fact(platform, run_id) -> str | None:
     return row["transaction_state"]
 
 
-async def purge(platform, run_id, actor, *, archived=None) -> None:
-    """Archive a run and delete it for good, after ``archived()`` when given."""
+async def purge(platform, run_id, actor, *, archived=None, again=False) -> None:
+    """Archive a run and delete it for good, after ``archived()`` when given; ``again`` when a refused purge already
+    archived it."""
     from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest, RunPurgeRequest
     from firefly_weave.runtime.lifecycle import RunLifecycleService
 
@@ -126,6 +127,8 @@ async def purge(platform, run_id, actor, *, archived=None) -> None:
         ("archive", RunLifecycleRequest(expected_revision=0, reason="tidy")),
         ("purge", RunPurgeRequest(expected_revision=1, reason="tidy", confirm_run_id=run_id)),
     ):
+        if again and action == "archive":
+            continue
         if action == "purge" and archived is not None:
             await archived()
         await lifecycle.command(actor, platform.scope, run_id, request, action, action=action, context=AuditContext())
