@@ -57,6 +57,7 @@ import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
 import { IncidentDrawer, type RecentEvents } from "./incident-drawer";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import { retryDelay } from "../transactions/transaction-record";
 import {
   caseLabel,
   inboxRows,
@@ -87,6 +88,7 @@ import {
   type ResolutionRequest,
 } from "./incidents-model";
 import { ResolveIncidentDialog } from "./resolve-incident-dialog";
+import type { PartnerRead } from "./transaction-panel";
 
 /** The longest opening range the platform accepts: 400 days. */
 const MAX_RANGE_MS = 400 * 86_400_000;
@@ -458,8 +460,8 @@ interface Band {
                               role="cell"
                               data-wide
                               class="cell-line"
-                              [attr.title]="stepOf(link)"
-                              >{{ stepOf(link) }}</span
+                              [attr.title]="stepText(link)"
+                              >{{ stepText(link) }}</span
                             ><span role="cell" class="open-cell"
                               ><button
                                 type="button"
@@ -548,7 +550,10 @@ interface Band {
               [incident]="selected"
               [events]="events"
               (resolve)="startResolving()"
-              (openRun)="openRun(selected)"
+              [partner]="partner"
+              (openLink)="openPartner($event)"
+              (tryPartner)="readPartner()"
+              (openRun)="openRun($event)"
               (reloadEvents)="loadEvents(selected)"
               (closed)="close()"
             />
@@ -613,10 +618,10 @@ interface Band {
                 @if (key) {
                   <span class="business-key">{{ key }}</span>
                 }
-              } @else if (i.origin_code !== i.code) {
+              } @else if (i.origin_code !== i.code && !inDoubt(i)) {
                 First reported as {{ i.origin_code }}
               } @else {
-                {{ stepOf(i) }}
+                {{ stepText(i) }}
               }
             </small></span
           ><span role="cell" class="badges"
@@ -654,8 +659,8 @@ interface Band {
             role="cell"
             data-wide
             class="cell-line"
-            [attr.title]="stepOf(i)"
-            >{{ stepOf(i) }}</span
+            [attr.title]="stepText(i)"
+            >{{ stepText(i) }}</span
           ><span role="cell" data-wide>
             @if (i.opened_at) {
               <time
@@ -756,6 +761,15 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
    */
   private pending = new Map<string, { key: string; receipt: string }>();
   private readonly listReads = new ListReads();
+  /** The related incident being read for the drawer, or why it isn't open. */
+  partner: PartnerRead | null = null;
+  /** What that read is for: the incident asked for, and the one it was asked in. */
+  private asked: {
+    id: string;
+    from: string;
+    failures: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  } | null = null;
 
   /** Every incident loaded, transactions in doubt first. */
   get incidents(): IncidentRecord[] {
@@ -786,6 +800,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   ngOnDestroy() {
     this.alive = false;
+    this.forgetPartner();
     this.navigated.unsubscribe();
     this.poller.stop();
     this.generation++;
@@ -802,6 +817,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.loaded = false;
     this.forbidden = false;
     this.error = null;
+    this.forgetPartner();
     this.selected = null;
     this.detailProblem = null;
     this.opening = "";
@@ -1060,6 +1076,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       void this.router.navigateByUrl(path, { replaceUrl: true });
   }
   open(incident: IncidentView) {
+    this.forgetPartner();
     this.selected = incident;
     this.detailProblem = null;
     this.opening = "";
@@ -1079,6 +1096,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       );
   }
   close(sync = true) {
+    this.forgetPartner();
     this.selected = null;
     this.opening = "";
     this.resolving = false;
@@ -1112,6 +1130,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         };
         return;
       }
+      this.forgetPartner();
       this.selected = incident;
       this.resolving = false;
       this.failure = null;
@@ -1124,8 +1143,106 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (this.alive) this.cdr.markForCheck();
     }
   }
-  openRun(incident: IncidentView) {
-    void this.host.viewRun({ id: incident.run_id });
+  openRun(id: string) {
+    void this.host.viewRun({ id });
+  }
+  /**
+   * Opens a related incident from the drawer: the one loaded, or the one
+   * incidents.read answers when no page lists it. A second press while it is
+   * on its way reads nothing.
+   */
+  openPartner(link: IncidentLink) {
+    const from = this.selected;
+    if (!from || (this.partner?.id === link.id && this.partner.reading)) return;
+    const loaded = this.incidents.find((item) => item.id === link.id);
+    if (loaded && !isUnavailableIncident(loaded)) {
+      this.open(loaded);
+      this.focusTitle();
+      return;
+    }
+    // Asked again after a failure, it keeps how long the next wait is.
+    if (this.asked?.id !== link.id) {
+      this.forgetPartner();
+      this.asked = { id: link.id, from: from.id, failures: 0, timer: null };
+    }
+    void this.readPartner();
+  }
+  /**
+   * Reads the related incident asked for, for the incident it was asked in
+   * only. A failed read waits 5 s, doubling to 60 s; a refusal or an incident
+   * that can't be found is final.
+   */
+  async readPartner() {
+    const scope = this.scope;
+    const asked = this.asked;
+    if (!scope || !asked || this.partner?.reading) return;
+    if (asked.timer !== null) clearTimeout(asked.timer);
+    asked.timer = null;
+    const generation = this.generation;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.asked === asked &&
+      this.selected?.id === asked.from;
+    const say = (message: string, code = "", again = false) => {
+      this.partner = {
+        id: asked.id,
+        reading: false,
+        problem: { message, code, again },
+      };
+    };
+    this.partner = { id: asked.id, reading: true, problem: null };
+    try {
+      const incident = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(asked.id)}`,
+      );
+      if (!current()) return;
+      if (isUnavailableIncident(incident))
+        say("Studio can't show this incident: its run can't be shown here.");
+      else {
+        this.open(incident);
+        this.focusTitle();
+      }
+    } catch (error) {
+      if (!current()) return;
+      const plain = describeError(error);
+      if (plain.status === 403)
+        say(
+          "You need incident.read in this environment. Ask an administrator in Settings › People and access.",
+          plain.code,
+        );
+      else if (plain.status === 404)
+        say(
+          "This incident can't be found. It may belong to another environment, or its run's data was deleted.",
+          plain.code,
+        );
+      else {
+        const wait = retryDelay(++asked.failures);
+        say(
+          `Studio couldn't read this incident. It tries again in ${wait / 1000} s.`,
+          plain.code,
+          true,
+        );
+        asked.timer = setTimeout(() => {
+          asked.timer = null;
+          if (current()) void this.readPartner();
+        }, wait);
+      }
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
+    }
+  }
+  /** Another incident, a decision or no drawer: the one asked for is no longer wanted. */
+  private forgetPartner() {
+    if (this.asked?.timer) clearTimeout(this.asked.timer);
+    this.asked = null;
+    this.partner = null;
+  }
+  /** The control that opened the incident is gone: its title takes the focus. */
+  private focusTitle() {
+    setTimeout(() =>
+      document.querySelector<HTMLElement>("#incident-detail-title")?.focus(),
+    );
   }
   /** The run's last 20 engine events: types and sequence numbers only. */
   async loadEvents(incident: IncidentView) {
@@ -1167,6 +1284,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   startResolving() {
     this.resolving = true;
     this.failure = null;
+    // An incident on its way never opens under a decision.
+    this.forgetPartner();
   }
   /**
    * Sends a decision with the incident's revision as If-Match and a receipt.
@@ -1204,13 +1323,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         this.selected = resolved;
         this.host.notify("Incident resolved.");
         void this.loadEvents(resolved);
-        // The dialog's button is gone: the incident's title takes the focus.
-        if (dialogOpen)
-          setTimeout(() =>
-            document
-              .querySelector<HTMLElement>("#incident-detail-title")
-              ?.focus(),
-          );
+        // The dialog's button is gone.
+        if (dialogOpen) this.focusTitle();
       } else {
         // The person has moved on: nothing on screen changes but the list.
         this.host.notify(`Incident ${where} is resolved.`);
@@ -1330,6 +1444,13 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   readonly missingText = missingText;
   stepOf(incident: Pick<IncidentView, "node_id">) {
     return incidentStep(incident.node_id) ?? "the run";
+  }
+  /** A row's step: a run held whole names one that is no step of the workflow. */
+  stepText(incident: Pick<IncidentView, "node_id">) {
+    return (
+      incidentStep(incident.node_id) ??
+      (incident.node_id ? "Not tied to a step" : "the run")
+    );
   }
   /** What a row in doubt says under its code: a band already says it is in doubt. */
   doubtText(banded: boolean, key: boolean) {

@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // One incident: what happened (its step and full step instance, the run and
-// its status, when it opened, marked when that time is an estimate), the
+// its status, when it opened, marked when that time is an estimate), or for
+// one that holds a transaction its record and the related incidents; the
 // run's last engine events (types only, never their data), how it was
 // resolved, and Resolve incident while it is active. A time the platform
 // doesn't know reads Unknown.
@@ -28,14 +29,17 @@ import { Icon } from "../../icon";
 import { statusLabel, statusTone, toneAttribute } from "../../status-labels";
 import { OperateState } from "../operate-state";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import { copyOperationKey } from "../transactions/transaction-record-table";
 import {
   incidentStatusLabel,
   incidentTone,
   openedText,
-  resolutionLabel,
   type EventLine,
+  type IncidentLink,
   type IncidentView,
 } from "./incidents-model";
+import { TransactionPanel, type PartnerRead } from "./transaction-panel";
+import { decisionText } from "./transaction-resolutions";
 
 /** The run's last events, or why they are missing. */
 export interface RecentEvents {
@@ -49,7 +53,7 @@ export interface RecentEvents {
 @Component({
   selector: "weave-incident-drawer",
   standalone: true,
-  imports: [Icon, OperateState],
+  imports: [Icon, OperateState, TransactionPanel],
   styleUrls: ["../operate.css", "./incidents.css"],
   template: `@let i = incident();
     <header class="detail-header">
@@ -63,7 +67,7 @@ export interface RecentEvents {
         <weave-icon name="close" />
       </button>
     </header>
-    <p class="badges">
+    <p class="badges" [class.over-panel]="i.priority === 'high'">
       <span class="status-pill" [attr.data-tone]="tone(i)">{{ label(i) }}</span>
       @if (i.test) {
         <span class="tag">Test run</span>
@@ -75,80 +79,109 @@ export interface RecentEvents {
         the run doesn't undo work already sent to other systems.
       </p>
     }
-    <dl class="facts">
-      <dt>Code</dt>
-      <dd>
-        <code>{{ i.code }}</code>
-      </dd>
-      @if (i.origin_code !== i.code) {
-        <dt>First reported as</dt>
+    @if (i.priority === "high") {
+      <weave-transaction-panel
+        [incident]="i"
+        [partner]="partner()"
+        (openLink)="openLink.emit($event)"
+        (tryNow)="tryPartner.emit()"
+        (openRun)="openRun.emit($event)"
+        (copyKey)="copy($event)"
+      />
+    } @else {
+      <dl class="facts">
+        <dt>Code</dt>
         <dd>
-          <code>{{ i.origin_code }}</code>
+          <code>{{ i.code }}</code>
         </dd>
-      }
-      <dt>Opened</dt>
-      <dd class="opened">
-        @if (i.opened_at && relative(i.opened_at)) {
-          <time
-            [attr.datetime]="iso(i.opened_at)"
-            [attr.title]="absolute(i.opened_at)"
-            >{{ opened(i) }}</time
+        @if (i.origin_code !== i.code) {
+          <dt>First reported as</dt>
+          <dd>
+            <code>{{ i.origin_code }}</code>
+          </dd>
+        }
+        <dt>Opened</dt>
+        <dd class="opened">
+          @if (i.opened_at && relative(i.opened_at)) {
+            <time
+              [attr.datetime]="iso(i.opened_at)"
+              [attr.title]="absolute(i.opened_at)"
+              >{{ opened(i) }}</time
+            >
+            @if (i.opened_at_estimated) {
+              <small class="hint"
+                >From the run's last recorded event: the incident's own opening
+                wasn't kept.</small
+              >
+            }
+          } @else {
+            Unknown
+          }
+        </dd>
+        @if (i.updated_at && relative(i.updated_at)) {
+          <dt>Last changed</dt>
+          <dd>
+            <time
+              [attr.datetime]="iso(i.updated_at)"
+              [attr.title]="absolute(i.updated_at)"
+              >{{ relative(i.updated_at) }}</time
+            >
+          </dd>
+        }
+        <dt>Workflow</dt>
+        <dd>
+          {{
+            i.workflow ? i.workflow.name + " " + i.workflow.version : "Unknown"
+          }}
+        </dd>
+        <dt>Step</dt>
+        <dd>{{ i.node_id || "Not tied to a step" }}</dd>
+        @if (i.instance_key && i.instance_key !== i.node_id) {
+          <dt>Step instance</dt>
+          <dd>
+            <code class="mono-id">{{ i.instance_key }}</code>
+          </dd>
+        }
+        @if (i.generation !== null) {
+          <dt>Attempt</dt>
+          <dd>{{ i.generation }}</dd>
+        }
+        <dt>Run</dt>
+        <dd class="run-fact">
+          <button
+            type="button"
+            class="tertiary sm"
+            (click)="openRun.emit(i.run_id)"
           >
-          @if (i.opened_at_estimated) {
-            <small class="hint"
-              >From the run's last recorded event: the incident's own opening
-              wasn't kept.</small
+            Run {{ short(i.run_id) }}
+          </button>
+          @if (i.run_status) {
+            <span
+              class="status-pill"
+              [attr.data-tone]="runTone(i.run_status)"
+              >{{ runLabel(i.run_status) }}</span
             >
           }
-        } @else {
-          Unknown
-        }
-      </dd>
-      @if (i.updated_at && relative(i.updated_at)) {
-        <dt>Last changed</dt>
-        <dd>
-          <time
-            [attr.datetime]="iso(i.updated_at)"
-            [attr.title]="absolute(i.updated_at)"
-            >{{ relative(i.updated_at) }}</time
-          >
         </dd>
-      }
-      <dt>Workflow</dt>
-      <dd>
-        {{
-          i.workflow ? i.workflow.name + " " + i.workflow.version : "Unknown"
-        }}
-      </dd>
-      <dt>Step</dt>
-      <dd>{{ i.node_id || "Not tied to a step" }}</dd>
-      @if (i.instance_key && i.instance_key !== i.node_id) {
-        <dt>Step instance</dt>
-        <dd>
-          <code class="mono-id">{{ i.instance_key }}</code>
-        </dd>
-      }
-      @if (i.generation !== null) {
-        <dt>Attempt</dt>
-        <dd>{{ i.generation }}</dd>
-      }
-      <dt>Run</dt>
-      <dd class="run-fact">
-        <button type="button" class="tertiary sm" (click)="openRun.emit()">
-          Run {{ short(i.run_id) }}
-        </button>
-        @if (i.run_status) {
-          <span class="status-pill" [attr.data-tone]="runTone(i.run_status)">{{
-            runLabel(i.run_status)
-          }}</span>
-        }
-      </dd>
-    </dl>
+      </dl>
+    }
     @if (i.resolution; as resolution) {
       <h3>Resolution</h3>
       <dl class="facts">
         <dt>Decision</dt>
-        <dd>{{ decision(resolution.kind) }}</dd>
+        <dd>{{ decision(i) }}</dd>
+        @if (resolution.workflow_run_id; as resolver) {
+          <dt>By</dt>
+          <dd>
+            <button
+              type="button"
+              class="text-link"
+              (click)="openRun.emit(resolver)"
+            >
+              Resolved by workflow run {{ short(resolver) }}
+            </button>
+          </dd>
+        }
         <dt>Reason</dt>
         <dd>{{ resolution.reason }}</dd>
         @if (resolution.evidence_reference) {
@@ -224,6 +257,34 @@ export interface RecentEvents {
         <dd>
           <code class="mono-id">{{ i.incident_key }}</code>
         </dd>
+        @if (i.priority === "high") {
+          @if (i.origin_code !== i.code) {
+            <dt>First reported as</dt>
+            <dd>
+              <code>{{ i.origin_code }}</code>
+            </dd>
+          }
+          @if (i.instance_key && i.instance_key !== i.node_id) {
+            <dt>Step instance</dt>
+            <dd>
+              <code class="mono-id">{{ i.instance_key }}</code>
+            </dd>
+          }
+          @if (i.generation !== null) {
+            <dt>Attempt</dt>
+            <dd>{{ i.generation }}</dd>
+          }
+          @if (i.updated_at && relative(i.updated_at)) {
+            <dt>Last changed</dt>
+            <dd>
+              <time
+                [attr.datetime]="iso(i.updated_at)"
+                [attr.title]="absolute(i.updated_at)"
+                >{{ relative(i.updated_at) }}</time
+              >
+            </dd>
+          }
+        }
         <dt>Revision</dt>
         <dd>{{ i.revision }}</dd>
       </dl>
@@ -233,8 +294,15 @@ export class IncidentDrawer {
   host = input.required<App>();
   incident = input.required<IncidentView>();
   events = input.required<RecentEvents>();
+  /** The related incident being read for this one, if any. */
+  partner = input<PartnerRead | null>(null);
   resolve = output<void>();
-  openRun = output<void>();
+  /** A run to open: the incident's, a called step's or a resolving workflow's. */
+  openRun = output<string>();
+  /** A related incident to open. */
+  openLink = output<IncidentLink>();
+  /** Reads the related incident again without waiting. */
+  tryPartner = output<void>();
   reloadEvents = output<void>();
   closed = output<void>();
   readonly short = shortId;
@@ -249,8 +317,11 @@ export class IncidentDrawer {
   tone(incident: IncidentView) {
     return toneAttribute(incidentTone(incident.status));
   }
-  decision(kind: Parameters<typeof resolutionLabel>[0]) {
-    return resolutionLabel(kind);
+  decision(incident: IncidentView) {
+    return decisionText(incident);
+  }
+  copy(key: string) {
+    void copyOperationKey(this.host(), key);
   }
   /** A time that isn't a date shows nothing; the template says Unknown. */
   relative(value: string) {

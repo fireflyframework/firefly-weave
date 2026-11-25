@@ -281,6 +281,25 @@ weave-operate-state {
   margin-top: var(--space-1);
 }
 
+/* The parts of a transaction's drawer are 16 px apart, the pill's too. */
+.badges.over-panel {
+  margin: 0 0 var(--space-4);
+}
+.badges.over-panel .status-pill {
+  margin-bottom: 0;
+}
+/* On a phone or a small window the drawer is the screen. */
+@media (max-width: 767px) {
+  .record-detail {
+    inset: 0;
+    width: auto;
+    padding: var(--space-4);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
 /* The drawer: the run's last engine events. */
 .recent-events {
   margin-top: var(--space-6);

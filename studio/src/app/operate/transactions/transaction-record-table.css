@@ -1,0 +1,272 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* A transaction's record. Its own width picks the layout: one row per step by
+   default, four columns from 560 px, five from 720 px. */
+:host {
+  display: block;
+  min-width: 0;
+}
+weave-icon[data-tone="success"] {
+  color: var(--success-ink);
+}
+weave-icon[data-tone="info"] {
+  color: var(--info-ink);
+}
+weave-icon[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+weave-icon[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.txn-record {
+  container: txn-record / inline-size;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+/* One row per step: its name left and how it's undone at the right edge, then
+   Forward and Undo or confirm side by side, then the key. */
+.txn-step {
+  display: grid;
+  grid-template-columns: fit-content(55%) minmax(0, 1fr);
+  grid-template-areas:
+    "step how"
+    "forward undo"
+    "key key";
+  align-items: start;
+  gap: var(--space-1) var(--space-4);
+  min-width: 0;
+  padding: var(--space-3);
+  font: var(--type-small);
+  color: var(--text);
+}
+.txn-step + .txn-step {
+  border-top: 1px solid var(--line);
+}
+.txn-step.stuck {
+  background: var(--danger-bg);
+}
+.txn-head {
+  display: none;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.c-step {
+  grid-area: step;
+}
+.c-how {
+  grid-area: how;
+}
+.c-forward {
+  grid-area: forward;
+}
+.c-undo {
+  grid-area: undo;
+}
+.c-key {
+  grid-area: key;
+}
+.c-happened {
+  display: none;
+}
+[role="cell"],
+[role="columnheader"] {
+  min-width: 0;
+}
+.c-step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.c-step strong {
+  font: var(--type-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.c-how,
+.step-word {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.c-how {
+  justify-self: end;
+  color: var(--muted);
+}
+.c-forward,
+.c-undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+}
+.step-note {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+/* "Undo failed · 3 tries" on one line. */
+:is(.c-forward, .c-undo) .step-note::before {
+  content: "· ";
+}
+.mono {
+  font: var(--type-mono);
+}
+.none {
+  color: var(--subtle);
+}
+/* One row per step leaves out an Undo or confirm with nothing in it. */
+.c-undo.empty {
+  display: none;
+}
+/* The key wraps at any character; Copy stays beside it. */
+.c-key {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+.c-key code {
+  min-width: 0;
+  font: var(--type-mono);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.cell-label {
+  color: var(--muted);
+}
+.c-key .cell-label {
+  grid-column: 1 / -1;
+}
+@container txn-record (min-width: 560px) {
+  .txn-step {
+    grid-template-columns:
+      minmax(96px, 1fr) 118px minmax(140px, 1.4fr)
+      minmax(150px, 1.3fr);
+    grid-template-areas:
+      "step how forward key"
+      "step how undo key";
+    gap: var(--space-1) var(--space-2);
+  }
+  .txn-head {
+    display: grid;
+    grid-template-areas: "step how happened key";
+  }
+  .txn-head .c-happened {
+    display: block;
+    grid-area: happened;
+  }
+  .txn-step:not(.txn-head) .cell-label {
+    display: none;
+  }
+  .c-undo.empty {
+    display: flex;
+  }
+  .c-how {
+    justify-self: start;
+  }
+  .c-key {
+    align-items: start;
+  }
+  /* In a column of its own, tries stand under the word. */
+  :is(.c-forward, .c-undo) .step-note {
+    flex-basis: 100%;
+  }
+  :is(.c-forward, .c-undo) .step-note::before {
+    content: none;
+  }
+}
+/* Four columns: What happened stands over Forward and Undo or confirm on
+   screen, and is hidden from screen readers, which keep each cell's own
+   header. */
+@container txn-record (560px <= width < 720px) {
+  .txn-head {
+    position: relative;
+  }
+  .txn-head .c-forward,
+  .txn-head .c-undo {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+@container txn-record (min-width: 720px) {
+  .txn-step {
+    grid-template-columns:
+      minmax(110px, 1fr) 128px minmax(96px, 0.9fr) minmax(150px, 1.2fr)
+      minmax(170px, 1.4fr);
+    grid-template-areas: "step how forward undo key";
+  }
+  .txn-head {
+    grid-template-areas: "step how forward undo key";
+  }
+  .txn-head .c-forward,
+  .txn-head .c-undo {
+    display: block;
+  }
+  .txn-head .c-happened {
+    display: none;
+  }
+}
+
+/* One row per step whatever the width: a container of another name, which no
+   column layout asks, and rules instead of a box. A stuck step's tint keeps
+   its words off its edge. */
+.txn-record.step-rows {
+  container: step-rows / inline-size;
+  border: 0;
+  border-radius: 0;
+}
+.step-rows .txn-step {
+  padding: var(--space-3) 0;
+}
+.step-rows .txn-step.stuck {
+  padding-inline: var(--space-2);
+}
+/* Too narrow for both: Undo or confirm goes under Forward. */
+@container txn-record (width < 300px) {
+  .txn-step {
+    grid-template-areas:
+      "step how"
+      "forward forward"
+      "undo undo"
+      "key key";
+  }
+}
+@container step-rows (width < 300px) {
+  .txn-step {
+    grid-template-areas:
+      "step how"
+      "forward forward"
+      "undo undo"
+      "key key";
+  }
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  .copy-key {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}

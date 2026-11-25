@@ -1703,6 +1703,10 @@ test.describe("transactions in doubt", () => {
         name: "Open incident WV-TXN-RUN-OVERSIZED at the run",
       }),
     ).toBeVisible();
+    // Its name, then no step: neither the platform's own step nor its code.
+    const row = high(page).locator(".resource-row").first();
+    await expect(row.locator("small").first()).toHaveText("Not tied to a step");
+    await expect(row.getByRole("cell").nth(3)).toHaveText("Not tied to a step");
     await expect(high(page)).not.toContainText("@transactions");
     // Nothing else is open: the band stands alone.
     await expect(other(page)).toHaveCount(0);
@@ -1731,6 +1735,9 @@ test.describe("transactions in doubt", () => {
       expect(platform.queries[0].has("priority")).toBe(false);
       for (const [key, value] of Object.entries(sent))
         expect(platform.queries[0].get(key)).toBe(value);
+      await page.screenshot({
+        path: `${captures}/inbox-one-list-${"code" in sent ? "code" : "status"}-1440.png`,
+      });
     });
 
   test("a decided incident is no longer in doubt: one list shows it as any other", async ({
@@ -2060,7 +2067,10 @@ for (const size of [
       expect(cut).toEqual([]);
       await page.screenshot({
         path: `${captures}/inbox-bands-${size.width}.png`,
-        fullPage: true,
+      });
+      await open.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${captures}/inbox-case-missing-${size.width}.png`,
       });
     });
   });

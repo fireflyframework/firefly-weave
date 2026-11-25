@@ -34,7 +34,6 @@ import {
 } from "@angular/core";
 import { Router } from "@angular/router";
 import type { App } from "../../app";
-import { copyText } from "../../connection";
 import { describeError, type PlainError } from "../../errors";
 import { shortId } from "../../format";
 import { Icon } from "../../icon";
@@ -57,6 +56,10 @@ import {
   sectionSummary,
   type RecordRow,
 } from "./transaction-record";
+import {
+  TransactionRecordTable,
+  copyOperationKey,
+} from "./transaction-record-table";
 
 /** How often the section reads again while the run goes on. */
 const LIVE_MS = 2_000;
@@ -76,7 +79,7 @@ interface Scope {
   selector: "weave-run-transactions",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, OperateState],
+  imports: [Icon, OperateState, TransactionRecordTable],
   styleUrl: "./run-transactions.css",
   template: `@if (shown()) {
     <section class="run-transactions" aria-labelledby="run-transactions-title">
@@ -207,98 +210,12 @@ interface Scope {
                   />{{ cause }}
                 </p>
               }
-              <div
-                class="txn-record"
-                role="table"
-                [attr.aria-label]="'Steps of transaction ' + view.instance_key"
-              >
-                <div class="txn-step txn-head" role="row">
-                  <span role="columnheader" class="c-step">Step</span
-                  ><span role="columnheader" class="c-how">How it's undone</span
-                  ><span role="columnheader" class="c-forward">Forward</span
-                  ><span role="columnheader" class="c-undo"
-                    >Undo or confirm</span
-                  ><span
-                    role="columnheader"
-                    class="c-happened"
-                    aria-hidden="true"
-                    >What happened</span
-                  ><span role="columnheader" class="c-key">Operation key</span>
-                </div>
-                @for (row of rowsOf(view); track row.instanceKey) {
-                  <div class="txn-step" role="row" [class.stuck]="row.stuck">
-                    <span role="cell" class="c-step"
-                      ><strong>{{ row.instanceKey }}</strong>
-                      @if (row.pending) {
-                        <span class="step-note">Pending</span>
-                      }
-                      @if (row.childRunId; as child) {
-                        <span class="step-note"
-                          >Child run
-                          <button
-                            type="button"
-                            class="text-link mono"
-                            [attr.aria-label]="'Open child run ' + short(child)"
-                            (click)="openRun(child)"
-                          >
-                            {{ short(child) }}
-                          </button></span
-                        >
-                      }</span
-                    ><span role="cell" class="c-how"
-                      ><weave-icon [name]="row.howIcon" [size]="16" />{{
-                        row.how
-                      }}</span
-                    ><span role="cell" class="c-forward"
-                      ><span class="cell-label">Forward</span
-                      ><span class="step-word">
-                        @if (row.forward.icon; as icon) {
-                          <weave-icon
-                            [name]="icon"
-                            [size]="16"
-                            [attr.data-tone]="row.forward.tone"
-                          />
-                        }
-                        {{ row.forward.text }}</span
-                      >
-                      @if (!row.undo && row.attempts) {
-                        <span class="step-note">{{ row.attempts }}</span>
-                      }</span
-                    ><span role="cell" class="c-undo" [class.empty]="!row.undo"
-                      ><span class="cell-label">Undo or confirm</span>
-                      @if (row.undo; as undo) {
-                        <span class="step-word">
-                          @if (undo.icon; as icon) {
-                            <weave-icon
-                              [name]="icon"
-                              [size]="16"
-                              [attr.data-tone]="undo.tone"
-                            />
-                          }
-                          {{ undo.text }}</span
-                        >
-                        @if (row.attempts) {
-                          <span class="step-note">{{ row.attempts }}</span>
-                        }
-                      } @else {
-                        <span class="none" aria-label="Nothing to undo">—</span>
-                      }</span
-                    ><span role="cell" class="c-key"
-                      ><span class="cell-label">Operation key</span
-                      ><code>{{ row.operationKey }}</code
-                      ><button
-                        type="button"
-                        class="icon-button copy-key"
-                        [attr.aria-label]="
-                          'Copy operation key ' + row.operationKey
-                        "
-                        (click)="copy(row.operationKey)"
-                      >
-                        <weave-icon name="copy" [size]="16" /></button
-                    ></span>
-                  </div>
-                }
-              </div>
+              <weave-transaction-record
+                [rows]="rowsOf(view)"
+                [transaction]="view.instance_key"
+                (openRun)="openRun($event)"
+                (copyKey)="copy($event)"
+              />
               <ol class="txn-timeline">
                 @for (moment of timelineOf(view); track $index) {
                   <li>
@@ -668,13 +585,8 @@ export class RunTransactions implements DoCheck, OnDestroy {
   openRun(id: string) {
     void this.host().viewRun({ id });
   }
-  async copy(key: string) {
-    const host = this.host();
-    if (await copyText(key)) host.notify("Copied the operation key.");
-    else
-      host.notify(
-        "Studio couldn't copy. Select the operation key and copy it.",
-      );
+  copy(key: string) {
+    void copyOperationKey(this.host(), key);
   }
 }
 

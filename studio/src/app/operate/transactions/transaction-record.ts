@@ -284,10 +284,12 @@ export const RESOLUTION_LABELS = {
   it_didnt_happen: "It didn't happen",
   force_end: "Force end",
 } as const;
-const RETRY_LABELS = {
+/** A retry's label, by what runs again: a step's phase, or the step itself. */
+export const RETRY_LABELS = {
   undo: "Retry the undo",
   cancel: "Retry the release",
   confirm: "Retry the confirm",
+  step: "Retry the step",
 } as const;
 /** The phase a retry ran again: a step still stuck, else the one that took more than one try. */
 function retryLabel(
@@ -299,7 +301,7 @@ function retryLabel(
       (item) => PHASES[item.status] && (item.attempts ?? 0) > 1,
     );
   const phase = retried && PHASES[retried.status];
-  return phase ? RETRY_LABELS[phase] : "Retry the step";
+  return phase ? RETRY_LABELS[phase] : RETRY_LABELS.step;
 }
 /** "Mark as reconciled as undone", "Force end"…: what the person chose. */
 export function resolutionText(
