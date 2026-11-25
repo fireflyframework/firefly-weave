@@ -190,7 +190,8 @@ export function recordRows(record: RecordInput, runId: string): RecordRow[] {
     const stillApplied = leftInDoubt && !NOT_APPLIED.has(participant.status);
     if (stillApplied) {
       forward = { text: forward.text, icon: null, tone: null };
-      if (!undo) {
+      // Only a step done says so: a status Studio doesn't know isn't one.
+      if (participant.status === "done") {
         const reading = participantText("done", participant.mode, frame)!;
         undo = {
           text: reading.text,

@@ -503,6 +503,36 @@ describe("the checklist", () => {
       "I confirmed add finished in the other system.",
     );
   });
+
+  it("says a status Studio doesn't know in plain words, and asks that its step is stopped too", () => {
+    const status = "held_open" as Step["status"];
+    const newer = about("WV-TXN-SETTLE-TIMEOUT", "move", [
+      step("add", "compensate", status),
+      step("hold", "reserve", status, 2),
+      step("submit", "irreversible", status),
+    ]);
+    const key = (rest: string) => `operation key ${runs.called}:${rest}`;
+    const captions = [
+      `Held open · ${key("add")}`,
+      `Held open · 2 tries · ${key("hold")}`,
+      `Held open · ${key("submit")}`,
+    ];
+    const undone = checklistRows(newer, "compensated");
+    expect(undone.map((row) => row.caption)).toEqual(captions);
+    expect(undone.map((row) => row.sentence)).toEqual(
+      ["add", "hold", "submit"].map(
+        (name) =>
+          `I confirmed ${name} is stopped and its change is reversed in the other system.`,
+      ),
+    );
+    const finished = checklistRows(newer, "completed");
+    expect(finished.map((row) => row.caption)).toEqual(captions);
+    expect(finished.map((row) => row.sentence)).toEqual([
+      "I confirmed add finished in the other system.",
+      "I confirmed hold was confirmed in the other system.",
+      "I confirmed submit finished in the other system.",
+    ]);
+  });
 });
 
 describe("how it ended", () => {

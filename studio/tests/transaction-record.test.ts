@@ -234,6 +234,23 @@ describe("a transaction record's rows", () => {
     }
   });
 
+  it("says a status it doesn't know in plain words, never as if its step were done", () => {
+    for (const state of ["in_doubt", "force_ended", "compensating"] as const)
+      for (const mode of ["reserve", "compensate", "irreversible"] as const) {
+        const newer = row(
+          record(
+            state,
+            participant("add", mode, "held_open" as ParticipantStatus),
+          ),
+          "add",
+        );
+        expect(newer.forward, `${state} ${mode}`).toEqual(
+          word("Held open", null, null),
+        );
+        expect(newer.undo, `${state} ${mode}`).toBeNull();
+      }
+  });
+
   it("test_a_transaction_that_went_ahead_keeps_done", () => {
     const confirmStuck = record(
       "in_doubt",

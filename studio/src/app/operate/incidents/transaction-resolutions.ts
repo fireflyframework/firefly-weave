@@ -164,12 +164,18 @@ export interface ChecklistRow {
   /** What the record may say of it; the first is sent. */
   outcomes: readonly ("undone" | "confirmed" | "done")[];
 }
-/** The steps with a call that may still change the other system. */
-const RUNNING = new Set<ParticipantStatus>([
-  "dispatched",
-  "cancelling",
-  "undoing",
-  "confirming",
+/**
+ * Of the steps Undone asks about, the statuses whose calls all ended. In any
+ * other, one Studio doesn't know among them, a call may still change the other
+ * system.
+ */
+const ENDED = new Set<ParticipantStatus>([
+  "done",
+  "unknown",
+  "cancel_stuck",
+  "undo_stuck",
+  "confirmed",
+  "confirm_stuck",
 ]);
 /**
  * Whether Weave knows that a step ended as the transaction is said to have: it
@@ -215,7 +221,7 @@ export function checklistRows(
     const participant = transaction.participants[index];
     if (endedSo(participant, as, own)) return [];
     const { status, mode } = participant;
-    const running = RUNNING.has(status);
+    const running = !ENDED.has(status);
     const outcome =
       as === "compensated"
         ? "undone"
