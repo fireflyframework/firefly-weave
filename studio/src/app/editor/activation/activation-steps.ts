@@ -31,7 +31,6 @@ import {
 import { ApiError, type Diagnostic, placeOf, type StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
-import { Icon } from "../../icon";
 import type { Workflow } from "../../model";
 import {
   readDeclaration,
@@ -57,7 +56,7 @@ import { joined } from "./event-bindings";
 import {
   eventResultView,
   eventRowView,
-  resultIcon,
+  otherResultView,
   uncheckedView,
   type EventRowView,
 } from "./event-rows";
@@ -113,7 +112,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 @Component({
   selector: "weave-activation-steps",
   standalone: true,
-  imports: [EventActivationRow, Icon],
+  imports: [EventActivationRow],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `@if (state() === "loading") {
       <p class="dialog-status" role="status">
@@ -142,12 +141,12 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
             @let result = results().get($index);
             <li
               class="activation-row"
-              [class.event-row]="row.event"
+              [class.event-row]="views().has($index)"
               [attr.data-row]="$index"
               [attr.data-kind]="result ? result.status : row.kind"
               [attr.aria-label]="row.event && !synced() ? row.text : null"
             >
-              @if (eventViews().get($index); as view) {
+              @if (views().get($index); as view) {
                 <weave-event-activation-row
                   [view]="view"
                   [textId]="'trigger-row-' + $index"
@@ -156,25 +155,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                   (answer)="answer($index, $event)"
                 />
               } @else {
-                <span class="activation-said">
-                  @if (result) {
-                    <weave-icon [name]="resultIcon(result.status)" size="16" />
-                  }
-                  <span [id]="'trigger-row-' + $index">{{
-                    result ? result.text : row.text
-                  }}</span>
-                </span>
-              }
-              @if (!row.event && result?.status === "failed") {
-                <!-- It keeps focus while it runs. -->
-                <button
-                  type="button"
-                  class="sm"
-                  [attr.aria-disabled]="acting() || null"
-                  (click)="answer($index, 'retry')"
-                >
-                  Retry
-                </button>
+                <span [id]="'trigger-row-' + $index">{{ row.text }}</span>
               }
               @if (row.kind === "schedule-input" && row.intentId) {
                 <!-- The way to fix it: the schedule's step details, where its run input is. -->
@@ -283,17 +264,6 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       border-radius: var(--radius-sm);
       overflow-wrap: anywhere;
     }
-    /* What happened, after its icon, as a platform event trigger's row says it. */
-    .activation-said {
-      display: flex;
-      align-items: flex-start;
-      gap: var(--space-3);
-      min-width: 0;
-    }
-    .activation-said weave-icon {
-      flex: none;
-      margin-top: 2px;
-    }
     /* A row with a lead and a detail lays its own text and controls out. */
     .activation-row.event-row {
       align-items: flex-start;
@@ -302,17 +272,8 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
     .activation-row[data-kind="blocked"],
     .activation-row[data-kind="schedule-input"],
     .activation-row[data-kind="missing"],
-    .activation-row[data-kind="not-callable"],
-    .activation-row[data-kind="failed"] {
+    .activation-row[data-kind="not-callable"] {
       color: var(--danger-ink);
-    }
-    .activation-row[data-kind="changed"] {
-      color: var(--warning-ink);
-    }
-    .activation-row[data-kind="created"],
-    .activation-row[data-kind="moved"],
-    .activation-row[data-kind="stopped"] {
-      color: var(--success-ink, var(--text));
     }
     .activation-connection {
       display: grid;
@@ -349,7 +310,6 @@ export class ActivationSteps implements OnInit {
   /** The editor's last check of the workflow, for a callee that refuses this caller. */
   readonly diagnostics = input<readonly Diagnostic[]>([]);
 
-  readonly resultIcon = resultIcon;
   readonly state = signal<"loading" | "ready">("loading");
   readonly stop = signal<string | null>(null);
   readonly callees = signal<CalleeRow[]>([]);
@@ -371,23 +331,24 @@ export class ActivationSteps implements OnInit {
   private context: SyncContext | null = null;
   /** Where what the dialog shows was read, and as whom. */
   private place: string | null = null;
-  /** What each platform event trigger's row shows, by its place in the list. */
-  readonly eventViews = computed(
+  /** What a row shows with its icon, its detail and its controls, by its place in the list: a platform event trigger's, and what happened to any other. */
+  readonly views = computed(
     () =>
       new Map(
-        this.triggers().flatMap((row, index) => {
-          if (!row.event) return [];
-          return [
-            [
-              index,
-              this.synced()
-                ? eventResultView(
-                    row.event,
-                    this.results().get(index)?.event ?? null,
-                  )
-                : eventRowView(row.event),
-            ] as const,
-          ];
+        this.triggers().flatMap((row, index): [number, EventRowView][] => {
+          const result = this.results().get(index);
+          if (row.event)
+            return [
+              [
+                index,
+                this.synced()
+                  ? eventResultView(row.event, result?.event ?? null)
+                  : eventRowView(row.event),
+              ],
+            ];
+          return result
+            ? [[index, otherResultView(result.status, result.text)]]
+            : [];
         }),
       ),
   );

@@ -31,7 +31,7 @@ import {
   eventRowView,
   heldResult,
   keptResult,
-  resultIcon,
+  otherResultView,
   type EventRowView,
 } from "../src/app/editor/activation/event-rows";
 import type { PlanActivation } from "../src/app/editor/activation/trigger-plan";
@@ -716,12 +716,32 @@ describe("a row after activating", () => {
     });
   });
 
-  it("gives every result of another kind of trigger its icon", () => {
+  it("shows a result of any other kind of trigger as its own, Retry after a failure", () => {
     expect(
       (["created", "moved", "stopped", "failed", "changed"] as const).map(
-        resultIcon,
+        (status) => otherResultView(status, "What happened"),
       ),
-    ).toEqual(["ok", "ok", "ok", "failCircle", "warning"]);
+    ).toEqual([
+      ...Array.from({ length: 3 }, () => ({
+        ...PLAIN,
+        lead: "What happened",
+        tone: "success",
+        icon: "ok",
+      })),
+      {
+        ...PLAIN,
+        lead: "What happened",
+        tone: "danger",
+        icon: "failCircle",
+        action: "retry",
+      },
+      {
+        ...PLAIN,
+        lead: "What happened",
+        tone: "warning",
+        icon: "warning",
+      },
+    ]);
   });
 
   it("stops nothing that changed since the dialog opened", async () => {

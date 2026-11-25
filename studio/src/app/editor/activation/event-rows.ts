@@ -75,13 +75,16 @@ const SUCCESS = { tone: "success", icon: "ok" } as const;
 const DANGER = { tone: "danger", icon: "failCircle" } as const;
 const WARNING = { tone: "warning", icon: "warning" } as const;
 const LEFT_ALONE = { tone: "muted", icon: "lock" } as const;
-/** The icon of what happened to any other kind of trigger: set up or stopped, not, or left as it is. */
-export const resultIcon = (status: EventStatus): IconName =>
-  status === "failed"
-    ? DANGER.icon
-    : status === "changed"
-      ? WARNING.icon
-      : SUCCESS.icon;
+/** What happened to any other kind of trigger: set up or stopped, not, or left as it is. */
+export const otherResultView = (
+  status: EventStatus,
+  lead: string,
+): EventRowView => ({
+  ...PLAIN,
+  ...(status === "failed" ? DANGER : status === "changed" ? WARNING : SUCCESS),
+  lead,
+  action: status === "failed" ? "retry" : null,
+});
 
 const same = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((item) => right.includes(item));

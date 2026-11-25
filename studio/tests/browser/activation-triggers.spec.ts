@@ -356,6 +356,35 @@ test("what happened to each trigger has an icon beside its words, and what wasn'
   ).toHaveCount(0);
 });
 
+test("on a phone, Retry is under the words of any kind of trigger, as wide as they are", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await platform(page);
+  await routeWebhooks(page, true);
+  await open(page);
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const row = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  const retry = row.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toBeVisible();
+  await expect(retry).toHaveAccessibleDescription(
+    /^Couldn't create webhook orders-in: /,
+  );
+  const [words, button] = [
+    (await row.locator("[id^='trigger-row-']").boundingBox())!,
+    (await retry.boundingBox())!,
+  ];
+  expect(button.y).toBeGreaterThanOrEqual(words.y + words.height);
+  expect(button.x).toBe(words.x);
+  expect(button.width).toBe(words.width);
+  expect(button.height).toBeGreaterThanOrEqual(44);
+});
+
 test("each kind of trigger that can't be checked has an icon and says what activating does to it", async ({
   page,
 }) => {
