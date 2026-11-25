@@ -241,6 +241,74 @@ async function panIntoView(page: Page, canvas: CanvasPage, target: Locator) {
     .toBeLessThan(3);
 }
 
+/** Pans the canvas with the wheel until the target is at its center. */
+async function centerOn(page: Page, canvas: CanvasPage, target: Locator) {
+  const area = await box(canvas.root);
+  const at = await box(target);
+  const dx = Math.round(at.x + at.width / 2 - (area.x + area.width / 2));
+  const dy = Math.round(at.middle - area.middle);
+  await page.mouse.move(area.x + area.width / 2, area.middle);
+  await page.mouse.wheel(dx, dy);
+  await expect
+    .poll(async () => {
+      const now = await box(target);
+      return Math.abs(now.x - (at.x - dx)) + Math.abs(now.y - (at.y - dy));
+    })
+    .toBeLessThan(3);
+}
+
+/** Zooms with Ctrl and the wheel over the canvas's center, as a person does. */
+async function zoomTo(page: Page, canvas: CanvasPage, percent: number) {
+  const area = await box(canvas.root);
+  const now = await canvas.zoomPercent();
+  await page.mouse.move(area.x + area.width / 2, area.middle);
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -Math.log(percent / now) / 0.0015);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(async () => Math.abs((await canvas.zoomPercent()) - percent))
+    .toBeLessThanOrEqual(1);
+}
+
+/**
+ * The points of a 9 × 9 grid over a step's card that a tap gives to an
+ * output: whatever an output takes beyond its own 24-unit circle, the area a
+ * fine pointer has, it takes from the card.
+ */
+async function takenFromCard(card: Locator): Promise<string[]> {
+  return card.evaluate((body) => {
+    const r = body.getBoundingClientRect();
+    const taken: string[] = [];
+    for (let i = 0; i < 9; i++)
+      for (let j = 0; j < 9; j++) {
+        const x = r.x + 1 + ((r.width - 2) * i) / 8;
+        const y = r.y + 1 + ((r.height - 2) * j) / 8;
+        if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) continue;
+        const output = document.elementFromPoint(x, y)?.closest(".handle");
+        if (!output) continue;
+        // Drawn 12 units across: its circle's radius is its drawn width.
+        const o = output.getBoundingClientRect();
+        const center = [o.x + o.width / 2, o.y + o.height / 2];
+        if (Math.hypot(x - center[0], y - center[1]) <= o.width + 0.5) continue;
+        taken.push(`${output.getAttribute("data-handle")} at ${i},${j}`);
+      }
+    return taken;
+  });
+}
+
+/** What a tap on the target's center reaches instead of it; null when it reaches the target. */
+const takerOfCenter = (target: Locator) =>
+  target.evaluate((element) => {
+    const r = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      r.x + r.width / 2,
+      r.y + r.height / 2,
+    );
+    if (!hit || element.contains(hit)) return null;
+    const owner = hit.closest("[data-handle], [data-tile]");
+    return `${hit.className} ${owner?.getAttribute("data-handle") ?? owner?.getAttribute("data-tile") ?? ""}`.trim();
+  });
+
 /** The text's size on screen: its font size times the scale it is drawn at. */
 const screenFont = (label: Locator) =>
   label.evaluate((element: HTMLElement) => {
@@ -280,14 +348,19 @@ for (const size of SIZES)
       ).toBe("2px");
       // The hit area: 24 units with a fine pointer. On touch and below
       // 768 px, 44 px on screen whatever the zoom: from the step's card (20
-      // units left of the output's center) to the right, and 22 px up and down.
+      // units left of the output's center) to the right; Error's 22 px up
+      // and down, Success's 11 px up and 33 px down, which leaves the step's
+      // issue badge above it its own center.
       const fine = 12 * zoom - 2;
-      for (const handle of [success, error])
+      for (const [handle, above] of [
+        [success, 10],
+        [error, 21],
+      ] as const)
         expect(
           await missed(
             handle,
             touch
-              ? [20 * zoom - 1, 43 - 20 * zoom, 21, 21]
+              ? [20 * zoom - 1, 43 - 20 * zoom, above, 42 - above]
               : [fine, fine, fine, fine],
           ),
           `${await handle.getAttribute("data-handle")} at ${zoom}`,
@@ -319,6 +392,70 @@ for (const size of SIZES)
       );
       expect(below.y).toBeGreaterThanOrEqual(above.bottom);
       await expectNoPageScroll(page);
+    });
+
+    test("each step's card and issue badge keep their taps beside its outputs", async ({
+      page,
+    }) => {
+      const canvas = await open(page);
+      // An issue on every step: review and submit have Success and Error
+      // outputs, notify-team and summarize a plain one.
+      await page.route("**/studio/local/validate", (route) =>
+        route.fulfill({
+          json: {
+            validationOk: false,
+            errorCount: 4,
+            partial: true,
+            diagnostics: [
+              "/spec/steps/0/value",
+              "/spec/steps/1/value",
+              "/spec/steps/1/errorPath/steps/0/value",
+              "/spec/steps/2/value",
+            ].map((path) => ({
+              code: "WV-COMP-TYPE_MISMATCH",
+              severity: "error",
+              message: "Choose a value",
+              path,
+            })),
+          },
+        }),
+      );
+      const validate = page.getByRole("button", {
+        name: "Validate",
+        exact: true,
+      });
+      if (await validate.isVisible()) await validate.click();
+      else {
+        await page
+          .getByRole("button", { name: "More workflow commands" })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "Validate", exact: true })
+          .click();
+      }
+      await page.getByRole("button", { name: "Dismiss notification" }).click();
+      await expect(canvas.root.locator(".tile-issue")).toHaveCount(4);
+      // Down to the canvas's smallest zoom; issue badges hide below 30%.
+      for (const percent of [100, 46, 40, 31, 25]) {
+        await zoomTo(page, canvas, percent);
+        for (const id of ["review", "submit", "notify-team", "summarize"]) {
+          const card = canvas.tileBody(id);
+          await centerOn(page, canvas, card);
+          expect(
+            await takenFromCard(card),
+            `${id}'s card at ${percent}%`,
+          ).toEqual([]);
+          // A tile just panned into view paints, and takes taps, from the
+          // next frame on (content-visibility): a person's tap comes later.
+          if (percent >= 30)
+            await expect
+              .poll(
+                () => takerOfCenter(canvas.tile(id).locator(".tile-issue")),
+                { message: `${id}'s issue badge at ${percent}%` },
+              )
+              .toBeNull();
+        }
+      }
     });
 
     test("On error and Result on error in Settings", async ({ page }) => {
