@@ -30,7 +30,7 @@ import { executions, executeButton } from "./execute-po";
 import { localAuthoring } from "./local-authoring";
 import { outputPane } from "./test-data-po";
 import { pauseClock, selectChoice } from "./support";
-import type { StepDetailsPage } from "./step-details-po";
+import { addCommonStep, type StepDetailsPage } from "./step-details-po";
 
 /** send reads the business key, which every platform event carries. */
 const READS_KEY = [
@@ -259,6 +259,61 @@ for (const size of [
       await expect(output).toContainText("REF-1029");
     });
   });
+
+test.describe("a real platform event entered in another Test event pane", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  /** Nothing Studio sent its host, and nothing it kept, holds a real ID. */
+  async function nothingReal(page: Page, details: StepDetailsPage) {
+    const dialog = await openEventTrigger(page, details);
+    const output = await outputPane(details);
+    await output.getByRole("radio", { name: "JSON" }).click();
+    await expect(output.locator(".pane-json")).toContainText("REF-4410");
+    for (const id of Object.values(REAL))
+      await expect(dialog).not.toContainText(id);
+  }
+  const NOTE_ALL = `Studio replaced the event, run and incident IDs with sample IDs. ${SHARED}`;
+
+  test("the manual form's", async ({ page }) => {
+    const details = await openNotifyTeam(page);
+    const sent: string[] = [];
+    page.on("request", (request) => sent.push(request.postData() ?? ""));
+    await page
+      .locator('.tile-node[data-tile^="$trigger"]')
+      .filter({ hasText: "Manual" })
+      .locator(".tile-body")
+      .dblclick();
+    const pane = page.getByRole("region", { name: "Input data" });
+    await pane
+      .locator("textarea.json-field")
+      .fill(JSON.stringify(pastedEvent()));
+    await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    await details.close();
+    await nothingReal(page, details);
+    expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
+    for (const id of Object.values(REAL))
+      expect(sent.filter((body) => body.includes(id))).toEqual([]);
+  });
+
+  test("a Kafka message trigger's", async ({ page }) => {
+    const details = await openNotifyTeam(page);
+    const sent: string[] = [];
+    page.on("request", (request) => sent.push(request.postData() ?? ""));
+    await addCommonStep(page, "Kafka message", "Add a step after send");
+    const pane = page.getByRole("region", { name: "Input data" });
+    await pane.getByRole("button", { name: "Paste a sample message" }).click();
+    await pane
+      .getByRole("textbox", { name: "Sample message (JSON)" })
+      .fill(JSON.stringify(pastedEvent()));
+    await pane.getByRole("button", { name: "Use this sample" }).click();
+    await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    await details.close();
+    await nothingReal(page, details);
+    expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
+    for (const id of Object.values(REAL))
+      expect(sent.filter((body) => body.includes(id))).toEqual([]);
+  });
+});
 
 test.describe("a later step of a workflow a platform event starts", () => {
   test.use({ viewport: { width: 1440, height: 900 } });

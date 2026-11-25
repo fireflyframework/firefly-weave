@@ -16,70 +16,86 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
+import type { JsonObject } from "../src/app/forms/core/json";
 import {
   pastedEvent,
   replacedNote,
   SAMPLE_FIELD_PROBLEM,
+  withSampleIds,
 } from "../src/app/editor/triggers/event-sample";
 import {
   sampleEvent,
   type PlatformEventType,
 } from "../src/app/editor/triggers/platform-event";
 
-let counter = 0;
-const ids = () =>
-  `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`;
+const SAMPLE_ID = /^00000000-0000-4000-8000-[0-9a-f]{12}$/;
+const REAL_ID = "5f0c2b7e-1111-4222-8333-944455556666";
 const event = (type: PlatformEventType = "transaction.in_doubt") =>
   sampleEvent(type, {
     source: "sync-records",
     now: new Date("2026-11-20T10:00:00Z"),
-    id: () => "5f0c2b7e-1111-4222-8333-944455556666",
-  }) as {
-    event_id: string;
-    transaction: Record<string, unknown>;
-  } & Record<string, unknown>;
-const read = (value: unknown) => pastedEvent(JSON.stringify(value), ids);
+    id: () => REAL_ID,
+  }) as JsonObject & { transaction: JsonObject };
 const problemOf = (value: unknown) => {
-  const answer = read(value);
+  const answer = pastedEvent(JSON.stringify(value));
   return "problem" in answer ? answer.problem : null;
 };
 
-describe("a pasted event", () => {
-  it("gets sample IDs in place of the event, run and incident IDs", () => {
-    const answer = read(event());
-    if ("problem" in answer) throw Error(answer.problem);
-    const pasted = answer.value as ReturnType<typeof event>;
-    expect(answer.replaced).toEqual(["event", "run", "incident"]);
-    for (const id of [
-      pasted.event_id,
-      pasted.transaction["run_id"],
-      pasted.transaction["incident_id"],
-    ]) {
-      expect(id).toMatch(/^00000000-0000-4000-8000-/);
-      expect(id).not.toBe("5f0c2b7e-1111-4222-8333-944455556666");
-    }
-    expect(
-      new Set([
-        pasted.event_id,
-        pasted.transaction["run_id"],
-        pasted.transaction["incident_id"],
-      ]).size,
-    ).toBe(3);
-    // Everything else is the event as pasted.
-    expect(pasted.transaction["business_key"]).toBe("REF-1029");
-    expect(pasted.transaction["workflow"]).toEqual({
-      name: "sync-records",
-      version: "1.0.0",
+describe("the IDs of an event entered as test data", () => {
+  it("become sample IDs, each its own, and the rest stays as it was", () => {
+    const { value, replaced } = withSampleIds(event());
+    const facts = value["transaction"] as JsonObject;
+    expect(replaced).toEqual(["event", "run", "incident"]);
+    const ids = [value["event_id"], facts["run_id"], facts["incident_id"]];
+    for (const id of ids) expect(id).toMatch(SAMPLE_ID);
+    expect(new Set(ids).size).toBe(3);
+    expect(value).toEqual({
+      ...event(),
+      event_id: ids[0],
+      transaction: {
+        ...event().transaction,
+        run_id: ids[1],
+        incident_id: ids[2],
+      },
     });
   });
 
-  it("says only the IDs it replaced", () => {
-    const answer = read(event("transaction.compensated"));
-    if ("problem" in answer) throw Error(answer.problem);
-    expect(answer.replaced).toEqual(["event", "run"]);
-    expect(
-      "incident_id" in (answer.value as ReturnType<typeof event>).transaction,
-    ).toBe(false);
+  it("stay when they are sample IDs already", () => {
+    const { value } = withSampleIds(event());
+    expect(withSampleIds(value)).toEqual({ value, replaced: [] });
+  });
+
+  it("are replaced in whatever spelling: without hyphens, in capitals, or not as text", () => {
+    for (const id of [
+      REAL_ID.replaceAll("-", ""),
+      REAL_ID.toUpperCase(),
+      { id: REAL_ID },
+      `00000000-0000-4000-8000-000000000001 ${REAL_ID}`,
+    ]) {
+      const { value, replaced } = withSampleIds({ ...event(), event_id: id });
+      expect(replaced).toContain("event");
+      expect(value["event_id"]).toMatch(SAMPLE_ID);
+    }
+  });
+
+  it("are only those it has: an incident that is missing or empty stays so", () => {
+    const undone = event("transaction.compensated");
+    const without = withSampleIds(undone);
+    expect(without.replaced).toEqual(["event", "run"]);
+    expect("incident_id" in (without.value["transaction"] as object)).toBe(
+      false,
+    );
+    const empty = withSampleIds({
+      ...undone,
+      transaction: { ...undone.transaction, incident_id: null },
+    });
+    expect(empty.replaced).toEqual(["event", "run"]);
+    expect((empty.value["transaction"] as JsonObject)["incident_id"]).toBe(
+      null,
+    );
+  });
+
+  it("are named in the note, only the ones replaced", () => {
     expect(replacedNote(["event", "run"])).toBe(
       "Studio replaced the event and run IDs with sample IDs.",
     );
@@ -90,23 +106,6 @@ describe("a pasted event", () => {
       "Studio replaced the run ID with a sample ID.",
     );
     expect(replacedNote([])).toBe("");
-  });
-
-  it("keeps an incident that is empty as it is", () => {
-    const pasted = event("transaction.compensated");
-    pasted.transaction["incident_id"] = null;
-    const answer = read(pasted);
-    if ("problem" in answer) throw Error(answer.problem);
-    expect(
-      (answer.value as ReturnType<typeof event>).transaction["incident_id"],
-    ).toBeNull();
-    expect(answer.replaced).toEqual(["event", "run"]);
-  });
-
-  it("isn't changed in place", () => {
-    const text = JSON.stringify(event());
-    pastedEvent(text, ids);
-    expect(text).toBe(JSON.stringify(event()));
   });
 });
 
@@ -138,7 +137,7 @@ describe("what is wrong with a pasted event, the first problem by field", () => 
   });
 
   it("is the text, when it isn't a JSON object", () => {
-    const notJson = pastedEvent("{oops", ids);
+    const notJson = pastedEvent("{oops");
     expect(notJson).toEqual({ problem: SAMPLE_FIELD_PROBLEM });
     expect(problemOf([1])).toBe(SAMPLE_FIELD_PROBLEM);
   });

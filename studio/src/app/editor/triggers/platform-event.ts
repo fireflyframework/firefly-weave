@@ -302,6 +302,18 @@ export function namedSchemas(
     view !== null && name === PLATFORM_EVENT_SCHEMA ? view : undefined;
 }
 
+/**
+ * What every sample's IDs start with, so Studio can tell them from the IDs of
+ * a real event, run or incident, which the platform draws at random.
+ */
+const SAMPLE_ID_START = "00000000-0000-4000-8000-";
+const SAMPLE_ID = /^00000000-0000-4000-8000-[0-9a-f]{12}$/i;
+/** A new ID for a sample. */
+export const sampleId = (): string =>
+  SAMPLE_ID_START + crypto.randomUUID().slice(-12);
+export const isSampleId = (value: unknown): boolean =>
+  typeof value === "string" && SAMPLE_ID.test(value);
+
 export interface SampleOptions {
   /** The workflow whose transaction the sample comes from: the first one the trigger names. */
   source?: string;

@@ -39,13 +39,13 @@ import {
   pastedEvent,
   replacedNote,
   SHARED_NOTE,
-  type ReplacedId,
 } from "./event-sample";
 import { chosenEvents, readDeclaration } from "./event-trigger";
 import {
   currentPlatformEvent,
   EVENT_CHOICES,
   sampleEvent,
+  sampleId,
   type PlatformEventType,
 } from "./platform-event";
 
@@ -330,11 +330,6 @@ export class EventSample {
   readonly problem = signal("");
   /** The event chosen here; another one when the trigger no longer reacts to it. */
   private readonly picked = signal<PlatformEventType | null>(null);
-  /** What the last paste replaced, for the event it became. */
-  private readonly swapped = signal<{
-    value: Json | undefined;
-    ids: ReplacedId[];
-  } | null>(null);
   /** The clock the countdown to the next read reads. */
   private readonly now = signal(Date.now());
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -399,12 +394,9 @@ export class EventSample {
   summaryName(): string {
     return this.viewingRuns() ? "The run's event" : "The test event";
   }
-  /** What the paste that made this test event replaced; "" for one pasted earlier. */
+  /** What Studio replaced in this test event as it was pasted; "" for one pasted earlier. */
   replaced(): string {
-    const last = this.swapped();
-    return last && JSON.stringify(last.value) === JSON.stringify(this.sample())
-      ? replacedNote(last.ids)
-      : "";
+    return replacedNote(this.session().controller.replacedIds());
   }
   private async keep(
     value: Json,
@@ -424,7 +416,7 @@ export class EventSample {
     const value = sampleEvent(type, {
       source: declared?.from?.[0],
       now: new Date(),
-      id: () => crypto.randomUUID(),
+      id: sampleId,
     }) as Json;
     if (await this.keep(value, "schema")) session.announce("Sample ready.");
   }
@@ -446,18 +438,15 @@ export class EventSample {
     this.cancel();
   }
   async use() {
-    const read = pastedEvent(this.draft(), () => crypto.randomUUID());
+    const read = pastedEvent(this.draft());
     if ("problem" in read) {
       this.problem.set(read.problem);
       return;
     }
     const session = this.session();
     if (!(await this.keep(read.value, "manual"))) return;
-    this.swapped.set({ value: this.sample(), ids: read.replaced });
     this.pasting.set(false);
-    session.announce(
-      [replacedNote(read.replaced), SHARED_NOTE].filter(Boolean).join(" "),
-    );
+    session.announce([this.replaced(), SHARED_NOTE].filter(Boolean).join(" "));
     this.focus(".es-summary");
   }
   private focus(selector: string) {

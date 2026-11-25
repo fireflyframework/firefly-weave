@@ -29,6 +29,7 @@ import {
   canonicalJson,
   getAt,
   isJsonObject,
+  jsonEqual,
   parsePointer,
   type JsonObject,
 } from "../../forms/core/json";
@@ -74,6 +75,11 @@ import {
   triggerForm as triggerSettingsForm,
   triggerProblems,
 } from "../triggers/trigger-forms";
+import {
+  isPlatformEvent,
+  withSampleIds,
+  type ReplacedId,
+} from "../triggers/event-sample";
 import { eventTileFacts, type CheckedInput } from "../triggers/event-trigger";
 import {
   currentPlatformEvent,
@@ -523,12 +529,48 @@ export class StepDetailsController {
     const now = new Date().toISOString();
     // A secret field never reaches the check, nor anything it keeps.
     const safe = this.safeInput(value);
+    const entered =
+      source === "manual" ? this.enteredEvent(safe) : { value: safe };
     const data = service.data();
     const outcome =
-      safe === undefined
+      entered.value === undefined
         ? await service.change(withoutInput(data, now), [])
-        : await service.change(withInput(data, safe, source, now), ["/input"]);
-    return outcome.ok ? null : outcome.message;
+        : await service.change(withInput(data, entered.value, source, now), [
+            "/input",
+          ]);
+    if (!outcome.ok) return outcome.message;
+    this.replaced.set({
+      value: entered.value,
+      ids: entered.replaced ?? [],
+    });
+    return null;
+  }
+  /**
+   * What a person entered, whichever pane they entered it in: test data is
+   * shared, so a platform event never keeps the IDs of a real event, run or
+   * incident.
+   */
+  private enteredEvent(value: Json | undefined): {
+    value: Json | undefined;
+    replaced?: ReplacedId[];
+  } {
+    const schema = this.host.model.definition.spec["inputSchema"];
+    return isPlatformEvent(value) ||
+      (isPlatformEventInput(schema) && isJsonObject(value))
+      ? (withSampleIds(value) as { value: Json; replaced: ReplacedId[] })
+      : { value };
+  }
+  /** The IDs the last write of the test event replaced. */
+  private readonly replaced = signal<{
+    value: Json | undefined;
+    ids: readonly ReplacedId[];
+  } | null>(null);
+  /** The IDs Studio replaced in this test event as it was entered; none for one entered earlier. */
+  replacedIds(): readonly ReplacedId[] {
+    const last = this.replaced();
+    return last?.ids.length && jsonEqual(last.value, this.testEvent())
+      ? last.ids
+      : [];
   }
   /** Every step's fingerprints now: the shell's (memoized), or computed here. */
   prints(): ReadonlyMap<string, StepFingerprints> {

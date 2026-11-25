@@ -15,10 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// A pasted sample of a platform event: what is wrong with it, the first
-// problem by field, and the event with its real IDs replaced. Test data is
-// read by everyone who can test the workflow, so an event copied from a real
-// transaction never keeps the IDs of its event, run or incident.
+// A platform event a person enters as test data: what is wrong with it, the
+// first problem by field, and the event with its real IDs replaced. Test data
+// is read by everyone who can test the workflow, so an event copied from a
+// real transaction never keeps the IDs of its event, run or incident.
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { Json } from "../ndv/registry";
 import {
@@ -26,6 +26,8 @@ import {
   EVENT_CHOICES,
   EVENT_TYPES,
   isPlatformEventType,
+  isSampleId,
+  sampleId,
 } from "./platform-event";
 
 export const SAMPLE_FIELD_PROBLEM =
@@ -73,11 +75,10 @@ function problemOf(event: JsonObject): string | null {
   return null;
 }
 
-/** The event pasted as `source` with sample IDs in place of its own, and which it replaced; or what is wrong with it. */
+/** The event pasted as `source`, or what is wrong with it. */
 export function pastedEvent(
   source: string,
-  id: () => string,
-): { value: Json; replaced: ReplacedId[] } | { problem: string } {
+): { value: Json } | { problem: string } {
   let event: unknown;
   try {
     event = JSON.parse(source);
@@ -86,19 +87,37 @@ export function pastedEvent(
   }
   if (!isJsonObject(event)) return { problem: SAMPLE_FIELD_PROBLEM };
   const problem = problemOf(event);
-  if (problem) return { problem };
-  const facts = event["transaction"] as JsonObject;
+  return problem ? { problem } : { value: event as Json };
+}
+
+/** Whether a value says it is a platform event, whatever else it holds. */
+export const isPlatformEvent = (value: unknown): value is JsonObject =>
+  isJsonObject(value) && value["version"] === VERSION;
+
+/**
+ * The event with sample IDs in place of its event, run and incident IDs, and
+ * which it replaced; IDs that are samples already stay, and so do the rest.
+ */
+export function withSampleIds(
+  event: JsonObject,
+  id: () => string = sampleId,
+): { value: JsonObject; replaced: ReplacedId[] } {
   const replaced: ReplacedId[] = [];
-  const replace = (holder: JsonObject, key: string, name: ReplacedId) => {
-    const held = holder[key] !== undefined && holder[key] !== null;
-    if (held) replaced.push(name);
-    // The event and the run always have one; an incident only some.
-    if (held || name !== "incident") holder[key] = id();
+  const sampled = (holder: JsonObject, key: string, name: ReplacedId) => {
+    const held = holder[key];
+    if (held === undefined || held === null || isSampleId(held)) return holder;
+    replaced.push(name);
+    return { ...holder, [key]: id() };
   };
-  replace(event, "event_id", "event");
-  replace(facts, "run_id", "run");
-  replace(facts, "incident_id", "incident");
-  return { value: event as Json, replaced };
+  const value = sampled(event, "event_id", "event");
+  const facts = value["transaction"];
+  if (!isJsonObject(facts)) return { value, replaced };
+  const transaction = sampled(
+    sampled(facts, "run_id", "run"),
+    "incident_id",
+    "incident",
+  );
+  return { value: { ...value, transaction }, replaced };
 }
 
 /** "Studio replaced the event and run IDs with sample IDs."; "" when it replaced none. */
@@ -109,6 +128,10 @@ export function replacedNote(replaced: readonly ReplacedId[]): string {
   const last = replaced[replaced.length - 1];
   return `Studio replaced the ${replaced.slice(0, -1).join(", ")} and ${last} IDs with sample IDs.`;
 }
+
+/** What Studio replaced in an event entered as test data, and who reads it; "" when it replaced nothing. */
+export const enteredNote = (replaced: readonly ReplacedId[]): string =>
+  replaced.length ? `${replacedNote(replaced)} ${SHARED_NOTE}` : "";
 
 /** What a test event is, in a few words; null for data that isn't a platform event. */
 export function eventSummary(

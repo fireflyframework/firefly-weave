@@ -31,6 +31,7 @@ import {
 } from "@angular/core";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
+import { enteredNote } from "./event-sample";
 import { EventSample } from "./event-sample-pane";
 import { listenBlocked, type ListenState } from "./test-listener";
 import { localPlatform, productionUrl, secretCommand } from "./webhook-help";
@@ -229,6 +230,9 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
             <button type="button" class="pane-generate" (click)="paste()">
               {{ offer() }}
             </button>
+          }
+          @if (replaced(); as note) {
+            <p class="pane-empty-text">{{ note }}</p>
           }
           @if (sample() !== undefined) {
             <pre class="pane-json" aria-label="Test event">{{ shown() }}</pre>
@@ -431,6 +435,10 @@ export class TriggerEventPane {
   shown(): string {
     return JSON.stringify(this.sample(), null, 2);
   }
+  /** What Studio replaced in a platform event pasted here, and why; "" when it replaced nothing. */
+  replaced(): string {
+    return enteredNote(this.session().controller.replacedIds());
+  }
 
   paste() {
     const current = this.sample();
@@ -461,6 +469,10 @@ export class TriggerEventPane {
     }
     this.pasting.set(false);
     this.problem.set("");
-    session.announce("Pasted a sample test event.");
+    session.announce(
+      ["Pasted a sample test event.", this.replaced()]
+        .filter(Boolean)
+        .join(" "),
+    );
   }
 }

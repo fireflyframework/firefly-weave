@@ -30,6 +30,7 @@ import type { Schema } from "../../../task-schema";
 import { canonicalJson } from "../../../forms/core/json";
 import { resolveSchema } from "../../../forms/core/resolve";
 import type { FormSession } from "../params/form-session";
+import { enteredNote } from "../../triggers/event-sample";
 import type { Json } from "../registry";
 import { sampleFromSchema } from "./sample";
 
@@ -70,6 +71,11 @@ interface SampleForm {
             (dataChange)="changed($event, form)"
           />
         }
+        <div aria-live="polite">
+          @if (replaced(); as note) {
+            <p class="pane-empty-text">{{ note }}</p>
+          }
+        </div>
       </div>
     </div>`,
 })
@@ -83,6 +89,10 @@ export class TestEventPane {
     return this.session().controller.testData.place().kind === "memory"
       ? "Test input is kept until you close this workflow."
       : "Test input is saved with this workflow.";
+  }
+  /** What Studio replaced in a platform event entered here, and why; "" when it replaced nothing. */
+  replaced(): string {
+    return enteredNote(this.session().controller.replacedIds());
   }
   private schema(): unknown {
     return this.session().host.model.definition.spec["inputSchema"] ?? {};
