@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { mkdirSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { test, expect, Page, Route } from "@playwright/test";
+import type { IncidentView } from "../../src/app/operate/incidents/incidents-model";
 import {
   called,
   caller,
@@ -2057,6 +2058,202 @@ test.describe("transactions in doubt", () => {
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(codes(high(page))).toHaveText(["Unavailable incident"]);
     await expect(codes(other(page))).toHaveCount(4);
+  });
+});
+
+test.describe("a refresh keeps the keyboard focus on its incident", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  /** An incident that opens after every other: the first row of its band. */
+  const newest = (incident: IncidentView): IncidentView => ({
+    ...incident,
+    id: "d1000000-0000-4000-8000-000000000001",
+    code: incident.priority ? "WV-TXN-AFTER-PIVOT-STUCK" : "WV-TASK-REFUSED",
+    opened_at: "2026-11-22T10:53:30Z",
+  });
+  const row = (page: Page, name: string) =>
+    page.getByRole("button", { name: `Open incident ${name}`, exact: true });
+  /** The page's own refresh, not a press that would move the focus. */
+  const refresh = (page: Page) => page.clock.fastForward(16_000);
+
+  test("in one list", async ({ page }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    platform.items = [newest(others[0]), ...others];
+    await refresh(page);
+    await expect(codes(page.locator(".incident-list"))).toHaveCount(5);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+  });
+
+  for (const [name, kept, added, first, scope] of [
+    [
+      "in the High priority band",
+      "WV-TXN-PIVOT-UNKNOWN at submit",
+      unknown,
+      "WV-TXN-AFTER-PIVOT-STUCK",
+      high,
+    ],
+    [
+      "in Other incidents",
+      "WV-TASK-FAILED at fetch",
+      others[0],
+      "WV-TASK-REFUSED",
+      other,
+    ],
+  ] as const)
+    test(`${name}, as another incident takes its first row`, async ({
+      page,
+    }) => {
+      const platform = await incidentPlatform(page);
+      await page.goto("/operate/incidents");
+      await row(page, kept).focus();
+      platform.items = [newest(added), ...platform.items];
+      await refresh(page);
+      await expect(codes(scope(page)).first()).toHaveText(first);
+      await expect(row(page, kept)).toBeFocused();
+    });
+
+  test("beside a case, as an incident joins it, and as another case comes between", async ({
+    page,
+  }) => {
+    const kept = "WV-TXN-CANCEL-STUCK at hold";
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await row(page, kept).focus();
+    // Between the case and its row.
+    platform.items = platform.items.flatMap((item) =>
+      item.id === ids.loop ? [newest(unknown), item] : [item],
+    );
+    await refresh(page);
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-AFTER-PIVOT-STUCK",
+      "WV-TXN-CANCEL-STUCK",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+    // Another case, right before its row: the row belongs to the rows after it.
+    const second: IncidentView = {
+      ...called,
+      id: "d1000000-0000-4000-8000-000000000002",
+      held_by: {
+        ...called.held_by!,
+        id: "d1000000-0000-4000-8000-00000000000f",
+      },
+    };
+    platform.items = platform.items.flatMap((item) =>
+      item.id === ids.loop ? [second, item] : [item],
+    );
+    await refresh(page);
+    await expect(page.locator(".case")).toHaveCount(2);
+    await expect(row(page, kept)).toBeFocused();
+  });
+
+  test("inside a case, as the incident that waits for it leads, or leaves", async ({
+    page,
+  }) => {
+    const kept = "WV-TXN-UNDO-STUCK at add";
+    const platform = await incidentPlatform(page, {
+      items: [unknown, called, ...others],
+    });
+    await page.goto("/operate/incidents");
+    await row(page, kept).focus();
+    platform.items = [unknown, caller, called, ...others];
+    await refresh(page);
+    await expect(codes(caseOf(page))).toHaveText([
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+    platform.items = [unknown, called, ...others];
+    await refresh(page);
+    await expect(codes(caseOf(page))).toHaveText([
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-SETTLE-TIMEOUT",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+  });
+
+  test("on the Open of an incident that isn't in the list, as a page lists it", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { items: [called] });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0").focus();
+    platform.items = [caller, called];
+    await refresh(page);
+    await expect(page.locator(".not-listed")).toHaveCount(0);
+    await expect(row(page, "WV-TXN-SETTLE-TIMEOUT at move")).toBeFocused();
+  });
+
+  test("as the first incident in doubt turns one list into bands, and as the last one leaves", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    platform.items = [unknown, ...others];
+    await refresh(page);
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    platform.items = others;
+    await refresh(page);
+    await expect(high(page)).toHaveCount(0);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+  });
+
+  test("and leaves it alone once the person moved it", async ({ page }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    await page.getByLabel("Workflow", { exact: true }).focus();
+    platform.items = [unknown, ...others];
+    await refresh(page);
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(page.getByLabel("Workflow", { exact: true })).toBeFocused();
+    // Nor does a focus nobody has go to a row.
+    await page.getByLabel("Workflow", { exact: true }).blur();
+    platform.items = others;
+    await refresh(page);
+    await expect(high(page)).toHaveCount(0);
+    await expect(page.locator("body")).toBeFocused();
+  });
+
+  test.describe("behind the drawer at 800x900", () => {
+    test.use({ viewport: { width: 800, height: 900 } });
+
+    for (const [name, before, added] of [
+      ["another incident in doubt opens", [unknown, ...others], newest(loop)],
+      ["the first incident in doubt opens", others, unknown],
+    ] as const)
+      test(`Escape returns to the row that opened it after ${name}`, async ({
+        page,
+      }) => {
+        const opener = row(
+          page,
+          before[0].priority
+            ? "WV-TXN-PIVOT-UNKNOWN at submit"
+            : "WV-TASK-FAILED at fetch",
+        );
+        const platform = await incidentPlatform(page, { items: [...before] });
+        await page.goto("/operate/incidents");
+        await opener.focus();
+        await page.keyboard.press("Enter");
+        const drawer = page.locator("weave-incident-drawer");
+        await expect(drawer.locator("#incident-detail-title")).toBeFocused();
+        platform.items = [added, ...before];
+        await refresh(page);
+        await expect(
+          page.locator(`.incident-band.high .row-open`).first(),
+        ).toHaveText(added.code);
+        // Reading the list never takes the focus out of the drawer.
+        await expect(drawer.locator("#incident-detail-title")).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+        await expect(opener).toBeFocused();
+      });
   });
 });
 

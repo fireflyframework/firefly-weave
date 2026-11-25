@@ -30,10 +30,12 @@ import {
   ChangeDetectorRef,
   Component,
   DoCheck,
+  ElementRef,
   HostListener,
   Input,
   OnDestroy,
   OnInit,
+  afterEveryRender,
   inject,
 } from "@angular/core";
 import { NavigationEnd, Router } from "@angular/router";
@@ -471,13 +473,14 @@ interface Band {
                               ><button
                                 type="button"
                                 class="sm"
+                                [attr.data-incident]="link.id"
                                 [attr.aria-label]="
                                   'Open incident ' +
                                   link.code +
                                   ', ' +
                                   linkPlace(link)
                                 "
-                                (click)="openLink(link)"
+                                (click)="openedFrom = link.id; openLink(link)"
                               >
                                 Open
                               </button></span
@@ -548,6 +551,7 @@ interface Band {
             [weaveModalSheet]="true"
             [sheetWhen]="sheetWhen.detail"
             sheetInitialFocus="#incident-detail-title"
+            [sheetReturnFocus]="drawerOpener"
             (sheetDismiss)="close()"
           >
             <weave-incident-drawer
@@ -612,9 +616,10 @@ interface Band {
             ><button
               type="button"
               class="row-open"
+              [attr.data-incident]="i.id"
               [attr.aria-current]="selected?.id === i.id ? 'true' : null"
               [attr.aria-label]="'Open incident ' + i.code + ' at ' + stepOf(i)"
-              (click)="open(i)"
+              (click)="openedFrom = i.id; open(i)"
             >
               {{ i.code }}</button
             ><small>
@@ -707,6 +712,7 @@ interface Band {
 export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
+  private element = inject<ElementRef<HTMLElement>>(ElementRef);
   private router = inject(Router);
   private navigated = this.router.events.subscribe((event) => {
     if (event instanceof NavigationEnd) this.addressChanged();
@@ -794,6 +800,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   private listGeneration = 0;
   /** The incident the latest direct read is for. */
   private opening = "";
+  /** The listed incident whose control opened the drawer last. */
+  openedFrom = "";
+  /** The listed incident whose control holds the focus as the page is drawn again. */
+  private focused = "";
   private alive = true;
 
   get readable() {
@@ -801,6 +811,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   private get scope() {
     return environmentOf(this.host);
+  }
+  constructor() {
+    afterEveryRender({ write: () => this.restoreFocus() });
   }
   ngOnInit() {
     this.poller.start(false);
@@ -813,6 +826,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.generation++;
   }
   ngDoCheck() {
+    this.holdFocus();
     const key = scopeKeyOf(this.host);
     if (key === this.scopeKey) return;
     this.scopeKey = key;
@@ -1267,6 +1281,32 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     if (this.asked?.timer) clearTimeout(this.asked.timer);
     this.asked = null;
     this.partner = null;
+  }
+  /** An incident's control in the list: its row, or its Open while no page lists it. */
+  private control(id: string): HTMLElement | null {
+    const control = `.incident-list [data-incident="${CSS.escape(id)}"]`;
+    const page = this.element.nativeElement;
+    return (
+      page.querySelector<HTMLElement>(`${control}.row-open`) ??
+      page.querySelector<HTMLElement>(control)
+    );
+  }
+  /** Closing the drawer over the list returns to the control that opened it, as it is drawn now. */
+  readonly drawerOpener = () => this.control(this.openedFrom);
+  private holdFocus() {
+    const control = document.activeElement?.closest<HTMLElement>(
+      ".incident-list [data-incident]",
+    );
+    if (control) this.focused = control.dataset["incident"] ?? "";
+  }
+  /**
+   * A row can be drawn elsewhere: one list turns into bands, a case forms
+   * around it. The focus it took along goes to its incident's control there.
+   */
+  private restoreFocus() {
+    if (this.focused && document.activeElement === document.body)
+      this.control(this.focused)?.focus({ preventScroll: true });
+    this.focused = "";
   }
   /** The control that opened the incident is gone: its title takes the focus. */
   private focusTitle() {

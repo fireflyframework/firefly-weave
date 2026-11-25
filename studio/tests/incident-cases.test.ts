@@ -254,6 +254,31 @@ describe("the inbox's cases", () => {
 });
 
 describe("the groups the table draws", () => {
+  it("keep their keys as incidents come and go, so a refresh draws no row again", () => {
+    const [one, two, three] = ["a", "b", "c"].map((letter) =>
+      plain(`${letter}0000000-0000-4000-8000-000000000001`),
+    );
+    const keys = (items: IncidentRecord[]) =>
+      rowGroups(inboxRows(items, []).high).map((group) => group.key);
+    const before = keys([one, settleTimeout, undoStuck, two]);
+    expect(new Set(before).size).toBe(3);
+    // An incident opens before each group's first; another leaves.
+    expect(keys([three, one, settleTimeout, undoStuck, two])).toEqual(before);
+    expect(keys([one, settleTimeout, undoStuck, three, two])).toEqual(before);
+    expect(keys([three, settleTimeout, undoStuck, two])).toEqual(before);
+    // A case that leaves takes only the group after it along.
+    expect(keys([one, two])).toEqual([before[0]]);
+    // Each group has its own, also after two cases.
+    const other: IncidentView = {
+      ...undoStuck,
+      id: "2b7e4c19-0000-4000-8000-0000000000bb",
+      held_by: { ...undoStuck.held_by!, id: "6d18b3f0-0000-4000-8000-bb" },
+    };
+    const many = keys([one, settleTimeout, undoStuck, two, other, three]);
+    expect(many).toHaveLength(5);
+    expect(new Set(many).size).toBe(5);
+  });
+
   it("a case is a group of its own, and the incidents between two cases are one", () => {
     const [before, one, two] = ["a", "b", "c"].map((letter) =>
       plain(`${letter}0000000-0000-4000-8000-000000000001`),

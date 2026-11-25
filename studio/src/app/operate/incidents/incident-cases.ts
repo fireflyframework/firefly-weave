@@ -151,6 +151,7 @@ export function inboxRows(
 
 /** Rows drawn together: a case, or the incidents between two cases. */
 export interface RowGroup {
+  /** Of a case its lead, of other incidents the case before them: the same as incidents come and go. */
   key: string;
   case: IncidentCase | null;
   items: IncidentRecord[];
@@ -166,7 +167,12 @@ export function rowGroups(rows: readonly InboxRow[]): RowGroup[] {
         items: [],
       });
     else if (last && !last.case) last.items.push(row.value);
-    else groups.push({ key: row.value.id, case: null, items: [row.value] });
+    else
+      groups.push({
+        key: last ? `after-${last.key}` : "first",
+        case: null,
+        items: [row.value],
+      });
   }
   return groups;
 }
