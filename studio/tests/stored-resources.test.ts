@@ -67,6 +67,18 @@ describe("the stops Studio owes", () => {
       expect(pendingStopsOf(intent({ pendingStops }), "local")).toEqual([]);
   });
 
+  it("are at most as many as an environment's triggers, however many a file lists", () => {
+    const many = Array.from({ length: 500 }, (_, at) => ({
+      ...STOP,
+      triggerId: `t-${at}`,
+    }));
+    const read = pendingStopsOf(
+      intent({ pendingStops: { local: many } }),
+      "local",
+    );
+    expect(read).toEqual(many.slice(0, 64));
+  });
+
   it("are written for one environment and leave the others", () => {
     const owing = intent({ pendingStops: { prod: [OTHER] } });
     expect(withPendingStops(owing, "local", [STOP])).toEqual(

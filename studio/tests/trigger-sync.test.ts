@@ -786,6 +786,18 @@ describe("a platform event trigger after an activation", () => {
     });
   });
 
+  it("still owes a stop after activating a version that declares no platform event", async () => {
+    const platform = seeded(SECOND);
+    const pendingStops = {
+      "env-1": [{ triggerId: "t-2", revision: 1, activationId: "a-older" }],
+    };
+    const intents: TriggerIntent[] = [{ ...EVENT, pendingStops }];
+    const rows = rowsFor(platform, intents, null);
+    expect(rows.map((row) => row.kind)).toEqual(["left-behind"]);
+    const results = await syncTriggers(rows, within(platform, intents));
+    expect(keep(intents, results, rows)["pendingStops"]).toEqual(pendingStops);
+  });
+
   it("owes nothing for a trigger it moved, even one whose stop was owed", async () => {
     // Its stop was owed on this computer; the version now reacts as it does.
     const platform = seeded({ ...SECOND, revision: 2 });

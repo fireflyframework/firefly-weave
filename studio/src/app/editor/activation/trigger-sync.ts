@@ -370,9 +370,9 @@ const keepsResource = (result: SyncResult) =>
     : result.status === "created" || result.status === "moved";
 
 /**
- * The stops a platform event trigger owes in this environment: those the
- * dialog showed as duplicates (the rest no longer count), with what each row
- * now owes or cleared.
+ * The stops a platform event trigger owes in this environment, with what each
+ * row now owes or cleared. A version that reacts to platform events shows each
+ * one that still counts as a duplicate, so the others go.
  */
 function owedAfter(
   intent: TriggerIntent,
@@ -380,6 +380,9 @@ function owedAfter(
   results: readonly SyncResult[],
   planned: readonly TriggerRow[],
 ): PendingStop[] {
+  const reacts = planned.some(
+    (row) => row.event && row.event.kind !== "left-behind",
+  );
   const duplicates = new Set(
     planned.flatMap((row) =>
       row.event?.kind === "duplicate" ? [row.event.binding.id] : [],
@@ -387,10 +390,7 @@ function owedAfter(
   );
   const owed = new Map(
     pendingStopsOf(intent, environmentId)
-      .filter(
-        (stop) =>
-          !planned.some((row) => row.event) || duplicates.has(stop.triggerId),
-      )
+      .filter((stop) => !reacts || duplicates.has(stop.triggerId))
       .map((stop) => [stop.triggerId, stop]),
   );
   for (const { row, event } of results) {

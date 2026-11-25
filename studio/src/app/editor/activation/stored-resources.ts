@@ -34,6 +34,8 @@ export function storedId(
   return typeof id === "string" ? id : undefined;
 }
 
+/** The most enabled platform event triggers an environment has, so the most stops it may owe. */
+const MAX_OWED = 64;
 const isPendingStop = (value: unknown): value is PendingStop =>
   isJsonObject(value) &&
   typeof value["triggerId"] === "string" &&
@@ -47,7 +49,9 @@ export function pendingStopsOf(
 ): PendingStop[] {
   const stops = intent["pendingStops"];
   const here = isJsonObject(stops) ? stops[environmentId] : undefined;
-  return Array.isArray(here) ? (here as unknown[]).filter(isPendingStop) : [];
+  return Array.isArray(here)
+    ? (here as unknown[]).filter(isPendingStop).slice(0, MAX_OWED)
+    : [];
 }
 
 /** The trigger choice owing these stops in this environment; the others stay as they were. */
