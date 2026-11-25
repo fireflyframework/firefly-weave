@@ -117,6 +117,7 @@ last column lists every page that embeds or links the diagram.
 | --- | --- | --- |
 | [Studio edits; the platform runs](diagrams/studio-and-runtime.svg) | The Studio page, its paired local host, and the platform API that stores and runs workflows | [Architecture: follow one run through Weave](architecture.md), [Design and run workflows in Studio](guides/studio.md) |
 | [What Call an action calls](diagrams/studio-integration-call.svg) | A step selects an Action version and a connection slot; the Action pins the connector or worker that runs it | [Choose and configure a workflow step](guides/studio-step-reference.md) |
+| [A transaction event starts a workflow](diagrams/react-to-a-transaction.svg) | Studio declares the events and creates the trigger; the platform records each event with the transaction and starts the workflow; Starts shows what happened | [Design and run workflows in Studio](guides/studio.md#react-to-a-transaction), [Undo steps together with a transaction](guides/transactions.md#6-react-to-a-transaction) |
 
 ### Author, check, and simulate
 
