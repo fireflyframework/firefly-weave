@@ -601,6 +601,8 @@ expires. The server checks, in this order, and refuses before writing anything:
 | 422 `WV-STEPTEST-INPUT` | The input breaks the action's input schema; `result.diagnostics` holds paths and codes, never values |
 | 422 `WV-STEPTEST-CONNECTION` | A chosen connection can't be used here; `result.slots` says which and why |
 | 422 `WV-STEPTEST-KIND` | The step can't run on its own as saved |
+| 422 `WV-ACTIVATION-AI-RESERVED` | The step would run a model task that only another kind of AI step runs, as for an activation |
+| 422 `WV-ACTIVATION-AI-PROVIDER`, 422 `WV-ACTIVATION-AI-MODEL`, 503 `WV-AI-POLICY` | An AI task's connection, or its model on that connection, doesn't pass the AI policy, as for an activation |
 | 422 `WV-STEPTEST-RELEASE` | Several releases, or none, can run a dependency; `result.choices` lists them to send back in `releases` |
 | 429 `WV-STEPTEST-BUSY` | The person already runs 4 step tests here or started 30 in the last minute; `Retry-After` says when to try again |
 

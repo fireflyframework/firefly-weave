@@ -36,9 +36,10 @@ from firefly_weave.access.service import audit
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.connections.repository import ConnectionRepository
-from firefly_weave.connections.service import ConnectionService
+from firefly_weave.connections.service import ConnectionService, no_credentials
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation, ActivationRequest
+from firefly_weave.contracts.connectors import BoundConnection
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.run_views import RunStepQuery
 from firefly_weave.contracts.runtime import StartRunRequest
@@ -50,6 +51,7 @@ from firefly_weave.contracts.step_tests import (
     SynthesizedTest,
 )
 from firefly_weave.contracts.values import JsonObject
+from firefly_weave.definitions.ai import uses_ai, validate_ai_bindings, validate_ai_reserved
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.definitions.service import DefinitionService, project_scope
@@ -57,6 +59,7 @@ from firefly_weave.operations.fact_reads import FactReadRepository, step_of
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
+from firefly_weave.runtime.kernel import workflow as workflow_ir
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.step_tests.admission import (
     ReleaseChoices,
@@ -184,6 +187,7 @@ class StepTestService:
             raise refused
 
         problems: dict[str, str] = {}
+        bound: dict[str, BoundConnection] = {}
         for slot, revision_id in synthesized.slots.items():
             try:
                 revision = await ConnectionRepository(tx).revision(revision_id)
@@ -205,6 +209,8 @@ class StepTestService:
                     if isinstance(first, dict) and "message" in first
                     else "This connection can't be used as configured."
                 )
+                continue
+            bound[slot] = BoundConnection(slot, revision, no_credentials)
         if problems:
             raise _connection(problems)
 
@@ -216,6 +222,11 @@ class StepTestService:
         )
         if not compiled.ok or compiled.artifact is None:
             raise _mismatch("This step can't run on its own as saved; save the draft and try again")
+        # What an activation refuses, a step test refuses too, before it asks which release runs the step.
+        ir = workflow_ir(compiled.artifact)
+        validate_ai_reserved(ir)
+        if uses_ai(ir.graph.nodes):
+            validate_ai_bindings(ir.graph.nodes, bound, self.definitions.ai_policy.current())
         needed = await repository.release_choices(compiled.artifact)
         pinned = release_pins(needed, {str(key): value for key, value in request.releases.items()})
         if isinstance(pinned, ReleaseChoices):
