@@ -60,6 +60,10 @@ _FORMATS = FormatChecker(formats=sorted(SUPPORTED_FORMATS))
 _SEARCH_TRIES = 8
 # What the stopped tries of one validation may last together, in seconds for each second of its CPU budget.
 _WAIT_PER_CPU_SECOND = 100
+# The largest search, as the length of its pattern times the length of its string, that keeps the interpreter. The
+# slowest one of this size measured keeps it for 44 ms. At a quarter of it, 20 ms, a valid string of 8,000 characters
+# can still use up its tries beside two threads busy in Python, as a larger search can at this size.
+_HELD_SEARCH = 262_144
 # How far the thread's CPU clock moves at a time: Windows charges a whole tick to the thread that runs at its end.
 _CPU_STEP = 1 / 64 if sys.platform == "win32" else 0.0
 
@@ -427,11 +431,15 @@ class _Budget:
         # of every thread in the process, so on a busy machine it also stops searches that spent almost nothing. The
         # answer depends on the CPU time of this thread alone, and a try that was stopped early is never charged.
         # The engine would also let other threads run every few hundred steps of a search, and wait for all of them each
-        # time: the search keeps the interpreter instead, which its CPU budget keeps short.
+        # time, so a small search keeps the interpreter instead. A larger one lets them run, because the engine can go
+        # through a long string without letting them.
+        concurrent = None if len(pattern) * len(value) > _HELD_SEARCH else False
         for attempt in range(_SEARCH_TRIES):
             started, cpu_started = time.perf_counter(), time.thread_time()
             try:
-                found: bool | None = compiled.search(value, timeout=allowed * 2**attempt, concurrent=False) is not None
+                found: bool | None = (
+                    compiled.search(value, timeout=allowed * 2**attempt, concurrent=concurrent) is not None
+                )
             except TimeoutError:
                 found = None
             cpu, elapsed = time.thread_time() - cpu_started, time.perf_counter() - started

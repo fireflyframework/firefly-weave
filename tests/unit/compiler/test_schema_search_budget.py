@@ -219,6 +219,52 @@ def test_a_runaway_search_spends_little_cpu_time_and_never_waits_for_the_interpr
         other.join()
 
 
+@pytest.mark.parametrize(("length", "lets_go"), [(32_768, False), (32_769, True)])
+def test_a_search_keeps_the_interpreter_up_to_its_size_bound(length, lets_go):
+    go, ran = threading.Event(), threading.Event()
+    other = threading.Thread(target=lambda: go.wait() and ran.set())
+    interval, pattern = sys.getswitchinterval(), "(a|aa)+$"
+    # From here on only a search that lets go of the interpreter lets the other thread run.
+    sys.setswitchinterval(60)
+    try:
+        other.start()
+        go.set()
+        # A busy machine may not give the other thread a processor during the first search.
+        for _ in range(500 if lets_go else 20):
+            with pytest.raises(schemas._Failure, match="RESOURCE_LIMIT"):
+                schemas._Budget(SchemaLimits()).search(pattern, "a" * (length - 1) + "!")
+            if ran.is_set():
+                break
+        assert ran.is_set() == lets_go
+    finally:
+        sys.setswitchinterval(interval)
+        other.join()
+
+
+def test_a_search_of_a_long_string_lets_the_other_threads_of_the_process_run():
+    # A search that keeps the interpreter stops the other threads while it goes through the whole string.
+    longest, done = 0.0, threading.Event()
+
+    def beat() -> None:
+        nonlocal longest
+        last = time.perf_counter()
+        while not done.is_set():
+            time.sleep(0.001)
+            now = time.perf_counter()
+            longest, last = max(longest, now - last), now
+
+    other = threading.Thread(target=beat)
+    other.start()
+    started = time.perf_counter()
+    issues = schemas.validate_payload({"pattern": r"\w+\s"}, "a" * 1_000_000, {})
+    lasted = time.perf_counter() - started
+    done.set()
+    other.join()
+    assert [issue.code for issue in issues] == REFUSED
+    # A search that keeps the interpreter stops the other thread from its start to its end, however busy the machine is.
+    assert longest < lasted / 2, (longest, lasted)
+
+
 def test_the_cpu_clock_moves_by_no_more_than_the_step_the_budget_allows_for():
     steps = []
     for _ in range(5):
