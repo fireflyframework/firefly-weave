@@ -294,7 +294,7 @@ test("a stop still owed comes first, marks the tab, and is made here", async ({
   await page.keyboard.press("Enter");
   await warning.getByRole("button", { name: "Stop now" }).click();
   await expect(panel.locator(".es-callout")).toContainText(
-    /Stopped notify-team\.\s*Only notify-team-2 starts notify-team now\./,
+    "Stopped notify-team. Only notify-team-2 starts notify-team now.",
   );
   await expect(
     dialog.locator("p.sr-only[aria-live='polite']").first(),

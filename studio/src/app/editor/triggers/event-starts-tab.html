@@ -55,7 +55,8 @@ SPDX-License-Identifier: Apache-2.0
     <weave-icon [name]="calloutIcons[said.tone]" [size]="16" />
     <div class="es-callout-text">
       <div [id]="id + '-said'">
-        <strong>{{ said.lead }}</strong> <span>{{ said.detail }}</span>
+        <strong>{{ said.lead }}</strong
+        >&ngsp;<span>{{ said.detail }}</span>
       </div>
       @if (said.actions.length) {
         <div class="es-callout-actions">
