@@ -336,6 +336,15 @@ test.describe("a real platform event entered in another Test event pane", () => 
     await expect(box).toHaveValue(first);
     await expect(box).toBeFocused();
     expect(await caret()).toMatch(/"event_id": "[0-9a-f-]{36}$/);
+    // A refused change says what is wrong, and no more what Studio replaced.
+    await box.fill(JSON.stringify({ ...pastedEvent(), root_event_id: "x" }));
+    await expect(pane.getByRole("alert")).toHaveText(
+      "root_event_id isn't one of the platform event's fields.",
+    );
+    await expect(pane.getByText(NOTE_ALL)).toHaveCount(0);
+    await box.fill(first);
+    await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    await expect(pane.getByRole("alert")).toHaveCount(0);
     await details.close();
     await nothingReal(page, details);
     expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);

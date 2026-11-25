@@ -426,9 +426,11 @@ export class EventSample {
   summaryName(): string {
     return this.viewingRuns() ? "The run's event" : "The test event";
   }
-  /** What Studio replaced in this test event as it was pasted; "" for one pasted earlier. */
+  /** What Studio replaced in the test event; "" when it replaced nothing, or a later one was refused. */
   replaced(): string {
-    return replacedNote(this.session().controller.replacedIds());
+    return this.problem()
+      ? ""
+      : replacedNote(this.session().controller.replacedIds());
   }
   private async keep(
     value: Json,

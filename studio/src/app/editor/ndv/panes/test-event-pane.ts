@@ -93,9 +93,11 @@ export class TestEventPane {
       ? "Test input is kept until you close this workflow."
       : "Test input is saved with this workflow.";
   }
-  /** What Studio replaced in a platform event entered here, and why; "" when it replaced nothing. */
+  /** What Studio replaced in the test event, and why; "" when it replaced nothing, or a later change was refused. */
   replaced(): string {
-    return enteredNote(this.session().controller.replacedIds());
+    return this.problem()
+      ? ""
+      : enteredNote(this.session().controller.replacedIds());
   }
   private schema(): unknown {
     return this.session().host.model.definition.spec["inputSchema"] ?? {};

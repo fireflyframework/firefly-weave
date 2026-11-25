@@ -435,9 +435,11 @@ export class TriggerEventPane {
   shown(): string {
     return JSON.stringify(this.sample(), null, 2);
   }
-  /** What Studio replaced in a platform event pasted here, and why; "" when it replaced nothing. */
+  /** What Studio replaced in the test event, and why; "" when it replaced nothing, or a later paste was refused. */
   replaced(): string {
-    return enteredNote(this.session().controller.replacedIds());
+    return this.problem()
+      ? ""
+      : enteredNote(this.session().controller.replacedIds());
   }
 
   paste() {

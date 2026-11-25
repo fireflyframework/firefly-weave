@@ -68,6 +68,8 @@ const REAL = {
   incident: "a3d0c1b2-1111-4222-8333-000000000003",
 };
 const SAMPLE_ID = /^00000000-0000-4000-8000-[0-9a-f]{12}$/;
+const NOTE =
+  "Studio replaced the event, run and incident IDs with sample IDs. Test data is shared with everyone who can test this workflow. Use a made-up business key.";
 interface Event {
   event_id: string;
   transaction: { run_id: string; incident_id?: string; business_key: string };
@@ -243,6 +245,30 @@ describe.each([
       "root_event_id isn't one of the platform event's fields.",
     );
   });
+
+  it("says what it replaced only while nothing is wrong with what was entered last", async () => {
+    await opened.enter(realEvent());
+    expect(opened.pane.replaced()).toBe(NOTE);
+    await opened.enter({ ...realEvent(), root_event_id: REAL.event });
+    expect(opened.pane.problem()).not.toBe("");
+    expect(opened.pane.replaced()).toBe("");
+    await opened.enter(realEvent());
+    expect(opened.pane.replaced()).toBe(NOTE);
+  });
+});
+
+it("the platform event's own pane says it only while nothing is wrong too", async () => {
+  const f = setup();
+  await f.controller.setTestEvent(realEvent() as Json);
+  const pane = Object.assign(Object.create(EventSample.prototype), {
+    session: () => f.session,
+    problem: signal(""),
+  }) as EventSample;
+  expect(pane.replaced()).toBe(
+    "Studio replaced the event, run and incident IDs with sample IDs.",
+  );
+  pane.problem.set("This workflow's test data is still opening.");
+  expect(pane.replaced()).toBe("");
 });
 
 describe("the manual form's box", () => {
@@ -546,9 +572,7 @@ describe("a real platform event a test call brings", () => {
       const kept = JSON.stringify(f.controller.testData.data());
       expect(kept).toContain("REF-4410");
       for (const id of Object.values(REAL)) expect(kept).not.toContain(id);
-      expect(pane.replaced()).toBe(
-        "Studio replaced the event, run and incident IDs with sample IDs. Test data is shared with everyone who can test this workflow. Use a made-up business key.",
-      );
+      expect(pane.replaced()).toBe(NOTE);
     },
   );
 
@@ -618,9 +642,7 @@ describe("a real platform event inside what a person enters", () => {
       const kept = JSON.stringify(f.controller.testData.data().input);
       expect(kept).toContain("REF-4410");
       for (const id of Object.values(REAL)) expect(kept).not.toContain(id);
-      expect(pane.replaced()).toBe(
-        "Studio replaced the event, run and incident IDs with sample IDs. Test data is shared with everyone who can test this workflow. Use a made-up business key.",
-      );
+      expect(pane.replaced()).toBe(NOTE);
     },
   );
 
