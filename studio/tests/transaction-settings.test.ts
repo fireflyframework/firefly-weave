@@ -261,6 +261,10 @@ describe("a transaction's fields", () => {
     expect(said("undoTimeout", 8 * 86400)).toEqual(["Use 1 minute to 7 days."]);
     expect(said("undoTimeout", 59)).toEqual(["Use 1 minute to 7 days."]);
     expect(said("undoRetry.maxAttempts", 0)).toEqual(["Use 1 or more."]);
+    expect(said("undoRetry.maxAttempts", 2.5)).toEqual([
+      "Enter a whole number.",
+    ]);
+    expect(said("undoRetry.maxAttempts", 3)).toEqual([]);
     // The longest wait is at least the wait between tries.
     write("undoRetry.initialDelaySeconds", fixed(600));
     expect(said("undoRetry.maxDelaySeconds", 300)).toEqual([

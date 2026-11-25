@@ -110,6 +110,7 @@ export const transactionSettings = (): FormSpec => ({
           type: "number",
           label: "Max tries",
           min: 1,
+          whole: true,
           default: POLICY.undoRetry.maxAttempts,
         },
         durationParam(

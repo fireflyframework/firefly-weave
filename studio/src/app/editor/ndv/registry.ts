@@ -220,6 +220,8 @@ export interface ParamSpec {
   actionsBeside?: boolean;
   min?: number;
   max?: number;
+  /** number only: 2.5 isn't one (tries). */
+  whole?: boolean;
   /**
    * number only: a value typed below `min` is an entry to finish. It stays
    * in the box with its message and isn't saved (Max tries, where one try

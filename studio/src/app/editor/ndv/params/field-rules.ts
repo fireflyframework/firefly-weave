@@ -26,7 +26,14 @@ import type { ParamSpec } from "../registry";
 import type { Entries, ParamValue } from "./value-io";
 
 export interface RuleProblem {
-  code: "required" | "range" | "length" | "items" | "positive" | "format";
+  code:
+    | "required"
+    | "range"
+    | "length"
+    | "items"
+    | "positive"
+    | "whole"
+    | "format";
   message: string;
   severity: "error" | "warning";
 }
@@ -129,6 +136,8 @@ export function fieldRules(
     !(Number.isInteger(v) && v > 0)
   )
     problems.push(error("positive", "Enter a whole number greater than 0."));
+  if (spec.whole && typeof v === "number" && !Number.isInteger(v))
+    problems.push(error("whole", "Enter a whole number."));
   if (
     (spec.type === "number" || spec.type === "duration") &&
     typeof v === "number"
