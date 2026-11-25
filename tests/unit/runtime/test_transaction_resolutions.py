@@ -396,6 +396,42 @@ def test_a_reconcile_waits_for_the_failed_attempt_of_a_step_that_changes_nothing
     assert waits_for_a_failure(run, "move") is inside
 
 
+def test_a_reconcile_never_waits_for_the_failed_attempt_of_a_step_the_rollback_stopped():
+    moves = {"steps": [transaction([hold(holdSeconds=600), lookup(), add()])], "output": {"literal": None}}
+    wait = {"steps": [{"id": "pause", "kind": "wait", "durationSeconds": 3600}], "output": {"literal": None}}
+    run = Run(compiled([{"id": "fork", "kind": "parallel", "concurrency": 2, "branches": {"a": moves, "b": wait}}]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    attempt_failed(run, "lookup")
+    assert waits_for_a_failure(run, "move")
+    run.fire("move#hold")
+    run.failed("hold#cancel", "REJECTED", effect="none", generation=10)
+    # Recovery never decides the stopped step, so its incident stays open while the other branch still waits.
+    assert (run.txn().status, run.state.active) == ("in_doubt", ["pause"])
+    assert sorted(run.state.incidents) == ["hold#cancel:10", "lookup:1"]
+    assert not waits_for_a_failure(run, "move")
+
+
+def test_a_reconcile_never_waits_for_an_incident_that_recovery_leaves_to_a_person():
+    branches = {
+        "a": {"steps": [notify()], "output": {"literal": None}},
+        "b": {"steps": [lookup()], "output": {"literal": None}},
+    }
+    after = {"id": "fork", "kind": "parallel", "concurrency": 2, "branches": branches}
+    run = Run(compiled([transaction([hold(), add(), submit(), after])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    run.failed("notify", "UNAVAILABLE", effect="unknown", generation=4)
+    # The read's output was refused: that incident is final, and the step stays active behind it.
+    run.send("incident_opened", node_id="lookup", generation=1, code="WV-RUNTIME-OUTPUT")
+    assert (run.txn().status, run.state.active) == ("in_doubt", ["lookup"])
+    assert sorted(run.state.incidents) == ["lookup:1", "notify:4"]
+    assert not waits_for_a_failure(run, "move")
+
+
 def test_a_reservation_marked_undone_is_recorded_as_released():
     run = Run(compiled([transaction([hold(), add(), submit()])]))
     run.start()
