@@ -32,7 +32,7 @@ from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import ActionNode, AgentNode, CallWorkflowNode
+from firefly_weave.compiler.ir import ActionNode, AgentNode, CallWorkflowNode, WorkflowIR
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.incident_queries import IncidentQuery
@@ -50,9 +50,10 @@ from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.agent_tools import reconciled_schema
 from firefly_weave.runtime.kernel import error_policy, validate, validate_action, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
-from firefly_weave.runtime.models import RuntimeEvent
+from firefly_weave.runtime.models import RunState, RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
+from firefly_weave.runtime.transactions import shapes
 from firefly_weave.runtime.waits import TERMINAL, settle
 from firefly_weave.workers.control import revoke_attempts
 from firefly_weave.workers.leases import TaskService
@@ -62,6 +63,16 @@ SAFE_RETRY_POLICIES = frozenset({"read_only", "idempotent", "idempotency_key"})
 
 def retry_allowed(policy: str, ambiguous: bool) -> bool:
     return policy in SAFE_RETRY_POLICIES
+
+
+def failure_in_progress(ir: WorkflowIR, state: RunState, transaction: str) -> bool:
+    """Whether a step, confirm, cancel or undo of the transaction instance has a failed attempt that recovery hasn't
+    decided yet: its interim incident closes only when recovery tries the step again or reports it failed for good."""
+    facts = shapes(ir)
+    return facts is not None and any(
+        item.code == "WV-TASK-FAILED" and facts.owner_key(item.node_id) == transaction
+        for item in state.incidents.values()
+    )
 
 
 def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None) -> IncidentView:
@@ -368,17 +379,18 @@ class IncidentService:
                     await repository.execute("SELECT weave_control_begin('run',:id)", id=previous.id)
                 await repository.persist(view, event, result, event_hash(event))
             if task is not None and result.state.status not in TERMINAL:
+                if request.kind == "retry_safe":
+                    # A run that no longer waits for the step (a person ended its transaction) never tries it again.
+                    status = "ready" if task["node_id"] in result.state.active else "cancelled"
+                else:
+                    status = "handled" if request.kind == "accept_reconciled_failure" else "completed"
                 await repository.execute(
                     task_fact_update(
                         f"UPDATE task_intents SET status=:status,next_attempt_at=NULL WHERE {SCOPE} AND id=:id"
                     ),
                     at=event.timestamp,
                     id=task["id"],
-                    status="ready"
-                    if request.kind == "retry_safe"
-                    else "handled"
-                    if request.kind == "accept_reconciled_failure"
-                    else "completed",
+                    status=status,
                 )
             elif task is not None and request.kind == "accept_reconciled_result":
                 await repository.task_status(task["id"], "completed", at=event.timestamp)
@@ -519,7 +531,7 @@ class IncidentService:
         self, repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent, actor: Principal
     ) -> Any:
         """Force end a run too large for the kernel: its transactions end force-ended and the run is canceled."""
-        from firefly_weave.runtime.models import RunState, Transition
+        from firefly_weave.runtime.models import Transition
         from firefly_weave.runtime.terminal_capacity import force_end_transactions, persist_terminal
 
         cancel = RuntimeEvent(
@@ -667,6 +679,13 @@ class IncidentService:
                 node=name,
             )
             return owner, tasks[0] if tasks else None, None, None
+        if failure_in_progress(ir, state, cast(str, owner)):
+            # Ending the transaction cancels that step's task, and then nothing could close its interim incident.
+            raise CatalogError(
+                409,
+                "WV-RUNTIME-STATE",
+                "An attempt of this transaction failed and that failure is still being handled; try again in a moment",
+            )
         record = state.transactions[cast(str, owner)]
         try:
             ending, _, output = check_reconciliation(record, request.output)

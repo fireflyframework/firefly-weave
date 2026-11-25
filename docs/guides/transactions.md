@@ -107,6 +107,10 @@ but a person's decision moves it. Check the other systems first, then choose:
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
 
+Mark as reconciled is refused (HTTP 409 `WV-RUNTIME-STATE`) while an attempt of
+one of the transaction's steps has just failed and Weave still handles that
+failure: wait a moment and send it again.
+
 A late result of work a person already ended changes nothing; it is counted
 (`weave.transaction_phases`, operation `transaction.late_result`), because it may
 mean the record was wrong. Retry needs `incident.resolve`. The others also need `transaction.reconcile`,

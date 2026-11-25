@@ -16,6 +16,7 @@
 
 """Work a run no longer waits for, on real PostgreSQL: a step or confirm that a person's decision on its transaction
 stopped, before or after a worker claimed it, is recorded and never reported, and the run goes on as the person decided.
+A failed attempt is handled first: until then, the decision is refused and changes nothing.
 """
 
 from typing import Any
@@ -94,6 +95,12 @@ async def incident(platform, run_id, code: str) -> dict[str, Any]:
     return found
 
 
+async def again(platform, found) -> dict[str, Any]:
+    """The same incident, read again."""
+    [now] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=found["id"])
+    return now
+
+
 async def resolve(platform, found, kind: str, actor, **fields: Any) -> None:
     from firefly_weave.contracts.operations import IncidentResolution
 
@@ -117,6 +124,16 @@ async def completed(platform, found, actor, **outcomes: str) -> None:
     steps = [{"instance_key": key, "outcome": outcome} for key, outcome in outcomes.items()]
     record = {"as": "completed", "participants": steps, "blockOutput": "moved"}
     await resolve(platform, found, "accept_reconciled_result", actor, output=record, evidence_reference="ticket-17")
+
+
+async def refused_for_now(platform, run_id, found, actor, **outcomes: str) -> None:
+    """The record is refused while a failed attempt of its transaction is handled, and nothing changes."""
+    before = await platform.state(run_id)
+    with pytest.raises(CatalogError) as refused:
+        await completed(platform, found, actor, **outcomes)
+    assert (refused.value.status, refused.value.code) == (409, "WV-RUNTIME-STATE")
+    assert "failure is still being handled" in refused.value.message
+    assert await platform.state(run_id) == before
 
 
 async def task(platform, run_id, key: str) -> tuple[str, str]:
@@ -161,6 +178,52 @@ async def recovery_reaches_another_run(platform) -> None:
     await platform.expire(await platform.lease("hold"))
     await platform.scan()
     assert await attempts(platform, other.id, "hold") == ["recovered"]
+
+
+def beside_another_transaction() -> dict[str, Any]:
+    """The transaction ``move`` in one branch, and the transaction ``other`` in another."""
+    moves = transaction(hold(), hold("hold2"), add(), submit())
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    return {
+        "id": "fork",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {
+            "moves": {"steps": [moves], "output": {"literal": None}},
+            "others": {"steps": [other], "output": {"literal": None}},
+        },
+    }
+
+
+async def leave(platform, lease, status: str, *, attempt: str = "active") -> None:
+    """A task as an earlier version left it, with its attempt ``active`` (and silent) or ``failed``."""
+    await platform.execute("UPDATE task_intents SET status=:status WHERE id=:id", status=status, id=lease.proof.task_id)
+    await platform.execute(
+        "UPDATE task_facts SET status=:status WHERE task_id=:id", status=status, id=lease.proof.task_id
+    )
+    await platform.execute(
+        "UPDATE task_leases SET status=:status WHERE task_id=:id", status=attempt, id=lease.proof.task_id
+    )
+    await platform.expire(lease)
+
+
+async def patient(platform, lease) -> None:
+    """The worker's lease and its task's time limit outlast the rest of the test."""
+    await platform.execute(
+        "UPDATE task_leases SET expires_at=clock_timestamp()+interval '10 minutes',"
+        "deadline=clock_timestamp()+interval '10 minutes' WHERE task_id=:id",
+        id=lease.proof.task_id,
+    )
+
+
+async def left_running(platform, reconciler):
+    """A reconciled run whose other confirm an earlier version left with its worker, now silent."""
+    run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
+    await busy(platform, run.id, "hold2#confirm", hours=0)
+    confirm = await platform.lease("hold2#confirm")
+    await completed(platform, stuck, reconciler, hold="confirmed")
+    await leave(platform, confirm, "leased")
+    return run, confirm
 
 
 async def test_an_unclaimed_confirm_of_a_reconciled_transaction_is_never_reported_and_the_run_goes_on(
@@ -211,18 +274,7 @@ async def test_a_stopped_confirm_still_marked_to_be_reported_is_dropped(platform
 async def test_a_force_end_drops_its_own_unclaimed_confirm_and_still_reports_the_step_another_transaction_undoes(
     platform, reconciler
 ):
-    moves = transaction(hold(), hold("hold2"), add(), submit())
-    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
-    fork = {
-        "id": "fork",
-        "kind": "parallel",
-        "concurrency": 2,
-        "branches": {
-            "moves": {"steps": [moves], "output": {"literal": None}},
-            "others": {"steps": [other], "output": {"literal": None}},
-        },
-    }
-    run = await platform.start(await platform.publish(workflow("move", [fork])))
+    run = await platform.start(await platform.publish(workflow("move", [beside_another_transaction()])))
     await platform.complete(await platform.lease("hold3"))
     await busy(platform, run.id, "add3")
     for key in ("hold", "hold2", "add", "submit"):
@@ -300,21 +352,97 @@ async def test_a_step_in_flight_at_a_settle_timeout_loses_its_lease_when_a_perso
     await goes_on(platform, run.id, "pause")
 
 
-@pytest.mark.parametrize("left", ["failed", "claimed by an earlier version"])
-async def test_recovery_retires_the_attempt_of_a_step_its_run_no_longer_waits_for(platform, reconciler, left):
+async def test_a_reconcile_waits_for_a_failed_confirm_to_be_handled_and_then_the_run_goes_on(platform, reconciler):
+    run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
+    await busy(platform, run.id, "hold2#confirm", hours=0)
+    await platform.fail(await platform.lease("hold2#confirm"), "UNAVAILABLE")
+    await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed")
+    assert await task(platform, run.id, "hold2#confirm") == ("failed", "failed")
+    await platform.scan()
+    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed")
+    await goes_on(platform, run.id, "pause")
+    assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")
+    assert await reported(platform, run.id, "hold2#confirm") == ["task_failed", "recovery_scheduled"]
+
+
+async def test_a_reconcile_waits_for_the_failure_of_a_step_in_flight_at_a_settle_timeout_to_be_handled(
+    platform, reconciler
+):
+    steps = [transaction(hold(holdSeconds=600), add()), PAUSE]
+    run = await platform.start(await platform.publish(workflow("move", steps)))
+    await platform.complete(await platform.lease("hold"))
+    flying = await platform.lease("add")
+    await due(platform, run.id, "hold")
+    await due(platform, run.id, "settle")
+    stuck = await incident(platform, run.id, "WV-TXN-SETTLE-TIMEOUT")
+    await platform.fail(flying, "UNAVAILABLE")
+    await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed", add="done")
+    await platform.scan()
+    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed", add="done")
+    await goes_on(platform, run.id, "pause")
+
+
+async def test_a_reconcile_waits_only_for_the_failures_of_its_own_transaction(platform, reconciler):
+    run = await platform.start(await platform.publish(workflow("move", [beside_another_transaction()])))
+    await platform.complete(await platform.lease("hold3"))
+    other = await platform.lease("add3")
+    await patient(platform, other)
+    for key in ("hold", "hold2", "add", "submit"):
+        await platform.complete(await platform.lease(key))
+    stuck = await confirm_stuck(platform, run)
+    await busy(platform, run.id, "hold2#confirm", hours=0)
+    await platform.fail(await platform.lease("hold2#confirm"), "UNAVAILABLE")
+    await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed")
+    await platform.scan()
+    await platform.fail(other, "UNAVAILABLE")
+    await completed(platform, await again(platform, stuck), reconciler, hold="confirmed")
+    await platform.scan()
+    # The other transaction's failure is recovery's as usual: that step failed for good, so it is undone.
+    await goes_on(platform, run.id, "add3#undo")
+    assert (await platform.record(run.id))["state"] == "reconciled"
+
+
+async def test_a_force_end_never_waits_for_a_failure_to_be_handled(platform, reconciler):
+    run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
+    await busy(platform, run.id, "hold2#confirm", hours=0)
+    await platform.fail(await platform.lease("hold2#confirm"), "UNAVAILABLE")
+    await refused_for_now(platform, run.id, stuck, reconciler, hold="confirmed")
+    await resolve(platform, stuck, "terminate", reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_recovery_retires_the_attempt_an_earlier_version_left_running(platform, reconciler):
+    run, confirm = await left_running(platform, reconciler)
+    await platform.scan()
+    assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
+    assert await task(platform, run.id, "hold2#confirm") == ("cancelled", "cancelled")
+    assert await reported(platform, run.id, "hold2#confirm") == []
+    await recovery_reaches_another_run(platform)
+    await goes_on(platform, run.id, "pause")
+
+
+@pytest.mark.parametrize("decision", ["retry_safe", "accept_reconciled_result"])
+async def test_a_person_still_closes_the_failure_an_earlier_version_left_behind_a_reconcile(
+    platform, reconciler, monkeypatch, decision
+):
     run, stuck = await one_confirm_stuck(platform, [transaction(hold(), hold("hold2"), add(), submit()), PAUSE])
     await busy(platform, run.id, "hold2#confirm", hours=0)
     confirm = await platform.lease("hold2#confirm")
-    if left == "failed":
-        # Its worker reported a failure, and a person decides before recovery looks at it.
-        await platform.fail(confirm, "UNAVAILABLE")
-    await completed(platform, stuck, reconciler, hold="confirmed")
-    if left != "failed":
-        # Earlier versions left the attempt running.
-        await platform.execute("UPDATE task_intents SET status='leased' WHERE id=:task", task=confirm.proof.task_id)
-        await platform.execute("UPDATE task_leases SET status='active' WHERE task_id=:task", task=confirm.proof.task_id)
-    await platform.expire(confirm)
+    await platform.fail(confirm, "UNAVAILABLE")
+    with monkeypatch.context() as earlier:
+        # Earlier versions took the decision at once and left the failed task as it was.
+        earlier.setattr("firefly_weave.operations.incidents.failure_in_progress", lambda *_: False, raising=False)
+        await completed(platform, stuck, reconciler, hold="confirmed")
+    await leave(platform, confirm, "failed", attempt="failed")
     await recovery_reaches_another_run(platform)
     assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
-    assert (await task(platform, run.id, "hold2#confirm"))[0] == "cancelled"
-    assert "step_failed" not in await reported(platform, run.id, "hold2#confirm")
+    failed = await incident(platform, run.id, "WV-TASK-FAILED")
+    record = {} if decision == "retry_safe" else {"output": {}, "evidence_reference": "ticket-17"}
+    await resolve(platform, failed, decision, reconciler, **record)
+    await goes_on(platform, run.id, "pause")
+    # Nobody does it again: the person already said how its transaction ended.
+    await platform.claim()
+    assert await attempts(platform, run.id, "hold2#confirm") == ["recovered"]
+    ended = "cancelled" if decision == "retry_safe" else "completed"
+    assert await task(platform, run.id, "hold2#confirm") == (ended, ended)

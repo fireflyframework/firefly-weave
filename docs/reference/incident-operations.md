@@ -278,7 +278,10 @@ Any decision while the stuck step's latest attempt or child run is still running
 is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
 in flight are what you decide about: Mark as reconciled and Force end settle
 them (their leases are revoked and their child runs asked to stop), they don't
-wait for them. A record that doesn't fit the
+wait for them. Mark as reconciled is also refused (HTTP 409 `WV-RUNTIME-STATE`)
+while an attempt of any step, confirm, cancel, or undo of the transaction has
+failed and recovery hasn't decided what follows; send it again after the next
+recovery scan. Force end doesn't wait. A record that doesn't fit the
 transaction answers HTTP 422 `WV-RUNTIME-OUTPUT`. The audit record adds the
 transaction's key and, for a reconciliation, how it ended.
 
