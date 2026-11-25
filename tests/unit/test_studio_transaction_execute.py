@@ -907,6 +907,35 @@ def test_a_step_that_failed_in_a_parallel_step_failed_and_the_one_it_stopped_did
     assert [entry["nodeId"] for entry in answer["trace"]][-1] == "pause"
 
 
+def test_every_step_of_a_parallel_step_that_failed_failed():
+    branches = parallel(x=[add()], y=[add("other")])
+    errors = {"node:add": {"code": "UNAVAILABLE"}, "node:other": {"code": "REJECTED"}}
+    answer = run_move(move(hold(), branches), errors=errors)
+    # The transaction names the first only; the second reported its failure while it was being undone.
+    assert answer["transactions"][0]["cause"]["code"] == "UNAVAILABLE"
+    assert failures(answer) == {"add": "UNAVAILABLE", "other": "REJECTED"}
+
+
+def test_a_transaction_undone_because_the_run_ends_didnt_fail():
+    # The second item's failure ends the run while the other two still wait, so they are undone too.
+    answer = run_move(
+        looped(hold(), add(), wait(60)),
+        input=THREE,
+        mocks={key: value for key, value in EVERY_ITEM.items() if key != "node:submit"},
+        errors={"node:add[1]": {"code": "UNAVAILABLE"}},
+    )
+    assert [record["state"] for record in answer["transactions"]] == ["compensated"] * 3
+    assert failures(answer) == {"add[1]": "UNAVAILABLE"}
+
+
+def test_a_step_of_a_called_workflow_never_takes_the_failure_of_a_step_with_its_id():
+    branches = parallel(x=[add()], y=[called_step()])
+    answer = run_calling(move(hold(), branches), wait(60, "add"), errors={"node:add": {"code": "UNAVAILABLE"}})
+    # The called run was stopped where it waited, when its transaction was undone.
+    assert failures(answer, "call") == {"add": None}
+    assert failures(answer)["add"] == "UNAVAILABLE"
+
+
 def test_an_expired_reservation_is_its_transactions_failure():
     answer = run_move(move(hold(holdSeconds=60), add(), wait(3000)))
     assert failures(answer) == {"move": "WV-TXN-HOLD-EXPIRED"}
