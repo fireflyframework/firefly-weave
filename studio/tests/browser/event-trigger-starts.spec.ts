@@ -351,6 +351,27 @@ test("a stop still owed comes first, marks the tab, and is made here", async ({
   expect(kept).not.toHaveProperty("pendingStops");
 });
 
+test("a stop still owed for a trigger of other events names the events it ends", async ({
+  page,
+}) => {
+  const { panel } = await open(page, {
+    seeds: [
+      CURRENT,
+      { ...OLD, events: ["transaction.completed"], sources: ["sync-records"] },
+    ],
+    pendingStops: [OWED],
+  });
+  const warning = panel.locator(".es-callout");
+  const stop = warning.getByRole("button", { name: "Stop it" });
+  await expect(stop).toHaveAccessibleDescription(
+    "Trigger notify-team also starts this workflow, for other events. It reacts to Completed · from sync-records. Stop it, and those events no longer start this workflow.",
+  );
+  await stop.click();
+  await expect(panel.locator(".es-callout")).toContainText(
+    "Stopped notify-team. notify-team-2 still starts this workflow.",
+  );
+});
+
 test("a stop refused or a trigger changed says so, and focus goes to the way on", async ({
   page,
 }) => {

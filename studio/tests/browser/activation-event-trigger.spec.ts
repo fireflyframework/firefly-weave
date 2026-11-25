@@ -476,6 +476,39 @@ test("triggers made outside Studio are left as they are, Stop it off", async ({
   expect(platform.writes()).toEqual(["POST /event-triggers/t-cli/disable"]);
 });
 
+test("a trigger an earlier activation left running for other events names the events a stop ends", async ({
+  page,
+}) => {
+  const { platform } = await openForActivation(page, {
+    seeds: [
+      { ...STORED, name: "notify-team-2" },
+      {
+        ...STORED,
+        id: "t-3",
+        activation: "a-older",
+        events: ["transaction.completed"],
+        sources: ["sync-records"],
+      },
+    ],
+    pendingStops: [{ triggerId: "t-3", revision: 3, activationId: "a-older" }],
+  });
+  const dialog = await activationDialog(page);
+  const owed = dialog.getByRole("listitem", {
+    name: "Trigger notify-team also starts this workflow, for other events. Stop notify-team",
+  });
+  const stop = owed.getByRole("checkbox", { name: "Stop it" });
+  await expect(stop).toBeChecked();
+  await expect(stop).toHaveAccessibleDescription(
+    "Trigger notify-team also starts this workflow, for other events. An earlier activation left it running for Completed · from sync-records. Once it's stopped, those events no longer start this workflow.",
+  );
+  platform.starts.set("t-3", [requested("s-1")]);
+  await activate(dialog);
+  await dialog.getByRole("button", { name: "Keep it for now" }).click();
+  await expect(eventRows(dialog).nth(1)).toHaveText(
+    /^\s*Kept notify-team for now\.\s*Both start this workflow, for different events, until you stop it in Starts or at the next activation\.\s*$/,
+  );
+});
+
 test("a trigger someone else moved meanwhile isn't stopped", async ({
   page,
 }) => {

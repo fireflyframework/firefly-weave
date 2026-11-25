@@ -713,26 +713,27 @@ describe("a stop Studio still owes", () => {
     [
       "reacts to other events",
       { events: ["transaction.completed"] },
-      "Trigger notify-team also starts notify-team, for other events.",
+      "Completed · from move-between-systems",
     ],
     [
       "reacts to other workflows",
       { name: "notify-team-0", sources: ["sync-references"] },
-      "notify-team-0 also starts notify-team, for other events.",
+      "Needs attention · from sync-references",
     ],
   ])(
-    "says so of a trigger that %s, and what still starts it after the stop",
-    async (_what, other, lead) => {
+    "names the events a stop ends of a trigger that %s, and what still starts it after the stop",
+    async (_what, other, ends) => {
       const old = { ...OLD, ...other };
+      const lead = `Trigger ${old.name} also starts this workflow, for other events.`;
       const f = owing([CURRENT, old]);
       f.platform.starts.set("t-1", [requested("s-1")]);
       await f.show();
       expect(callout(f)).toMatchObject({
         lead,
-        detail: `Stop ${old.name} to keep only notify-team-2.`,
+        detail: `It reacts to ${ends}. Stop it, and those events no longer start this workflow.`,
       });
       const both =
-        "both start notify-team, for different events, until you stop it.";
+        "both start this workflow, for different events, until you stop it.";
       const stopping = f.list.stop();
       expect(callout(f)).toMatchObject({ lead, busy: true });
       await stopping;
@@ -749,10 +750,22 @@ describe("a stop Studio still owes", () => {
       await f.list.stop();
       expect(callout(f)).toMatchObject({
         lead: `Stopped ${old.name}.`,
-        detail: "notify-team-2 still starts notify-team.",
+        detail: "notify-team-2 still starts this workflow.",
       });
     },
   );
+
+  it("says how many are left after the one that reacts to other events", async () => {
+    const f = owing(
+      [CURRENT, { ...OLD, events: ["transaction.completed"] }, TWO[0][2]!],
+      TWO[1],
+    );
+    await f.show();
+    expect(callout(f)).toMatchObject({
+      detail:
+        "It reacts to Completed · from move-between-systems. Stop it, and those events no longer start this workflow. Another one is left to stop after it.",
+    });
+  });
 
   it("is read again only once the stop that runs answers", async () => {
     const f = owing(...TWO);

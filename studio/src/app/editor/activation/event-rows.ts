@@ -20,19 +20,20 @@ SPDX-License-Identifier: Apache-2.0
 // means; a row that changes who reacts, or under whose authority, says so in
 // the row itself. After activating, it says what happened and what is still
 // to be chosen.
-import { EVENT_CHOICE_ORDER, EVENT_CHOICES } from "../triggers/platform-event";
 import type { EventDeclaration } from "../triggers/event-trigger";
 import type { IconName } from "../../icon-data";
 import {
   AS_YOU,
   bothStart,
   declarationOf,
+  eventNames,
   isStudioName,
-  joined,
   MAY_RESOLVE,
   overlap,
   owedStop,
+  reacts,
   second,
+  sourceNames,
   type EventResult,
   type EventRow,
   type EventStatus,
@@ -82,23 +83,6 @@ export const resultIcon = (status: EventStatus): IconName =>
       ? WARNING.icon
       : SUCCESS.icon;
 
-/** "Needs attention and Undone": every event, in the order people choose them in. */
-const events = (declaration: EventDeclaration) =>
-  joined(
-    EVENT_CHOICE_ORDER.filter((type) => declaration.events.includes(type)).map(
-      (type) => EVENT_CHOICES[type].short,
-    ),
-  );
-/** "from move-between-systems", "from any workflow in this project": every workflow, however many. */
-const sources = ({ from }: EventDeclaration) =>
-  from === null
-    ? "from any workflow in this project"
-    : from.length
-      ? `from ${joined(from)}`
-      : "from no workflow";
-/** "Needs attention · from move-between-systems". */
-const reacts = (declaration: EventDeclaration) =>
-  `${events(declaration)} · ${sources(declaration)}`;
 const same = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((item) => right.includes(item));
 
@@ -158,7 +142,9 @@ export function eventRowView(row: EventRow): EventRowView {
         ...PLAIN,
         ...WARNING,
         lead: second(row.binding.workflow_name, row.binding.name, row.shared),
-        detail: `Stop trigger ${row.binding.name}, which an earlier activation left running.${row.shared ? " Both react until one stops." : ""}`,
+        detail: row.shared
+          ? `Stop trigger ${row.binding.name}, which an earlier activation left running. Both react until one stops.`
+          : `An earlier activation left it running for ${reacts(declarationOf(row.binding))}. Once it's stopped, those events no longer start this workflow.`,
         stop: row.stop,
       };
     case "blocked":
@@ -214,7 +200,7 @@ function resultDetail(row: EventRow, result: EventResult): string | null {
   switch (result.status) {
     case "replaced":
       return row.kind === "replace"
-        ? `${result.made} reacts to ${events(row.after)} ${sources(row.after)}. ${row.binding.name} is stopped.`
+        ? `${result.made} reacts to ${eventNames(row.after)} ${sourceNames(row.after)}. ${row.binding.name} is stopped.`
         : null;
     case "stopped":
       return row.kind === "blocked"

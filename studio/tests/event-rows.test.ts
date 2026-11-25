@@ -222,21 +222,25 @@ describe("a row before activating", () => {
     [
       "other events",
       { name: "notify-team-2", events: ["transaction.completed"] },
-      "notify-team-2 also starts notify-team, for other events.",
+      "Completed · from move-between-systems",
     ],
     [
       "events of other workflows",
       { name: "notify-team-2", sources: ["sync-references"] },
-      "notify-team-2 also starts notify-team, for other events.",
+      "Needs attention · from sync-references",
     ],
     [
       "other events under the workflow's name",
-      { name: "notify-team", events: ["transaction.completed"] },
-      "Trigger notify-team also starts notify-team, for other events.",
+      {
+        name: "notify-team",
+        events: ["transaction.completed", "transaction.compensated"],
+        sources: undefined,
+      },
+      "Undone and Completed · from any workflow in this project",
     ],
   ])(
-    "says a trigger whose stop is owed starts it for %s",
-    (_what, other, lead) => {
+    "names the events a stop ends when a trigger whose stop is owed starts it for %s",
+    (_what, other, ends) => {
       const platform = seeded(
         { ...STORED, name: "notify-team-3" },
         { ...STORED, id: "t-2", activation: "a-older", ...other },
@@ -245,10 +249,12 @@ describe("a row before activating", () => {
         planned(platform, { storedId: "t-1", pendingStops: [owed("t-2")] }),
         "duplicate",
       );
+      const lead = `Trigger ${other.name} also starts this workflow, for other events.`;
       expect(duplicate.text).toBe(`${lead} Stop ${other.name}`);
       expect(eventRowView(duplicate)).toMatchObject({
         lead,
-        detail: `Stop trigger ${other.name}, which an earlier activation left running.`,
+        detail: `An earlier activation left it running for ${ends}. Once it's stopped, those events no longer start this workflow.`,
+        tone: "warning",
         stop: true,
       });
     },
@@ -608,7 +614,7 @@ describe("a row after activating", () => {
       "replace",
     );
     const until =
-      "both start notify-team, for different events, until you stop it in Starts or at the next activation.";
+      "both start this workflow, for different events, until you stop it in Starts or at the next activation.";
     const asked = await applyEventRow(platform, replace, "a-new");
     expect(eventResultView(replace, asked).detail).toBe(
       `Keep it for now and ${until}`,

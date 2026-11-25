@@ -259,12 +259,12 @@ export const overlap = (left: EventDeclaration, right: EventDeclaration) =>
 export const second = (workflow: string, name: string, shared: boolean) =>
   shared
     ? `Two triggers start ${workflow} for the same events.`
-    : `${name === workflow ? "Trigger " : ""}${name} also starts ${workflow}, for other events.`;
+    : `Trigger ${name} also starts this workflow, for other events.`;
 /** "both start notify-team for every new event", while two triggers react. */
 export const bothStart = (workflow: string, shared: boolean) =>
   shared
     ? `both start ${workflow} for every new event`
-    : `both start ${workflow}, for different events,`;
+    : "both start this workflow, for different events,";
 /** The stop Studio owes for a trigger as it was read. */
 export const owedStop = (view: EventTriggerView): PendingStop => ({
   triggerId: view.id,
@@ -316,24 +316,34 @@ export function joined(words: readonly string[]) {
     ? words.join("")
     : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
-/** "Needs attention and Undone from any workflow in this project". */
-function reaction(declaration: EventDeclaration) {
-  const events = joined(
-    EVENT_CHOICE_ORDER.filter((type) => declaration.events.includes(type)).map(
+/** "Needs attention and Undone": every event, in the order people choose them in. */
+export const eventNames = ({ events }: EventDeclaration) =>
+  joined(
+    EVENT_CHOICE_ORDER.filter((type) => events.includes(type)).map(
       (type) => EVENT_CHOICES[type].short,
     ),
   );
+/** "from move-between-systems", "from any workflow in this project": every workflow, however many. */
+export const sourceNames = ({ from }: EventDeclaration) =>
+  from === null
+    ? "from any workflow in this project"
+    : from.length
+      ? `from ${joined(from)}`
+      : "from no workflow";
+/** "Needs attention · from move-between-systems". */
+export const reacts = (declaration: EventDeclaration) =>
+  `${eventNames(declaration)} · ${sourceNames(declaration)}`;
+/** "Needs attention and Undone from any workflow in this project", the workflows past the first few counted. */
+function reaction(declaration: EventDeclaration) {
   const from = declaration.from;
-  if (from === null) return `${events} from any workflow in this project`;
-  if (from.length === 0) return `${events} from no workflow`;
   const shown =
-    from.length <= NAMED_SOURCES
+    from === null || from.length <= NAMED_SOURCES
       ? from
       : [
           ...from.slice(0, NAMED_SOURCES - 1),
           `${from.length - NAMED_SOURCES + 1} more`,
         ];
-  return `${events} from ${joined(shown)}`;
+  return `${eventNames(declaration)} ${sourceNames({ ...declaration, from: shown })}`;
 }
 
 /**

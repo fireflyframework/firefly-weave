@@ -31,6 +31,7 @@ import {
   bothStart,
   declarationOf,
   overlap,
+  reacts,
   second,
   type EventTriggerView,
   type PendingStop,
@@ -129,14 +130,17 @@ export function owedCallout(owed: Owed): OwedCallout {
   const shared = overlap(declarationOf(old), declarationOf(keeps));
   const first = second(workflow, old.name, shared);
   const both = `${bothStart(workflow, shared)} until you stop it.`;
+  const left = `${others === 1 ? "Another one is" : `${others} more are`} left to stop after it.`;
   switch (owed.kind) {
     case "owed":
       return says(
         "warning",
         first,
-        others === 0
-          ? `Stop ${old.name} to keep only ${keeps.name}.`
-          : `Stop ${old.name}. ${others === 1 ? "Another one is" : `${others} more are`} left to stop after it.`,
+        shared
+          ? others === 0
+            ? `Stop ${old.name} to keep only ${keeps.name}.`
+            : `Stop ${old.name}. ${left}`
+          : `It reacts to ${reacts(declarationOf(old))}. Stop it, and those events no longer start this workflow.${others === 0 ? "" : ` ${left}`}`,
         "stop",
       );
     case "stopping":
@@ -181,7 +185,7 @@ export function owedCallout(owed: Owed): OwedCallout {
         `Stopped ${old.name}.`,
         shared
           ? `Only ${keeps.name} starts ${workflow} now.`
-          : `${keeps.name} still starts ${workflow}.`,
+          : `${keeps.name} still starts this workflow.`,
       );
   }
 }
