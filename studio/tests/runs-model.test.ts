@@ -501,22 +501,18 @@ describe("runs and their transactions", () => {
   });
 
   it.each([
-    ["", "No run started in the last 24 hours has a transaction in doubt."],
-    [
-      "&range=400d",
-      "No run started in the last 400 days has a transaction in doubt.",
-    ],
-    [
-      "&started_after=2026-11-01T00%3A00%3A00Z",
-      "No run started in this range has a transaction in doubt.",
-    ],
+    ["", "the last 24 hours"],
+    ["&range=400d", "the last 400 days"],
+    ["&started_after=2026-11-01T00%3A00%3A00Z", "this range"],
   ])(
-    "says in which range no run needs attention, whatever the range%s",
-    (range, text) => {
+    "says in which range no transaction is in doubt, and where a held run is, whatever the range%s",
+    (range, read) => {
       const filters = runsFiltersFromQuery(
         `?transaction_state=in_doubt${range}`,
       );
-      expect(nothingNeedsAttention(filters)).toBe(text);
+      expect(nothingNeedsAttention(filters)).toBe(
+        `No run started in ${read} has a transaction in doubt. A run whose transactions are held is in Incidents.`,
+      );
     },
   );
 

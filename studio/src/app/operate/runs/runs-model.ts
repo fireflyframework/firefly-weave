@@ -388,7 +388,7 @@ export function nothingNeedsAttention(filters: RunsFilters): string | null {
     filters.timeWindow.kind === "absolute"
       ? "this range"
       : `the ${rangeLabel(filters.timeWindow).toLowerCase()}`;
-  return `No run started in ${range} has a transaction in doubt.`;
+  return `No run started in ${range} has a transaction in doubt. A run whose transactions are held is in Incidents.`;
 }
 
 /** The run's status pill. A run that handled errors and succeeded says so. */

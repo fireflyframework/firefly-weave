@@ -628,7 +628,7 @@ interface BulkResult {
               @if (nothingNeedsAttention(); as why) {
                 <weave-operate-state
                   kind="empty"
-                  heading="No runs need attention."
+                  heading="No transaction in doubt in this range."
                   [text]="why"
                 >
                   <button type="button" (click)="clearFilters()">

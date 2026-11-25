@@ -2333,18 +2333,19 @@ test.describe("transactions", () => {
     await expect(rows(page)).toHaveCount(6);
     await needsAttention(page).check();
     const empty = page.getByRole("heading", {
-      name: "No runs need attention.",
+      name: "No transaction in doubt in this range.",
+      exact: true,
     });
     await expect(empty).toBeVisible();
-    // It names the range it read, not the whole environment.
-    const why = page.locator(".runs-list").getByText(/transaction in doubt\.$/);
+    // It names the range it read, not the whole environment, and where a held run is.
+    const why = page.locator(".runs-list").getByText(/^No run started in/);
     await expect(why).toHaveText(
-      "No run started in the last 24 hours has a transaction in doubt.",
+      "No run started in the last 24 hours has a transaction in doubt. A run whose transactions are held is in Incidents.",
     );
     await page.getByLabel("Time range").selectOption({ label: "Last 7 days" });
     await expect(empty).toBeVisible();
     await expect(why).toHaveText(
-      "No run started in the last 7 days has a transaction in doubt.",
+      "No run started in the last 7 days has a transaction in doubt. A run whose transactions are held is in Incidents.",
     );
     await expect(
       page
