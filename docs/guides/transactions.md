@@ -292,8 +292,8 @@ the decisions of steps 4 and 5. Each needs its own permission:
 | See the transactions in doubt in **Incidents** | `incident.read` | `operator` |
 | Retry, or wait again | `incident.resolve` | `operator` |
 | Make any other decision on a transaction in doubt | `incident.resolve` and `transaction.reconcile` | `operator` with `transaction_reconciler` |
-| **Cancel run** | `run.cancel` | `operator` |
-| **Cancel without undoing** | `run.cancel` and `transaction.reconcile` | `operator` with `transaction_reconciler` |
+| **Cancel run** | `run.cancel`, and `run.read` for the run's detail | `operator` with `viewer` |
+| **Cancel without undoing** | `run.cancel` and `transaction.reconcile`, and `run.read` for the run's detail | `operator` with `viewer` and `transaction_reconciler` |
 
 An incident's decision that you may not make stays in view, disabled, with the
 role it needs.
@@ -337,6 +337,13 @@ is in doubt, both incidents are one **case** that names the one to resolve
 first: the called run's. Its drawer names the waiting run under **Held by**, and
 the waiting run's names the called one under **Waits on**.
 
+The notice of a run that stopped for a transaction leads there too. **Open
+incident** opens the incident of the transaction in doubt, and **Go to the
+transaction** shows its record in the run; of several in doubt, both lead to the
+first. When Studio can't tell which incident that is (the run is held, its
+transactions couldn't be read, or the one in doubt isn't listed yet), **Show in
+Incidents** lists the active incidents with its code, those of test runs too.
+
 Open an incident to read its record and choose among the decisions that fit it:
 
 | Decision | Offered when | Asks for |
@@ -349,10 +356,11 @@ Open an incident to read its record and choose among the decisions that fit it:
 
 **Mark as reconciled** lists every step whose end Weave doesn't know for the
 ending you choose, with its operation key. Check each one in its own system
-before you tick it. With **Undone**, you confirm that each step was reversed or
-released, and that a step still running is stopped; with **Finished**, that each
-one was confirmed or went through. Weave then stops whatever is left and takes
-your word, so a step you didn't check stays as that system has it.
+before you tick it. With **Undone**, you confirm that each step was reversed, was
+released, or has nothing left to undo, and that a step still running is stopped;
+with **Finished**, that each one was confirmed or went through. Weave then stops
+whatever is left and takes your word, so a step you didn't check stays as that
+system has it.
 
 **Force end** first lists what **stays done in other systems**.
 
@@ -366,7 +374,9 @@ safe.
 **Cancel run** on a run with a transaction that isn't finished undoes it before
 the run ends. **Cancel without undoing** lists what stays done in other systems
 and asks for a reason and the run's short ID. While a transaction is in doubt,
-neither is sent: **Open incident** takes you to the decision it waits for.
+neither is sent: **Open incident** takes you to the decision it waits for. A run
+held because it grew too large to undo its transactions can't be canceled either
+way: force end it from its incident.
 
 ### Know when a transaction is in doubt
 
