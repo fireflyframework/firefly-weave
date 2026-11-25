@@ -2573,6 +2573,84 @@ test.describe("a refresh keeps the keyboard focus on its incident", () => {
     await expect(page.locator("body")).toBeFocused();
   });
 
+  test.describe("beside the drawer at 1440x900, as it closes", () => {
+    const drawer = (page: Page) => page.locator("weave-incident-drawer");
+    const closing = (page: Page) =>
+      drawer(page).getByRole("button", { name: "Close detail" });
+    /** Two incidents open in turn, the last from its row, with the keyboard in its drawer. */
+    async function inDrawer(page: Page) {
+      const platform = await incidentPlatform(page, { items: [...others] });
+      await page.goto("/operate/incidents");
+      await row(page, "WV-TASK-AMBIGUOUS at send").click();
+      await expect(closing(page)).toBeVisible();
+      await row(page, "WV-TASK-FAILED at fetch").focus();
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toContainText("WV-TASK-FAILED");
+      await closing(page).focus();
+      return platform;
+    }
+
+    test("returns to the row that opened it", async ({ page }) => {
+      await inDrawer(page);
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("returns to the next row once its incident left the list", async ({
+      page,
+    }) => {
+      const platform = await inDrawer(page);
+      await decidedElsewhere(page, platform, others[1]);
+      await expect(closing(page)).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-LOST at send")).toBeFocused();
+    });
+
+    test("returns to its row when the address closes it", async ({ page }) => {
+      await inDrawer(page);
+      await page.evaluate(() => {
+        history.pushState(null, "", "/operate/incidents");
+        dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("returns to its row after a press that doesn't move the focus, as in a desktop window", async ({
+      page,
+    }) => {
+      await inDrawer(page);
+      await closing(page).evaluate((button: HTMLElement) => {
+        button.blur();
+        button.click();
+      });
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("leaves the focus where the person has it", async ({ page }) => {
+      await inDrawer(page);
+      const workflow = page.getByLabel("Workflow", { exact: true });
+      await workflow.focus();
+      const close = () =>
+        page.evaluate(() => {
+          history.pushState(null, "", "/operate/incidents");
+          dispatchEvent(new PopStateEvent("popstate"));
+        });
+      await close();
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(workflow).toBeFocused();
+      // Nor does a focus nobody has go to a row as the address closes it.
+      await row(page, "WV-TASK-FAILED at fetch").click();
+      await row(page, "WV-TASK-FAILED at fetch").blur();
+      await close();
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(page.locator("body")).toBeFocused();
+    });
+  });
+
   test.describe("behind the drawer at 800x900", () => {
     test.use({ viewport: { width: 800, height: 900 } });
 

@@ -1222,11 +1222,30 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       );
   }
   close(sync = true) {
+    this.leaveDrawer(sync);
     this.forgetPartner();
     this.selected = null;
     this.opening = "";
     this.leaveDialog();
     if (sync) this.syncAddress();
+  }
+  /**
+   * The drawer is closing, and the focus it holds goes to the list, beside it
+   * as under it. A press of its Close may leave the focus nowhere.
+   */
+  private leaveDrawer(pressed: boolean) {
+    const active = document.activeElement ?? document.body;
+    const held =
+      !!active.closest(".record-detail") ||
+      (pressed && active === document.body);
+    if (held)
+      afterNextRender(
+        () => {
+          if (document.activeElement === document.body)
+            this.drawerOpener()?.focus({ preventScroll: true });
+        },
+        { injector: this.injector },
+      );
   }
   /**
    * Opens the incident the address names from incidents.read, whether or not

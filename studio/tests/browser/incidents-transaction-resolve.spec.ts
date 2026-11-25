@@ -1782,30 +1782,38 @@ test("a press that doesn't move the focus, as in a desktop window, still returns
   await expect(offer(page, "Retry the undo")).toBeFocused();
 });
 
-test("a decision is made from the drawer's sheet, over the list", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 800, height: 900 });
-  const platform = await incidentPlatform(page, {
-    capabilities: reconciler,
-    items: [called, unknown, ...others],
+for (const [where, width] of [
+  ["the drawer's sheet, over the list", 800],
+  ["the drawer, beside the list", 1440],
+] as const)
+  test(`a decision is made from ${where}, which closes to the next row`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const platform = await incidentPlatform(page, {
+      capabilities: reconciler,
+      items: [called, unknown, ...others],
+    });
+    await decisions(page, platform);
+    await page.goto("/operate/incidents");
+    const row = (name: string) =>
+      page.getByRole("button", { name: `Open incident ${name}`, exact: true });
+    await row("WV-TXN-UNDO-STUCK at add").focus();
+    await page.keyboard.press("Enter");
+    await undone(page);
+    await confirm(page, "Mark as reconciled").click();
+    await expect(
+      drawer(page).locator("dt:text-is('Decision') + dd"),
+    ).toHaveText("Mark as reconciled as undone");
+    await expect(title(page)).toBeFocused();
+    // Its row left the list: the drawer returns to the next one.
+    if (width === 800) await page.keyboard.press("Escape");
+    else {
+      await drawer(page).getByRole("button", { name: "Close detail" }).focus();
+      await page.keyboard.press("Enter");
+    }
+    await expect(row("WV-TXN-PIVOT-UNKNOWN at submit")).toBeFocused();
   });
-  await decisions(page, platform);
-  await page.goto("/operate/incidents");
-  const row = (name: string) =>
-    page.getByRole("button", { name: `Open incident ${name}`, exact: true });
-  await row("WV-TXN-UNDO-STUCK at add").focus();
-  await page.keyboard.press("Enter");
-  await undone(page);
-  await confirm(page, "Mark as reconciled").click();
-  await expect(drawer(page).locator("dt:text-is('Decision') + dd")).toHaveText(
-    "Mark as reconciled as undone",
-  );
-  await expect(title(page)).toBeFocused();
-  // Its row left the list: the sheet returns to the next one.
-  await page.keyboard.press("Escape");
-  await expect(row("WV-TXN-PIVOT-UNKNOWN at submit")).toBeFocused();
-});
 
 for (const size of [
   { width: 1440, height: 900, touch: false },
