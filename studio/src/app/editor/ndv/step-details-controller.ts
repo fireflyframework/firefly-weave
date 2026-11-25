@@ -30,6 +30,7 @@ import {
   getAt,
   isJsonObject,
   parsePointer,
+  type JsonObject,
 } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
@@ -74,6 +75,13 @@ import {
   triggerProblems,
 } from "../triggers/trigger-forms";
 import { eventTileFacts, type CheckedInput } from "../triggers/event-trigger";
+import {
+  currentPlatformEvent,
+  eventFieldView,
+  isPlatformEventInput,
+  namedSchemas,
+  PLATFORM_EVENT_NAME,
+} from "../triggers/platform-event";
 import { isTriggerChoice, triggerChoiceOf } from "../triggers/trigger-target";
 import {
   CANVAS_MAX_BYTES,
@@ -460,10 +468,19 @@ export class StepDetailsController {
     const service = this.testData;
     service.version();
     if (this.stale()) return undefined;
-    return safeSample(
-      this.host.model.definition.spec["inputSchema"],
-      service.data().input?.value,
-    );
+    return this.safeInput(service.data().input?.value);
+  }
+  /** Whether the test event was built from a schema or pasted; null without one. */
+  testEventSource(): "schema" | "manual" | null {
+    if (this.testEvent() === undefined) return null;
+    return this.testData.data().input?.source === "schema"
+      ? "schema"
+      : "manual";
+  }
+  /** A test input without its secret fields; the platform event has none. */
+  private safeInput(value: Json | undefined): Json | undefined {
+    const schema = this.host.model.definition.spec["inputSchema"];
+    return isPlatformEventInput(schema) ? value : safeSample(schema, value);
   }
   /** Deferred pane work belongs to the workflow and connection that created it. */
   testEventOwner(): () => boolean {
@@ -505,10 +522,7 @@ export class StepDetailsController {
     const service = this.testData;
     const now = new Date().toISOString();
     // A secret field never reaches the check, nor anything it keeps.
-    const safe = safeSample(
-      this.host.model.definition.spec["inputSchema"],
-      value,
-    );
+    const safe = this.safeInput(value);
     const data = service.data();
     const outcome =
       safe === undefined
@@ -2417,8 +2431,22 @@ export class StepDetailsController {
     model.canvas = next;
   }
 
+  /**
+   * The platform event's fields while the workflow's input is the event, as
+   * the Studio host serves them; null for another input, or until they're read.
+   */
+  eventView(): JsonObject | null {
+    const { definition } = this.host.model;
+    if (!isPlatformEventInput(definition.spec["inputSchema"])) return null;
+    const view = currentPlatformEvent(this.host.api);
+    return view?.state === "ready" ? eventFieldView(view.schema) : null;
+  }
   scopeOptions(): ScopeOptions {
     return {
+      ...(isPlatformEventInput(this.host.model.definition.spec["inputSchema"])
+        ? { inputLabel: PLATFORM_EVENT_NAME }
+        : {}),
+      namedSchema: namedSchemas(this.eventView()),
       actionOutput: (uses) =>
         (
           (this.actionContract(uses) as Record<string, unknown> | null)?.[

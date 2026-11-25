@@ -76,9 +76,12 @@ import {
   writeView,
   defaultOutputView,
   schemaRows,
+  sourceRows,
   withSamples,
   type DataView,
 } from "./views";
+import { isPlatformEventInput } from "../../triggers/platform-event";
+import { referenceScope, WORKFLOW } from "../../../forms/core/scope";
 import type { FormSession } from "../params/form-session";
 import { usageLine } from "../kinds/ai-task-model";
 import {
@@ -338,6 +341,10 @@ export function simulateOpening(
           </button>
         } @else if (ran) {
           <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
+        } @else if (draftEvent()) {
+          @if (event() !== undefined) {
+            <span class="pill" data-tone="info">Test event</span>
+          }
         } @else if (event() !== undefined && value() === undefined) {
           <span class="pill" data-tone="info">Sample</span>
         }
@@ -354,7 +361,12 @@ export function simulateOpening(
                 ? tableCountOf()
                 : event() !== undefined && view() !== "schema"
                   ? sampleCount(event()) + skippedText()
-                  : countLabel(rows.length, query() ? shown.length : undefined)
+                  : draftEvent()
+                    ? eventCount()
+                    : countLabel(
+                        rows.length,
+                        query() ? shown.length : undefined
+                      )
         }}</span>
       </div>
       @let actions = moreActions();
@@ -448,7 +460,14 @@ export function simulateOpening(
     @if (around.length) {
       <weave-iteration-picker [loops]="around" (picked)="pick($event)" />
     }
-    <div class="sd-pane-body">
+    <!-- A platform event's fields run past the pane and none takes focus: the
+         keyboard scrolls the pane itself. -->
+    <div
+      class="sd-pane-body"
+      [attr.role]="draftEvent() ? 'group' : null"
+      [attr.aria-label]="draftEvent() ? eventLabel : null"
+      [attr.tabindex]="draftEvent() ? 0 : null"
+    >
       <div class="pane-content" [class.is-editing]="editing()">
         @if (editing()) {
           @defer (on immediate) {
@@ -752,6 +771,17 @@ null</pre
             </p>
           } @else if (returnedNull()) {
             <p class="pane-empty-text">This step returned no data (null).</p>
+          } @else if (draftEvent() && event() === undefined) {
+            <div class="pane-empty">
+              <span class="pane-empty-icon" aria-hidden="true"
+                ><weave-icon name="signal" [size]="20"
+              /></span>
+              <h4>No test event yet</h4>
+              <p>
+                Generate a sample in Test event to see the fields this trigger
+                passes on.
+              </p>
+            </div>
           } @else if (event() !== undefined && view() !== "schema") {
             @if (view() === "table") {
               <!-- A loop's results: the item each came from first. -->
@@ -1046,6 +1076,26 @@ export class OutputPane {
   /** The input form or a trigger choice: its output is the test event. */
   isTrigger(): boolean {
     return isTriggerTarget(this.session().target);
+  }
+  /** The platform event trigger of a workflow whose input is the event. */
+  eventTrigger(): boolean {
+    const { controller, target, host } = this.session();
+    return (
+      controller.triggerChoice(target)?.kind === "event" &&
+      isPlatformEventInput(host.model.definition.spec["inputSchema"])
+    );
+  }
+  readonly eventLabel = "The test event's fields";
+  /** Its test event, while the draft shows: a run shows its own input. */
+  draftEvent(): boolean {
+    return this.eventTrigger() && !this.session().controller.viewingRuns();
+  }
+  /** "Sample · 5 fields" or "Pasted · 5 fields"; "" without a test event. */
+  eventCount(): string {
+    const source = this.session().controller.testEventSource();
+    const value = this.event();
+    if (!source || !value || typeof value !== "object") return "";
+    return `${source === "manual" ? "Pasted" : "Sample"} · ${countLabel(Object.keys(value).length)}`;
   }
   /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
   /**
@@ -1774,6 +1824,20 @@ export class OutputPane {
   rows() {
     const session = this.session();
     const target = session.target;
+    if (this.eventTrigger()) {
+      // As a later step reads them, with the test event's values.
+      const { entries } = referenceScope(
+        session.host.model.definition,
+        WORKFLOW,
+        "/spec/output",
+        session.controller.scopeOptions(),
+      );
+      const fields = sourceRows(entries, "input").map(({ ref, ...row }) => ({
+        ...row,
+        key: (ref ?? "").slice("/input".length),
+      }));
+      return withSamples(fields, this.event(), "");
+    }
     if (isTriggerTarget(target))
       return schemaRows(session.host.model.definition.spec["inputSchema"]);
     if (target === "$end")

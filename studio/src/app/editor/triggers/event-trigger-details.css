@@ -274,7 +274,7 @@ button.et-remove:hover {
 }
 .et-field input.et-input {
   flex: 1;
-  width: 14em;
+  width: 9em;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -302,7 +302,9 @@ button.et-remove:hover {
   overflow: auto;
   color: var(--text);
 }
+/* The sheet leaves the field it belongs to in view, above it. */
 .et-list[data-side="sheet"] {
+  max-height: 45dvh !important;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .et-group,

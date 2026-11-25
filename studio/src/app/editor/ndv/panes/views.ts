@@ -103,6 +103,8 @@ export interface TreeRow {
   schema?: Schema;
   /** The field's value in the test data, on one line (Schema view with data). */
   sample?: string;
+  /** Its group may be without it; said of an input with a name of its own (the platform event). */
+  optional?: boolean;
 }
 
 const isObject = (value: unknown): value is Schema =>
@@ -172,6 +174,8 @@ export interface Source {
   icon: string;
 }
 
+/** The workflow input without a name of its own. */
+const WORKFLOW_INPUT = "Workflow input";
 export function inputSources(scope: {
   steps: { id: string; kind: string }[];
   entries?: readonly {
@@ -179,8 +183,12 @@ export function inputSources(scope: {
     stepId?: string;
     path: unknown[];
     optional?: boolean;
+    label?: string;
   }[];
 }): Source[] {
+  const input = (scope.entries ?? []).find(
+    (entry) => entry.source === "input" && !entry.path.length,
+  );
   // Inside a step's error path the step has failed: its error comes first.
   const errors = (scope.entries ?? [])
     .filter(
@@ -202,7 +210,15 @@ export function inputSources(scope: {
   return [
     ...errors,
     ...steps,
-    { id: "input", label: "Workflow input", detail: "", icon: "source" },
+    {
+      id: "input",
+      label: input?.label ?? WORKFLOW_INPUT,
+      detail: "",
+      icon:
+        (input?.label ?? WORKFLOW_INPUT) === WORKFLOW_INPUT
+          ? "source"
+          : "signal",
+    },
   ];
 }
 /**
@@ -291,11 +307,25 @@ export function rootOf(source: string): string {
   return `/steps/${escaped(source.slice(5))}/output`;
 }
 
+/** Whether a field may be missing from the group that holds it. */
+function onlySome(entry: PaneEntry, entries: readonly PaneEntry[]): boolean {
+  if (!entry.optional) return false;
+  const holder = entry.ref.slice(0, entry.ref.lastIndexOf("/"));
+  const group = entries.find((other) => other.ref === holder)?.schema;
+  const required = group?.["required"];
+  return !(
+    Array.isArray(required) && required.includes(entry.path.at(-1) ?? "")
+  );
+}
+
 export function sourceRows(
   entries: readonly PaneEntry[],
   source: string,
 ): TreeRow[] {
   const root = rootOf(source);
+  // An input with a name of its own (the platform event) names its fields' root.
+  const label = entries.find((entry) => entry.ref === "/input")?.label;
+  const named = label === undefined || label === WORKFLOW_INPUT ? null : label;
   const descendants = entries.filter((entry) =>
     entry.ref.startsWith(`${root}/`),
   );
@@ -313,13 +343,16 @@ export function sourceRows(
     ref: entry.ref,
     breadcrumb: [
       entry.source === "input"
-        ? "Input"
+        ? (named ?? "Input")
         : entry.source in LOOP_WORDS
           ? loopLabel(entry)
           : entry.stepId,
       ...entry.path,
     ].join(" › "),
     schema: entry.schema,
+    ...(named && entry.source === "input" && onlySome(entry, entries)
+      ? { optional: true }
+      : {}),
   }));
 }
 

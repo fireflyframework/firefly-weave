@@ -1290,6 +1290,7 @@ div.dialog-message ul + p {
 .dialog-items small {
   margin-left: auto;
   text-align: right;
+  color: var(--muted);
 }
 .dialog-items.chips {
   display: flex;

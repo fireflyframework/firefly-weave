@@ -84,7 +84,7 @@ interface Option {
   aside: string;
 }
 
-/** The event's fields as people read them, the ones a builder looks for first. */
+/** What each of the event's fields is. */
 const EVENT_FIELDS: Readonly<Record<string, string>> = {
   type: "Which event happened",
   emitted_at: "When it happened",
@@ -92,7 +92,18 @@ const EVENT_FIELDS: Readonly<Record<string, string>> = {
   event_id: "The event's ID",
   version: "The version of these fields",
 };
-const FIELD_ORDER = Object.keys(EVENT_FIELDS);
+/** Between the field and the sheet below it. */
+const GAP = 8;
+/** The nearest ancestor that scrolls. */
+function scrollerOf(element: HTMLElement): HTMLElement | null {
+  for (let at = element.parentElement; at; at = at.parentElement)
+    if (
+      at.scrollHeight > at.clientHeight &&
+      /auto|scroll/.test(getComputedStyle(at).overflowY)
+    )
+      return at;
+  return null;
+}
 let sequence = 0;
 /**
  * The names Only these workflows held before Any workflow was chosen, by
@@ -290,6 +301,27 @@ export class EventTriggerDetails {
     this.problem.set("");
     this.active.set(-1);
     this.open.set(true);
+    this.revealField();
+  }
+  /** Below 768 px the suggestions are a sheet: what it would cover of the field scrolls up above it. */
+  private revealField() {
+    if (window.innerWidth >= 768) return;
+    const host = this.element.nativeElement;
+    // The list is placed as it is drawn: measured a frame later.
+    afterNextRender(
+      () =>
+        requestAnimationFrame(() => {
+          const field = host.querySelector<HTMLElement>(".et-field");
+          const list = host.querySelector<HTMLElement>(".et-list");
+          if (!field || !list?.matches(":popover-open")) return;
+          const covered =
+            field.getBoundingClientRect().bottom +
+            GAP -
+            list.getBoundingClientRect().top;
+          if (covered > 0) scrollerOf(field)?.scrollBy({ top: covered });
+        }),
+      { injector: this.injector },
+    );
   }
   close() {
     this.open.set(false);
@@ -392,14 +424,8 @@ export class EventTriggerDetails {
     return count ? `${count} ${count === 1 ? "field" : "fields"}` : "";
   }
   private eventFields(): FieldRow[] {
-    const view = currentPlatformEvent(this.session().host.api);
-    if (view?.state !== "ready") return [];
-    const place = (key: string) => {
-      const at = FIELD_ORDER.indexOf(key);
-      return at < 0 ? FIELD_ORDER.length : at;
-    };
-    return fieldsOf(view.schema)
-      .map((field) => {
+    return fieldsOf(this.session().controller.eventView() ?? {}).map(
+      (field) => {
         const type = typeLabel(field.schema);
         return {
           key: field.key,
@@ -407,8 +433,8 @@ export class EventTriggerDetails {
           icon: typeIcon(schemaTypes(field.schema), type),
           about: EVENT_FIELDS[field.key] ?? "",
         };
-      })
-      .sort((a, b) => place(a.key) - place(b.key));
+      },
+    );
   }
   /** What each run starts with, field by field; null while it can't be listed. */
   box(): InputBox | null {

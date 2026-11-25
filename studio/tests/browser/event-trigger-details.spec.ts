@@ -30,7 +30,7 @@ import {
   REFERENCE,
   spec,
 } from "./event-trigger-po";
-import { command } from "./support";
+import { command, expectHitTarget } from "./support";
 
 const LABELS = [
   "A transaction needs attention",
@@ -145,6 +145,20 @@ for (const size of [
       await input.fill("mo");
       const list = suggestions(page);
       await expect(list.getByRole("group")).toHaveCount(2);
+      // The text being typed stays in view: beside the list, or above the sheet.
+      await expect
+        .poll(async () => {
+          const box = (await input.boundingBox())!;
+          const panel = (await page.locator(".et-list").boundingBox())!;
+          return (
+            box.y >= 0 &&
+            box.y + box.height <= size.height &&
+            (box.y + box.height <= panel.y + 1 ||
+              box.y >= panel.y + panel.height - 1)
+          );
+        })
+        .toBe(true);
+      await expectHitTarget(input);
       await expect(
         list
           .getByRole("group", { name: "In this project" })
@@ -401,6 +415,7 @@ test.describe("the Platform event trigger's Parameters", () => {
     await expect(suggestions(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(suggestions(page)).toBeHidden();
+    await expect(field(dialog)).toBeFocused();
     await expect(field(dialog)).toHaveValue("mo");
     await expect(dialog).toBeVisible();
     await field(dialog).fill("");

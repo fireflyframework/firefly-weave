@@ -88,6 +88,10 @@ export interface ScopeOptions {
   decisionOutput?: (uses: string) => unknown;
   /** Output schema of a called workflow version by its `uses` reference. */
   workflowOutput?: (uses: string) => unknown;
+  /** A schema referenced by name (the platform event's, for example); undefined for a name it doesn't know. */
+  namedSchema?: (name: string) => unknown;
+  /** What the workflow input is called, when it has a name of its own ("Platform event"). */
+  inputLabel?: string;
   /** Deepest property path expanded below a root (default 4). */
   maxDepth?: number;
   /** Total suggestions, roots included (default 200). */
@@ -249,6 +253,30 @@ function resolveRef(schema: Schema, root: Schema): Schema {
     current = node;
   }
   return current;
+}
+
+/**
+ * Follows a schema's references: a local one below `root`, and a name that
+ * `named` knows, whose schema is the root of what it holds.
+ */
+function locate(
+  schema: Schema,
+  root: Schema,
+  named: ScopeOptions["namedSchema"],
+): { schema: Schema; root: Schema } {
+  let at = { schema, root };
+  for (let hops = 0; hops < 16; hops++) {
+    const local = resolveRef(at.schema, at.root);
+    if (local !== at.schema) at = { schema: local, root: at.root };
+    const target = at.schema["$ref"];
+    const found =
+      typeof target === "string" && !target.startsWith("#")
+        ? named?.(target)
+        : undefined;
+    if (!isObject(found)) return at;
+    at = { schema: found, root: found };
+  }
+  return at;
 }
 
 /**
@@ -693,10 +721,15 @@ class Walker {
     }
     if (typeof expression["ref"] === "string") {
       const [head, id, output, ...rest] = segmentsOf(expression["ref"]);
+      const named = this.options.namedSchema;
       if (head === "input")
-        return schemaAt(this.input, [id, output, ...rest].filter(defined));
+        return schemaAt(
+          this.input,
+          [id, output, ...rest].filter(defined),
+          named,
+        );
       if (head === "steps" && output === "output" && visible.has(id!))
-        return schemaAt(visible.get(id!)!.schema, rest);
+        return schemaAt(visible.get(id!)!.schema, rest, named);
       if (
         head === "steps" &&
         output === "error" &&
@@ -746,14 +779,19 @@ function withoutNull(schema: Schema): Schema | null {
   return typeof type === "string" ? schema : {};
 }
 
-function schemaAt(schema: Schema, path: string[]): Schema {
-  let current = schema;
+function schemaAt(
+  schema: Schema,
+  path: string[],
+  named?: ScopeOptions["namedSchema"],
+): Schema {
+  if (!path.length) return schema;
+  let at = locate(schema, schema, named);
   for (const key of path) {
-    const property = objectProperties(current, schema)?.get(key);
+    const property = objectProperties(at.schema, at.root)?.get(key);
     if (!property) return {};
-    current = resolveRef(property.schema, schema);
+    at = locate(property.schema, at.root, named);
   }
-  return current;
+  return at.schema;
 }
 
 /** `[target name, output field name, branch]` in the analyzer's terms. */
@@ -931,8 +969,8 @@ function expand(
           ref: "/input",
           source: "input",
           path: [],
-          label: "Workflow input",
-          breadcrumb: "Workflow input",
+          label: options.inputLabel ?? "Workflow input",
+          breadcrumb: options.inputLabel ?? "Workflow input",
           schema: input,
           optional: false,
         },
@@ -981,24 +1019,26 @@ function expand(
   ) {
     const next: Pending[] = [];
     for (const parent of level) {
-      const properties = objectProperties(
-        resolveRef(parent.entry.schema, parent.root),
-        parent.root,
-      );
+      const at = locate(parent.entry.schema, parent.root, options.namedSchema);
+      const properties = objectProperties(at.schema, at.root);
       let index = 0;
       for (const [key, property] of properties ?? []) {
         if (accepted.length >= maxEntries) {
           truncated = true;
           break;
         }
-        const schema = resolveRef(property.schema, parent.root);
+        const { schema, root } = locate(
+          property.schema,
+          at.root,
+          options.namedSchema,
+        );
         const title =
           typeof schema["title"] === "string" && schema["title"].trim()
             ? schema["title"].trim()
             : key;
         const nullable = parent.entry.types.includes("null");
         const child: Pending = {
-          root: parent.root,
+          root,
           order: [...parent.order, index++],
           entry: make(
             {
@@ -1010,7 +1050,7 @@ function expand(
               schema,
               optional: parent.entry.optional || nullable || !property.required,
             },
-            parent.root,
+            root,
           ),
         };
         accepted.push(child);

@@ -29,6 +29,7 @@ import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
 import { sampleFromSchema } from "../src/app/editor/ndv/panes/sample";
 import type { StudioTestData } from "../src/app/editor/state/test-data";
 import { finalRun } from "../src/app/editor/canvas/trace-playback";
+import type { Json } from "../src/app/editor/ndv/registry";
 import type { Workflow } from "../src/app/model";
 import { RESPONSE, print } from "./execution-fixtures";
 
@@ -62,7 +63,10 @@ interface Pending {
   refuse: (error: unknown) => void;
 }
 
-function fixture(workflow: Workflow = WORKFLOW) {
+function fixture(
+  workflow: Workflow = WORKFLOW,
+  inputSchema: Json = INPUT_SCHEMA,
+) {
   const values = new Map<string, string>();
   const backend: StoreBackend = {
     keys: async (prefix) =>
@@ -117,7 +121,7 @@ function fixture(workflow: Workflow = WORKFLOW) {
     definitions: () => [],
     testData: () => state.testData,
     prints: () => state.prints,
-    inputSchema: () => INPUT_SCHEMA,
+    inputSchema: () => inputSchema,
     callees: () => state.callees ?? { sources: {}, references: [] },
   };
   return { service: new ExecutionService(host), sent, values, state };
@@ -156,6 +160,63 @@ describe("the execution service", () => {
     sent[2].answer({ ...RESPONSE, trace: [] });
     expect((await third).kind).toBe("stale");
     expect(service.results()).toEqual(before);
+  });
+
+  describe("a workflow whose input is the platform event", () => {
+    const event = { $ref: "weave.platform-event-v1" };
+    const reacting = {
+      ...WORKFLOW,
+      spec: {
+        ...WORKFLOW.spec,
+        inputSchema: event,
+        eventTrigger: {
+          events: ["transaction.completed", "transaction.compensated"],
+          from: ["sync-records"],
+        },
+      },
+    } as Workflow;
+
+    it("starts from a sample of the first event it reacts to, in the order people choose", async () => {
+      const { service, sent } = fixture(reacting, event);
+      await service.open("d-1");
+      void service.execute({ mode: "workflow" });
+      await settle();
+      const input = (sent[0]!.body as { input: Record<string, unknown> }).input;
+      expect(input).toMatchObject({
+        type: "transaction.compensated",
+        emitted_at: "2026-10-26T12:04:00Z",
+        transaction: { workflow: { name: "sync-records" } },
+      });
+      expect(service.workflowInput()).toMatchObject({
+        type: "transaction.compensated",
+      });
+    });
+
+    it("starts from the test event when there is one", async () => {
+      const { service, sent, state } = fixture(reacting, event);
+      const pasted = { type: "transaction.completed" };
+      state.testData = {
+        ...EMPTY,
+        input: { value: pasted, source: "manual" },
+      };
+      await service.open("d-1");
+      void service.execute({ mode: "workflow" });
+      await settle();
+      expect((sent[0]!.body as { input: unknown }).input).toEqual(pasted);
+    });
+
+    it("samples an event that needs attention while none is chosen", () => {
+      const { service } = fixture(
+        {
+          ...reacting,
+          spec: { ...reacting.spec, eventTrigger: { events: [] } },
+        },
+        event,
+      );
+      expect(service.workflowInput()).toMatchObject({
+        type: "transaction.in_doubt",
+      });
+    });
   });
 
   it("drops an answer for steps renamed or deleted meanwhile", async () => {

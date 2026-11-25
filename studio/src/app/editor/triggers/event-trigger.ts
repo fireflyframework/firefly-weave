@@ -139,15 +139,17 @@ const joined = (words: readonly string[]) =>
     ? words.join("")
     : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 
+/** The events declared, in the order people choose them in. */
+export const chosenEvents = (
+  declaration: EventDeclaration,
+): PlatformEventType[] =>
+  EVENT_CHOICE_ORDER.filter((type) => declaration.events.includes(type));
+
 /** The tile's tooltip and accessible name: every event and every workflow, in full. */
 export function eventTileName(declaration: EventDeclaration): string {
   const { events, from } = declaration;
   const what = events.length
-    ? joined(
-        EVENT_CHOICE_ORDER.filter((type) => events.includes(type)).map(
-          (type) => EVENT_CHOICES[type].short,
-        ),
-      )
+    ? joined(chosenEvents(declaration).map((type) => EVENT_CHOICES[type].short))
     : "no events chosen";
   const where =
     from === null

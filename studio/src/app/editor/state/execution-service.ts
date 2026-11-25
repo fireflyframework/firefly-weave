@@ -31,6 +31,12 @@ import { ApiError } from "../../api";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Workflow } from "../../model";
 import { sampleFromSchema } from "../ndv/panes/sample";
+import {
+  chosenEvents,
+  DEFAULT_DECLARATION,
+  readDeclaration,
+} from "../triggers/event-trigger";
+import { isPlatformEventInput, sampleEvent } from "../triggers/platform-event";
 import type { Json } from "../ndv/registry";
 import type { StoreBackend } from "./browser-store";
 import {
@@ -245,8 +251,26 @@ export class ExecutionService {
   workflowInput(): Json {
     const input = this.host.testData().input?.value;
     return input === undefined
-      ? (sampleFromSchema(this.host.inputSchema()) as Json)
+      ? this.sampleInput(this.host.draft()?.workflow)
       : (input as Json);
+  }
+  /**
+   * A sample of what a run starts with: the workflow's input fields, or the
+   * first event it reacts to while its input is the platform event.
+   */
+  private sampleInput(workflow: Workflow | undefined): Json {
+    const schema = this.host.inputSchema();
+    if (!workflow || !isPlatformEventInput(schema))
+      return sampleFromSchema(schema) as Json;
+    const declaration = readDeclaration(workflow) ?? DEFAULT_DECLARATION;
+    return sampleEvent(
+      chosenEvents(declaration)[0] ?? DEFAULT_DECLARATION.events[0]!,
+      {
+        source: declaration.from?.[0],
+        now: this.host.now(),
+        id: () => crypto.randomUUID(),
+      },
+    ) as Json;
   }
   async execute(
     target: ExecuteTarget,
@@ -291,7 +315,7 @@ export class ExecutionService {
       connected: this.host.connected(),
       testData,
       results: previous,
-      sampleInput: sampleFromSchema(this.host.inputSchema()),
+      sampleInput: this.sampleInput(draft.workflow),
       callees: this.host.callees?.(),
       target,
       now: this.host.now(),
@@ -361,7 +385,7 @@ export class ExecutionService {
         connected: this.host.connected(),
         testData: this.host.testData(),
         results: this.results(),
-        sampleInput: sampleFromSchema(this.host.inputSchema()),
+        sampleInput: this.sampleInput(draft.workflow),
         callees: this.host.callees?.(),
         target: { mode: "workflow" },
         now: this.host.now(),

@@ -24,7 +24,12 @@ SPDX-License-Identifier: Apache-2.0
 // events for testing, since test runs start no reactions.
 import { signal, type WritableSignal } from "@angular/core";
 import type { StudioApi } from "../../api";
-import { isJsonObject, type JsonObject } from "../../forms/core/json";
+import {
+  isJsonObject,
+  jsonEqual,
+  type Json,
+  type JsonObject,
+} from "../../forms/core/json";
 
 /** The name a workflow's input schema references to take the platform event. */
 export const PLATFORM_EVENT_SCHEMA = "weave.platform-event-v1";
@@ -32,6 +37,9 @@ export const PLATFORM_EVENT_SCHEMA = "weave.platform-event-v1";
 export const PLATFORM_EVENT_INPUT: JsonObject = Object.freeze({
   $ref: PLATFORM_EVENT_SCHEMA,
 });
+
+/** What people call an input that is the platform event. */
+export const PLATFORM_EVENT_NAME = "Platform event";
 
 export type PlatformEventType =
   | "transaction.completed"
@@ -196,6 +204,94 @@ export function currentPlatformEvent(
   )
     void platformEventView(api, now).then((next) => view.set(next));
   return known;
+}
+
+/** The fields a builder looks for first; the others follow as the view lists them. */
+const FIELD_ORDER = [
+  "type",
+  "emitted_at",
+  "transaction",
+  "event_id",
+  "name",
+  "version",
+  "workflow",
+  "business_key",
+  "state",
+  "cause",
+  "steps",
+  "incident_id",
+  "run_id",
+  "instance_key",
+  "code",
+  "step",
+  "done",
+  "undone",
+  "pending",
+];
+const place = (key: string) => {
+  const at = FIELD_ORDER.indexOf(key);
+  return at < 0 ? FIELD_ORDER.length : at;
+};
+const fieldViews = new WeakMap<JsonObject, JsonObject>();
+
+/**
+ * The view as the data picker lists it: fields by their keys (the view's
+ * titles only repeat them), what a builder looks for first, rules about one
+ * value together so its type shows, and a group that may be empty as one
+ * group that allows null, so what it holds is listed. It allows the same
+ * values.
+ */
+export function eventFieldView(view: JsonObject): JsonObject {
+  let kept = fieldViews.get(view);
+  if (!kept) fieldViews.set(view, (kept = fieldsOf(view)));
+  return kept;
+}
+/** `allOf` rules about one value that don't contradict each other, as one rule. */
+function oneRule(schema: JsonObject): JsonObject {
+  const { allOf, ...rest } = schema;
+  if (!Array.isArray(allOf)) return schema;
+  const merged: JsonObject = { ...rest };
+  for (const part of allOf) {
+    if (
+      !isJsonObject(part) ||
+      Object.entries(part).some(
+        ([key, value]) =>
+          key in merged && !jsonEqual(value as Json, merged[key] as Json),
+      )
+    )
+      return schema;
+    Object.assign(merged, part);
+  }
+  return merged;
+}
+function fieldsOf(schema: JsonObject): JsonObject {
+  const { title: _title, ...node } = oneRule(schema);
+  if (isJsonObject(node["properties"]))
+    node["properties"] = Object.fromEntries(
+      Object.entries(node["properties"])
+        .sort(([a], [b]) => place(a) - place(b))
+        .map(([key, value]) => [
+          key,
+          isJsonObject(value) ? fieldsOf(value) : value,
+        ]),
+    );
+  if (isJsonObject(node["items"])) node["items"] = fieldsOf(node["items"]);
+  if (Array.isArray(node["anyOf"]))
+    node["anyOf"] = node["anyOf"].map((part) =>
+      isJsonObject(part) ? fieldsOf(part) : part,
+    );
+  const either = node["anyOf"];
+  if (!Array.isArray(either) || either.length !== 2) return node;
+  const group = either.find(
+    (part): part is JsonObject =>
+      isJsonObject(part) && part["type"] === "object",
+  );
+  const empty = either.some(
+    (part) => isJsonObject(part) && part["type"] === "null",
+  );
+  if (!group || !empty) return node;
+  delete node["anyOf"];
+  return { ...group, ...node, type: ["object", "null"] };
 }
 
 /** Schemas by name for the data picker: the platform event's name is its view, any other name nothing. */
