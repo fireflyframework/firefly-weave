@@ -543,6 +543,56 @@ for (const [how, ask] of [
     await expect(title(page)).toHaveText("Incident WV-TXN-PIVOT-UNKNOWN");
   });
 
+test("a partner's retry never opens over its own incident, asked for again from the list's Open", async ({
+  page,
+}) => {
+  // No page lists the drawer's incident: another called run's link names it.
+  await incidentPlatform(page, {
+    items: [
+      { ...called, id: "a2000000-0000-4000-8000-000000000003" },
+      ...others,
+    ],
+  });
+  await page.route(`${environment}/incidents/${ids.caller}`, (route) =>
+    route.fulfill({ json: caller }),
+  );
+  const reads: Route[] = [];
+  await page.route(`${environment}/incidents/${ids.called}`, (route) => {
+    reads.push(route);
+  });
+  const openPartner = links(page, "Waits on").getByRole("button", {
+    name: "Open incident WV-TXN-UNDO-STUCK, add in run 9a01c7d2",
+  });
+  await open(page, ids.caller);
+  await expect(title(page)).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+  // The address names one that can't be found: the drawer stays.
+  await page.evaluate((id) => {
+    history.pushState(null, "", `/operate/incidents?incident=${id}`);
+    dispatchEvent(new PopStateEvent("popstate"));
+  }, elsewhere);
+  await expect(
+    page.getByRole("heading", { name: "This incident can't be found" }),
+  ).toBeVisible();
+  await openPartner.click();
+  await expect.poll(() => reads.length).toBe(1);
+  await reads[0].fulfill(unavailable);
+  const alert = links(page, "Waits on").getByRole("alert");
+  await expect(alert).toBeVisible();
+  await page
+    .locator(".not-listed")
+    .getByRole("button", {
+      name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+    })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/operate/incidents\\?incident=${ids.caller}$`),
+  );
+  await expect(alert).toHaveCount(0);
+  await page.clock.fastForward(6_000);
+  expect(reads).toHaveLength(1);
+  await expect(title(page)).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+});
+
 for (const [where, field, moves] of [
   ["the drawer", null, true],
   ["a filter", "Workflow", false],

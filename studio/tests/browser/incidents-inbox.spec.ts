@@ -1591,6 +1591,15 @@ test.describe("platform filters, direct links and opening times", () => {
     await expect(problem).toBeVisible();
     await move("");
     await expect(problem).toHaveCount(0);
+    // Nor once it names the incident that is open again.
+    await move(`?incident=${active}`);
+    const title = page.locator("#incident-detail-title");
+    await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+    await move(`?incident=${hidden}`);
+    await expect(problem).toBeVisible();
+    await move(`?incident=${active}`);
+    await expect(problem).toHaveCount(0);
+    await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
   });
 
   for (const [name, extra, expected, hint] of [
