@@ -720,7 +720,7 @@ def simulator_for(
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
-    from firefly_weave.operations.debug.models import ScriptedError
+    from firefly_weave.operations.debug.models import DebugError, ScriptedError
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import CompileSummary
 
@@ -758,10 +758,45 @@ def simulator_for(
             workflows=workflows,
             errors=errors,
         )
+    except DebugError as error:
+        if error.code == "WV-DEBUG-MOCK-KEY":
+            _refuse_stale_phases(artifact, mocks, errors, workflows)
+        raise
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
         raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
     return summary, simulator, misfits
+
+
+def _refuse_stale_phases(
+    artifact: CompiledArtifact,
+    mocks: Mapping[str, JsonValue],
+    errors: Mapping[str, object],
+    workflows: Mapping[str, Any],
+) -> None:
+    """Refuses test data of a confirm, release or undo its step doesn't declare (anymore), by its key."""
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.transactions import phase_target
+    from firefly_weave.runtime.kernel import prepare
+
+    places: list[tuple[str, CompiledArtifact, tuple[str, ...], Mapping[str, object]]] = [
+        ("This workflow", artifact, ("mocks",), mocks),
+        ("This workflow", artifact, ("errors",), errors),
+    ]
+    for reference, called in workflows.items():
+        places.append((reference, import_artifact(called.artifact), ("workflows", reference, "mocks"), called.mocks))
+    stale: list[tuple[str, str]] = []
+    for owner, document, prefix, keyed in places:
+        prepared = prepare(document)
+        for key in keyed:
+            instance = key.removeprefix("node:")
+            phase = _phase_of(instance)
+            if key != instance and phase is not None and phase_target(prepared, instance) is None:
+                said = f"{owner} has no {_PHASE_NAMES[phase]} of {node_of(instance)}; remove its test data"
+                stale.append((said, _pointer(*prefix, key)))
+    if stale:
+        raise SimulationRefused(422, "WV-DEBUG-MOCK-KEY", stale[0][0], [path for _, path in stale])
 
 
 @functools.cache

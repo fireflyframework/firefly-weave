@@ -1342,3 +1342,39 @@ def test_a_called_undo_of_a_called_workflow_that_doesnt_compile_never_counts_as_
         "message": "The undo of add in inside can't run, because reverse-target-addition doesn't compile.",
         "frame": "call",
     }
+
+
+def test_a_misfitting_pin_of_a_step_is_never_said_to_be_its_confirms():
+    # hold takes its action's mock, as its own pin doesn't fit; nothing is pinned at its confirm.
+    mocks = {"node:hold": {"holdId": 7}, "action:source-system.hold-quantity@1.0.0": {"holdId": "h-1"}}
+    answer = run_move(move(), definitions=STRICT_CONFIRM, mocks=mocks)
+    assert answer["blocked"]["instanceKey"] == "hold#confirm"
+    assert answer["blocked"]["message"] == "The confirm of hold needs test data."
+
+
+@pytest.mark.parametrize(
+    "fields, path",
+    [
+        ({"mocks": {"node:add#undo": {}}}, "/mocks/node:add#undo"),
+        ({"errors": {"node:add#undo": {"code": "DOWN"}}}, "/errors/node:add#undo"),
+        ({"mocks": {"node:add#confirm": {}, "node:hold#confirm": {}}}, "/mocks/node:add#confirm"),
+    ],
+    ids=["a pin of an undo", "a failure of an undo", "a pin of a confirm"],
+)
+def test_test_data_of_a_phase_a_step_no_longer_has_is_refused_by_its_key(fields, path):
+    step = {**add(), "irreversible": True}
+    del step["compensate"]
+    with pytest.raises(SimulationRefused) as refused:
+        run_move(move(hold(), step), **fields)
+    assert (refused.value.status, refused.value.code) == (422, "WV-DEBUG-MOCK-KEY")
+    assert refused.value.paths == [path]
+    named = "undo" if path.endswith("undo") else "confirm"
+    assert refused.value.message == f"This workflow has no {named} of add; remove its test data"
+
+
+def test_test_data_of_a_phase_a_called_workflow_no_longer_has_is_refused_by_its_key():
+    mocks = {"node:hold": {"holdId": "h-1"}, "node:add": {"id": "a-1"}, "node:add#confirm": {}}
+    with pytest.raises(SimulationRefused) as refused:
+        inside_a_call(hold(), add(), definitions=fixture()["definitions"], workflows={"inside@1.0.0": {"mocks": mocks}})
+    assert refused.value.paths == ["/workflows/inside@1.0.0/mocks/node:add#confirm"]
+    assert refused.value.message == "inside@1.0.0 has no confirm of add; remove its test data"
