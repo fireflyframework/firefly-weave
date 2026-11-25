@@ -233,6 +233,58 @@ for (const size of [
         expect(sent.filter((body) => body.includes(id))).toEqual([]);
     });
 
+    test("a pasted event the trigger doesn't react to says a real one starts nothing", async ({
+      page,
+    }) => {
+      const details = await openNotifyTeam(page);
+      const dialog = await openEventTrigger(page, details);
+      let pane = await testEvent(page, dialog);
+      const use = async (event: object) => {
+        await pane
+          .getByRole("button", { name: "Paste a sample event" })
+          .click();
+        await pane
+          .getByRole("textbox", { name: "Sample event (JSON)" })
+          .fill(JSON.stringify(event));
+        await pane.getByRole("button", { name: "Use this sample" }).click();
+        await expect(summary).toBeFocused();
+      };
+      const summary = dialog
+        .getByRole("region", { name: "Input data" })
+        .getByRole("group", { name: "The test event" });
+      const note = dialog.getByText("This trigger doesn't react to");
+      await use({
+        ...pastedEvent({
+          state: "compensated",
+          cause: undefined,
+          incident_id: undefined,
+        }),
+        type: "transaction.compensated",
+      });
+      await expect(note).toHaveText(
+        "This trigger doesn't react to Undone, so a real one starts nothing.",
+      );
+      await expect(summary).toHaveAccessibleDescription(
+        "This trigger doesn't react to Undone, so a real one starts nothing.",
+      );
+      const [above, below] = [
+        (await summary.boundingBox())!,
+        (await note.boundingBox())!,
+      ];
+      expect(below.y).toBeGreaterThanOrEqual(above.y + above.height);
+      // Once it reacts to it, a real one starts a run.
+      const parameters = dialog.getByRole("tab", { name: "Parameters" });
+      if (size.width < 768) await parameters.first().click();
+      await dialog
+        .getByRole("checkbox", { name: "A transaction was undone" })
+        .check();
+      pane = await testEvent(page, dialog);
+      await expect(summary).toBeVisible();
+      await expect(note).toHaveCount(0);
+      await use(pastedEvent());
+      await expect(note).toHaveCount(0);
+    });
+
     test("Escape leaves the paste without using it, and step details stay open", async ({
       page,
     }) => {

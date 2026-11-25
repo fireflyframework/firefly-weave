@@ -30,6 +30,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { isJsonObject } from "../../forms/core/json";
 import { Select, type SelectOption } from "../../forms/ui/select";
 import { Icon } from "../../icon";
 import type { FormSession } from "../ndv/params/form-session";
@@ -51,6 +52,7 @@ import {
 import {
   currentPlatformEvent,
   EVENT_CHOICES,
+  isPlatformEventType,
   sampleId,
   type PlatformEventType,
 } from "./platform-event";
@@ -189,10 +191,12 @@ const TICK_MS = 1_000;
       }
     }
     @if (!pasting() && summary(); as lines) {
+      @let nothing = startsNothing();
       <div
         class="es-summary"
         role="group"
         [attr.aria-label]="summaryName()"
+        [attr.aria-describedby]="nothing ? id + '-nothing' : null"
         tabindex="-1"
       >
         <dl>
@@ -204,6 +208,9 @@ const TICK_MS = 1_000;
           }
         </dl>
       </div>
+      @if (nothing) {
+        <p class="es-hint" [id]="id + '-nothing'">{{ nothing }}</p>
+      }
     }`,
   styles: `
     :host {
@@ -424,6 +431,17 @@ export class EventSample {
   }
   summary() {
     return eventSummary(this.sample());
+  }
+  /** What a pasted event the trigger doesn't react to would start; null for any other. */
+  startsNothing(): string | null {
+    const sample = this.sample();
+    const type = isJsonObject(sample) ? sample["type"] : undefined;
+    return this.pasted() &&
+      !this.viewingRuns() &&
+      isPlatformEventType(type) &&
+      !this.events().includes(type)
+      ? `This trigger doesn't react to ${EVENT_CHOICES[type].short}, so a real one starts nothing.`
+      : null;
   }
   summaryName(): string {
     return this.viewingRuns() ? "The run's event" : "The test event";
