@@ -79,7 +79,9 @@ export function noteObstacles(layout: LtrLayout, zoom: number): Box[] {
   const boxes: Box[] = layout.tiles.map((tile) => {
     const width = Math.max(
       tile.width,
-      tile.shape === "end" ? LTR.end * 2 : labelWidth(zoom, tile.shape),
+      tile.shape === "end"
+        ? LTR.end * 2
+        : labelWidth(zoom, tile.shape, tile.wideLabel),
     );
     return {
       x: tile.x + tile.width / 2 - width / 2,

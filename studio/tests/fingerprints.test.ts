@@ -87,6 +87,51 @@ const inputs = (
   contractOf: (step) => contracts[step.id] ?? String(step["uses"] ?? ""),
 });
 
+describe("the fingerprint of the platform event a step reads", () => {
+  const steps: Step[] = [
+    { id: "send", kind: "transform", value: { ref: "/input/event_id" } },
+    { id: "note", kind: "transform", value: { literal: "fixed" } },
+  ] as Step[];
+  const of = (eventTrigger: unknown, testInput?: unknown) => {
+    const source = workflow(steps);
+    source.spec["inputSchema"] = { $ref: "weave.platform-event-v1" };
+    source.spec["eventTrigger"] = eventTrigger;
+    return fingerprints({
+      ...inputs(steps, testInput),
+      testInput: testInput as FingerprintInputs["testInput"],
+      workflow: source,
+    });
+  };
+  const undone = { events: ["transaction.compensated"] };
+
+  it("changes with the sample Execute starts from: its event, and the workflow it comes from", () => {
+    const before = of(undone).get("send")!;
+    for (const declared of [
+      { events: ["transaction.completed"] },
+      { ...undone, from: ["sync-records"] },
+    ]) {
+      const now = of(declared);
+      expect(now.get("send")!.upstream).not.toBe(before.upstream);
+      expect(now.get("note")).toEqual(of(undone).get("note"));
+    }
+    // An event that comes after it in the choices changes no sample.
+    expect(
+      of({ events: ["transaction.compensated", "transaction.completed"] }).get(
+        "send",
+      ),
+    ).toEqual(before);
+  });
+
+  it("is the test input's when there is one", () => {
+    const tested = of(undone, { event_id: "x" }).get("send")!;
+    expect(tested.upstream).not.toBe(of(undone).get("send")!.upstream);
+    expect(
+      of({ events: ["transaction.completed"] }, { event_id: "x" }).get("send"),
+    ).toEqual(tested);
+    expect(of(undone, null).get("send")).not.toEqual(of(undone).get("send"));
+  });
+});
+
 describe("fingerprints", () => {
   it("hash bytes as FNV-1a 64 does", () => {
     expect(fnv1a64("")).toBe("cbf29ce484222325");

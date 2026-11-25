@@ -18,6 +18,7 @@
 
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -45,6 +46,7 @@ from firefly_weave.runtime.kernel import error_policy, runs_model, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.run_failures import FAILED_ITEMS, RunFailures
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
 from firefly_weave.runtime.settlement import UNFINISHED_TASK_STATUSES
 from firefly_weave.runtime.step_failures import LEASE_EXPIRED, attempt_outcomes, failure_data, final_failure
@@ -95,6 +97,7 @@ class RecoveryService:
     ) -> None:
         self.runtime, self.tasks, self.deadlines = runtime, tasks, deadlines
         self.access = access
+        self.failures = RunFailures()
         self.calls = CallService(runtime)
         self.event_starts = EventStartService(runtime)
 
@@ -151,16 +154,25 @@ class RecoveryService:
                         await authorize(tx)
                         if kind in {"expired", "retry", "dispatch", "event_start"}:
                             self.runtime.definitions.registry.require_operational()
-                        report = await self._recover(tx, kind)
+                        report = await self._item(tx, kind)
+                        # An item that failed was put off: the items behind it are still tried.
+                        failed = bool(tx.session.info.get(FAILED_ITEMS))
                 except CatalogError as error:
                     if error.code == "WV-RUNTIME-LIMIT":
                         continue
                     raise
                 for name, value in report.model_dump().items():
                     totals[name] += value
-                if not any(report.model_dump().values()):
+                if not failed and not any(report.model_dump().values()):
                     break
         return RecoveryReport(**totals)
+
+    async def _item(self, tx: Transaction, kind: str) -> RecoveryReport:
+        """One quantum of a kind. Task recovery guards the run it locks; the other kinds guard each item they scan."""
+        if kind not in {"expired", "retry"}:
+            return await self._recover(tx, kind)
+        report = await self.failures.guard(tx, kind, None, partial(self._recover, tx, kind))
+        return report if report is not None else RecoveryReport()
 
     async def _recover(self, tx: Transaction, kind: str) -> RecoveryReport:
         limit = 1
@@ -178,12 +190,14 @@ class RecoveryService:
             else RecoveryReport()
         )
         resumed = incidents = failures = 0
+        skip = self.failures.waiting(tx, kind)
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
-        for identifier in await repository.expired_ready(limit) if kind == "expired" else []:
+        for identifier in await repository.expired_ready(limit, skip=skip) if kind == "expired" else []:
             locked = await self.runtime.lock_task(tx, identifier, skip_locked=True)
             if locked is None:
                 continue
             row, task = locked
+            tx.session.info["weave_runtime_candidate"] = row["id"]
             if await self.runtime.observe_unavailable(tx, row):
                 continue
             view = view_of(row)
@@ -225,7 +239,6 @@ class RecoveryService:
                 sequence=view.state.accepted_sequence + 1,
                 data=expired,
             )
-            tx.session.info["weave_runtime_candidate"] = row["id"]
             result = await transition(view.state, event, artifact)
             await repository.persist(view.model_copy(update={"state": result.state}), event, result, event_hash(event))
             if kind == "incident_opened":
@@ -235,11 +248,12 @@ class RecoveryService:
                 failures += 1
             else:
                 incidents += 1
-        for identifier in await self.tasks.recovery_candidates(tx, limit) if kind == "retry" else []:
+        for identifier in await self.tasks.recovery_candidates(tx, limit, skip=skip) if kind == "retry" else []:
             locked = await self.runtime.lock_task(tx, identifier, skip_locked=True)
             if locked is None:
                 continue
             row, task = locked
+            tx.session.info["weave_runtime_candidate"] = row["id"]
             if task["status"] == "handled":
                 continue
             if await self.runtime.observe_unavailable(tx, row):
@@ -374,7 +388,6 @@ class RecoveryService:
                 sequence=view.state.accepted_sequence + 1,
                 data=data,
             )
-            tx.session.info["weave_runtime_candidate"] = row["id"]
             result = await transition(view.state, event, artifact)
             await repository.persist(
                 view.model_copy(update={"state": result.state}),

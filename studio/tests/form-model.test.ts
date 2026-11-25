@@ -21,6 +21,7 @@ import { resolve } from "node:path";
 import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
+  caretAfter,
   fieldable,
   formFields,
   localDateTime,
@@ -209,6 +210,30 @@ describe("small helpers", () => {
     expect(fieldable({ ref: "/input" })).toBe(false);
     expect(fieldable({ literal: 3 })).toBe(false);
     expect(fieldable({ op: { name: "coalesce", args: [] } })).toBe(false);
+  });
+
+  it("keeps the caret after the same characters when a text is laid out again", () => {
+    const text = '{"a":1,"id":"real"}';
+    const next = '{\n  "a": 1,\n  "id": "demo"\n}';
+    const at = (mark: string) => text.indexOf(mark) + mark.length;
+    const to = (mark: string) => next.indexOf(mark) + mark.length;
+    expect(caretAfter(text, 0, next)).toBe(0);
+    expect(caretAfter(text, at('"a":1'), next)).toBe(to('"a": 1'));
+    expect(caretAfter(text, at('"re'), next)).toBe(to('"de'));
+    expect(caretAfter(text, text.length, next)).toBe(next.length);
+    expect(caretAfter(text + "\n", text.length + 1, next)).toBe(next.length);
+  });
+
+  it("keeps the caret before the same characters when those before it are longer or shorter", () => {
+    const text = '{"id":"1","key":"REF"}';
+    for (const id of ["00001", ""]) {
+      const next = `{\n  "id": "${id}",\n  "key": "REF"\n}`;
+      const at = (value: string, mark: string) =>
+        value.indexOf(mark) + mark.length;
+      expect(caretAfter(text, at(text, '"REF'), next)).toBe(at(next, '"REF'));
+      expect(caretAfter(text, text.length, next)).toBe(next.length);
+    }
+    expect(caretAfter("abc", 1, "")).toBe(0);
   });
 
   it("round-trips date-times through the local picker", () => {

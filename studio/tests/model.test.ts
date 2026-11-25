@@ -1174,6 +1174,23 @@ describe("the canvas sidecar follows the workflow", () => {
     ]);
   });
 
+  it("shows Platform event while the source declares one", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    const definition = structuredClone(model.definition);
+    definition.spec["eventTrigger"] = { events: ["transaction.in_doubt"] };
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+      "event",
+    ]);
+    delete definition.spec["eventTrigger"];
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+    ]);
+  });
+
   it("keeps what Studio recorded when Redo brings a later state back", () => {
     const model = new StructuredCanvasAdapter();
     const wait = model.insert("wait");

@@ -31,6 +31,7 @@ const triggers = [
   "Email",
   "App event",
   "Called by a workflow",
+  "Platform event",
 ];
 const categories = [
   "AI",
@@ -52,7 +53,7 @@ for (const size of [
       await page.setViewportSize(size);
     });
 
-    test("an empty workflow offers Add first step; N opens What triggers this workflow? with the search focused and the seven triggers first", async ({
+    test("an empty workflow offers Add first step; N opens What triggers this workflow? with the search focused and the eight triggers first", async ({
       page,
     }) => {
       const canvas = await openNewWorkflow(page);
@@ -62,7 +63,7 @@ for (const size of [
       const panel = new AddStepPanel(page);
       await expect(panel.title).toHaveText("What triggers this workflow?");
       await expect(panel.search).toBeFocused();
-      expect((await panel.labels()).slice(0, 7)).toEqual(triggers);
+      expect((await panel.labels()).slice(0, 8)).toEqual(triggers);
       expect(await panel.headings()).toEqual(["Triggers", "Not sure yet?"]);
       await expect(panel.option("Start from a template")).toBeVisible();
       await page.keyboard.press("Escape");

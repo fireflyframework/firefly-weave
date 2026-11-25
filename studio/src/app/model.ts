@@ -22,7 +22,7 @@ import {
   emptyCanvas,
   pruneCanvas,
   renameInCanvas,
-  syncCalled,
+  syncDeclared,
   type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
 export type Kind =
@@ -630,7 +630,7 @@ export class StructuredCanvasAdapter {
       this.definition = value;
       this.readonly = false;
       const present = this.stepIdSet();
-      this.canvas = syncCalled(
+      this.canvas = syncDeclared(
         pruneCanvas(this.canvas, present),
         value,
         present.size > 0,

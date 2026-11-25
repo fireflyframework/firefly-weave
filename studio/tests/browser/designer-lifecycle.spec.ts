@@ -31,6 +31,7 @@ import {
   viewSwitcher,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { Activations } from "./platform-activations";
 
 test.beforeEach(async ({ page }) => {
   await withClassicDesigner(page);
@@ -70,18 +71,13 @@ async function lifecyclePlatform(page: Page) {
       },
     });
   });
+  const activations = new Activations();
   await page.route(`${environment}/activations`, (r) => {
     if (r.request().method() !== "POST") return r.fallback();
     calls.push("activate");
-    return r.fulfill({
-      status: 201,
-      json: {
-        id: "act-1",
-        version_id: versionId,
-        workflow: "untitled-workflow",
-        version: "1.0.0",
-      },
-    });
+    return r.fulfill(
+      activations.create(r.request(), "untitled-workflow", "act-1"),
+    );
   });
   return calls;
 }

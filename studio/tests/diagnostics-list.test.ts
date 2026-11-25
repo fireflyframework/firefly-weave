@@ -141,6 +141,177 @@ describe("diagnostic rows", () => {
   });
 });
 
+describe("a problem of the Platform event trigger", () => {
+  const reacting = (
+    eventTrigger: unknown,
+    inputSchema: unknown = { $ref: "weave.platform-event-v1" },
+  ) => ({
+    ...definition,
+    spec: {
+      ...definition.spec,
+      inputSchema,
+      ...(eventTrigger === undefined ? {} : { eventTrigger }),
+    },
+  });
+  const ATTENTION = { events: ["transaction.in_doubt"] };
+  const NO_EVENT = { events: [] };
+  const FORM = { type: "object", required: ["reference"] };
+  /** What the compiler answers, at `path`. */
+  const invalid = (path: string) => ({
+    code: "WV-SCHEMA-INVALID_INSTANCE",
+    severity: "error",
+    path,
+    message: "Value does not satisfy the declared contract.",
+  });
+  const mismatch = {
+    code: "WV-COMP-TYPE_MISMATCH",
+    severity: "error",
+    path: "/spec/inputSchema",
+    message: "Definition violates the type mismatch contract.",
+  };
+  const row = (diagnostic: object, document: unknown, stepDetails = true) =>
+    diagnosticRows(
+      [diagnostic as Parameters<typeof diagnosticRows>[0][number]],
+      document,
+      stepDetails,
+    ).problems[0]!;
+
+  it.each<[string, object, unknown, string, string | undefined, string]>([
+    [
+      "no event",
+      invalid("/spec/eventTrigger/events"),
+      reacting(NO_EVENT),
+      "Choose at least one event.",
+      undefined,
+      "Which events",
+    ],
+    [
+      "no list of events",
+      invalid("/spec/eventTrigger"),
+      reacting({}),
+      "Choose at least one event.",
+      undefined,
+      "Which events",
+    ],
+    [
+      "no workflow named",
+      invalid("/spec/eventTrigger/from"),
+      reacting({ ...ATTENTION, from: [] }),
+      "Add at least one workflow, or choose Any workflow in this project.",
+      undefined,
+      "From which workflows",
+    ],
+    [
+      "a name that isn't a workflow's",
+      invalid("/spec/eventTrigger/from/1"),
+      reacting({ ...ATTENTION, from: ["sync-records", "not one"] }),
+      "“not one” isn't a workflow name. Use letters, numbers, dots, underscores or hyphens, starting with a letter or number.",
+      undefined,
+      "From which workflows",
+    ],
+    [
+      "an input that refuses the event",
+      mismatch,
+      reacting(ATTENTION, FORM),
+      "This trigger can't start runs: the workflow's input doesn't accept the platform event.",
+      "Reset the input in the trigger's Parameters.",
+      "Input",
+    ],
+    [
+      "an input Studio can't compare",
+      {
+        ...mismatch,
+        code: "WV-COMP-UNKNOWN_COMPATIBILITY",
+        severity: "warning",
+      },
+      reacting(ATTENTION, FORM),
+      "Studio can't confirm that the platform event fits this workflow's input.",
+      "Each start checks it.",
+      "Input",
+    ],
+  ])(
+    "reads as the trigger says it, and opens the trigger: %s",
+    (_what, diagnostic, document, text, hint, part) => {
+      const { view, where, location } = row(diagnostic, document);
+      expect(view.text).toBe(text);
+      expect(view.hint).toBe(hint);
+      expect(where).toBe(`Platform event trigger · ${part}`);
+      expect(location?.event).toBe(
+        { "Which events": "events", "From which workflows": "from" }[part] ??
+          "input",
+      );
+      // What support asks for stays in Details.
+      expect(view).toMatchObject({
+        severity: (diagnostic as { severity: string }).severity,
+        code: (diagnostic as { code: string }).code,
+        technical: (diagnostic as { message: string }).message,
+      });
+    },
+  );
+
+  it.each<[string, object, unknown, boolean, string, string]>([
+    [
+      "a workflow without the trigger",
+      mismatch,
+      reacting(undefined, FORM),
+      true,
+      "This value's type doesn't match what the field expects.",
+      "Workflow settings · Input schema",
+    ],
+    [
+      "a problem inside the input schema",
+      { ...mismatch, path: "/spec/inputSchema/properties/reference" },
+      reacting(ATTENTION, FORM),
+      true,
+      "This value's type doesn't match what the field expects.",
+      "Workflow settings · Input schema",
+    ],
+    [
+      "another problem at the input",
+      { ...mismatch, code: "WV-SCHEMA-INVALID_SCHEMA" },
+      reacting(ATTENTION, FORM),
+      true,
+      "This schema isn't valid.",
+      "Workflow settings · Input schema",
+    ],
+    [
+      "a field the trigger doesn't have",
+      invalid("/spec/eventTrigger/every"),
+      reacting({ ...ATTENTION, every: "day" }),
+      true,
+      "This value doesn't have the expected format.",
+      "Workflow settings",
+    ],
+    [
+      "an editor without step details",
+      mismatch,
+      reacting(ATTENTION, FORM),
+      false,
+      "This value's type doesn't match what the field expects.",
+      "Workflow settings · Input schema",
+    ],
+  ])(
+    "leaves %s as it was",
+    (_what, diagnostic, document, stepDetails, text, where) => {
+      const found = row(diagnostic, document, stepDetails);
+      expect(found.view.text).toBe(text);
+      expect(found.where).toBe(where);
+      expect(found.location?.event).toBeUndefined();
+    },
+  );
+
+  it("opens the trigger for a problem the trigger has no sentence for", () => {
+    const twice = row(
+      invalid("/spec/eventTrigger/events"),
+      reacting({ events: ["transaction.in_doubt", "transaction.in_doubt"] }),
+    );
+    expect(twice.view.text).toBe(
+      "This value doesn't have the expected format.",
+    );
+    expect(twice.where).toBe("Platform event trigger · Which events");
+  });
+});
+
 describe("suggested edits", () => {
   it("edits one step's data and leaves the definition untouched", () => {
     const change = suggestedChange(

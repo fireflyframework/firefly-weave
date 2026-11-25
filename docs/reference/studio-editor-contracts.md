@@ -530,15 +530,25 @@ must take one. Studio reads that message's schema, with its definitions inlined,
 from its host at `GET /studio/contracts/email-message`, a read-only route that
 answers only a paired session, like the other contract routes.
 
+A platform event trigger (`kind: event`, at most one) holds no settings of its
+own: it mirrors the definition's `spec.eventTrigger`, and a definition that has
+one gets the tile when it opens. Studio writes the events in the platform's
+order, leaves `from` out for any workflow, and sets `spec.inputSchema` to
+`{$ref: weave.platform-event-v1}`. It reads that schema from its host at
+`GET /studio/contracts/platform-event`, once per session, and tries again 5
+seconds after a failure, doubling to 60. The data picker, the sample events, and
+the check of a pasted event use it.
+
 ### What Studio keeps about a trigger's resource
 
 When an activation creates or moves a trigger choice's resource, Studio keeps
-two fields in the choice, both keyed by environment ID:
+these fields in the choice, each keyed by environment ID:
 
 | Field | Value |
 | --- | --- |
-| `resources` | The ID of the webhook, schedule, Kafka trigger, email source or app event source in that environment. |
+| `resources` | The ID of the webhook, schedule, Kafka trigger, email source, app event source or platform event trigger in that environment. |
 | `activated` | A key of the choice's settings when that activation took them: its fields other than `id`, `resources` and `activated`, as canonical JSON. |
+| `pendingStops` | Platform event triggers only: the stops Studio still owes, at most 64, each with the `triggerId`, `revision` and `activationId` it was read with. A stop counts only while the trigger still has that revision and activation. |
 
 The next activation in that environment moves the stored resource instead of
 creating one, so a webhook keeps its ID and its URL. A tile reads "Set up at
@@ -554,7 +564,8 @@ The dialog reads, before Activate:
 | Checks | `GET {PROJECT}/language` and the version's export (`artifact.executable.features`) | The first feature the platform doesn't run stops the dialog. |
 | Connections | `GET {ENV}/bindable-connections?connector=…` per slot connector | One row per slot. A required slot is chosen for the person from this computer's dev binding, else the connection named like the slot when exactly one candidate has that name, else the only candidate; an optional one only from a dev binding. The listing has no revision number, so several revisions with the slot's name are left for the person. |
 | Called workflows | The version's export (`document`), `GET {PROJECT}/workflows` and `GET {ENV}/activations` | Each callee's current activation, sent as `workflow_activation_ids`; a callee without one blocks Activate. |
-| Triggers | `GET {ENV}/triggers`, `schedules`, `broker-triggers`, `email/sources` and `provider-sources` | One row per trigger choice: create, move, a schedule to save, a choice the CLI sets up, or a resource this workflow ran that is left behind, with **Stop it**. |
+| The activation it replaces | `GET {ENV}/activations`, every page | No row: the revision of the workflow's newest activation, sent as `If-Match`, or none for a first one. When it was activated meanwhile, the platform answers `412 WV-ETAG`, and the dialog says so and turns **Activate version** off. |
+| Triggers | `GET {ENV}/triggers`, `schedules`, `broker-triggers`, `email/sources`, `provider-sources` and `event-triggers` | One row per trigger choice: create, move, a schedule to save, a choice the CLI sets up, or a resource this workflow ran that is left behind, with **Stop it**. A platform event trigger has rows of its own, below. |
 
 A new Kafka, email or app event trigger chooses its connection on its own row:
 Studio lists every bindable connection (`GET {ENV}/bindable-connections`,
@@ -564,7 +575,40 @@ the triggers up row by row: it creates what's missing, moves a resource with
 the revision it read (`If-Match`), saves a moved schedule with its calendar and
 input, and disables what the person ticked. A failure stays on its row with
 **Retry**, which reads the resource again first, and never undoes the
-activation.
+activation. Every row is bound to the environment and the account it was read
+with: once either changes, its requests aren't sent.
+
+### A platform event trigger's rows
+
+The rows compare what the published version declares with the environment's
+triggers of this workflow: enabled, with its `workflow_name`, and on an
+activation of it. The platform's stop checks neither, so this filter is the only
+guard per workflow.
+
+| Row | When | What Studio does |
+| --- | --- | --- |
+| Create | No trigger of this workflow to use | Creates one named after the workflow, or `NAME-2`, `NAME-3`… when taken, with `may_reconcile: false` |
+| Move | The stored trigger, or one with a name Studio gives, reacts as declared | `retarget` with the revision read; its runs then start as the mover |
+| Replace | The stored trigger reacts to other events or workflows | Creates the new one with the same `may_reconcile`, then stops the old one |
+| Blocked | A trigger named after the workflow that Studio didn't make and reacts to something else, or one without `may_reconcile` in its view | Nothing; **Stop it** is off, and offered only for the first |
+| Duplicate | Another trigger that reacts as declared, or whose stop is owed; **Stop it** is on | Stops it once the declared trigger is set up and still reacts |
+| Left behind | Any other trigger of the workflow; **Stop it** is off | Stops it when the person asks |
+
+- **A create whose answer is lost** is adopted: Studio lists first and takes a
+  trigger equal in name, workflow, activation, events, workflows and authority.
+  A trigger that shares an event and a workflow with the declaration, and wasn't
+  in the list the dialog read, is someone else's: the row answers "changed" and
+  nothing is created.
+- **The activation and every row after it** go only to the environment, and as
+  the person, the dialog opened with. When either changed meanwhile, nothing is
+  sent, and the stop of a duplicate not stopped yet stays owed.
+- **Every stop** first reads the trigger's starts, at most ten pages, and asks
+  while any is `requested`, or when they can't be read; then reads the trigger
+  again, stops nothing that changed, and sends the revision as `If-Match`.
+- **Starts** lists `GET {ENV}/event-triggers/{id}/starts`, 20 at a time, for the
+  stored trigger, when the target lists `flow.eventTrigger`. A failed read waits
+  5 seconds, doubling to 60. An answer for an environment, account, workflow or
+  trigger the person left is dropped.
 
 ## Storage on this computer
 

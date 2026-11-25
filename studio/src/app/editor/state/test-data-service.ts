@@ -182,6 +182,11 @@ export class TestDataService {
     string,
     { entry: unknown; step: string | undefined }
   >();
+  /**
+   * The sample ID each real ID entered here got, by the real one: entered
+   * again, it gets the same one while this opening lasts. Never kept.
+   */
+  readonly sampleIds = new Map<string, string>();
   /** What was set in memory before the account was known, waiting for `carryOver`. */
   private carried: StudioTestData | null = null;
   /** Keys of accounts signed out since: a write queued for one never runs. */
@@ -240,6 +245,7 @@ export class TestDataService {
     const raw = key ? await this.host.backend.get(key) : null;
     if (opening !== this.opened) return;
     this.deleted.clear();
+    this.sampleIds.clear();
     // Opened again for that account: it signed in again.
     if (key) this.forgotten.delete(key);
     this.where = key ? place : { kind: "memory" };
@@ -326,6 +332,7 @@ export class TestDataService {
       if (key && this.where.kind === "connected") this.forgotten.add(key);
     this.opened++;
     this.deleted.clear();
+    this.sampleIds.clear();
     this.where = { kind: "memory" };
     this.key = null;
     this.waitingKey = null;

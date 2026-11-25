@@ -516,7 +516,7 @@
       {
         "name": "eventTrigger",
         "feature": "flow.eventTrigger",
-        "studio": "pending"
+        "studio": "ready"
       }
     ],
     "step_kinds": [

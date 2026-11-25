@@ -102,7 +102,7 @@ but a person's decision moves it. Check the other systems first, then choose:
 | Decision | Kind | When |
 | --- | --- | --- |
 | **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. An action runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped. An undo or confirm that calls a workflow starts a new child run instead, whose steps get new operation keys, so that workflow must receive `/participant/operationKey` in its `with` and refuse a duplicate by it |
-| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read |
+| **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read. While the run would go on after the block, `completed` is refused (HTTP 422) when the block can never complete, because every way through it reaches a Fail step: use Force end, or `compensated` if everything was undone |
 | **It happened** | `accept_reconciled_result` with the step's output | The order went through. Weave confirms the reservations and runs the steps after it |
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
@@ -144,6 +144,20 @@ tell a team that a move is in doubt or to open a ticket. The events are
 `transaction.completed`, `transaction.compensated`, `transaction.cancelled`,
 `transaction.in_doubt`, `transaction.reconciled`, and
 `transaction.force_ended`.
+
+![From choosing events in Studio to the runs a transaction event starts](../diagrams/react-to-a-transaction.svg)
+
+**How to read this diagram:** Read down. Someone creates the trigger once; each
+event of a matching transaction then starts one run as the trigger's owner.
+
+[Open diagram at full size](../diagrams/react-to-a-transaction.svg).
+
+**From Studio,** add the **Platform event** trigger: Studio writes the
+declaration and the input below, tests the workflow with a sample event, creates
+or moves the trigger when you activate, and lists what it started under
+**Starts**. [React to a transaction in Studio](studio.md#react-to-a-transaction)
+has the steps. The rest of this section does the same with a definition file and
+the command line.
 
 ### Declare the events the workflow accepts
 
