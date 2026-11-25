@@ -64,7 +64,29 @@ class Platform extends FakePlatform {
   project = PROJECT;
   /** The workflow an activation's record names, when it isn't notify-team. */
   readonly runs = new Map<string, string>();
+  /** The next answer to a request with this key waits here, after the platform read it. */
+  readonly held = new Map<string, Promise<void>>();
+  private async hold(key: string) {
+    const held = this.held.get(key);
+    this.held.delete(key);
+    await held;
+  }
   override async request<T>(path: string, method = "GET"): Promise<T> {
+    const answer = await this.answer<T>(path, method);
+    await this.hold(`${method} ${path.split("?")[0]!.replace(ENV, "")}`);
+    return answer;
+  }
+  override async mutate<T>(
+    path: string,
+    method: string,
+    body: unknown,
+    revision?: number,
+  ): Promise<T> {
+    const answer = await super.mutate<T>(path, method, body, revision);
+    await this.hold(`${method} ${path.replace(ENV, "")}`);
+    return answer;
+  }
+  private async answer<T>(path: string, method: string): Promise<T> {
     const activation = /\/activations\/(.+)$/.exec(path)?.[1];
     if (activation) {
       this.sent.push({ key: `GET /activations/${activation}` });
@@ -124,6 +146,19 @@ const listed = (f: ReturnType<typeof setup>) => {
   const state = f.list.state();
   if (state.kind !== "list") throw Error(`No list: ${state.kind}`);
   return state;
+};
+/** An answer held back: `release` lets it go. */
+function held(f: ReturnType<typeof setup>, key: string) {
+  let release = () => undefined as void;
+  f.platform.held.set(
+    key,
+    new Promise<void>((resolve) => (release = () => resolve())),
+  );
+  return () => release();
+}
+/** Everything the list does now, up to what the platform holds. */
+const settledSoFar = async () => {
+  for (let turn = 0; turn < 50; turn++) await Promise.resolve();
 };
 const callout = (f: ReturnType<typeof setup>) => {
   const owed = f.list.owed();
@@ -212,6 +247,85 @@ describe("what the trigger started", () => {
     await refreshed;
     expect(listed(f)).toMatchObject({ refreshing: false });
     expect(listed(f).rows[0]!.title).toBe("Started run r-0");
+  });
+
+  it("asks for the next page once, however often Show more is pressed", async () => {
+    const f = setup();
+    f.platform.starts.set("t-2", startedRuns(45));
+    await f.show();
+    const before = f.platform.sent.length;
+    expect(await Promise.all([f.list.more(), f.list.more()])).toEqual([
+      "s-20",
+      null,
+    ]);
+    expect(f.platform.sent).toHaveLength(before + 1);
+    expect(listed(f).rows).toHaveLength(40);
+  });
+
+  it("shows no more rows while it refreshes: the next page follows the rows it reads", async () => {
+    const f = setup();
+    f.platform.starts.set("t-2", startedRuns(45));
+    await f.show();
+    f.platform.starts.set("t-2", [
+      requested("n-1"),
+      requested("n-2"),
+      ...startedRuns(45),
+    ]);
+    const refreshed = f.list.refresh();
+    expect(await f.list.more()).toBeNull();
+    await refreshed;
+    expect(await f.list.more()).toBe("s-18");
+    const ids = listed(f).rows.map((row) => row.id);
+    expect(ids).toEqual([
+      "n-1",
+      "n-2",
+      ...Array.from({ length: 38 }, (_, index) => `s-${index}`),
+    ]);
+  });
+
+  it("drops a page that answers after a refresh", async () => {
+    const f = setup();
+    f.platform.starts.set("t-2", startedRuns(45));
+    await f.show();
+    const release = held(f, "GET /event-triggers/t-2/starts");
+    const more = f.list.more();
+    await settledSoFar();
+    await f.list.refresh();
+    release();
+    expect(await more).toBeNull();
+    expect(listed(f).rows).toHaveLength(20);
+    expect(listed(f)).toMatchObject({ more: "idle", refreshing: false });
+  });
+
+  it("drops a page that answers once the person left", async () => {
+    const f = setup([CURRENT, { ...OLD, id: "t-9", name: "notify-team-9" }]);
+    f.platform.starts.set("t-2", startedRuns(45));
+    f.platform.starts.set("t-9", [requested("n-1")]);
+    await f.show();
+    const release = held(f, "GET /event-triggers/t-2/starts");
+    const more = f.list.more();
+    await settledSoFar();
+    f.target.now = { ...f.target.now!, triggerId: "t-9" };
+    release();
+    // Not redrawn yet: what is shown is still the trigger they left.
+    expect(await more).toBeNull();
+    expect(listed(f).rows).toHaveLength(20);
+    await f.show();
+    expect(listed(f).rows.map((row) => row.id)).toEqual(["n-1"]);
+  });
+
+  it("keeps the newer of two reads, whichever answers last", async () => {
+    const f = setup();
+    f.platform.starts.set("t-2", [requested("s-1")]);
+    await f.show();
+    const release = held(f, "GET /event-triggers/t-2/starts");
+    const older = f.list.refresh();
+    await settledSoFar();
+    f.platform.starts.set("t-2", [requested("s-2"), requested("s-1")]);
+    await f.list.refresh();
+    release();
+    await older;
+    expect(listed(f).rows.map((row) => row.id)).toEqual(["s-2", "s-1"]);
   });
 
   it("says a trigger that was stopped is", async () => {
@@ -508,6 +622,7 @@ describe("a stop Studio still owes", () => {
   it.each([
     ["no longer reacts", { disabled: true }],
     ["moved to another version", { revision: 2 }],
+    ["starts another workflow", { workflow_name: "sync-references" }],
   ])("stops nothing when the one that stays %s", async (_what, change) => {
     const f = owing();
     await f.show();
@@ -587,6 +702,131 @@ describe("a stop Studio still owes", () => {
     });
     expect(f.settled).toEqual([["env-1", "t-1"]]);
   });
+
+  const TWO: [Seed[], PendingStop[]] = [
+    [CURRENT, OLD, { ...OLD, id: "t-0", name: "notify-team-0" }],
+    [OWED, { triggerId: "t-0", revision: 3, activationId: "a-old" }],
+  ];
+  const ALSO = "Stop notify-team-0 to keep only notify-team-2.";
+
+  it("is read again only once the stop that runs answers", async () => {
+    const f = owing(...TWO);
+    await f.show();
+    const release = held(f, "POST /event-triggers/t-1/disable");
+    const stopping = f.list.stop();
+    await settledSoFar();
+    const asked = f.platform.sent.length;
+    await f.list.refresh();
+    expect(f.platform.sent).toHaveLength(asked);
+    expect(listed(f)).toMatchObject({ refreshing: false });
+    expect(callout(f)).toMatchObject({ detail: "Stopping notify-team…" });
+    release();
+    await stopping;
+    expect(callout(f)).toMatchObject({ lead: FOR, detail: ALSO });
+    await f.list.stop();
+    expect(callout(f)).toMatchObject({
+      lead: "Stopped notify-team-0.",
+      detail: "Only notify-team-2 starts notify-team now.",
+    });
+    expect(f.platform.enabled().map((item) => item["id"])).toEqual(["t-2"]);
+  });
+
+  it("takes nothing off the list the person looks at when it answers after they moved to another account", async () => {
+    const f = owing(...TWO);
+    await f.show();
+    const release = held(f, "POST /event-triggers/t-1/disable");
+    const stopping = f.list.stop();
+    await settledSoFar();
+    f.platform.find("t-1")!["disabled"] = false;
+    f.platform.find("t-1")!["revision"] = 3;
+    f.target.now = {
+      ...f.target.now!,
+      scope: "person-2",
+      pendingStops: [TWO[1][1]!, OWED],
+    };
+    await f.show();
+    expect(callout(f)).toMatchObject({
+      detail: "Stop notify-team-0. Another one is left to stop after it.",
+    });
+    release();
+    await stopping;
+    expect(callout(f)).toMatchObject({
+      detail: "Stop notify-team-0. Another one is left to stop after it.",
+    });
+    await f.list.stop();
+    expect(callout(f)).toMatchObject({
+      lead: FOR,
+      detail: "Stop notify-team to keep only notify-team-2.",
+    });
+  });
+
+  it("keeps what a newer read shows when the person left and came back while it ran", async () => {
+    const f = owing();
+    await f.show();
+    const release = held(f, "POST /event-triggers/t-1/disable");
+    const stopping = f.list.stop();
+    await settledSoFar();
+    f.platform.find("t-1")!["disabled"] = false;
+    f.platform.find("t-1")!["revision"] = 3;
+    const here = f.target.now;
+    f.target.now = null;
+    await f.show();
+    f.target.now = here;
+    await f.show();
+    release();
+    await stopping;
+    expect(callout(f)).toMatchObject({ lead: FOR, actions: ["stop"] });
+  });
+
+  const LEFT: [string, (f: ReturnType<typeof setup>) => void][] = [
+    [
+      "another environment",
+      (f) => (f.platform.environment = `${PROJECT}/environments/other`),
+    ],
+    [
+      "another account",
+      (f) => (f.target.now = { ...f.target.now!, scope: "person-2" }),
+    ],
+    [
+      "another workflow",
+      (f) => (f.target.now = { ...f.target.now!, workflow: "sync-references" }),
+    ],
+    ["no environment", (f) => (f.target.now = null)],
+  ];
+  it.each(LEFT)(
+    "sends nothing for what the person left before it is drawn again: %s",
+    async (_what, leave) => {
+      const f = owing();
+      await f.show();
+      const asked = f.platform.sent.length;
+      leave(f);
+      await f.list.stop();
+      expect(f.platform.sent).toHaveLength(asked);
+      expect(f.settled).toEqual([]);
+    },
+  );
+  it.each(LEFT)(
+    "sends no stop once the person left while it checked: %s",
+    async (_what, leave) => {
+      const f = owing();
+      await f.show();
+      const release = held(f, "GET /event-triggers/t-2");
+      const stopping = f.list.stop();
+      await settledSoFar();
+      const here = f.target.now;
+      const environment = f.platform.environment;
+      leave(f);
+      release();
+      await stopping;
+      expect(f.platform.writes()).toEqual([]);
+      expect(f.settled).toEqual([]);
+      // Back before it was drawn: it is still owed, and Stop it works.
+      f.target.now = here;
+      f.platform.environment = environment;
+      await f.list.stop();
+      expect(callout(f)).toMatchObject({ lead: "Stopped notify-team." });
+    },
+  );
 
   it("is still cleared for the environment it was made in when the person chooses another meanwhile", async () => {
     const f = owing();

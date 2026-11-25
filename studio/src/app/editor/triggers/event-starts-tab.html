@@ -43,6 +43,7 @@ SPDX-License-Identifier: Apache-2.0
         class="icon-button es-refresh"
         aria-label="Refresh the starts"
         title="Refresh the starts"
+        [attr.aria-disabled]="list.stopping() || null"
         (click)="refresh()"
       >
         <weave-icon name="refresh" [size]="16" />
@@ -158,7 +159,7 @@ SPDX-License-Identifier: Apache-2.0
     @if (now.next) {
       <button
         type="button"
-        [attr.aria-disabled]="now.more === 'loading' || null"
+        [attr.aria-disabled]="now.more === 'loading' || now.refreshing || null"
         (click)="more()"
       >
         Show more

@@ -232,10 +232,17 @@ export class EventStartsList {
   settled(): Promise<void> {
     return this.reading;
   }
-  /** Reads it again, as the person asked: not before a failed read's pause is over. */
+  /** While a stop runs, what is owed is as it was read before it. */
+  stopping(): boolean {
+    return this.owed()?.kind === "stopping";
+  }
+  /** Reads it again, as the person asked: not before a failed read's pause is over, nor while a stop runs. */
   refresh(): Promise<void> {
     const state = this.state();
-    if (state.kind === "failed" && this.now() < state.retryAt)
+    if (
+      this.stopping() ||
+      (state.kind === "failed" && this.now() < state.retryAt)
+    )
       return Promise.resolve();
     if (state.kind === "list") this.state.set({ ...state, refreshing: true });
     this.reading = this.read();
@@ -354,7 +361,7 @@ export class EventStartsList {
     });
   }
 
-  /** Twenty more; the ID of the first one, or null when none was read. */
+  /** Twenty more; the ID of the first one, or null when none was read. They follow the rows a refresh reads. */
   async more(): Promise<string | null> {
     const state = this.state();
     const target = this.host.target();
@@ -362,6 +369,7 @@ export class EventStartsList {
       !target?.triggerId ||
       state.kind !== "list" ||
       !state.next ||
+      state.refreshing ||
       state.more === "loading"
     )
       return null;
@@ -420,9 +428,12 @@ export class EventStartsList {
     const { api, environmentId, environment } = target;
     const path = api.environment;
     const current = this.still(this.key(target));
+    // It is offered for what is drawn; the person may have left it since.
+    if (!current()) return;
     const turn = this.turn;
+    const holds = () => turn === this.turn && current();
     const says = (next: Owed | null) => {
-      if (turn === this.turn && current()) this.owed.set(next);
+      if (holds()) this.owed.set(next);
     };
     this.owed.set({ kind: "stopping", ...triggers });
     // Something must still react once the old one stops.
@@ -448,7 +459,11 @@ export class EventStartsList {
         ...triggers,
       });
     }
-    if (api.environment !== path) return;
+    // They left while it checked: nothing is sent, and it stays owed.
+    if (!current()) {
+      if (turn === this.turn) this.owed.set(owed);
+      return;
+    }
     const result = await applyEventRow(
       api,
       { kind: "duplicate", binding: old, from: "", stop: true, text: "" },
@@ -459,7 +474,11 @@ export class EventStartsList {
     if (result.pendingStop === null) this.host.settle(environmentId, old.id);
     switch (result.status) {
       case "stopped":
-        this.pending = this.pending.slice(1);
+        // Only from the list it was made in: a newer read knows what is owed.
+        if (holds())
+          this.pending = this.pending.filter(
+            (item) => !("old" in item) || item.old.id !== old.id,
+          );
         return says(this.pending[0] ?? { kind: "stopped", ...triggers });
       case "waiting":
         return says({
