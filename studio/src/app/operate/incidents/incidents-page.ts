@@ -1812,6 +1812,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         !this.alive ||
         generation !== this.generation ||
         this.selected?.id !== decided.id ||
+        // The next decision is made on the incident its dialog opened on.
+        this.resolving ||
         isUnavailableIncident(fresh) ||
         fresh.revision < this.selected.revision
       )

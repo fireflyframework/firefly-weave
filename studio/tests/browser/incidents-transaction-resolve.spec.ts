@@ -1012,6 +1012,43 @@ test("the read after a decision never opens over an incident opened meanwhile, n
   await expect(offers(page)).toHaveCount(0);
 });
 
+test("a slow read after a decision never changes the incident under the next decision's dialog", async ({
+  page,
+}) => {
+  const platform = await opened(page, called);
+  const sent = await decisions(page, platform);
+  const reads: Route[] = [];
+  await page.route(`${environment}/incidents/${ids.called}`, (route) => {
+    reads.push(route);
+  });
+  await offer(page, "Retry the undo").click();
+  await field(page, "Retry the undo", "Reason").fill("Back");
+  await confirm(page, "Retry the undo").click();
+  await expect.poll(() => reads.length).toBe(1);
+  // It is in doubt again before that read is answered, as the list says.
+  const again = (revision: number, attempts: number): IncidentView => ({
+    ...triedAgain(called, attempts),
+    revision,
+  });
+  change(platform, again(3, 4));
+  await page.clock.fastForward(16_000);
+  const name = "Mark as reconciled";
+  await offer(page, name).click();
+  await expect.poll(() => reads.length).toBe(2);
+  await reads[1].fulfill({ json: again(3, 4) });
+  await ending(page, name, "Undone").check();
+  await tickAll(page);
+  await field(page, name, "Reason").fill("The quantity is back");
+  await field(page, name, "Evidence reference").fill("OPS-2304");
+  await reads[0].fulfill({ json: again(4, 9) });
+  await drawn(page);
+  await expect(dialog(page, name)).toContainText("Undo failed after 4 tries");
+  await expect(dialog(page, name)).not.toContainText("rebuilt the checklist");
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1].revision).toBe('"3"');
+});
+
 // -------------------------------------------------------------- refusals
 
 test("a refused record shows under the result, and everything typed stays", async ({
