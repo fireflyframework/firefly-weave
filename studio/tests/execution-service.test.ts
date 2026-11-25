@@ -194,10 +194,13 @@ describe("the execution service", () => {
         event_id: string;
         transaction: { run_id: string };
       };
-      // After a reload too: a kept result keeps matching what it read.
+      // After a reload, another day, too: a kept result keeps matching what it read.
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2027-03-01") });
       expect(fixture(reacting, event).service.workflowInput()).toEqual(sample);
+      vi.useRealTimers();
       for (const id of [sample.event_id, sample.transaction.run_id])
         expect(id).toMatch(/^00000000-0000-4000-8000-[0-9a-f]{12}$/);
+      expect(sample.event_id).not.toBe(sample.transaction.run_id);
       const other = (eventTrigger: unknown) =>
         fixture(
           {

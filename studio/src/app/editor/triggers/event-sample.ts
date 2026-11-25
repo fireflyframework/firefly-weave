@@ -167,7 +167,6 @@ function problemAt(
     const options = schema["anyOf"].filter(isJsonObject);
     const isNull = (option: JsonObject) => option["type"] === "null";
     const allowed = empty || options.some(isNull);
-    if (value === null && allowed) return null;
     const found = options
       .filter((option) => !isNull(option))
       .map((option) => problemAt(path, value, option, event, allowed));

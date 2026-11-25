@@ -25,6 +25,7 @@ import type { Workflow } from "../src/app/model";
 import {
   DEFAULT_DECLARATION,
   eventInputFit,
+  declaredSample,
   eventInputState,
   eventProblems,
   eventSubtitle,
@@ -36,6 +37,7 @@ import {
   withDeclaration,
   type EventDeclaration,
 } from "../src/app/editor/triggers/event-trigger";
+import type { PlatformEventType } from "../src/app/editor/triggers/platform-event";
 
 const workflow = (spec: Record<string, unknown> = {}): Workflow => ({
   apiVersion: "weave/v1alpha1",
@@ -361,6 +363,34 @@ const FORM = {
 const checked = (inputSchema: unknown, ...codes: string[]) => ({
   definition: workflow({ inputSchema }),
   diagnostics: codes.map((code) => ({ code, path: "/spec/inputSchema" })),
+});
+
+describe("a sample of the trigger's event", () => {
+  const sample = (spec: Record<string, unknown>, type?: PlatformEventType) =>
+    declaredSample(workflow(spec), {
+      ...(type ? { type } : {}),
+      now: new Date("2026-11-20T10:00:00Z"),
+      id: () => "00000000-0000-4000-8000-000000000001",
+    });
+  const eventTrigger = {
+    events: ["transaction.completed", "transaction.compensated"],
+    from: ["sync-records"],
+  };
+
+  it("is the event asked for, from the first workflow it reacts to", () => {
+    expect(sample({ eventTrigger }, "transaction.completed")).toMatchObject({
+      type: "transaction.completed",
+      transaction: { workflow: { name: "sync-records" }, state: "completed" },
+    });
+  });
+
+  it("is otherwise the first in the choices, or needs attention while none is chosen", () => {
+    expect(sample({ eventTrigger })["type"]).toBe("transaction.compensated");
+    expect(sample({ eventTrigger: { events: [] } })["type"]).toBe(
+      "transaction.in_doubt",
+    );
+    expect(sample({})["type"]).toBe("transaction.in_doubt");
+  });
 });
 
 describe("what a check says of the input", () => {

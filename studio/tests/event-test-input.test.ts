@@ -224,6 +224,19 @@ describe.each([
   });
 });
 
+it("says nothing of the IDs it replaced once the test event is another", async () => {
+  const f = setup();
+  await f.controller.setTestEvent(realEvent() as Json);
+  expect(f.controller.replacedIds()).toEqual(["event", "run", "incident"]);
+  // As another window, Debug in editor or Undo leaves it.
+  const data = f.controller.testData.data();
+  await f.controller.testData.change(
+    { ...data, input: { value: { type: "x" }, source: "manual" } },
+    [],
+  );
+  expect(f.controller.replacedIds()).toEqual([]);
+});
+
 describe("Generate sample in the manual form", () => {
   it("builds an event the trigger reacts to, the first in the choices", async () => {
     const f = setup();
