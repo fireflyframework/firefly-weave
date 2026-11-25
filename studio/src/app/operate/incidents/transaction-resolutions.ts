@@ -229,7 +229,8 @@ export function checklistRows(
           ? "confirmed"
           : "done";
     const did = {
-      // What it still answers isn't shown while the transaction is in doubt.
+      // While the transaction is in doubt, a step's own answer isn't shown;
+      // what its confirm, its release or its undo answers is.
       undone: running
         ? "is stopped and its change is reversed"
         : "was reversed",
