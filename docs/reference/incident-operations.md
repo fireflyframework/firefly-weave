@@ -231,8 +231,9 @@ most 2,000 characters). Only `accept_reconciled_result` takes an `output`;
 `retry_safe` and `terminate` reject any `output`, even `null`. A reconciled output
 is checked against the 1 MiB payload limit before anything is stored. The same
 person resending the same request with the original revision gets the original
-receipt; a different request with that receipt ID conflicts; two competing
-receipts for one revision cannot both win. Authority is checked before a resend
+receipt; a different request with that receipt ID conflicts, and so does a
+decision on another incident of the same run; two competing receipts for one
+revision cannot both win. Authority is checked before a resend
 is honored, so removing a grant also stops resends.
 Two decisions sent at once on one incident queue: the later one waits up to 2
 seconds for the earlier one, then answers HTTP 409 `WV-INCIDENT-REVISION` (or
@@ -502,7 +503,7 @@ Some runs created before the current admission policy cannot be shown safely.
 | HTTP 409 `WV-RUNTIME-STATE` on a call incident | The call's child run has not ended yet | Wait for the child, or cancel it, and decide again |
 | HTTP 409 `WV-RUNTIME-DEADLINE` on `retry_safe` | The action's original deadline has passed | Use `terminate`, then start a linked retry of the whole run |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The reconciled `output` does not match the action's pinned output schema or exceeds the payload limit, or an `output` was sent with `retry_safe` or `terminate` | Fix the output to match that schema; leave `output` out for the other decisions |
-| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | You reused a `receipt_id` with a different body or revision, or another person used it | Resend the original request unchanged, or generate a new `receipt_id` for a new decision |
+| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | You reused a `receipt_id` with a different body or revision, another person used it, or another incident of the run was decided with it | Resend the original request unchanged, or generate a new `receipt_id` for a new decision |
 | The run stays suspended after a resolution | Another incident is still active, or a deadline applies | List the run's incidents again and resolve each active one |
 | `retry` is rejected, for example with HTTP 409 `WV-RUNTIME-STATE` | The parent run has not finished, or the start request is invalid | Wait for the run to finish, or cancel it first; check the input |
 | `external_effects_may_continue: true` after cancel | Work was already sent to another system | Check that system and compensate there if needed |

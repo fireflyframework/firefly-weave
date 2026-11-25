@@ -17,6 +17,8 @@
 """Histories of transactions on real PostgreSQL export and replay consistently: runs of this version, whose incidents
 can meet and open again, and runs an earlier version started, before and after a decision moved them on."""
 
+from uuid import uuid4
+
 import pytest
 from stuck_transactions import (
     CONFIRMS,
@@ -35,6 +37,7 @@ from stuck_transactions import (
 from transaction_platform import build, hold, submit, transaction, workflow, writes_as_an_earlier_version
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.definitions.models import CatalogError
 
 pytestmark = pytest.mark.integration
 
@@ -78,6 +81,47 @@ async def test_two_stuck_confirms_decided_one_by_one_replay(platform, history):
     await resolve(platform, (await by_key(platform, run.id))[CONFIRMS[1]], "retry_safe")
     await platform.complete(await platform.lease("hold2#confirm"))
     await replays(platform, history, run, "started", "incident_resolved", "incident_resolved")
+
+
+async def test_a_receipt_decides_one_incident_of_its_run(platform, history):
+    run, held = await two_stuck(platform)
+    receipt = uuid4()
+    first = await resolve(platform, held[CONFIRMS[0]], "retry_safe", receipt=receipt)
+    [second] = (await by_key(platform, run.id)).values()
+    with pytest.raises(CatalogError) as refused:
+        await resolve(platform, second, "retry_safe", receipt=receipt)
+    assert (refused.value.status, refused.value.code) == (409, "WV-INCIDENT-RECEIPT-CONFLICT")
+    assert await by_key(platform, run.id) == {second["incident_key"]: second}
+    # Sent again for the incident it decided, it answers as it did.
+    assert await resolve(platform, held[CONFIRMS[0]], "retry_safe", receipt=receipt) == first
+    await resolve(platform, second, "retry_safe")
+    for key in ("hold#confirm", "hold2#confirm"):
+        await platform.complete(await platform.lease(key))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+    await replays(platform, history, run, "started", "incident_resolved", "incident_resolved")
+
+
+async def test_a_receipt_names_no_event_of_its_run(platform):
+    run, held = await two_stuck(platform)
+    [started] = await platform.query("SELECT id FROM run_events WHERE run_id=:run AND type='started'", run=run.id)
+    with pytest.raises(CatalogError) as refused:
+        await resolve(platform, held[CONFIRMS[0]], "retry_safe", receipt=started["id"])
+    assert (refused.value.status, refused.value.code) == (409, "WV-INCIDENT-RECEIPT-CONFLICT")
+    assert await by_key(platform, run.id) == held
+
+
+async def test_a_receipt_decides_incidents_of_two_runs(platform):
+    activation = await platform.publish(workflow("move", [transaction(hold(), submit())]))
+    receipt, incidents = uuid4(), []
+    for move in ("M-1", "M-2"):
+        run = await platform.start(activation, move)
+        for key in ("hold", "submit"):
+            await platform.complete(await platform.lease(key))
+        await platform.fail(await platform.lease("hold#confirm"), "REJECTED", outcome="failed")
+        await platform.scan()
+        incidents.append(await active(platform, run.id))
+    for incident in incidents:
+        assert (await resolve(platform, incident, "retry_safe", receipt=receipt)).status == "resolved"
 
 
 async def test_a_step_that_failed_beside_the_decision_and_was_retried_replays(platform, history):

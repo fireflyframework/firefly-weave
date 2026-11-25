@@ -763,6 +763,17 @@ class RuntimeRepository:
         )
         return sorted(str(row["id"]) for row in rows)
 
+    async def receipt_used(self, run_id: UUID, receipt: UUID) -> bool:
+        """Whether a decision or an event of the run has this identity: its history names each of them by one."""
+        rows = await self.rows(
+            "SELECT 1 FROM incidents i JOIN incident_resolution_receipts r ON r.incident_id=i.id "
+            f"WHERE i.{SCOPE.replace(' AND ', ' AND i.')} AND i.run_id=:run AND r.receipt_id=:receipt "
+            f"UNION ALL SELECT 1 FROM run_events WHERE {SCOPE} AND run_id=:run AND id=:receipt LIMIT 1",
+            run=run_id,
+            receipt=receipt,
+        )
+        return bool(rows)
+
     async def observe_policy_block(self, row: dict[str, Any]) -> None:
         """Trusted scanner/claim observation; caller holds this scoped run lock."""
         if any(row[field] != getattr(self.tx.scope, field) for field in ("tenant_id", "project_id", "environment_id")):

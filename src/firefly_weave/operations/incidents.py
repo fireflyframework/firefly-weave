@@ -238,6 +238,8 @@ class IncidentService:
                 if prior["actor_id"] != actor.id or prior["request_hash"] != fingerprint:
                     raise CatalogError(409, "WV-INCIDENT-RECEIPT-CONFLICT", "Resolution receipt payload conflict")
                 return IncidentView.model_validate_json(json.dumps(prior["response"]))
+            if await repository.receipt_used(row["id"], request.receipt_id):
+                raise CatalogError(409, "WV-INCIDENT-RECEIPT-CONFLICT", "Another decision of this run has this receipt")
             if request.kind != "terminate":
                 self.runtime.definitions.registry.require_operational()
             if incident["revision"] != expected_revision:
