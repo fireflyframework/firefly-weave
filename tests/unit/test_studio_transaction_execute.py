@@ -1029,6 +1029,48 @@ def test_a_step_that_failed_in_a_transaction_a_called_workflow_handles_failed_th
     assert failures(answer, "call") == {"move[0]": "WV-TXN-ROLLED-BACK", "note[0]": "WV-EXPR-MISSING"}
 
 
+def beside(step: dict[str, Any]) -> str:
+    """A workflow that runs a step beside a transaction that waits with its reservation made."""
+    return source({**parallel(x=[step], y=[transaction([hold(), wait(60, "held"), submit()])]), "id": "outer"})
+
+
+LATER = {"id": "later", "kind": "action", "uses": "target-system.add-quantity@1.0.0", "with": add()["with"]}
+PAID = {"id": "paid", "kind": "signal", "name": "order-paid", "timeoutSeconds": 30, "payloadSchema": {}}
+FAILED_LATER = {"errors": {"node:later": {"code": "VALIDATION"}}}
+
+
+@pytest.mark.parametrize(
+    "failing, fields, expected",
+    [
+        (LATER, FAILED_LATER, {"later": "VALIDATION"}),
+        (PAID, {"scripts": {"signals": {"paid": {"outcome": "timeout"}}}}, {"paid": None}),
+    ],
+    ids=["an action", "a signal that never arrives"],
+)
+def test_a_step_of_an_open_transaction_is_never_blamed_for_a_failure_outside_of_it(failing, fields, expected):
+    answer = run_move(beside(failing), **fields)
+    assert answer["status"] == "failed", answer
+    assert answer["trace"][-1]["nodeId"] in {"hold", "held"}
+    assert failures(answer) == expected
+
+
+def test_a_step_of_an_open_transaction_is_never_blamed_for_a_called_run_that_failed():
+    call = {key: value for key, value in called_step().items() if key != "compensate"}
+    answer = run_calling(beside(call), wait(10), STOP)
+    assert answer["status"] == "failed", answer
+    assert [entry["nodeId"] for entry in answer["trace"] if "frame" not in entry][-1] == "held"
+    assert failures(answer) == {"call": None}
+    assert failures(answer, "call") == {"stop": None}
+
+
+def test_the_step_whose_incident_holds_the_run_is_blamed_before_one_that_failed_after_it():
+    call = {key: value for key, value in called_step().items() if key != "compensate"}
+    branches = parallel(x=[LATER], y=[call], z=[transaction([hold(), submit()])])
+    answer = run_calling(source({**branches, "id": "outer"}), STOP, **FAILED_LATER)
+    assert answer["status"] == "failed", answer
+    assert failures(answer) == {"later": "VALIDATION"}
+
+
 MISSING = {"id": "missing", "kind": "transform", "value": {"ref": "/input/items/5"}}
 
 

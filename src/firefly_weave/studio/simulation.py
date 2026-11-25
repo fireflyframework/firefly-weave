@@ -1191,22 +1191,28 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         shapes = cast(Any, simulator).prepared_of(frame or "").transactions
         stopped_by_transaction = False
         handled: set[str | None] = set()
+        stopped_at: set[str] = set()
         if shapes is not None:
             # A run with transactions: what failed inside them, whatever settled after it.
             handled = {_entry_key(entry) for entry in trace if entry.frame == frame and entry.handled is not None}
             own_errors, own_uses = (request.errors, uses) if frame is None else ({}, {})
             called = next((item for item in data.frames if item.key == frame), None)
-            reports = reported if called is None else _reported(called.events)
+            events = view.events if called is None else called.events
+            reports = reported if called is None else _reported(events)
             variables = view.variables if frame is None else frames[frame].variables
             causes = _named_failures(records(frame or ""), variables)
+            stopped_at = _stopped_at(events, variables)
             stopped_by_transaction = (held if frame is None else held_frames.get(frame)) in IN_DOUBT_CODES
             for index, update in _transaction_failures(trace, frame, shapes, causes, reports, own_errors, own_uses):
                 trace[index] = trace[index].model_copy(update=update)
                 stopped_by_transaction |= shapes.owner_key(_entry_key(trace[index])) not in handled
-        last_of_run = next((i for i in reversed(range(len(trace))) if trace[i].frame == frame), None)
-        if frame not in ended or last_of_run is None or stopped_by_transaction:
+        of_run = [index for index, entry in enumerate(trace) if entry.frame == frame]
+        if frame not in ended or not of_run or stopped_by_transaction:
             continue
-        stopping = trace[last_of_run]
+        # The last step, unless the run stopped at an earlier one while the steps of a transaction went on.
+        unfinished = [index for index in of_run if trace[index].status not in {"completed", "failed"}]
+        stopping_index = ([index for index in unfinished if _entry_key(trace[index]) in stopped_at] or of_run)[-1]
+        stopping = trace[stopping_index]
         key = _entry_key(stopping)
         # A step left unfinished by a transaction whose failure was handled didn't stop the run.
         if stopping.status == "completed" or (shapes is not None and shapes.owner_key(key) in handled):
@@ -1216,7 +1222,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
             if stopped is not None:
                 update["error"] = stopped
-        trace[last_of_run] = stopping.model_copy(update=update)
+        trace[stopping_index] = stopping.model_copy(update=update)
     own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
@@ -1632,6 +1638,17 @@ def _entry_key(entry: TraceEntry) -> str:
 def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
     """The failure each step instance of a run reported last."""
     return {cast(str, event.data.get("node_id")): event.data for event in events if event.type == "step_failed"}
+
+
+def _stopped_at(events: Iterable[RuntimeEvent], variables: Mapping[str, Any]) -> set[str]:
+    """The step instances a run may have stopped at outside its transactions: those its incidents name, which hold it;
+    without any, the calls whose run failed and the waits whose deadline passed."""
+    incidents = {cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()}
+    return incidents or {
+        cast(str, event.data.get("node_id"))
+        for event in events
+        if event.type == "timed_out" or (event.type == "call_completed" and event.data.get("status") != "succeeded")
+    }
 
 
 def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:
