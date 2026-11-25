@@ -514,6 +514,48 @@ def test_after_a_signal_a_step_the_simulator_cant_carry_on_with_is_named_and_wha
     assert "v-123" not in logged and "a defect in the runtime" not in logged
 
 
+def after(steps: int) -> Any:
+    """The end of a request's time, after the simulation asked that many times; ``asked`` counts."""
+
+    def out_of_time() -> bool:
+        out_of_time.asked += 1
+        return out_of_time.asked > steps
+
+    out_of_time.asked = 0
+    return out_of_time
+
+
+@pytest.mark.parametrize("step", [PAUSE, {"id": "note", "kind": "transform", "value": {"literal": 1}}])
+def test_a_simulation_out_of_time_stops_at_its_next_step_and_answers_limit(step):
+    loop = {**loop_over([1, 2]), "body": {"steps": [step], "output": {"literal": None}}}
+    time = after(4)
+    answer = execute(request(workflow(loop)), None, out_of_time=time)
+    assert (answer.status, answer.trace, answer.compile.ok) == ("limit", [], True)
+    assert time.asked == 5
+    in_time = after(1000)
+    assert execute(request(workflow(loop)), None, out_of_time=in_time).status == "completed"
+    assert in_time.asked > 5
+
+
+def test_a_simulation_out_of_time_while_it_looks_for_where_it_stopped_answers_limit(monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    def defect(*_: object) -> None:
+        raise TypeError("a defect in the runtime")
+
+    monkeypatch.setattr(kernel, "call_result", defect)
+    body = request(
+        workflow(CALL),
+        definitions=[ACTION, callee_definition()],
+        workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+    )
+    whole = after(1000)
+    assert execute(body, None, out_of_time=whole).status == "failed"
+    # Half of what it asked was the run itself; the rest looks for the step.
+    answer = execute(body, None, out_of_time=after(whole.asked // 2 + 1))
+    assert (answer.status, answer.diagnostics) == ("limit", [])
+
+
 def loop_over(items: list[int]) -> dict[str, Any]:
     """A loop of up to two items over ``items``."""
     return {

@@ -17,7 +17,8 @@
 """Execute step, Execute previous steps and Execute workflow on the Studio host: the slice of a workflow a target
 needs, the catalog a simulation compiles against, stubs for what isn't there, and the simulated run as a trace.
 
-Pure: no network, no clock and no files. The host fetches the project catalog itself and passes it in.
+Pure: no network, no clock and no files. The host fetches the project catalog itself and passes it in, and says when
+a request's time is up.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
@@ -358,6 +359,15 @@ class SimulationRefused(ValueError):
 
 
 ROUNDS = 1000
+
+
+class OutOfTime(Exception):
+    """The time of the request that simulates is up: the simulation stops at once, so the next request can start."""
+
+
+def never() -> bool:
+    """Whether the time is up, for a simulation without a limit of its own."""
+    return False
 
 
 def _pointer(*parts: str) -> str:
@@ -713,6 +723,7 @@ def simulator_for(
     whole: JsonObject,
     sliced: bool,
     target: str | None = None,
+    out_of_time: Callable[[], bool] = never,
 ) -> tuple[CompileSummary, Simulator | None, set[str]]:
     """Compile ``document`` (the workflow, or its slice) for a simulation and start it with the request's test data.
 
@@ -720,8 +731,8 @@ def simulator_for(
     mocks for steps the slice doesn't run, and mocks that no longer fit, are left out before the simulator sees
     them (the misfits are returned); called workflows run with the mocks test data holds for their steps; AI tasks
     replay their saved turns; simulated failures apply like mocks, to the steps the document runs. ``target`` is the
-    step the document is cut after. The simulator is None when the workflow doesn't compile. Raises
-    ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    step the document is cut after. The simulator raises ``OutOfTime`` at its first step once ``out_of_time`` says so;
+    it is None when the workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
@@ -763,6 +774,7 @@ def simulator_for(
             workflows=workflows,
             errors=errors,
         )
+        simulator.out_of_time = out_of_time
     except DebugError as error:
         if error.code == "WV-DEBUG-MOCK-KEY":
             _refuse_stale_phases(artifact, mocks, errors, workflows)
@@ -808,9 +820,31 @@ def _refuse_stale_phases(
         raise SimulationRefused(422, "WV-DEBUG-MOCK-KEY", stale[0][0], [path for _, path in stale])
 
 
+class _Timed:
+    """What the host adds to a simulator: it stops at its next step once the request's time is up."""
+
+    out_of_time: Callable[[], bool] = staticmethod(never)
+
+    def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
+        if self.out_of_time():
+            raise OutOfTime
+        return cast(bool, super()._step_run(key, run, event))  # type: ignore[misc]
+
+
+@functools.cache
+def host_simulator() -> Any:
+    """The simulator of the host's sessions."""
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    class HostSimulator(_Timed, Simulator):
+        pass
+
+    return HostSimulator
+
+
 @functools.cache
 def _watching_simulator() -> Any:
-    """The simulator the host runs, which keeps the last record of each transaction of each run and stops the
+    """The simulator Execute runs, which keeps the last record of each transaction of each run and stops the
     transaction a target is in at the target.
 
     **Records.** The runtime deletes a transaction's record from the run's state when its loop iteration is released,
@@ -841,7 +875,7 @@ def _watching_simulator() -> Any:
     from firefly_weave.runtime.control import loop_suffix
     from firefly_weave.runtime.kernel import _advance_owned, begin
 
-    class WatchingSimulator(Simulator):
+    class WatchingSimulator(_Timed, Simulator):
         def __init__(
             self, artifact: CompiledArtifact, *, target: str | None = None, broken: Collection[str] = (), **options: Any
         ) -> None:
@@ -983,7 +1017,8 @@ def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
     """Where a run stops on something the simulator can't carry on with, and the run up to there.
 
     ``simulator`` is a fresh one (the failed one's state is unknown). It replays as Execute does (scripted signals
-    and people answered, waits advanced) one boundary at a time; the step that raises names the place.
+    and people answered, waits advanced) one boundary at a time; the step that raises names the place. Raises
+    ``OutOfTime`` when the time is up before that.
     """
     from types import SimpleNamespace
 
@@ -994,6 +1029,8 @@ def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
     stepper = _Stepper(simulator)
     try:
         _drive(stepper, scripts or SimpleNamespace(signals={}, humans={}), SignalNode, HumanTaskNode, TERMINAL)
+    except OutOfTime:
+        raise
     except Exception:  # noqa: BLE001 - this boundary is where it stops
         return (f"step {node_of(stepper.here[0])}" if stepper.here else "the current step"), simulator
     return "the current step", simulator
@@ -1020,11 +1057,14 @@ def unsimulated(place: str) -> str:
     return f"Studio couldn't simulate {place}, so the simulated run stopped there."
 
 
-def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> ExecuteResponse:
+def execute(
+    request: ExecuteRequest, project: CatalogSnapshot | None, *, out_of_time: Callable[[], bool] = never
+) -> ExecuteResponse:
     """Simulate the target of an Execute request; the answer is ``ExecuteResponse``.
 
-    Raises ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition
-    that conflicts with the catalog. Nothing here reads the network, the clock or files.
+    The answer is ``limit`` when ``out_of_time`` says the request's time is up before the simulated run ends. Raises
+    ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition that
+    conflicts with the catalog. Nothing here reads the network, the clock or files.
     """
     from firefly_weave.compiler.api import import_artifact
     from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
@@ -1070,7 +1110,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     unsimulated_at: str | None = None
     try:
         summary, simulator, misfits = simulator_for(
-            request, project, document, whole=whole, sliced=sliced, target=target_step
+            request, project, document, whole=whole, sliced=sliced, target=target_step, out_of_time=out_of_time
         )
         if simulator is None:
             return ExecuteResponse(status="failed", compile=summary, trace=[])
@@ -1084,10 +1124,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 code=str(error), severity="error", stage="evaluation", path="", message="The simulated run stopped."
             )
             return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
-        except (DebugError, SimulationRefused):
+        except (DebugError, SimulationRefused, OutOfTime):
             raise
         except Exception as error:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
-            _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced, target=target_step)
+            _, fresh, _ = simulator_for(
+                request, project, document, whole=whole, sliced=sliced, target=target_step, out_of_time=out_of_time
+            )
             if fresh is None:
                 raise
             place, simulator = stuck_at(fresh, scripts)
@@ -1095,6 +1137,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             logger.debug("Studio couldn't simulate %s: %s", place, type(error).__name__)
             unsimulated_at = place
             blocked = None
+    except OutOfTime:
+        return ExecuteResponse(status="limit", compile=cast("CompileSummary", summary), trace=[])
     except DebugError as error:
         if error.code == "WV-DEBUG-LIMIT" and summary is not None:
             return ExecuteResponse(status="limit", compile=summary, trace=[])

@@ -146,6 +146,8 @@ class HttpActionBuild(BaseModel):
 # Room for a body sample and a response sample at the 256 KB Studio accepts for each, with their schemas.
 HTTP_ACTION_LIMIT = 1024 * 1024
 LOCAL_WORK_SECONDS = 30
+# A simulation stops itself a little before its request gives up, so the answer says why it stopped.
+SIMULATION_SECONDS = LOCAL_WORK_SECONDS - 2
 LOCAL_WORKERS = 2
 
 
@@ -214,6 +216,12 @@ async def local_work(
     if respond is not None:
         return respond(value)
     return Response(canonical_bytes(value), media_type="application/json")
+
+
+def _simulation_time() -> Callable[[], bool]:
+    """Whether the time of a simulation that starts now is up. The thread it runs in can't be cancelled, so it asks."""
+    until = time.monotonic() + SIMULATION_SECONDS
+    return lambda: time.monotonic() >= until
 
 
 def _session_id(request: Request) -> UUID | None:
@@ -698,9 +706,11 @@ class StudioController:
             if project is None:
                 return problem(502, "WV-STUDIO-CATALOG", "Studio couldn't read the project's catalog")
 
+        out_of_time = _simulation_time()
+
         def work() -> Any:
             try:
-                answer = execute(body, project)
+                answer = execute(body, project, out_of_time=out_of_time)
             except SimulationRefused as refused:
                 return refused
             except CatalogConflict as conflict:
@@ -746,6 +756,7 @@ class StudioController:
         return kept[1]
 
     async def _session_work(self, work: Callable[[], Any], status: int = 200) -> Response:
+        from firefly_weave.studio.debug_sessions import LATE
         from firefly_weave.studio.simulation import SimulationRefused
 
         def guarded() -> Any:
@@ -766,7 +777,7 @@ class StudioController:
         return await local_work(
             guarded,
             pool=_DEBUG_WORK,
-            slow="The run log took longer than 30 seconds; execute fewer steps",
+            slow=LATE,
             busy="Studio is still executing; wait for it to finish",
             respond=respond,
             slow_code="WV-STUDIO-TIMEOUT",
@@ -811,7 +822,10 @@ class StudioController:
         except ValidationError:
             return problem(422, "WV-STUDIO-REQUEST", "Provide a run log command")
         sessions = self._debug_sessions()
-        return await self._session_work(lambda: sessions.command(identifier, int(match), command, time.monotonic()))
+        out_of_time = _simulation_time()
+        return await self._session_work(
+            lambda: sessions.command(identifier, int(match), command, time.monotonic(), out_of_time)
+        )
 
     @delete_mapping("/studio/local/debug/sessions")
     async def debug_sessions_clear(self, request: Request) -> Response:
