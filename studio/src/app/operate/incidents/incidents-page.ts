@@ -623,10 +623,10 @@ interface Band {
         <weave-transaction-resolve-dialog
           [incident]="selected"
           [action]="action"
-          [busy]="sending.has(selected.id)"
+          [busy]="sending.has(selected.id) || rereading"
           [failure]="failure"
           [refreshing]="refreshing"
-          [unread]="!!refusedRecord && !sending.has(selected.id)"
+          [unread]="!!refusedRecord && !rereading"
           (decide)="resolve($event)"
           (dismiss)="stopDeciding(action)"
           (refresh)="reloadIncident()"
@@ -840,6 +840,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   failure: PlainError | null = null;
   /** Why a record of how a transaction ended was refused, until its incident is read again. */
   refusedRecord: PlainError | null = null;
+  /** The receipt each incident's last decision was sent with. */
+  private readonly lastSent = new Map<string, string>();
   /**
    * Per incident, the receipt of a decision whose answer was lost, with what
    * it was sent with (revision and decision). Sending the same again reuses
@@ -1640,6 +1642,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const receipt = lost?.key === key ? lost.receipt : crypto.randomUUID();
     this.pending.set(incident.id, { key, receipt });
     this.sending.add(incident.id);
+    this.lastSent.set(incident.id, receipt);
     this.failure = null;
     const where = this.whereOf(incident);
     const offer = this.deciding
@@ -1655,12 +1658,15 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const stillAsked = () =>
       stillOpen() && this.resolving && (!offer || dialog === this.dialogs);
     try {
-      const row = await this.host.api.request<IncidentView>(
-        `${scope}/incidents/${encodeURIComponent(incident.id)}/resolve`,
-        "POST",
-        { receipt_id: receipt, ...request },
-        { "If-Match": `"${incident.revision}"` },
-      );
+      // Once answered, another decision can be sent, whatever is still read for this one.
+      const row = await this.host.api
+        .request<IncidentView>(
+          `${scope}/incidents/${encodeURIComponent(incident.id)}/resolve`,
+          "POST",
+          { receipt_id: receipt, ...request },
+          { "If-Match": `"${incident.revision}"` },
+        )
+        .finally(() => this.sending.delete(incident.id));
       if (this.pending.get(incident.id)?.receipt === receipt)
         this.pending.delete(incident.id);
       const resolved = { ...unchanging(incident), ...row };
@@ -1713,6 +1719,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       ) {
         this.refusedRecord = explained;
         if (await this.reloadIncident()) return;
+        // A later decision says how it went itself.
+        if (this.lastSent.get(incident.id) !== receipt) return;
       }
       if (stillAsked()) this.failure = explained;
       else
@@ -1722,9 +1730,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
             : `Incident ${where} was not resolved. ${plain.message}`,
         );
     } finally {
-      this.sending.delete(incident.id);
       if (this.alive) this.cdr.markForCheck();
     }
+  }
+  /** A refused record's incident is being read again, before its refusal shows. */
+  get rereading() {
+    return this.refreshing && !!this.refusedRecord && !this.failure;
   }
   /**
    * Refresh incident: reads the incident again (incidents.read) so the dialog

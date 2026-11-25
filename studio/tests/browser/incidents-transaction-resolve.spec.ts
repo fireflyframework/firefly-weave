@@ -1256,6 +1256,8 @@ test("a refused record that is the same when read again keeps its ticks, and its
   // Nor is there anything to refresh yet, whatever is typed meanwhile.
   await field(page, name, "Reason").fill("Both are confirmed by hand");
   await expect(asked).toContainText("26 / 2,000");
+  // It still waits once the dialog is drawn again.
+  await expect(asked.getByRole("button", { name: "Resolving…" })).toBeVisible();
   await expect(asked.locator(".confirm-reason")).toHaveCount(0);
   // The stuck confirm was only tried again meanwhile.
   const tried = twoConfirms("confirming");
@@ -1399,6 +1401,52 @@ test("a refused record whose steps are all known when read again says so, with n
   await confirm(page, name).click();
   await expect(asked).toHaveCount(0);
   expect(sent[1].body.output).toEqual({ as: "compensated", participants: [] });
+});
+
+test("another decision is sent while a refused record is read again, and only it says how it went", async ({
+  page,
+}) => {
+  const reads: Route[] = [];
+  const { sent, name, asked } = await refusedRecord(page, (route) => {
+    reads.push(route);
+  });
+  await confirm(page, name).click();
+  await expect.poll(() => reads.length).toBe(1);
+  // Its own dialog waits for that read.
+  const waiting = asked.getByRole("button", { name: "Resolving…" });
+  await waiting.evaluate((button: HTMLElement) => button.click());
+  expect(sent).toHaveLength(1);
+  await page.keyboard.press("Escape");
+  await expect(asked).toHaveCount(0);
+  let release = () => {};
+  const released = new Promise<void>((done) => (release = done));
+  await page.route(`${environment}/incidents/*/resolve`, async (route) => {
+    await released;
+    await route.fallback();
+  });
+  const retry = "Retry the confirm";
+  await offer(page, retry).click();
+  await field(page, retry, "Reason").fill("The system is back");
+  await expect(confirm(page, retry)).not.toHaveAttribute("aria-disabled");
+  await confirm(page, retry).click();
+  const sending = dialog(page, retry).getByRole("button", {
+    name: "Resolving…",
+  });
+  await expect(sending).toBeVisible();
+  // The read that ends meanwhile doesn't end the retry, nor says how it went.
+  const read = page.waitForResponse(`${environment}/incidents/${ids.called}`);
+  await reads[0].fulfill({ json: twoConfirms("confirming") });
+  await (await read).finished();
+  await drawn(page);
+  await expect(sending).toBeVisible();
+  await expect(page.getByText("was not resolved")).toHaveCount(0);
+  release();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByText("Incident resolved.")).toBeVisible();
+  expect(sent.map(({ body }) => body.kind)).toEqual([
+    "accept_reconciled_result",
+    "retry_safe",
+  ]);
 });
 
 test("a refused record whose incident was decided meanwhile leaves the dialog and says so once", async ({
@@ -1621,7 +1669,21 @@ test("Refresh incident stays while what it reads is the revision that was refuse
     .poll(() => described(page, name))
     .toBe("To record that it didn't happen, refresh the incident.");
   change(platform, { ...unknown, revision: 2 });
+  let answer = () => {};
+  const answered = new Promise<void>((done) => (answer = done));
+  await page.route(
+    `${environment}/incidents/${ids.unknown}`,
+    async (route) => {
+      await answered;
+      await route.fallback();
+    },
+    { times: 1 },
+  );
   await refresh.click();
+  // While it is read, which sends nothing, the confirm only waits.
+  await expect(refresh).toHaveAttribute("aria-busy", "true");
+  await expect(confirm(page, name)).toHaveAttribute("aria-disabled", "true");
+  answer();
   await expect(alert).toHaveCount(0);
   await confirm(page, name).click();
   await expect.poll(() => sent.length).toBe(2);
