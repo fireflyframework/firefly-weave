@@ -403,9 +403,13 @@ async def a_signal_is_kept(platform, run_id) -> None:
 
 
 @pytest.mark.parametrize("arrives", [a_wait_is_due, a_signal_is_kept])
-@pytest.mark.parametrize("held", [False, True], ids=["stuck confirm", "held for its size"])
+@pytest.mark.parametrize(
+    ("held", "decided"),
+    [(False, "hold#confirm:1"), (True, HELD_INCIDENT), (True, "hold#confirm:1")],
+    ids=["stuck confirm", "held for its size", "stuck confirm of a run held for its size"],
+)
 async def test_force_end_of_a_run_too_large_for_the_kernel_applies_nothing_else(
-    platform, reconciler, monkeypatch, held, arrives
+    platform, reconciler, monkeypatch, held, decided, arrives
 ):
     from firefly_weave.runtime import kernel
 
@@ -425,9 +429,14 @@ async def test_force_end_of_a_run_too_large_for_the_kernel_applies_nothing_else(
     rows = await by_key(platform, run.id)
     assert (HELD_INCIDENT in rows) is held
     # It can't be applied, and nothing has to be before a run ends: the first Force end is taken.
-    await resolve(platform, rows[HELD_INCIDENT if held else "hold#confirm:1"], "terminate", actor=reconciler)
+    await resolve(platform, rows[decided], "terminate", actor=reconciler)
     assert (await platform.state(run.id))["status"] == "cancelled"
     assert {(await platform.record(run.id, key))["state"] for key in ("move", "other")} == {"force_ended"}
+    # Whoever ended the run decided every incident in doubt it had.
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: (row["actor_id"], row["resolution"]["kind"]) for key, row in ended.items()} == dict.fromkeys(
+        rows, (reconciler.id, "terminate")
+    )
 
 
 async def test_force_end_of_a_run_too_large_for_the_kernel_applies_no_called_result(platform, reconciler, monkeypatch):

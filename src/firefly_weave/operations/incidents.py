@@ -84,7 +84,8 @@ def closed_beside(
     ir: WorkflowIR, before: RunState, after: RunState, resolved: str, transaction: str | None, *, every: bool
 ) -> list[str]:
     """The keys of the other incidents a decision closed with its transaction, or with ``every`` transaction a force
-    end of the whole run ended: that person decided them too. Any other incident that closed with the run closed."""
+    end of the whole run ended, the hold of a run too large included: that person decided them too. Any other incident
+    that closed with the run closed."""
     facts = shapes(ir)
     if facts is None or (transaction is None and not every):
         return []
@@ -93,7 +94,11 @@ def closed_beside(
         for key, item in before.incidents.items()
         if key != resolved and key not in after.incidents
     }
-    return sorted(key for key, owner in owners.items() if owner is not None and (every or owner == transaction))
+    return sorted(
+        key
+        for key, owner in owners.items()
+        if (owner is not None and (every or owner == transaction)) or (every and key == HELD_INCIDENT)
+    )
 
 
 def stuck_steps(incidents: Sequence[dict[str, Any]]) -> tuple[str, ...]:
