@@ -294,7 +294,7 @@ weave-operate-state {
   min-height: var(--target);
 }
 
-/* Workers and clusters: panels of counts, three or, with transactions, four. */
+/* Capacity and incidents: panels of counts, three or, with transactions, four. */
 .panels {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

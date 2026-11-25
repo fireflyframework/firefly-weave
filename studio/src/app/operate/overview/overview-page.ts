@@ -378,7 +378,7 @@ const STATISTICS_DELAY_MS = 5_000;
 
         <section class="band" aria-labelledby="overview-capacity">
           <h2 id="overview-capacity" class="band-title">
-            Workers and clusters
+            Capacity and incidents
           </h2>
           <div class="panels">
             <article class="panel" aria-labelledby="overview-workers">
@@ -555,7 +555,7 @@ const STATISTICS_DELAY_MS = 5_000;
                 } @else {
                   <weave-operate-state
                     kind="error"
-                    message="Studio couldn't read this section. The other figures are current."
+                    message="Studio couldn't read this section."
                     (retry)="poller.refresh()"
                   />
                 }

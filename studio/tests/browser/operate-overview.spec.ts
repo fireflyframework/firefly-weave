@@ -428,7 +428,7 @@ for (const viewport of [
           .first()
           .evaluate((node) => getComputedStyle(node).fontVariantNumeric),
       ).toBe("tabular-nums");
-      const capacity = band(page, "Workers and clusters");
+      const capacity = band(page, "Capacity and incidents");
       await expect(capacity.locator(".panel").nth(0)).toContainText(
         /Online\s*3/,
       );
@@ -618,7 +618,7 @@ for (const viewport of [
             exact: true,
           }),
         ).toBeVisible();
-      await expect(band(page, "Workers and clusters")).toContainText(
+      await expect(band(page, "Capacity and incidents")).toContainText(
         /Online\s*3/,
       );
       await expect(page.locator("li.health-tile")).toHaveCount(6);
@@ -672,7 +672,7 @@ for (const viewport of [
         ],
       );
       await open(page);
-      const capacity = band(page, "Workers and clusters");
+      const capacity = band(page, "Capacity and incidents");
       const clusters = capacity.locator(".panel").nth(1);
       const incidents = capacity.locator(".panel").nth(2);
       await expect(clusters).toContainText(
@@ -748,7 +748,7 @@ test.describe("transactions", () => {
   }) => {
     await opened(page, inDoubt);
     await expect(
-      band(page, "Workers and clusters").getByRole("heading", { level: 3 }),
+      band(page, "Capacity and incidents").getByRole("heading", { level: 3 }),
     ).toHaveText(["Workers", "Clusters", "Incidents", "Transactions"]);
     await expect(panel(page).locator("dt")).toHaveText([
       "Transactions in doubt Waiting for a person to resolve them",
@@ -839,16 +839,16 @@ test.describe("transactions", () => {
     await expect(link(page)).toHaveCount(0);
   });
 
-  test("a section the server couldn't read says the rest is current, and reads again", async ({
+  test("a section the server couldn't read says so of itself alone, and reads again", async ({
     page,
   }) => {
     const answers = await opened(page, { state: "unavailable" });
     const problem = panel(page).getByRole("alert");
-    await expect(problem).toContainText(
-      "Studio couldn't read this section. The other figures are current.",
-    );
+    await expect(problem).toContainText("Studio couldn't read this section.");
+    // Another section may have failed too.
+    await expect(problem).not.toContainText("current");
     await expect(panel(page).locator("dd")).toHaveCount(0);
-    await expect(band(page, "Workers and clusters")).toContainText(
+    await expect(band(page, "Capacity and incidents")).toContainText(
       /Online\s*3/,
     );
     await shot(page, "overview-transactions-unavailable-1440");
@@ -863,7 +863,7 @@ test.describe("transactions", () => {
   }) => {
     await opened(page, undefined);
     await expect(
-      band(page, "Workers and clusters").locator(".panel"),
+      band(page, "Capacity and incidents").locator(".panel"),
     ).toHaveCount(3);
     await expect(panel(page)).toHaveCount(0);
   });
