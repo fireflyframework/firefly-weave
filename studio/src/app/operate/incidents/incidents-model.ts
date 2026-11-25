@@ -119,6 +119,21 @@ const HELD_STEP = "@transactions";
 export function incidentStep(nodeId: string | null): string | null {
   return nodeId && nodeId !== HELD_STEP ? stepName(nodeId) : null;
 }
+/** The step of an incident in doubt or of a link to one, with its iteration in a loop: "hold[3]". */
+export function transactionStep(
+  at: Pick<IncidentLink, "node_id" | "instance_key">,
+): string | null {
+  const step = incidentStep(at.node_id);
+  return step && at.instance_key ? incidentStep(at.instance_key) : step;
+}
+/** Any incident's step: only one that holds a transaction names its iteration. */
+export function stepOfIncident(
+  incident: Pick<IncidentView, "node_id" | "instance_key" | "priority">,
+): string | null {
+  return incident.priority === "high"
+    ? transactionStep(incident)
+    : incidentStep(incident.node_id);
+}
 /** Whether an incident holds a transaction that waits for a person: a decided one no longer does. */
 export const inDoubt = (
   incident: Pick<IncidentView, "priority" | "status">,

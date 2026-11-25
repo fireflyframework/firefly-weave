@@ -37,6 +37,7 @@ import {
   mayRefusePriority,
   openedText,
   resolutionLabel,
+  stepOfIncident,
   type IncidentRecord,
   type IncidentView,
 } from "../src/app/operate/incidents/incidents-model";
@@ -270,6 +271,28 @@ describe("incident filters", () => {
     expect(incidentStep("@join")).toBe("@join");
     expect(incidentStep("@transactions")).toBeNull();
     expect(incidentStep(null)).toBeNull();
+  });
+
+  it("names the iteration of a loop's step only where a transaction is in doubt", () => {
+    const at = {
+      node_id: "hold",
+      instance_key: "hold[3]#cancel",
+    };
+    expect(stepOfIncident(incident({ ...at, priority: "high" }))).toBe(
+      "hold[3]",
+    );
+    expect(
+      stepOfIncident(incident({ ...at, priority: "high", status: "resolved" })),
+    ).toBe("hold[3]");
+    expect(stepOfIncident(incident(at))).toBe("hold");
+    // The platform leaves the instance out where it is the step itself.
+    expect(
+      stepOfIncident(incident({ node_id: "submit", priority: "high" })),
+    ).toBe("submit");
+    expect(
+      stepOfIncident(incident({ node_id: "@transactions", priority: "high" })),
+    ).toBeNull();
+    expect(stepOfIncident(incident({ node_id: null }))).toBeNull();
   });
 
   it("calls an incident in doubt while it is active and high priority", () => {

@@ -81,12 +81,12 @@ import {
   incidentFromQuery,
   incidentQuery,
   incidentStatusLabel,
-  incidentStep,
   incidentSuggestions,
   incidentTone,
   isUnavailableIncident,
   lastEvents,
   mayRefusePriority,
+  stepOfIncident,
   type IncidentFilters,
   type IncidentLink,
   type IncidentRecord,
@@ -477,8 +477,8 @@ interface Band {
                               role="cell"
                               data-wide
                               class="cell-line"
-                              [attr.title]="stepText(link)"
-                              >{{ stepText(link) }}</span
+                              [attr.title]="linkStep(link)"
+                              >{{ linkStep(link) }}</span
                             ><span role="cell" class="open-cell"
                               ><button
                                 type="button"
@@ -1552,15 +1552,21 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   readonly caseLabel = caseLabel;
   readonly linkPlace = linkPlace;
   readonly missingText = missingText;
-  stepOf(incident: Pick<IncidentView, "node_id">) {
-    return incidentStep(incident.node_id) ?? "the run";
+  stepOf(incident: IncidentView) {
+    return stepOfIncident(incident) ?? "the run";
   }
   /** A row's step: a run held whole names one that is no step of the workflow. */
-  stepText(incident: Pick<IncidentView, "node_id">) {
+  stepText(
+    incident: Pick<IncidentView, "node_id" | "instance_key" | "priority">,
+  ) {
     return (
-      incidentStep(incident.node_id) ??
+      stepOfIncident(incident) ??
       (incident.node_id ? "Not tied to a step" : "the run")
     );
+  }
+  /** The step of a linked incident, which is in doubt whatever its status. */
+  linkStep(link: IncidentLink) {
+    return this.stepText({ ...link, priority: "high" });
   }
   /** What a row in doubt says under its code: a band already says it is in doubt. */
   doubtText(banded: boolean, key: boolean) {

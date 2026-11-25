@@ -339,4 +339,23 @@ describe("what a case says", () => {
         "run 9a01c7d2",
       );
   });
+
+  it("names the iteration of a loop's step, of the one that waits and of a linked incident", () => {
+    const looped: IncidentView = {
+      ...settleTimeout,
+      node_id: "move",
+      instance_key: "move[3]",
+    };
+    const label = "Case: move[3] is waiting for a called run in doubt";
+    expect(caseLabel(onlyCase(inboxRows([looped], []).high))).toBe(label);
+    const child: IncidentView = { ...undoStuck, held_by: linkOf(looped) };
+    expect(caseLabel(onlyCase(inboxRows([child], []).high))).toBe(label);
+    expect(
+      linkPlace({
+        ...settleTimeout.waits_on![0],
+        node_id: "hold",
+        instance_key: "hold[3]#cancel",
+      }),
+    ).toBe("hold[3] in run 9a01c7d2");
+  });
 });

@@ -45,9 +45,9 @@ import { TransactionRecordTable } from "../transactions/transaction-record-table
 import { linkPlace } from "./incident-cases";
 import {
   incidentStatusLabel,
-  incidentStep,
   incidentTone,
   openedText,
+  transactionStep,
   type IncidentLink,
   type IncidentView,
 } from "./incidents-model";
@@ -315,7 +315,7 @@ export class TransactionPanel {
     return read?.id === link.id ? read : null;
   }
   step() {
-    return incidentStep(this.incident().node_id) ?? "Not tied to a step";
+    return transactionStep(this.incident()) ?? "Not tied to a step";
   }
   tone(tone: Tone) {
     return toneAttribute(tone);

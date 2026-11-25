@@ -21,8 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // guesses from the runs on a page. Pure: the page renders it, tests check it.
 import { shortId } from "../../format";
 import {
-  incidentStep,
   isUnavailableIncident,
+  transactionStep,
   type IncidentLink,
   type IncidentRecord,
   type IncidentView,
@@ -179,16 +179,17 @@ export function rowGroups(rows: readonly InboxRow[]): RowGroup[] {
 
 /** "Case: move is waiting for a called run in doubt": the step that waits, whichever incident leads. */
 export function caseLabel({ lead }: IncidentCase): string {
-  const step = waitsOn(lead).length ? lead.node_id : lead.held_by?.node_id;
-  return `Case: ${incidentStep(step ?? null) ?? "the run"} is waiting for a called run in doubt`;
+  const waiting = waitsOn(lead).length ? lead : lead.held_by;
+  const step = waiting ? transactionStep(waiting) : null;
+  return `Case: ${step ?? "the run"} is waiting for a called run in doubt`;
 }
 
 /** "add in run 9a01c7d2": where a linked incident is. */
 export function linkPlace(
-  link: Pick<IncidentLink, "node_id" | "run_id">,
+  link: Pick<IncidentLink, "node_id" | "instance_key" | "run_id">,
 ): string {
   const run = `run ${shortId(link.run_id)}`;
-  const step = incidentStep(link.node_id);
+  const step = transactionStep(link);
   return step ? `${step} in ${run}` : run;
 }
 

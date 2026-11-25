@@ -1784,6 +1784,43 @@ test.describe("transactions in doubt", () => {
     );
   });
 
+  test("a loop's step names its iteration, in its row, in its drawer and where another row waits for it", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [
+        loop,
+        {
+          ...called,
+          held_by: { ...called.held_by!, instance_key: "move[3]" },
+        },
+        ...others,
+      ],
+    });
+    await page.goto("/operate/incidents");
+    const row = high(page)
+      .locator(".resource-row")
+      .filter({ hasText: "WV-TXN-CANCEL-STUCK" });
+    await expect(row.getByRole("cell").nth(3)).toHaveText("hold[3]");
+    const waits = high(page).locator(".not-listed");
+    await expect(waits.getByRole("cell").nth(3)).toHaveText("move[3]");
+    await expect(waits).toContainText(
+      "Not in this list · move[3] in run 6d18b3f0",
+    );
+    await expect(high(page).locator(".case-head")).toContainText(
+      "Case: move[3] is waiting for a called run in doubt",
+    );
+    await row
+      .getByRole("button", {
+        name: "Open incident WV-TXN-CANCEL-STUCK at hold[3]",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.locator("dl.txn-facts dt:text-is('Step') + dd"),
+    ).toHaveText("hold[3]");
+  });
+
   test("a run held whole is in the band too, tied to no step", async ({
     page,
   }) => {
@@ -2235,7 +2272,7 @@ test.describe("a refresh keeps the keyboard focus on its incident", () => {
   test("beside a case, as an incident joins it, and as another case comes between", async ({
     page,
   }) => {
-    const kept = "WV-TXN-CANCEL-STUCK at hold";
+    const kept = "WV-TXN-CANCEL-STUCK at hold[3]";
     const platform = await incidentPlatform(page);
     await page.goto("/operate/incidents");
     await row(page, kept).focus();
