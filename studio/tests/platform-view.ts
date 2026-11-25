@@ -42,7 +42,8 @@ def taken(event):
         return False
     return validate_payload({"$ref": PLATFORM_EVENT_SCHEMA}, event, bundle) == ()
 
-events = json.load(sys.stdin)
+# The bytes, which are UTF-8 whatever the locale is, as on Windows.
+events = json.load(sys.stdin.buffer)
 print(json.dumps({"view": bundle[PLATFORM_EVENT_SCHEMA], "taken": [taken(event) for event in events]}))
 `;
 const ask = (events: readonly unknown[]) =>
