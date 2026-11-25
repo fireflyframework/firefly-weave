@@ -84,6 +84,7 @@ from firefly_weave.runtime.step_failures import continuation_steps
 from firefly_weave.runtime.transactions import (
     HELD_CODE,
     HELD_NODE,
+    TRANSACTION_RULES,
     in_transaction,
     leftover,
     shapes,
@@ -397,8 +398,12 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 # Dispatched on the incident's code first, as the service does: in doubt, accept_reconciled_failure is
                 # "It didn't happen" and the kernel decides it; otherwise it confirms a step's unknown outcome.
                 doubt = prior is not None and prior.code in IN_DOUBT_CODES
-                # A retry of what an earlier decision left runs nothing again: no new attempt and no new call.
-                closes = prior is not None and transactions is not None and leftover(transactions, state, prior)
+                # A retry of what an earlier decision left runs nothing again: no new attempt and no new call. Only the
+                # second rules know leftovers, and the event itself may move the run to them.
+                second = TRANSACTION_RULES in (state.transaction_rules, event.data.get("transaction_rules"))
+                closes = (
+                    second and prior is not None and transactions is not None and leftover(transactions, state, prior)
+                )
                 if kind == "accept_reconciled_failure" and not doubt:
                     # Only a step that handles its failures goes on after its effect was confirmed not to happen.
                     attempted = event.data.get("attempts")
