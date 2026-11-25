@@ -79,7 +79,9 @@ def draft_refusal(draft: DraftStep, metadata: JsonObject, catalog: CatalogSnapsh
         return _refusal(MESSAGES["AI_SECRET_INPUT"], secret)
     # A finding outside the steps and their connections is about the whole draft, so it's about this step too.
     whole = [error for error in errors if not any(_within(error.path, place) for place in ABOUT_STEPS)]
-    if compiled.analysis is None or compiled.truncated or whole:
+    # A compile counts an error before it leaves one out, so without any it left out only warnings and notes.
+    unlisted = compiled.schema_truncated or (compiled.omitted_count and compiled.error_count)
+    if compiled.analysis is None or unlisted or whole:
         return _refusal(UNCHECKED, errors)
     problems = _Checked(compiled.analysis, errors).problems(cast(str, draft.step["id"]))
     return None if problems is None else _refusal(UNCHECKED, problems or errors)

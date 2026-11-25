@@ -432,23 +432,37 @@ def test_a_draft_without_an_input_schema_is_refused():
     assert found(refusal(document))
 
 
-def test_a_compile_that_leaves_findings_out_is_refused():
-    few = [transform(f"t{index}", ref(f"/steps/no{index}/output")) for index in range(3)]
-    many = [transform(f"t{index}", ref(f"/steps/no{index}/output")) for index in range(120)]
-    # The texts read none of these steps; only what the compile left out refuses the second draft.
-    assert refusal(workflow(*few, ask())) is None
-    assert found(refusal(workflow(*many, ask())))
+def test_a_compile_that_leaves_errors_out_is_refused():
+    def asked(count):
+        """The text reads what the action declares; the action's own input reads what isn't there."""
+        unfinished = {"object": {f"f{index}": ref(f"/input/customer/no{index}") for index in range(count)}}
+        return workflow(fetch(**{"with": unfinished}), ask(context=ref("/steps/fetch/output/name")))
+
+    assert refusal(asked(3)) is None
+    assert found(refusal(asked(120)))
 
 
-def test_a_compile_that_leaves_only_warnings_out_is_refused_too():
-    def noted(count):
-        document = workflow(*(transform(f"t{index}", ref("/input/note")) for index in range(count)), ask())
-        document["spec"]["inputSchema"]["properties"]["note"] = TEXT
-        return document
+def test_a_compile_that_leaves_only_warnings_out_is_admitted():
+    # The text reads a hundred and twenty steps that each leave a warning.
+    steps = [transform(f"t{index}", ref("/input/note")) for index in range(120)]
+    document = workflow(*steps, ask(context={"array": [ref(f"/steps/{step['id']}/output") for step in steps]}))
+    document["spec"]["inputSchema"]["properties"]["note"] = TEXT
+    whole = compile_source(document, format="object", catalog=catalog())
+    assert whole.ok and whole.omitted_count
+    assert refusal(document) is None
 
-    assert compile_source(noted(120), format="object", catalog=catalog()).ok
-    assert refusal(noted(3)) is None
-    assert found(refusal(noted(120))) == []
+
+def test_a_value_marked_secret_counts_where_only_warnings_are_listed():
+    def asked(count):
+        """The text reads agents that each leave a warning, which is listed before any other finding."""
+        steps = [agent(id=f"a{index}", tools=[], limits={"maxTotalTokens": 1}) for index in range(count)]
+        texts = [ref(f"/steps/{step['id']}/output/turns") for step in steps]
+        return workflow(*steps, ask(context={"array": [*texts, ref("/input/customer/ssn")]}), mark=MARKS[0])
+
+    listed = compile_source(asked(101), format="object", catalog=catalog()).diagnostics
+    assert SECRET_INPUT not in {diagnostic.code for diagnostic in listed}
+    assert found(refusal(asked(101)))
+    assert codes(refusal(asked(3))) == {SECRET_INPUT}
 
 
 @pytest.mark.parametrize(
