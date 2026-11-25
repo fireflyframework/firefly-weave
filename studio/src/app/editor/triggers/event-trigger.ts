@@ -22,7 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 // it for the tile, says what the platform would refuse, warns when the
 // workflow reacts to its own transactions, and tells whether the workflow's
 // input already takes the platform event.
-import { isJsonObject, jsonEqual, type Json } from "../../forms/core/json";
+import {
+  isJsonObject,
+  jsonEqual,
+  type Json,
+  type JsonObject,
+} from "../../forms/core/json";
 import type { Workflow } from "../../model";
 import type { StepFacts } from "../canvas/tile-facts";
 import {
@@ -31,6 +36,8 @@ import {
   EVENT_TYPES,
   isPlatformEventInput,
   isPlatformEventType,
+  sampleEvent,
+  sampleIdOf,
   type PlatformEventType,
 } from "./platform-event";
 
@@ -144,6 +151,42 @@ export const chosenEvents = (
   declaration: EventDeclaration,
 ): PlatformEventType[] =>
   EVENT_CHOICE_ORDER.filter((type) => declaration.events.includes(type));
+
+/**
+ * A sample of an event the trigger reacts to: `type`, else the first one, or
+ * the one a new trigger starts with while none is chosen.
+ */
+export function declaredSample(
+  workflow: Workflow,
+  options: { type?: PlatformEventType; now: Date; id: () => string },
+): JsonObject {
+  const declaration = readDeclaration(workflow) ?? DEFAULT_DECLARATION;
+  const type =
+    options.type ??
+    chosenEvents(declaration)[0] ??
+    DEFAULT_DECLARATION.events[0]!;
+  return sampleEvent(type, {
+    source: declaration.from?.[0],
+    now: options.now,
+    id: options.id,
+  });
+}
+/** When the sample a run starts from happened, whenever the run starts. */
+const SAMPLED_AT = new Date("2026-01-15T09:30:00Z");
+/**
+ * What Execute starts from while the workflow's input is the platform event
+ * and there is no test event; undefined for another input. It is the same
+ * event until the trigger reacts to something else, so what a step read in
+ * one execution is what the next one reads.
+ */
+export function eventSampleInput(workflow: Workflow): JsonObject | undefined {
+  if (!isPlatformEventInput(workflow.spec["inputSchema"])) return undefined;
+  let count = 0;
+  return declaredSample(workflow, {
+    now: SAMPLED_AT,
+    id: () => sampleIdOf(++count),
+  });
+}
 
 /** The tile's tooltip and accessible name: every event and every workflow, in full. */
 export function eventTileName(declaration: EventDeclaration): string {

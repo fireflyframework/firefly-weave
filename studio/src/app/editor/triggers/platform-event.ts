@@ -308,6 +308,9 @@ export function namedSchemas(
  */
 const SAMPLE_ID_START = "00000000-0000-4000-8000-";
 const SAMPLE_ID = /^00000000-0000-4000-8000-[0-9a-f]{12}$/i;
+/** A sample's ID by number, the same each time. */
+export const sampleIdOf = (number: number): string =>
+  SAMPLE_ID_START + number.toString(16).padStart(12, "0");
 /** A new ID for a sample. */
 export const sampleId = (): string =>
   SAMPLE_ID_START + crypto.randomUUID().slice(-12);

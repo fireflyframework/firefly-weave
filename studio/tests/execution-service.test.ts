@@ -184,11 +184,36 @@ describe("the execution service", () => {
       const input = (sent[0]!.body as { input: Record<string, unknown> }).input;
       expect(input).toMatchObject({
         type: "transaction.compensated",
-        emitted_at: "2026-10-26T12:04:00Z",
         transaction: { workflow: { name: "sync-records" } },
       });
-      expect(service.workflowInput()).toMatchObject({
-        type: "transaction.compensated",
+      expect(service.workflowInput()).toEqual(input);
+    });
+
+    it("starts from the same sample each time, until the trigger reacts to something else", () => {
+      const sample = fixture(reacting, event).service.workflowInput() as {
+        event_id: string;
+        transaction: { run_id: string };
+      };
+      // After a reload too: a kept result keeps matching what it read.
+      expect(fixture(reacting, event).service.workflowInput()).toEqual(sample);
+      for (const id of [sample.event_id, sample.transaction.run_id])
+        expect(id).toMatch(/^00000000-0000-4000-8000-[0-9a-f]{12}$/);
+      const other = (eventTrigger: unknown) =>
+        fixture(
+          {
+            ...reacting,
+            spec: { ...reacting.spec, eventTrigger },
+          } as Workflow,
+          event,
+        ).service.workflowInput();
+      expect(other({ events: ["transaction.completed"] })).not.toEqual(sample);
+      expect(
+        other({
+          events: ["transaction.compensated"],
+          from: ["move-files-nightly"],
+        }),
+      ).toMatchObject({
+        transaction: { workflow: { name: "move-files-nightly" } },
       });
     });
 
@@ -215,6 +240,40 @@ describe("the execution service", () => {
       );
       expect(service.workflowInput()).toMatchObject({
         type: "transaction.in_doubt",
+      });
+    });
+  });
+
+  describe("an input Studio can't sample", () => {
+    // Every run needs a code no sample can be made up for.
+    const coded = {
+      type: "object",
+      properties: { code: { type: "string", pattern: "^[A-Z]{3}$" } },
+    };
+    const withInput: StudioTestData = {
+      ...EMPTY,
+      input: { value: { code: "ABC" }, source: "manual" },
+    };
+
+    it("isn't sampled for Execute when there is a test input", async () => {
+      const { service, sent, state } = fixture(WORKFLOW, coded);
+      state.testData = withInput;
+      await service.open("d-1");
+      void service.execute({ mode: "workflow" });
+      await settle();
+      expect((sent[0]?.body as { input?: unknown })?.input).toEqual({
+        code: "ABC",
+      });
+    });
+
+    it("isn't sampled for the run log when there is a test input", async () => {
+      const { service, sent, state } = fixture(WORKFLOW, coded);
+      state.testData = withInput;
+      await service.open("d-1");
+      void service.sessions.create();
+      await settle();
+      expect((sent[0]?.body as { input?: unknown })?.input).toEqual({
+        code: "ABC",
       });
     });
   });

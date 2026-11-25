@@ -28,6 +28,7 @@ import { canonicalJson } from "../../forms/core/json";
 import type { Step, Workflow } from "../../model";
 import { childLists, withChildIds } from "../ndv/step-walk";
 import type { Json, StaleReason } from "../ndv/registry";
+import { eventSampleInput } from "../triggers/event-trigger";
 import type { Fingerprint, PinEntry } from "./test-data";
 
 /** FNV-1a 64 of the UTF-8 bytes of `text`, as 16 lowercase hex digits (four 16-bit limbs, no BigInt). */
@@ -181,7 +182,12 @@ export function fingerprints(
     }
   };
   visit(inputs.workflow.spec.steps, []);
-  const input = fingerprint(inputs.testInput ?? null);
+  // Without a test input, a platform event is the sample Execute starts from.
+  const input = fingerprint(
+    inputs.testInput === undefined
+      ? (eventSampleInput(inputs.workflow) ?? null)
+      : inputs.testInput,
+  );
   // What one loop goes over: its items expression and everything that expression reads.
   const iterations = new Map<string, Fingerprint | null>();
   const iterating = new Set<string>();
