@@ -285,12 +285,23 @@ test("an activation someone made meanwhile isn't replaced unseen: the dialog say
   const { activations, dialog } = await opened(page, active(1));
   activations.items.push(active(2));
   await activate(page).click();
-  const problem = dialog.locator(".activation-problem");
+  const problem = dialog.getByRole("alert");
   await expect(problem).toContainText(
-    "pets 1.0.0 wasn't activated: the workflow was activated here since you opened this. Close this and activate again to replace that activation.",
+    "pets 1.0.0 wasn't activated: another activation was made here since you opened this. Close this and activate again to replace it.",
   );
   await expect(problem).toContainText("Support code: WV-ETAG");
-  await expect(problem).toBeFocused();
+  // The same request would be refused again: the way on is out.
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  await expect(activate(page)).toHaveAttribute("aria-disabled", "true");
+  await expect(activate(page)).toHaveAccessibleDescription(
+    /^pets 1\.0\.0 wasn't activated: another activation was made here since you opened this\./,
+  );
+  await activate(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(problem).toBeVisible();
+  expect(activations.ifMatch).toEqual(['"1"']);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await command(page, "Activate…");
   await expect(dialog.getByRole("status")).toHaveCount(0);
@@ -313,9 +324,10 @@ test("without the activations' list it says why the platform refused to replace 
   );
   const dialog = await openActivation(page, [], false);
   await activate(page).click();
-  await expect(dialog.locator(".activation-problem")).toContainText(
-    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read the activation to replace. Ask for permission to read the catalog here, then activate again.",
+  await expect(dialog.getByRole("alert")).toContainText(
+    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read that activation. Ask for permission to read the catalog here, then activate again.",
   );
+  await expect(activate(page)).toHaveAttribute("aria-disabled", "true");
   expect(activations.ifMatch).toEqual([null]);
 });
 
@@ -336,9 +348,10 @@ test("after the activations' list failed once, closing and activating again repl
   );
   const dialog = await openActivation(page, [], false);
   await activate(page).click();
-  await expect(dialog.locator(".activation-problem")).toContainText(
-    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read the activation to replace. Close this and activate again.",
+  await expect(dialog.getByRole("alert")).toContainText(
+    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read that activation. Close this and activate again.",
   );
+  await expect(activate(page)).toHaveAttribute("aria-disabled", "true");
   failing = false;
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await command(page, "Activate…");
@@ -347,6 +360,33 @@ test("after the activations' list failed once, closing and activating again repl
   await expect(dialog).toHaveCount(0);
   expect(activations.ifMatch).toEqual([null, '"1"']);
 });
+
+for (const [what, status] of [
+  ["a refusal of what was asked", 422],
+  ["a refusal of who asked", 403],
+] as const)
+  test(`after ${what}, Activate version stays on and asks again`, async ({
+    page,
+  }) => {
+    const { activations, dialog } = await opened(page, active(1));
+    let refused = 0;
+    await page.route("**/environments/development/activations", (r) =>
+      refused++ > 0
+        ? r.fallback()
+        : r.fulfill({
+            status,
+            json: { status, code: "WV-REFUSED", message: "Not this time." },
+          }),
+    );
+    await activate(page).click();
+    const problem = dialog.getByRole("alert");
+    await expect(problem).toBeVisible();
+    await expect(problem).toBeFocused();
+    await expect(activate(page)).toBeEnabled();
+    await activate(page).click();
+    await expect(dialog).toHaveCount(0);
+    expect(activations.ifMatch).toEqual(['"1"']);
+  });
 
 test("a called workflow pins its current activation", async ({ page }) => {
   const captured = await platform(page);

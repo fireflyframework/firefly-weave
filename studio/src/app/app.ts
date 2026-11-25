@@ -154,7 +154,11 @@ import {
   exportNotice,
   isDesktopShell,
 } from "./export-file";
-import { type ActivationAsk, ActivationDialog } from "./activation-dialog";
+import {
+  type ActivationAsk,
+  ActivationDialog,
+  type ActivationFailure,
+} from "./activation-dialog";
 import {
   StepPicker,
   type AnchorRect,
@@ -1127,7 +1131,7 @@ export class App implements CanvasHost {
   exportFallback: ExportedFile[] | null = null;
   showActivation = false;
   /** Why the last activation failed, shown inside the activation dialog. */
-  activationError: { message: string; code: string } | null = null;
+  activationError: ActivationFailure | null = null;
   private inspectorTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingInspector: {
     scope: "step" | "workflow" | "rename";
@@ -8648,6 +8652,7 @@ export class App implements CanvasHost {
       this.activationError = {
         message: `${this.publishedText} wasn't activated: the environment or the account changed since you opened this. Close this and activate again.`,
         code: "",
+        reopen: true,
       };
       this.cdr.markForCheck();
       return;

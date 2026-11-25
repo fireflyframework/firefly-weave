@@ -127,6 +127,7 @@ describe("activating from an open dialog", () => {
         message:
           "notify-team 1.2.0 wasn't activated: the environment or the account changed since you opened this. Close this and activate again.",
         code: "",
+        reopen: true,
       });
     }
     expect(o.sent).toEqual([]);

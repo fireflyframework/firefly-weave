@@ -55,6 +55,13 @@ import type {
   TriggerIntent,
 } from "./editor/state/canvas-sidecar";
 
+/** Why the last activation failed, in plain language with a support code. */
+export interface ActivationFailure {
+  message: string;
+  code: string;
+  /** It says to close the dialog and activate again: the same request would be refused. */
+  reopen?: true;
+}
 /** What to activate with, and the revision of the activation it replaces. */
 export interface ActivationAsk {
   bindings: ActivationBindings;
@@ -274,6 +281,7 @@ function onceEach(api: StudioApi): StudioApi {
       @if (failure(); as failed) {
         <div
           class="notice error-notice activation-problem"
+          id="activation-problem"
           role="alert"
           tabindex="-1"
         >
@@ -318,6 +326,7 @@ function onceEach(api: StudioApi): StudioApi {
           <button
             type="button"
             class="tertiary"
+            data-cancel
             [disabled]="running()"
             (click)="dismiss()"
           >
@@ -334,8 +343,13 @@ function onceEach(api: StudioApi): StudioApi {
               !!steps()?.blocked() ||
               !!missingConnection()
             "
+            [attr.aria-disabled]="reopen() || null"
             [attr.aria-describedby]="
-              missingConnection() ? 'activation-missing' : null
+              reopen()
+                ? 'activation-problem'
+                : missingConnection()
+                  ? 'activation-missing'
+                  : null
             "
           >
             Activate version
@@ -377,7 +391,12 @@ export class ActivationDialog implements OnInit {
   /** The activation request is running; the dialog cannot be closed meanwhile. */
   running = input(false);
   /** Why the last activation failed, in plain language with a support code. */
-  failure = input<{ message: string; code: string } | null>(null);
+  failure = input<ActivationFailure | null>(null);
+  /** The same request would be refused again: the person closes the dialog first. */
+  readonly reopen = computed(() => {
+    const failed = this.failure();
+    return !!failed && (failed.reopen === true || failed.code === "WV-ETAG");
+  });
   /** The editor's workflow and canvas: its called workflows and trigger choices. */
   definition = input<Workflow | null>(null);
   canvas = input<CanvasSidecar | null>(null);
@@ -500,14 +519,13 @@ export class ActivationDialog implements OnInit {
       const stays = this.stays();
       untracked(() => steps?.busy.set(stays));
     });
-    // A failure takes focus, so it is announced and Tab stays in the dialog.
+    // A failure takes focus, so it is announced and Tab stays in the dialog;
+    // one the same request would meet again leaves focus on the way out.
     effect(() => {
       if (!this.failure()) return;
+      const to = this.reopen() ? "[data-cancel]" : ".activation-problem";
       afterNextRender(
-        () =>
-          this.host.nativeElement
-            .querySelector<HTMLElement>(".activation-problem")
-            ?.focus(),
+        () => this.host.nativeElement.querySelector<HTMLElement>(to)?.focus(),
         { injector: this.injector },
       );
     });
@@ -642,11 +660,11 @@ export class ActivationDialog implements OnInit {
   }
   /** Why the platform refused to replace an activation Studio didn't name. */
   stale(): string {
-    const refused = `${this.workflowName()} wasn't activated: the workflow`;
+    const refused = `${this.workflowName()} wasn't activated:`;
     const steps = this.steps();
     if (steps?.replaces() !== undefined)
-      return `${refused} was activated here since you opened this. Close this and activate again to replace that activation.`;
-    return `${refused} is active here already, and Studio couldn't read the activation to replace. ${
+      return `${refused} another activation was made here since you opened this. Close this and activate again to replace it.`;
+    return `${refused} the workflow is active here already, and Studio couldn't read that activation. ${
       steps?.replacesForbidden()
         ? "Ask for permission to read the catalog here, then activate again."
         : "Close this and activate again."
@@ -738,7 +756,13 @@ export class ActivationDialog implements OnInit {
   }
   submit(event: Event) {
     event.preventDefault();
-    if (this.busy() || this.pinsLoading() || this.picker()?.loading()) return;
+    if (
+      this.reopen() ||
+      this.busy() ||
+      this.pinsLoading() ||
+      this.picker()?.loading()
+    )
+      return;
     const form = event.target as HTMLFormElement;
     if (!form.reportValidity()) return;
     const connections: Record<string, string> = {};
