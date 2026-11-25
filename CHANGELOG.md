@@ -46,9 +46,9 @@ SPDX-License-Identifier: Apache-2.0
   because every way through it reaches a Fail step, now fails the run with
   `WV-TXN-ROLLED-BACK`, as without the setting. Continue has nothing to go on
   to, even when a step is written after the block; Continue with error output
-  does go on. After the upgrade, such a run that hasn't ended yet ends at
-  recovery's next scan or the worker's next report, with nothing to do, and no
-  recorded history changes. Marking such a transaction as reconciled with
+  does go on. After the upgrade, a run that is already being undone ends the same
+  way when its undo is done, at recovery's next scan or the worker's next report,
+  and no recorded history changes. Marking such a transaction as reconciled with
   `completed` answers HTTP 422 `WV-RUNTIME-OUTPUT` instead of HTTP 500 while the
   run would go on after the block, and says to use Force end unless everything
   was undone; `compensated` and Force end work as before.
