@@ -2383,7 +2383,7 @@ longer, up to a minute.
 - **Load** shows active runs (test runs left out), ready tasks with the oldest
   wait, waits with how many are overdue, the outbox backlog and the provider
   backlog.
-- **Workers and clusters** counts online, offline and draining workers, free
+- **Capacity and incidents** counts online, offline and draining workers, free
   task slots against ready tasks, runners, busy targets, targets that need
   reconciliation and plans waiting for approval, and active incidents.
 - **Needs attention** lists up to 20 items, most urgent first: jobs that need

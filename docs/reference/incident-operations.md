@@ -294,7 +294,7 @@ A refused decision changes nothing:
 | Answer | Why | What to do |
 | --- | --- | --- |
 | HTTP 403 `WV-FORBIDDEN` | The token, or the principal it names, lacks `incident.resolve`, or `transaction.reconcile` for anything but `retry_safe` | Ask someone who holds both for the whole environment |
-| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` on `WV-TXN-PIVOT-UNKNOWN`, anything but `terminate` on `WV-TXN-RUN-OVERSIZED`, `accept_reconciled_failure` on any other code, or a reconciliation without `evidence_reference` or `output` | Send a decision that fits the code, with both |
+| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` on `WV-TXN-PIVOT-UNKNOWN`, anything but `terminate` on `WV-TXN-RUN-OVERSIZED`, `accept_reconciled_failure` on any other code or without `evidence_reference`, or `accept_reconciled_result` without `evidence_reference` or `output` | Send a decision that fits the code: `accept_reconciled_result` needs both fields, `accept_reconciled_failure` only `evidence_reference` |
 | HTTP 409 `WV-RUNTIME-STATE` | The step's latest attempt or child run is still running, a failure of the transaction is still handled, or the incident is no longer active | Read the incident again; decide once the step ended or the next recovery scan ran |
 | HTTP 409 `WV-INCIDENT-REVISION` | The incident changed since you read it | Read it again, and check every step again |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The record doesn't fit the transaction, or the output doesn't fit its schema | Read the incident again: a step may have changed. Then correct the record |

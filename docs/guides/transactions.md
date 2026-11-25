@@ -285,19 +285,18 @@ The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
 Studio's **Operate** pages show every transaction of the environment and offer
 the decisions of steps 4 and 5. Each needs its own permission:
 
-| To | You need |
-| --- | --- |
-| See transactions in **Runs**, in a run's detail, and in **Overview** | `run.read` |
-| See the transactions in doubt in **Incidents** | `incident.read` |
-| Retry, or wait again | `incident.resolve` |
-| Make any other decision on a transaction in doubt | `incident.resolve` and `transaction.reconcile` |
-| **Cancel run** | `run.cancel` |
-| **Cancel without undoing** | `run.cancel` and `transaction.reconcile` |
+| To | You need | Roles that hold it |
+| --- | --- | --- |
+| See transactions in **Runs** and in a run's detail | `run.read` | `viewer`, `execution_manager` |
+| See their counts in **Overview** | `status.read`, as the whole page, and `run.read` | `viewer` |
+| See the transactions in doubt in **Incidents** | `incident.read` | `operator` |
+| Retry, or wait again | `incident.resolve` | `operator` |
+| Make any other decision on a transaction in doubt | `incident.resolve` and `transaction.reconcile` | `operator` with `transaction_reconciler` |
+| **Cancel run** | `run.cancel` | `operator` |
+| **Cancel without undoing** | `run.cancel` and `transaction.reconcile` | `operator` with `transaction_reconciler` |
 
-The `operator` role holds the first three and `run.cancel` (with `viewer` for
-`run.read`); only `transaction_reconciler` holds `transaction.reconcile`. An
-incident's decision that you may not make stays in view, disabled, with the role
-it needs.
+An incident's decision that you may not make stays in view, disabled, with the
+role it needs.
 
 A business key shows as text on these pages. It never enters an address, a page
 title, a notice, the name of an exported file, or a request to Weave AI.
@@ -374,7 +373,9 @@ neither is sent: **Open incident** takes you to the decision it waits for.
 **Operate › Overview** counts the transactions in doubt and those being undone,
 with the age of the oldest, and lists in-doubt incidents first among the
 incidents that need attention. **Show runs that need attention** opens the runs
-of the last 400 days with a transaction in doubt.
+of the last 400 days with a transaction in doubt. The counts leave out the
+records that an earlier release left unsettled in ended runs; **Needs attention**
+in Runs, and so that list, still includes those runs.
 
 Every environment has the alert rule **Transactions in doubt** (critical, at
 once). See [Alerts](../operations/observability.md#alerts) for the rule and the
