@@ -167,11 +167,16 @@ function past(step: Step, from: Reach, plan: Walk, around: Around): Reach {
   return reach;
 }
 
-/** Whether a branch holds a step that may change data. */
+/**
+ * Whether a branch holds a step of the transaction: one that says how it's
+ * undone, or a call. As the compiler counts them, an action that says
+ * nothing doesn't count: it only reads, or the compiler already asks how
+ * it's undone (TXN_UNDECLARED).
+ */
 const takesPart = (steps: readonly Step[]): boolean =>
   steps.some(
     (step) =>
-      step.kind === "action" ||
+      undoChoiceOf(step) !== null ||
       (step.kind as string) === "callWorkflow" ||
       blocksOf(step).some(({ branch }) => takesPart(stepsIn(branch))),
   );

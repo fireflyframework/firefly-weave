@@ -208,6 +208,17 @@ describe("points of no return", () => {
     expect(points(fork("both", [last("submit")], [plain("build")]))).toEqual([
       "submit",
     ]);
+    // An action that only reads says nothing of how it's undone: the
+    // platform doesn't count it, so the other branch still decides.
+    const lookup = {
+      id: "lookup",
+      kind: "action",
+      uses: "reports.lookup@1.0.0",
+      with: { literal: {} },
+    } as unknown as Step;
+    expect(points(fork("both", [last("submit")], [lookup]))).toEqual([
+      "submit",
+    ]);
     // The platform refuses it there, however deep the other step is.
     for (const other of [
       reversible("add"),
