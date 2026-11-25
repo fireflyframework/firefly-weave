@@ -75,6 +75,13 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "step.continue",
         "step.errorOutput",
         "step.incident",
+        # Recovery work of one item that raised an unexpected error, by kind of work.
+        "recovery.deadline",
+        "recovery.cancel",
+        "recovery.expired",
+        "recovery.retry",
+        "recovery.dispatch",
+        "recovery.event_start",
         # Platform-event triggers: starting a reaction, and a reaction resolving its transaction.
         "event.start",
         "event.resolve",
@@ -112,6 +119,7 @@ COUNTERS = {
     "request": "weave.requests",
     "transition": "weave.transitions",
     "recovery": "weave.recoveries",
+    "recovery_failure": "weave.recovery_failures",
     "provider": "weave.provider_events",
     "outbox": "weave.outbox_deliveries",
     "secret": "weave.secret_capacity",
