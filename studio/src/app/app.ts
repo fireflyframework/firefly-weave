@@ -9419,7 +9419,8 @@ export class App implements CanvasHost {
   }
   /**
    * A workflow opened with its .testdata.json: Load or Not now. The file is
-   * read as any test data and every entry is checked (secrets never stay).
+   * read as any test data and every entry is checked (secrets never stay, nor
+   * the IDs of a real platform event).
    */
   private async offerTestDataFile(text: string) {
     const opened = this.model.opened;
@@ -9442,7 +9443,7 @@ export class App implements CanvasHost {
     }
     const tools = await this.loadTools().catch(() => null);
     if (!tools || !still()) return;
-    const { entriesOf, pruneEntries } = tools.testDataOps;
+    const { pruneEntries } = tools.testDataOps;
     const reading = tools.readTestData(value);
     if (!reading.ok) {
       this.notify(
@@ -9461,11 +9462,13 @@ export class App implements CanvasHost {
       (id) => steps.has(id),
       new Date().toISOString(),
     );
-    const outcome = await (
-      await this.requireTestData()
-    ).change(
+    const service = await this.requireTestData();
+    if (!still()) return;
+    const outcome = await tools.keepFile(
+      service,
       data,
-      entriesOf(data).map((entry) => entry.path),
+      this.model.definition,
+      this.api,
     );
     if (!still()) return;
     if (outcome.ok) {
