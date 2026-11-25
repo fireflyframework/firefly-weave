@@ -188,9 +188,14 @@ export class UndoSection {
       .filter(Boolean)
       .join(" ");
   }
-  /** Keeps a field's component while its descriptor stays the same. */
+  /**
+   * Keeps a field's component while its descriptor stays the same; Hold for's
+   * while it shows, since typing in it changes its hint.
+   */
   fieldKey(entry: FieldEntry): object {
-    return this.session().fieldKey(entry);
+    return entry.spec.id === "undoHold"
+      ? this.session()
+      : this.session().fieldKey(entry);
   }
   choose(value: string) {
     const option = UNDO_OPTIONS.find((item) => item.value === value);

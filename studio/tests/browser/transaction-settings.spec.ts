@@ -26,7 +26,7 @@ import {
   yamlFile,
   type StepDetailsPage,
 } from "./step-details-po";
-import { offline, sourceText } from "./support";
+import { drawn, offline, sourceText } from "./support";
 
 const MOVE = yamlFile(
   "move-between-systems.yaml",
@@ -160,6 +160,82 @@ test.describe("a transaction in step details at 1440x900", () => {
     await details.open("move");
     await details.tab("Settings").click();
     await details.field("holdSeconds").getByRole("textbox").fill("15");
+    expect(await move(page, details)).not.toHaveProperty("policy");
+  });
+
+  // Typed key by key: on the way, the digits are the default (10 tries, 15
+  // minutes), which a transaction leaves out of its source.
+  for (const { id, typed, saved } of [
+    {
+      id: "undoRetry.maxAttempts",
+      typed: "105",
+      saved: { undoRetry: { maxAttempts: 105 } },
+    },
+    {
+      id: "undoRetry.maxAttempts",
+      typed: "100",
+      saved: { undoRetry: { maxAttempts: 100 } },
+    },
+    { id: "holdSeconds", typed: "152", saved: { holdSeconds: 9120 } },
+    { id: "holdSeconds", typed: "150", saved: { holdSeconds: 9000 } },
+    // 60 minutes on the way reads as 1 hour only once the box is left.
+    { id: "holdSeconds", typed: "605", saved: { holdSeconds: 36300 } },
+  ])
+    test(`typing ${typed} in ${id} goes past its default`, async ({ page }) => {
+      const details = await open(page);
+      await details.tab("Settings").click();
+      const box = details.field(id).getByRole("textbox");
+      await box.click();
+      for (const [index, key] of [...typed].entries()) {
+        await page.keyboard.press(key);
+        await drawn(page);
+        expect(await box.inputValue()).toBe(typed.slice(0, index + 1));
+      }
+      await expect(details.field(id).getByRole("alert")).toHaveCount(0);
+      expect((await move(page, details))["policy"]).toMatchObject(saved);
+    });
+
+  test("a typed default shows as the default once the box is left", async ({
+    page,
+  }) => {
+    const details = await open(page);
+    await details.tab("Settings").click();
+    const tries = details.field("undoRetry.maxAttempts").getByRole("textbox");
+    await tries.click();
+    await page.keyboard.type("10");
+    await expect(tries).toHaveValue("10");
+    await page.keyboard.press("Tab");
+    await expect(tries).toHaveValue("");
+    await expect(tries).toHaveAttribute("placeholder", "10");
+    // A duration typed in seconds keeps its unit until the box is left.
+    const hold = details.field("holdSeconds");
+    await hold.getByRole("combobox").selectOption("seconds");
+    await hold.getByRole("textbox").click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("900");
+    await expect(hold.getByRole("textbox")).toHaveValue("900");
+    await expect(hold.getByRole("combobox")).toHaveValue("seconds");
+    await page.keyboard.type("0");
+    await expect(hold.getByRole("textbox")).toHaveValue("9000");
+    await hold.getByRole("textbox").blur();
+    await expect(hold.getByRole("textbox")).toHaveValue("150");
+    await expect(hold.getByRole("combobox")).toHaveValue("minutes");
+    expect((await move(page, details))["policy"]).toMatchObject({
+      holdSeconds: 9000,
+      undoRetry: { maxAttempts: 10 },
+    });
+  });
+
+  test("Undo while typing shows the value as it was", async ({ page }) => {
+    const details = await open(page);
+    await details.tab("Settings").click();
+    const tries = details.field("undoRetry.maxAttempts").getByRole("textbox");
+    await tries.click();
+    await page.keyboard.type("25");
+    await drawn(page);
+    await expect(tries).toHaveValue("25");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(tries).toHaveValue("");
     expect(await move(page, details)).not.toHaveProperty("policy");
   });
 

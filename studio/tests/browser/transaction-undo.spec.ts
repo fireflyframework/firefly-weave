@@ -30,7 +30,7 @@ import {
   stepInSource,
   undoSelect,
 } from "./transaction-po";
-import { sourceText } from "./support";
+import { drawn, sourceText } from "./support";
 
 const UNDECLARED = "This step changes data. Choose how it's undone.";
 const HOLD = `- id: hold
@@ -174,11 +174,18 @@ test.describe("how a step is undone at 1440x900", () => {
     );
     const amount = hold.getByRole("textbox");
     await expect(amount).toHaveAttribute("placeholder", "10");
-    await amount.fill("30");
+    // Key by key: 10 minutes on the way is the transaction's own hold.
+    await amount.click();
+    for (const typed of ["1", "10", "105"]) {
+      await page.keyboard.press(typed.slice(-1));
+      await drawn(page);
+      expect(await amount.inputValue()).toBe(typed);
+      await expect(amount).toBeFocused();
+    }
     await amount.press("Tab");
     await expect(hold).not.toContainText("Same as the transaction's");
     expect((await stepInSource(page, details, "add"))["holdSeconds"]).toBe(
-      1800,
+      6300,
     );
   });
 

@@ -987,6 +987,8 @@ describe("number and JSON entries not applied yet", () => {
     expect(again.numberText).toBe("1");
     expect(again.numberProblem()).toBe("Use a number from 2 to 10.");
     again.number({ target: { value: "8" } } as unknown as Event);
+    expect(again.numberProblem()).toBe("");
+    again.left();
     expect(again.numberText).toBeNull();
     expect(ownedActionsOf(h.model.canvas)[USES].retry?.maxAttempts).toBe(8);
   });
