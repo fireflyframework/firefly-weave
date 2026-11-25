@@ -24,11 +24,21 @@ import type { ToastAction } from "../../toast";
 import type { StructuredCanvasAdapter } from "../../model";
 import type { Path } from "../ndv/registry";
 import type { StepDetailsRequest } from "../ndv/step-details-service";
-import { applyTransactionFix, fixedText, type TransactionFix } from "./fixes";
+import {
+  CHANGED_SINCE,
+  aboutNow,
+  applyTransactionFix,
+  fixedText,
+  type TransactionFix,
+} from "./fixes";
 
 /** What running a fix needs of the editor's shell. */
 export interface FixHost {
   readonly model: StructuredCanvasAdapter;
+  /** The workflow the findings shown are about. */
+  readonly diagnosticsDefinition?: unknown;
+  /** A simulation runs: nothing changes meanwhile. */
+  readonly editingLocked?: boolean;
   readonly error: string;
   readonly editorNext?: boolean;
   ensureApplied(): Promise<boolean>;
@@ -75,15 +85,17 @@ export async function runProblemFix(
   location: DiagnosticLocation,
 ): Promise<void> {
   if (fix.kind === "openWorkflow") return host.openWorkflow?.(fix.uses);
+  const changes =
+    fix.kind === "suggestion" ||
+    fix.kind === "move" ||
+    fix.kind === "clearUndo" ||
+    fix.kind === "waitForCall";
+  if (changes && host.editingLocked)
+    return host.notify("Editing is paused while the simulation runs.");
   if (fix.kind === "suggestion") {
     await host.applySuggestion(fix.change);
     if (host.error) return;
-  } else if (
-    fix.kind === "move" ||
-    fix.kind === "clearUndo" ||
-    fix.kind === "waitForCall"
-  )
-    return change(host, fix, location.stepId);
+  } else if (changes) return change(host, fix, location.stepId);
   const focus = fixFocus(fix, {
     stepId: location.stepId,
     path: [...location.field, ...location.dataPath],
@@ -100,6 +112,7 @@ export async function runProblemFix(
 
 async function change(host: FixHost, fix: TransactionFix, id: string) {
   if (!(await host.ensureApplied())) return;
+  if (!aboutNow(host)) return host.notify(CHANGED_SINCE);
   const { model } = host;
   const text = fixedText(model.definition, fix, id);
   let changed = false;

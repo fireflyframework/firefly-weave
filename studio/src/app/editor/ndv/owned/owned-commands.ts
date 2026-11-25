@@ -36,6 +36,7 @@ import {
   countLine,
   type ValidationResult,
 } from "../../../designer/validation";
+import { aboutNow } from "../../transactions/fixes";
 import { showTransactionProblems } from "../../transactions/publish-summary";
 import {
   canvasExtras,
@@ -169,9 +170,11 @@ export async function publishOwnedFirst(
   check: () => Promise<boolean>,
 ): Promise<{ result: OwnedFirst; published: number }> {
   if (!versionChangedOwned(host)) return { result: "stopped", published: 0 };
+  const before = host.diagnostics;
   if (!(await check())) {
-    // A transaction that isn't safe says so before Publish… goes on.
-    if (purpose === "publish")
+    // A transaction that isn't safe says so before Publish… goes on, when the
+    // check answered about this workflow; one that couldn't run says so itself.
+    if (purpose === "publish" && host.diagnostics !== before && aboutNow(host))
       showTransactionProblems(host, host.diagnostics ?? null);
     return { result: "stopped", published: 0 };
   }

@@ -331,6 +331,9 @@ function editor(name: Name) {
   };
   return { model, host, opened, workflows, toasts, undos };
 }
+/** What applying a suggested edit to a workflow that changed says too. */
+const CHANGED_SINCE =
+  "The workflow changed after this suggestion was made. Wait for the next check, then try again.";
 const ids = (steps: unknown): string[] =>
   (steps as Step[]).map((step) => step.id);
 const runs = async (name: Name, code: string) => {
@@ -602,8 +605,51 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
     expect(made.opened).toEqual([["open", location]]);
   });
 
-  it("is the same in step details", async () => {
-    const made = editor("order");
+  it("makes no change to a workflow that changed since its check, and says why", async () => {
+    for (const [name, code] of [
+      ["unsafe", "TXN_AFTER_PIVOT_UNSAFE"],
+      ["outside", "TXN_OUTSIDE"],
+      ["detached", "TXN_DETACH"],
+    ] as const) {
+      const made = editor(name);
+      const { fix, location } = row(name, code);
+      const { spec } = made.model.definition;
+      made.model.update(
+        spec.steps[0].id,
+        JSON.stringify({ ...spec.steps[0], notes: "changed since" }),
+      );
+      const after = made.model.source;
+      await runProblemFix(made.host as never, fix!, location!);
+      expect([name, made.model.source]).toEqual([name, after]);
+      expect(made.toasts).toEqual([CHANGED_SINCE]);
+    }
+  });
+
+  it("makes no change while a simulation runs", async () => {
+    for (const [name, code] of [
+      ["unsafe", "TXN_AFTER_PIVOT_UNSAFE"],
+      ["order", "TXN_ORDER"],
+      ["shortHold", "TXN_HOLD_PIVOT"],
+    ] as const) {
+      const made = editor(name);
+      const { fix, location } = row(name, code);
+      Object.assign(made.host, { editingLocked: true });
+      await runProblemFix(made.host as never, fix!, location!);
+      expect([name, made.model.canUndo]).toEqual([name, false]);
+      expect(made.toasts).toEqual([
+        "Editing is paused while the simulation runs.",
+      ]);
+      expect(made.opened).toEqual([]);
+    }
+  });
+
+  /** Step details on a step, and the problem of it that says `message`. */
+  const stepDetails = (
+    made: ReturnType<typeof editor>,
+    name: Name,
+    step: string,
+    message: RegExp,
+  ) => {
     const host = {
       ...made.host,
       refreshView: () => undefined,
@@ -614,18 +660,52 @@ describe.skipIf(!available)("the fix of each transaction finding", () => {
       editingLocked: false,
       profile: null,
       api: { request: async () => ({ features: ["flow.transaction"] }) },
-      diagnostics: { diagnostics: found.order },
+      diagnostics: { diagnostics: found[name] },
       cacheDecisionContract: () => undefined,
       can: () => true,
     } as unknown as StepDetailsHost;
     const controller = new StepDetailsController(host, () => 0);
-    const form = new FormSession(host, controller, openRequest("add"), {
+    const form = new FormSession(host, controller, openRequest(step), {
       confirm: async () => true,
       announce: () => undefined,
     });
     const issue = form
       .issues()
-      .find(({ message }) => /must come last/.test(message))!;
+      .find(({ message: text }) => message.test(text))!;
+    return { form, issue };
+  };
+
+  it("changes nothing from step details either, once the workflow changed", () => {
+    for (const [name, step, message] of [
+      ["unsafe", "add", /after the step that can't be undone/],
+      ["outside", "add", /only to steps inside a transaction/],
+      ["detached", "call", /./],
+    ] as const) {
+      const made = editor(name);
+      const { form, issue } = stepDetails(made, name, step, message);
+      expect(issue.fix?.kind).toMatch(/^(move|clearUndo|waitForCall)$/);
+      made.model.update(
+        step,
+        JSON.stringify({
+          ...made.model.nodes().find((node) => node.step.id === step)!.step,
+          notes: "changed since",
+        }),
+      );
+      const after = made.model.source;
+      form.runFix(issue);
+      expect([name, made.model.source]).toEqual([name, after]);
+      expect(made.toasts).toEqual([CHANGED_SINCE]);
+      // Once the next check answers for this workflow, it is made.
+      made.host.diagnosticsDefinition = made.model.definition;
+      const again = stepDetails(made, name, step, message);
+      again.form.runFix(again.issue);
+      expect(made.model.source).not.toBe(after);
+    }
+  });
+
+  it("is the same in step details", async () => {
+    const made = editor("order");
+    const { form, issue } = stepDetails(made, "order", "add", /must come last/);
     expect(issue.fix).toMatchObject({ label: "Move to end" });
     form.runFix(issue);
     await Promise.resolve();
@@ -797,9 +877,14 @@ describe.skipIf(!available)("publishing a transaction that isn't safe", () => {
       name: Name,
       passes: boolean,
       more: object[] = [],
+      /** What the check does: by default it answers for this workflow. */
+      check = (host: Record<string, unknown>) => {
+        host["diagnostics"] = result(name, more);
+      },
     ) => {
       const made = editor(name);
       const host = Object.assign(made.host, {
+        // What an earlier check of this workflow found.
         diagnostics: result(name, more),
         busy: "",
         errorCode: "",
@@ -810,7 +895,10 @@ describe.skipIf(!available)("publishing a transaction that isn't safe", () => {
       const outcome = await publishOwnedFirst(
         host as never,
         "publish",
-        async () => passes,
+        async () => {
+          check(host);
+          return passes;
+        },
       );
       return { outcome, summary: publishSummary(host)() };
     };
@@ -823,6 +911,19 @@ describe.skipIf(!available)("publishing a transaction that isn't safe", () => {
     expect(stopped.summary?.problems).toHaveLength(1);
     expect((await publish("order", true)).summary).toBeNull();
     expect((await publish("wait", false, [other])).summary).toBeNull();
+    // A check that can't run says so itself: what an earlier one found isn't its answer.
+    expect(
+      (await publish("order", false, [], () => undefined)).summary,
+    ).toBeNull();
+    // Nor is an answer about another workflow.
+    expect(
+      (
+        await publish("order", false, [], (host) => {
+          host["diagnostics"] = result("order");
+          host["diagnosticsDefinition"] = WORKFLOWS.unsafe;
+        })
+      ).summary,
+    ).toBeNull();
   });
 });
 

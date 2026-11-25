@@ -19,8 +19,15 @@ SPDX-License-Identifier: Apache-2.0
 // panel and in step details with its fix, the summary before publishing, and
 // the data a step's undo reads. The platform is mocked; its compiler and the
 // Studio host's check are the repository's own Python.
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import { hasPython, hostValidate } from "./local-authoring";
+import { applySource } from "./owned-actions";
 import type { StepDetailsPage } from "./step-details-po";
 import {
   moveWorkflow,
@@ -199,6 +206,52 @@ test.describe("a transaction's problems at 1440x900", () => {
     await dialog.getByRole("button", { name: /^Move to end/ }).click();
     await expect(dialog).toHaveCount(0);
     expect(await orderIn(page, details)).toEqual(["hold", "add", "submit"]);
+  });
+
+  test("a check that can't run opens no question, and a fix for an older workflow changes nothing", async ({
+    page,
+  }) => {
+    const details = await openConnectedMove(
+      page,
+      moveWorkflow(HOLD + SUBMIT, { after: ADD }),
+    );
+    const list = await diagnostics(page);
+    const clear = list.getByRole("button", { name: /^Clear How it's undone/ });
+    await expect(clear).toBeVisible();
+    // The connection goes: no later check answers.
+    const away = (route: Route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "WV-STUDIO-UNAVAILABLE", message: "Away." } },
+      });
+    await page.route("**/compiler/compile", away);
+    await page.route("**/studio/local/validate", away);
+    await applySource(page, moveWorkflow(HOLD + ADD + SUBMIT));
+    const changed = await sourceText(page);
+    await showView(page, "Designer");
+    const publish = page
+      .getByRole("button", { name: "Publish…" })
+      .or(page.getByRole("menuitem", { name: "Publish…" }));
+    if (!(await publish.first().isVisible()))
+      await page.getByRole("button", { name: "More" }).first().click();
+    await publish.first().click();
+    await expect(
+      page.getByText("Studio couldn't check this workflow. Try again."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Publish move-between-systems 1.0.0" }),
+    ).toHaveCount(0);
+    // add is inside now, and its choice is right: the old fix leaves it.
+    await (await diagnostics(page))
+      .getByRole("button", { name: /^Clear How it's undone/ })
+      .click();
+    await expect(page.locator(".toast-region")).toContainText(
+      "The workflow changed after this suggestion was made.",
+    );
+    expect(await sourceText(page)).toBe(changed);
+    expect(await stepInSource(page, details, "add")).toHaveProperty(
+      "compensate",
+    );
   });
 
   test("a hold too short for a wait opens what sets it", async ({ page }) => {

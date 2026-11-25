@@ -155,6 +155,8 @@ import {
   type StepPatch,
 } from "../../transactions/undo";
 import {
+  CHANGED_SINCE,
+  aboutNow,
   applyTransactionFix,
   type FindingPlace,
   type TransactionFix,
@@ -1835,8 +1837,6 @@ export class FormSession {
         void this.host.branchOnDecision(this.target);
         return;
       case "clearUndo":
-        this.clearUndo();
-        return;
       case "move":
       case "waitForCall":
         this.change(fix);
@@ -1900,6 +1900,8 @@ export class FormSession {
   /** A fix that changes where the step is or how it runs, as one undo step. */
   private change(fix: TransactionFix): void {
     if (this.controller.readOnlyReason(this.target)) return;
+    if (!aboutNow(this.host)) return this.host.notify(CHANGED_SINCE);
+    if (fix.kind === "clearUndo") return void this.clearUndo();
     this.host.perform(() => {
       applyTransactionFix(this.model, fix, this.target);
     });

@@ -64,6 +64,17 @@ export type TransactionFix =
   | { kind: "clearUndo"; label: "Clear How it's undone"; name: string }
   | { kind: "waitForCall"; label: "Wait for its result"; name: string };
 
+/** What applying a suggested edit to a workflow that changed says too. */
+export const CHANGED_SINCE =
+  "The workflow changed after this suggestion was made. Wait for the next check, then try again.";
+/** Whether a check's findings are about the workflow as it is now. */
+export const aboutNow = (host: {
+  readonly model: { readonly definition: Workflow };
+  readonly diagnosticsDefinition?: unknown;
+}): boolean =>
+  JSON.stringify(host.model.definition) ===
+  JSON.stringify(host.diagnosticsDefinition);
+
 /** Where a finding is, in the workflow it was made for. */
 export interface FindingPlace {
   stepId: string;
