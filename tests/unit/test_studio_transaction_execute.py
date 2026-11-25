@@ -1378,3 +1378,19 @@ def test_test_data_of_a_phase_a_called_workflow_no_longer_has_is_refused_by_its_
         inside_a_call(hold(), add(), definitions=fixture()["definitions"], workflows={"inside@1.0.0": {"mocks": mocks}})
     assert refused.value.paths == ["/workflows/inside@1.0.0/mocks/node:add#confirm"]
     assert refused.value.message == "inside@1.0.0 has no confirm of add; remove its test data"
+
+
+def test_a_phase_the_host_cant_find_is_refused_by_pointer_never_passed_on():
+    document = json.loads(move())
+    _, simulator, _ = simulator_for(move_request(move()), None, document, whole=document, sliced=False)
+    assert simulator is not None
+    unknown = {"instanceKey": "nowhere#undo", "input": {"reference": "M-1"}, "output": {}}
+    stale = {"instanceKey": "add#confirm", "output": {}}
+    known = {"instanceKey": "add#undo", "input": {"reference": "M-1", "addOperation": "a-1"}}
+    assert simulation.secret_phases(simulator.data.artifact, [unknown, known, stale]) == [
+        "/phases/nowhere#undo/input",
+        "/phases/nowhere#undo/output",
+        "/phases/add#confirm/output",
+    ]
+    # Nothing it received or returned: nothing to pass on.
+    assert simulation.secret_phases(simulator.data.artifact, [{"instanceKey": "nowhere#undo"}]) == []

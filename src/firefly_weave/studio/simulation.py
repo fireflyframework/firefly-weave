@@ -1500,8 +1500,8 @@ def _too_many(transactions: list[JsonObject], phases: list[JsonObject]) -> bool:
 
 def secret_phases(artifact: JsonObject, phases: Iterable[Mapping[str, Any]]) -> list[str]:
     """Pointers (``/phases/add#undo/input``) of what a confirm, release or undo received or returned that its own
-    operation marks secret, or that can't be classified. An undo's input derives from what the steps before it
-    returned, so it is checked here too.
+    operation marks secret, or that can't be classified, the values of one the workflow doesn't have included. An
+    undo's input derives from what the steps before it returned, so it is checked here too.
     """
     from firefly_weave.compiler.api import import_artifact
     from firefly_weave.compiler.schemas import _Failure
@@ -1516,7 +1516,10 @@ def secret_phases(artifact: JsonObject, phases: Iterable[Mapping[str, Any]]) -> 
         key = cast(str, entry["instanceKey"])
         target = phase_target(prepared, key)
         for direction in ("input", "output"):
-            if target is None or direction not in entry:
+            if direction not in entry:
+                continue
+            if target is None:
+                found.append(_pointer("phases", key, direction))
                 continue
             for schema in _phase_schemas(prepared.ir, target, direction):
                 try:
