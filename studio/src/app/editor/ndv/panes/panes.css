@@ -503,11 +503,10 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 /* A real result's source ("From local · run 3f2a…"): a 24 px pill that
    opens the run in Operate. Its target reaches 44 px tall without the pill
-   growing, and it shortens (the run ID first) before the count, Pin or Edit
-   leave the row. */
-.pane-sub-info:has(> .pane-real-tag) {
-  flex-wrap: nowrap;
-}
+   growing. When the pill and the count don't fit beside Pin, Edit and More
+   output actions, the count takes the line under the pill, so the source
+   keeps its words; the pill shortens (the run ID first) only when it alone
+   doesn't fit. */
 .pane-sub-info:has(> .pane-real-tag) > .pane-count {
   flex: none;
   white-space: nowrap;

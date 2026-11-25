@@ -620,16 +620,28 @@ for (const size of sizes)
         0,
       );
       // The usage takes a row of its own: the run's source keeps its words,
-      // and the keep and Edit output buttons stay inside the pane.
+      // and the keep, Edit output and More output actions buttons end the
+      // source's row inside the pane. The count may take the line under it.
       const source = pane.locator(".pane-real-text");
       expect(
         await source.evaluate((e) => e.scrollWidth - e.clientWidth),
       ).toBeLessThanOrEqual(1);
       const edges = await box(pane);
-      for (const name of ["Keep as test data", "Edit output"]) {
+      const tag = await box(pane.locator(".pane-real-tag"));
+      for (const name of [
+        "Keep as test data",
+        "Edit output",
+        "More output actions",
+      ]) {
         const control = await box(pane.getByRole("button", { name }));
         expect(control.right, name).toBeLessThanOrEqual(edges.right + 0.5);
+        expect(
+          Math.abs(control.y + control.height / 2 - (tag.y + tag.height / 2)),
+          name,
+        ).toBeLessThan(1);
       }
+      const count = await box(pane.locator(".pane-count"));
+      expect(count.right).toBeLessThanOrEqual(edges.right + 0.5);
       // Keeping the real answer makes it the turn Execute step replays, and
       // the button says so for as long as it holds.
       await expect(keep(pane)).toHaveAttribute("aria-pressed", "false");
