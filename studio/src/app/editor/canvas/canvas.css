@@ -609,14 +609,14 @@ weave-canvas-view,
   border-radius: 50%;
 }
 /* Below 768 px or with a coarse pointer, a step's Success and Error outputs
-   and an empty path's slot take a 44 px tap on screen at any zoom (--zoom is
-   the canvas's). Those outputs sit 20 units right of their step's card: the
-   area starts at the card and grows right, up and down; it is placed from
-   inside the output's 2 px border. Any other output sits on its card's edge
-   and keeps its circle, so the card and its issue badge keep their taps. */
+   (data-tap: touchTap in handles.ts) and an empty path's slot take a 44 px
+   tap on screen at any zoom (--zoom is the canvas's, and no other output has
+   it). Those outputs sit 20 units right of their step's card: the area
+   starts at the card and grows right, up and down; it is placed from inside
+   the output's 2 px border. Any other output sits on its card's edge and
+   keeps its circle, so the card and its issue badge keep their taps. */
 @media (max-width: 767px), (pointer: coarse) {
-  .canvas-v2
-    .handle:is([data-tone="danger"], [data-handle$=":path:success"])::before {
+  .canvas-v2 .handle[data-tap]::before {
     --hit: max(24px, calc(44px / var(--zoom, 1)));
     inset: calc(4px - var(--hit) / 2) calc(24px - var(--hit))
       calc(4px - var(--hit) / 2) -16px;
@@ -625,7 +625,7 @@ weave-canvas-view,
   /* Success's area reaches a quarter up and three down: the step's issue
      badge, right above it at low zoom, keeps its center and the 11 px
      below. */
-  .canvas-v2 .handle[data-handle$=":path:success"]::before {
+  .canvas-v2 .handle[data-tap="success"]::before {
     inset-block: calc(4px - var(--hit) / 4) calc(4px - var(--hit) * 0.75);
   }
   .canvas-v2 .lane-slot::before {
