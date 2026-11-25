@@ -176,10 +176,6 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* Who resolved it starts at the left as every other fact, and when follows. */
-.txn-resolution .text-link {
-  text-align: start;
-}
 .txn-resolution time {
   white-space: nowrap;
 }
