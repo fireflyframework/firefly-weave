@@ -201,6 +201,10 @@ SPDX-License-Identifier: Apache-2.0
     height: 44px;
     min-height: 44px;
   }
+  .txn-open-incident,
+  .notice button.sm {
+    min-height: var(--control-touch);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .txn-chevron .disclosure {

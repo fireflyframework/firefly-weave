@@ -42,6 +42,11 @@ SPDX-License-Identifier: Apache-2.0
   flex: 1 1 180px;
   margin: 0;
 }
+@media (max-width: 767px), (pointer: coarse) {
+  .notice button.sm {
+    min-height: var(--control-touch);
+  }
+}
 .stays-done {
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line);

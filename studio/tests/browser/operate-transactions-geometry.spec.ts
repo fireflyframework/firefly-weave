@@ -424,6 +424,44 @@ for (const size of sizes)
       ).toBeFocused();
     });
 
+    test("each way on from a transaction in doubt, and from a failed read, is a full target", async ({
+      page,
+    }) => {
+      await transactionsPlatform(page, { capabilities: reconciler });
+      await openRunDetail(page, runs.called);
+      const heightOf = async (button: Locator) => (await box(button)).height;
+      const heights = {
+        "Open incident of a transaction": await heightOf(
+          block(page, "apply").getByRole("button", { name: "Open incident" }),
+        ),
+        "Open incident in Cancel run": 0,
+        "Try now": 0,
+      };
+      await page
+        .locator(".run-controls")
+        .getByRole("button", { name: "Cancel run" })
+        .click();
+      heights["Open incident in Cancel run"] = await heightOf(
+        dialog(page, "Cancel this run?").getByRole("button", {
+          name: "Open incident",
+        }),
+      );
+      await page.route(`${environment}/runs/*/transactions?*`, (route) =>
+        route.fulfill({
+          status: 503,
+          json: { code: "WV-UNAVAILABLE", message: "Down" },
+        }),
+      );
+      await page.goto(`/operate/runs/${runs.called}`);
+      heights["Try now"] = await heightOf(
+        transactionsOf(page).getByRole("button", { name: "Try now" }),
+      );
+      const least = large(size) ? 44 : 32;
+      expect(
+        Object.entries(heights).filter(([, height]) => height < least - 0.5),
+      ).toEqual([]);
+    });
+
     test("a run held whole keeps its ID and its state on one line, and what resolves it in view", async ({
       page,
     }) => {
