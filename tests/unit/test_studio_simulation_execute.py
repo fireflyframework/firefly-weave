@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from firefly_weave.contracts.step_errors import step_error_message
 from firefly_weave.studio.local_contracts import ExecuteRequest
-from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
+from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute, simulator_for
 
 ACTION = yaml.safe_load(Path("examples/definitions/check-customer.action.yaml").read_text("utf-8"))
 CHECK = {
@@ -554,6 +554,49 @@ def test_a_simulation_out_of_time_while_it_looks_for_where_it_stopped_answers_li
     # Half of what it asked was the run itself; the rest looks for the step.
     answer = execute(body, None, out_of_time=after(whole.asked // 2 + 1))
     assert (answer.status, answer.diagnostics) == ("limit", [])
+
+
+def test_the_waits_of_a_loop_never_have_the_whole_run_checked_for_each(monkeypatch):
+    # Copying, checking and viewing a run takes longer the further it is.
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    checked: list[int] = []
+    bounded = Simulator._bounded
+    monkeypatch.setattr(Simulator, "_bounded", lambda self: (checked.append(1), bounded(self))[1])
+    counts = []
+    for items in ([1], [1, 2, 3, 4]):
+        checked.clear()
+        loop = {**loop_over(items), "maxItems": 4, "body": {"steps": [PAUSE], "output": {"literal": None}}}
+        assert run(workflow(loop))["status"] == "completed"
+        counts.append(len(checked))
+    assert counts[0] == counts[1]
+
+
+def test_a_drive_is_one_command_and_one_that_fails_changes_nothing():
+    from firefly_weave.operations.debug.models import DebugError
+
+    body = request(workflow(PAUSE))
+    document = json.loads(body.source)
+    _, simulator, _ = simulator_for(body, None, document, whole=document, sliced=False)
+
+    def waited() -> str:
+        simulator.continue_until_breakpoint()
+        simulator.advance_time(300)
+        simulator.continue_until_breakpoint()
+        return "waited"
+
+    assert simulator.drive(waited) == "waited"
+    assert (simulator.data.command_count, simulator.inspect().status) == (1, "succeeded")
+
+    def refused() -> None:
+        simulator.advance_time(60)
+        simulator.advance_time(-1)
+
+    with pytest.raises(DebugError):
+        simulator.drive(refused)
+    assert simulator.data.virtual_seconds == 300
+    # The commands after it answer again.
+    assert simulator.advance_time(60).status == "succeeded"
 
 
 def loop_over(items: list[int]) -> dict[str, Any]:

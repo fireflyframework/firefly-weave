@@ -28,7 +28,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 from firefly_weave.studio.simulation import (
@@ -251,4 +251,5 @@ def _continue(simulator: Simulator, scripts: ExecuteScripts) -> None:
     from firefly_weave.operations.debug.simulator import TERMINAL
     from firefly_weave.studio.simulation import _drive
 
-    _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
+    host = cast(Any, simulator)
+    host.drive(lambda: _drive(host, scripts, SignalNode, HumanTaskNode, TERMINAL))

@@ -820,10 +820,34 @@ def _refuse_stale_phases(
         raise SimulationRefused(422, "WV-DEBUG-MOCK-KEY", stale[0][0], [path for _, path in stale])
 
 
-class _Timed:
-    """What the host adds to a simulator: it stops at its next step once the request's time is up."""
+class _Hosted:
+    """What the host adds to a simulator: it stops at its next step once the request's time is up, and runs the
+    commands of a drive as one."""
 
     out_of_time: Callable[[], bool] = staticmethod(never)
+    _driving = False
+
+    def drive[T](self, rounds: Callable[[], T]) -> T:
+        """Run ``rounds``, which gives the simulator many commands, as one command. Each command copies, checks and
+        shows the whole run, which takes longer the further the run is; a drive does it once. The commands inside of
+        it return nothing."""
+        found: list[T] = []
+
+        def run() -> None:
+            self._driving = True
+            try:
+                found.append(rounds())
+            finally:
+                self._driving = False
+
+        self._mutate(run)
+        return found[0]
+
+    def _mutate(self, operation: Callable[[], None]) -> Any:
+        if not self._driving:
+            return super()._mutate(operation)  # type: ignore[misc]
+        operation()
+        return None
 
     def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
         if self.out_of_time():
@@ -836,7 +860,7 @@ def host_simulator() -> Any:
     """The simulator of the host's sessions."""
     from firefly_weave.operations.debug.simulator import Simulator
 
-    class HostSimulator(_Timed, Simulator):
+    class HostSimulator(_Hosted, Simulator):
         pass
 
     return HostSimulator
@@ -875,7 +899,7 @@ def _watching_simulator() -> Any:
     from firefly_weave.runtime.control import loop_suffix
     from firefly_weave.runtime.kernel import _advance_owned, begin
 
-    class WatchingSimulator(_Timed, Simulator):
+    class WatchingSimulator(_Hosted, Simulator):
         def __init__(
             self, artifact: CompiledArtifact, *, target: str | None = None, broken: Collection[str] = (), **options: Any
         ) -> None:
@@ -1117,7 +1141,8 @@ def execute(
         if target.mode == "before":
             simulator.set_breakpoints({target.instanceKey or first_instance(simulator.ir, cast(str, target.stepId))})
         try:
-            blocked = _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
+            host = cast(Any, simulator)
+            blocked = host.drive(lambda: _drive(host, scripts, SignalNode, HumanTaskNode, TERMINAL))
         except KernelError as error:
             # A step the runtime refused (a condition that isn't true or false, say): the run fails there.
             stopped = Diagnostic(
@@ -1831,24 +1856,26 @@ def _clocks(data: DebugState, terminal: set[str]) -> Iterator[tuple[RunState, li
 
 def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:
     """Run until the end, the target, an incident (it waits for a person), or a signal or a person nobody scripted;
-    waits advance by themselves, those of the called workflows too."""
+    waits advance by themselves, those of the called workflows too. Reads the run itself, never a command's answer:
+    inside a drive there is none."""
     from firefly_weave.contracts.instance_keys import node_of
     from firefly_weave.operations.debug.transactions import due_deadline
     from firefly_weave.studio.local_contracts import Blocked
 
     nodes = {node.id: node for node in simulator.ir.graph.nodes}
     for _ in range(ROUNDS):
-        view = simulator.continue_until_breakpoint()
+        simulator.continue_until_breakpoint()
         data = simulator.data
+        state = data.cursor.result.state if data.cursor is not None else data.state
         if (
-            view.diagnostics
-            or view.status in terminal
+            data.diagnostics
+            or state.status in terminal
             or data.paused is not None
-            or _incident(view.status, view.variables) is not None
+            or _incident(state.status, {"incident": state.incident}) is not None
         ):
             return None
         moved = False
-        for key in list(view.active_nodes):
+        for key in list(state.active):
             node = nodes.get(node_of(key))
             if isinstance(node, signal_node):
                 script = scripts.signals.get(key) or scripts.signals.get(node.id)
