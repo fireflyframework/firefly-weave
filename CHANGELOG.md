@@ -31,12 +31,14 @@ SPDX-License-Identifier: Apache-2.0
   published on 0.1.0a19 change, so publishing one again gives a new artifact;
   published artifacts keep running as they are, and workflows that don't
   reference a platform schema keep their bytes.
-- A busy machine no longer makes a valid document, run input, or worker output
-  answer `WV-SCHEMA-RESOURCE_LIMIT`: the time that schema patterns may take is
-  now the CPU time of the thread that validates (10 ms a match, 100 ms a
-  validation, as before), and a match that the machine interrupts is tried
-  again, up to 8 times. A runaway pattern is still refused, with the same code
-  and message.
+- Weave no longer refuses a valid document, run input, or worker output with
+  `WV-SCHEMA-RESOURCE_LIMIT` because other work keeps the processor busy: the
+  time that schema patterns may take is now the CPU time of the thread that
+  validates (10 ms a match, 100 ms a validation, as before), and a match that
+  stops before it spends that time is tried again, up to 8 times. A match that
+  still can't finish, such as one on a long string in a process that is busy
+  running Python, is refused as before. A runaway pattern is still refused, with
+  the same code and message.
 
 ### Runs, incidents, and workers
 

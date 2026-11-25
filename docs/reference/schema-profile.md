@@ -201,13 +201,28 @@ counted repetition), so some complex patterns are rejected even though their rea
 cost is lower. Costs add up across a schema's patterns and are charged again when
 a pattern is compiled at run time.
 
-Only the CPU time of the thread that validates counts, so a busy machine makes a
-validation slower but doesn't refuse it. A match that the machine interrupts
-before it spends its limit is tried again, up to 8 times with twice the time each
-try. Interrupted tries of one validation may last 100 times its CPU-time budget
-(10 seconds by default) before it's refused. On Windows, the CPU clock moves by
-15.6 milliseconds at a time, so a match may spend that much past its limit. A
-match near its limit can still pass on a fast processor and fail on a slow one.
+A match that spends more than its limit is refused.
+
+Only the CPU time of the thread that validates counts, so waiting for the
+processor makes a validation slower but doesn't spend its budget. A match that
+stops before it spends its limit is tried again, up to 8 times with twice the time
+each try. Stopped tries aren't charged to the budget. Together, the stopped tries
+of one validation may last 100 times its CPU-time budget (10 seconds by default)
+before it's refused. A payload is checked twice, once for classified secrets and
+once against its schema, and each check has its own budget and its own wait.
+
+A match holds Python's interpreter lock when the length of its pattern times the
+length of its string is at most 262,144. A larger match lets the other threads of
+the process run meanwhile. When those threads are busy running Python, a larger
+match can wait for them so often that it uses up its tries, and a valid string is
+refused.
+
+On Windows, the CPU clock moves by 15.6 milliseconds at a time, so a match may
+spend that much past its limit. All the matches of a validation usually spend at
+most about twice their budget, and up to several times it when matches near
+their limit are stopped and tried again. A validation near its budget can be
+refused on a busy Windows machine. A match near its limit can still pass on a
+fast processor and fail on a slow one.
 
 ## Durable secret classification
 
