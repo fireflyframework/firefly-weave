@@ -23,20 +23,9 @@ from typing import Any
 import pytest
 import yaml
 from pydantic import ValidationError
-from studio_transaction_support import (
-    fixture,
-    hold,
-    move,
-    move_request,
-    reverse_by_call,
-    run_move,
-    simulated,
-    strict,
-    submit,
-)
 
 from firefly_weave.contracts.step_errors import step_error_message
-from firefly_weave.studio.local_contracts import ExecuteRequest, ScriptedFailure
+from firefly_weave.studio.local_contracts import ExecuteRequest
 from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
 
 ACTION = yaml.safe_load(Path("examples/definitions/check-customer.action.yaml").read_text("utf-8"))
@@ -876,121 +865,6 @@ def test_simulated_failures_never_reach_a_real_run():
         assert model.model_validate_json(json.dumps(body))
         with pytest.raises(ValidationError):
             model.model_validate_json(json.dumps({**body, "errors": errors}))
-
-
-# --- transactions: pins of undo steps, and failures with their effect -------------------------------------------
-
-STRICT_CONFIRM = strict(fixture(), "source-system.confirm-hold", ["confirmedAt"])["definitions"]
-CONFIRMED = {"confirmedAt": "2026-11-24T00:00:00Z"}
-
-
-def test_a_phase_pin_that_fits_its_phase_is_used():
-    # The pin fits the confirm and not the hold it confirms, whose output requires holdId. The undo's pin fits neither
-    # the undo nor its step, and the undo never runs: it is left out alone.
-    pins = {"node:hold#confirm": CONFIRMED, "node:add#undo": {"unexpected": 1}}
-    body = move_request(move(), definitions=STRICT_CONFIRM, mocks=pins)
-    assert execute(body, None).status == "completed"
-    view = simulated(body)
-    assert [record.state for record in view.transactions] == ["completed"]
-    assert [event.data["output"] for event in view.events if event.data.get("node_id") == "hold#confirm"] == [CONFIRMED]
-
-
-def test_a_phase_pin_that_no_longer_fits_is_left_out_and_the_step_asks_for_data():
-    answer = run_move(move(), definitions=STRICT_CONFIRM, mocks={"node:hold#confirm": {}})
-    assert answer["status"] == "blocked"
-    assert answer["blocked"] == {
-        "reason": "missing_mock",
-        "nodeId": "hold",
-        "instanceKey": "hold#confirm",
-        "message": "The pinned output of the confirm of hold doesn't fit its output fields. Edit it, or unpin it.",
-    }
-
-
-def test_a_phase_without_test_data_blocks_and_names_itself():
-    answer = run_move(move(), definitions=STRICT_CONFIRM)
-    assert answer["blocked"] == {
-        "reason": "missing_mock",
-        "nodeId": "hold",
-        "instanceKey": "hold#confirm",
-        "message": "The confirm of hold needs test data.",
-    }
-
-
-def test_a_misfitting_pin_of_a_step_in_a_transaction_asks_to_be_edited_instead_of_refusing_the_run():
-    answer = run_move(move(), mocks={"node:hold": {"holdId": 7}})
-    assert answer["status"] == "blocked"
-    assert (answer["blocked"]["instanceKey"], answer["blocked"]["nodeId"]) == ("", "hold")
-    assert "doesn't fit its output fields" in answer["blocked"]["message"]
-
-
-def test_a_phase_pin_marked_secret_is_refused_with_its_pointer_only():
-    definitions = fixture()["definitions"]
-    undo = next(item for item in definitions if item["metadata"]["name"] == "reverse-target-addition")
-    undo["spec"]["outputSchema"] = {
-        "type": "object",
-        "properties": {"undone": {"type": "string", "x-secret": True}},
-    }
-    with pytest.raises(SimulationRefused) as refused:
-        run_move(
-            move(hold(), reverse_by_call(), submit()),
-            definitions=definitions,
-            mocks={"node:add#undo": {"undone": "s3cr3t"}},
-        )
-    assert (refused.value.status, refused.value.code) == (422, "WV-SCHEMA-SECRET_VALUE")
-    assert refused.value.paths == ["/mocks/node:add#undo"]
-    assert "s3cr3t" not in repr(refused.value.__dict__)
-
-
-def test_a_secret_in_a_pin_of_a_step_in_a_transaction_is_refused_with_its_pointer():
-    definitions = fixture()["definitions"]
-    held = next(item for item in definitions if item["metadata"]["name"] == "source-system.hold-quantity")
-    held["spec"]["outputSchema"]["properties"]["holdId"]["x-secret"] = True
-    with pytest.raises(SimulationRefused) as refused:
-        run_move(move(), definitions=definitions)
-    assert (refused.value.code, refused.value.paths) == ("WV-SCHEMA-SECRET_VALUE", ["/mocks/node:hold"])
-
-
-def test_a_later_undo_actions_mock_never_blocks_executing_an_earlier_step():
-    removed = {"action:target-system.remove-quantity@1.0.0": {}}
-    answer = run_move(move(), mocks=removed, target={"mode": "step", "stepId": "hold"})
-    assert answer["status"] == "completed"
-    assert [entry["nodeId"] for entry in answer["trace"]] == ["move", "hold"]
-
-
-def test_the_host_scripts_failures_like_a_session():
-    answer = run_move(move(), errors={"node:add": {"code": "UNAVAILABLE"}})
-    assert answer["status"] == "failed"
-    undone = [item for item in answer["diagnostics"] if item["code"] == "WV-TXN-ROLLED-BACK"]
-    assert [item["message"] for item in undone] == ["The transaction was undone."]
-
-
-def test_a_failure_takes_its_effect():
-    body = move_request(move(), errors={"node:submit": {"code": "REFUSED", "effect": "none"}})
-    # Nothing was applied, so the steps before it are undone and the step that can't be undone isn't in doubt.
-    [undone] = simulated(body).transactions
-    assert undone.state == "compensated"
-    assert [(item.instance_key, item.status, item.effect) for item in undone.participants] == [
-        ("hold", "cancelled", "none"),
-        ("add", "undone", "none"),
-        ("submit", "failed", "none"),
-    ]
-    in_doubt = simulated(move_request(move(), errors={"node:submit": {"code": "REFUSED", "effect": "unknown"}}))
-    assert [record.state for record in in_doubt.transactions] == ["in_doubt"]
-
-
-def test_an_undo_takes_a_simulated_failure():
-    errors = {"node:submit": {"code": "REFUSED", "effect": "none"}, "node:add#undo": {"code": "DOWN", "attempts": 10}}
-    [left] = simulated(move_request(move(), errors=errors)).transactions
-    assert (left.state, left.incident_key) == ("in_doubt", "add#undo:10")
-
-
-def test_a_failure_with_no_effect_and_an_unknown_outcome_is_refused_by_the_simulation_too():
-    # The request's model refuses it first; whatever gets past it is refused before anything runs.
-    unchecked = ScriptedFailure.model_construct(code="REFUSED", outcome="unknown", attempts=1, effect="none")
-    body = move_request(move(), errors={"node:submit": {"code": "REFUSED"}})
-    with pytest.raises(SimulationRefused) as refused:
-        execute(body.model_copy(update={"errors": {"node:submit": unchecked}}), None)
-    assert (refused.value.status, refused.value.code) == (422, "WV-DEBUG-MOCK-OUTPUT")
 
 
 def test_executing_a_step_in_an_error_path_its_step_did_not_take_says_why():

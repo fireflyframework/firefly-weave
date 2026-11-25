@@ -27,7 +27,8 @@ import functools
 import json
 import logging
 import math
-from collections.abc import Iterable, Iterator, Mapping
+import re
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
@@ -35,9 +36,13 @@ from firefly_weave.contracts.definitions import ActionDefinition, load_definitio
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
+    from firefly_weave.compiler.api import CompiledArtifact
     from firefly_weave.compiler.ir import WorkflowIR
     from firefly_weave.contracts.transactions import UndoPhase
+    from firefly_weave.operations.debug.models import DebugState, TransactionDebugView
     from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.operations.debug.transactions import PhaseTarget
+    from firefly_weave.runtime.models import RuntimeEvent, TransactionRecord
     from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
 NULL: JsonObject = {"literal": None}
@@ -670,7 +675,6 @@ def simulator_for(
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
     from firefly_weave.operations.debug.models import ScriptedError
-    from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import CompileSummary
 
@@ -698,13 +702,39 @@ def simulator_for(
         for key, failure in _in_slice(document, whole, request.errors).items()
     }
     try:
-        simulator = Simulator(
+        simulator = _watching_simulator()(
             artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows, errors=errors
         )
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
         raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
     return summary, simulator, misfits
+
+
+@functools.cache
+def _watching_simulator() -> Any:
+    """The simulator the host runs, which keeps the last record of each of the workflow's transactions.
+
+    The runtime deletes a transaction's record from the run's state when its loop iteration is released, in the same
+    event that ends it, and reports the final record nowhere else. This is the one place that works around it: once
+    the runtime reports the final record, the debug view lists it and the host can run a plain ``Simulator``.
+    """
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    class WatchingSimulator(Simulator):
+        def __init__(self, artifact: CompiledArtifact, **options: Any) -> None:
+            super().__init__(artifact, **options)
+            # By instance key, in the order the transactions opened.
+            self.transactions: dict[str, TransactionRecord] = {}
+
+        def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
+            moved = super()._step_run(key, run, event)
+            if not key:
+                state = run.cursor.result.state if run.cursor is not None else run.state
+                self.transactions.update(state.transactions)
+            return moved
+
+    return WatchingSimulator
 
 
 class _Stepper:
@@ -769,18 +799,22 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     from firefly_weave.compiler.parser import ParseFailure, parse_source
     from firefly_weave.contracts.diagnostics import Diagnostic
     from firefly_weave.contracts.instance_keys import node_of
-    from firefly_weave.contracts.transactions import PHASE_SEGMENTS, TRANSACTION_MESSAGES
+    from firefly_weave.contracts.transactions import IN_DOUBT_CODES, TRANSACTION_MESSAGES
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
+    from firefly_weave.operations.debug.transactions import transaction_views
     from firefly_weave.runtime.kernel import KernelError, prepare
+    from firefly_weave.runtime.models import RunState
     from firefly_weave.studio.local_contracts import (
         Blocked,
         CompileSummary,
         ExecuteResponse,
         FrameView,
         LoopProgress,
+        PhaseEntry,
         SelectedScope,
         TraceEntry,
+        TransactionTrace,
     )
 
     if not request.scripts.autoAdvanceWaits:
@@ -835,8 +869,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
     trace: list[TraceEntry] = []
     seen: set[tuple[str | None, str]] = set()
-    # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing.
+    # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing. A called
+    # confirm, release or undo is one of the phases: its own steps stay out of the trace, and its run out of the frames.
     frames = {frame.key: frame for frame in view.frames if frame.status != "not_simulated"}
+    shown = {key: frame for key, frame in frames.items() if _called_phase(key) is None}
+    phases: list[JsonObject] = []
+    recorded = iter(view.events)
     # A run held on an incident (a step the runtime refused) stops there until a person ends it: it failed there. So
     # does a run left waiting on a called run held that way.
     held = _incident(view.status, view.variables)
@@ -859,12 +897,19 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         return _error_handlers(prepare(import_artifact(called.artifact)).ir) if called and called.artifact else {}
 
     for boundary in data.boundaries:
+        if boundary.kind == "event" and boundary.frame is None:
+            # The simulated workflow's event boundaries are its recorded events, in order.
+            event = next(recorded, None)
+            result = event.data.get("node_id") if event is not None else None
+            if isinstance(result, str) and _phase_of(result) is not None:
+                outcome: Literal["completed", "failed"] = "completed" if result in data.outputs else "failed"
+                phases.append(_phase_entry(result, len(trace) - 1, outcome, data))
         if boundary.kind != "node" or boundary.node_id is None:
             continue
         frame, key = boundary.frame, boundary.node_id
         # A step inside a called workflow comes with the frame it ran in; its key is its own workflow's. The nodes a
         # compiled workflow adds (@start, @end, @join…) are no one's steps.
-        step_of_a_run = node_of(key) in steps if frame is None else frame in frames and not key.startswith("@")
+        step_of_a_run = node_of(key) in steps if frame is None else frame in shown and not key.startswith("@")
         if not step_of_a_run or (frame, key) in seen:
             continue
         seen.add((frame, key))
@@ -887,6 +932,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         if path in data.failures:
             entry |= _handled_entry(handlers(frame), key, data.failures[path], data.outputs, frame)
         trace.append(TraceEntry.model_validate(entry))
+    phases.extend(_unsettled_phases(view.variables, data, {cast(str, entry["instanceKey"]) for entry in phases}, trace))
+    kept = RunState(input=None, transactions=cast(Any, simulator).transactions)
+    transactions = [_transaction_entry(record) for record in transaction_views(kept)]
+    if _too_many(transactions, phases):
+        return ExecuteResponse(status="limit", compile=summary, trace=[])
+    _refuse_secret_phases(data.artifact, phases, view.variables)
     if unsimulated_at is not None:
         failed = True
     # Where each run stopped: the simulated workflow's last step, and the last step of each called run that failed.
@@ -942,7 +993,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             Diagnostic(code="WV-TXN-ROLLED-BACK", severity="error", stage="evaluation", path="", message=words)
         )
     for code in [*([held] if held is not None else []), *held_frames.values()]:
-        words = _incident_words(code)
+        words = IN_DOUBT if code in IN_DOUBT_CODES else _incident_words(code)
         extra.append(Diagnostic(code=code, severity="error", stage="evaluation", path="", message=words))
     if unsimulated_at is not None:
         extra.append(
@@ -964,26 +1015,28 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             inside, _, last = last.rpartition("/")
             step = node_of(last)
             called = parse_agent_key(last)
-            phase = _phase_of(last)
-            if inside:
+            named = _phase_name(last)
+            what = f"The {named}" if named is not None else f"Step {step}"
+            workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
+            calling = _called_phase(inside)
+            if calling is not None:
+                # Inside a called confirm, release or undo: it is answered whole, where it is called.
+                inside, last = calling
+                message = f"The {_phase_name(last)} needs test data: step {step} of {workflow} has none."
+                step = node_of(last)
+            elif inside:
                 # Its test data goes under the called workflow's mocks, which apply wherever that workflow runs.
-                workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
-                message = f"Step {step} {f'in {workflow} ' if workflow else ''}needs test data."
-            elif phase is not None:
-                # A confirm, cancel or undo is answered at its own keys, never at its step's.
-                what = f"{_PHASE_NAMES[phase]} of {step}"
-                segment = PHASE_SEGMENTS[phase]
-                if {"node:" + last, f"node:{step}#{segment}"} & misfits:
-                    message = f"The pinned output of the {what} doesn't fit its output fields. Edit it, or unpin it."
-                else:
-                    message = f"The {what} needs test data."
+                message = f"{what} {f'in {workflow} ' if workflow else ''}needs test data."
+            elif named is not None and {"node:" + last, f"node:{step}#{last.partition('#')[2]}"} & misfits:
+                # A confirm, release or undo is answered at its own keys, never at its step's.
+                message = f"The pinned output of the {named} doesn't fit its output fields. Edit it, or unpin it."
             elif "node:" + last in misfits and called is not None and called.call is not None:
                 # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
                 message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
-            elif {"node:" + last, "node:" + step} & misfits:
+            elif named is None and {"node:" + last, "node:" + step} & misfits:
                 message = f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
             else:
-                message = f"Step {step} needs test data."
+                message = f"{what} needs test data."
             blocked = Blocked(
                 reason="missing_mock",
                 nodeId=step,
@@ -1033,6 +1086,17 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         status = "failed"
     else:
         status = "completed"
+    # Each left out when there are none, so other answers keep their bytes.
+    listed: dict[str, Any] = {}
+    if shown:
+        listed["frames"] = [
+            FrameView(key=key, workflow=frame.workflow, callNode=frame.call_node, status=statuses[key])
+            for key, frame in shown.items()
+        ]
+    if transactions:
+        listed["transactions"] = [TransactionTrace.model_validate(entry) for entry in transactions]
+    if phases:
+        listed["phases"] = [PhaseEntry.model_validate(entry) for entry in phases]
     return ExecuteResponse(
         status=status,
         compile=summary,
@@ -1059,16 +1123,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             else None
         ),
         blocked=blocked,
-        **(
-            {
-                "frames": [
-                    FrameView(key=key, workflow=frame.workflow, callNode=frame.call_node, status=statuses[key])
-                    for key, frame in frames.items()
-                ]
-            }
-            if frames
-            else {}
-        ),
+        **listed,
         # Only what Studio reads: the paths decisions took. The run's values are in the trace already.
         variables={"branches": view.variables["branches"]} if "branches" in view.variables else {},
         diagnostics=[
@@ -1080,6 +1135,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
 
 # What each phase of a step in a transaction does, as Studio names it.
 _PHASE_NAMES: Mapping[UndoPhase, str] = {"confirm": "confirm", "cancel": "release", "compensate": "undo"}
+IN_DOUBT = "A transaction is in doubt, so the simulated run stopped."
 
 
 def _phase_of(key: str) -> UndoPhase | None:
@@ -1092,6 +1148,161 @@ def _phase_of(key: str) -> UndoPhase | None:
     except InvalidInstanceKey:
         return None
     return found[1] if found is not None else None
+
+
+def _phase_name(key: str) -> str | None:
+    """What a confirm, release or undo is called ("undo of add"), or None for a step's own key."""
+    from firefly_weave.contracts.instance_keys import node_of
+
+    phase = _phase_of(key)
+    return f"{_PHASE_NAMES[phase]} of {node_of(key)}" if phase is not None else None
+
+
+def _called_phase(frame: str) -> tuple[str, str] | None:
+    """The called confirm, release or undo a frame runs in: the frame that called it ("" for the simulated workflow)
+    and its key there. None for a frame outside of one."""
+    parts = frame.split("/")
+    for index, part in enumerate(parts):
+        if _phase_of(part) is not None:
+            return "/".join(parts[:index]), part
+    return None
+
+
+def _phase_entry(
+    key: str, after: int, status: Literal["completed", "failed", "waiting"], data: DebugState
+) -> JsonObject:
+    """One confirm, release or undo in the answer's words, with what it received and returned."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
+
+    entry: JsonObject = {
+        "afterIndex": after,
+        "nodeId": node_of(key),
+        "instanceKey": key,
+        "phase": PHASE_SEGMENTS[cast("UndoPhase", _phase_of(key))],
+        "status": status,
+    }
+    if key in data.inputs:
+        entry["input"] = data.inputs[key]
+    if key in data.outputs:
+        entry["output"] = data.outputs[key]
+    return entry
+
+
+def _unsettled_phases(
+    variables: Mapping[str, Any], data: DebugState, settled: set[str], trace: Sequence[object]
+) -> Iterator[JsonObject]:
+    """The phases no result was recorded for: those that failed before they were sent (their input couldn't be built,
+    so their transaction is in doubt), then those still waiting for one."""
+    after = len(trace) - 1
+    stuck = [cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()]
+    for key in stuck:
+        if _phase_of(key) is not None and key not in settled and key not in data.inputs:
+            yield _phase_entry(key, after, "failed", data)
+    for key in data.inputs:
+        if "/" not in key and _phase_of(key) is not None and key not in settled:
+            yield _phase_entry(key, after, "waiting", data)
+
+
+def _transaction_entry(record: TransactionDebugView) -> JsonObject:
+    """One transaction in the answer's words: keys, states, codes and counts, never its business key."""
+    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
+
+    entry: JsonObject = {"instanceKey": record.instance_key, "nodeId": record.node_id, "state": record.state}
+    for name, cause in (("cause", record.cause), ("pendingAbort", record.pending_abort)):
+        # A fail step's code is any name its author gave it; only codes spelled as codes are passed on.
+        if cause is not None and re.fullmatch(ERROR_CODE_PATTERN[1:-1], cause.code) is not None:
+            entry[name] = {"code": cause.code, "instanceKey": cause.instance_key, "effect": cause.effect}
+    if record.incident_key is not None:
+        entry["incidentKey"] = record.incident_key
+    if record.reconciled_as is not None:
+        entry["reconciledAs"] = record.reconciled_as
+    entry["participants"] = [
+        {
+            "nodeId": item.node_id,
+            "instanceKey": item.instance_key,
+            "mode": item.mode,
+            "status": item.status,
+            "effect": item.effect,
+            **({"attempts": item.attempts} if item.attempts is not None else {}),
+        }
+        for item in record.participants
+    ]
+    return entry
+
+
+def _too_many(transactions: list[JsonObject], phases: list[JsonObject]) -> bool:
+    """Whether a run did more to its transactions than an answer holds: entries of either kind, or bytes of both."""
+    from firefly_weave.contracts.studio_documents import TEST_DATA_MAX_BYTES
+    from firefly_weave.studio import local_contracts
+
+    if max(len(transactions), len(phases)) > local_contracts.MAX_TRANSACTION_ENTRIES:
+        return True
+    written = json.dumps([transactions, phases], ensure_ascii=False, separators=(",", ":"))
+    return len(written.encode()) > TEST_DATA_MAX_BYTES
+
+
+def secret_phases(artifact: JsonObject, phases: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Pointers (``/phases/add#undo/input``) of what a confirm, release or undo received or returned that its own
+    operation marks secret, or that can't be classified. An undo's input derives from what the steps before it
+    returned, so it is checked here too.
+    """
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.operations.debug.transactions import phase_target
+    from firefly_weave.operations.redaction import classify
+    from firefly_weave.runtime.kernel import prepare
+
+    prepared = prepare(import_artifact(artifact))
+    bundle = {d.reference: d.document for d in prepared.ir.dependencies if d.kind == "Schema"}
+    found: list[str] = []
+    for entry in phases:
+        key = cast(str, entry["instanceKey"])
+        target = phase_target(prepared, key)
+        for direction in ("input", "output"):
+            if target is None or direction not in entry:
+                continue
+            for schema in _phase_schemas(prepared.ir, target, direction):
+                try:
+                    classify(schema, entry[direction], bundle)
+                except (_Failure, RecursionError, ArithmeticError):
+                    found.append(_pointer("phases", key, direction))
+                    break
+    return found
+
+
+def _phase_schemas(ir: WorkflowIR, target: PhaseTarget, direction: Literal["input", "output"]) -> list[JsonObject]:
+    """What a live run checks a phase's input or output with: its action's schemas, or its called workflow's."""
+    from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+    from firefly_weave.runtime.kernel import action_schemas
+
+    kind = "Action" if target.kind == "action" else "Workflow"
+    document = next(d.document for d in ir.dependencies if d.kind == kind and d.reference == target.reference)
+    if kind == "Action":
+        return action_schemas(ir, cast(ActionDefinition, load_definition(document)), direction)
+    return [cast(JsonObject, cast(JsonObject, document["spec"])[direction + "Schema"])]
+
+
+def _refuse_secret_phases(
+    artifact: JsonObject, phases: Sequence[Mapping[str, Any]], variables: Mapping[str, Any]
+) -> None:
+    """Refuses an answer about a confirm, release or undo that received or returned a value marked secret, by pointer.
+
+    The runtime never sends such an input or accepts such an output: it puts the transaction in doubt with that code.
+    """
+    found = secret_phases(artifact, phases) if phases else []
+    entries = {cast(str, entry["instanceKey"]): entry for entry in phases}
+    for incident in variables.get("incidents", {}).values():
+        key = cast(str, incident["node_id"])
+        if incident.get("origin_code") == "WV-SCHEMA-SECRET_VALUE" and _phase_of(key) is not None:
+            found.append(_pointer("phases", key, "output" if "input" in entries.get(key, {}) else "input"))
+    if found:
+        raise SimulationRefused(
+            422,
+            "WV-SCHEMA-SECRET_VALUE",
+            "A confirm, release or undo can't take or return values marked secret; leave them out",
+            dict.fromkeys(found),
+        )
 
 
 def _error_handlers(ir: WorkflowIR) -> dict[str, Any]:

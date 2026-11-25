@@ -217,6 +217,92 @@ def test_a_response_states_one_outcome(change):
         lc.ExecuteResponse.model_validate_json(json.dumps({**EXECUTE_RESPONSE, **change}))
 
 
+PARTICIPANT = {"nodeId": "add", "instanceKey": "add", "mode": "compensate", "status": "undone", "effect": "none"}
+TRANSACTION = {
+    "instanceKey": "move",
+    "nodeId": "move",
+    "state": "in_doubt",
+    "cause": {"code": "REFUSED", "instanceKey": "submit", "effect": "none"},
+    "pendingAbort": {"code": "WV-TXN-RUN-CANCELLED", "instanceKey": "move", "effect": "unknown"},
+    "incidentKey": "add#undo:10",
+    "reconciledAs": "compensated",
+    "participants": [{**PARTICIPANT, "attempts": 10}],
+}
+PHASE = {
+    "afterIndex": -1,
+    "nodeId": "hold",
+    "instanceKey": "hold[2]#cancel",
+    "phase": "cancel",
+    "status": "completed",
+    "input": {"reference": "M-1"},
+    "output": None,
+}
+
+
+def _answers(**fields) -> lc.ExecuteResponse:
+    return lc.ExecuteResponse.model_validate_json(json.dumps({**EXECUTE_RESPONSE, **fields}))
+
+
+def test_a_response_reports_its_transactions_and_their_phases():
+    response = _answers(transactions=[TRANSACTION], phases=[PHASE])
+    assert response.model_dump(mode="json", by_alias=True, exclude_unset=True) == {
+        **EXECUTE_RESPONSE,
+        "transactions": [TRANSACTION],
+        "phases": [PHASE],
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"businessKey": "M-1"},
+        {"cause": {"code": "It was refused", "instanceKey": "submit", "effect": "none"}},
+        {"state": "rolled_back"},
+        {"incidentKey": "the undo of M-1"},
+        {"participants": [{**PARTICIPANT, "status": "rolled_back"}]},
+        {"participants": [{**PARTICIPANT, "input": {"reference": "M-1"}}]},
+        {"participants": [PARTICIPANT] * 1001},
+    ],
+    ids=[
+        "a business key",
+        "a cause in words",
+        "a state outside the list",
+        "an incident in words",
+        "a status outside the list",
+        "a step's value",
+        "more than 1000 steps",
+    ],
+)
+def test_a_transaction_carries_keys_states_codes_and_counts_only(change):
+    assert _answers(transactions=[TRANSACTION])
+    with pytest.raises(ValidationError):
+        _answers(transactions=[{**TRANSACTION, **change}])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"instanceKey": "hold[2]"},
+        {"instanceKey": "hold[2]#confirm"},
+        {"instanceKey": "add[2]#cancel"},
+        {"afterIndex": -2},
+        {"status": "stuck"},
+    ],
+    ids=["a step's own key", "another phase's key", "another step's key", "before the start", "a status not listed"],
+)
+def test_a_phase_names_the_confirm_release_or_undo_of_its_step(change):
+    assert _answers(phases=[PHASE])
+    with pytest.raises(ValidationError):
+        _answers(phases=[{**PHASE, **change}])
+
+
+@pytest.mark.parametrize(("field", "entry"), [("transactions", TRANSACTION), ("phases", PHASE)])
+def test_a_response_holds_a_thousand_transactions_and_a_thousand_phases(field, entry):
+    assert len(getattr(_answers(**{field: [entry] * 1000}), field)) == 1000
+    with pytest.raises(ValidationError):
+        _answers(**{field: [entry] * 1001})
+
+
 def _without(body: dict, key: str) -> dict:
     return {name: value for name, value in body.items() if name != key}
 
