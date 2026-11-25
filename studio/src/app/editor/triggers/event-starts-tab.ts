@@ -235,6 +235,8 @@ export class EventStartsTab {
     if (first) this.focus(`[data-start="${CSS.escape(first)}"]`, ".es-foot");
   }
   async act(action: OwedCallout["actions"][number]) {
+    // What the callout offers may no longer be so once the list is read again.
+    if (this.list.refreshing()) return;
     switch (action) {
       case "stop":
         await this.list.stop();

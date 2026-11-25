@@ -238,6 +238,11 @@ export class EventStartsList {
   stopping(): boolean {
     return this.owed()?.kind === "stopping";
   }
+  /** While the list is read again, what is owed may no longer be. */
+  refreshing(): boolean {
+    const state = this.state();
+    return state.kind === "list" && state.refreshing;
+  }
   /** Reads it again, as the person asked: not before a failed read's pause is over, nor while a stop runs. */
   refresh(): Promise<void> {
     const state = this.state();
@@ -420,6 +425,7 @@ export class EventStartsList {
     if (
       !target?.triggerId ||
       !owed ||
+      this.refreshing() ||
       !(stopWithWaiting
         ? owed.kind === "waiting"
         : owed.kind === "owed" || owed.kind === "failed")

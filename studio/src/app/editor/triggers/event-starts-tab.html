@@ -65,7 +65,7 @@ SPDX-License-Identifier: Apache-2.0
             <button
               type="button"
               class="sm"
-              [attr.aria-disabled]="said.busy || null"
+              [attr.aria-disabled]="said.busy || list.refreshing() || null"
               [attr.aria-describedby]="id + '-said'"
               (click)="act(action)"
             >

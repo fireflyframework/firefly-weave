@@ -776,6 +776,75 @@ describe("a stop Studio still owes", () => {
     expect(f.platform.enabled().map((item) => item["id"])).toEqual(["t-2"]);
   });
 
+  it.each(["fails", "answers"] as const)(
+    "waits for a refresh that runs and %s: nothing is stopped meanwhile",
+    async (how) => {
+      const f = owing(...TWO);
+      f.platform.starts.set("t-1", [requested("s-1")]);
+      await f.show();
+      f.platform.starts.delete("t-1");
+      const release = held(f, "GET /event-triggers/t-2");
+      if (how === "fails")
+        f.platform.refuse.set(
+          "GET /event-triggers/t-2/starts",
+          refusal(503, "WV-UNAVAILABLE", "Try again later."),
+        );
+      const refreshed = f.list.refresh();
+      await settledSoFar();
+      const asked = f.platform.sent.length;
+      await f.list.stop();
+      expect(f.platform.sent).toHaveLength(asked);
+      expect(callout(f)).toMatchObject({ lead: FOR, busy: false });
+      release();
+      await refreshed;
+      if (how === "fails") {
+        expect(kind(f)).toBe("failed");
+        expect(f.list.owed()).toBeNull();
+        f.wait(5_000);
+        await f.list.refresh();
+      }
+      // Both are still owed, and each stop says what is left.
+      await f.list.stop();
+      expect(callout(f)).toMatchObject({ lead: FOR, detail: ALSO });
+      await f.list.stop();
+      expect(callout(f)).toMatchObject({ lead: "Stopped notify-team-0." });
+      expect(f.platform.enabled().map((item) => item["id"])).toEqual(["t-2"]);
+    },
+  );
+
+  it("skips no waiting event while a refresh runs", async () => {
+    const f = owing();
+    f.platform.starts.set("t-1", [requested("s-1")]);
+    await f.show();
+    await f.list.stop();
+    expect(callout(f)).toMatchObject({ actions: ["keep", "now"] });
+    const release = held(f, "GET /event-triggers/t-2");
+    const refreshed = f.list.refresh();
+    await settledSoFar();
+    await f.list.stopNow();
+    expect(f.platform.writes()).toEqual([]);
+    release();
+    await refreshed;
+    expect(callout(f)).toMatchObject({ lead: FOR, actions: ["stop"] });
+  });
+
+  it("says nothing of a stop that answers after a newer read found nothing owed", async () => {
+    const f = owing();
+    await f.show();
+    const release = held(f, "POST /event-triggers/t-1/disable");
+    const stopping = f.list.stop();
+    await settledSoFar();
+    const here = f.target.now;
+    f.target.now = null;
+    await f.show();
+    f.target.now = here;
+    await f.show();
+    expect(f.list.owed()).toBeNull();
+    release();
+    await stopping;
+    expect(f.list.owed()).toBeNull();
+  });
+
   it("takes nothing off the list the person looks at when it answers after they moved to another account", async () => {
     const f = owing(...TWO);
     await f.show();

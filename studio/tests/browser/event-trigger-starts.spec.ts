@@ -417,6 +417,37 @@ test("while a stop runs, Refresh waits for it", async ({ page }) => {
   );
 });
 
+test("while it refreshes, Stop it waits for it", async ({ page }) => {
+  const { panel, platform } = await open(page, {
+    seeds: [CURRENT, OLD],
+    pendingStops: [OWED],
+  });
+  const stop = panel
+    .locator(".es-callout")
+    .getByRole("button", { name: "Stop it" });
+  await expect(stop).toBeEnabled();
+  const held = { asked: false, release: () => undefined as void };
+  const answer = new Promise<void>((resolve) => (held.release = resolve));
+  await page.route(/\/event-triggers\/t-2(?:\?.*)?$/, async (route) => {
+    held.asked = true;
+    await answer;
+    await route.fallback();
+  });
+  await panel.getByRole("button", { name: "Refresh the starts" }).click();
+  await expect.poll(() => held.asked).toBe(true);
+  await expect(stop).toBeDisabled();
+  await stop.focus();
+  await page.keyboard.press("Enter");
+  held.release();
+  await expect(stop).toBeEnabled();
+  await expect(stop).toBeFocused();
+  expect(platform.writes()).toEqual([]);
+  await page.keyboard.press("Enter");
+  await expect(panel.locator(".es-callout")).toContainText(
+    "Stopped notify-team. Only notify-team-2 starts notify-team now.",
+  );
+});
+
 test("a stop that answers leaves focus where the person moved it meanwhile", async ({
   page,
 }) => {
