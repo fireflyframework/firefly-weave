@@ -148,3 +148,11 @@ def test_only_what_confirms_releases_or_undoes_a_step_gets_a_stub_that_changes_d
     assert "timeoutSeconds" not in spec("Workflow", "notify@1.0.0")
     tasks = {reference for kind, reference in catalog.resources if kind == "TaskCapability" and "stub" in reference}
     assert tasks == {"studio.stub@0.0.0", "studio.undo-stub@0.0.0"}
+    # A step or operation that isn't one yet, as an author writes it, is nobody's and is left to the compiler.
+    unfinished = {
+        "id": "move",
+        "kind": ["action"],
+        "uses": "crm.hold@1.0.0",
+        "confirm": {"kind": {}, "uses": "a@1.0.0"},
+    }
+    assert simulation_catalog({"spec": {"steps": [unfinished]}}, [], None, stub_unresolved=True)[1] == []

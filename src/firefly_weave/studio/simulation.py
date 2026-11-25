@@ -311,9 +311,11 @@ def simulation_catalog(
         for phase, operation in ((None, step), *((name, step.get(name)) for name in PHASE_SEGMENTS)):
             if not isinstance(operation, dict) or not isinstance(operation.get("uses"), str):
                 continue
-            kind = {"action": "Action", "callWorkflow": "Workflow"}.get(cast(str, operation.get("kind")))
-            used = (cast(str, kind), cast(str, operation["uses"]))
-            if kind is None or used in merged.resources:
+            kind = operation.get("kind")
+            if kind not in ("action", "callWorkflow"):
+                continue
+            used = ("Action" if kind == "action" else "Workflow", cast(str, operation["uses"]))
+            if used in merged.resources:
                 continue
             missing.add(used)
             if phase is not None:
