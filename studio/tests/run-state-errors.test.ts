@@ -358,3 +358,29 @@ describe("the Success output of a step in a loop whose error path ran for some i
     expect(edgeRun(success, run([0, 1, 2]))).toBe("skipped");
   });
 });
+
+describe("the Success output of a step in a recorded run", () => {
+  const success = { leaves: "submit", enters: null, success: "submit" };
+  const recorded = (run: Partial<CanvasRun>): CanvasRun => ({
+    mode: "real",
+    status: "succeeded",
+    current: [],
+    active: [],
+    done: [],
+    ...run,
+  });
+
+  it("is dashed when the step's error path handled its failure", () => {
+    const handled = recorded({
+      done: ["submit", "notify-team", "summarize"],
+      handled: {
+        submit: { code: "REFUSED", message: "Refused", policy: "errorOutput" },
+      },
+    });
+    expect(edgeRun(success, handled)).toBe("skipped");
+  });
+
+  it("stays plain when the run ended before the step", () => {
+    expect(edgeRun(success, recorded({ status: "failed" }))).toBe("idle");
+  });
+});

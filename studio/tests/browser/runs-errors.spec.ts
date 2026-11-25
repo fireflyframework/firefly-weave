@@ -132,7 +132,8 @@ function runningRun(): RunFixture {
   return { ...base, summary: { ...base.summary, handled_errors: 2 } };
 }
 
-async function openRuns(page: Page) {
+/** The Runs tab over the runs above; `draft` is the workflow being edited, the runs' version by default. */
+async function openRuns(page: Page, draft: unknown = errorWorkflow) {
   return openRunsTab(page, {
     runs: [
       handledRun(HANDLED, "REQUEST_REFUSED"),
@@ -140,7 +141,7 @@ async function openRuns(page: Page) {
       runningRun(),
       runFixture("failed"),
     ],
-    workflow: errorWorkflow,
+    workflow: draft,
     before: async (platform: RunsPlatform) => {
       await page.route("**/projects/*/workflows/*/export", (route) => {
         platform.requests.push(new URL(route.request().url()));
@@ -310,6 +311,33 @@ test.describe("handled failures on the Runs tab at 1440x900", () => {
     ]);
     // The run's failure is no "failed in this run" notice: the run went on.
     await expect(pane.locator(".pane-run-notice")).toHaveCount(0);
+    await expect(pane.locator(".pane-result-caption")).toHaveText(
+      "Result on error · from flag-request",
+    );
+  });
+
+  test("a run names the error path's result its own version returned, when the draft changed since", async ({
+    page,
+  }) => {
+    // The draft's error path now returns notify-team's output; the run's
+    // version returned flag-request's.
+    const { runs } = await openRuns(
+      page,
+      JSON.parse(
+        JSON.stringify(errorWorkflow).replace(
+          "/steps/flag-request/output",
+          "/steps/notify-team/output",
+        ),
+      ),
+    );
+    await runs.row(HANDLED).click();
+    await expect(runs.canvas.locator(".run-handled")).toBeVisible();
+    const details = new StepDetailsPage(page);
+    await details.open("submit");
+    const pane = details.dialog.locator('[data-region="output"]');
+    await expect(pane.locator(".pane-run-notice")).toHaveText(
+      "Changed since this run.",
+    );
     await expect(pane.locator(".pane-result-caption")).toHaveText(
       "Result on error · from flag-request",
     );
