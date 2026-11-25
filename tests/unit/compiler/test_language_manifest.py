@@ -245,10 +245,7 @@ def test_a_manifest_from_a_server_without_step_fields_still_reads():
 
 def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
-    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
-        "agent",
-        "transaction",
-    }
+    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {"agent"}
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
     assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {"eventTrigger"}
     assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}

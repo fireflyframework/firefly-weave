@@ -43,10 +43,7 @@ import type {
   ParamSpec,
 } from "../../registry";
 import { isRecord, schemaOf } from "../shared";
-import { wholeMapping } from "./shared";
-
-/** The language's limits on a call's business key (compiler/calls.py BUSINESS_KEY_SCHEMA). */
-const BUSINESS_KEY_SCHEMA = { type: "string", minLength: 1, maxLength: 200 };
+import { BUSINESS_KEY_SCHEMA, wholeMapping } from "./shared";
 
 /** A new call step: it waits for the result and sends an empty input until a workflow is chosen. */
 export const newCallStep = (id: string): Step => ({

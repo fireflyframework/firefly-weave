@@ -64,6 +64,21 @@ export const ON_ERROR_CHOICES: readonly OnErrorChoice[] = [
   },
 ];
 
+/** What each choice does once a transaction is undone. */
+const UNDONE: Readonly<Record<OnErrorValue, string>> = {
+  stop: "If the transaction is undone, the run fails. Nothing stays applied.",
+  continue:
+    "If the transaction is undone, the run goes on; later steps read its error.",
+  errorOutput: "If the transaction is undone, the run takes the error path.",
+};
+const TRANSACTION_CHOICES: readonly OnErrorChoice[] = ON_ERROR_CHOICES.map(
+  (choice) => ({ ...choice, description: UNDONE[choice.value] }),
+);
+const isTransaction = (step: Step) => (step.kind as string) === "transaction";
+/** The choices as a step's kind says what they do: always the same list. */
+export const onErrorChoices = (step: Step): readonly OnErrorChoice[] =>
+  isTransaction(step) ? TRANSACTION_CHOICES : ON_ERROR_CHOICES;
+
 /** Retry on fail already says the step changes data and is never retried. */
 export const UNKNOWN_OUTCOME_HINT =
   "If its outcome is unknown, the run still stops with an incident until someone checks it.";
@@ -72,6 +87,8 @@ export const RESULT_STATUS_HINT =
 export const SIGNAL_HINT =
   "Applies when no signal arrives within Wait at most.";
 export const HUMAN_HINT = "Applies when the task expires (Expires after).";
+export const IN_DOUBT_HINT =
+  "A transaction in doubt always waits for a person; On error never handles it.";
 export const RESULT_ON_ERROR_HINT =
   "What later steps read as this step's output after the error path.";
 
@@ -125,6 +142,7 @@ function hints(step: Step, ctx: KindContext): string[] {
     return [RESULT_STATUS_HINT];
   if (step.kind === "signal") return [SIGNAL_HINT];
   if (step.kind === "humanTask") return [HUMAN_HINT];
+  if (isTransaction(step)) return [IN_DOUBT_HINT];
   return [];
 }
 
@@ -255,7 +273,7 @@ export function onErrorFields(step: Step, ctx: OnErrorContext): ParamSpec[] {
     type: "select",
     label: "On error",
     mapping: "fixed",
-    choices: ON_ERROR_CHOICES.map(({ value, label, description }) => ({
+    choices: onErrorChoices(step).map(({ value, label, description }) => ({
       value,
       label,
       description,

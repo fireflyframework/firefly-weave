@@ -111,8 +111,8 @@ describe.skipIf(!available)(
       ).toEqual([...schema.workflow].sort());
     });
     it("covers every ready step kind and its configuration fields", async () => {
-      // Kinds the palette doesn't list come with their own descriptor (Call a
-      // workflow); a kind still marked pending may have one already.
+      // Kinds the palette doesn't list come with their own descriptor; a kind
+      // still marked pending may have one already.
       await loadKindRegistrations();
       const own = ndvRegistry
         .kinds()
@@ -120,6 +120,10 @@ describe.skipIf(!available)(
         .filter((d) =>
           ready(manifest.step_kinds).some((entry) => entry.kind === d.kind),
         );
+      expect(own.map((d) => d.kind).sort()).toEqual([
+        "callWorkflow",
+        "transaction",
+      ]);
       expect([...kinds, ...own.map((d) => d.kind)].sort()).toEqual(
         ready(manifest.step_kinds)
           .map((entry) => entry.kind)
@@ -149,6 +153,10 @@ describe.skipIf(!available)(
             ...allParams(descriptor.settings?.(step, ctx), step, ctx),
           ].map(({ spec }) => String(spec.path[0])),
           ...onErrorPaths(step, ctx),
+          // The canvas edits a kind's own steps (a transaction's).
+          ...(descriptor.containers?.(step) ?? []).map(({ path }) =>
+            String(path[0]),
+          ),
         ]);
         fields.add("id");
         fields.add("kind");

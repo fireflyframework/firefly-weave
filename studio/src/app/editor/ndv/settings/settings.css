@@ -91,17 +91,43 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 0;
 }
 @container (min-width: 480px) {
-  .settings-form > weave-param-field:has(.param-duration) > .param {
+  .settings-form
+    > weave-param-field:has(> .param > .param-control > .param-duration)
+    > .param {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     align-items: center;
     gap: var(--sd-field-inner) var(--space-3);
   }
   .settings-form
-    > weave-param-field:has(.param-duration)
+    > weave-param-field:has(> .param > .param-control > .param-duration)
     > .param
     > .param-label-row {
     grid-column: 1 / -1;
+  }
+}
+
+/* A transaction's undo retries: the tries and the two waits, one under the
+   other; side by side while there is room, with one hint under them. Its
+   durations end where the widest unit needs them to. */
+.settings-form [data-param="undoRetry"] .param-group {
+  display: grid;
+  gap: var(--sd-field-gap) var(--space-3);
+}
+.settings-form [data-param="undoRetry"] .param-group .param-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.settings-form [data-param="undoRetry"] .param-duration {
+  width: 100%;
+}
+@container (min-width: 480px) {
+  .settings-form [data-param="undoRetry"] .param-group {
+    grid-template-columns: 96px repeat(2, minmax(0, 176px));
+  }
+  .settings-form [data-param="holdSeconds"] .param-duration,
+  .settings-form [data-param="undoTimeout"] .param-duration {
+    width: 168px;
   }
 }
 

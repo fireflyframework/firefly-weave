@@ -19,6 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 import { decode } from "../../../../forms/core/binding";
 import type { ParamSpec, Path } from "../../registry";
 
+/** The language's limits on a business key (compiler/calls.py BUSINESS_KEY_SCHEMA). */
+export const BUSINESS_KEY_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 200,
+};
+
 export const DURATION_UNITS = ["seconds", "minutes", "hours", "days"] as const;
 
 export const durationParam = (
@@ -46,6 +53,7 @@ export const ON_ERROR_KINDS: ReadonlySet<string> = new Set([
   "callWorkflow",
   "humanTask",
   "signal",
+  "transaction",
 ]);
 /** Kinds whose failure always stops the run. */
 export const STOP_ONLY_KINDS: ReadonlySet<string> = new Set([

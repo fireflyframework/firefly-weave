@@ -25,20 +25,23 @@ SPDX-License-Identifier: Apache-2.0
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { Select, type SelectOption } from "../../../forms/ui/select";
 import { Icon } from "../../../icon";
+import { memo } from "../../memo";
 import type { FieldEntry } from "../params/form-model";
 import type { FormSession } from "../params/form-session";
 import { ParamField } from "../params/param-field";
 import {
-  ON_ERROR_CHOICES,
+  onErrorChoices,
   onErrorRow,
   removedPathToast,
   writeOnError,
+  type OnErrorChoice,
   type OnErrorRow,
 } from "./on-error";
 import { ERROR_PATH } from "../../step-blocks";
 import { STOP_ONLY_REASON } from "./settings-rules";
 
 let sequence = 0;
+const NO_CHOICES: readonly OnErrorChoice[] = [];
 
 @Component({
   selector: "weave-on-error-section",
@@ -61,7 +64,7 @@ let sequence = 0;
             sheetTitle="On error"
             [hideLabel]="true"
             [controlId]="id"
-            [options]="options"
+            [options]="options()"
             [value]="row.value"
             [disabled]="!!reason()"
             [invalid]="line?.kind === 'error'"
@@ -155,13 +158,27 @@ export class OnErrorSection {
   result = input<FieldEntry | null>(null);
   readonly id = `sd-on-error-${++sequence}`;
   readonly stopOnly = STOP_ONLY_REASON;
-  readonly options: SelectOption[] = ON_ERROR_CHOICES.map(
-    ({ value, label, description }) => ({ value, label, description }),
-  );
 
   private step() {
     const session = this.session();
     return session.controller.step(session.target);
+  }
+  private choices(): readonly OnErrorChoice[] {
+    const step = this.step();
+    return step ? onErrorChoices(step) : NO_CHOICES;
+  }
+  /** The same options while the step's kind is: an open list keeps its place. */
+  private readonly optionsOf = memo((choices: readonly OnErrorChoice[]) =>
+    choices.map(
+      ({ value, label, description }): SelectOption => ({
+        value,
+        label,
+        description,
+      }),
+    ),
+  );
+  options(): SelectOption[] {
+    return this.optionsOf(this.choices());
   }
   row(): OnErrorRow {
     const step = this.step();
@@ -176,7 +193,7 @@ export class OnErrorSection {
   /** What the chosen value does, said right under it. */
   description(row: Extract<OnErrorRow, { kind: "choices" }>): string {
     return (
-      ON_ERROR_CHOICES.find((choice) => choice.value === row.value)
+      this.choices().find((choice) => choice.value === row.value)
         ?.description ?? ""
     );
   }
@@ -203,7 +220,7 @@ export class OnErrorSection {
   choose(value: string) {
     const session = this.session();
     const step = this.step();
-    const choice = ON_ERROR_CHOICES.find((item) => item.value === value);
+    const choice = this.choices().find((item) => item.value === value);
     if (!step || !choice || this.reason()) return;
     const write = writeOnError(step, choice.value);
     const changes = write.patch.map((edit) => ({

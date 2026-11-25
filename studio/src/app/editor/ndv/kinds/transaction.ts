@@ -17,18 +17,15 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The Transaction step: steps that all succeed, or whose effects are undone.
 // Its own steps sit in its frame; later steps read its result, never theirs.
-import { branchTitle, type Step } from "../../../model";
-import { blocksOf } from "../../step-blocks";
-import { newTransactionStep } from "../../transactions/group";
+import { branchTitle } from "../../../model";
+import { newTransactionStep, stepCount } from "../../transactions/group";
 import { registerKind, type StepKindDescriptor } from "../registry";
-import { field, inferredOutput } from "./shared";
-
-/** "3 steps": the steps it holds itself; nothing while it is empty. */
-function stepCount(step: Step): string {
-  const own = blocksOf(step).find((block) => block.kind === "body")?.branch;
-  const count = Array.isArray(own?.steps) ? own.steps.length : 0;
-  return count ? `${count} ${count === 1 ? "step" : "steps"}` : "";
-}
+import {
+  transactionFields,
+  transactionForm,
+  transactionSettings,
+} from "./forms/transaction-forms";
+import { inferredOutput } from "./shared";
 
 export const transactionKind: StepKindDescriptor = {
   kind: "transaction",
@@ -41,10 +38,7 @@ export const transactionKind: StepKindDescriptor = {
   category: "flow",
   idPrefix: "transaction",
   create: newTransactionStep,
-  fields: () => [
-    field("Result", "output"),
-    field("Business key", "businessKey"),
-  ],
+  fields: transactionFields,
   containers: () => [
     {
       path: ["steps"],
@@ -55,6 +49,8 @@ export const transactionKind: StepKindDescriptor = {
   summary: stepCount,
   outputSchema: inferredOutput,
   pinnable: false,
+  form: transactionForm,
+  settings: transactionSettings,
 };
 
 export function register(): void {

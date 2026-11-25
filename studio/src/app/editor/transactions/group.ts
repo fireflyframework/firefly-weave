@@ -15,8 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// A transaction as a builder makes one: what a new one holds, and the
-// transaction a place is in. Pure, and only loaded with the editor.
+// A transaction as a builder makes one: what a new one holds, how many steps
+// it has, and the transaction a place is in. Pure, and only loaded with the
+// editor.
 import type { Step, Workflow } from "../../model";
 import { blocksOf } from "../step-blocks";
 
@@ -33,6 +34,13 @@ export const newTransactionStep = (id: string): Step => ({
   steps: [],
   output: { literal: null },
 });
+
+/** "3 steps": the steps a transaction holds itself; nothing while it is empty. */
+export function stepCount(step: Step): string {
+  const own = step["steps"];
+  const count = Array.isArray(own) ? own.length : 0;
+  return count ? `${count} ${count === 1 ? "step" : "steps"}` : "";
+}
 
 /**
  * The transaction whose own steps hold a place (a sequence's owner), at any

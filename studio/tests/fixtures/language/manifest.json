@@ -634,7 +634,7 @@
           }
         ],
         "scope_roots": [],
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "kind": "wait",

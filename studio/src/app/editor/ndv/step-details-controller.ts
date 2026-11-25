@@ -46,6 +46,7 @@ import {
   triggerForm,
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
+import { settledPolicy } from "./kinds/forms/transaction-forms";
 import {
   ownedActionsOf,
   usesOwning,
@@ -2128,11 +2129,23 @@ export class StepDetailsController {
       for (const change of hidden.changes)
         settled = applyChange(settled, change);
       ended = settled.step ? endedOnError(settled.step) : null;
-      const endChanges: FormChange[] = (ended?.patch ?? []).map((edit) => ({
+      // A change of one value of a transaction's policy settles the whole.
+      const policy =
+        settled.step &&
+        changes.some(
+          (change) => change.scope === "step" && change.path[0] === "policy",
+        )
+          ? settledPolicy(settled.step)
+          : null;
+      const endChanges: FormChange[] = [
+        ...(ended?.patch ?? []),
+        ...(policy ? [policy] : []),
+      ].map((edit) => ({
         scope: "step",
         path: edit.path,
         value: edit.value,
       }));
+      for (const change of endChanges) settled = applyChange(settled, change);
       // Changes that leave the step as it is write nothing: the file keeps
       // its bytes (a space typed in a formula, a value set to itself).
       // Key order counts: moving rows reorders an object's keys.
@@ -2140,11 +2153,9 @@ export class StepDetailsController {
         a === b || JSON.stringify(a) === JSON.stringify(b);
       const unchanged =
         !!step &&
-        !hidden.changes.length &&
-        !endChanges.length &&
-        same(subject.step, env.subject.step) &&
-        same(subject.action, env.subject.action) &&
-        same(subject.workflow, env.subject.workflow);
+        same(settled.step, env.subject.step) &&
+        same(settled.action, env.subject.action) &&
+        same(settled.workflow, env.subject.workflow);
       const apply = () => {
         moves = this.write(target, [
           ...changes,

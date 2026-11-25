@@ -150,9 +150,15 @@ export class ParamField {
     const spec = this.spec();
     return !(spec.labelHidden && this.isGroup() && spec.path.length === 0);
   }
-  /** A group of fields introduces its contents: its hint comes before them. */
+  /**
+   * A group of fields introduces its contents: its hint comes before them.
+   * One whose fields all show reads as one field, with its hint under them.
+   */
   introFirst(): boolean {
-    return this.spec().type === "fields" || this.spec().type === "schema";
+    const spec = this.spec();
+    return (
+      (spec.type === "fields" && !spec.expandChildren) || spec.type === "schema"
+    );
   }
   isGroup(): boolean {
     return ["list", "keyValue", "fields", "conditions", "schema"].includes(
@@ -794,7 +800,10 @@ export class ParamField {
   }
   durationParts(): { amount: string; unit: string } {
     const seconds = this.fixedValue();
-    const split = splitDuration(seconds);
+    // Empty, it shows its default in the default's own unit ("1 day").
+    const split = splitDuration(
+      typeof seconds === "number" ? seconds : this.spec().default,
+    );
     const unit =
       Object.keys(UNIT_CODE).find((u) => UNIT_CODE[u] === split.unit) ??
       "minutes";
