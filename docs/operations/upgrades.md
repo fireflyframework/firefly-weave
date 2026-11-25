@@ -684,9 +684,11 @@ left in ended runs, without any action from you:
   See [what blocks a purge](../guides/execution-management.md#5-permanently-delete-an-archived-run).
 - **Some records stay unchanged.** The server log names them once, with the
   reason: `Transaction records of run … stay as they are`. `too_slow` is a run
-  with an event that took more than 2.5 s to read and check. A restarted server
-  tries it again. `too_large` is an event over 8 MB, which only a purge reads.
-  The other reasons (`unavailable`, `no_event`, `no_evidence`, `differs` and
+  with an event that took more than 2.5 s to read and check. A statement that
+  took more than 1 s, or a database that didn't answer in time, counts too. The
+  loop leaves the rest of that run as well, and a restarted server tries it
+  again. `too_large` is an event over 8 MB, which only a purge reads. The other
+  reasons (`unavailable`, `no_event`, `no_evidence`, `differs` and
   `not_released`) say that the history can't show how the transaction ended.
 - **The upgrade adds no missing records.** A transaction that opened and ended in
   one event on an earlier version has none, and gets none. Such a transaction
