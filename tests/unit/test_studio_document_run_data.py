@@ -49,6 +49,14 @@ def test_entries_from_runs_and_test_calls_are_run_data():
     assert run_data(document(workflows={"notify@1.0.0": {"mocks": {"send": mock}}})) == (True, [UUID(ENVIRONMENT)])
 
 
+def test_a_failure_copied_from_a_run_counts_as_run_data():
+    copied = {"code": "REQUEST_REFUSED", "outcome": "unknown", "attempts": 3, **RECORDED}
+    assert run_data(document(errors={"submit[2]": copied})) == (True, [UUID(ENVIRONMENT)])
+    # A failure someone typed in is not.
+    manual = {"code": "REQUEST_REFUSED", "source": "manual"}
+    assert run_data(document(errors={"submit": manual, "lookup": {"code": "REQUEST_REFUSED"}})) == (False, [])
+
+
 @pytest.mark.parametrize("step", ["data", "output", "value", "payload"])
 def test_an_entry_of_a_step_named_like_a_value_field_is_still_read(step):
     recorded = (True, [UUID(ENVIRONMENT)])

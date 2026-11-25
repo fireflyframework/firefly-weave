@@ -43,7 +43,7 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
 import { DebugRun, debugRefusal } from "./debug-run";
 import { dropDebug, takeDebug } from "./run-links";
-import { bannerSummary } from "./run-overlay";
+import { bannerSummary, handledCaption } from "./run-overlay";
 import { OTHER_WORKFLOW } from "./runs-tab-state";
 import { environmentName, type RunsView } from "./runs-view";
 
@@ -99,14 +99,21 @@ export class RunHeader {
         })();
     const version = summary ? shortVersion(summary.workflow.version) : "";
     const now = new Date(this.now());
+    const failed = !!status && FAILED.has(status);
+    // Failures its steps' On error handled: the platform's count, at least
+    // those Studio read; Debug in editor turns them into simulated ones.
+    const handled = chosen.overlay?.handled ?? [];
+    const handledCount = Math.max(summary?.handled_errors ?? 0, handled.length);
     return {
       id: chosen.id,
       short: shortId(chosen.id),
       status,
       outcome,
       loading: !chosen.record && !chosen.error,
-      failed: !!status && FAILED.has(status),
-      failedAt: status && FAILED.has(status) ? failedAt : null,
+      failed,
+      failedAt: failed ? failedAt : null,
+      handled: failed ? "" : handledCaption(handledCount, handled[0] ?? null),
+      debug: failed || handledCount > 0,
       version,
       older:
         !!version &&

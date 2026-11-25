@@ -482,12 +482,27 @@ export function fieldSentence(
   return `${name} ${tail}.`;
 }
 
+/**
+ * Copy for a code at one field, where one code names two settings: a call's
+ * CALL_MODE at `/onError` is about On error, not If it fails.
+ */
+const atField: Record<string, Record<string, Copy>> = {
+  "WV-COMP-CALL_MODE": {
+    onError: {
+      text: "On error applies only when the call waits for its result.",
+      hint: "Set When it runs to Wait for its result, or set On error to Stop the run.",
+    },
+  },
+};
+
 export function describeDiagnostic(
   diagnostic: {
     code?: unknown;
     message?: unknown;
     severity?: unknown;
     hint?: unknown;
+    /** The pointer the diagnostic is at, when it has one. */
+    path?: unknown;
   },
   /** The plain name of a field key, such as "Duration" for durationSeconds. */
   label?: (key: string) => string,
@@ -500,7 +515,12 @@ export function describeDiagnostic(
       : "error";
   const match = /^WV-([A-Z0-9]+)-([A-Z0-9_]+)$/.exec(code);
   const family = match ? families[match[1]] : undefined;
-  const specific = family ? family.copy[match![2]] : undefined;
+  const field =
+    typeof diagnostic.path === "string"
+      ? diagnostic.path.slice(diagnostic.path.lastIndexOf("/") + 1)
+      : "";
+  const specific =
+    atField[code]?.[field] ?? (family ? family.copy[match![2]] : undefined);
   // Without specific copy, a readable compiler sentence says more than the
   // family's general line: it becomes the headline, in the author's words.
   const copy: Copy = specific

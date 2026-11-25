@@ -330,7 +330,7 @@ STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
         path="/onError",
         default="stop",
         block=ManifestBlock(name="errorPath", path="/errorPath", label="On error"),
-        studio="pending",
+        studio="ready",
     ),
 )
 

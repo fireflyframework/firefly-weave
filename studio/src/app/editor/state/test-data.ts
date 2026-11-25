@@ -98,6 +98,19 @@ export interface AiTurnsEntry extends Provenance {
   configHash?: Fingerprint;
   upstreamHash?: Fingerprint;
 }
+/**
+ * A failure a step reports in place of its result when Studio executes the
+ * workflow; real runs never see it. `outcome` is "failed" and `attempts` 1
+ * when left out. It never holds a message: the platform's copy for the
+ * code applies.
+ */
+export interface ErrorEntry extends Provenance {
+  /** Capital letters, digits and . _ - from a capital letter, up to 128. */
+  code: string;
+  outcome?: "not_started" | "failed" | "unknown";
+  attempts?: number;
+  source?: "manual" | "run";
+}
 export interface CalleeMocks {
   mocks: Record<InstanceKey, MockEntry>;
 }
@@ -118,6 +131,8 @@ export interface StudioTestData {
   /** Mocks for steps inside called workflows, by callee reference (`notify-customer@1.0.0`). */
   workflows?: Record<string, CalleeMocks>;
   waits?: WaitScripts;
+  /** Simulated failures, by step ID (every item) or instance key (one item). */
+  errors?: Record<InstanceKey, ErrorEntry>;
 }
 
 export type StudioDocumentKind = "canvas" | "test-data";

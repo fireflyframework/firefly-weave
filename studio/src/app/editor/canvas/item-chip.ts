@@ -39,6 +39,8 @@ import type { RecordedItem, RecordedLoop } from "./run-state";
 const WORDS: Readonly<Record<RecordedItem["status"], string>> = {
   finished: "Finished",
   failed: "Failed",
+  // Under "Failed, continued", the row's word says only what came next.
+  handled: "Continued",
   running: "Running",
   "not-run": "Not run",
   stopped: "Stopped",
@@ -47,6 +49,7 @@ const WORDS: Readonly<Record<RecordedItem["status"], string>> = {
 const ICONS: Readonly<Record<RecordedItem["status"], string>> = {
   finished: "ok",
   failed: "failCircle",
+  handled: "degraded",
   running: "spinner",
   // The dashed circle: nothing ran.
   "not-run": "typeAny",
@@ -65,16 +68,23 @@ export function itemLabel(index: number, loop: RecordedLoop): string {
 /** The item button's name: "Item 4 of 20, Failed. Choose an item". */
 export function chipName(index: number, loop: RecordedLoop): string {
   const status = loop.items[index]?.status ?? "not-run";
-  return `${itemLabel(index, loop)}, ${WORDS[status]}. Choose an item`;
+  const word = status === "handled" ? HANDLED : WORDS[status];
+  return `${itemLabel(index, loop)}, ${word}. Choose an item`;
 }
+const HANDLED = "Failed, continued";
 
-/** The item list's groups: the failed items, when any, then every item. */
+/**
+ * The item list's groups: the failed items, then the items that failed and
+ * went on (their step's On error handled it), when any; then every item.
+ */
 export function itemGroups(
   loop: RecordedLoop,
 ): { title: string; items: readonly RecordedItem[] }[] {
   const failed = loop.items.filter((item) => item.status === "failed");
+  const handled = loop.items.filter((item) => item.status === "handled");
   return [
     ...(failed.length ? [{ title: "Failed", items: failed }] : []),
+    ...(handled.length ? [{ title: HANDLED, items: handled }] : []),
     { title: "All items", items: loop.items },
   ];
 }
@@ -263,6 +273,11 @@ export function typedItem(text: string, count: number): number | null {
       [data-status="failed"] > .chip-status,
       .item-option[data-status="failed"] .item-status {
         color: var(--danger-ink);
+      }
+      [data-status="handled"] > .chip-status,
+      .item-option[data-status="handled"] .item-status,
+      .item-option[data-status="handled"] .item-code {
+        color: var(--warning-ink);
       }
       [data-status="finished"] > .chip-status,
       .item-option[data-status="finished"] .item-status {

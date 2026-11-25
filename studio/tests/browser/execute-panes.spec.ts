@@ -188,7 +188,9 @@ for (const size of sizes)
       await page.keyboard.press("Escape");
       expect(executions(calls)).toHaveLength(0);
       await pinned.getByRole("button", { name: "Keep pinned" }).click();
-      await expect(pinned).toContainText("This data is pinned for test runs.");
+      await expect(pinned).toContainText(
+        "This data is pinned for when you execute it in Studio.",
+      );
     });
   });
 

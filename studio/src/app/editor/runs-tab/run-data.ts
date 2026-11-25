@@ -28,7 +28,18 @@ import { enclosingLoops } from "../formula/loops";
 import { referencesOf } from "../formula/preview";
 import { findStep } from "../ndv/step-walk";
 import { instanceStep } from "../state/instance-keys";
-import type { RecordedOutput, Received, RunDataPort } from "./run-port";
+import { errorResultSource } from "../step-blocks";
+import {
+  handledFailures,
+  handledPolicy,
+  type RecordedFailure,
+} from "./run-overlay";
+import type {
+  HandledRecord,
+  RecordedOutput,
+  Received,
+  RunDataPort,
+} from "./run-port";
 import type { RunRecord } from "./run-record";
 
 type Json = unknown;
@@ -51,6 +62,8 @@ const AT_WORK = new Set<StepFact["status"]>([
 const FAILED = new Set<StepFact["status"]>(["failed", "timed_out"]);
 
 const keyOf = (fact: StepFact) => fact.instance_key || fact.node_id;
+/** A failure the step's On error didn't handle: the run stopped there. */
+const stopped = (fact: StepFact) => FAILED.has(fact.status) && !fact.handled;
 /**
  * Whether an instance key is the step's own: a repeated activation ("#",
  * a confirm, cancel or undo) or a loop's yield ("~") never stands in for
@@ -84,6 +97,11 @@ export class RunData implements RunDataPort {
 
   /** Steps whose outputs were asked for. */
   private readonly asked = new Set<string>();
+  /** The failures steps' On error handled, as read at a version of the run's data. */
+  private handledRead: {
+    version: number;
+    failures: ReadonlyMap<string, RecordedFailure>;
+  } | null = null;
 
   constructor(
     private record: RunRecord,
@@ -296,7 +314,10 @@ export class RunData implements RunDataPort {
         };
   }
 
-  state(key: string): "failed" | "running" | "finished" | "not-reached" {
+  state(
+    key: string,
+  ): "failed" | "handled" | "running" | "finished" | "not-reached" {
+    if (this.handled(key)) return "handled";
     const fact = this.facts.get(key);
     if (fact && FAILED.has(fact.status)) return "failed";
     if (
@@ -314,7 +335,7 @@ export class RunData implements RunDataPort {
     const instances = [...this.facts.values()].filter(
       (fact) => fact.node_id === stepId,
     );
-    const failed = (fact: StepFact) => (FAILED.has(fact.status) ? 0 : 1);
+    const failed = (fact: StepFact) => (stopped(fact) ? 0 : 1);
     return instances
       .sort((a, b) => failed(a) - failed(b) || byIteration(a, b))
       .map(keyOf);
@@ -326,9 +347,37 @@ export class RunData implements RunDataPort {
     );
     if (incident) return incident.code;
     for (const fact of this.facts.values())
-      if (fact.node_id === stepId && FAILED.has(fact.status))
+      if (fact.node_id === stepId && stopped(fact))
         return fact.error_code ?? fact.status;
     return null;
+  }
+
+  handled(key: string): HandledRecord | null {
+    // Read once per change of the run's data: views ask on every redraw.
+    const version = this.version();
+    if (this.handledRead?.version !== version)
+      this.handledRead = {
+        version,
+        failures: new Map(
+          handledFailures(this.record, [...this.facts.values()]).map(
+            (failure) => [failure.key, failure],
+          ),
+        ),
+      };
+    const failure = this.handledRead.failures.get(key);
+    if (!failure) return null;
+    return {
+      code: failure.code,
+      message: failure.message,
+      outcome: failure.outcome,
+      attempts: failure.attempts,
+      policy: handledPolicy(failure, this.definition),
+      from: this.definition
+        ? errorResultSource(
+            findStep(this.definition.spec.steps, (s) => s.id === failure.step),
+          )
+        : null,
+    };
   }
 
   childRun(key: string): string | null {

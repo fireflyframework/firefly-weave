@@ -43,6 +43,7 @@ import {
   type Workflow,
 } from "../../model";
 import type { Insertion } from "../canvas/layout-ltr";
+import { ERROR_PATH, blocksOf } from "../step-blocks";
 import {
   nameOfUses,
   ownedName,
@@ -54,7 +55,7 @@ import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
 import { instanceStep } from "./instance-keys";
 // Run data as test data reads it: from a run or a test call, or naming a run.
 import { runDerived } from "./test-data-ops";
-import type { PinEntry } from "./test-data";
+import type { ErrorEntry, PinEntry } from "./test-data";
 
 export const CLIPBOARD_HEADER = "# Firefly Weave steps. Paste into Studio.";
 export const CLIPBOARD_WEB_FORMAT = "web application/x-weave-steps";
@@ -69,6 +70,8 @@ export interface ClipboardDocument {
   pins: Record<string, PinEntry>;
   /** What the actions the steps' workflow owned for them do, by `uses`; only when there are some. */
   actions?: Record<string, OwnedRecipe>;
+  /** Failures simulated by hand on the steps, by instance key; only when there are some. */
+  errors?: Record<string, ErrorEntry>;
 }
 export interface Copied {
   document: ClipboardDocument;
@@ -83,6 +86,8 @@ export interface ClipboardContent {
   llmProfiles: Record<string, unknown>;
   pins: Record<string, unknown>;
   actions: Record<string, unknown>;
+  /** Simulated failures, by instance key (none from an older clipboard). */
+  errors?: Record<string, unknown>;
 }
 export type ClipboardReading =
   | { ok: true; content: ClipboardContent }
@@ -124,6 +129,8 @@ export interface PastePlan {
   renamedSlots: Record<string, string>;
   renamedProfiles: Record<string, string>;
   pins: Record<string, unknown>;
+  /** Simulated failures under the pasted steps' new IDs. */
+  errors: Record<string, unknown>;
   ownedAdds: OwnedAdd[];
   unreadable: Unreadable[];
 }
@@ -164,13 +171,15 @@ const UNKNOWN_KIND = (kind: string) =>
 export const PASTE_MAX_STEPS = 500;
 /** The longest step, slot or profile name Studio keeps, as elsewhere in Studio. */
 export const NAME_MAX = 128;
+/** What a step's failure does, and the error path that handles it, on the kinds that can fail. */
+const ON_ERROR = ["onError", ERROR_PATH] as const;
 /**
  * The fields each step kind has in the workflow language, which refuses any
  * other; loops and workflow calls too, for platforms whose language has them.
  */
 const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
-  action: new Set(["id", "kind", "uses", "with", "connection"]),
-  decisionTable: new Set(["id", "kind", "uses", "with"]),
+  action: new Set(["id", "kind", "uses", "with", "connection", ...ON_ERROR]),
+  decisionTable: new Set(["id", "kind", "uses", "with", ...ON_ERROR]),
   llm: new Set([
     "id",
     "kind",
@@ -179,12 +188,20 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "prompt",
     "context",
     "connection",
+    ...ON_ERROR,
   ]),
-  transform: new Set(["id", "kind", "value"]),
+  transform: new Set(["id", "kind", "value", ...ON_ERROR]),
   switch: new Set(["id", "kind", "cases", "default"]),
   parallel: new Set(["id", "kind", "branches", "concurrency"]),
   wait: new Set(["id", "kind", "durationSeconds"]),
-  signal: new Set(["id", "kind", "name", "timeoutSeconds", "payloadSchema"]),
+  signal: new Set([
+    "id",
+    "kind",
+    "name",
+    "timeoutSeconds",
+    "payloadSchema",
+    ...ON_ERROR,
+  ]),
   humanTask: new Set([
     "id",
     "kind",
@@ -195,6 +212,7 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "decisions",
     "dueSeconds",
     "expirySeconds",
+    ...ON_ERROR,
   ]),
   fail: new Set(["id", "kind", "code", "message"]),
   forEach: new Set([
@@ -214,6 +232,7 @@ const STEP_FIELDS: Record<string, ReadonlySet<string>> = {
     "mode",
     "onFailure",
     "businessKey",
+    ...ON_ERROR,
   ]),
 };
 const PATH_FIELDS = new Set(["steps", "output"]);
@@ -225,6 +244,7 @@ const DOCUMENT_FIELDS = new Set([
   "llmProfiles",
   "pins",
   "actions",
+  "errors",
 ]);
 const SLOT_FIELDS = new Set(["connector", "required"]);
 /** Keys that would reach an object's prototype if code ever assigned them. */
@@ -319,6 +339,7 @@ export function copySteps(
   ids: readonly string[],
   pins: Readonly<Record<string, PinEntry>> = {},
   owned: Readonly<Record<string, OwnedRecipe>> = {},
+  errors: Readonly<Record<string, ErrorEntry>> = {},
 ): Copied {
   const sequences = [...sequencesOf(workflow).values()];
   const steps = ids.flatMap((id) => {
@@ -359,19 +380,22 @@ export function copySteps(
     if (recipe) actions.push([uses as string, unpublished(recipe)]);
   }
   const inTree = new Set(tree.map((step) => step.id));
+  // Recorded from a run, test data never leaves on the clipboard.
+  const carried = <T>(entries: Readonly<Record<string, T>>) =>
+    Object.entries(entries)
+      .filter(
+        ([key, entry]) => inTree.has(instanceStep(key)) && !runDerived(entry),
+      )
+      .map(([key, entry]): [string, T] => [key, structuredClone(entry)]);
+  const failures = carried(errors);
   const document: ClipboardDocument = {
     weaveClipboard: 1,
     steps,
     connections: Object.fromEntries(connections),
     llmProfiles: Object.fromEntries(llmProfiles),
-    pins: Object.fromEntries(
-      Object.entries(pins)
-        .filter(
-          ([key, entry]) => inTree.has(instanceStep(key)) && !runDerived(entry),
-        )
-        .map(([key, entry]) => [key, structuredClone(entry)]),
-    ),
+    pins: Object.fromEntries(carried(pins)),
     ...(actions.length ? { actions: Object.fromEntries(actions) } : {}),
+    ...(failures.length ? { errors: Object.fromEntries(failures) } : {}),
   };
   return {
     document,
@@ -398,26 +422,20 @@ function checkStep(
   if (unknown) return UNKNOWN_FIELD(step["id"], unknown);
   if (depth > 40)
     return "The pasted steps nest too deeply for the canvas. Paste them in Source.";
-  const lanes: unknown[] = [];
-  if (step["kind"] === "switch") {
-    if (!Array.isArray(step["cases"]) || !isRecord(step["default"]))
-      return PATHLESS(step["id"]);
-    lanes.push(...step["cases"], step["default"]);
-  } else if (step["kind"] === "parallel") {
-    if (!isRecord(step["branches"])) return PATHLESS(step["id"]);
-    lanes.push(...Object.values(step["branches"]));
-  } else if (step["kind"] === "forEach") {
-    if (!isRecord(step["body"])) return PATHLESS(step["id"]);
-    lanes.push(step["body"]);
-  }
-  for (const lane of lanes) {
+  if (
+    (step["kind"] === "switch" &&
+      (!Array.isArray(step["cases"]) || !isRecord(step["default"]))) ||
+    (step["kind"] === "parallel" && !isRecord(step["branches"])) ||
+    (step["kind"] === "forEach" && !isRecord(step["body"]))
+  )
+    return PATHLESS(step["id"]);
+  for (const block of blocksOf(step as Step)) {
+    const lane: unknown = block.branch;
     if (!isRecord(lane) || !Array.isArray(lane["steps"]))
       return PATHLESS(step["id"]);
     const field = unknownKey(
       lane,
-      step["kind"] === "switch" && lane !== step["default"]
-        ? CASE_FIELDS
-        : PATH_FIELDS,
+      block.kind === "case" ? CASE_FIELDS : PATH_FIELDS,
     );
     if (field) return UNKNOWN_FIELD(step["id"], field);
     for (const inner of lane["steps"]) {
@@ -467,6 +485,7 @@ export function readClipboard(
     llmProfiles?: unknown;
     pins?: unknown;
     actions?: unknown;
+    errors?: unknown;
   } | null = null;
   if (
     isRecord(value) &&
@@ -485,6 +504,7 @@ export function readClipboard(
       llmProfiles: value["llmProfiles"],
       pins: value["pins"],
       actions: value["actions"],
+      errors: value["errors"],
     };
   } else if (Array.isArray(value)) found = { steps: value };
   else if (
@@ -555,28 +575,24 @@ export function readClipboard(
       llmProfiles: isRecord(found.llmProfiles) ? found.llmProfiles : {},
       pins: isRecord(found.pins) ? found.pins : {},
       actions,
+      errors: isRecord(found.errors) ? found.errors : {},
     },
   };
 }
 
-/** Every `{ref}` a step holds outside its paths and a loop's body, with where it sits. */
+/** Every `{ref}` a step holds outside the steps of its blocks (paths, a loop's body, an error path), with where it sits. */
 function refSites(
   step: Step,
 ): { ref: string; path: (string | number)[]; fieldPath: string }[] {
   const sites: { ref: string; path: (string | number)[]; fieldPath: string }[] =
     [];
+  const lists = blocksOf(step).map((block) => [...block.path, "steps"]);
   const nested = (path: readonly (string | number)[]) =>
-    (step.kind === "switch" &&
-      ((path[0] === "cases" && path.length === 3 && path[2] === "steps") ||
-        (path[0] === "default" && path.length === 2 && path[1] === "steps"))) ||
-    (step.kind === "parallel" &&
-      path[0] === "branches" &&
-      path.length === 3 &&
-      path[2] === "steps") ||
-    (step.kind === "forEach" &&
-      path[0] === "body" &&
-      path.length === 2 &&
-      path[1] === "steps");
+    lists.some(
+      (list) =>
+        list.length === path.length &&
+        list.every((segment, i) => String(segment) === String(path[i])),
+    );
   const walk = (value: unknown, path: (string | number)[]) => {
     if (nested(path)) return;
     if (Array.isArray(value)) {
@@ -843,19 +859,21 @@ export function planPaste(
         reason: present.has(match[1]) ? "later" : "missing",
       });
     }
-  // 5. Pins follow their steps' new IDs; pins recorded from runs never come.
+  // 5. Pins and simulated failures follow their steps' new IDs; those
+  // recorded from runs never come.
   const pastedIds = new Set(steps.flatMap(stepTree).map((step) => step.id));
-  const pins = Object.fromEntries(
-    Object.entries(content.pins).flatMap(
-      ([key, entry]): [string, unknown][] => {
+  const followed = (entries: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(entries).flatMap(([key, entry]): [string, unknown][] => {
         if (!isRecord(entry) || runDerived(entry)) return [];
         const owner = instanceStep(key);
         const next = renamed.get(owner);
         const rekeyed = next ? `${next}${key.slice(owner.length)}` : key;
         return pastedIds.has(instanceStep(rekeyed)) ? [[rekeyed, entry]] : [];
-      },
-    ),
-  );
+      }),
+    );
+  const pins = followed(content.pins);
+  const errors = followed(content.errors ?? {});
   return {
     at,
     steps,
@@ -866,6 +884,7 @@ export function planPaste(
     renamedSlots: connections.rename,
     renamedProfiles: llmProfiles.rename,
     pins,
+    errors,
     ownedAdds,
     unreadable,
   };

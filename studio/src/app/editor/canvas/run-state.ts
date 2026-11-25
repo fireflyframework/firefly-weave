@@ -35,6 +35,13 @@ export interface CanvasRun {
   counts?: Readonly<Record<string, number>>;
   /** The playback ended: the whole trace has played. */
   ended?: boolean;
+  /** Steps whose failure their On error handled, by step ID: the run went past them. */
+  handled?: Readonly<Record<string, HandledFailure>>;
+  /**
+   * Handled steps that also completed without a failure, in another item of
+   * a loop around them: their Success output was taken too.
+   */
+  alsoCompleted?: readonly string[];
   /**
    * The loops the answer ended inside, by instance key, with how many items
    * they finished: Execute previous steps stopped in one of their items, or
@@ -53,6 +60,8 @@ export interface TraceStep {
   results?: number;
   /** The incident a failed entry stopped the run with, when the answer says (WV-RUNTIME-LOOP-LIMIT). */
   code?: string;
+  /** A failed entry its On error handled: the item went on past it. */
+  handled?: true;
 }
 /** One run of a loop at a point of the playback. */
 export interface LoopRun {
@@ -72,6 +81,8 @@ export interface LoopRun {
   results: number | null;
   /** It failed before its first item because its list was longer than Up to; absent otherwise. */
   overLimit?: true;
+  /** Items with a failure their On error handled so far; absent when none. */
+  handled?: number;
 }
 /** The incident a loop over more items than its Up to opens. */
 export const LOOP_LIMIT = "WV-RUNTIME-LOOP-LIMIT";
@@ -108,6 +119,8 @@ export function loopProgress(
   >();
   const last = new Map<string, Map<number, number>>();
   const failures = new Map<string, Set<number>>();
+  // The items a step failed in and went on, its On error handling it.
+  const handledIn = new Map<string, Set<number>>();
   // A loop the run stopped at, by its own failed entry, and the incident it opened.
   const stopped = new Map<string, string | null>();
   const keyOf = (id: string, within: readonly number[]) =>
@@ -136,20 +149,28 @@ export function loopProgress(
       let items = last.get(key);
       if (!items) last.set(key, (items = new Map()));
       items.set(iteration[depth], position);
-      // A failure inside an item, nested loops included, fails it.
+      // A failure inside an item, nested loops included, fails it, unless
+      // its On error handled it: then the item went on.
       if (entry.status === "failed" && position < played) {
-        let failed = failures.get(key);
-        if (!failed) failures.set(key, (failed = new Set()));
-        failed.add(iteration[depth]);
+        const kept = entry.handled ? handledIn : failures;
+        let items = kept.get(key);
+        if (!items) kept.set(key, (items = new Set()));
+        items.add(iteration[depth]);
       }
     });
   });
   return [...runs].map(([key, run]) => {
     let finished = 0;
     for (const position of last.get(key)?.values() ?? [])
-      if (position < played && trace[position].status === "completed")
+      if (
+        position < played &&
+        (trace[position].status === "completed" || trace[position].handled)
+      )
         finished++;
     const failed = [...(failures.get(key) ?? [])];
+    const handled = [...(handledIn.get(key) ?? [])].filter(
+      (index) => !failed.includes(index),
+    ).length;
     const failedAt = failed.length ? Math.min(...failed) + 1 : null;
     const count = counts[key] ?? null;
     // The run stopped at the loop itself, before any of its items ran.
@@ -174,6 +195,7 @@ export function loopProgress(
       ...(failedItself && stopped.get(key) === LOOP_LIMIT
         ? { overLimit: true as const }
         : {}),
+      ...(handled ? { handled } : {}),
     };
   });
 }
@@ -184,15 +206,19 @@ export function loopProgress(
 /** One item of a loop in a recorded run, and what it did. */
 export interface RecordedItem {
   index: number;
-  /** "stopped": a cancelled run cut it off; "timed-out": the run timed out while it ran. */
+  /**
+   * "stopped": a cancelled run cut it off; "timed-out": the run timed out
+   * while it ran; "handled": a step failed in it and its On error went on.
+   */
   status:
     | "finished"
     | "failed"
+    | "handled"
     | "running"
     | "not-run"
     | "stopped"
     | "timed-out";
-  /** A failed item's error code. */
+  /** A failed or handled item's error code. */
   code: string | null;
 }
 /** One run of a loop in a recorded run: once, or once per item of the loops around it. */
@@ -228,7 +254,13 @@ export interface RecordedRun extends CanvasRun {
 }
 export const isRecordedRun = (run: CanvasRun | null): run is RecordedRun =>
   !!run && "failures" in run;
-export type TileRun = "live" | "waiting" | "done" | "failed" | null;
+export type TileRun = "live" | "waiting" | "done" | "failed" | "handled" | null;
+/** A failure a step's On error handled: its code and message, and the setting. */
+export interface HandledFailure {
+  code: string;
+  message: string;
+  policy: "continue" | "errorOutput";
+}
 export type EdgeRun = "idle" | "live" | "taken" | "skipped";
 export const ENDED_STATUSES: readonly string[] = [
   "succeeded",
@@ -242,6 +274,7 @@ export const runEnded = (run: CanvasRun): boolean =>
 export function tileRun(id: string, run: CanvasRun | null): TileRun {
   if (!run) return null;
   const finished = run.done.includes(id);
+  if (finished && run.handled?.[id]) return "handled";
   if (run.current.includes(id) || run.active.includes(id)) {
     if (run.status === "failed" || run.status === "timed_out") return "failed";
     // An ended run is nowhere any more; what it finished keeps its check.
@@ -283,11 +316,25 @@ export function groupsEntered(
  * skipped when it ended elsewhere. An edge naming no step stays idle.
  */
 export function edgeRun(
-  edge: { leaves: string | null; enters: string | null },
+  edge: { leaves: string | null; enters: string | null; success?: string },
   run: CanvasRun | null,
   inside: ReadonlySet<string> = NO_GROUPS,
 ): EdgeRun {
-  if (!run || (edge.leaves === null && edge.enters === null)) return "idle";
+  if (!run) return "idle";
+  // A step's Success output: taken when it finished without a failure its
+  // error path handled, in any item of the loops around it; when its error
+  // path ran every time, the way it didn't take.
+  if (edge.success !== undefined) {
+    const handled =
+      run.handled?.[edge.success]?.policy === "errorOutput" &&
+      !run.alsoCompleted?.includes(edge.success);
+    if (!handled && run.done.includes(edge.success))
+      return runEnded(run) ? "taken" : "live";
+    return runEnded(run) && (handled || run.mode === "simulated")
+      ? "skipped"
+      : "idle";
+  }
+  if (edge.leaves === null && edge.enters === null) return "idle";
   const reached = (id: string) =>
     run.done.includes(id) || (id === "$end" && run.status === "succeeded");
   const here = (id: string) =>
@@ -444,7 +491,8 @@ export function frameExecuted(
 
 /**
  * The step a run is framed on: where it failed, else where it is, else the
- * last step it finished, else the trigger. `tiles` are in the canvas's order.
+ * first step that failed and continued, else the last step it finished,
+ * else the trigger. `tiles` are in the canvas's order.
  */
 export function framedStep(
   run: RecordedRun,
@@ -459,6 +507,8 @@ export function framedStep(
   return (
     at((state) => state === "failed") ??
     at((state) => state === "live" || state === "waiting") ??
+    // A step that failed and continued: the run went on, but that's the why.
+    at((state) => state === "handled") ??
     (lastDone >= 0 ? tiles[lastDone] : null) ??
     tiles.find((id) => id.startsWith("$trigger")) ??
     null

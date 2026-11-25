@@ -29,7 +29,10 @@ from firefly_weave.contracts.catalog import Digest
 from firefly_weave.contracts.definitions import DecisionTableDefinition, JsonPointer, ResourceName, VersionedReference
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import INSTANCE_KEY_PATTERN, InstanceKeyText, InstanceKeyTextOrEmpty, node_of
+from firefly_weave.contracts.step_errors import StepError, StepOutcome
 from firefly_weave.contracts.studio_documents import (
+    ERROR_CODE_PATTERN,
+    MAX_SIMULATED_ATTEMPTS,
     REFERENCE_PATTERN,
     AiTurnsEntry,
     CalleeReference,
@@ -99,6 +102,17 @@ class ExecuteTarget(_HostBody):
         return self
 
 
+class ScriptedFailure(_HostBody):
+    """A failure a step reports in place of its result in this simulation; real runs never see one.
+
+    ``outcome`` and ``attempts`` are what the platform would report after the step's own retries.
+    """
+
+    code: str = Field(min_length=1, max_length=128, pattern=ERROR_CODE_PATTERN)
+    outcome: StepOutcome = "failed"
+    attempts: int = Field(default=1, ge=0, le=MAX_SIMULATED_ATTEMPTS)
+
+
 class SimulationRequest(_HostBody):
     """The body of a debug session; Execute adds a target."""
 
@@ -111,6 +125,8 @@ class SimulationRequest(_HostBody):
     stubUnresolved: bool = False
     input: JsonData = None
     mocks: dict[MockKey, JsonData] = Field(default_factory=dict, max_length=1000)
+    # Failures keyed like mocks; a key can't hold both.
+    errors: dict[MockKey, ScriptedFailure] = Field(default_factory=dict, max_length=1000)
     scripts: ExecuteScripts = Field(default_factory=ExecuteScripts)
     now: AwareDatetime
 
@@ -137,11 +153,17 @@ class TraceEntry(_HostBody):
     output: JsonData = None
     virtualTime: AwareDatetime | None = None
     frame: FrameKey | None = None
+    # The step's failure: one its onError setting handled (``handled`` names the setting, and with an error path the
+    # output is the path's once it ended), or the one that stopped the run (no ``handled``).
+    error: StepError | None = None
+    handled: Literal["continue", "errorOutput"] | None = None
 
     @model_validator(mode="after")
     def key_of_node(self) -> Self:
         if not _instance_of(self.nodeId, self.instanceKey):
             raise ValueError("instanceKey is empty or an instance of nodeId")
+        if self.handled is not None and (self.error is None or self.status != "failed"):
+            raise ValueError("A handled failure is a failed step with its error")
         return self
 
 

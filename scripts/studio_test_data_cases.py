@@ -98,7 +98,7 @@ CASES: tuple[tuple[str, Any], ...] = (
     ("schema version 2", {**MINIMAL, "schemaVersion": 2}),
     ("a boolean schema version", {**MINIMAL, "schemaVersion": True}),
     ("another kind", {**MINIMAL, "kind": "weave.studio/canvas"}),
-    ("an unknown section", doc(errors={})),
+    ("an unknown section", doc(notes={})),
     ("a client-asserted containsRunData flag", doc(containsRunData=False)),
     ("a timestamp without a time zone", {**MINIMAL, "updatedAt": "2026-10-07T10:00:00"}),
     ("a timestamp with a space instead of T", {**MINIMAL, "updatedAt": "2026-10-07 10:00:00Z"}),

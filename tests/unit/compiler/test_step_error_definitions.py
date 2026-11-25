@@ -188,7 +188,7 @@ def test_the_feature_and_its_fields_are_named_once():
         "path": "/onError",
         "default": "stop",
         "block": {"name": "errorPath", "path": "/errorPath", "label": "On error"},
-        "studio": "pending",
+        "studio": "ready",
     }
 
 

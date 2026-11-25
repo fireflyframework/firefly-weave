@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
-from test_studio_simulation_execute import ACTION, CALL, CHECK, SHAPE, callee_definition, workflow
+from test_studio_simulation_execute import ACTION, CALL, CHECK, SHAPE, callee_definition, run, workflow
 
 from firefly_weave.operations.debug.models import DebugCommand
 from firefly_weave.studio import debug_sessions
@@ -209,6 +209,27 @@ def test_the_host_creates_reads_commands_and_deletes_sessions(tmp_path):
         assert stale.status_code == 409 and stale.json()["code"] == "WV-DEBUG-REVISION"
         assert browser.delete(f"{SESSIONS}/{identifier}", headers=headers).status_code == 204
         assert browser.get(f"{SESSIONS}/{identifier}", headers=headers).status_code == 404
+
+
+def test_a_session_applies_simulated_failures_as_execute_does(tmp_path):
+    source = workflow(CHECK | {"onError": "continue"}, SHAPE | {"value": {"literal": 1}})
+    errors = {"node:check": {"code": "REQUEST_REFUSED"}}
+    executed = run(source, errors=errors)
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        created = browser.post(SESSIONS, json=body(source, errors=errors), headers=headers)
+        assert created.status_code == 201, created.text
+        identifier, revision = created.json()["id"], created.json()["revision"]
+        ended = browser.post(
+            f"{SESSIONS}/{identifier}/commands",
+            json={"kind": "continue"},
+            headers=headers | {"If-Match": f'"{revision}"'},
+        )
+    view = ended.json()["view"]
+    assert view["status"] == "succeeded"
+    [check] = [entry for entry in executed["trace"] if entry["nodeId"] == "check"]
+    assert view["variables"]["steps"]["check"] == {"output": None, "error": check["error"]}
+    assert check["handled"] == "continue"
 
 
 def test_the_run_log_can_close_every_session_when_the_host_is_full(tmp_path):

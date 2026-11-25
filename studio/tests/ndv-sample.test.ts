@@ -250,6 +250,45 @@ describe("step details read the last execution", () => {
       customerId: "c-pin",
     });
   });
+  it("previews read a step's error: its simulated failure, else the failure the last execution handled", async () => {
+    const { controller, results } = executed();
+    const current = results()!;
+    results.set({
+      ...current,
+      steps: {
+        ...current.steps,
+        lookup: {
+          ...current.steps["lookup"],
+          output: null,
+          handled: {
+            code: "TIMEOUT",
+            message: "The step timed out.",
+            outcome: "unknown",
+            attempts: 3,
+            policy: "continue",
+          },
+        },
+      },
+    });
+    expect(controller.previewData().error("lookup")).toEqual({
+      code: "TIMEOUT",
+      message: "The step timed out.",
+      outcome: "unknown",
+      attempts: 3,
+      instanceKey: "lookup",
+    });
+    // A simulated failure goes first, as the Input pane's Error of lookup shows it.
+    await controller.setFailure("lookup", { code: "CRM_DOWN" });
+    expect(controller.previewData().error("lookup")).toEqual({
+      code: "CRM_DOWN",
+      message: "The step failed with code CRM_DOWN.",
+      outcome: "failed",
+      attempts: 1,
+      instanceKey: "lookup",
+    });
+    // A step that ran without failing has none.
+    expect(controller.previewData().error("route")).toBeUndefined();
+  });
   it("a last result shows as simulated, and an out-of-date one is still used", () => {
     const { controller } = executed("fnv1a64:00000000000000ff");
     expect(controller.ndvContext("lookup").sample.output()).toEqual({

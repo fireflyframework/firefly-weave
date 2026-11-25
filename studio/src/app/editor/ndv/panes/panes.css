@@ -151,6 +151,37 @@ weave-test-event-pane {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* The Output pane's sub-row: what the data is (the pills and the count)
+   wraps in its own group; Pin, Edit and More output actions never wrap and
+   end the first row. Each line of pills is centered on the buttons' height,
+   so the first one sits level with them, and a single row stays centered in
+   the bar. */
+.pane-output-sub {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-block: calc(
+    (var(--control-touch) - var(--sd-target, var(--control-touch))) / 2
+  );
+}
+.pane-sub-info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  min-height: var(--sd-target, var(--control-touch));
+  padding-block: calc((var(--sd-target, var(--control-touch)) - 24px) / 2);
+}
+.pane-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
 /* An AI task's model requests and tokens: a row of its own under the source,
    so the source tag, Pin and Edit output keep their room on every width. */
 .pane-usage {
@@ -472,12 +503,11 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 /* A real result's source ("From local · run 3f2a…"): a 24 px pill that
    opens the run in Operate. Its target reaches 44 px tall without the pill
-   growing, and it shortens (the run ID first) before the count, Pin or Edit
-   leave the row. */
-.pane-sub:has(> .pane-real-tag) {
-  flex-wrap: nowrap;
-}
-.pane-sub:has(> .pane-real-tag) > .pane-count {
+   growing. When the pill and the count don't fit beside Pin, Edit and More
+   output actions, the count takes the line under the pill, so the source
+   keeps its words; the pill shortens (the run ID first) only when it alone
+   doesn't fit. */
+.pane-sub-info:has(> .pane-real-tag) > .pane-count {
   flex: none;
   white-space: nowrap;
 }
@@ -551,7 +581,13 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 .step-details button.pane-pin {
   flex: none;
-  margin-left: auto;
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+/* More output actions ends the row at Pin and Edit's size. */
+.step-details .pane-more .row-menu-toggle {
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
@@ -628,6 +664,45 @@ weave-input-pane.is-compact .pane-source-field::before {
 .pinned-banner p.pinned-banner-note {
   margin-top: var(--space-1);
   color: var(--muted);
+}
+/* A simulated failure's code and outcome: the code as typed, never cut. */
+.failure-banner p.failure-banner-code {
+  margin-top: var(--space-1);
+}
+.failure-banner .failure-code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+/* A step that failed and went on: what happened, then (under a rule) that
+   the failure was simulated. The code is whole, never cut by the layout. */
+.error-banner .error-banner-failed {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.error-banner p + p {
+  margin-top: var(--space-1);
+}
+.error-banner p.error-banner-setting {
+  color: var(--muted);
+}
+.error-banner p.error-banner-simulated {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--warning-bd);
+}
+.error-banner-simulated > weave-icon {
+  margin-inline-end: var(--space-1);
+  color: var(--warning-ink);
+  vertical-align: -3px;
+}
+/* What later steps read after the failure: the error path's result, or null. */
+.pane-result-caption {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font: var(--type-caption);
+}
+.pane-empty-text.pane-result-note {
+  text-align: start;
 }
 .pane-empty-actions {
   display: flex;
@@ -1059,4 +1134,114 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 .pane-stopped-text + .pane-empty-actions {
   justify-content: flex-start;
+}
+/* Simulate a failure: a native modal over the page, the shared modal panel's
+   look; on a phone a bottom sheet with 44 px controls. */
+dialog.simulate-failure {
+  border: 0;
+  color: var(--text);
+}
+dialog.simulate-failure:modal {
+  overscroll-behavior: contain;
+}
+dialog.simulate-failure::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: var(--scrim);
+}
+.simulate-failure input[type="text"] {
+  width: 100%;
+  min-height: 36px;
+  font-family: var(--font-mono);
+}
+/* Code keeps the browser's list of suggestions (free entry, read by screen
+   readers) behind Studio's chevron instead of the browser's own triangle.
+   The triangle turns transparent, not display: none (Chrome shows it again
+   on focus over any rule short of !important): it keeps its room and stays
+   the click target that opens the list, under the chevron, which lets
+   clicks through. */
+.failure-code-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.failure-code-field > input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+.failure-code-field > input::-webkit-list-button {
+  opacity: 0;
+}
+.failure-code-chevron {
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  color: var(--muted);
+  pointer-events: none;
+}
+.simulate-failure .failure-choice {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  border: 0;
+}
+.simulate-failure .failure-items {
+  grid-template-columns: 1fr 1fr;
+}
+.simulate-failure .failure-choice legend {
+  margin-bottom: var(--space-2);
+}
+.simulate-failure .failure-choice label {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.simulate-failure .failure-choice label:has(:checked) {
+  border-color: var(--accent);
+}
+.simulate-failure .failure-choice label > input {
+  flex: none;
+  width: auto;
+  min-height: 0;
+  margin: 3px 0 0;
+}
+.simulate-failure .failure-choice label > span {
+  flex: 1;
+  text-align: start;
+  font: var(--type-small);
+  font-weight: 400;
+  color: var(--muted);
+}
+.simulate-failure .failure-choice b {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+.simulate-failure .failure-warning {
+  margin: var(--space-2) 0 0;
+  color: var(--warning-ink);
+}
+@media (max-width: 767px) {
+  dialog.simulate-failure:modal {
+    margin: auto 0 0;
+    width: 100%;
+    max-width: none;
+    padding: var(--space-4);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .simulate-failure input[type="text"],
+  .simulate-failure .failure-choice label,
+  .simulate-failure .dialog-actions button {
+    min-height: 44px;
+  }
+  /* The footer spans the sheet to its 16 px padding, not the panel's 28. */
+  dialog.simulate-failure .dialog-actions {
+    bottom: calc(-1 * var(--space-4));
+    margin: var(--space-6) calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+    padding-inline: var(--space-4);
+  }
 }
