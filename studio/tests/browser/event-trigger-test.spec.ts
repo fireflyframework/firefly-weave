@@ -308,10 +308,35 @@ test.describe("a real platform event entered in another Test event pane", () => 
       .locator(".tile-body")
       .dblclick();
     const pane = page.getByRole("region", { name: "Input data" });
-    await pane
-      .locator("textarea.json-field")
-      .fill(JSON.stringify(pastedEvent()));
+    const box = pane.locator("textarea.json-field");
+    await box.focus();
+    await page.keyboard.insertText(JSON.stringify(pastedEvent()));
     await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    // The box, still open, holds the event as it's kept, the caret at its end.
+    const caret = () =>
+      box.evaluate((element: HTMLTextAreaElement) => {
+        const { value, selectionStart, selectionEnd } = element;
+        return selectionStart === selectionEnd && value.slice(0, selectionEnd);
+      });
+    const held = async () => {
+      const text = await box.inputValue();
+      expect(text).toContain('"business_key": "REF-4410"');
+      for (const id of Object.values(REAL)) expect(text).not.toContain(id);
+      return text;
+    };
+    const first = await held();
+    await expect(box).toBeFocused();
+    expect(await caret()).toBe(first);
+    // A real ID put back is replaced where it is, the caret right after it.
+    await box.evaluate((element: HTMLTextAreaElement) => {
+      const start = element.value.indexOf('"event_id": "') + 13;
+      element.setSelectionRange(start, start + 36);
+    });
+    await page.keyboard.insertText(REAL.event);
+    await expect(box).not.toHaveValue(new RegExp(REAL.event));
+    await held();
+    await expect(box).toBeFocused();
+    expect(await caret()).toMatch(/"event_id": "[0-9a-f-]{36}$/);
     await details.close();
     await nothingReal(page, details);
     expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
@@ -373,6 +398,38 @@ test.describe("a real platform event entered in another Test event pane", () => 
     expect(sent.some((body) => body.includes("REF-4410"))).toBe(true);
     for (const id of Object.values(REAL))
       expect(sent.filter((body) => body.includes(id))).toEqual([]);
+  });
+
+  test("the manual form's, in a field of a workflow's own input, beside text that isn't a value yet", async ({
+    page,
+  }) => {
+    await openNotifyTeam(page, {
+      spec: {
+        inputSchema: {
+          type: "object",
+          properties: {
+            count: { type: "integer" },
+            events: { type: "array", items: { type: "object" } },
+          },
+        },
+      },
+    });
+    await page
+      .locator('.tile-node[data-tile^="$trigger"]')
+      .filter({ hasText: "Manual" })
+      .locator(".tile-body")
+      .dblclick();
+    const pane = page.getByRole("region", { name: "Input data" });
+    const count = pane.getByLabel(/^Count/);
+    await count.fill("1.5");
+    const box = pane.locator("textarea.json-field");
+    await box.focus();
+    await page.keyboard.insertText(JSON.stringify([pastedEvent()]));
+    await expect(pane.getByText(NOTE_ALL)).toBeVisible();
+    await expect(box).toHaveValue(/"business_key": "REF-4410"/);
+    for (const id of Object.values(REAL))
+      await expect(box).not.toHaveValue(new RegExp(id));
+    await expect(count).toHaveValue("1.5");
   });
 
   test("a Kafka message trigger's, in a field of a workflow's own input", async ({

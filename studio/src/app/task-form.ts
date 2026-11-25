@@ -34,6 +34,7 @@ import { ReferenceCombobox } from "./forms/ui/reference-combobox";
 import { LazyComponent, type LazyOutputs } from "./forms/ui/lazy-component";
 import type { FieldInfo } from "./forms/core/resolve";
 import {
+  caretAfter,
   formFields,
   formatProblem,
   localDateTime,
@@ -65,7 +66,7 @@ import {
   value as literalNode,
   type Bound,
 } from "./forms/core/binding";
-import { getAt, removeAt, setAt } from "./forms/core/json";
+import { getAt, jsonEqual, removeAt, setAt } from "./forms/core/json";
 import {
   referencesAt,
   type ReferenceContext,
@@ -1286,6 +1287,53 @@ export class TaskForm implements OnChanges {
           : setAt(this.values, path, value)
       ) as Data;
     this.publish();
+  }
+  /**
+   * Shows `data` in place of what the form holds: what the host kept of the
+   * person's own values, with some of them changed. Text that isn't a value
+   * yet stays, and so does the caret.
+   */
+  showData(data: Data): void {
+    // First what was typed: a field that goes back to its last drawn text is drawn again.
+    this.cdr.detectChanges();
+    const restore = this.caret();
+    const before = this.values;
+    this.values = data;
+    for (const key of [...this.drafts.keys()]) {
+      const path = key.split("\u001f");
+      if (
+        !(key in this.errors) &&
+        !jsonEqual(getAt(before, path), getAt(data, path))
+      )
+        this.drafts.delete(key);
+    }
+    this.cdr.detectChanges();
+    restore();
+  }
+  /** Where the person is in the form; what it returns puts them back there once the form is drawn again. */
+  private caret(): () => void {
+    const host = this.host.nativeElement as HTMLElement;
+    const controls = () => [
+      ...host.querySelectorAll<HTMLInputElement>(
+        "input, select, textarea, button",
+      ),
+    ];
+    const active = host.ownerDocument.activeElement as HTMLInputElement | null;
+    const index = controls().findIndex((control) => control === active);
+    if (!active || index < 0) return () => undefined;
+    const { value, selectionStart, selectionEnd, scrollTop } = active;
+    return () => {
+      const control = controls()[index];
+      if (!control) return;
+      if (control !== host.ownerDocument.activeElement)
+        control.focus({ preventScroll: true });
+      if (typeof selectionStart !== "number" || control.value === value) return;
+      control.setSelectionRange(
+        caretAfter(value, selectionStart, control.value),
+        caretAfter(value, selectionEnd ?? selectionStart, control.value),
+      );
+      control.scrollTop = scrollTop;
+    };
   }
   /**
    * The bound tree with `node` at `path`, or without the field. A single

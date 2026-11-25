@@ -66,11 +66,12 @@ interface SampleForm {
         }
         @for (form of forms(); track form) {
           <weave-task-form
+            #shown
             choiceIcon="chevronDown"
             [schema]="form.schema"
             [schemaRoot]="form.root"
             [initialData]="form.initial"
-            (dataChange)="changed($event, form)"
+            (dataChange)="changed($event, form, shown)"
           />
         }
         <div aria-live="polite">
@@ -177,11 +178,27 @@ export class TestEventPane {
       if (this.owns(form)) this.problem.set((error as Error).message);
     }
   }
-  async changed(data: Record<string, unknown>, form: SampleForm) {
+  /** The last change, of several on their way. */
+  private turn = 0;
+  async changed(
+    data: Record<string, unknown>,
+    form: SampleForm,
+    shown: TaskForm,
+  ) {
     if (!this.owns(form)) return;
-    const refused = await form.session.controller.setTestEvent(
+    const turn = ++this.turn;
+    const { controller } = form.session;
+    const refused = await controller.setTestEvent(
       (form.wrapped ? data["value"] : data) as Json | undefined,
     );
-    if (this.owns(form)) this.problem.set(refused ?? "");
+    if (!this.owns(form)) return;
+    this.problem.set(refused ?? "");
+    // The form never keeps the real IDs it was given: it shows what is kept.
+    if (refused || turn !== this.turn || !controller.replacedIds().length)
+      return;
+    const kept = controller.testEvent();
+    shown.showData(
+      (form.wrapped ? { value: kept } : kept) as Record<string, unknown>,
+    );
   }
 }

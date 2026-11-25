@@ -129,8 +129,17 @@ function setup(inputSchema: unknown = { $ref: "weave.platform-event-v1" }) {
   );
   const injector = Injector.create({
     providers: [
-      { provide: ElementRef, useValue: new ElementRef({}) },
-      { provide: ChangeDetectorRef, useValue: { markForCheck() {} } },
+      {
+        provide: ElementRef,
+        useValue: new ElementRef({
+          ownerDocument: { activeElement: null },
+          querySelectorAll: () => [],
+        }),
+      },
+      {
+        provide: ChangeDetectorRef,
+        useValue: { markForCheck() {}, detectChanges() {} },
+      },
     ],
   });
   return { model, controller, session, injector, announced };
@@ -152,12 +161,20 @@ function manualPane(f: ReturnType<typeof setup>) {
   form.schemaRoot = signal(owner.root) as never;
   form.initialData = signal(owner.initial) as never;
   const writes: Promise<void>[] = [];
-  form.dataChange.subscribe((data) => writes.push(pane.changed(data, owner)));
+  form.dataChange.subscribe((data) =>
+    writes.push(pane.changed(data, owner, form)),
+  );
   form.ngOnChanges({ schema: {} as never });
+  const target = (value: string) =>
+    ({ target: { value, setCustomValidity() {} } }) as unknown as Event;
   return {
     pane,
+    /** What the box shows, and the text a person leaves in it. */
+    box: () => form.jsonText(["value"]),
+    type: (text: string) => form.setJson(["value"], target(text), null),
+    settled: () => Promise.all(writes),
     enter: async (value: unknown) => {
-      form.write(["value"], value);
+      form.setJson(["value"], target(JSON.stringify(value)), null);
       await Promise.all(writes);
     },
   };
@@ -221,6 +238,89 @@ describe.each([
     expect(opened.pane.problem()).toBe(
       "root_event_id isn't one of the platform event's fields.",
     );
+  });
+});
+
+describe("the manual form's box", () => {
+  it("shows the event as it's kept once its real IDs are replaced", async () => {
+    const f = setup();
+    const { box, enter } = manualPane(f);
+    await enter(realEvent());
+    for (const id of Object.values(REAL)) expect(box()).not.toContain(id);
+    expect(box()).toBe(JSON.stringify(kept(f.controller), null, 2));
+    // What comes next is an edit of that event.
+    const next = JSON.parse(box()) as Event;
+    next.transaction.business_key = "REF-5";
+    await enter(next);
+    expect(kept(f.controller)).toEqual(next);
+  });
+
+  it("keeps the text a person types when nothing in it is replaced", async () => {
+    const f = setup();
+    const { box, enter } = manualPane(f);
+    await enter(realEvent());
+    const compact = JSON.stringify(JSON.parse(box()));
+    await enter(JSON.parse(compact));
+    expect(box()).toBe(compact);
+  });
+
+  it("keeps text that isn't JSON yet, and shows the kept event once it is", async () => {
+    const f = setup();
+    const { box, type, settled } = manualPane(f);
+    const text = JSON.stringify(realEvent());
+    type(text);
+    type(text.slice(0, -1));
+    await settled();
+    expect(kept(f.controller).event_id).toMatch(SAMPLE_ID);
+    expect(box()).toBe(text.slice(0, -1));
+    type(text);
+    await settled();
+    expect(box()).toBe(JSON.stringify(kept(f.controller), null, 2));
+  });
+
+  it("shows the last of two changes, never the first one's event over it", async () => {
+    const f = setup();
+    const { box, type, settled } = manualPane(f);
+    type(JSON.stringify(realEvent()));
+    type(JSON.stringify(realEvent({ business_key: "REF-2" })));
+    await settled();
+    expect(kept(f.controller).transaction.business_key).toBe("REF-2");
+    expect(box()).toBe(JSON.stringify(kept(f.controller), null, 2));
+  });
+
+  it("keeps a refused change that came while an event was being kept, and its problem", async () => {
+    const f = setup();
+    const { pane, box, type, settled } = manualPane(f);
+    type(JSON.stringify(realEvent()));
+    await Promise.resolve();
+    const refused = JSON.stringify({ ...realEvent(), root_event_id: "x" });
+    type(refused);
+    await settled();
+    expect(kept(f.controller).event_id).toMatch(SAMPLE_ID);
+    expect(box()).toBe(refused);
+    expect(pane.problem()).toBe(
+      "root_event_id isn't one of the platform event's fields.",
+    );
+  });
+
+  it("shows the kept events of a workflow's own input in its fields", async () => {
+    const f = setup({
+      type: "object",
+      properties: {
+        event: { type: "object" },
+        note: { type: "string" },
+      },
+    });
+    const pane = runInInjectionContext(f.injector, () => new TestEventPane());
+    pane.session = signal(f.session) as never;
+    const owner = pane.forms()[0]!;
+    const shown: unknown[] = [];
+    await pane.changed({ event: realEvent(), note: "x" }, owner, {
+      showData: (data: unknown) => shown.push(data),
+    } as unknown as TaskForm);
+    expect(shown).toEqual([f.controller.testEvent()]);
+    for (const id of Object.values(REAL))
+      expect(JSON.stringify(shown)).not.toContain(id);
   });
 });
 
