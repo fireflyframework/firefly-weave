@@ -206,5 +206,16 @@ test.describe("a transaction in step details at 360x640", () => {
     expect(boxes[1].y).toBeGreaterThan(boxes[0].y + boxes[0].height);
     expect(boxes[2].y).toBeGreaterThan(boxes[1].y + boxes[1].height);
     for (const box of boxes) expect(box.height).toBeGreaterThanOrEqual(44);
+    // Every duration fills the column the tries do.
+    const widths = await Promise.all(
+      ["holdSeconds", "undoRetry.maxDelaySeconds", "undoTimeout"].map(
+        async (id) =>
+          (await details.field(id).locator(".param-duration").boundingBox())!
+            .width,
+      ),
+    );
+    expect(new Set(widths.map(Math.round))).toEqual(
+      new Set([Math.round(boxes[0].width)]),
+    );
   });
 });

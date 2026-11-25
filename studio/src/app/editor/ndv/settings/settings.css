@@ -118,15 +118,22 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-caption);
   color: var(--muted);
 }
-.settings-form [data-param="undoRetry"] .param-duration {
+.settings-form
+  :is(
+    [data-param="undoRetry"],
+    [data-param="holdSeconds"],
+    [data-param="undoTimeout"]
+  )
+  .param-duration {
   width: 100%;
 }
 @container (min-width: 480px) {
   .settings-form [data-param="undoRetry"] .param-group {
     grid-template-columns: 96px repeat(2, minmax(0, 176px));
   }
-  .settings-form [data-param="holdSeconds"] .param-duration,
-  .settings-form [data-param="undoTimeout"] .param-duration {
+  .settings-form
+    :is([data-param="holdSeconds"], [data-param="undoTimeout"])
+    .param-duration {
     width: 168px;
   }
 }
