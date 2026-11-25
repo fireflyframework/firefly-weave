@@ -757,6 +757,33 @@ test.describe("on a record's own width", () => {
   });
 });
 
+// A browser draws a date as wide as its own words: Linux needs 42 px more than
+// macOS for the same filters, so the row that fits both also fits 1400 px.
+test.describe("at 1400x900", () => {
+  test.use({ viewport: { width: 1400, height: 900 }, timezoneId: "UTC" });
+
+  test("the inbox's filters hold one row, with a code's room to read", async ({
+    page,
+  }) => {
+    await transactionsPlatform(page, { capabilities: reconciler });
+    await page.goto("/operate/incidents");
+    const filters = page.getByRole("search", { name: "Filter incidents" });
+    const fields = filters.locator(".field");
+    await expect(fields).toHaveCount(7);
+    const tops = await fields.evaluateAll((parts) =>
+      parts.map((part) => part.getBoundingClientRect().top),
+    );
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+    const widths = await filters
+      .locator("input:not([type])")
+      .evaluateAll((parts) =>
+        parts.map((part) => part.getBoundingClientRect().width),
+      );
+    expect(widths).toHaveLength(3);
+    for (const width of widths) expect(width).toBeGreaterThanOrEqual(100);
+  });
+});
+
 test.describe("at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
 

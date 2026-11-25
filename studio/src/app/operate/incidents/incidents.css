@@ -203,6 +203,18 @@ weave-operate-state {
 .operate-filters input:not([type="checkbox"], [type="datetime-local"]) {
   width: 16ch;
 }
+/* A text filter gives up a little of its width before a filter leaves the row:
+   each browser draws its dates at a width of its own. */
+@media (min-width: 768px) {
+  .operate-filters
+    .field:has(input:not([type="checkbox"], [type="datetime-local"])) {
+    flex: 1 1 108px;
+    max-width: max-content;
+  }
+  .operate-filters input:not([type="checkbox"], [type="datetime-local"]) {
+    max-width: 100%;
+  }
+}
 @media (max-width: 767px), (pointer: coarse) {
   .operate-filters input:not([type="checkbox"]),
   .operate-filters select,
