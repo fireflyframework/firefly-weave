@@ -271,6 +271,40 @@ describe("the later reads grouping would break", () => {
     ).toEqual(["notify /steps/add/output", "notify /steps/hold/error/code"]);
   });
 
+  it("are found in a field named like an operator, never in literal data", () => {
+    const reading = (value: unknown) =>
+      listed(
+        group(
+          holding([
+            transform("hold"),
+            transform("add"),
+            step({ id: "notify", kind: "transform", value }),
+          ]),
+          0,
+          1,
+        ).outsideReads,
+      );
+    const read = { ref: "/steps/hold/output" };
+    const found = ["notify /steps/hold/output"];
+    for (const name of ["literal", "object", "array", "ref", "op"])
+      expect(reading({ object: { [name]: read } }), name).toEqual(found);
+    expect(
+      reading({ object: { object: { object: { literal: read } } } }),
+    ).toEqual(found);
+    expect(
+      reading({
+        op: { name: "coalesce", args: [{ object: { literal: read } }] },
+      }),
+    ).toEqual(found);
+    for (const data of [
+      { literal: read },
+      { literal: { object: { literal: read } } },
+      { object: { literal: { literal: read } } },
+      { array: [{ literal: read }] },
+    ])
+      expect(reading(data), JSON.stringify(data)).toEqual([]);
+  });
+
   it("are found in paths, undo steps, results and the workflow's own", () => {
     const workflow = holding(
       [

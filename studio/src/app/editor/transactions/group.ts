@@ -127,19 +127,23 @@ function readsOf(
     path: (string | number)[],
     holder: string,
     elsewhere: ReadonlySet<unknown>,
+    named = false,
   ) => {
     if (!value || typeof value !== "object" || elsewhere.has(value)) return;
-    for (const [key, item] of Object.entries(value)) {
+    const entries = Object.entries(value);
+    // The keys of an object's fields are names a person gave, not operators.
+    const alone = !named && !Array.isArray(value) && entries.length === 1;
+    for (const [key, item] of entries) {
       // Literal content is data, never a reference.
-      if (key === "literal") continue;
+      if (alone && key === "literal") continue;
       const at = [...path, Array.isArray(value) ? Number(key) : key];
       const step =
-        key === "ref" && typeof item === "string"
+        alone && key === "ref" && typeof item === "string"
           ? /^\/steps\/([^/]+)(?:\/|$)/.exec(item)?.[1]
           : undefined;
       if (step !== undefined && ids.has(step))
         found.push({ path: at, ref: item as string, holder });
-      else read(item, at, holder, elsewhere);
+      else read(item, at, holder, elsewhere, alone && key === "object");
     }
   };
   const visit = (steps: readonly Step[], path: (string | number)[]) =>
