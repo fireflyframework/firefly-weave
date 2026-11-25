@@ -574,7 +574,7 @@ test.describe("a later step of a workflow a platform event starts", () => {
     const paste = pane.getByRole("button", { name: "Paste a sample event" });
     // Nothing has compared them yet.
     await expect(pane).toContainText(
-      "The next check says whether this workflow's input takes the platform event.",
+      "Not checked yet. Select Validate to see whether this workflow's input takes the platform event.",
     );
     await expect(generate).toBeDisabled();
     answer();

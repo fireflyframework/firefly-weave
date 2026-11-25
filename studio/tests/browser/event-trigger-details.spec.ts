@@ -360,7 +360,7 @@ test.describe("the Platform event trigger's Parameters", () => {
     const dialog = await openEventTrigger(page, details);
     const input = inputSection(dialog);
     await expect(input).toContainText(
-      "The next check says whether this workflow's input takes the platform event.",
+      "Not checked yet. Select Validate to see whether this workflow's input takes the platform event.",
     );
     await expect(input).not.toContainText("Runs start with");
     answer();

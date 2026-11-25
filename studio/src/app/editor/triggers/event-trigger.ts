@@ -273,7 +273,7 @@ export const INPUT_REFUSED =
 export const INPUT_UNSURE =
   "Studio can't confirm that the platform event fits this workflow's input.";
 export const INPUT_UNREAD =
-  "The next check says whether this workflow's input takes the platform event.";
+  "Not checked yet. Select Validate to see whether this workflow's input takes the platform event.";
 
 /**
  * The state of the workflow's input as the last check left it; a check that
