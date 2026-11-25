@@ -273,6 +273,7 @@ SPDX-License-Identifier: Apache-2.0
           }
           <!-- A run that happened connects nothing: no handles. -->
           @for (output of viewingRuns() ? [] : l.handles; track output.key) {
+            @let tap = touchTap(output);
             @if (outputButton(output.key); as port) {
               <!-- A step's Error output: drag from it, or Enter, to add a step to its error path. -->
               <button
@@ -285,11 +286,12 @@ SPDX-License-Identifier: Apache-2.0
                 data-action="insert"
                 [attr.data-handle]="output.key"
                 [attr.data-tone]="output.tone ?? null"
+                [attr.data-tap]="tap"
                 [attr.data-insert-owner]="port.insert.owner"
                 [attr.data-insert-index]="port.insert.index"
                 [style.left.px]="output.x - 6 + handleOffset(output.tile)"
                 [style.top.px]="output.y - 6"
-                [style.--zoom]="view.zoom"
+                [style.--zoom]="tap ? view.zoom : null"
                 [attr.aria-label]="port.name"
                 [attr.title]="port.name"
                 [attr.tabindex]="port.tabIndex"
@@ -310,9 +312,10 @@ SPDX-License-Identifier: Apache-2.0
                 [class.connecting]="band?.key === output.key"
                 [attr.data-handle]="output.key"
                 [attr.data-tone]="output.tone ?? null"
+                [attr.data-tap]="tap"
                 [style.left.px]="output.x - 6 + handleOffset(output.tile)"
                 [style.top.px]="output.y - 6"
-                [style.--zoom]="view.zoom"
+                [style.--zoom]="tap ? view.zoom : null"
                 aria-hidden="true"
               ></span>
             }
