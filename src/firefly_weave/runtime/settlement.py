@@ -57,14 +57,17 @@ def spends_reserve(event: RuntimeEvent, result: Transition) -> bool:
     """Whether a transition is settlement work, which spends the run's control reserve like a stop does.
 
     Undoing a transaction is part of stopping its run, so it never waits for quota: a cancel or timeout that undoes
-    transactions first, a transaction's own deadlines, results of confirms, cancels and undos, and results of steps
-    still in flight while their transaction goes back. A transition that ends the run is a stop already.
+    transactions first, a force end that leaves others to undo, a transaction's own deadlines, results of confirms,
+    cancels and undos, and results of steps still in flight while their transaction goes back. A transition that ends
+    the run is a stop already.
     """
     state = result.state
     if state.status in {"succeeded", "failed", "cancelled", "timed_out"} or state.unavailable:
         return False
     if event.type in {"cancelled", "timed_out"}:
         return state.ending is not None
+    if event.type == "incident_resolved" and event.data.get("kind") == "terminate" and state.ending is not None:
+        return True
     return settling(event, result) and only_settlement(result)
 
 

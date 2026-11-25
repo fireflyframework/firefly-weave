@@ -41,6 +41,13 @@ FINISHED = {
     "participants": [{"instance_key": key, "outcome": "confirmed"} for key in ("hold", "hold2")],
     "blockOutput": "moved",
 }
+NOTIFY = {
+    "id": "notify",
+    "kind": "action",
+    "uses": "notify.send-message@1.0.0",
+    "with": {"object": {"text": {"ref": "/input/moveId"}}},
+    "irreversible": True,
+}
 LOOKUP = {
     "id": "lookup",
     "kind": "action",
@@ -164,6 +171,18 @@ async def left_by_an_earlier_version(platform, reconciler, monkeypatch, how: str
     assert (state["status"], set(state["incidents"])) == ("suspended", {other})
     assert "transaction_rules" not in state
     return run, (await by_key(platform, run.id))[other]
+
+
+async def due(platform, run_id, wait: str, *field: str) -> None:
+    """The time of a wait, or of a transaction's deadline, has passed: ``field`` is where the run's state keeps it."""
+    await platform.execute(
+        "WITH due AS (UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second' "
+        "WHERE run_id=:run AND node_id=:wait RETURNING run_id,deadline) UPDATE runs SET state="
+        "jsonb_set(state,cast(:field AS text[]),to_jsonb(due.deadline)) FROM due WHERE runs.id=due.run_id",
+        run=run_id,
+        wait=wait,
+        field=list(field),
+    )
 
 
 async def confirm_stuck(platform):

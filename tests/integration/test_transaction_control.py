@@ -21,7 +21,15 @@ import json
 from uuid import uuid4
 
 import pytest
-from stuck_transactions import active, confirm_stuck, left_by_an_earlier_version, resolve
+from stuck_transactions import (
+    NOTIFY,
+    active,
+    beside,
+    confirm_stuck,
+    left_by_an_earlier_version,
+    resolve,
+    stuck,
+)
 from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
@@ -335,3 +343,33 @@ async def test_force_end_works_at_a_full_byte_quota(platform, reconciler):
         )
     assert (await platform.state(run.id))["status"] == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_force_end_works_at_a_full_byte_quota_while_another_transaction_goes_back(platform, reconciler):
+    """Stuck after its point of no return, and another transaction to undo: Force end leaves the run ending."""
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(submit(), NOTIFY), other)])))
+    await platform.complete(await platform.lease("submit"))
+    await platform.complete(platform.leased.pop("hold3"))
+    held = await stuck(platform, run.id, "notify")
+    await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+    await resolve(platform, held["notify:1"], "terminate", actor=reconciler)
+    state = await platform.state(run.id)
+    assert (state["status"], state["ending"]["status"]) == ("waiting", "cancelled")
+    assert (await platform.record(run.id))["state"] == "force_ended"
+    await platform.fail(platform.leased.pop("add3"), "REFUSED", outcome="failed")
+    await platform.scan()
+    await platform.complete(await platform.lease("add3#undo"))
+    await platform.complete(await platform.lease("hold3#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+
+
+async def test_a_retry_after_the_point_of_no_return_waits_for_quota_like_forward_work(platform):
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(submit(), NOTIFY), other)])))
+    await platform.complete(await platform.lease("submit"))
+    held = await stuck(platform, run.id, "notify")
+    await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+    with pytest.raises(CatalogError) as refused:
+        await resolve(platform, held["notify:1"], "retry_safe")
+    assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")

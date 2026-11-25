@@ -27,12 +27,14 @@ from stuck_transactions import (
     CONFIRMS,
     FINISHED,
     LOOKUP,
+    NOTIFY,
     PAUSE,
     STEPS,
     active,
     beside,
     by_key,
     confirm_stuck,
+    due,
     failed_beside,
     left_by_an_earlier_version,
     reconcile,
@@ -56,14 +58,6 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.definitions.models import CatalogError
 
 pytestmark = pytest.mark.integration
-
-NOTIFY = {
-    "id": "notify",
-    "kind": "action",
-    "uses": "notify.send-message@1.0.0",
-    "with": {"object": {"text": {"ref": "/input/moveId"}}},
-    "irreversible": True,
-}
 
 
 @pytest.fixture
@@ -881,12 +875,7 @@ async def called_step_unknown(platform):
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
     await platform.scan()
-    await platform.execute(
-        "WITH due AS (UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second' "
-        "WHERE run_id=:run AND node_id='move#decide' RETURNING run_id,deadline) UPDATE runs SET state="
-        "jsonb_set(state,'{transactions,move,decide_by}',to_jsonb(due.deadline)) FROM due WHERE runs.id=due.run_id",
-        run=run.id,
-    )
+    await due(platform, run.id, "move#decide", "transactions", "move", "decide_by")
     await platform.scan()
     incident = await active(platform, run.id)
     assert (incident["incident_key"], incident["code"]) == ("order:0", "WV-TXN-PIVOT-UNKNOWN")
