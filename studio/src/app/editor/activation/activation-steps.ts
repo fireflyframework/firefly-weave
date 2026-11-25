@@ -349,6 +349,8 @@ export class ActivationSteps implements OnInit {
    * replaces; null when it has none, undefined when Studio can't read it.
    */
   readonly replaces = signal<number | null | undefined>(undefined);
+  /** The person may not read the activations here. */
+  readonly replacesForbidden = signal(false);
   /** After the activation: what happened to each trigger row, by its place in the list. */
   readonly results = signal<ReadonlyMap<number, SyncResult>>(new Map());
   readonly synced = signal(false);
@@ -665,6 +667,9 @@ export class ActivationSteps implements OnInit {
         : [],
       this.activationsHere().catch((error: unknown) => {
         couldnt(error);
+        this.replacesForbidden.set(
+          error instanceof ApiError && error.status === 403,
+        );
         return { items: [], complete: false };
       }),
     ]);

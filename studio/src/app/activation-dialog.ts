@@ -643,9 +643,14 @@ export class ActivationDialog implements OnInit {
   /** Why the platform refused to replace an activation Studio didn't name. */
   stale(): string {
     const refused = `${this.workflowName()} wasn't activated: the workflow`;
-    return this.steps()?.replaces() === undefined
-      ? `${refused} is active here already, and Studio couldn't read the activation to replace. Ask for permission to read the catalog here, then activate again.`
-      : `${refused} was activated here since you opened this. Close this and activate again to replace that activation.`;
+    const steps = this.steps();
+    if (steps?.replaces() !== undefined)
+      return `${refused} was activated here since you opened this. Close this and activate again to replace that activation.`;
+    return `${refused} is active here already, and Studio couldn't read the activation to replace. ${
+      steps?.replacesForbidden()
+        ? "Ask for permission to read the catalog here, then activate again."
+        : "Close this and activate again."
+    }`;
   }
   text(event: Event) {
     return (event.target as HTMLInputElement).value;

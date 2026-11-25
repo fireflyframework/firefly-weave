@@ -319,6 +319,35 @@ test("without the activations' list it says why the platform refused to replace 
   expect(activations.ifMatch).toEqual([null]);
 });
 
+test("after the activations' list failed once, closing and activating again replaces the activation", async ({
+  page,
+}) => {
+  const { activations } = await platform(page);
+  activations.items.push(active(1));
+  await bindable(page, [PETS]);
+  let failing = true;
+  await page.route("**/environments/development/activations?*", (r) =>
+    failing
+      ? r.fulfill({
+          status: 503,
+          json: { status: 503, code: "WV-UNAVAILABLE", message: "Later." },
+        })
+      : r.fallback(),
+  );
+  const dialog = await openActivation(page, [], false);
+  await activate(page).click();
+  await expect(dialog.locator(".activation-problem")).toContainText(
+    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read the activation to replace. Close this and activate again.",
+  );
+  failing = false;
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await command(page, "Activate…");
+  await expect(dialog.getByRole("status")).toHaveCount(0);
+  await activate(page).click();
+  await expect(dialog).toHaveCount(0);
+  expect(activations.ifMatch).toEqual([null, '"1"']);
+});
+
 test("a called workflow pins its current activation", async ({ page }) => {
   const captured = await platform(page);
   await bindable(page, [PETS]);
