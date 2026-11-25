@@ -64,7 +64,10 @@ verified result, also give its evidence reference and the result as JSON.
 Studio sends the incident's revision and a new receipt, and reuses that receipt
 if you send the same decision again after a lost answer. If someone changed the
 incident first, it asks you to refresh it and decide again. The steps below do
-the same from the CLI.
+the same from the CLI. Transactions in doubt come first, under **High
+priority**, and offer their own decisions instead of **Resolve incident**;
+[See and resolve transactions in Operations](../guides/transactions.md#see-and-resolve-transactions-in-operations)
+describes them.
 
 Run the commands with a saved platform and workspace from `weave auth setup` (see
 [how remote commands choose a platform](../guides/connect-to-api.md#how-remote-commands-choose-a-platform)).
@@ -285,6 +288,28 @@ recovery scan. Only a failure that recovery still handles is refused. Force end
 doesn't wait. A record that doesn't fit the transaction answers HTTP 422
 `WV-RUNTIME-OUTPUT`. The audit record adds the transaction's key and, for a
 reconciliation, how it ended.
+
+A refused decision changes nothing:
+
+| Answer | Why | What to do |
+| --- | --- | --- |
+| HTTP 403 `WV-FORBIDDEN` | The token, or the principal it names, lacks `incident.resolve`, or `transaction.reconcile` for anything but `retry_safe` | Ask someone who holds both for the whole environment |
+| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` on `WV-TXN-PIVOT-UNKNOWN`, anything but `terminate` on `WV-TXN-RUN-OVERSIZED`, `accept_reconciled_failure` on any other code, or a reconciliation without `evidence_reference` or `output` | Send a decision that fits the code, with both |
+| HTTP 409 `WV-RUNTIME-STATE` | The step's latest attempt or child run is still running, a failure of the transaction is still handled, or the incident is no longer active | Read the incident again; decide once the step ended or the next recovery scan ran |
+| HTTP 409 `WV-INCIDENT-REVISION` | The incident changed since you read it | Read it again, and check every step again |
+| HTTP 422 `WV-RUNTIME-OUTPUT` | The record doesn't fit the transaction, or the output doesn't fit its schema | Read the incident again: a step may have changed. Then correct the record |
+
+**Name every step you checked.** The platform refuses a record that leaves out a
+stuck step. It accepts one that leaves out a step that is still running or whose
+result it doesn't have, and then stops that step where it is. Studio's
+**Mark as reconciled** asks about each of those steps for the ending you choose,
+and sends the ones you tick.
+
+**Cases.** When a transaction's settle timeout waits for a called run whose own
+transaction is in doubt, the two incidents name each other: `waits_on` on the
+caller's, `held_by` on the called run's. Resolve the called run's first; then
+the caller's `waits_on` is left out, and `retry_safe` waits again for its steps.
+The [API reference](api.md) lists the fields and who sees them.
 
 When the rollback stops a failed step before recovery decides what follows (for
 example, the hold time passes or the run is canceled), recovery no longer

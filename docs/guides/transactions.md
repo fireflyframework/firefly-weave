@@ -280,6 +280,106 @@ start never suspends a run or opens an incident:
 The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
 `blocked`).
 
+## See and resolve transactions in Operations
+
+Studio's **Operate** pages show every transaction of the environment and offer
+the decisions of steps 4 and 5. Each needs its own permission:
+
+| To | You need |
+| --- | --- |
+| See transactions in **Runs**, in a run's detail, and in **Overview** | `run.read` |
+| See the transactions in doubt in **Incidents** | `incident.read` |
+| Retry, or wait again | `incident.resolve` |
+| Make any other decision on a transaction in doubt | `incident.resolve` and `transaction.reconcile` |
+| **Cancel run** | `run.cancel` |
+| **Cancel without undoing** | `run.cancel` and `transaction.reconcile` |
+
+The `operator` role holds the first three and `run.cancel` (with `viewer` for
+`run.read`); only `transaction_reconciler` holds `transaction.reconcile`. An
+incident's decision that you may not make stays in view, disabled, with the role
+it needs.
+
+A business key shows as text on these pages. It never enters an address, a page
+title, a notice, the name of an exported file, or a request to Weave AI.
+
+### Find the runs that need attention
+
+In **Operate › Runs**, the **Transaction** column shows the state of the run's
+worst transaction: **Open**, **Deciding**, **Finishing**, **Completed**,
+**Undoing**, **Undone**, **Canceled**, **In doubt**, **Reconciled**, or **Force
+ended**. A run without transactions has none.
+
+Check **Needs attention** to list only the runs with a transaction in doubt, or
+choose any states under **More filters › Transaction**. Both look in the time
+range you chose, and the list says which when it finds none.
+
+### Read what a transaction did
+
+A run's detail has a **Transactions** section after its graph. Each transaction
+shows its state, its business key, and why it left its normal path, and then a
+row per step: how it is undone, what happened forward and in its undo or
+confirm, how many tries that took, the run it called, and its operation key to
+copy into the other system. Below them are the moments of the transaction and,
+once someone resolved it, how, why, and with what evidence. A transaction that
+completed with nothing to resolve folds to one line.
+
+In a transaction in doubt or force ended, look for these two words first. They
+mark what other systems still hold:
+
+- **Still reserved**: the reservation was made, and nobody confirmed or released
+  it.
+- **Not undone**: the step went through, and nothing reversed it.
+
+### Resolve a transaction in doubt
+
+**Operate › Incidents** lists the transactions in doubt first, under **High
+priority**, each with its business key. When a run waits for a called run that
+is in doubt, both incidents are one **case** that names the one to resolve
+first: the called run's. Its drawer names the waiting run under **Held by**, and
+the waiting run's names the called one under **Waits on**.
+
+Open an incident to read its record and choose among the decisions that fit it:
+
+| Decision | Offered when | Asks for |
+| --- | --- | --- |
+| **Retry the undo**, **the release**, **the confirm**, or **the step** | That is what couldn't finish | A reason |
+| **Wait again** | Steps were still running when the time to undo ran out | A reason |
+| **Mark as reconciled** | Any of those | How it ended, the steps you checked, the transaction's result when it finished, a reason, and an evidence reference |
+| **It happened** or **It didn't happen** | Nobody knows whether the step that can't be undone went through | The step's result (only when it happened), a reason, and an evidence reference |
+| **Force end** | Always; it is the only one for a run too large to undo | A reason, and the run's short ID typed |
+
+**Mark as reconciled** lists every step whose end Weave doesn't know for the
+ending you choose, with its operation key. Check each one in its own system
+before you tick it. With **Undone**, you confirm that each step was reversed or
+released, and that a step still running is stopped; with **Finished**, that each
+one was confirmed or went through. Weave then stops whatever is left and takes
+your word, so a step you didn't check stays as that system has it.
+
+**Force end** first lists what **stays done in other systems**.
+
+If someone changed the incident meanwhile, Studio asks you to refresh it. When a
+step changed too, you tick the steps again; what you typed stays. If the answer
+to your decision was lost, send it again unchanged: the same receipt makes that
+safe.
+
+### Stop a run from its detail
+
+**Cancel run** on a run with a transaction that isn't finished undoes it before
+the run ends. **Cancel without undoing** lists what stays done in other systems
+and asks for a reason and the run's short ID. While a transaction is in doubt,
+neither is sent: **Open incident** takes you to the decision it waits for.
+
+### Know when a transaction is in doubt
+
+**Operate › Overview** counts the transactions in doubt and those being undone,
+with the age of the oldest, and lists in-doubt incidents first among the
+incidents that need attention. **Show runs that need attention** opens the runs
+of the last 400 days with a transaction in doubt.
+
+Every environment has the alert rule **Transactions in doubt** (critical, at
+once). See [Alerts](../operations/observability.md#alerts) for the rule and the
+two signals about transactions.
+
 ## Test a step that takes part in a transaction
 
 A debug session simulates a transaction with mocks for each step and for its
