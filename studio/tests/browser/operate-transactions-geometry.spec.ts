@@ -21,7 +21,13 @@ SPDX-License-Identifier: Apache-2.0
 // scrolls sideways, no operation key or word is cut, every target is full
 // size, and what a person must see first is in view.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { caller, ids, loop, runs } from "../transaction-incidents-fixture";
+import {
+  caller,
+  held,
+  ids,
+  loop,
+  runs,
+} from "../transaction-incidents-fixture";
 import { otherRuns } from "../operate-transactions-fixture";
 import { environment } from "./incidents-po";
 import {
@@ -359,19 +365,37 @@ for (const size of sizes)
         page.locator(".notice.incident"),
         page.locator(".run-controls"),
       ];
+      const steps = page.locator(".incident-steps");
+      await expect(steps.getByRole("button")).toHaveText([
+        "Open incident",
+        "Go to the transaction",
+      ]);
       const blocked = page.locator(".cancel-blocked");
       await expect(blocked).toContainText(
         "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.",
       );
-      if (size.width >= 1440 || size.width === 360)
-        await expectInView(page, ...parts);
-      if (size.width >= 1440) await expectInView(page, blocked);
+      if (size.width >= 1440)
+        await expectInView(page, ...parts, steps, blocked);
+      if (size.width === 360)
+        await expectInView(page, parts[0], parts[1], steps);
+      await expectTargets(steps, "button:not(.text-link)", control(size));
+      await expectTargets(steps, "button.text-link", large(size) ? 44 : 24);
       await expectTargets(
         page.locator(".run-controls"),
         "button",
         control(size),
       );
-      await expectNoSideways(page);
+      await expectNoSideways(page, page.locator(".notice.incident"));
+      // The reason's icon stands beside its first line, also where it wraps.
+      const sign = await box(blocked.locator("weave-icon"));
+      const reason = await box(blocked.locator("#cancel-blocked-reason"));
+      expect(sign.right).toBeLessThanOrEqual(reason.x);
+      expect(Math.abs(sign.y - reason.y)).toBeLessThanOrEqual(4);
+      // The run's state sits on the line of its key and its ID, where they fit.
+      const pill = await box(page.locator(".run-meta .status-pill"));
+      const key = await box(page.locator(".run-meta .meta-item").first());
+      if (key.x > pill.right)
+        expect(pill.y + pill.height / 2).toBeCloseTo(key.y + key.height / 2, 0);
       await transactionsOf(page)
         .getByRole("button", { name: "1 in doubt" })
         .click();
@@ -380,6 +404,62 @@ for (const size of sizes)
           name: /Transaction apply/,
         }),
       ).toBeFocused();
+    });
+
+    test("a run held whole keeps its ID and its state on one line, and what resolves it in view", async ({
+      page,
+    }) => {
+      const platform = await transactionsPlatform(page, {
+        capabilities: reconciler,
+        items: [held],
+      });
+      platform.runs = [
+        { ...platform.runs[5], id: runs.held },
+        ...platform.runs,
+      ];
+      await page.goto(`/operate/runs/${runs.held}`);
+      const step = page.getByRole("button", { name: "Show in Incidents" });
+      await expect(step).toBeVisible();
+      // Without a business key, the state, the ID and its Copy share a line.
+      const id = page.locator(".run-id");
+      const parts = [
+        await box(id),
+        await box(id.locator("code")),
+        await box(id.getByRole("button")),
+      ];
+      // Each of its words is whole on that line.
+      expect(
+        await id.evaluate((element) => {
+          const lines: Record<string, number> = {};
+          const texts = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+          );
+          for (let text = texts.nextNode(); text; text = texts.nextNode()) {
+            if (!text.textContent!.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(text);
+            lines[text.textContent!.trim()] = range.getClientRects().length;
+          }
+          return lines;
+        }),
+      ).toEqual({ "Run ID": 1, [runs.held.slice(0, 8)]: 1, Copy: 1 });
+      for (const part of parts)
+        expect(part.y + part.height / 2).toBeCloseTo(
+          parts[0].y + parts[0].height / 2,
+          0,
+        );
+      expect(await cutText(page.locator(".run-meta"), "code, button")).toEqual(
+        [],
+      );
+      if (size.width >= 1440 || size.width === 360)
+        await expectInView(page, page.locator(".notice.incident"), step);
+      const blocked = page.locator(".cancel-blocked");
+      await expect(blocked).toHaveText(
+        "This run is held, so it can't be canceled. Force end it from its incident.",
+      );
+      if (size.width >= 1440) await expectInView(page, blocked);
+      await expectNoSideways(page);
     });
 
     test("the inbox shows the band in doubt first, its case on the list's own columns", async ({
