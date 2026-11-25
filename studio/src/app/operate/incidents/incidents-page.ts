@@ -626,7 +626,7 @@ interface Band {
           [busy]="sending.has(selected.id) || rereading"
           [failure]="failure"
           [refreshing]="refreshing"
-          [unread]="!!refusedRecord && !rereading"
+          [unread]="rereading ? null : refusedRecord"
           (decide)="resolve($event)"
           (dismiss)="stopDeciding(action)"
           (refresh)="reloadIncident()"

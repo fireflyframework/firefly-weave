@@ -1403,6 +1403,41 @@ test("a refused record whose steps are all known when read again says so, with n
   expect(sent[1].body.output).toEqual({ as: "compensated", participants: [] });
 });
 
+test("a result corrected while the refused record is unread isn't refused once it reads the same", async ({
+  page,
+}) => {
+  let failing = true;
+  const reads: Route[] = [];
+  const { sent, name, asked } = await refusedRecord(page, (route) =>
+    failing
+      ? refuse(route, 503, "WV-UNAVAILABLE", "Unavailable")
+      : reads.push(route),
+  );
+  await confirm(page, name).click();
+  const alert = asked.getByRole("alert");
+  await expect(alert).toContainText("couldn't read the incident again");
+  const result = field(page, name, "Result of the transaction (JSON)");
+  await result.fill('{"moved": true}');
+  // Corrected or not, it is still to be read, and to wait for while it is.
+  await expect(alert).toContainText("couldn't read the incident again");
+  failing = false;
+  const refresh = asked.getByRole("button", { name: "Refresh incident" });
+  await refresh.click();
+  await expect.poll(() => reads.length).toBe(1);
+  await expect(refresh).toHaveAttribute("aria-busy", "true");
+  await expect
+    .poll(() => described(page, name))
+    .toBe("To mark it as reconciled, refresh the incident.");
+  await reads[0].fulfill({ json: twoConfirms("confirming") });
+  await expect(alert).toHaveCount(0);
+  await expect(result).not.toHaveAttribute("aria-invalid");
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).toBeChecked();
+  await confirm(page, name).click();
+  await expect(asked).toHaveCount(0);
+  expect(sent).toHaveLength(2);
+});
+
 test("another decision is sent while a refused record is read again, and only it says how it went", async ({
   page,
 }) => {
