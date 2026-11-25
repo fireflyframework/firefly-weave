@@ -96,24 +96,6 @@ def settling(event: RuntimeEvent, result: Transition) -> bool:
     )
 
 
-def ignored_after_person(event: RuntimeEvent, result: Transition) -> bool:
-    """Whether an event was the late result of work a person already settled by hand (a transaction they marked
-    reconciled or force ended): the kernel changes nothing for it, and Operations counts it, because such a result
-    may show the person's record was wrong."""
-    name = event.data.get("node_id")
-    if not isinstance(name, str) or result.steps or result.commands:
-        return False
-    try:
-        phase = split_phase(name)
-    except ValueError:
-        return False
-    key = phase[0] if phase is not None else name
-    return any(
-        record.status in {"reconciled", "force_ended"} and any(item.key == key for item in record.participants)
-        for record in result.state.transactions.values()
-    )
-
-
 def only_settlement(result: Transition) -> bool:
     """Whether a transition writes settlement work only: confirms, cancels and undos, a transaction's own deadlines,
     and the steps and joins of its transactions. One that also runs forward work (a step after a block a confirm

@@ -111,9 +111,13 @@ Mark as reconciled is refused (HTTP 409 `WV-RUNTIME-STATE`) while an attempt of
 one of the transaction's steps has just failed and Weave still handles that
 failure: wait a moment and send it again.
 
-A late result of work a person already ended changes nothing; it is counted
-(`weave.transaction_phases`, operation `transaction.late_result`), because it may
-mean the record was wrong. Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
+Once a person ends a transaction, a late result of its work changes nothing: a
+worker's report is refused with HTTP 409 `WV-LEASE` (or, when the run ended
+failed or canceled and the lease had not expired, kept as an `ignored` receipt),
+and a called workflow's result stays with its call. Weave doesn't count these,
+so if a worker logs one, check the record against the systems involved.
+
+Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
 an audited reason, and (except Force end) an evidence reference. See
 [Incident operations](../reference/incident-operations.md#transactions-in-doubt)
 for the request bodies.
