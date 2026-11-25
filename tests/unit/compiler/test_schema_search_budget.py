@@ -197,6 +197,39 @@ def test_a_stepped_cpu_clock_refuses_no_valid_search(monkeypatch):
     assert run(machine, monkeypatch, searches=20) == []
 
 
+@pytest.mark.parametrize("cost", [0.000_1, 0.000_125, 0.000_5, 0.003])
+def test_a_stepped_cpu_clock_still_bounds_the_cpu_time_of_all_searches(cost, monkeypatch):
+    # The clock shows nothing of most searches and a whole tick of a few, and those sums tell what all of them spent.
+    for start in (0.0, TICK / 2, TICK - cost / 2):
+        machine = Machine(cost, step=TICK)
+        machine.cpu = start
+        assert run(machine, monkeypatch, searches=5000) == REFUSED, start
+        assert 0.1 <= machine.cpu - start <= 0.1 + 3 * TICK + cost, start
+        # A document that spends less is accepted, also from a start that makes the clock show a tick too many.
+        machine = Machine(cost, step=TICK)
+        machine.cpu = start
+        assert run(machine, monkeypatch, searches=int(0.096 / cost)) == [], start
+
+
+def test_a_tick_that_another_thread_spent_refuses_no_valid_document(monkeypatch):
+    # 32 searches of 3 ms show seven ticks, 109 ms, and the eighth one lands on a search that only waited: 96 ms spent.
+    machine = Machine(0.003, step=TICK)
+    machine.cpu = TICK - 0.001
+    calls = 0
+    search = machine.search
+
+    def interrupted(value: str, *, timeout: float, concurrent: bool | None = None) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            machine.cpu += TICK
+            machine.elapsed += 0.1
+        return search(value, timeout=timeout, concurrent=concurrent)
+
+    machine.search = interrupted  # type: ignore[method-assign]
+    assert run(machine, monkeypatch, searches=32) == []
+
+
 def test_a_runaway_search_spends_little_cpu_time_and_never_waits_for_the_interpreter():
     go, ran = threading.Event(), threading.Event()
     other = threading.Thread(target=lambda: go.wait() and ran.set())

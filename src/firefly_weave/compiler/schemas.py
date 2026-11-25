@@ -408,7 +408,7 @@ class _Budget:
     def __init__(self, limits: SchemaLimits) -> None:
         self.limits = limits
         self.work = 0
-        self.regex_seconds = 0.0
+        self.regex_seconds = self.regex_cpu = self.regex_elapsed = 0.0
         self.regex_waited = 0.0
         self.patterns: dict[str, regex.Pattern[str]] = {}
 
@@ -448,7 +448,11 @@ class _Budget:
             if spent - _CPU_STEP >= allowed:
                 break
             if found is not None:
-                self.regex_seconds += spent
+                self.regex_cpu += cpu
+                self.regex_elapsed += elapsed
+                # A stepped clock shows nothing of most small searches and a whole step of a few, so only the sums tell
+                # what all of them spent. Two steps are left out, because the sum can be off by about that much.
+                self.regex_seconds = min(self.regex_cpu - 2 * _CPU_STEP, self.regex_elapsed)
                 return found
             self.regex_waited += elapsed
             if self.regex_waited >= self.limits.max_regex_seconds * _WAIT_PER_CPU_SECOND:
