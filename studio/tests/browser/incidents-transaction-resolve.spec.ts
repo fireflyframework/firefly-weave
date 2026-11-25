@@ -138,10 +138,10 @@ async function undone(page: Page) {
   const name = "Mark as reconciled";
   await offer(page, name).click();
   await ending(page, name, "Undone").check();
-  for (const key of ["hold", "add"])
+  for (const did of ["hold was released", "add was reversed"])
     await dialog(page, name)
       .getByRole("checkbox", {
-        name: `I confirmed ${key} was reversed in the other system.`,
+        name: `I confirmed ${did} in the other system.`,
       })
       .check();
   await field(page, name, "Reason").fill("The quantity is back");
@@ -565,7 +565,7 @@ test("Mark as reconciled names only what it still lacks, and drops the ticks of 
     );
   await asked
     .getByRole("checkbox", {
-      name: "I confirmed hold was reversed in the other system.",
+      name: "I confirmed hold was released in the other system.",
     })
     .check();
   await expect
@@ -676,7 +676,7 @@ test("a settle timeout asks about the steps it left, one still running among the
   const lines = asked.locator(".tick");
   await expect(lines).toHaveText([
     new RegExp(
-      `I confirmed hold was reversed in the other system\\.Still reserved · operation key ${runs.caller}:hold`,
+      `I confirmed hold was released in the other system\\.Still reserved · operation key ${runs.caller}:hold`,
     ),
     new RegExp(
       `I confirmed add is stopped and its change is reversed in the other system\\.Running · operation key ${runs.caller}:add`,

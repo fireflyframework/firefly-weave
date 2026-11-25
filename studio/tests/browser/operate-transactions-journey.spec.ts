@@ -532,7 +532,7 @@ test("from the runs that need attention to none in doubt, and no business key le
       await dialogOf.getByRole("radio", { name: /^Undone/ }).check();
       await dialogOf
         .getByRole("checkbox", {
-          name: "I confirmed hold[3] was reversed in the other system.",
+          name: "I confirmed hold[3] was released in the other system.",
         })
         .check();
       await expect(dialogOf).toContainText(

@@ -308,56 +308,93 @@ describe("the checklist", () => {
     },
   );
 
-  const STATUSES = [
-    "pending",
-    "dispatched",
-    "done",
-    "failed",
-    "unknown",
-    "skipped",
-    "cancelling",
-    "cancelled",
-    "cancel_stuck",
-    "undoing",
-    "undone",
-    "undo_stuck",
-    "confirming",
-    "confirmed",
-    "confirm_stuck",
-  ] as const;
+  // What a reconciliation must say of a step, by how it is undone and how
+  // Weave left it: the words a person signs when the transaction is undone,
+  // and whether it is asked about when it finished. Null and "no" are steps
+  // whose end is known; "its own" is asked about only when the incident waits
+  // for that step.
+  const REVERSED = "was reversed";
+  const STOPPED_REVERSED = "is stopped and its change is reversed";
+  const RELEASED = "was released";
+  const STOPPED_RELEASED = "is stopped and its reservation is released";
+  const NOTHING_LEFT = "has nothing left to undo";
+  const STOPPED_NOTHING_LEFT = "is stopped and has nothing left to undo";
+  const NEWER = "held_open" as Step["status"];
   it.each([
-    ["compensated", "reserve", "undone", "cancelled"],
-    ["compensated", "compensate", "undone", "cancelled"],
-    ["compensated", "irreversible", "undone", "cancelled"],
-    ["completed", "reserve", "confirmed"],
-    ["completed", "compensate", "confirmed", "done"],
-    ["completed", "irreversible", "confirmed", "done"],
+    ["reserve", "pending", null, "no"],
+    ["reserve", "dispatched", STOPPED_RELEASED, "yes"],
+    ["reserve", "done", RELEASED, "yes"],
+    ["reserve", "failed", null, "its own"],
+    ["reserve", "unknown", NOTHING_LEFT, "yes"],
+    ["reserve", "skipped", null, "no"],
+    ["reserve", "cancelling", STOPPED_RELEASED, "yes"],
+    ["reserve", "cancelled", null, "yes"],
+    ["reserve", "cancel_stuck", RELEASED, "yes"],
+    ["reserve", "undoing", STOPPED_RELEASED, "yes"],
+    ["reserve", "undone", null, "yes"],
+    ["reserve", "undo_stuck", RELEASED, "yes"],
+    ["reserve", "confirming", STOPPED_NOTHING_LEFT, "yes"],
+    ["reserve", "confirmed", REVERSED, "no"],
+    ["reserve", "confirm_stuck", NOTHING_LEFT, "yes"],
+    ["reserve", NEWER, STOPPED_NOTHING_LEFT, "yes"],
+    ["compensate", "pending", null, "no"],
+    ["compensate", "dispatched", STOPPED_REVERSED, "yes"],
+    ["compensate", "done", REVERSED, "no"],
+    ["compensate", "failed", null, "its own"],
+    ["compensate", "unknown", NOTHING_LEFT, "yes"],
+    ["compensate", "skipped", null, "no"],
+    ["compensate", "cancelling", STOPPED_REVERSED, "yes"],
+    ["compensate", "cancelled", null, "yes"],
+    ["compensate", "cancel_stuck", REVERSED, "yes"],
+    ["compensate", "undoing", STOPPED_REVERSED, "yes"],
+    ["compensate", "undone", null, "yes"],
+    ["compensate", "undo_stuck", REVERSED, "yes"],
+    ["compensate", "confirming", STOPPED_REVERSED, "yes"],
+    ["compensate", "confirmed", REVERSED, "no"],
+    ["compensate", "confirm_stuck", REVERSED, "yes"],
+    ["compensate", NEWER, STOPPED_NOTHING_LEFT, "yes"],
+    ["irreversible", "pending", null, "no"],
+    ["irreversible", "dispatched", STOPPED_REVERSED, "yes"],
+    ["irreversible", "done", REVERSED, "no"],
+    ["irreversible", "failed", null, "its own"],
+    ["irreversible", "unknown", NOTHING_LEFT, "yes"],
+    ["irreversible", "skipped", null, "no"],
+    ["irreversible", "cancelling", STOPPED_REVERSED, "yes"],
+    ["irreversible", "cancelled", null, "yes"],
+    ["irreversible", "cancel_stuck", REVERSED, "yes"],
+    ["irreversible", "undoing", STOPPED_REVERSED, "yes"],
+    ["irreversible", "undone", null, "yes"],
+    ["irreversible", "undo_stuck", REVERSED, "yes"],
+    ["irreversible", "confirming", STOPPED_REVERSED, "yes"],
+    ["irreversible", "confirmed", REVERSED, "no"],
+    ["irreversible", "confirm_stuck", REVERSED, "yes"],
+    ["irreversible", NEWER, STOPPED_NOTHING_LEFT, "yes"],
   ] as const)(
-    "as %s leaves out a %s step only when it ended %s, or nothing of it stays",
-    (as, mode, ...ended) => {
-      const left: readonly string[] = [
-        ...ended,
-        "failed",
-        "skipped",
-        "pending",
+    "of a %s step left %s says what must be said for either ending",
+    (mode, status, undone, finished) => {
+      const said = (key: string, as: "compensated" | "completed") =>
+        checklistRows(
+          about("WV-TXN-UNDO-STUCK", key, [step("hold", mode, status)]),
+          as,
+        ).map((row) => [row.sentence, ...row.outcomes]);
+      const line = (did: string, outcome: string) => [
+        [`I confirmed hold ${did} in the other system.`, outcome],
       ];
-      const incident = about(
-        "WV-TXN-UNDO-STUCK",
-        "other#undo",
-        STATUSES.map((status) => step(status, mode, status)),
-      );
-      expect(Object.keys(listed(incident, as))).toEqual(
-        STATUSES.filter((status) => !left.includes(status)),
-      );
-      expect(new Set(Object.values(listed(incident, as)))).toEqual(
-        new Set([
-          as === "compensated"
-            ? "undone"
-            : mode === "reserve"
-              ? "confirmed"
-              : "done",
-        ]),
-      );
+      const went =
+        mode === "reserve"
+          ? line("was confirmed", "confirmed")
+          : line("finished", "done");
+      // The same whether the incident is about another step, or this one.
+      for (const key of ["other#undo", "hold"]) {
+        expect(said(key, "compensated")).toEqual(
+          undone ? line(undone, "undone") : [],
+        );
+        expect(said(key, "completed")).toEqual(
+          finished === "yes" || (finished === "its own" && key === "hold")
+            ? went
+            : [],
+        );
+      }
     },
   );
 
@@ -375,14 +412,6 @@ describe("the checklist", () => {
     );
   });
 
-  it("asks of a step whose status Studio doesn't know, for either ending", () => {
-    const newer = about("WV-TXN-UNDO-STUCK", "other#undo", [
-      step("add", "compensate", "held_open" as Step["status"]),
-    ]);
-    expect(listed(newer, "compensated")).toEqual({ add: "undone" });
-    expect(listed(newer, "completed")).toEqual({ add: "done" });
-  });
-
   it("is empty without the record it is built from", () => {
     expect(checklistRows(held, "compensated")).toEqual([]);
   });
@@ -393,7 +422,7 @@ describe("the checklist", () => {
     const key = (rest: string) => `operation key ${runs.called}:${rest}`;
     expect(said(stuck, "compensated")).toEqual([
       [
-        "I confirmed hold was reversed in the other system.",
+        "I confirmed hold was released in the other system.",
         `Release failed · ${key("hold#cancel")}`,
       ],
       [
@@ -401,7 +430,7 @@ describe("the checklist", () => {
         `Undo failed after 3 tries · ${key("add#undo")}`,
       ],
       [
-        "I confirmed keep[2] was reversed in the other system.",
+        "I confirmed keep[2] has nothing left to undo in the other system.",
         `Confirm failed after 4 tries · ${key("keep[2]#confirm")}`,
       ],
     ]);
@@ -426,11 +455,11 @@ describe("the checklist", () => {
     // A reservation nobody released, and a step of unknown outcome.
     expect(said(settleTimeout, "compensated").slice(0, 2)).toEqual([
       [
-        "I confirmed hold was reversed in the other system.",
+        "I confirmed hold was released in the other system.",
         `Still reserved · ${key("hold")}`,
       ],
       [
-        "I confirmed add was reversed in the other system.",
+        "I confirmed add has nothing left to undo in the other system.",
         `Unknown · ${key("add")}`,
       ],
     ]);
@@ -483,7 +512,7 @@ describe("the checklist", () => {
         `Running · 2 tries · ${key("add")}`,
       ],
       [
-        "I confirmed hold is stopped and its change is reversed in the other system.",
+        "I confirmed hold is stopped and its reservation is released in the other system.",
         `Releasing · ${key("hold#cancel")}`,
       ],
       [
@@ -491,11 +520,11 @@ describe("the checklist", () => {
         `Undoing · 3 tries · ${key("add2#undo")}`,
       ],
       [
-        "I confirmed hold2 is stopped and its change is reversed in the other system.",
+        "I confirmed hold2 is stopped and has nothing left to undo in the other system.",
         `Confirming · ${key("hold2#confirm")}`,
       ],
       [
-        "I confirmed add3 was reversed in the other system.",
+        "I confirmed add3 has nothing left to undo in the other system.",
         `Unknown · 2 tries · ${key("add3")}`,
       ],
     ]);
@@ -522,7 +551,7 @@ describe("the checklist", () => {
     expect(undone.map((row) => row.sentence)).toEqual(
       ["add", "hold", "submit"].map(
         (name) =>
-          `I confirmed ${name} is stopped and its change is reversed in the other system.`,
+          `I confirmed ${name} is stopped and has nothing left to undo in the other system.`,
       ),
     );
     const finished = checklistRows(newer, "completed");

@@ -164,11 +164,7 @@ export interface ChecklistRow {
   /** What the record may say of it; the first is sent. */
   outcomes: readonly ("undone" | "confirmed" | "done")[];
 }
-/**
- * Of the steps Undone asks about, the statuses whose calls all ended. In any
- * other, one Studio doesn't know among them, a call may still change the other
- * system.
- */
+/** Of the steps Undone asks about, the statuses whose calls all ended. */
 const ENDED = new Set<ParticipantStatus>([
   "done",
   "unknown",
@@ -177,6 +173,38 @@ const ENDED = new Set<ParticipantStatus>([
   "confirmed",
   "confirm_stuck",
 ]);
+/** Those a call may still change the other system in. */
+const RUNS = new Set<ParticipantStatus>([
+  "dispatched",
+  "cancelling",
+  "undoing",
+  "confirming",
+]);
+/**
+ * What a person confirms of a step of a transaction said to be undone. A
+ * reservation is released, or reversed once confirmed. Nothing may have
+ * happened at a step of unknown outcome, at a confirm that isn't over, or in a
+ * status Studio doesn't know: there, nothing is left to undo. While a call may
+ * still change the other system, the step is stopped too.
+ */
+function undoneWords(
+  status: ParticipantStatus,
+  mode: TransactionParticipantView["mode"],
+): string {
+  const reserved = mode === "reserve";
+  const stopped = !ENDED.has(status);
+  if (
+    status === "unknown" ||
+    (stopped && !RUNS.has(status)) ||
+    (reserved && (status === "confirming" || status === "confirm_stuck"))
+  )
+    return `${stopped ? "is stopped and " : ""}has nothing left to undo`;
+  if (reserved && status !== "confirmed")
+    return stopped
+      ? "is stopped and its reservation is released"
+      : "was released";
+  return stopped ? "is stopped and its change is reversed" : "was reversed";
+}
 /**
  * Whether Weave knows that a step ended as the transaction is said to have: it
  * stops there, so a step it doesn't know is left as it is for good. A failed
@@ -221,7 +249,6 @@ export function checklistRows(
     const participant = transaction.participants[index];
     if (endedSo(participant, as, own)) return [];
     const { status, mode } = participant;
-    const running = !ENDED.has(status);
     const outcome =
       as === "compensated"
         ? "undone"
@@ -231,9 +258,7 @@ export function checklistRows(
     const did = {
       // While the transaction is in doubt, a step's own answer isn't shown;
       // what its confirm, its release or its undo answers is.
-      undone: running
-        ? "is stopped and its change is reversed"
-        : "was reversed",
+      undone: undoneWords(status, mode),
       confirmed: "was confirmed",
       done: "finished",
     }[outcome];
