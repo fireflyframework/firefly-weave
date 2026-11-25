@@ -194,12 +194,20 @@ fuzzy matching, and engine-specific escapes.
 
 Patterns run with the timeout-enabled `regex` engine, never Python's unbounded
 matcher; this also applies when `additionalProperties` decides which names
-`patternProperties` already matched. Each match has a timeout, and all matches in
-one validation share a time budget. The compile cost of counted repetitions is
-estimated conservatively (pattern length times the maxima of every counted
-repetition), so some complex patterns are rejected even though their real cost is
-lower. Costs add up across a schema's patterns and are charged again when a
-pattern is compiled at run time.
+`patternProperties` already matched. Each match has a CPU-time limit, and all
+matches in one validation share a CPU-time budget. The compile cost of counted
+repetitions is estimated conservatively (pattern length times the maxima of every
+counted repetition), so some complex patterns are rejected even though their real
+cost is lower. Costs add up across a schema's patterns and are charged again when
+a pattern is compiled at run time.
+
+Only the CPU time of the thread that validates counts, so a busy machine makes a
+validation slower but doesn't refuse it. A match that the machine interrupts
+before it spends its limit is tried again, up to 8 times with twice the time each
+try. Interrupted tries of one validation may last 100 times its CPU-time budget
+(10 seconds by default) before it's refused. On Windows, the CPU clock moves by
+15.6 milliseconds at a time, so a match may spend that much past its limit. A
+match near its limit can still pass on a fast processor and fail on a slow one.
 
 ## Durable secret classification
 
@@ -267,8 +275,8 @@ argument. Definitions cannot raise it, and it is separate from
 | `max_depth` | 32 | Container nesting in the value |
 | `max_diagnostics` | 100 | Returned diagnostics, including any overflow marker |
 | `max_pattern_length` | 1,024 | Unicode code points in one pattern |
-| `regex_timeout_seconds` | 0.01 | Time for one match |
-| `max_regex_seconds` | 0.1 | Total matching time for one validation |
+| `regex_timeout_seconds` | 0.01 | CPU time of one match |
+| `max_regex_seconds` | 0.1 | CPU time of all matches in one validation |
 
 **Generated platform contracts get more work budget.** Weave's own outer
 contracts use the public `DEFAULT_CONTRACT_LIMITS`: the same values except
