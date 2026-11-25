@@ -1259,8 +1259,11 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         reading: false,
         problem: { message, code, again },
       };
+      if (!again) this.leaveTryNow(asked.id);
     };
-    this.partner = { id: asked.id, reading: true, problem: null };
+    // What went wrong stays while it is read again, and Try now its focus.
+    const problem = this.partner?.problem ?? null;
+    this.partner = { id: asked.id, reading: true, problem };
     try {
       const incident = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(asked.id)}`,
@@ -1308,6 +1311,16 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     if (this.asked?.timer) clearTimeout(this.asked.timer);
     this.asked = null;
     this.partner = null;
+  }
+  /** Try now goes once an answer is final: its link's Open takes the focus. */
+  private leaveTryNow(id: string) {
+    if (!document.activeElement?.closest(".record-detail .txn-links .notice"))
+      return;
+    const open = `.record-detail [data-incident="${CSS.escape(id)}"]`;
+    const page = this.element.nativeElement;
+    afterNextRender(() => page.querySelector<HTMLElement>(open)?.focus(), {
+      injector: this.injector,
+    });
   }
   /** An incident's control in the list: its row, or its Open while no page lists it. */
   private control(id: string): HTMLElement | null {

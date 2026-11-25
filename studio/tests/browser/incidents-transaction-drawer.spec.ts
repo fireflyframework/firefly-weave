@@ -419,6 +419,42 @@ test("a partner that can't be read waits 5 s, then 10 s, and Try now reads it at
   await expect.poll(() => reads.length).toBe(3);
   await reads[2].fulfill({ json: called });
   await expect(title(page)).toHaveText("Incident WV-TXN-UNDO-STUCK");
+  await expect(title(page)).toBeFocused();
+});
+
+test("Try now keeps the focus while it reads, and Open takes it when the answer is final", async ({
+  page,
+}) => {
+  const { reads, openPartner } = await partnerElsewhere(page);
+  await openPartner.click();
+  await expect.poll(() => reads.length).toBe(1);
+  await reads[0].fulfill(unavailable);
+  const problem = links(page, "Waits on").getByRole("alert");
+  const tryNow = problem.getByRole("button", { name: "Try now" });
+  await tryNow.focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => reads.length).toBe(2);
+  await expect(tryNow).toBeFocused();
+  await expect(tryNow).toHaveAttribute("aria-busy", "true");
+  await expect(tryNow).toHaveAttribute("aria-disabled", "true");
+  // Nor does a press while it is on its way read it once more.
+  await page.keyboard.press("Enter");
+  await reads[1].fulfill(unavailable);
+  await expect(problem).toContainText("It tries again in 10 s.");
+  expect(reads).toHaveLength(2);
+  await expect(tryNow).toBeFocused();
+  await expect(tryNow).not.toHaveAttribute("aria-busy");
+  // Nor does its own retry take the focus away.
+  await page.clock.fastForward(11_000);
+  await expect.poll(() => reads.length).toBe(3);
+  await expect(tryNow).toBeFocused();
+  await reads[2].fulfill({
+    status: 404,
+    json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+  });
+  await expect(problem).toContainText("This incident can't be found.");
+  await expect(tryNow).toHaveCount(0);
+  await expect(openPartner).toBeFocused();
 });
 
 test("leaving the incident drops its partner's read and its retries", async ({

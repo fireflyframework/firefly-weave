@@ -57,6 +57,7 @@ export interface PartnerRead {
   /** The incident being read. */
   id: string;
   reading: boolean;
+  /** Why the last read failed, also while it is read again. */
   problem: {
     message: string;
     code: string;
@@ -178,6 +179,7 @@ export function panelView(incident: IncidentView): PanelView | null {
                   ><button
                     type="button"
                     class="sm"
+                    [attr.data-incident]="item.link.id"
                     [attr.aria-label]="
                       'Open incident ' + item.link.code + ', ' + item.place
                     "
@@ -203,7 +205,13 @@ export function panelView(incident: IncidentView): PanelView | null {
                       </p>
                     }
                     @if (problem.again) {
-                      <button type="button" class="sm" (click)="tryNow.emit()">
+                      <button
+                        type="button"
+                        class="sm"
+                        [attr.aria-busy]="read?.reading ? 'true' : null"
+                        [attr.aria-disabled]="read?.reading ? 'true' : null"
+                        (click)="tryNow.emit()"
+                      >
                         Try now
                       </button>
                     }
