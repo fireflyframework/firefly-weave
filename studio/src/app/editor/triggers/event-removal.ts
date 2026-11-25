@@ -24,17 +24,21 @@ import type { DialogItem, DialogOptions } from "../../dialog";
 import { isJsonObject } from "../../forms/core/json";
 import { shortId } from "../../format";
 import type { Workflow } from "../../model";
+import type { ToastService } from "../../toast";
 import type { EventTriggerView } from "../activation/event-bindings";
 import type { TriggerIntent } from "../state/canvas-sidecar";
 import { isPlatformEventInput } from "./platform-event";
 
 /** How long the question waits for the triggers' names before asking without them. */
 export const REMOVAL_WAIT_MS = 3_000;
+/** A wait this short isn't noticed, so nothing is said of it. */
+const UNNOTICED_MS = 300;
 
 /** What the question reads from the editor's shell. */
 export interface RemovalHost {
   readonly api: Pick<StudioApi, "project" | "request">;
   readonly identity: Pick<Identity, "workspaces"> | null;
+  readonly toasts: Pick<ToastService, "show" | "dismiss" | "current">;
 }
 
 const ICON = "signal";
@@ -49,12 +53,32 @@ function storedTriggers(intent: TriggerIntent): [string, string][] {
     : [];
 }
 
-function environmentName(host: RemovalHost, id: string): string {
+/** The open project's path; "" while none is. */
+function openProject(host: RemovalHost): string {
+  try {
+    return host.api.project;
+  } catch {
+    return "";
+  }
+}
+
+/** Where an environment is, as far as the account's workspaces say: its name, and whether the open project has it. */
+function place(host: RemovalHost, id: string): { name: string; here: boolean } {
   for (const tenant of host.identity?.workspaces ?? [])
     for (const project of tenant.projects)
       for (const environment of project.environments)
-        if (environment.id === id) return environment.name;
-  return `Environment ${shortId(id)}`;
+        if (environment.id === id) {
+          const here = openProject(host).endsWith(
+            `/tenants/${encodeURIComponent(tenant.id)}/projects/${encodeURIComponent(project.id)}`,
+          );
+          return {
+            name: here
+              ? environment.name
+              : `${environment.name} in ${project.name}`,
+            here,
+          };
+        }
+  return { name: `Environment ${shortId(id)}`, here: false };
 }
 
 /** The version an activation runs, or null when it can't be read. */
@@ -82,8 +106,8 @@ async function triggerRow(
   environmentId: string,
   triggerId: string,
 ): Promise<DialogItem | null> {
-  const environment = environmentName(host, environmentId);
-  const unread = { icon: ICON, text: "A trigger", aside: environment };
+  const environment = place(host, environmentId);
+  const unread = { icon: ICON, text: "A trigger", aside: environment.name };
   const read = async (): Promise<DialogItem | null> => {
     try {
       const base = `${host.api.project}/environments/${encodeURIComponent(environmentId)}`;
@@ -95,10 +119,16 @@ async function triggerRow(
       return {
         icon: ICON,
         text: view.name,
-        aside: version ? `${environment} · ${version}` : environment,
+        aside: version ? `${environment.name} · ${version}` : environment.name,
       };
     } catch (error) {
-      return error instanceof ApiError && error.status === 404 ? null : unread;
+      // This project can't find a trigger in another project's environment:
+      // it may still react there.
+      return error instanceof ApiError &&
+        error.status === 404 &&
+        environment.here
+        ? null
+        : unread;
     }
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -110,15 +140,33 @@ async function triggerRow(
   ]).finally(() => clearTimeout(timer));
 }
 
+/** Says that the triggers are being read, while a noticeable read lasts. */
+async function noticed<T>(host: RemovalHost, read: Promise<T>): Promise<T> {
+  let told: number | undefined;
+  const timer = setTimeout(() => {
+    host.toasts.show({ text: "Checking which triggers still react…" });
+    told = host.toasts.current()?.id;
+  }, UNNOTICED_MS);
+  try {
+    return await read;
+  } finally {
+    clearTimeout(timer);
+    if (told !== undefined) host.toasts.dismiss(told);
+  }
+}
+
 /** The question, or null when no trigger created for this choice still reacts. */
 export async function eventRemovalQuestion(
   host: RemovalHost,
   intent: TriggerIntent,
   workflow: Workflow,
 ): Promise<DialogOptions | null> {
-  const rows = await Promise.all(
-    storedTriggers(intent).map(([environment, trigger]) =>
-      triggerRow(host, environment, trigger),
+  const rows = await noticed(
+    host,
+    Promise.all(
+      storedTriggers(intent).map(([environment, trigger]) =>
+        triggerRow(host, environment, trigger),
+      ),
     ),
   );
   const items = rows.filter((row): row is DialogItem => row !== null);

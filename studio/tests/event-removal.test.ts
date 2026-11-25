@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import "@angular/compiler";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/app/api";
 import {
@@ -22,6 +23,7 @@ import {
   REMOVAL_WAIT_MS,
 } from "../src/app/editor/triggers/event-removal";
 import { freshWorkflow, type Workflow } from "../src/app/model";
+import { ToastService } from "../src/app/toast";
 import type { TriggerIntent } from "../src/app/editor/state/canvas-sidecar";
 
 const PROJECT = "/studio/api/api/v1/tenants/t/projects/p";
@@ -75,10 +77,16 @@ const host = (answers: Record<string, unknown> = ANSWERS) => ({
               { id: "env-staging", name: "staging" },
             ],
           },
+          {
+            id: "p-2",
+            name: "Billing",
+            environments: [{ id: "env-billing", name: "staging" }],
+          },
         ],
       },
     ],
   },
+  toasts: new ToastService(),
 });
 const intent = (resources?: Record<string, string>): TriggerIntent => ({
   id: "trigger-0000000e",
@@ -155,6 +163,18 @@ describe("the question before a platform event trigger goes", () => {
     ).toBeNull();
   });
 
+  it("keeps a trigger in another project's environment, which this project can't find", async () => {
+    const question = await eventRemovalQuestion(
+      host(),
+      intent({ "env-billing": "et-9", "env-unknown": "et-8" }),
+      reacting(),
+    );
+    expect(question?.items).toEqual([
+      { icon: "signal", text: "A trigger", aside: "staging in Billing" },
+      { icon: "signal", text: "A trigger", aside: "Environment env-unknown" },
+    ]);
+  });
+
   it("asks with the environment alone when the trigger can't be read", async () => {
     const question = await eventRemovalQuestion(
       host({
@@ -179,13 +199,18 @@ describe("the question before a platform event trigger goes", () => {
             throw Error("Choose an authorized workspace before this action.");
           },
         } as never,
-        identity: null,
+        identity: host().identity,
+        toasts: new ToastService(),
       },
-      intent({ "0d9f7e61-0000-4000-8000-000000000000": "et-1" }),
+      intent({
+        "0d9f7e61-0000-4000-8000-000000000000": "et-1",
+        "env-dev": "et-2",
+      }),
       reacting(),
     );
     expect(question?.items).toEqual([
       { icon: "signal", text: "A trigger", aside: "Environment 0d9f7e61" },
+      { icon: "signal", text: "A trigger", aside: "development in Operations" },
     ]);
   });
 
@@ -202,5 +227,31 @@ describe("the question before a platform event trigger goes", () => {
     expect((await asked)?.items).toEqual([
       { icon: "signal", text: "A trigger", aside: "development" },
     ]);
+  });
+
+  it("says nothing of a wait too short to notice", async () => {
+    vi.useFakeTimers();
+    const quick = host();
+    const shown = vi.spyOn(quick.toasts, "show");
+    await eventRemovalQuestion(quick, intent(BOTH), reacting());
+    await eventRemovalQuestion(quick, intent(), reacting());
+    expect(shown).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("leaves another toast that came meanwhile", async () => {
+    vi.useFakeTimers();
+    const slow = host();
+    (slow.api as { request: unknown }).request = () => new Promise(() => {});
+    const asked = eventRemovalQuestion(
+      slow,
+      intent({ "env-dev": "et-2" }),
+      reacting(),
+    );
+    await vi.advanceTimersByTimeAsync(REMOVAL_WAIT_MS / 2);
+    slow.toasts.show({ text: "Saved." });
+    await vi.advanceTimersByTimeAsync(REMOVAL_WAIT_MS / 2);
+    await asked;
+    expect(slow.toasts.current()?.text).toBe("Saved.");
   });
 });

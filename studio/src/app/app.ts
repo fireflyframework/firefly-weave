@@ -4271,9 +4271,13 @@ export class App implements CanvasHost {
   ): Promise<InsertOutcome> {
     const { insertEntry } = await import("./editor/add-step/insert");
     const current = this.insertOwner();
+    const locked = () => this.editingLocked;
     const host: InsertHost = {
       model: this.model,
-      editingLocked: this.editingLocked,
+      // Read again after each answer it waits for.
+      get editingLocked() {
+        return locked();
+      },
       ensureApplied: () => this.ensureApplied(),
       edit: (change) => {
         this.perform(change);
@@ -4378,6 +4382,8 @@ export class App implements CanvasHost {
       ).eventRemovalQuestion(this, intent, this.model.definition);
     return null;
   }
+  /** The triggers whose removal is being asked about: each is asked about once. */
+  private readonly removals = new Set<TriggerIntent>();
   /**
    * Removes a trigger choice. Called by a workflow asks first, because callers
    * depend on it; so does Platform event while a trigger created for it reacts.
@@ -4387,10 +4393,18 @@ export class App implements CanvasHost {
     const opened = model.opened;
     const intent = model.canvas.triggers?.find((item) => item.id === id);
     if (!intent || this.editingLocked || model.readonly) return;
-    const question = await this.removalQuestion(intent);
-    if (question && !(await this.dialogs.confirm(question))) return;
+    if (this.removals.has(intent)) return;
+    this.removals.add(intent);
     // Another workflow opened while it waited: its triggers stay.
-    if (this.model !== model || model.opened !== opened) return;
+    const gone = () => this.model !== model || model.opened !== opened;
+    try {
+      const question = await this.removalQuestion(intent);
+      if (gone() || (question && !(await this.dialogs.confirm(question))))
+        return;
+    } finally {
+      this.removals.delete(intent);
+    }
+    if (gone()) return;
     let change: ReturnType<typeof removeTrigger>;
     try {
       change = removeTrigger(this.model.canvas, this.model.definition, id);
