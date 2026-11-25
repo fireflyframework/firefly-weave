@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A platform with transactions in doubt for the Incidents specs: it filters
 // incidents.list by status, code, test runs and priority, pages each list
-// with its own cursor, and answers incidents.read by ID.
+// with its own cursor, and answers incidents.read by ID. An earlier one
+// refuses the priority, or ignores it.
 import type { Page } from "@playwright/test";
 import type {
   IncidentRecord,
@@ -38,6 +39,15 @@ export interface IncidentPlatform {
   reads: string[];
 }
 
+/** An incident as a release before priorities answers it. */
+export const earlier = ({
+  priority: _priority,
+  transaction: _transaction,
+  waits_on: _waitsOn,
+  held_by: _heldBy,
+  ...incident
+}: IncidentView): IncidentView => incident;
+
 /** Opens nothing: a platform at 10:54 with these incidents. */
 export async function incidentPlatform(
   page: Page,
@@ -45,6 +55,12 @@ export async function incidentPlatform(
     capabilities?: string[];
     items?: IncidentRecord[];
     pageSize?: number;
+    /**
+     * What it does with `priority`: splits the incidents by it (by default),
+     * refuses it as 0.1.0a16 to 0.1.0a19 do, or ignores it as earlier
+     * releases do.
+     */
+    priority?: "splits" | "refuses" | "ignores";
     /**
      * The incidents it can't show that are of transactions in doubt: it
      * splits by their code, which its answer doesn't say.
@@ -70,7 +86,13 @@ export async function incidentPlatform(
     const query = new URL(route.request().url()).searchParams;
     platform.queries.push(query);
     const statuses = query.getAll("status");
-    const priority = query.get("priority");
+    const asked = query.get("priority");
+    if (asked && options.priority === "refuses")
+      return route.fulfill({
+        status: 422,
+        json: { code: "WV-VALIDATION", message: "Unknown query parameter" },
+      });
+    const priority = options.priority === "ignores" ? null : asked;
     const listed = platform.items.filter((item) => {
       const view = item as IncidentView;
       if ("unavailable" in item)

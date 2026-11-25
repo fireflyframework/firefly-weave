@@ -69,6 +69,7 @@ import {
 import {
   bandsView,
   defaultIncidentFilters,
+  ignoresPriority,
   inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
@@ -81,6 +82,7 @@ import {
   incidentTone,
   isUnavailableIncident,
   lastEvents,
+  mayRefusePriority,
   type IncidentFilters,
   type IncidentLink,
   type IncidentRecord,
@@ -101,10 +103,13 @@ const noEvents: RecentEvents = {
   problem: null,
 };
 
-/** One list of incidents: what was read, the cursor after it and how many pages that is. */
-interface IncidentList {
+/** What a list's pages answered, and the cursor after them. */
+interface ListAnswer {
   items: IncidentRecord[];
   next: string | null;
+}
+/** One list of incidents: what was read, the cursor after it and how many pages that is. */
+interface IncidentList extends ListAnswer {
   pages: number;
   appending: boolean;
 }
@@ -740,6 +745,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   rest = emptyList();
   /** What was read is the two bands, not one list. */
   private banded = false;
+  /** False once the platform refused to list by priority: one list, until the scope changes. */
+  private knowsPriority = true;
   loaded = false;
   forbidden = false;
   error: PlainError | null = null;
@@ -814,6 +821,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.high = emptyList();
     this.rest = emptyList();
     this.banded = false;
+    this.knowsPriority = true;
     this.loaded = false;
     this.forbidden = false;
     this.error = null;
@@ -852,7 +860,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   /**
    * Reads as many pages as are on screen, with the filters' query: the band in
-   * doubt and then the rest, or one list.
+   * doubt and then the rest, or one list. A platform of an earlier release
+   * refuses the priority, or ignores it: one list too.
    */
   private async load() {
     const scope = this.scope;
@@ -860,33 +869,54 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const generation = this.generation;
     const listGeneration = this.listGeneration;
     const filters = this.filters;
-    const banded = bandsView(filters);
     const current = () =>
       generation === this.generation && listGeneration === this.listGeneration;
+    /** The cursor of the page being read; null for a first page. */
+    let cursor: string | null = null;
     /** A list's pages again; null once the answer is no longer wanted. */
     const read = async (list: IncidentList, priority?: "high" | "normal") => {
       const items: IncidentRecord[] = [];
-      let next: string | null = null;
       let pages = 0;
+      cursor = null;
       do {
         const page: Page<IncidentRecord> = await this.host.api.request(
-          `${scope}/incidents?${incidentQuery(filters, next, priority)}`,
+          `${scope}/incidents?${incidentQuery(filters, cursor, priority)}`,
         );
         if (!current()) return null;
         items.push(...page.items);
-        next = page.next_cursor;
-      } while (next && ++pages < list.pages);
-      return { items, next };
+        cursor = page.next_cursor;
+      } while (cursor && ++pages < list.pages);
+      return { items, next: cursor };
     };
     return this.listReads.run(async () => {
       if (!current()) return false;
       try {
-        const high = banded
-          ? await read(this.high, "high")
-          : { items: [], next: null };
+        const none: ListAnswer = { items: [], next: null };
+        let banded = this.knowsPriority && bandsView(filters);
+        let high: ListAnswer | null = none;
+        if (banded)
+          try {
+            high = await read(this.high, "high");
+          } catch (error) {
+            // A cursor it refuses is one it gave: only a first page says it
+            // may not know the priority.
+            if (
+              cursor ||
+              !current() ||
+              !mayRefusePriority(describeError(error))
+            )
+              throw error;
+            banded = false;
+          }
         if (!high) return false;
         const rest = await read(this.rest, banded ? "normal" : undefined);
         if (!rest) return false;
+        // Answered without it: the platform refused the priority, not a filter.
+        if (!banded && bandsView(filters)) this.knowsPriority = false;
+        if (ignoresPriority(high.items, rest.items)) {
+          banded = false;
+          high = none;
+        }
         Object.assign(this.high, high);
         Object.assign(this.rest, rest);
         this.banded = banded;

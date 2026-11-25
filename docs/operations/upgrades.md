@@ -216,6 +216,9 @@ The incident lists also change how they read requests:
   instead of `422 WV-PAGE`.
 - An older server ignores the filters and the order and lists every incident in
   ID order. Upgrade servers before relying on them.
+- They accept `priority`, which servers 0.1.0a16 to 0.1.0a19 refuse with
+  `422 WV-VALIDATION` and older ones ignore. On such a server, Studio's
+  Incidents page shows one list, without a **High priority** band.
 
 Incident views gain optional fields that are left out while unknown, false, or
 empty. **Upgrade CLIs and SDKs with the server.** Earlier releases reject the

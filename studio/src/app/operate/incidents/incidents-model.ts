@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // decisions the Resolve incident dialog offers and how it checks them before
 // sending. Pure: the page renders it, tests check it.
 import type { TransactionState } from "../../editor/transactions/transaction-words";
+import type { PlainError } from "../../errors";
 import type { Tone } from "../../status-labels";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import {
@@ -277,6 +278,30 @@ export function bandsView(
   filters: Pick<IncidentFilters, "status" | "code">,
 ): boolean {
   return filters.status === "active" && !filters.code;
+}
+/**
+ * Whether a refused read in doubt may mean the platform doesn't know
+ * `priority`: releases 0.1.0a16 to 0.1.0a19 refuse a parameter they don't know
+ * as they do a value they can't take.
+ */
+export function mayRefusePriority(refused: PlainError): boolean {
+  return refused.status === 422 && refused.code === "WV-VALIDATION";
+}
+/**
+ * Whether the platform ignored `priority`, as releases before 0.1.0a16 do:
+ * both bands answer every incident, so the one in doubt holds others, or an
+ * incident Studio can't show that the other band lists too.
+ */
+export function ignoresPriority(
+  high: readonly IncidentRecord[],
+  normal: readonly IncidentRecord[],
+): boolean {
+  const listed = new Set(normal.map((item) => item.id));
+  return high.some((item) =>
+    isUnavailableIncident(item)
+      ? listed.has(item.id)
+      : item.priority !== "high",
+  );
 }
 /** How many filters differ from the defaults ("Clear filters" shows from one). */
 export function incidentFilterCount(filters: IncidentFilters): number {

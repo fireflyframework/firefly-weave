@@ -31,7 +31,18 @@ import {
   others,
   unknown,
 } from "../transaction-incidents-fixture";
-import { environment, incidentPlatform } from "./incidents-po";
+import {
+  earlier,
+  environment,
+  incidentPlatform,
+  type IncidentPlatform,
+} from "./incidents-po";
+import {
+  acmePlatform,
+  platformHost,
+  signInWaiting,
+  type PlatformHost,
+} from "./platform-host";
 import { connected, pauseClock } from "./support";
 
 const active = "91111111-1111-4111-8111-111111111111";
@@ -2046,6 +2057,222 @@ test.describe("transactions in doubt", () => {
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(codes(high(page))).toHaveText(["Unavailable incident"]);
     await expect(codes(other(page))).toHaveCount(4);
+  });
+});
+
+test.describe("a platform of an earlier release", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  const problem = (page: Page) => page.locator(".operate-problem");
+  const asked = (platform: IncidentPlatform) =>
+    platform.queries.map(
+      (query) =>
+        `${query.get("priority") ?? "every"} ${query.get("cursor") ?? "from the start"}`,
+    );
+
+  test("that refuses the priority shows one list, and Studio doesn't ask for it again", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, ...others].map(earlier),
+      pageSize: 3,
+      priority: "refuses",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(3);
+    await expect(problem(page)).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    expect(asked(platform)).toEqual([
+      "high from the start",
+      "every from the start",
+    ]);
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(rows(page)).toHaveCount(5);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => platform.queries.length).toBe(5);
+    await expect(rows(page)).toHaveCount(5);
+    await page
+      .getByLabel("Workflow", { exact: true })
+      .fill("move-between-systems");
+    await page.getByLabel("Workflow", { exact: true }).press("Enter");
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page)).not.toContainText("In doubt");
+    expect(asked(platform)).toEqual([
+      "high from the start",
+      "every from the start",
+      "every every:3",
+      "every from the start",
+      "every every:3",
+      "every from the start",
+    ]);
+  });
+
+  test("that refuses the priority is asked for it again once another person signs in", async ({
+    page,
+  }) => {
+    let person = "jane";
+    const identity = (host: PlatformHost) => ({
+      ...host.identity(),
+      principal_id: `principal-${person}`,
+      grants: host.identity().grants.map((grant) => ({
+        ...grant,
+        capabilities: ["incident.read"],
+      })),
+    });
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: identity(current),
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
+    });
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill({ json: identity(host) }),
+    );
+    const asked: string[] = [];
+    // The platform is upgraded before John signs in.
+    await page.route("**/environments/*/incidents?*", (route) => {
+      const priority = new URL(route.request().url()).searchParams.get(
+        "priority",
+      );
+      asked.push(`${person} ${priority ?? "every"}`);
+      if (person === "jane" && priority)
+        return route.fulfill({
+          status: 422,
+          json: { code: "WV-VALIDATION", message: "Unknown query parameter" },
+        });
+      return route.fulfill({
+        json: {
+          items: priority === "high" ? [unknown] : others,
+          next_cursor: null,
+        },
+      });
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    const finish = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Incidents", exact: true }).click(),
+    );
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    person = "john";
+    await finish();
+    await expect(codes(high(page))).toHaveText(["WV-TXN-PIVOT-UNKNOWN"]);
+    await expect(codes(other(page))).toHaveCount(4);
+    expect(asked.slice(-2)).toEqual(["john high", "john normal"]);
+  });
+
+  test("that ignores the priority shows one list: no incident but a transaction's reads as in doubt", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, ...others].map(earlier),
+      pageSize: 4,
+      priority: "ignores",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.locator(".band-note")).toHaveCount(0);
+    await expect(page.getByText("4 incidents loaded")).toBeVisible();
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(codes(page.locator(".incident-list"))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TASK-AMBIGUOUS",
+      "WV-TASK-FAILED",
+      "WV-TASK-LOST",
+      "WV-TASK-AMBIGUOUS",
+    ]);
+    await expect(page.getByText("5 incidents", { exact: true })).toBeVisible();
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    // The band in doubt, then the list's own two pages.
+    await expect.poll(() => platform.queries.length).toBe(before + 3);
+    await expect(rows(page)).toHaveCount(5);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+  });
+
+  test("that ignores the priority and can't show an incident shows it once, in no band", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [
+        { id: "c1000000-0000-4000-8000-000000000001", unavailable: true },
+      ],
+      priority: "ignores",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveText(/Unavailable incident/);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.getByText("1 incident", { exact: true })).toBeVisible();
+  });
+
+  test("a filter the platform refuses is an error, and clearing it brings the bands back", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    const refused = {
+      status: 422,
+      json: { code: "WV-VALIDATION", message: "Invalid workflow" },
+    };
+    await page.route(`${environment}/incidents?*workflow=*`, (route) =>
+      route.fulfill(refused),
+    );
+    await page.goto("/operate/incidents?workflow=not%20a%20name");
+    await expect(page.getByText("Support code: WV-VALIDATION")).toBeVisible();
+    await page.unroute(`${environment}/incidents?*workflow=*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(
+      page.getByRole("button", { name: /^Clear filters/ }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /^Clear filters/ }).click();
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked(platform).slice(-2)).toEqual([
+      "high from the start",
+      "normal from the start",
+    ]);
+  });
+
+  test("a cursor the platform refuses is an error: the bands stay, and Studio keeps asking for them", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { pageSize: 3 });
+    await page.goto("/operate/incidents");
+    await high(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(high(page))).toHaveCount(4);
+    let held = 0;
+    await page.route(`${environment}/incidents?*cursor=high*`, (route) => {
+      held++;
+      return route.fulfill({
+        status: 422,
+        json: { code: "WV-VALIDATION", message: "Invalid scope-bound cursor" },
+      });
+    });
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText("Support code: WV-VALIDATION")).toBeVisible();
+    expect(held).toBe(1);
+    await expect(codes(high(page))).toHaveCount(4);
+    await expect(codes(other(page))).toHaveCount(3);
+    // Neither one list nor the other band was read after it.
+    expect(asked(platform).slice(before)).toEqual(["high from the start"]);
+    await page.unroute(`${environment}/incidents?*cursor=high*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(problem(page)).toHaveCount(0);
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked(platform).slice(before + 1)).toEqual([
+      "high from the start",
+      "high high:3",
+      "normal from the start",
+    ]);
   });
 });
 

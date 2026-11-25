@@ -22,6 +22,7 @@ import {
   bandsView,
   checkResolution,
   defaultIncidentFilters,
+  ignoresPriority,
   inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
@@ -33,6 +34,7 @@ import {
   incidentStatusLabel,
   incidentTone,
   lastEvents,
+  mayRefusePriority,
   openedText,
   resolutionLabel,
   type IncidentRecord,
@@ -238,6 +240,28 @@ describe("incident filters", () => {
     expect(bandsView({ ...banded, code: "WV-TXN-UNDO-STUCK" })).toBe(false);
     for (const status of ["resolved", "closed", "all"] as const)
       expect(bandsView({ ...banded, status }), status).toBe(false);
+  });
+
+  it("only a refused value says the platform may not know the priority", () => {
+    const refusal = (status: number, code: string) =>
+      mayRefusePriority({ message: "Unknown query parameter", code, status });
+    expect(refusal(422, "WV-VALIDATION")).toBe(true);
+    expect(refusal(422, "WV-FILTER")).toBe(false);
+    expect(refusal(400, "WV-VALIDATION")).toBe(false);
+    expect(refusal(503, "WV-UNAVAILABLE")).toBe(false);
+  });
+
+  it("a platform that ignores the priority lists other incidents as in doubt, or one it can't show in both bands", () => {
+    const high = incident({ id: "high", priority: "high" });
+    const hidden: IncidentRecord = { id: "hidden", unavailable: true };
+    const rest = [incident({ id: "other" })];
+    expect(ignoresPriority([high], rest)).toBe(false);
+    expect(ignoresPriority([], rest)).toBe(false);
+    expect(ignoresPriority([high, hidden], rest)).toBe(false);
+    expect(ignoresPriority([hidden], rest)).toBe(false);
+    expect(ignoresPriority(rest, rest)).toBe(true);
+    expect(ignoresPriority([high, ...rest], [])).toBe(true);
+    expect(ignoresPriority([hidden], [hidden])).toBe(true);
   });
 
   it("names an incident's step without its undo, and none for a run held whole", () => {
