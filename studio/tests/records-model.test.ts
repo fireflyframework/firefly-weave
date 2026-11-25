@@ -242,6 +242,27 @@ describe("run detail", () => {
     });
   });
 
+  it("names the step of the first of two incidents with one code, as the platform orders them", () => {
+    const stuck = (node_id: string) => ({
+      node_id,
+      code: "WV-TXN-CANCEL-STUCK",
+    });
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident: "WV-TXN-CANCEL-STUCK",
+            incidents: {
+              "hold#cancel:0": stuck("hold#cancel"),
+              "book#cancel:0": stuck("book#cancel"),
+            },
+          },
+        }),
+      )?.step,
+    ).toBe("book");
+  });
+
   it("leads from a run held whole to its incident, also when another one is named", () => {
     expect(
       runIncident(

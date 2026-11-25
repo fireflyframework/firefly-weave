@@ -1406,12 +1406,15 @@ test("a refused record whose steps are all known when read again says so, with n
   await expect(asked.getByRole("checkbox")).toHaveCount(0);
   await expect(field(page, name, "Reason")).toHaveValue("Both are reversed");
   await page.screenshot({ path: `${captures}/reconcile-none-left-1440.png` });
-  // The other ending asks about the same steps.
+  // The other ending asks about the same steps: the words change, and the
+  // focus stays on the ending chosen.
+  await expect(notice).toBeFocused();
   await ending(page, name, "Finished").check();
   await expect(asked.getByRole("checkbox")).toHaveCount(2);
   await expect(notice).toHaveText(
     "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept.",
   );
+  await expect(ending(page, name, "Finished")).toBeFocused();
   await ending(page, name, "Undone").check();
   // Nothing is sent before it is pressed again.
   expect(sent).toHaveLength(1);
@@ -1944,10 +1947,6 @@ for (const size of [
       await expect(told).toContainText("rebuilt the checklist");
       await expect(told).toBeFocused();
       await expectShown(told);
-      // Choosing the other ending says it again without taking the focus.
-      await ending(page, name, "Undone").check();
-      await expect(told).toContainText("rebuilt the checklist");
-      await expect(ending(page, name, "Undone")).toBeFocused();
     });
 
     test("a record that couldn't be read is said in view, and rebuilt in view once it is", async ({

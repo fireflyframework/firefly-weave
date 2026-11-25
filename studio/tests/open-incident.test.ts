@@ -138,6 +138,15 @@ describe("where a stopped run's notice leads", () => {
     });
   });
 
+  it("to the first incident that one of several names", () => {
+    const unnamed = view("move[2]", "in_doubt");
+    expect(steps([settled, unnamed, other])).toEqual({
+      open: { id: other.incident_id, label: "Open first incident" },
+      code: null,
+      goTo: "Go to the first transaction in doubt",
+    });
+  });
+
   it.each([
     ["a run held whole, whose transactions name none", [settled], true],
     ["a transaction in doubt that lies past the pages read", [settled], false],
