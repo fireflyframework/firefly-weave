@@ -2336,9 +2336,24 @@ test.describe("transactions", () => {
       name: "No runs need attention.",
     });
     await expect(empty).toBeVisible();
+    // It names the range it read, not the whole environment.
+    const why = page.locator(".runs-list").getByText(/transaction in doubt\.$/);
+    await expect(why).toHaveText(
+      "No run started in the last 24 hours has a transaction in doubt.",
+    );
+    await page.getByLabel("Time range").selectOption({ label: "Last 7 days" });
+    await expect(empty).toBeVisible();
+    await expect(why).toHaveText(
+      "No run started in the last 7 days has a transaction in doubt.",
+    );
     await expect(
-      page.getByText("No run in this environment has a transaction in doubt."),
+      page
+        .locator(".runs-list")
+        .getByRole("button", { name: "Clear filters (2)", exact: true }),
     ).toBeVisible();
+    await page
+      .getByLabel("Time range")
+      .selectOption({ label: "Last 24 hours" });
     await shot(page, "runs-transactions-nothing-in-doubt");
     await page
       .locator(".runs-list")

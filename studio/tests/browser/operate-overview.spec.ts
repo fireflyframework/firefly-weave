@@ -30,7 +30,7 @@ import {
   type Route,
 } from "@playwright/test";
 import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
-import { connected } from "./support";
+import { connected, runSummary } from "./support";
 import {
   acme,
   acmePlatform,
@@ -765,27 +765,53 @@ test.describe("transactions", () => {
     await expect(undoing.locator("weave-icon")).toHaveCount(0);
     await panel(page).scrollIntoViewIfNeeded();
     await shot(page, "overview-transactions-1440");
-    const reads: string[] = [];
-    page.on("request", (request) => {
-      if (request.url().includes("/run-summaries?")) reads.push(request.url());
+    // One of the four is in doubt since a run started three days ago.
+    const started = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const old = {
+      ...runSummary({
+        id: id(31),
+        workflow_name: "move-between-systems",
+        started_at: started,
+        state: { status: "suspended" },
+      }),
+      transaction_state: "in_doubt",
+    };
+    await page.route("**/run-summaries?**", (route) => {
+      const query = new URL(route.request().url()).searchParams;
+      return route.fulfill({
+        json: {
+          items:
+            query.getAll("transaction_state").join() === "in_doubt" &&
+            query.get("started_after")! <= started
+              ? [old]
+              : [],
+          next_cursor: null,
+        },
+      });
     });
     await expect(link(page)).toHaveAttribute(
       "href",
-      "/operate/runs?transaction_state=in_doubt",
+      "/operate/runs?transaction_state=in_doubt&range=400d",
     );
     // Studio opens it in place: what it holds in memory stays.
     await page.evaluate(() => Object.assign(window, { sameDocument: true }));
     await link(page).click();
     await expect(page).toHaveURL(
-      /\/operate\/runs\?transaction_state=in_doubt$/,
+      /\/operate\/runs\?transaction_state=in_doubt&range=400d$/,
     );
     await expect(
       page.getByRole("checkbox", { name: "Needs attention" }),
     ).toBeChecked();
     expect(await page.evaluate(() => "sameDocument" in window)).toBe(true);
-    await expect
-      .poll(() => reads.at(-1) ?? "")
-      .toContain("transaction_state=in_doubt");
+    const rows = page.getByRole("table", { name: "Runs" }).locator(".run-row");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("move-between-systems");
+    // The range it reads shows by its length, with no empty bounds to fill in.
+    await expect(
+      page.getByLabel("Time range").locator("option:checked"),
+    ).toHaveText("Last 400 days");
+    await expect(page.getByLabel("From", { exact: true })).toHaveCount(0);
+    await shot(page, "runs-needs-attention-from-overview-1440");
   });
 
   test("with nothing in doubt or undoing both read 0, in no danger and with no link", async ({

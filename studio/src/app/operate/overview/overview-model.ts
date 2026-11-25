@@ -477,8 +477,11 @@ export function slotMeter(
   };
 }
 
-/** The runs with a transaction in doubt: the runs list's Needs attention. */
-export const inDoubtRuns = `${viewPath("runs")}?transaction_state=in_doubt`;
+/**
+ * The runs with a transaction in doubt: the runs list's Needs attention, over
+ * the longest range the platform reads, because the panel counts them all.
+ */
+export const inDoubtRuns = `${viewPath("runs")}?transaction_state=in_doubt&range=400d`;
 /** "oldest 12 min": how long the one undoing longest has been open; "" when nothing is. */
 export function oldestUndoing({
   oldest_undoing_seconds: oldest,

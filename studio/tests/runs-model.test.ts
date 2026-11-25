@@ -29,7 +29,9 @@ import {
   handledText,
   liveDuration,
   needsAttention,
+  nothingNeedsAttention,
   originLabel,
+  rangeLabel,
   rangePresets,
   resolveRunsQuery,
   runFilterCount,
@@ -482,5 +484,56 @@ describe("runs and their transactions", () => {
         transaction_state: ["in_doubt", "compensating", "force_ended"],
       }),
     ).toBe(1);
+  });
+
+  it.each([
+    ["", "Last 24 hours"],
+    ["?range=7d", "Last 7 days"],
+    ["?range=400d", "Last 400 days"],
+    ["?range=90m", "Last 90 minutes"],
+    ["?range=1m", "Last 1 minute"],
+    ["?range=36h", "Last 36 hours"],
+    ["?range=1d", "Last 24 hours"],
+    ["?range=2h", "Last 2 hours"],
+    ["?started_after=2026-11-01T00%3A00%3A00Z", "Custom range"],
+  ])("names the range of %s", (search, label) => {
+    expect(rangeLabel(runsFiltersFromQuery(search).timeWindow)).toBe(label);
+  });
+
+  it.each([
+    ["", "No run started in the last 24 hours has a transaction in doubt."],
+    [
+      "&range=400d",
+      "No run started in the last 400 days has a transaction in doubt.",
+    ],
+    [
+      "&started_after=2026-11-01T00%3A00%3A00Z",
+      "No run started in this range has a transaction in doubt.",
+    ],
+  ])(
+    "says in which range no run needs attention, whatever the range%s",
+    (range, text) => {
+      const filters = runsFiltersFromQuery(
+        `?transaction_state=in_doubt${range}`,
+      );
+      expect(nothingNeedsAttention(filters)).toBe(text);
+    },
+  );
+
+  it("says it only when no other filter could have left runs out", () => {
+    for (const other of ["&status=failed", "&workflow=move-each"])
+      expect(
+        nothingNeedsAttention(
+          runsFiltersFromQuery(`?transaction_state=in_doubt${other}`),
+        ),
+      ).toBeNull();
+    expect(
+      nothingNeedsAttention(
+        runsFiltersFromQuery(
+          "?transaction_state=in_doubt&transaction_state=open",
+        ),
+      ),
+    ).toBeNull();
+    expect(nothingNeedsAttention(defaultRunsFilters())).toBeNull();
   });
 });

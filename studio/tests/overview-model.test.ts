@@ -45,8 +45,10 @@ import {
 } from "../src/app/operate/overview/overview-model";
 import { viewFromPath } from "../src/app/operate/operate-routes";
 import {
+  MAX_RANGE_MS,
   needsAttention,
   runsFiltersFromQuery,
+  runsFiltersToQuery,
 } from "../src/app/operate/runs/runs-model";
 import { statusLabel, statusTone } from "../src/app/status-labels";
 import { pythonAvailable } from "./run-views-oracle";
@@ -539,11 +541,21 @@ describe("Overview model", () => {
     expect(oldest()).toBe("");
   });
 
-  it("links to the runs with a transaction in doubt, as the runs list's Needs attention", () => {
-    expect(inDoubtRuns).toBe("/operate/runs?transaction_state=in_doubt");
+  it("links to the runs with a transaction in doubt, as the runs list's Needs attention, as far back as the platform reads", () => {
+    expect(inDoubtRuns).toBe(
+      "/operate/runs?transaction_state=in_doubt&range=400d",
+    );
     const { pathname, search } = new URL(inDoubtRuns, "http://studio");
     expect(viewFromPath(pathname)).toEqual({ view: "runs", id: "" });
-    expect(needsAttention(runsFiltersFromQuery(search))).toBe(true);
+    const filters = runsFiltersFromQuery(search);
+    expect(needsAttention(filters)).toBe(true);
+    // The count above the link has no age, so a run started days ago is there.
+    expect(filters.timeWindow).toEqual({
+      kind: "relative",
+      milliseconds: MAX_RANGE_MS,
+    });
+    // The list shows the address as it is, and leaves it so.
+    expect(runsFiltersToQuery(filters)).toBe(search);
   });
 
   it("calls an environment quiet only when every figure it may read is zero", () => {

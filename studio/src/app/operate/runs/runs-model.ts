@@ -190,6 +190,30 @@ function rangeId(milliseconds: number): string {
       return `${milliseconds / units[unit]}${unit}`;
   return `${Math.max(1, Math.round(milliseconds / 60_000))}m`;
 }
+const unitNames: Record<string, string> = { m: "minute", h: "hour", d: "day" };
+/** "Last 7 days", an address's own length too; "Custom range" for exact bounds. */
+export function rangeLabel(window: RunTimeWindow): string {
+  if (window.kind === "absolute") return "Custom range";
+  const id = rangeId(window.milliseconds);
+  const preset = rangePresets.find((item) => item.id === id);
+  if (preset) return preset.label;
+  const count = id.slice(0, -1);
+  return `Last ${count} ${unitNames[id.slice(-1)]}${count === "1" ? "" : "s"}`;
+}
+/** The time range's choices: the presets, and the window's own length when it is none of them. */
+export function rangeChoices(
+  window: RunTimeWindow,
+): { id: string; label: string }[] {
+  if (window.kind === "absolute") return rangePresets;
+  const id = rangeId(window.milliseconds);
+  return rangePresets.some((preset) => preset.id === id)
+    ? rangePresets
+    : [...rangePresets, { id, label: rangeLabel(window) }];
+}
+/** The chosen range: a choice's ID, or "custom" for exact bounds. */
+export function chosenRange(window: RunTimeWindow): string {
+  return window.kind === "absolute" ? "custom" : rangeId(window.milliseconds);
+}
 const instant =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -347,6 +371,24 @@ export function runFilterCount(filters: RunsFilters): number {
     !!filters.activation_id,
     (filters.order ?? "started_desc") !== "started_desc",
   ].filter(Boolean).length;
+}
+
+/**
+ * Why a list that needs attention is empty, by the range it read; null when
+ * another filter may have left runs out.
+ */
+export function nothingNeedsAttention(filters: RunsFilters): string | null {
+  const { timeWindow } = defaultRunsFilters();
+  if (
+    !needsAttention(filters) ||
+    runFilterCount({ ...filters, timeWindow }) !== 1
+  )
+    return null;
+  const range =
+    filters.timeWindow.kind === "absolute"
+      ? "this range"
+      : `the ${rangeLabel(filters.timeWindow).toLowerCase()}`;
+  return `No run started in ${range} has a transaction in doubt.`;
 }
 
 /** The run's status pill. A run that handled errors and succeeded says so. */

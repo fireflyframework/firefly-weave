@@ -79,12 +79,15 @@ import {
 } from "./run-actions";
 import {
   MAX_RANGE_MS,
+  chosenRange,
   defaultRunsFilters,
   handledText,
   isTerminalRun,
   liveDuration,
   needsAttention,
+  nothingNeedsAttention,
   originLabel,
+  rangeChoices,
   rangePresets,
   resolveRunsQuery,
   runFilterCount,
@@ -241,12 +244,12 @@ interface BulkResult {
             <div class="field">
               <label for="runs-range">Time range</label>
               <select id="runs-range" (change)="setRange(value($event))">
-                @for (preset of presets; track preset.id) {
+                @for (choice of rangeChoices(); track choice.id) {
                   <option
-                    [value]="preset.id"
-                    [selected]="rangeId() === preset.id"
+                    [value]="choice.id"
+                    [selected]="rangeId() === choice.id"
                   >
-                    {{ preset.label }}
+                    {{ choice.label }}
                   </option>
                 }
                 <option value="custom" [selected]="rangeId() === 'custom'">
@@ -622,11 +625,11 @@ interface BulkResult {
             } @else if (!loaded) {
               <weave-operate-state kind="loading" noun="runs" [rows]="6" />
             } @else if (!runs.length && !startedRuns.length) {
-              @if (attention() && filterCount() === 1) {
+              @if (nothingNeedsAttention(); as why) {
                 <weave-operate-state
                   kind="empty"
                   heading="No runs need attention."
-                  text="No run in this environment has a transaction in doubt."
+                  [text]="why"
                 >
                   <button type="button" (click)="clearFilters()">
                     Clear filters ({{ filterCount() }})
@@ -997,7 +1000,6 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   readonly absolute = timeAbsolute;
   readonly originLabel = originLabel;
   readonly handled = handledText;
-  readonly presets = rangePresets;
   readonly origins = runOrigins;
   readonly statuses = runStatuses;
   readonly transactionStates = transactionStates;
@@ -1326,13 +1328,14 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   toggleTransactionState(state: TransactionState) {
     this.apply(withTransactionState(this.filters, state));
   }
+  nothingNeedsAttention() {
+    return nothingNeedsAttention(this.filters);
+  }
   rangeId() {
-    const window = this.filters.timeWindow;
-    if (window.kind === "absolute") return "custom";
-    return (
-      rangePresets.find((preset) => preset.milliseconds === window.milliseconds)
-        ?.id ?? "custom"
-    );
+    return chosenRange(this.filters.timeWindow);
+  }
+  rangeChoices() {
+    return rangeChoices(this.filters.timeWindow);
   }
   setRange(id: string) {
     this.rangeProblem = "";
