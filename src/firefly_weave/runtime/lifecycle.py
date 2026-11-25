@@ -44,19 +44,26 @@ from firefly_weave.runtime.waits import TERMINAL
 PURGE_SECONDS = 5.0
 PURGE_WRITES = 50
 
+# What a purge with no time left says of the records it read: it wrote all of them, or some, or there were none; or it
+# wrote nothing, because they need more room than there is, or because another change holds the run or its project.
+ALL_KEPT = "it kept what it read, so purge it again"
+SOME_KEPT = "it kept part of what it read, so purge it again"
+NONE_READ = "it got through none of them, so purge it again when the server is less busy"
+NO_ROOM = (
+    "there is no room in the project's storage to keep what it read: make room, such as by purging other runs, and "
+    "purge it again"
+)
+HELD = "another change holds the run or its project, so it kept nothing: purge it again"
 
-def _blocked(error: DBAPIError, repair: Repair) -> str:
-    """Why a purge is refused. Only a history that was read to its end is said not to show how a transaction ended."""
-    if "Transaction not settled" in str(error.orig):
-        if repair.unfinished:
-            return (
-                "Weave had no time left to read how every transaction of the run ended; it kept what it read, so "
-                "purge it again"
-            )
-        if "too_large" in repair.left.values():
-            return (
-                "The run's history is too large to read how every transaction of the run ended; keep the run archived"
-            )
+
+class _Unread(Exception):
+    """A purge refused only for records whose events it had no time to read."""
+
+
+def _blocked(unsettled: bool, repair: Repair) -> str:
+    """Why a purge is refused that no further read of the history helps; ``unsettled`` when that is for a record."""
+    if unsettled and "too_large" in repair.left.values():
+        return "The run's history is too large to read how every transaction of the run ended; keep the run archived"
     return (
         "Run has a live lease, a running or undelivered workflow call, a trigger start still waiting to run, a "
         "transaction whose outcome its history doesn't show, or retained email, trigger, schedule, or retry "
@@ -90,13 +97,22 @@ class RunLifecycleService:
             purged_at=row["purged_at"],
         )
 
+    @staticmethod
+    async def _archived(repository: RuntimeRepository, identifier: UUID, revision: int) -> bool:
+        """Whether a run is archived at this revision."""
+        return bool(
+            await repository.rows(
+                f"SELECT 1 FROM run_archives WHERE {SCOPE} AND run_id=:id AND archived AND revision=:revision",
+                id=identifier,
+                revision=revision,
+            )
+        )
+
     async def _repair(
         self, actor: Principal, scope: Scope, identifier: UUID, request: RunLifecycleRequest, context: AuditContext
     ) -> Repair:
         """What the run's history says about the transaction records an earlier version left unsettled, which would
         refuse its purge; read before the purge takes the project's lock, and only for a purge nothing else refuses.
-
-        A read whose time runs out writes what it found, so the next purge goes on from there.
         """
         found = Repair()
         try:
@@ -106,30 +122,47 @@ class RunLifecycleService:
             ):
                 self.runtime.require(await load_principal(tx.session, actor.id), scope, "run.purge", context)
                 repository = RuntimeRepository(tx)
-                archived = await repository.rows(
-                    f"SELECT 1 FROM run_archives WHERE {SCOPE} AND run_id=:id AND archived AND revision=:revision",
-                    id=identifier,
-                    revision=request.expected_revision,
-                )
-                if archived and isinstance(request, RunPurgeRequest) and request.confirm_run_id == identifier:
+                if (
+                    isinstance(request, RunPurgeRequest)
+                    and request.confirm_run_id == identifier
+                    and await self._archived(repository, identifier, request.expected_revision)
+                ):
                     await read_repair(repository, identifier, found, limit=PURGE_BYTES)
         except TimeoutError:
             found.unfinished = True
-            for part in batched(found.records.items(), PURGE_WRITES):
-                await self._keep(scope, identifier, Repair(records=dict(part)))
         return found
 
-    async def _keep(self, scope: Scope, identifier: UUID, found: Repair) -> None:
-        """Write the records a purge had time to read. Without room for them, they keep only how their transactions
-        ended, so a project at its quota still gets to the end of a long purge."""
+    async def _keep(self, scope: Scope, identifier: UUID, revision: int, found: Repair) -> str:
+        """Write the records a refused purge had time to read, so the next one goes on from there; what it says of
+        them. Its run stays and can be restored, so a record is written with all it says, or not at all."""
+        parts = list(batched(found.records.items(), PURGE_WRITES))
+        for written, part in enumerate(parts):
+            refused = await self._keep_part(scope, identifier, revision, Repair(records=dict(part)))
+            if refused is not None:
+                return SOME_KEPT if written else refused
+        return ALL_KEPT if parts else NONE_READ
+
+    async def _keep_part(self, scope: Scope, identifier: UUID, revision: int, found: Repair) -> str | None:
+        """Write some of the records in one transaction; why nothing was written, if it was not."""
         try:
             async with self.runtime.definitions.transaction(scope, None) as tx:
-                await write_repair(RuntimeRepository(tx), identifier, found)
+                repository = RuntimeRepository(tx)
+                # The refused purge's transaction ended, so its run may have been restored since.
+                if not await self._archived(repository, identifier, revision):
+                    raise CatalogError(409, "WV-RUN-LIFECYCLE-REVISION", "Execution lifecycle revision changed")
+                try:
+                    async with tx.session.begin_nested():
+                        written = await write_repair(repository, identifier, found)
+                except DBAPIError as error:
+                    if getattr(error.orig, "sqlstate", None) != "WQ001":
+                        raise
+                    return NO_ROOM
+                return HELD if written is None else None
         except CatalogError as error:
+            # The project's lock, or one of the records, stayed busy.
             if not capacity_rejected(error):
                 raise
-            async with self.runtime.definitions.transaction(scope, None) as tx:
-                await settle_for_purge(RuntimeRepository(tx), identifier, found)
+            return HELD
 
     async def command(
         self,
@@ -144,8 +177,31 @@ class RunLifecycleService:
     ) -> RunLifecycle:
         if action not in {"archive", "restore", "purge"}:
             raise ValueError("Unknown lifecycle command")
-        capability = "run.purge" if action == "purge" else "run.archive"
         repair = await self._repair(actor, scope, identifier, request, context) if action == "purge" else Repair()
+        try:
+            return await self._apply(actor, scope, identifier, request, key, repair, action=action, context=context)
+        except _Unread:
+            said = await self._keep(scope, identifier, request.expected_revision, repair)
+        raise CatalogError(
+            409,
+            "WV-RUN-PURGE-BLOCKED",
+            f"Weave had no time left to read how every transaction of the run ended; {said}",
+        )
+
+    async def _apply(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        request: RunLifecycleRequest,
+        key: str,
+        repair: Repair,
+        *,
+        action: str,
+        context: AuditContext,
+    ) -> RunLifecycle:
+        """Archive, restore or purge the run in one transaction, a purge with what ``repair`` says of its records."""
+        capability = "run.purge" if action == "purge" else "run.archive"
         async with self.runtime.definitions.transaction(scope, None) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.runtime.require(actor, scope, capability, context)
@@ -189,7 +245,10 @@ class RunLifecycleService:
                 except DBAPIError as error:
                     if getattr(error.orig, "sqlstate", None) not in {"23503", "P0001"}:
                         raise
-                    raise CatalogError(409, "WV-RUN-PURGE-BLOCKED", _blocked(error, repair)) from None
+                    unsettled = "Transaction not settled" in str(error.orig)
+                    if unsettled and repair.unfinished and not repair.left:
+                        raise _Unread from None
+                    raise CatalogError(409, "WV-RUN-PURGE-BLOCKED", _blocked(unsettled, repair)) from None
             else:
                 archived = action == "archive"
                 if current.archived == archived:

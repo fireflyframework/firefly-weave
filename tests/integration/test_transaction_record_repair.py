@@ -21,6 +21,7 @@ import asyncio
 import logging
 import pkgutil
 import threading
+from contextlib import asynccontextmanager, nullcontext
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -112,6 +113,88 @@ def slow(monkeypatch):
     monkeypatch.setattr(kernel, "transition", reducing)
     yield this
     this.end.set()
+
+
+@pytest.fixture
+def out_of_time(monkeypatch):
+    """The keys whose events a read of the history has no time left for: it ends when it comes to one of them."""
+    from firefly_weave.runtime import record_repair
+
+    current, at = record_repair.read_moment, set()
+
+    async def reading(repository, history, moment, **options):
+        if any(key in at for keys in moment.values() for key in keys):
+            raise TimeoutError
+        return await current(repository, history, moment, **options)
+
+    monkeypatch.setattr(record_repair, "read_moment", reading)
+    return at
+
+
+@pytest.fixture
+def meanwhile(platform, monkeypatch):
+    """What another session does around each change of a purge, by the change's position: the purge itself is 0, and
+    each change after it writes some of the records it read. Positions count from ``arm()``."""
+    current = platform.runtime.definitions.transaction
+    this = SimpleNamespace(around={}, position=None)
+
+    @asynccontextmanager
+    async def opening(scope, supplied, *, mutation=True, **options):
+        around = nullcontext
+        if mutation and this.position is not None:
+            around = this.around.get(this.position, nullcontext)
+            this.position += 1
+        async with around(), current(scope, supplied, mutation=mutation, **options) as tx:
+            yield tx
+
+    async def arm():
+        this.position = 0
+
+    this.arm = arm
+    monkeypatch.setattr(platform.runtime.definitions, "transaction", opening)
+    return this
+
+
+def holder(platform, what: str, run_id: UUID):
+    """Another session's change, which holds the run, one of its records or its whole project."""
+    from sqlalchemy import text
+
+    lock, values = {
+        "the run": ("SELECT 1 FROM runs WHERE id=:run FOR UPDATE", {"run": run_id}),
+        "the project": (
+            "SELECT pg_advisory_xact_lock(hashtextextended('weave.operations:'||:tenant||':'||:project,0))",
+            {"tenant": str(platform.scope.tenant_id), "project": str(platform.scope.project_id)},
+        ),
+        "a record": (
+            "SELECT 1 FROM run_transactions WHERE run_id=:run AND instance_key='move[0]' FOR UPDATE",
+            {"run": run_id},
+        ),
+    }[what]
+
+    @asynccontextmanager
+    async def held():
+        async with platform.sessions() as session, session.begin():
+            await session.execute(text(lock), values)
+            yield
+
+    return held
+
+
+@pytest.fixture
+def quota(platform):
+    """The project's byte quota: ``spend()`` leaves no room in it, ``free()`` makes room again."""
+    from test_transaction_control import SATURATE
+
+    before = {}
+
+    async def spend():
+        [before["policy"]] = await platform.query("SELECT limits::text AS limits FROM operation_policy")
+        await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+
+    async def free():
+        await platform.execute("UPDATE operation_policy SET limits=cast(:limits AS jsonb)", **before["policy"])
+
+    return SimpleNamespace(spend=spend, free=free)
 
 
 async def read(platform, run_id: UUID, **options: Any):
@@ -410,28 +493,51 @@ async def test_a_purge_settles_more_records_than_one_read_takes_on_at_a_full_byt
     assert await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run.id) == []
 
 
-@pytest.mark.parametrize("quota", ["free", "full"])
-async def test_a_purge_that_runs_out_of_time_says_so_and_the_next_one_goes_on(
-    platform, reconciler, earlier, slow, monkeypatch, quota
-):
-    from test_transaction_control import SATURATE
-
+async def refused(platform, run_id: UUID, actor, **options: Any):
+    """What a purge is refused with: its status, its code and what it says."""
     from firefly_weave.definitions.models import CatalogError
+
+    with pytest.raises(CatalogError) as caught:
+        await purge(platform, run_id, actor, **options)
+    return caught.value.status, caught.value.code, str(caught.value)
+
+
+async def restore(platform, run_id: UUID, actor) -> None:
+    """Bring back an archived run, whose purge was refused."""
+    from loop_transactions import AuditContext
+
+    from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest
+    from firefly_weave.runtime.lifecycle import RunLifecycleService
+
+    request = RunLifecycleRequest(expected_revision=1, reason="still needed")
+    await RunLifecycleService(platform.runtime).command(
+        actor, platform.scope, run_id, request, "restore", action="restore", context=AuditContext()
+    )
+
+
+async def gone(platform, run_id: UUID) -> bool:
+    return await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run_id) == []
+
+
+def says_all(row: dict[str, Any]) -> bool:
+    """Whether a settled record has all it says."""
+    return bool(row["participants"] and row["business_key"] and row["ended_at"])
+
+
+async def test_a_purge_that_runs_out_of_time_says_so_and_the_next_one_goes_on(
+    platform, reconciler, earlier, slow, monkeypatch
+):
     from firefly_weave.runtime import lifecycle
 
     run = await three_open(platform)
     last = await last_event(platform, run.id)
     slow.when = lambda state, event: event.sequence == last and not slow.asked
     monkeypatch.setattr(lifecycle, "PURGE_SECONDS", 2.0)
-
-    async def archived() -> None:
-        if quota == "full":
-            await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
-
-    with pytest.raises(CatalogError) as refused:
-        await purge(platform, run.id, reconciler, archived=archived)
-    assert (refused.value.status, refused.value.code) == (409, "WV-RUN-PURGE-BLOCKED")
-    assert "purge it again" in str(refused.value) and "history doesn't show" not in str(refused.value)
+    # Each record it read has a transaction of its own.
+    monkeypatch.setattr(lifecycle, "PURGE_WRITES", 1)
+    status, code, said = await refused(platform, run.id, reconciler)
+    assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert "it kept what it read, so purge it again" in said and "history doesn't show" not in said
     # What it read is kept, so the next purge has only the rest to read.
     kept = await records(platform, run.id)
     assert {key: row["state"] for key, row in kept.items()} == {
@@ -439,10 +545,174 @@ async def test_a_purge_that_runs_out_of_time_says_so_and_the_next_one_goes_on(
         "move[1]": "completed",
         "move[2]": "open",
     }
-    # At a full quota a record has no room for the rest of what it says.
-    assert bool(kept["move[0]"]["participants"]) is (quota == "free")
+    assert says_all(kept["move[0]"]) and says_all(kept["move[1]"])
     await purge(platform, run.id, reconciler, again=True)
-    assert await platform.query("SELECT 1 FROM runs WHERE id=:run", run=run.id) == []
+    assert await gone(platform, run.id)
+
+
+async def test_a_purge_without_room_for_what_it_read_changes_no_record_until_there_is_room(
+    platform, reconciler, earlier, out_of_time, quota
+):
+    run = await three_open(platform)
+    out_of_time.add("move[2]")
+    before, fact = await records(platform, run.id), await run_fact(platform, run.id)
+    for options in ({"archived": quota.spend}, {"again": True}):
+        status, code, said = await refused(platform, run.id, reconciler, **options)
+        assert await records(platform, run.id) == before
+        assert await run_fact(platform, run.id) == fact
+        assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED")
+        assert "no room in the project's storage" in said and "it kept" not in said
+    await quota.free()
+    _, _, said = await refused(platform, run.id, reconciler, again=True)
+    assert "it kept what it read" in said
+    kept = await records(platform, run.id)
+    assert says_all(kept["move[0]"]) and says_all(kept["move[1]"]) and kept["move[2]"] == before["move[2]"]
+    out_of_time.clear()
+    await purge(platform, run.id, reconciler, again=True)
+    assert await gone(platform, run.id)
+
+
+async def test_a_run_restored_after_a_refused_purge_is_repaired_with_all_its_records_say(
+    platform, access_db, reconciler, earlier, out_of_time, quota
+):
+    activation = await platform.publish(workflow("move-each", [each(BODY, 2)]))
+
+    async def ended() -> UUID:
+        run = await platform.start(activation)
+        await go_back(platform, "[0]")
+        await commit(platform, "[1]")
+        return run.id
+
+    stuck = await ended()
+    out_of_time.add("move[1]")
+    await refused(platform, stuck, reconciler, archived=quota.spend)
+    await quota.free()
+    await restore(platform, stuck, reconciler)
+    out_of_time.clear()
+    loop = operations_loop(access_db)
+    assert await loop.repair_records(await authority(platform, access_db), loop.monotonic() + 10) is True
+    repaired, fact = await records(platform, stuck), await run_fact(platform, stuck)
+    earlier()
+    whole = await ended()
+    expected = await records(platform, whole)
+    assert [written(row) for row in repaired.values()] == [written(row) for row in expected.values()]
+    assert fact == await run_fact(platform, whole)
+
+
+@pytest.mark.parametrize(
+    "held,position,status,said,kept",
+    [
+        ("the project", 0, 429, "", 0),
+        ("the project", 1, 409, "it kept nothing: purge it again", 0),
+        ("the run", 1, 409, "it kept nothing: purge it again", 0),
+        ("a record", 1, 409, "it kept nothing: purge it again", 0),
+        ("the project", 2, 409, "it kept part of what it read, so purge it again", 1),
+    ],
+)
+async def test_a_purge_of_a_run_that_another_change_holds_empties_no_record(
+    platform, reconciler, earlier, out_of_time, meanwhile, monkeypatch, held, position, status, said, kept
+):
+    from firefly_weave.runtime import lifecycle
+
+    monkeypatch.setattr(lifecycle, "PURGE_WRITES", 1)
+    run = await three_open(platform)
+    out_of_time.add("move[2]")
+    before = await records(platform, run.id)
+    meanwhile.around[position] = holder(platform, held, run.id)
+    answer = await refused(platform, run.id, reconciler, archived=meanwhile.arm)
+    after = await records(platform, run.id)
+    changed = [key for key in after if after[key] != before[key]]
+    assert changed == [f"move[{index}]" for index in range(kept)]
+    assert all(says_all(after[key]) for key in changed)
+    assert answer[0] == status and said in answer[2]
+    out_of_time.clear()
+    await purge(platform, run.id, reconciler, again=True)
+    assert await gone(platform, run.id)
+
+
+async def test_a_purge_keeps_nothing_in_a_run_that_was_restored_meanwhile(
+    platform, reconciler, earlier, out_of_time, meanwhile
+):
+    @asynccontextmanager
+    async def restored():
+        await restore(platform, run.id, reconciler)
+        yield
+
+    run = await three_open(platform)
+    out_of_time.add("move[2]")
+    before = await records(platform, run.id)
+    meanwhile.around[1] = restored
+    status, code, _ = await refused(platform, run.id, reconciler, archived=meanwhile.arm)
+    assert (status, code) == (409, "WV-RUN-LIFECYCLE-REVISION")
+    assert await records(platform, run.id) == before
+
+
+async def test_only_a_purge_that_ran_out_of_time_asks_for_another_one(platform, reconciler, earlier, out_of_time):
+    run = await three_open(platform)
+    before = await records(platform, run.id)
+    out_of_time.add("move[0]")
+    status, code, said = await refused(platform, run.id, reconciler)
+    assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert "purge it again when the server is less busy" in said and "it kept" not in said
+    assert await records(platform, run.id) == before
+    # With time for everything, but a record no read takes on, because the run's state names its transaction.
+    out_of_time.clear()
+    await platform.execute("ALTER TABLE runs DISABLE TRIGGER USER")
+    await platform.execute(
+        "UPDATE runs SET state=jsonb_set(state,'{transactions}','{\"move[0]\": {}}') WHERE id=:run", run=run.id
+    )
+    status, code, said = await refused(platform, run.id, reconciler, again=True)
+    assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert "history doesn't show" in said and "again" not in said
+    assert await records(platform, run.id) == before
+
+
+@pytest.mark.parametrize("problem", ["the digest", "the size"])
+async def test_a_purge_that_no_further_read_can_help_says_so_although_it_had_no_time_for_the_rest(
+    platform, reconciler, earlier, out_of_time, monkeypatch, problem
+):
+    from firefly_weave.runtime import lifecycle
+
+    run = await three_open(platform)
+    out_of_time.add("move[2]")
+    if problem == "the size":
+        monkeypatch.setattr(lifecycle, "PURGE_BYTES", 100)
+    else:
+        await platform.execute("ALTER TABLE run_event_evidence DISABLE TRIGGER USER")
+        await platform.execute(
+            TAMPERED["the digest"] + " AND sequence=(SELECT e.sequence FROM run_events e JOIN step_facts s "
+            "ON s.run_id=e.run_id AND s.ended_at=e.created_at WHERE e.run_id=:run AND s.instance_key='move[0]')",
+            run=run.id,
+        )
+    before = await records(platform, run.id)
+    status, code, said = await refused(platform, run.id, reconciler)
+    assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED")
+    assert ("too large" if problem == "the size" else "history doesn't show") in said and "again" not in said
+    # It could read and settle move[1], but not the whole run, so it changes nothing.
+    assert await records(platform, run.id) == before
+
+
+async def test_a_purge_that_something_else_refuses_too_keeps_nothing_and_says_what_does(
+    platform, reconciler, earlier, out_of_time, monkeypatch
+):
+    from firefly_weave.runtime import lifecycle
+
+    run = await three_open(platform)
+    out_of_time.add("move[2]")
+    await platform.execute("ALTER TABLE task_leases DISABLE TRIGGER USER")
+    await platform.execute(
+        "UPDATE task_leases SET status='active',expires_at=clock_timestamp()+interval '1 hour',"
+        "deadline=clock_timestamp()+interval '1 hour' "
+        "WHERE task_id IN (SELECT id FROM task_intents WHERE run_id=:run)",
+        run=run.id,
+    )
+    before = await records(platform, run.id)
+    for options in ({}, {"again": True}):
+        status, code, said = await refused(platform, run.id, reconciler, **options)
+        assert await records(platform, run.id) == before
+        assert (status, code) == (409, "WV-RUN-PURGE-BLOCKED") and said.startswith("Run has a live lease")
+        # Nor is a history too large to read what refuses it.
+        monkeypatch.setattr(lifecycle, "PURGE_BYTES", 100)
 
 
 async def test_a_purge_names_a_history_too_large_to_read(platform, reconciler, earlier, monkeypatch):

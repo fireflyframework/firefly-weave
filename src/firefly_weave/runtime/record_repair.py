@@ -184,7 +184,8 @@ async def write_repair(repository: RuntimeRepository, run_id: UUID, repair: Repa
 
 async def settle_for_purge(repository: RuntimeRepository, run_id: UUID, repair: Repair) -> None:
     """Settle the records of a run that is being purged. They keep only how their transactions ended, so none of them
-    grows: a purge, which is how a project at its quota frees room, needs none."""
+    grows: a purge, which is how a project at its quota frees room, needs none. Only in one savepoint with the purge,
+    which takes it back when the purge is refused: nothing restores what the records said."""
     # Thousands of records in one statement, whose plan does not depend on how many of them the planner expects.
     await repository.execute(
         "UPDATE run_transactions SET state=cast(:states AS jsonb)->>instance_key,participants='[]'::jsonb,cause=NULL,"
