@@ -54,7 +54,10 @@ export function openIncident(
     incidentFiltersToQuery(defaultIncidentFilters, id),
   );
 }
-/** Opens the inbox on the active incidents of a code. */
+/**
+ * Opens the inbox on the active incidents of a code, those of test runs too:
+ * the run it is opened from may be one.
+ */
 export function showInIncidents(
   host: Pick<App, "view" | "navigate">,
   router: Pick<Router, "navigateByUrl">,
@@ -63,7 +66,11 @@ export function showInIncidents(
   return openInbox(
     host,
     router,
-    incidentFiltersToQuery({ ...defaultIncidentFilters, code }),
+    incidentFiltersToQuery({
+      ...defaultIncidentFilters,
+      code,
+      includeTest: true,
+    }),
   );
 }
 

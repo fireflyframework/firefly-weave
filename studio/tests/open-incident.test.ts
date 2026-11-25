@@ -77,12 +77,12 @@ describe("opening the inbox on an incident", () => {
     expect(steps).toEqual(["page incidents"]);
   });
 
-  it("shows the incidents of a code, in the address of the inbox's own filter", async () => {
+  it("shows the incidents of a code, those of test runs too, in the address of the inbox's own filters", async () => {
     const there = shell("incidents");
     await there.show("WV-TXN-RUN-OVERSIZED");
     expect(there.steps).toEqual([
       "page incidents",
-      "replace /operate/incidents?code=WV-TXN-RUN-OVERSIZED",
+      "replace /operate/incidents?code=WV-TXN-RUN-OVERSIZED&include_test=true",
     ]);
     const elsewhere = shell("workers");
     await elsewhere.show("WV-TXN-RUN-OVERSIZED");

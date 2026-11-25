@@ -187,13 +187,33 @@ for (const [what, answer] of [
       "Show in Incidents",
     ]);
     await step(page, "Show in Incidents").click();
-    await inbox(page, "code=WV-TXN-UNDO-STUCK");
+    await inbox(page, "code=WV-TXN-UNDO-STUCK&include_test=true");
     await expect(
       page.getByRole("button", {
         name: "Open incident WV-TXN-UNDO-STUCK at add",
       }),
     ).toBeVisible();
   });
+
+test("the notice of a test run leads to its incident, which the inbox lists only with test runs", async ({
+  page,
+}) => {
+  const platform = await transactionsPlatform(page, {
+    capabilities: reconciler,
+    items: [{ ...held, test: true }, ...others],
+  });
+  platform.runs = [{ ...platform.runs[5], id: runs.held }, ...platform.runs];
+  await page.goto(`/operate/runs/${runs.held}`);
+  await step(page, "Show in Incidents").click();
+  await expect(
+    page.getByRole("button", {
+      name: "Open incident WV-TXN-RUN-OVERSIZED at the run",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: "Include test runs" }),
+  ).toBeChecked();
+});
 
 test("the notice keeps its height while its transactions are read, and what it offers through a failed read", async ({
   page,
@@ -265,7 +285,7 @@ test("a run held whole leads to its incident, and offers no cancel the platform 
   }
   expect(sent).toEqual([]);
   await step(page, "Show in Incidents").click();
-  await inbox(page, "code=WV-TXN-RUN-OVERSIZED");
+  await inbox(page, "code=WV-TXN-RUN-OVERSIZED&include_test=true");
   await expect(
     page.getByRole("button", {
       name: "Open incident WV-TXN-RUN-OVERSIZED at the run",
