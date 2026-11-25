@@ -17,10 +17,19 @@
 """Transactions in doubt on the platform of ``transaction_platform``: one or two incidents of the same transaction, and
 a person's decisions on them."""
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
-from transaction_platform import add, hold, submit, transaction, workflow
+from transaction_platform import (
+    add,
+    hold,
+    resolved_by_an_earlier_version,
+    started_by_an_earlier_version,
+    submit,
+    transaction,
+    workflow,
+)
 
 from firefly_weave.access.audit import AuditContext
 
@@ -40,10 +49,10 @@ LOOKUP = {
 }
 
 
-def beside(*steps: dict[str, Any]) -> dict[str, Any]:
+def beside(*steps: dict[str, Any], identifier: str = "both") -> dict[str, Any]:
     """Steps that run at once, each in its own branch."""
     branches = {f"b{index}": {"steps": [step], "output": {"literal": None}} for index, step in enumerate(steps)}
-    return {"id": "both", "kind": "parallel", "concurrency": len(steps), "branches": branches}
+    return {"id": identifier, "kind": "parallel", "concurrency": len(steps), "branches": branches}
 
 
 async def active(platform, run_id) -> dict[str, Any]:
@@ -96,14 +105,37 @@ async def stuck(platform, run_id, *phases: str) -> dict[str, dict[str, Any]]:
     return await by_key(platform, run_id)
 
 
-async def two_stuck(platform, *after: dict[str, Any]):
-    """Both reservations of one transaction couldn't be confirmed: two incidents hold the run."""
-    run = await platform.start(await platform.publish(workflow("move", [transaction(*STEPS), *after])))
+async def two_stuck(platform, *after: dict[str, Any], others: Sequence[dict[str, Any]] = ()):
+    """Both reservations of one transaction couldn't be confirmed: two incidents hold the run, with the steps ``others``
+    in a branch beside the transaction."""
+    block = beside(transaction(*STEPS), *others) if others else transaction(*STEPS)
+    run = await platform.start(await platform.publish(workflow("move", [block, *after])))
     for key in ("hold", "hold2", "add", "submit"):
         await platform.complete(await platform.lease(key))
     held = await stuck(platform, run.id, "hold#confirm", "hold2#confirm")
     assert {key: row["code"] for key, row in held.items()} == dict.fromkeys(CONFIRMS, "WV-TXN-CONFIRM-STUCK")
     return run, held
+
+
+async def left_by_an_earlier_version(platform, reconciler, monkeypatch, how: str = "reconciled", **shape: Any):
+    """A run an earlier version left suspended on one incident nobody could resolve, after one decision of two: the
+    transaction named the incident that was decided, and nothing named the other."""
+    run, held = await two_stuck(platform, PAUSE, **shape)
+    await started_by_an_earlier_version(platform, run.id)
+    named = (await platform.record(run.id))["incident_key"]
+    [other] = set(CONFIRMS) - {named}
+    with monkeypatch.context() as earlier:
+        resolved_by_an_earlier_version(earlier)
+        if how == "retried":
+            await resolve(platform, held[named], "retry_safe")
+        else:
+            await reconcile(platform, held[named], reconciler)
+    if how == "retried":
+        await platform.complete(await platform.lease(named.removesuffix(":1")))
+    state = await platform.state(run.id)
+    assert (state["status"], set(state["incidents"])) == ("suspended", {other})
+    assert "transaction_rules" not in state
+    return run, (await by_key(platform, run.id))[other]
 
 
 async def confirm_stuck(platform):

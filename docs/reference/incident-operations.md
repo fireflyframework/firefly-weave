@@ -261,10 +261,12 @@ receipt; they never advance the run.
 An incident whose code starts with `WV-TXN-` holds a workflow transaction that
 Weave can't finish on its own. Its view has `priority: "high"` and a
 `transaction` object: the transaction's instance key, state and business key,
-each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`)
-and the keys of the steps still `pending`, with no business values. Nothing but
+each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`),
+the keys of the steps still `pending`, and, when there are any, the steps with an
+open `WV-TXN-AFTER-PIVOT-STUCK` incident (`stuck_steps`), with no business
+values. Each incident of a transaction shows it, however many it has. Nothing but
 one of these decisions closes it; a plain cancel is refused with HTTP 409
-`WV-TXN-IN-DOUBT`.
+`WV-TXN-IN-DOUBT` while the run has an open transaction.
 
 | Decision | `kind` | Needs | Effect |
 | --- | --- | --- | --- |
@@ -297,7 +299,13 @@ resolution and the audit record say `leftover: true`.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
-`force_ended`, and answers `external_effects_may_continue: true`. Retiring an
+`force_ended`, and answers `external_effects_may_continue: true`. While an open
+transaction is in doubt, or the run is held behind `WV-TXN-RUN-OVERSIZED`, that
+cancel is refused too (HTTP 409 `WV-TXN-IN-DOUBT`) and changes nothing: Force end
+on the incident is the way past it. It is not refused for a run whose incident
+nobody can resolve, such as one over the fetch budget of retained runs. An
+incident in doubt that a cancel closes ends `resolved` with the kind `terminate`,
+the cancel's actor and reason, and the cancel event's ID as its receipt. Retiring an
 activation that a running transaction may still need to undo a step is refused
 (HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
 `reason` in its body (HTTP 422 `WV-RETIRE-REASON` without one), and the caller
@@ -307,8 +315,8 @@ later, its call can't start and the transaction is in doubt for a person.
 A run too large to undo its transactions is held behind one run-level incident,
 `WV-TXN-RUN-OVERSIZED`; its transactions stay `open` and emit no
 `transaction.in_doubt` (a subscriber sees the run's `run.transition` to
-`suspended`). Force end on that incident, or a cancel with `skip_undo`, ends each
-of them `force_ended` and emits `transaction.force_ended`, as for any other
+`suspended`). Force end on that incident ends each of them `force_ended` and
+emits `transaction.force_ended`, as for any other
 transaction.
 
 **Several incidents.** Each resolution stores the actor, reason, kind, evidence,

@@ -109,6 +109,10 @@ class IncidentTransaction(ContractModel):
     business_key: str | None = Field(default=None, max_length=200, exclude_if=lambda value: value is None)
     participants: list[TransactionParticipantView] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
     pending: list[InstanceKeyText] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
+    # The steps with an open WV-TXN-AFTER-PIVOT-STUCK incident: a record that says the transaction completed names each.
+    stuck_steps: list[InstanceKeyText] = Field(
+        default_factory=list, max_length=MAX_TRANSACTION_PARTICIPANTS, exclude_if=lambda value: not value
+    )
 
 
 class IncidentView(ContractModel):

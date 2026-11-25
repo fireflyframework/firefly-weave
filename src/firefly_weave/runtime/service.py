@@ -36,7 +36,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.instance_keys import node_of
-from firefly_weave.contracts.operations import CancelRunRequest
+from firefly_weave.contracts.operations import CancelRunRequest, RecordedResolution
 from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
@@ -46,7 +46,8 @@ from firefly_weave.contracts.runtime import (
     StartRunRequest,
     UnavailableRunAcknowledgment,
 )
-from firefly_weave.contracts.values import JsonValue
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, TRANSACTION_MESSAGES
+from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.fact_positions import RunPosition
@@ -54,11 +55,11 @@ from firefly_weave.operations.fact_reads import FactReadRepository, unavailable
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
-from firefly_weave.runtime.kernel import KernelError, action_schemas, validate, validate_action, workflow
+from firefly_weave.runtime.kernel import KernelError, action_schemas, unsettled, validate, validate_action, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TerminalControl
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
-from firefly_weave.runtime.transactions import TRANSACTION_RULES
+from firefly_weave.runtime.transactions import HELD_INCIDENT, TRANSACTION_RULES, leftover, shapes
 
 if TYPE_CHECKING:
     from firefly_weave.runtime.calls import ChildStart
@@ -105,6 +106,46 @@ def run_caller(link: dict[str, Any] | None) -> RunCaller | None:
         "depth": link["depth"],
     }
     return RunCaller.model_validate_json(json.dumps(fields))
+
+
+async def open_doubts(repository: RuntimeRepository, run_id: UUID) -> list[str]:
+    """The keys of the run's active incidents in doubt: the ones a person sees and can resolve."""
+    rows = await repository.rows(
+        f"SELECT incident_key FROM incidents WHERE {SCOPE} AND run_id=:run AND status='active' "
+        "AND code=ANY(cast(:codes AS text[])) ORDER BY incident_key",
+        run=run_id,
+        codes=sorted(IN_DOUBT_CODES),
+    )
+    return [row["incident_key"] for row in rows]
+
+
+def refuse_past_doubt(state: RunState, doubts: list[str], *, skip_undo: bool) -> None:
+    """Refuse to stop a run past a transaction in doubt, or past the hold of a run too large to undo its transactions:
+    only a person who resolves that incident, by Force end among the rest, decides it. An incident that an earlier
+    decision left holds no run whose transactions all ended.
+
+    A stop without undoing counts the active incidents (``doubts``), so a run that holds one nobody sees keeps a way
+    out; any other stop counts what the run's state holds.
+    """
+    if skip_undo:
+        held = doubts
+    else:
+        held = [key for key, item in state.incidents.items() if item.code in IN_DOUBT_CODES]
+        held += [key for key, record in state.transactions.items() if record.status == "in_doubt"]
+    if HELD_INCIDENT in held or (held and unsettled(state)):
+        raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])
+
+
+def stopped_resolution(event: RuntimeEvent, reason: str, *, left: bool = False) -> RecordedResolution:
+    """What an incident in doubt says once a stop of its run closed it."""
+    return RecordedResolution(receipt_id=event.id, kind="terminate", reason=reason, leftover=left)
+
+
+def decided_by_stop(artifact: JsonObject, before: RunState, after: RunState, doubts: list[str]) -> dict[str, bool]:
+    """The incidents in doubt a stop closed, and whether an earlier decision had left each of them."""
+    closed = {key: before.incidents[key] for key in doubts if key in before.incidents and key not in after.incidents}
+    facts = shapes(workflow(import_artifact(artifact))) if closed else None
+    return {key: facts is not None and leftover(facts, before, item) for key, item in closed.items()}
 
 
 async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:
@@ -682,6 +723,8 @@ class RuntimeService:
             if skip_undo:
                 self.require(await load_principal(tx.session, actor.id), scope, "transaction.reconcile", context)
             skipped = {"skip_undo": True} if skip_undo else {}
+            # The incidents in doubt a stop closes say who stopped the run.
+            doubts = await open_doubts(repository, run_id)
             if oversized is not None:
                 if row["state"]["status"] == "cancelled":
                     return CapacityRunAcknowledgment(
@@ -698,6 +741,9 @@ class RuntimeService:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
+                await repository.resolve_incidents(
+                    run_id, doubts, actor.id, event.timestamp, stopped_resolution(event, request.reason)
+                )
                 await audit(
                     tx.session,
                     actor,
@@ -728,16 +774,9 @@ class RuntimeService:
                 )
             if previous.state.status in TERMINAL:
                 raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal runs cannot be cancelled")
-            from firefly_weave.contracts.transactions import IN_DOUBT_CODES
-
-            if not skip_undo and (
-                any(record.status == "in_doubt" for record in previous.state.transactions.values())
-                or any(item.code in IN_DOUBT_CODES for item in previous.state.incidents.values())
-            ):
-                # A transaction in doubt, or a run holding its transactions because it grew too large to undo them.
-                from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
-
-                raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])
+            if isinstance(previous, RunView):
+                # A run this platform withholds takes no decision on its incidents, so stopping it stays the way out.
+                refuse_past_doubt(previous.state, doubts, skip_undo=skip_undo)
             if previous.state.ending is not None and isinstance(previous, RunView) and not skip_undo:
                 # Already undoing its transactions before it ends.
                 return previous.model_copy(update={"pending_undo": True})
@@ -763,6 +802,9 @@ class RuntimeService:
                     await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
+                await repository.resolve_incidents(
+                    run_id, doubts, actor.id, event.timestamp, stopped_resolution(event, request.reason)
+                )
                 await audit(
                     tx.session,
                     actor,
@@ -789,6 +831,16 @@ class RuntimeService:
                 else None
             )
             await repository.persist(view, event, result, event_hash(event), safe_response=ack)
+            if isinstance(previous, RunView):
+                decided = decided_by_stop(row["artifact"], previous.state, result.state, doubts)
+                for left in (False, True):
+                    keys = [key for key, was in decided.items() if was is left]
+                    resolution = stopped_resolution(event, request.reason, left=left)
+                    await repository.resolve_incidents(run_id, keys, actor.id, event.timestamp, resolution)
+            else:
+                # Its audit row names the code of the stop instead of a reason, and so do its incidents.
+                resolution = stopped_resolution(event, "WV-LEGACY-UNAVAILABLE")
+                await repository.resolve_incidents(run_id, doubts, actor.id, event.timestamp, resolution)
             await audit(
                 tx.session,
                 actor,

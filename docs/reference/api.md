@@ -1203,13 +1203,15 @@ deadline (such as a reservation about to expire), fires once and holds the run:
 the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
 `@transactions:0`, with origin `WV-RUNTIME-CAPACITY`. Forward work waits behind
 it, later changes to the run keep it, and a plain cancel stays refused. The
-transaction stays as it is until a reconciler ends it: a cancel with
-`"skip_undo": true`, or **Force end** (`terminate`) on that incident. Both need
-`transaction.reconcile` and end every open transaction `force_ended`.
+transaction stays as it is until a reconciler ends it with **Force end**
+(`terminate`) on that incident, or, when the run is over the fetch budget of
+retained runs and takes no decision, with a cancel with `"skip_undo": true`. Both
+need `transaction.reconcile` and end every open transaction `force_ended`.
 
 **Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
 `"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
-end `force_ended` instead of being undone. Without it, a run with an open
+end `force_ended` instead of being undone; while one of them is in doubt, it
+answers HTTP 409 `WV-TXN-IN-DOUBT`, as a plain cancel does. Without it, a run with an open
 transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
 finishes at a full byte quota. Only settlement spends it: a confirm whose result

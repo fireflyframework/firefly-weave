@@ -21,6 +21,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from stuck_transactions import active, confirm_stuck, left_by_an_earlier_version, resolve
 from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
@@ -81,7 +82,7 @@ async def test_skip_undo_needs_the_reconcile_capability(platform, reconciler):
     assert adding.operation_key == f"{run.id}:add"
 
 
-async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
+async def test_skip_undo_is_refused_while_the_step_that_cant_be_undone_is_unknown(platform, reconciler):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
@@ -89,10 +90,97 @@ async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
     await platform.fail(await platform.lease("submit"), "UNAVAILABLE")
     await platform.scan()
     assert (await platform.record(run.id))["state"] == "in_doubt"
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    # The incident stays open: a person says whether the step happened, or force ends the run from it.
+    assert (await platform.record(run.id))["state"] == "in_doubt"
+    [incident] = await platform.query("SELECT code FROM incidents WHERE run_id=:run AND status='active'", run=run.id)
+    assert incident == {"code": "WV-TXN-PIVOT-UNKNOWN"}
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_leftover_does_not_refuse_a_cancel(platform, reconciler, monkeypatch, skip_undo):
+    run, _ = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    view = await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert view.state.status == "cancelled"
+    # What the person said of the transaction stays.
+    assert (await platform.record(run.id))["state"] == "reconciled"
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_run_stops_only_when_no_open_transaction_is_in_doubt(platform, reconciler, monkeypatch, skip_undo):
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch, others=[other])
+    # The incident in doubt is a leftover, and the transaction beside it is still open.
+    before = await platform.state(run.id)
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    assert await platform.state(run.id) == before
+    # Closing it is the way on.
+    await resolve(platform, left, "retry_safe")
+    await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert (await platform.state(run.id)).get("ending") is not None or skip_undo
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_stop_that_closes_a_doubt_records_who_stopped_it(platform, reconciler, monkeypatch, skip_undo):
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    [event] = await platform.query(
+        "SELECT id,created_at FROM run_events WHERE run_id=:run AND type='cancelled'", run=run.id
+    )
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=left["id"])
+    assert (row["status"], row["actor_id"], row["resolved_at"]) == ("resolved", reconciler.id, event["created_at"])
+    assert row["resolution"] == {
+        "receipt_id": str(event["id"]),
+        "kind": "terminate",
+        "reason": "stop",
+        "output": None,
+        "evidence_reference": None,
+        "leftover": True,
+    }
+    assert row["revision"] > left["revision"]
+
+
+async def test_a_stop_closes_any_other_incident_without_a_person(platform, reconciler):
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    await platform.fail(await platform.lease("hold"), "UNAVAILABLE")
+    failed = await active(platform, run.id)
+    assert failed["code"] == "WV-TASK-FAILED"
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    [row] = await platform.query("SELECT status,actor_id,resolution FROM incidents WHERE id=:id", id=failed["id"])
+    assert row == {"status": "closed", "actor_id": None, "resolution": None}
+
+
+async def test_a_doubt_no_row_shows_refuses_no_stop_without_undoing(platform, reconciler):
+    run, incident = await confirm_stuck(platform)
+    # An earlier version left the state with an incident no row showed.
+    await platform.execute("UPDATE incidents SET status='closed' WHERE id=:id", id=incident["id"])
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id)
+    assert refused.value.code == "WV-TXN-IN-DOUBT"
     view = await cancel(platform, run.id, actor=reconciler, skip_undo=True)
     assert view.state.status == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
-    assert await platform.query("SELECT 1 FROM incidents WHERE run_id=:run AND status='active'", run=run.id) == []
+
+
+async def test_a_run_in_doubt_too_large_to_read_is_still_stopped_without_undoing(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import repository
+
+    run, incident = await confirm_stuck(platform)
+    with monkeypatch.context() as large:
+        large.setattr(repository, "RUN_FETCH_BYTES", 1)
+        # Nobody can decide it, so this stop is its way out.
+        with pytest.raises(CatalogError) as refused:
+            await resolve(platform, incident, "terminate", actor=reconciler)
+        assert refused.value.code == "WV-RUNTIME-LIMIT"
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    [row] = await platform.query("SELECT status,actor_id,resolution FROM incidents WHERE id=:id", id=incident["id"])
+    assert (row["status"], row["actor_id"], row["resolution"]["kind"]) == ("resolved", reconciler.id, "terminate")
 
 
 async def test_a_rollback_finishes_at_a_full_byte_quota(platform):

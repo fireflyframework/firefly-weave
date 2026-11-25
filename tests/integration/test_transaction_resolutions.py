@@ -34,6 +34,7 @@ from stuck_transactions import (
     by_key,
     confirm_stuck,
     failed_beside,
+    left_by_an_earlier_version,
     reconcile,
     resolve,
     retried_and_never_claimed,
@@ -44,8 +45,6 @@ from transaction_platform import (
     add,
     build,
     hold,
-    resolved_by_an_earlier_version,
-    started_by_an_earlier_version,
     submit,
     transaction,
     workflow,
@@ -664,27 +663,6 @@ async def test_a_called_child_with_two_stuck_confirms_returns_to_its_caller(plat
     )
     await platform.scan()
     assert (await platform.state(run.id))["status"] == "succeeded"
-
-
-async def left_by_an_earlier_version(platform, reconciler, monkeypatch, how: str):
-    """A run an earlier version left suspended on one incident nobody could resolve, after one decision of two: the
-    transaction named the incident that was decided, and nothing named the other."""
-    run, held = await two_stuck(platform, PAUSE)
-    await started_by_an_earlier_version(platform, run.id)
-    named = (await platform.record(run.id))["incident_key"]
-    [other] = set(CONFIRMS) - {named}
-    with monkeypatch.context() as earlier:
-        resolved_by_an_earlier_version(earlier)
-        if how == "retried":
-            await resolve(platform, held[named], "retry_safe")
-        else:
-            await reconcile(platform, held[named], reconciler)
-    if how == "retried":
-        await platform.complete(await platform.lease(named.removesuffix(":1")))
-    state = await platform.state(run.id)
-    assert (state["status"], set(state["incidents"])) == ("suspended", {other})
-    assert "transaction_rules" not in state
-    return run, (await by_key(platform, run.id))[other]
 
 
 @pytest.mark.parametrize("kind", ["retry_safe", "accept_reconciled_result", "terminate"])

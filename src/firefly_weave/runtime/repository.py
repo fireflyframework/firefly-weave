@@ -17,6 +17,7 @@
 """Scoped runtime SQL. Durable intents become visible only after caller commit."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -26,7 +27,7 @@ from sqlalchemy import text
 
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.operations import TaskTiming
+from firefly_weave.contracts.operations import RecordedResolution, TaskTiming
 from firefly_weave.contracts.runtime import RunView, StartRunRequest, UnavailableRunAcknowledgment
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import FactRepository, RunStartFacts, author_instance, task_fact_update
@@ -737,6 +738,26 @@ class RuntimeRepository:
             keys=list(active),
         )
         return IncidentChanges(frozenset(opened), tuple((row["node_id"], row["code"]) for row in closed))
+
+    async def resolve_incidents(
+        self, run_id: UUID, keys: Sequence[str], actor_id: UUID, at: datetime, resolution: RecordedResolution
+    ) -> list[str]:
+        """Record a person's decision on these incidents of the run, once ``persist`` closed them; returns their IDs,
+        in order."""
+        if not keys:
+            return []
+        rows = await self.rows(
+            "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:at,"
+            f"resolution=cast(:resolution AS jsonb) WHERE {SCOPE} AND run_id=:run "
+            "AND incident_key=ANY(cast(:keys AS text[])) RETURNING id), facts AS (UPDATE incident_facts "
+            f"SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)) SELECT id FROM changed",
+            run=run_id,
+            keys=list(keys),
+            actor=actor_id,
+            at=at,
+            resolution=resolution.model_dump_json(),
+        )
+        return sorted(str(row["id"]) for row in rows)
 
     async def observe_policy_block(self, row: dict[str, Any]) -> None:
         """Trusted scanner/claim observation; caller holds this scoped run lock."""

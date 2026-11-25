@@ -127,7 +127,9 @@ for the request bodies.
 ## 5. Stop a run without undoing it
 
 A reconciler can cancel a run without undoing its open transactions: they end
-`force_ended` and `external_effects_may_continue` is `true`.
+`force_ended` and `external_effects_may_continue` is `true`. While one of them is
+in doubt, that cancel is refused, as a plain one is: resolve its incident instead,
+by Force end if nothing else fits.
 
 ```bash
 weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_undo": true}

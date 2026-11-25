@@ -17,6 +17,7 @@
 """Revision-fenced operational decisions over the shared accepted-event runtime."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Final, Literal, cast, get_args
@@ -37,7 +38,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import node_of
-from firefly_weave.contracts.operations import IncidentResolution, IncidentView, RecordedResolution
+from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.step_errors import confirmable
 from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase, unsaid_message
@@ -89,29 +90,13 @@ def closed_beside(
     return sorted(key for key, owner in owners.items() if owner is not None and (every or owner == transaction))
 
 
-async def record_resolution(
-    repository: RuntimeRepository,
-    run_id: UUID,
-    keys: list[str],
-    actor: Principal,
-    at: datetime,
-    resolution: RecordedResolution,
-) -> list[str]:
-    """Record a person's decision on these incidents of the run; returns their IDs, in order."""
-    if not keys:
-        return []
-    rows = await repository.rows(
-        "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:at,"
-        f"resolution=cast(:resolution AS jsonb) WHERE {SCOPE} AND run_id=:run "
-        "AND incident_key=ANY(cast(:keys AS text[])) RETURNING id), facts AS (UPDATE incident_facts "
-        f"SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)) SELECT id FROM changed",
-        run=run_id,
-        keys=keys,
-        actor=actor.id,
-        at=at,
-        resolution=resolution.model_dump_json(),
+def stuck_steps(incidents: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    """The steps after the point of no return with an open incident, from the run's incident rows."""
+    return tuple(
+        item["node_id"]
+        for item in incidents
+        if item["status"] == "active" and item["code"] == "WV-TXN-AFTER-PIVOT-STUCK"
     )
-    return sorted(str(row["id"]) for row in rows)
 
 
 async def unfinished_task(repository: RuntimeRepository, run_id: UUID, node_id: str) -> dict[str, Any] | None:
@@ -124,8 +109,11 @@ async def unfinished_task(repository: RuntimeRepository, run_id: UUID, node_id: 
     return next((row for row in rows if row["status"] in UNFINISHED_TASK_STATUSES), None)
 
 
-def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None) -> IncidentView:
-    """An incident from its own row; an in-doubt one with its priority and, given its record, its transaction."""
+def incident_view(
+    row: dict[str, Any], transaction: dict[str, Any] | None = None, stuck: Sequence[str] = ()
+) -> IncidentView:
+    """An incident from its own row; an in-doubt one with its priority and, given its record, its transaction, whose
+    steps with an open incident after the point of no return are among ``stuck``."""
     fields = {name: row[name] for name in IncidentView.model_fields if name in row}
     fields["external_effects_may_continue"] = bool(row["resolution"] and row["resolution"]["kind"] == "terminate")
     held = {"code": row["code"]} | (
@@ -134,6 +122,7 @@ def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None
             "txn_state": transaction["state"],
             "txn_business_key": transaction["business_key"],
             "txn_participants": transaction["participants"],
+            "txn_stuck": stuck,
         }
         if transaction is not None
         else {}
@@ -180,19 +169,29 @@ class IncidentService:
         async with self.runtime.definitions.transaction(scope, tx, mutation=False) as tx:
             self.runtime.require(await self.access.load_principal(actor.id, tx=tx), scope, "incident.read", context)
             repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
-            view_of(await repository.run(run_id))
+            row = await repository.run(run_id)
+            view_of(row)
+            incidents = await repository.rows(
+                f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run ORDER BY incident_key", run=run_id
+            )
+            facts = shapes(workflow(import_artifact(row["artifact"])))
+            owners = {
+                item["incident_key"]: incident_transaction(facts, item["node_id"], item["code"])
+                for item in incidents
+                if facts is not None and item["node_id"] is not None and item["code"] in IN_DOUBT_CODES
+            }
             records = {
-                row["incident_key"]: row
-                for row in await repository.rows(
-                    f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run AND incident_key IS NOT NULL",
+                record["instance_key"]: record
+                for record in await repository.rows(
+                    f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run "
+                    "AND instance_key=ANY(cast(:keys AS text[]))",
                     run=run_id,
+                    keys=sorted({owner for owner in owners.values() if owner is not None}),
                 )
             }
+            stuck = stuck_steps(incidents)
             return [
-                incident_view(row, records.get(row["incident_key"]))
-                for row in await repository.rows(
-                    f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run ORDER BY incident_key", run=run_id
-                )
+                incident_view(item, records.get(owners.get(item["incident_key"]) or ""), stuck) for item in incidents
             ]
 
     async def resolve(
@@ -487,11 +486,11 @@ class IncidentService:
                 transaction_key,
                 every=ends_every_transaction,
             )
-            closed = await record_resolution(
-                repository, previous.id, beside, actor, event.timestamp, recorded.model_copy(update={"output": None})
+            closed = await repository.resolve_incidents(
+                previous.id, beside, actor.id, event.timestamp, recorded.model_copy(update={"output": None})
             )
-            await record_resolution(
-                repository, previous.id, [incident["incident_key"]], actor, event.timestamp, recorded
+            await repository.resolve_incidents(
+                previous.id, [incident["incident_key"]], actor.id, event.timestamp, recorded
             )
             records = await repository.rows(
                 f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run AND CASE "
@@ -500,9 +499,11 @@ class IncidentService:
                 key=incident["incident_key"],
                 transaction=transaction_key,
             )
+            now = await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run", run=previous.id)
             resolved = incident_view(
-                (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0],
+                next(item for item in now if item["id"] == incident_id),
                 records[0] if records else None,
+                stuck_steps(now),
             )
             await repository.execute(
                 "INSERT INTO incident_resolution_receipts "
