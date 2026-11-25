@@ -102,8 +102,9 @@ weave-operate-state {
   font: var(--type-caption);
   color: var(--muted);
 }
+/* At 1440x900 the first two other incidents are in view under the band. */
 .band-note {
-  margin: 0 0 var(--space-1);
+  margin: 0;
   font: var(--type-small);
   color: var(--muted);
 }
