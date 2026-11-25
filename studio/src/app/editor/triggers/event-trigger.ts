@@ -22,8 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 // it for the tile, says what the platform would refuse, warns when the
 // workflow reacts to its own transactions, and tells whether the workflow's
 // input already takes the platform event.
-import { isJsonObject } from "../../forms/core/json";
+import { isJsonObject, jsonEqual, type Json } from "../../forms/core/json";
 import type { Workflow } from "../../model";
+import type { StepFacts } from "../canvas/tile-facts";
 import {
   EVENT_CHOICE_ORDER,
   EVENT_CHOICES,
@@ -49,7 +50,7 @@ export const DEFAULT_DECLARATION: EventDeclaration = {
 export const MAX_SOURCES = 100;
 /** How many times in a row the platform lets reactions start reactions. */
 const MAX_DEPTH = 3;
-const WORKFLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+export const WORKFLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /**
  * The workflow's declaration, or null when it doesn't react to platform
@@ -171,7 +172,7 @@ export function eventProblems(declaration: EventDeclaration): {
   const invalid = from.find((name) => !WORKFLOW_NAME.test(name));
   if (from.length === 0)
     problems.from =
-      "Name at least one workflow, or choose Any workflow in this project.";
+      "Add at least one workflow, or choose Any workflow in this project.";
   else if (from.length > MAX_SOURCES)
     problems.from = `Up to ${MAX_SOURCES} workflows can be named here.`;
   else if (invalid !== undefined)
@@ -205,6 +206,70 @@ function blank(inputSchema: unknown): boolean {
     (properties === undefined ||
       (isJsonObject(properties) && !Object.keys(properties).length))
   );
+}
+
+/** What a check of the workflow found, and the definition it read. */
+export interface CheckedInput {
+  definition: unknown;
+  diagnostics: readonly { code?: unknown; path?: unknown }[];
+}
+/**
+ * Whether the platform event is what the workflow's input takes: the input is
+ * the event itself; a check refused it ("refused") or couldn't compare them
+ * ("unsure"); or the workflow reads it through an input of its own.
+ */
+export type EventInputState = "event" | "refused" | "unsure" | "own";
+
+const INPUT_PATH = "/spec/inputSchema";
+export const INPUT_REFUSED =
+  "This trigger can't start runs: the workflow's input doesn't accept the platform event.";
+export const INPUT_UNSURE =
+  "Studio can't confirm that the platform event fits this workflow's input.";
+
+/**
+ * The state of the workflow's input as the last check left it; a check that
+ * read another input says nothing of this one.
+ */
+export function eventInputState(
+  workflow: Workflow,
+  checked: CheckedInput | null,
+): EventInputState {
+  const schema = workflow.spec["inputSchema"];
+  if (isPlatformEventInput(schema)) return "event";
+  const definition = checked?.definition;
+  const spec = isJsonObject(definition) ? definition["spec"] : null;
+  if (
+    !checked ||
+    !isJsonObject(spec) ||
+    !jsonEqual((spec["inputSchema"] ?? null) as Json, (schema ?? null) as Json)
+  )
+    return "own";
+  const found = (code: string) =>
+    checked.diagnostics.some(
+      (item) =>
+        item.path === INPUT_PATH &&
+        typeof item.code === "string" &&
+        item.code.endsWith(code),
+    );
+  return found("TYPE_MISMATCH")
+    ? "refused"
+    : found("UNKNOWN_COMPATIBILITY")
+      ? "unsure"
+      : "own";
+}
+
+/** What the trigger's tile says is wrong: an input that can't take the event, then what is still to be chosen. */
+export function eventTileFacts(
+  workflow: Workflow,
+  checked: CheckedInput | null,
+): StepFacts {
+  const declaration = readDeclaration(workflow);
+  const state = eventInputState(workflow, checked);
+  return {
+    errors: state === "refused" ? [INPUT_REFUSED] : [],
+    warnings: state === "unsure" ? [INPUT_UNSURE] : [],
+    setup: declaration ? Object.values(eventProblems(declaration)) : [],
+  };
 }
 
 /**

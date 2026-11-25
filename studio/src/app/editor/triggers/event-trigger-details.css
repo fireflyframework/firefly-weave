@@ -1,0 +1,448 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Three sections, ruled apart: Which events, From which workflows, Input; a
+   problem with the input comes first. Rows are 52 px or more at every size. */
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.et-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.et-section + .et-section {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+.et-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  padding: 0;
+}
+legend.et-head {
+  margin-bottom: var(--space-2);
+}
+.et-heading {
+  margin: 0;
+  font: var(--type-title-sm);
+  font-size: 15px;
+}
+.et-caption {
+  margin: 0;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Which events: one bordered list, so its error has an edge to color. */
+.et-rows {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.et-rows.is-wrong {
+  border-color: var(--danger-bd);
+}
+.et-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 52px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.et-row + .et-row {
+  border-top: 1px solid var(--line);
+}
+.et-row:hover {
+  background: var(--hover);
+}
+/* The box at the row's start, the words beside it (inputs are full width elsewhere). */
+.et-row input[type="checkbox"],
+.et-card input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  min-height: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.et-row-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.et-row-text small {
+  font: var(--type-small);
+  font-weight: 400;
+  color: var(--muted);
+}
+.et-row:has(input:checked) .et-row-name {
+  font-weight: 600;
+}
+.et-problem,
+.et-ok {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0;
+  font: var(--type-small);
+}
+.et-problem {
+  color: var(--danger-ink);
+}
+.et-ok {
+  font: var(--type-body);
+}
+.et-ok weave-icon {
+  align-self: center;
+  color: var(--success-ink);
+}
+.et-problem weave-icon,
+.et-callout > weave-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* A callout: the input's problem first in Parameters, the loop under the names. */
+.et-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--warning-bd);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+  font: var(--type-small);
+  color: var(--text);
+}
+.et-callout > weave-icon {
+  color: var(--warning-ink);
+}
+.et-callout[data-tone="danger"] {
+  border-color: var(--danger-bd);
+  background: var(--danger-bg);
+}
+.et-callout[data-tone="danger"] > weave-icon {
+  color: var(--danger-ink);
+}
+.et-callout-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.et-callout-text p {
+  margin: 0;
+}
+.et-callout-text .et-code {
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.et-callout-text button {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+/* From which workflows: two radio cards, the chosen one in the accent. */
+.et-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.et-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 36px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.et-card.is-chosen {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.et-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-6);
+  list-style: none;
+}
+.et-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 2px 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font: var(--type-small);
+  font-weight: 600;
+}
+.et-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.et-chip.is-own {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+}
+.et-chip.is-own > weave-icon {
+  margin-right: 2px;
+  color: var(--warning-ink);
+}
+button.et-remove {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+}
+button.et-remove:hover {
+  color: var(--text);
+}
+.et-full {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.et-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  min-width: 150px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--muted);
+}
+.et-field:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.et-field input.et-input {
+  flex: 1;
+  width: 14em;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: var(--type-label);
+  color: var(--text);
+}
+.et-field input.et-input::placeholder {
+  color: var(--subtle);
+}
+.et-section > .et-problem {
+  padding-left: var(--space-6);
+}
+
+/* The suggestions: a list under the field, a sheet on a phone. */
+.et-list {
+  padding: var(--space-1) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  overflow: auto;
+  color: var(--text);
+}
+.et-list[data-side="sheet"] {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.et-group,
+.et-note,
+.et-foot {
+  margin: 0;
+  padding: var(--space-2) 14px;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.et-group {
+  padding-bottom: var(--space-1);
+}
+.et-note + [role="listbox"],
+[role="group"] + [role="group"] {
+  border-top: 1px solid var(--line);
+}
+.et-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0 6px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.et-option:hover {
+  background: var(--hover);
+}
+.et-option.is-active {
+  background: var(--selected);
+}
+.et-option weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.et-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.et-option-name b {
+  font-weight: 700;
+}
+.et-option-aside {
+  flex: none;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Input: what each run starts with, field by field. */
+.et-box {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.et-box-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+}
+.et-box-head weave-icon,
+.et-fields weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.et-box-title,
+.et-field-name {
+  font: var(--type-label);
+}
+.et-fields {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.et-fields li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+}
+.et-field-name,
+.et-fields .et-caption {
+  flex: none;
+}
+.et-about {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* A finger needs 44 px: the names, the field, the options and Reset the input. */
+@media (max-width: 767px), (pointer: coarse) {
+  .et-card {
+    min-height: 44px;
+  }
+  .et-chips {
+    padding-left: 0;
+  }
+  .et-chip {
+    min-height: 44px;
+    padding-left: var(--space-3);
+  }
+  button.et-remove {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin-block: -1px;
+  }
+  .et-add {
+    flex: 1 1 100%;
+  }
+  .et-field {
+    width: 100%;
+    height: 44px;
+  }
+  .et-option {
+    min-height: 48px;
+  }
+  .et-callout-text button {
+    min-height: 44px;
+  }
+  .et-section > .et-problem {
+    padding-left: 0;
+  }
+}

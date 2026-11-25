@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // Studio reads that schema (the platform's view) from its host once per
 // connection, waiting before it asks again after a failure, and builds sample
 // events for testing, since test runs start no reactions.
+import { signal, type WritableSignal } from "@angular/core";
 import type { StudioApi } from "../../api";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 
@@ -86,6 +87,19 @@ export const EVENT_CHOICES: Readonly<
     label: "A transaction was force ended",
     short: "Force ended",
   },
+};
+
+/** When each event happens, under its choice: words few builders know. */
+export const EVENT_DESCRIPTIONS: Readonly<Record<PlatformEventType, string>> = {
+  "transaction.completed": "Every step finished.",
+  "transaction.compensated":
+    "It failed, and the steps it had done were undone.",
+  "transaction.cancelled": "It stopped, and nothing had to be undone.",
+  "transaction.in_doubt":
+    "Its outcome is unclear, and a person has to resolve it.",
+  "transaction.reconciled": "A person resolved one that needed attention.",
+  "transaction.force_ended":
+    "A person ended one that needed attention without resolving it.",
 };
 
 export const isPlatformEventType = (
@@ -159,6 +173,29 @@ export function platformEventView(
     });
   kept.loading = loading;
   return loading;
+}
+
+const shown = new WeakMap<object, WritableSignal<PlatformEventView | null>>();
+
+/**
+ * The view as a template reads it: null until the first answer, then the last
+ * one, announced through a signal when the next arrives. Drawing it asks for
+ * it, at most once per connection and, after a failure, once per pause.
+ */
+export function currentPlatformEvent(
+  api: Pick<StudioApi, "request">,
+  now: () => number = () => Date.now(),
+): PlatformEventView | null {
+  let kept = shown.get(api);
+  if (!kept) shown.set(api, (kept = signal(null)));
+  const view = kept;
+  const known = view();
+  if (
+    known === null ||
+    (known.state === "unavailable" && now() >= known.retryAt)
+  )
+    void platformEventView(api, now).then((next) => view.set(next));
+  return known;
 }
 
 /** Schemas by name for the data picker: the platform event's name is its view, any other name nothing. */

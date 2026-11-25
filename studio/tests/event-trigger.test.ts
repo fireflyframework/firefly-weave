@@ -25,8 +25,10 @@ import type { Workflow } from "../src/app/model";
 import {
   DEFAULT_DECLARATION,
   eventInputFit,
+  eventInputState,
   eventProblems,
   eventSubtitle,
+  eventTileFacts,
   eventTileName,
   eventTileSubtitle,
   loopWarning,
@@ -227,7 +229,7 @@ describe("what is wrong with the declaration", () => {
     expect(
       eventProblems({ events: ["transaction.in_doubt"], from: [] }),
     ).toEqual({
-      from: "Name at least one workflow, or choose Any workflow in this project.",
+      from: "Add at least one workflow, or choose Any workflow in this project.",
     });
   });
 
@@ -347,6 +349,104 @@ describe("what the tile says", () => {
     expect(eventTileName({ events: [], from: [] })).toBe(
       "Platform event trigger: no events chosen, no workflow named",
     );
+  });
+});
+
+const FORM = {
+  type: "object",
+  required: ["reference"],
+  properties: { reference: { type: "string" } },
+};
+/** What a check of `inputSchema` found at the input, with the codes as the compiler sends them. */
+const checked = (inputSchema: unknown, ...codes: string[]) => ({
+  definition: workflow({ inputSchema }),
+  diagnostics: codes.map((code) => ({ code, path: "/spec/inputSchema" })),
+});
+
+describe("what a check says of the input", () => {
+  it("is the event while the input is the platform event, whatever an older check found", () => {
+    const event = { $ref: "weave.platform-event-v1" };
+    expect(
+      eventInputState(
+        workflow({ inputSchema: event }),
+        checked(event, "WV-COMP-TYPE_MISMATCH"),
+      ),
+    ).toBe("event");
+  });
+
+  it.each([
+    ["refused", "WV-COMP-TYPE_MISMATCH"],
+    ["unsure", "WV-COMP-UNKNOWN_COMPATIBILITY"],
+    ["own", "WV-COMP-SCHEMA_DIALECT"],
+  ])("is %s for %s at the input", (state, code) => {
+    expect(
+      eventInputState(workflow({ inputSchema: FORM }), checked(FORM, code)),
+    ).toBe(state);
+  });
+
+  it("says nothing of an input the check didn't see", () => {
+    const now = workflow({ inputSchema: FORM });
+    expect(eventInputState(now, null)).toBe("own");
+    expect(
+      eventInputState(
+        now,
+        checked({ type: "string" }, "WV-COMP-TYPE_MISMATCH"),
+      ),
+    ).toBe("own");
+    expect(
+      eventInputState(now, {
+        definition: now,
+        diagnostics: [
+          { code: "WV-COMP-TYPE_MISMATCH", path: "/spec/steps/0/value" },
+        ],
+      }),
+    ).toBe("own");
+  });
+});
+
+describe("what the tile's badge says", () => {
+  const reacting = (
+    eventTrigger: unknown,
+    inputSchema: unknown = { $ref: "weave.platform-event-v1" },
+  ) => workflow({ eventTrigger, inputSchema });
+
+  it("is quiet for a trigger that is set up", () => {
+    expect(
+      eventTileFacts(reacting({ events: ["transaction.in_doubt"] }), null),
+    ).toEqual({ errors: [], warnings: [], setup: [] });
+  });
+
+  it("says what is still to be chosen", () => {
+    expect(eventTileFacts(reacting({ events: [] }), null).setup).toEqual([
+      "Choose at least one event.",
+    ]);
+    expect(
+      eventTileFacts(
+        reacting({ events: ["transaction.in_doubt"], from: [] }),
+        null,
+      ).setup,
+    ).toEqual([
+      "Add at least one workflow, or choose Any workflow in this project.",
+    ]);
+  });
+
+  it("says when the input can't take the event, or Studio can't tell", () => {
+    const declared = reacting({ events: ["transaction.in_doubt"] }, FORM);
+    expect(
+      eventTileFacts(declared, checked(FORM, "WV-COMP-TYPE_MISMATCH")),
+    ).toEqual({
+      errors: [
+        "This trigger can't start runs: the workflow's input doesn't accept the platform event.",
+      ],
+      warnings: [],
+      setup: [],
+    });
+    expect(
+      eventTileFacts(declared, checked(FORM, "WV-COMP-UNKNOWN_COMPATIBILITY"))
+        .warnings,
+    ).toEqual([
+      "Studio can't confirm that the platform event fits this workflow's input.",
+    ]);
   });
 });
 

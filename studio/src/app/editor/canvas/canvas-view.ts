@@ -158,6 +158,7 @@ import {
 import { ItemChip } from "./item-chip";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
+import { eventTileFacts } from "../triggers/event-trigger";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
 import { noteTitle } from "./note-markdown";
 import { NotesLayer, type NoteEdit, type NoteView } from "./notes-layer";
@@ -188,6 +189,7 @@ import {
   tileName,
   type StepFacts,
   type TileBorders,
+  type TileFacts,
 } from "./tile-facts";
 import { failureText } from "./error-lane";
 
@@ -801,6 +803,9 @@ export class CanvasView implements OnInit, DoCheck {
     if (!tile.step) {
       const trigger =
         tile.kind === "trigger" ? this.triggerText(tile.id) : null;
+      const shown = this.triggerFacts(tile.id);
+      const badge = shown ? tileBadge(shown) : null;
+      const full = trigger?.name ?? "";
       return {
         ...common,
         step: false,
@@ -808,17 +813,23 @@ export class CanvasView implements OnInit, DoCheck {
         title: trigger ? trigger.title : "End",
         subtitle: state.listening ? LISTENING : (trigger?.subtitle ?? ""),
         name: trigger
-          ? trigger.name && !state.listening
-            ? trigger.name
+          ? full && !state.listening
+            ? [full, badge?.text].filter(Boolean).join(". ")
             : `${trigger.title} trigger, ${state.listening ? LISTENING : trigger.subtitle}`
           : "End, workflow result",
         tooltip: trigger
           ? trigger.manual
             ? "Open the workflow inputs"
-            : (trigger.name ?? `${trigger.title} · ${trigger.subtitle}`)
+            : full
+              ? [full, badge?.text].filter(Boolean).join(". ")
+              : `${trigger.title} · ${trigger.subtitle}`
           : "Open the workflow result",
-        badge: null,
-        borders: state.listening ? LISTENING_BORDERS : NO_BORDERS,
+        badge,
+        borders: state.listening
+          ? LISTENING_BORDERS
+          : shown
+            ? tileBorders(shown)
+            : NO_BORDERS,
         listening: !!state.listening,
         selected: false,
       };
@@ -1016,6 +1027,28 @@ export class CanvasView implements OnInit, DoCheck {
         activatedIntent(this.intentOf(tileId)),
       ),
       manual: kind === "manual",
+    };
+  }
+  /** What a platform event's tile says is wrong; other triggers say it at activation. */
+  private triggerFacts(tileId: string): TileFacts | null {
+    const h = this.host();
+    if (this.viewingRuns() || this.intentOf(tileId)?.kind !== "event")
+      return null;
+    return {
+      ...eventTileFacts(
+        h.model.definition,
+        h.diagnostics
+          ? {
+              definition: h.diagnosticsDefinition,
+              diagnostics: h.diagnostics.diagnostics,
+            }
+          : null,
+      ),
+      run: null,
+      failure: null,
+      stale: null,
+      pinned: false,
+      selected: false,
     };
   }
   /** Double-click or Enter on a trigger opens its settings: the input form's, or the trigger choice's. */
@@ -1383,7 +1416,10 @@ export class CanvasView implements OnInit, DoCheck {
     const action = control.dataset["action"];
     if (action === "issues") {
       const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
-      if (id && event.detail < 2) void this.host().openStep(id, "issues");
+      if (id?.startsWith("$trigger:")) {
+        if (event.detail < 2) this.openTrigger(id);
+      } else if (id && event.detail < 2)
+        void this.host().openStep(id, "issues");
     } else if (action === "tile") {
       const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
       if (id) void this.openTile(id, event);

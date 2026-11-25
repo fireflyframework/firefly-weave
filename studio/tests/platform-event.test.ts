@@ -30,6 +30,8 @@ import {
   EVENT_TYPES,
   PLATFORM_EVENT_INPUT,
   PLATFORM_EVENT_SCHEMA,
+  VIEW_RETRY_MS,
+  currentPlatformEvent,
   isPlatformEventInput,
   namedSchemas,
   platformEventView,
@@ -217,5 +219,53 @@ describe("reading the platform event's view from the Studio host", () => {
       state: "unavailable",
       retryAt: 5_000,
     });
+  });
+});
+
+describe("the view as a template reads it", () => {
+  const settled = () => new Promise((done) => setTimeout(done));
+
+  it("is nothing while the first read runs, then the view, asked for once however often it is drawn", async () => {
+    const host = new FakeHost([VIEW]);
+    expect(currentPlatformEvent(host)).toBeNull();
+    expect(currentPlatformEvent(host)).toBeNull();
+    await settled();
+    expect(currentPlatformEvent(host)).toEqual({
+      state: "ready",
+      schema: VIEW,
+    });
+    expect(host.asked).toEqual([ROUTE]);
+  });
+
+  it("stays unavailable through the pause, then reads it again", async () => {
+    const host = new FakeHost([unavailable(), VIEW]);
+    let now = 0;
+    currentPlatformEvent(host, () => now);
+    await settled();
+    now = VIEW_RETRY_MS - 1;
+    const paused = currentPlatformEvent(host, () => now);
+    expect(paused).toEqual({ state: "unavailable", retryAt: VIEW_RETRY_MS });
+    await settled();
+    // Drawing it again announces nothing, so it never draws itself in a loop.
+    expect(currentPlatformEvent(host, () => now)).toBe(paused);
+    expect(host.asked).toHaveLength(1);
+    now = VIEW_RETRY_MS;
+    // Still unavailable while the second read runs.
+    expect(currentPlatformEvent(host, () => now)).toMatchObject({
+      state: "unavailable",
+    });
+    await settled();
+    expect(currentPlatformEvent(host, () => now)).toEqual({
+      state: "ready",
+      schema: VIEW,
+    });
+    expect(host.asked).toHaveLength(2);
+  });
+
+  it("keeps each connection's view apart", async () => {
+    const first = new FakeHost([VIEW]);
+    currentPlatformEvent(first);
+    await settled();
+    expect(currentPlatformEvent(new FakeHost([unavailable()]))).toBeNull();
   });
 });

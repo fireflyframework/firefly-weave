@@ -73,6 +73,7 @@ import {
   triggerForm as triggerSettingsForm,
   triggerProblems,
 } from "../triggers/trigger-forms";
+import { eventTileFacts, type CheckedInput } from "../triggers/event-trigger";
 import { isTriggerChoice, triggerChoiceOf } from "../triggers/trigger-target";
 import {
   CANVAS_MAX_BYTES,
@@ -313,6 +314,27 @@ function choiceDiagnostics(choice: TriggerIntent): StepDiagnostic[] {
       path: `/${field}`,
       at: [field],
     }));
+}
+/** What a platform event trigger declares that the platform would refuse, and the last check's words on its input. */
+function eventDiagnostics(
+  workflow: Workflow,
+  checked: CheckedInput | null,
+): StepDiagnostic[] {
+  const facts = eventTileFacts(workflow, checked);
+  const at = (path: string[], message: string, severity: string) => ({
+    code: "WV-STUDIO-TRIGGER",
+    severity,
+    message,
+    path: `/${path.join("/")}`,
+    at: path,
+  });
+  return [
+    ...facts.errors.map((text) => at(["spec", "inputSchema"], text, "error")),
+    ...facts.setup.map((text) => at(["spec", "eventTrigger"], text, "error")),
+    ...facts.warnings.map((text) =>
+      at(["spec", "inputSchema"], text, "warning"),
+    ),
+  ];
 }
 export interface CommitOutcome {
   ok: boolean;
@@ -2435,6 +2457,14 @@ export class StepDetailsController {
    */
   diagnostics(target: string): StepDiagnostic[] {
     const choice = this.triggerChoice(target);
+    if (choice?.kind === "event")
+      return eventDiagnostics(
+        this.host.model.definition,
+        this.host.diagnostics && {
+          definition: this.host.diagnosticsDefinition,
+          diagnostics: this.host.diagnostics.diagnostics,
+        },
+      );
     if (choice) return choiceDiagnostics(choice);
     const result = this.host.diagnostics;
     if (!result) return [];
