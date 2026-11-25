@@ -220,16 +220,18 @@ test("the step that can't be undone reads Unknown, and what came before it stays
   await page.screenshot({ path: `${captures}/drawer-unknown-1440.png` });
 });
 
-test("links withheld say more called runs wait", async ({ page }) => {
+test("links withheld say that called runs wait", async ({ page }) => {
   const { waits_on: _links, ...withheld } = caller;
   await incidentPlatform(page, {
     items: [{ ...withheld, waits_on_more: true }],
   });
   await open(page, ids.caller);
   const section = links(page, "Waits on");
-  await expect(section).toContainText(
-    "More called runs wait in doubt. Open the run to see them.",
-  );
+  await expect(
+    section.getByText("Called runs wait in doubt. Open the run to see them.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(section.getByRole("button")).toHaveCount(0);
   await expect(section).not.toContainText("Resolve these first");
   await page.screenshot({ path: `${captures}/drawer-withheld-1440.png` });
@@ -292,9 +294,9 @@ test("a decision a workflow applied names its run and opens it; evidence stays t
     "<b>ticket 4411</b>",
   );
   await page.screenshot({ path: `${captures}/drawer-resolved-1440.png` });
-  await drawer(page)
-    .getByRole("button", { name: "Resolved by workflow run 5c90e1b7" })
-    .click();
+  const by = drawer(page).locator("dt:text-is('By') + dd");
+  await expect(by).toHaveText("Workflow run 5c90e1b7");
+  await by.getByRole("button").click();
   await expect(page).toHaveURL(new RegExp(`/operate/runs/${runs.resolving}`));
 });
 

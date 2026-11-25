@@ -100,6 +100,7 @@ export interface PanelView {
 const HELD_TEXT =
   "Its transactions are held as they are. Open the run to see each one.";
 const MORE_TEXT = "More called runs wait in doubt. Open the run to see them.";
+const WITHHELD_TEXT = "Called runs wait in doubt. Open the run to see them.";
 
 const panelLink = (link: IncidentLink): PanelLink => ({
   link,
@@ -119,7 +120,11 @@ export function panelView(incident: IncidentView): PanelView | null {
       hint: waitsOn.length
         ? "Resolve these first: this run waits for them."
         : null,
-      more: incident.waits_on_more ? MORE_TEXT : null,
+      more: !incident.waits_on_more
+        ? null
+        : waitsOn.length
+          ? MORE_TEXT
+          : WITHHELD_TEXT,
       items: waitsOn,
     });
   if (incident.held_by)

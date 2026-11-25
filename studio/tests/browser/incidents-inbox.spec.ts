@@ -1838,7 +1838,7 @@ test.describe("transactions in doubt", () => {
     );
     await expect(high(page).locator(".band-count")).toHaveText("4 incidents");
     await expect(high(page)).toContainText(
-      "Transactions in doubt. Other systems may not match Weave until someone resolves them.",
+      "Transactions that need a person. Other systems may not match Weave until someone resolves them.",
     );
     await expect(
       other(page).getByRole("heading", { level: 2, name: "Other incidents" }),
@@ -1938,11 +1938,34 @@ test.describe("transactions in doubt", () => {
     ).toBeVisible();
     // Its name, then no step: neither the platform's own step nor its code.
     const row = high(page).locator(".resource-row").first();
-    await expect(row.locator("small").first()).toHaveText("Not tied to a step");
+    await expect(row.locator("small").first()).toHaveText(
+      "All its transactions are held",
+    );
     await expect(row.getByRole("cell").nth(3)).toHaveText("Not tied to a step");
     await expect(high(page)).not.toContainText("@transactions");
     // Nothing else is open: the band stands alone.
     await expect(other(page)).toHaveCount(0);
+    // In one list, where a run's notice leads, its transactions aren't in doubt either.
+    await page.goto("/operate/incidents?code=WV-TXN-RUN-OVERSIZED");
+    const listed = page.locator(".resource-row").first();
+    await expect(listed.locator("small").first()).toHaveText(
+      "All its transactions are held",
+    );
+    await expect(listed).toContainText("High priority");
+    await expect(listed).not.toContainText("In doubt");
+  });
+
+  test("a run that was held whole says nothing of it once it is decided", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [{ ...held, status: "resolved", revision: 2 }],
+    });
+    await page.goto("/operate/incidents?status=resolved");
+    const row = page.locator(".resource-row").first();
+    await expect(row.locator("small").first()).toHaveText(
+      "First reported as WV-RUNTIME-CAPACITY",
+    );
   });
 
   for (const [address, sent] of [

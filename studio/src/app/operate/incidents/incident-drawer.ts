@@ -189,7 +189,7 @@ export interface RecentEvents {
               class="text-link"
               (click)="openRun.emit(resolver)"
             >
-              Resolved by workflow run {{ short(resolver) }}
+              Workflow run {{ short(resolver) }}
             </button>
           </dd>
         }

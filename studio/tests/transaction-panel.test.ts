@@ -118,15 +118,23 @@ describe("what the drawer says of a transaction in doubt", () => {
     ]);
   });
 
-  it("links withheld, or past the 20 it names, say more called runs wait", () => {
-    const more = "More called runs wait in doubt. Open the run to see them.";
+  it("links withheld say that called runs wait, and links past the 20 it names that more do", () => {
     const { waits_on: _links, ...withheld } = caller;
-    expect(panelView({ ...withheld, waits_on_more: true })?.links).toEqual([
-      { title: "Waits on", hint: null, more, items: [] },
-    ]);
+    const without = { ...withheld, waits_on_more: true };
+    for (const none of [without, { ...without, waits_on: [] }])
+      expect(panelView(none)?.links).toEqual([
+        {
+          title: "Waits on",
+          hint: null,
+          more: "Called runs wait in doubt. Open the run to see them.",
+          items: [],
+        },
+      ]);
     const full = panelView({ ...caller, waits_on_more: true })!.links[0];
     expect(full.items).toHaveLength(1);
-    expect(full.more).toBe(more);
+    expect(full.more).toBe(
+      "More called runs wait in doubt. Open the run to see them.",
+    );
     expect(full.hint).toBe("Resolve these first: this run waits for them.");
     // Nothing to link and nothing more: no section at all.
     expect(panelView(unknown)?.links).toEqual([]);

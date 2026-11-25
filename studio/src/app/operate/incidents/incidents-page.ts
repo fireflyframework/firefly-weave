@@ -65,6 +65,7 @@ import {
   type RecentEvents,
 } from "./incident-drawer";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import { HELD_RUN } from "../transactions/transaction-contracts";
 import { retryDelay } from "../transactions/transaction-record";
 import {
   caseLabel,
@@ -445,8 +446,8 @@ interface Band {
                 </div>
                 @if (band.id === "high") {
                   <p class="band-note">
-                    Transactions in doubt. Other systems may not match Weave
-                    until someone resolves them.
+                    Transactions that need a person. Other systems may not match
+                    Weave until someone resolves them.
                   </p>
                 }
                 <div
@@ -686,7 +687,9 @@ interface Band {
             >
               {{ i.code }}</button
             ><small>
-              @if (inDoubt(i) && (key || !banded)) {
+              @if (inDoubt(i) && i.code === heldRun) {
+                All its transactions are held
+              } @else if (inDoubt(i) && (key || !banded)) {
                 {{ doubtText(banded, !!key) }}
                 @if (key) {
                   <span class="business-key">{{ key }}</span>
@@ -1605,8 +1608,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     ).find((item) => item.action === action);
     if (offer && !offer.missing) return true;
     this.leaveDialog();
-    if (!inDoubt(fresh))
-      this.host.notify(`Incident ${this.whereOf(fresh)} is no longer active.`);
+    if (!inDoubt(fresh)) {
+      const gone = `Incident ${this.whereOf(fresh)} is no longer active.`;
+      this.host.notify(
+        fresh.resolution
+          ? `${gone} The drawer shows how it was resolved.`
+          : gone,
+      );
+    }
     void this.loadEvents(fresh);
     this.focusTitle();
     return false;
@@ -1847,6 +1856,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     return item as IncidentView;
   }
   readonly inDoubt = inDoubt;
+  readonly heldRun = HELD_RUN;
   readonly caseLabel = caseLabel;
   readonly linkPlace = linkPlace;
   readonly missingText = missingText;
