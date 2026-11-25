@@ -1744,7 +1744,7 @@ workflow again after the step, so the steps after it run either way. A step set 
   **Add a step** at the start of the path.
 - **Touch.** On a touch screen, and in a window narrower than 768 pixels, the
   Success and Error outputs and an empty path's **Add a step** slot take a
-  44-pixel tap at any zoom.
+  44-pixel tap wherever the canvas shows them.
 
 A step inside the path says where it sits. Its breadcrumb reads "Error path of
 submit · step 1 of 2," and **Outline** shows "On error of submit" beside it.

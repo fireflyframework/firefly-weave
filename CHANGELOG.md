@@ -179,6 +179,27 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- Studio handles step errors. A step's **On error** setting (stop the run,
+  continue, or continue with error output) and its **Result on error** are in
+  step details; the canvas draws an error path under the step with its Success
+  and Error outputs, and **Add a step** builds it. Later steps and formulas
+  read a step's error (`steps.<id>.error`) where it can fail, and the data
+  picker and the formula preview show it.
+- **Simulate a failure** gives a step a failure in test data: its code, for
+  one loop item or every item, and an outcome for steps that act outside the
+  run (a Transform or a Decision table fails as Didn't start). Execute step
+  and Execute workflow then mark the step **Failed, continued**, the run log
+  says **Succeeded with errors** and lists the error path under its step, and a
+  loop's handled items let it finish. Execute leaves out a simulated failure
+  its step can no longer take, and says why.
+- The Runs tab shows runs that went on after a step failed: "Succeeded with
+  errors" in the list and header, a **With handled errors** filter, the step's
+  code and the way taken on the canvas, and the error banner in step details.
+  **Debug in editor** copies each handled failure (code, outcome and attempts,
+  never the message) as a simulated failure, and a wait that timed out or a
+  human task that expired as its Time out or Expire answer.
+- On touch screens and below 768 px, a step's Success and Error outputs and an
+  empty error path's **Add a step** slot take a 44 px tap.
 - The Python SDK and the typed CLI send a request again when the platform
   refused it before admitting it (HTTP 429 `WV-OPERATION-CAPACITY` or
   `WV-REQUEST-CAPACITY`): a `GET`, or a change that carries an idempotency key,
