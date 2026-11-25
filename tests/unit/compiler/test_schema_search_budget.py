@@ -63,15 +63,11 @@ class Machine:
         return value
 
 
-def run(machine: Machine, monkeypatch: pytest.MonkeyPatch, *, searches: int = 1, own_clock: bool = False) -> list[str]:
-    """The codes of validating ``searches`` strings against a pattern on ``machine``.
-
-    With ``own_clock``, the budget allows for the CPU clock of the computer that runs the test.
-    """
+def run(machine: Machine, monkeypatch: pytest.MonkeyPatch, *, searches: int = 1) -> list[str]:
+    """The codes of validating ``searches`` strings against a pattern on ``machine``."""
     monkeypatch.setattr(schemas, "time", machine)
     monkeypatch.setattr(schemas, "_pattern", lambda *_, **__: machine)
-    if not own_clock:
-        monkeypatch.setattr(schemas, "_CPU_STEP", machine.step, raising=False)
+    monkeypatch.setattr(schemas, "_CPU_STEP", machine.step, raising=False)
     # A validator alone, so that redaction's own searches do not count twice.
     limits = SchemaLimits()
     return [issue.code for issue in schemas._payload({"items": {"pattern": "a"}}, ["a"] * searches, {}, limits)]
@@ -334,7 +330,10 @@ def test_a_search_near_its_limit_is_judged_by_this_computers_own_cpu_clock(monke
             return value
 
         machine.search = search  # type: ignore[method-assign]
-        return run(machine, monkeypatch, searches=2, own_clock=True)
+        monkeypatch.setattr(schemas, "time", machine)
+        monkeypatch.setattr(schemas, "_pattern", lambda *_, **__: machine)
+        # The allowance for the clock is the one that the module takes on this computer.
+        return [issue.code for issue in schemas._payload({"items": {"pattern": "a"}}, ["a"] * 2, {}, SchemaLimits())]
 
     assert validated(0.009) == []
     assert validated(0.01 + 3 * step) == REFUSED
