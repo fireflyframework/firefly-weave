@@ -203,7 +203,7 @@ test.describe("The rule editor's states", () => {
       await choice.selectOption({ label: name });
       await expect(choice).toHaveValue(signal);
       const whole = page.getByText(
-        "Every workflow: this signal counts the whole environment.",
+        "Every workflow: this signal covers the whole environment.",
         { exact: true },
       );
       await expect(whole).toBeVisible();
@@ -211,7 +211,7 @@ test.describe("The rule editor's states", () => {
       await expect(page.getByLabel("Workflow")).toHaveCount(0);
       // A screen reader hears it with the signal.
       await expect(choice).toHaveAccessibleDescription(
-        /Test runs never count\. Every workflow: this signal counts the whole environment\.$/,
+        /Test runs never count\. Every workflow: this signal covers the whole environment\.$/,
       );
       await shot(page, `alerts-editor-${signal}`);
       // A signal nobody would narrow says nothing.
@@ -261,32 +261,55 @@ test.describe("The rule editor's states", () => {
     await shot(page, "alerts-preview-nothing-undoing-1440");
   });
 
-  test("saving a rule on transactions without run.read shows the platform's refusal", async ({
-    page,
-  }) => {
-    await alertsPlatform(page, {
-      path: "/operate/alerts?tab=rules",
-      capabilities: ["alert.read", "alert.manage", "status.read"],
-      answers: {
-        createRule: {
-          status: 403,
-          json: { code: "WV-FORBIDDEN", message: "Access denied" },
-        },
-      },
+  for (const [what, capabilities, sentence, named] of [
+    [
+      "without run.read names it",
+      ["alert.read", "alert.manage", "status.read"],
+      "You need run.read in this environment for a rule on this signal. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.",
+      ["run.read"],
+    ],
+    [
+      "for a reason of the platform's own claims nothing missing",
+      ["alert.read", "alert.manage", "status.read", "run.read"],
+      "You can't SAVE this rule. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.",
+      [],
+    ],
+  ] as const)
+    test(`a rule on transactions refused ${what}, and keeps the form`, async ({
+      page,
+    }) => {
+      const refused = {
+        status: 403,
+        json: { code: "WV-FORBIDDEN", message: "Access denied" },
+      };
+      await alertsPlatform(page, {
+        path: "/operate/alerts?tab=rules",
+        capabilities: [...capabilities],
+        answers: { createRule: refused },
+      });
+      await page.route("**/alert-rules/preview", (route) =>
+        route.fulfill(refused),
+      );
+      await page.getByRole("button", { name: "Add rule" }).click();
+      await page.getByLabel("Signal").selectOption("transactions.in_doubt");
+      await page.getByLabel("Name").fill("Transactions in doubt here");
+      await page.getByLabel("Threshold").fill("0");
+      await page.getByRole("button", { name: "Preview", exact: true }).click();
+      const preview = page.locator(".preview-result .problem");
+      await expect(preview).toHaveText(sentence.replace("SAVE", "preview"));
+      await expect(preview.locator("code")).toHaveText([...named]);
+      await page.getByRole("button", { name: "Save rule" }).click();
+      const saving = page.getByRole("alert");
+      await expect(saving).toHaveText(sentence.replace("SAVE", "save"));
+      await expect(saving.locator("code")).toHaveText([...named]);
+      await shot(page, `alerts-rule-refused-${named.length}`);
+      await expect(page.getByLabel("Name")).toHaveValue(
+        "Transactions in doubt here",
+      );
+      await expect(
+        page.getByRole("heading", { name: "Add a rule" }),
+      ).toBeVisible();
     });
-    await page.getByRole("button", { name: "Add rule" }).click();
-    await page.getByLabel("Signal").selectOption("transactions.in_doubt");
-    await page.getByLabel("Name").fill("Transactions in doubt here");
-    await page.getByLabel("Threshold").fill("0");
-    await page.getByRole("button", { name: "Save rule" }).click();
-    await expect(page.getByRole("alert")).toHaveText(/^\s*WV-FORBIDDEN: \S/);
-    await expect(page.getByLabel("Name")).toHaveValue(
-      "Transactions in doubt here",
-    );
-    await expect(
-      page.getByRole("heading", { name: "Add a rule" }),
-    ).toBeVisible();
-  });
 
   test("the rule Weave suggests for transactions in doubt is critical and fires at once", async ({
     page,

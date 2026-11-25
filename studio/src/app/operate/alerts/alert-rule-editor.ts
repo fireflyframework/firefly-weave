@@ -34,7 +34,7 @@ import {
   signal,
 } from "@angular/core";
 import { ApiError } from "../../api";
-import { describeError } from "../../errors";
+import { describeError, type PlainError } from "../../errors";
 import { Icon } from "../../icon";
 import { alertSignals, type AlertChannel, type AlertRule } from "./alerts-api";
 import {
@@ -45,6 +45,7 @@ import {
   previewWords,
   renotifyChoices,
   ruleDraft,
+  ruleRefusal,
   signalName,
   signalWords,
   windowChoices,
@@ -183,7 +184,7 @@ const selectorLabels = {
             <div class="field">
               <span class="field-label">Workflow</span>
               <p class="hint" id="rule-whole">
-                Every workflow: this signal counts the whole environment.
+                Every workflow: this signal covers the whole environment.
               </p>
             </div>
           }
@@ -423,9 +424,15 @@ const selectorLabels = {
             }
             @case ("error") {
               <p class="problem">
-                <weave-icon name="failCircle" [size]="16" />{{
-                  s.error.message
-                }}
+                <weave-icon name="failCircle" [size]="16" /><span>
+                  @for (part of parts(previewProblem(s.error)); track $index) {
+                    @if ($odd) {
+                      <code>{{ part }}</code>
+                    } @else {
+                      <ng-container>{{ part }}</ng-container>
+                    }
+                  }
+                </span>
               </p>
             }
             @default {
@@ -441,7 +448,15 @@ const selectorLabels = {
         <p class="says">{{ saying() }}</p>
         @if (saveError()) {
           <p class="problem" role="alert">
-            <weave-icon name="failCircle" [size]="16" />{{ saveError() }}
+            <weave-icon name="failCircle" [size]="16" /><span>
+              @for (part of parts(saveError()); track $index) {
+                @if ($odd) {
+                  <code>{{ part }}</code>
+                } @else {
+                  <ng-container>{{ part }}</ng-container>
+                }
+              }
+            </span>
           </p>
         }
         <div class="formacts">
@@ -582,6 +597,8 @@ export class AlertRuleEditor implements OnInit {
   targets = input<Map<string, string>>(new Map());
   environment = input("this environment");
   canPreview = input(true);
+  /** Whether the person holds a capability here. */
+  can = input<(capability: string) => boolean>(() => true);
   /** The saved rule, or null when the person went back without saving. */
   done = output<AlertRule | null>();
   private element = inject(ElementRef<HTMLElement>);
@@ -778,9 +795,31 @@ export class AlertRuleEditor implements OnInit {
       this.saving.set(false);
     }
   }
+  /** A problem's words, and between them a capability it names. */
+  parts(problem: string) {
+    return problem.split("`");
+  }
+  /** Why the platform refused to save or preview the rule, for lack of access. */
+  private accessProblem(plain: PlainError, doing: "save" | "preview") {
+    return ruleRefusal({
+      signal: this.form().signal,
+      doing,
+      can: this.can(),
+      code: plain.code,
+    });
+  }
+  previewProblem(plain: PlainError) {
+    return plain.status === 403
+      ? this.accessProblem(plain, "preview")
+      : plain.message;
+  }
   /** A refusal names its field when the platform says which one. */
   private refused(error: unknown) {
     const plain = describeError(error);
+    if (plain.status === 403) {
+      this.saveError.set(this.accessProblem(plain, "save"));
+      return;
+    }
     const detail =
       error instanceof ApiError &&
       error.detail &&
