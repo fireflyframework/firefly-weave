@@ -290,6 +290,11 @@ status of one of its steps, or the set of them changes, so a decision made on an
 older view answers HTTP 409 `WV-INCIDENT-REVISION`. An attempt that fails and is
 tried again raises no revision.
 
+What already happened counts too. A deadline that passed or a called run that
+ended is applied before the revision is checked, so a decision on a view that
+doesn't have it yet is refused as well. The refusal applies nothing. The next
+recovery scan does, and the incident then shows it.
+
 A decision that ends a transaction, or stops steps of it, closes their open
 incidents too, a failure that recovery still handles included. Each one ends
 `resolved` with the same actor, time, receipt, kind, reason, and evidence

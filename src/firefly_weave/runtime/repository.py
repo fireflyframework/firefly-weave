@@ -188,12 +188,16 @@ class RuntimeRepository:
         self.tx.session.info["weave_runtime_candidate"] = identifier
         return dict(row)
 
-    async def require_work(self, identifier: UUID, state: dict[str, Any]) -> None:
+    async def capacity_blocked(self, identifier: UUID) -> bool:
+        """Whether a run was refused for its size: recovery then applies nothing but what ends it."""
         blocked = await self.tx.session.scalar(
             text(f"SELECT active FROM runtime_capacity_blocks WHERE {SCOPE} AND run_id=:id"),
             {**self.params, "id": identifier},
         )
-        if blocked:
+        return bool(blocked)
+
+    async def require_work(self, identifier: UUID, state: dict[str, Any]) -> None:
+        if await self.capacity_blocked(identifier):
             raise CatalogError(429, "WV-RUNTIME-LIMIT", "Run requires terminal control after a capacity rejection")
         from functools import partial
 

@@ -117,6 +117,34 @@ async def two_stuck(platform, *after: dict[str, Any], others: Sequence[dict[str,
     return run, held
 
 
+CALLED_CONFIRM = {
+    "kind": "callWorkflow",
+    "uses": "reverse-target-addition@1.0.0",
+    "with": {
+        "object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"ref": "/participant/operationKey"}},
+    },
+}
+
+
+async def stuck_beside_a_called_confirm_that_ended(platform):
+    """One reservation couldn't be confirmed, and the other's confirm called a workflow that ended badly. Nothing has
+    applied that result yet, so the incident a person reads is still about the first one alone."""
+    steps = [transaction(hold(), hold("hold2", confirm=CALLED_CONFIRM), submit()), PAUSE]
+    activation = await platform.publish(workflow("move", steps), **{"reverse-target-addition": platform.reverse.id})
+    run = await platform.start(activation)
+    for key in ("hold", "hold2", "submit"):
+        await platform.complete(await platform.lease(key))
+    held = await stuck(platform, run.id, "hold#confirm")
+    await platform.fail(await platform.lease("remove"), "REJECTED", outcome="failed")
+    await platform.scan()
+    [call] = await platform.query("SELECT child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    await resolve(platform, await active(platform, call["child_run_id"]), "terminate")
+    [call] = await platform.query("SELECT status,delivered FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    assert call == {"status": "cancelled", "delivered": False}
+    assert (await by_key(platform, run.id)).keys() == held.keys() == {"hold#confirm:1"}
+    return run, held["hold#confirm:1"]
+
+
 async def left_by_an_earlier_version(platform, reconciler, monkeypatch, how: str = "reconciled", **shape: Any):
     """A run an earlier version left suspended on one incident nobody could resolve, after one decision of two: the
     transaction named the incident that was decided, and nothing named the other."""

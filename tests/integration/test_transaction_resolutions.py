@@ -39,6 +39,7 @@ from stuck_transactions import (
     resolve,
     retried_and_never_claimed,
     stuck,
+    stuck_beside_a_called_confirm_that_ended,
     two_stuck,
 )
 from transaction_platform import (
@@ -473,21 +474,25 @@ async def test_a_failure_that_puts_a_transaction_in_doubt_keeps_the_age_of_its_r
     assert await age(platform, stuck) == (before, True)
 
 
-async def test_pausing_a_run_opens_the_row_of_an_incident_nobody_could_resolve(platform):
+async def set_paused(platform, run_id) -> None:
     from firefly_weave.contracts.human_tasks import ManualControlRequest
 
-    run, incident = await confirm_stuck(platform)
-    # An earlier version left the state with an incident no row showed.
-    await platform.execute("UPDATE incidents SET status='closed' WHERE id=:id", id=incident["id"])
     await platform.runtime.manual_control(
         platform.actor,
         platform.scope,
-        run.id,
+        run_id,
         ManualControlRequest(reason="look", expected_revision=0),
         str(uuid4()),
         paused=True,
         context=AuditContext(),
     )
+
+
+async def test_pausing_a_run_opens_the_row_of_an_incident_nobody_could_resolve(platform):
+    run, incident = await confirm_stuck(platform)
+    # An earlier version left the state with an incident no row showed.
+    await platform.execute("UPDATE incidents SET status='closed' WHERE id=:id", id=incident["id"])
+    await set_paused(platform, run.id)
     again = await active(platform, run.id)
     assert (again["id"], again["code"]) == (incident["id"], "WV-TXN-CONFIRM-STUCK")
     await resolve(platform, again, "retry_safe")
@@ -601,6 +606,55 @@ async def test_two_people_resolving_two_incidents_of_one_transaction(platform, r
         "SELECT 1 FROM run_events WHERE run_id=:run AND type='incident_resolved'", run=run.id
     )
     assert len(decisions) == 1
+
+
+async def everything(platform, run_id) -> dict[str, list[dict[str, Any]]]:
+    """A run as it is stored: its state, events, incidents and transactions, and what it has dispatched."""
+    tables = {
+        "runs": "SELECT state FROM runs WHERE id=:run",
+        "run_events": "SELECT id,type,sequence FROM run_events WHERE run_id=:run ORDER BY sequence",
+        "incidents": "SELECT * FROM incidents WHERE run_id=:run ORDER BY incident_key",
+        "run_transactions": "SELECT * FROM run_transactions WHERE run_id=:run ORDER BY instance_key",
+        "receipts": "SELECT r.receipt_id FROM incident_resolution_receipts r JOIN incidents i ON i.id=r.incident_id "
+        "WHERE i.run_id=:run",
+    }
+    stored = {name: await platform.query(sql, run=run_id) for name, sql in tables.items()}
+    return stored | await work(platform, run_id)
+
+
+@pytest.mark.parametrize("paused", [False, True])
+async def test_a_decision_is_checked_against_what_fell_due_before_it(platform, reconciler, paused):
+    run, incident = await stuck_beside_a_called_confirm_that_ended(platform)
+    if paused:
+        await set_paused(platform, run.id)
+    before = await everything(platform, run.id)
+    with pytest.raises(CatalogError) as refused:
+        await reconcile(platform, incident, reconciler)
+    assert (refused.value.status, refused.value.code) == (409, "WV-INCIDENT-REVISION")
+    assert await everything(platform, run.id) == before
+    # The next scan applies the same result, so the person reads what changed and decides it.
+    await platform.scan()
+    held = await by_key(platform, run.id)
+    assert held.keys() == {"hold#confirm:1", "hold2#confirm:0"}
+    again = held["hold#confirm:1"]
+    assert again["revision"] > incident["revision"]
+    await reconcile(platform, again, reconciler)
+    assert (await platform.record(run.id))["state"] == "reconciled"
+
+
+async def test_a_run_that_recovery_leaves_alone_is_decided_as_it_was_read(platform, reconciler):
+    run, incident = await stuck_beside_a_called_confirm_that_ended(platform)
+    # A run refused for its size gets no more work from recovery, so nothing would apply that result before a
+    # decision: one that waited for it would never be taken.
+    await platform.execute("UPDATE runtime_capacity_blocks SET active=true WHERE run_id=:run", run=run.id)
+    await platform.scan()
+    assert (await by_key(platform, run.id)).keys() == {"hold#confirm:1"}
+    before = [row["type"] for row in (await everything(platform, run.id))["run_events"]]
+    await resolve(platform, incident, "terminate", actor=reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id))["state"] == "force_ended"
+    after = [row["type"] for row in (await everything(platform, run.id))["run_events"]]
+    assert after == [*before, "incident_resolved"]
 
 
 async def test_a_transaction_in_a_loop_is_reconciled_while_another_stays_in_doubt(platform, reconciler):

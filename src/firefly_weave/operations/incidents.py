@@ -242,11 +242,17 @@ class IncidentService:
                 self.runtime.definitions.registry.require_operational()
             if incident["revision"] != expected_revision:
                 raise CatalogError(409, "WV-INCIDENT-REVISION", "Incident revision changed")
-            await settle(repository, row)
+            # What fell due is applied before the decision, so the person must have read what it left. A refused
+            # decision applies none of it: the next scan does, and the person reads it then. A run that recovery
+            # leaves alone is decided as it was read, or its decision would wait for a scan that never comes.
+            await settle(repository, row, terminal_only=await repository.capacity_blocked(row["id"]))
             row = await repository.run(row["id"])
             previous = view_of(row)
+            incident = (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0]
             if incident["status"] != "active" or previous.state.status != "suspended":
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Incident is no longer active")
+            if incident["revision"] != expected_revision:
+                raise CatalogError(409, "WV-INCIDENT-REVISION", "Incident revision changed")
             artifact = import_artifact(row["artifact"])
             ir = workflow(artifact)
             # A run-wide incident has no step; a step incident names its instance key.
