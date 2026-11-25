@@ -592,6 +592,7 @@ class IncidentService:
             block_output,
             called_workflow,
             check_reconciliation,
+            completes,
             validate,
         )
         from firefly_weave.runtime.transactions import HELD_INCIDENT
@@ -713,7 +714,15 @@ class IncidentService:
         try:
             ending, _, output = check_reconciliation(record, request.output)
             if ending == "completed":
-                block_output(ir, nodes[node_of(cast(str, owner))], output)
+                block = nodes[node_of(cast(str, owner))]
+                if state.ending is None and not completes(ir, block):
+                    raise CatalogError(
+                        422,
+                        "WV-RUNTIME-OUTPUT",
+                        "The block can never complete, because every way through it reaches a Fail step: "
+                        "use Force end, or compensated if everything was undone",
+                    )
+                block_output(ir, block, output, goes_on=state.ending is None)
         except (KernelError, ValueError) as error:
             raise CatalogError(
                 422, "WV-RUNTIME-OUTPUT", "The reconciliation record doesn't fit the transaction"

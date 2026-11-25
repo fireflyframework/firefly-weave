@@ -315,6 +315,11 @@ class PreparedWorkflow:
     transactions: TransactionShapes | None = None
 
 
+def completes(ir: WorkflowIR, block: TransactionNode) -> bool:
+    """Whether a transaction's block can complete. Nothing follows one whose every way through reaches a fail step."""
+    return any(node.id == block.join and isinstance(node, JoinNode) and node.completes for node in ir.graph.nodes)
+
+
 def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
     ir = workflow(artifact)
     sizes: dict[str, int] = {}
@@ -339,9 +344,14 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
                 for node in body
             ):
                 nested.add(loop.id)
+    nodes = {node.id: node for node in ir.graph.nodes}
+    for block in ir.graph.nodes:
+        if isinstance(block, TransactionNode) and block.on_error == "continue" and not completes(ir, block):
+            # There is no step to continue with: its failures count as without the setting.
+            nodes[block.id] = block.model_copy(update={"on_error": None})
     return PreparedWorkflow(
         ir=ir,
-        nodes=MappingProxyType({node.id: node for node in ir.graph.nodes}),
+        nodes=MappingProxyType(nodes),
         successors=MappingProxyType({edge.source: edge.target for edge in ir.graph.edges if edge.kind == "next"}),
         body_sizes=MappingProxyType(sizes),
         body_intents=MappingProxyType(intents),
@@ -482,8 +492,13 @@ def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple
     return ending, outcomes, output
 
 
-def block_output(ir: WorkflowIR, node: TransactionNode, value: JsonValue) -> None:
-    """Validate an output a person gave a transaction's block against the block's own output schema."""
+def block_output(ir: WorkflowIR, node: TransactionNode, value: JsonValue, *, goes_on: bool) -> None:
+    """Validate an output a person gave a transaction's block against the block's own output schema.
+
+    A run that ``goes_on`` after the block needs a step after it, which a block that can never complete doesn't have.
+    """
+    if goes_on and not completes(ir, node):
+        raise KernelError("WV-RUNTIME-OUTPUT")
     for item in ir.guards:
         if item.path == f"{node.path}/output" and item.purpose == "branch_output":
             validate(ir, ir.schemas[item.schema_ref], value)
@@ -1540,7 +1555,8 @@ def _advance_owned(
         """Check a reconciliation record against the transaction: how it ended, each step's outcome, its output."""
         ending, outcomes, output = check_reconciliation(record(key), value)
         if ending == "completed":
-            block_output(ir, cast(TransactionNode, nodes[node_of(key)]), output)
+            block = cast(TransactionNode, nodes[node_of(key)])
+            block_output(ir, block, output, goes_on=current_state.ending is None)
         return ending, outcomes, output
 
     def force_end(key: str) -> None:

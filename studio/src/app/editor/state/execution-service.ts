@@ -31,6 +31,7 @@ import { ApiError } from "../../api";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
 import type { Workflow } from "../../model";
 import { sampleFromSchema } from "../ndv/panes/sample";
+import { eventSampleInput } from "../triggers/event-trigger";
 import type { Json } from "../ndv/registry";
 import type { StoreBackend } from "./browser-store";
 import {
@@ -245,8 +246,16 @@ export class ExecutionService {
   workflowInput(): Json {
     const input = this.host.testData().input?.value;
     return input === undefined
-      ? (sampleFromSchema(this.host.inputSchema()) as Json)
+      ? this.sampleInput(this.host.draft()?.workflow)
       : (input as Json);
+  }
+  /**
+   * A sample of what a run starts with: the workflow's input fields, or the
+   * first event it reacts to while its input is the platform event.
+   */
+  private sampleInput(workflow: Workflow | undefined): Json {
+    return ((workflow && eventSampleInput(workflow)) ??
+      sampleFromSchema(this.host.inputSchema())) as Json;
   }
   async execute(
     target: ExecuteTarget,
@@ -291,7 +300,8 @@ export class ExecutionService {
       connected: this.host.connected(),
       testData,
       results: previous,
-      sampleInput: sampleFromSchema(this.host.inputSchema()),
+      // Not every input can be sampled: only when there is no test input.
+      sampleInput: sampled ? this.sampleInput(draft.workflow) : null,
       callees: this.host.callees?.(),
       target,
       now: this.host.now(),
@@ -353,15 +363,20 @@ export class ExecutionService {
     create: async (): Promise<HostSession | null> => {
       const draft = this.host.draft();
       if (!draft) return null;
+      const definitions = await this.host.definitions();
+      const testData = this.host.testData();
       const { target: _, ...body } = executeRequest({
         source: draft.source,
         format: draft.format,
         workflow: draft.workflow,
-        definitions: await this.host.definitions(),
+        definitions,
         connected: this.host.connected(),
-        testData: this.host.testData(),
+        testData,
         results: this.results(),
-        sampleInput: sampleFromSchema(this.host.inputSchema()),
+        sampleInput:
+          testData.input?.value === undefined
+            ? this.sampleInput(draft.workflow)
+            : null,
         callees: this.host.callees?.(),
         target: { mode: "workflow" },
         now: this.host.now(),

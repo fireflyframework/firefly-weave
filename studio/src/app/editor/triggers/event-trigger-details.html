@@ -1,0 +1,340 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let reason = readOnly();
+@let wrong = problems();
+@let state = inputState();
+@if (state === "refused") {
+  <div
+    class="et-callout"
+    data-tone="danger"
+    role="alert"
+    data-focus-path="eventTrigger/input"
+  >
+    <weave-icon name="failCircle" [size]="16" />
+    <div class="et-callout-text">
+      <strong>{{ refused }}</strong>
+      <p>
+        Reset it to read the event's fields in later steps; Undo brings
+        {{ ownCount() ? "the " + ownCount() : "this input" }} back.
+      </p>
+      <p class="et-code">{{ inputCode() }}</p>
+      <button type="button" class="sm" [disabled]="!!reason" (click)="reset()">
+        <weave-icon name="refresh" [size]="16" />Reset the input
+      </button>
+    </div>
+  </div>
+} @else if (state === "unsure") {
+  <div
+    class="et-callout"
+    data-tone="warning"
+    role="note"
+    data-focus-path="eventTrigger/input"
+  >
+    <weave-icon name="warning" [size]="16" />
+    <div class="et-callout-text">
+      <strong>{{ unsure }}</strong>
+      <p>
+        Each start checks it, and a start that doesn't fit is recorded as
+        refused.
+      </p>
+      <button type="button" class="sm" [disabled]="!!reason" (click)="reset()">
+        <weave-icon name="refresh" [size]="16" />Reset the input
+      </button>
+    </div>
+  </div>
+}
+
+<fieldset
+  class="et-section et-events"
+  data-focus-path="eventTrigger/events"
+  [attr.aria-labelledby]="id + '-events'"
+  [attr.aria-describedby]="wrong.events ? id + '-events-problem' : null"
+  [disabled]="!!reason"
+>
+  <legend class="et-head">
+    <span class="et-heading" [id]="id + '-events'">Which events</span>
+    <span class="et-caption">Each one you choose starts a run</span>
+  </legend>
+  <div class="et-rows" [class.is-wrong]="!!wrong.events">
+    @for (choice of choices; track choice.type) {
+      <label class="et-row">
+        <input
+          #box
+          type="checkbox"
+          [value]="choice.type"
+          [checked]="has(choice.type)"
+          [attr.aria-labelledby]="id + '-' + choice.type"
+          [attr.aria-describedby]="id + '-' + choice.type + '-about'"
+          (change)="toggle(choice.type, box)"
+        />
+        <span class="et-row-text">
+          <span class="et-row-name" [id]="id + '-' + choice.type">{{
+            choice.label
+          }}</span>
+          <small [id]="id + '-' + choice.type + '-about'">{{
+            choice.description
+          }}</small>
+        </span>
+      </label>
+    }
+  </div>
+  <div aria-live="polite">
+    @if (wrong.events) {
+      <p class="et-problem" [id]="id + '-events-problem'">
+        <weave-icon name="failCircle" [size]="16" />{{ wrong.events }}
+      </p>
+    }
+  </div>
+</fieldset>
+
+<section class="et-section et-from" [attr.aria-labelledby]="id + '-from'">
+  <h3 class="et-heading" [id]="id + '-from'">From which workflows</h3>
+  <div
+    class="et-cards"
+    role="radiogroup"
+    [attr.aria-labelledby]="id + '-from'"
+    [attr.aria-describedby]="wrong.from ? id + '-from-problem' : null"
+  >
+    <label class="et-card" [class.is-chosen]="!only()">
+      <input
+        type="radio"
+        value="any"
+        [name]="id + '-from'"
+        [checked]="!only()"
+        [disabled]="!!reason"
+        [attr.aria-labelledby]="id + '-any'"
+        [attr.aria-describedby]="id + '-any-hint'"
+        (change)="chooseAny()"
+      />
+      <span class="et-row-text"
+        ><span [id]="id + '-any'">Any workflow in this project</span>
+        <small [id]="id + '-any-hint'"
+          >Including workflows published later. This workflow's own transactions
+          don't count.</small
+        ></span
+      >
+    </label>
+    <label class="et-card" [class.is-chosen]="only()">
+      <input
+        type="radio"
+        value="only"
+        [name]="id + '-from'"
+        [checked]="only()"
+        [disabled]="!!reason"
+        [attr.aria-labelledby]="id + '-only'"
+        [attr.aria-describedby]="id + '-only-hint'"
+        (change)="chooseOnly()"
+      />
+      <span class="et-row-text"
+        ><span [id]="id + '-only'">Only these workflows</span>
+        <small [id]="id + '-only-hint'"
+          >Up to {{ most }} workflows, by name. Every version of a workflow
+          counts.</small
+        ></span
+      >
+    </label>
+  </div>
+  @if (only()) {
+    <ul
+      class="et-chips"
+      aria-label="Workflows this one reacts to"
+      data-focus-path="eventTrigger/from"
+    >
+      @for (source of names(); track $index) {
+        <li
+          class="et-chip"
+          [class.is-own]="source === name()"
+          [attr.data-source]="source"
+        >
+          @if (source === name()) {
+            <weave-icon name="warning" [size]="16" />
+          }
+          <span>{{ source }}</span>
+          <button
+            type="button"
+            class="et-remove"
+            [attr.aria-label]="'Remove ' + source"
+            [disabled]="!!reason"
+            (click)="remove(source)"
+          >
+            <weave-icon name="close" [size]="16" />
+          </button>
+        </li>
+      }
+      @if (full()) {
+        <li class="et-full">
+          {{ most }} workflows, the most a trigger can list.
+        </li>
+      } @else {
+        <li class="et-add">
+          <span class="et-field" #anchor>
+            <weave-icon name="plus" [size]="16" />
+            <input
+              class="et-input"
+              type="text"
+              role="combobox"
+              aria-label="Add a workflow"
+              aria-autocomplete="list"
+              placeholder="Add a workflow"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              [value]="text()"
+              [disabled]="!!reason"
+              [attr.aria-expanded]="showing()"
+              [attr.aria-controls]="id + '-list'"
+              [attr.aria-activedescendant]="activeId()"
+              [attr.aria-invalid]="problem() ? 'true' : null"
+              [attr.aria-describedby]="
+                problem() ? id + '-name-problem' : id + '-foot'
+              "
+              (input)="typed($any($event.target).value)"
+              (keydown)="keydown($event)"
+              (focus)="revealField()"
+              (blur)="close()"
+            />
+          </span>
+          <!-- A press in the list keeps focus in the text box. -->
+          <div
+            class="et-list"
+            [weaveAnchoredPopover]="showing()"
+            [popoverAnchor]="anchor"
+            [popoverSheet]="true"
+            [hidden]="!showing()"
+            (popoverClosed)="close()"
+            (mousedown)="$event.preventDefault()"
+          >
+            @if (note(); as why) {
+              <p class="et-note">{{ why }}</p>
+            }
+            <div
+              role="listbox"
+              aria-label="Workflow suggestions"
+              [id]="id + '-list'"
+              [hidden]="!groups().length"
+            >
+              @for (group of groups(); track group.label) {
+                <div role="group" [attr.aria-label]="group.label">
+                  <p class="et-group" aria-hidden="true">{{ group.label }}</p>
+                  @for (option of group.options; track option.name) {
+                    <div
+                      class="et-option"
+                      role="option"
+                      [id]="option.id"
+                      [class.is-active]="option.id === activeId()"
+                      [attr.aria-selected]="option.id === activeId()"
+                      (click)="choose(option)"
+                    >
+                      <weave-icon
+                        [name]="
+                          group.label === 'In this project'
+                            ? 'workflows'
+                            : 'laptop'
+                        "
+                        [size]="16"
+                      />
+                      <span class="et-option-name"
+                        >{{ option.before }}<b>{{ option.match }}</b
+                        >{{ option.after }}</span
+                      >
+                      <span class="et-option-aside">{{ option.aside }}</span>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+            <p class="et-foot" [id]="id + '-foot'">
+              Names already chosen aren't listed. Enter adds the active one, or
+              the text as typed.
+            </p>
+          </div>
+        </li>
+      }
+    </ul>
+  }
+  @if (problem()) {
+    <p class="et-problem" role="alert" [id]="id + '-name-problem'">
+      <weave-icon name="failCircle" [size]="16" />{{ problem() }}
+    </p>
+  } @else if (wrong.from) {
+    <p class="et-problem" [id]="id + '-from-problem'">
+      <weave-icon name="failCircle" [size]="16" />{{ wrong.from }}
+    </p>
+  }
+  <div aria-live="polite">
+    @if (loop(); as warning) {
+      <p class="et-callout" data-tone="warning">
+        <weave-icon name="warning" [size]="16" />{{ warning }}
+      </p>
+    }
+  </div>
+</section>
+
+<section class="et-section" [attr.aria-labelledby]="id + '-input'">
+  <div class="et-head">
+    <h3 class="et-heading" [id]="id + '-input'">Input</h3>
+    <span class="et-caption">What each run starts with</span>
+  </div>
+  @if (state === "event") {
+    <p class="et-ok">
+      <weave-icon name="check" [size]="16" />Runs start with the platform event.
+    </p>
+  } @else if (state === "refused") {
+    <p class="et-problem">
+      <weave-icon name="failCircle" [size]="16" />Runs start with
+      {{ ownCount() ? "these " + ownCount() : "this input" }}, not the platform
+      event.
+    </p>
+  } @else if (state === "unread") {
+    <p class="et-caption">{{ unchecked }}</p>
+  } @else {
+    <p class="et-caption">
+      Runs start with the platform event, read through this workflow's own
+      input.
+    </p>
+  }
+  @if (box(); as shown) {
+    <div class="et-box" role="group" [attr.aria-label]="shown.title">
+      <div class="et-box-head">
+        <weave-icon [name]="shown.icon" [size]="16" />
+        <span class="et-box-title">{{ shown.title }}</span>
+        <span class="et-caption"
+          >{{ shown.fields.length }}
+          {{ shown.fields.length === 1 ? "field" : "fields" }}</span
+        >
+      </div>
+      <ul class="et-fields">
+        @for (field of shown.fields; track field.key) {
+          <li>
+            <weave-icon [name]="field.icon" [size]="16" />
+            <span class="et-field-name">{{ field.key }}</span>
+            <span class="et-caption">{{ field.type }}</span>
+            <span class="et-about" [attr.title]="field.about">{{
+              field.about
+            }}</span>
+          </li>
+        }
+      </ul>
+    </div>
+  } @else if (unread()) {
+    <p class="et-caption">
+      Studio couldn't read the platform event's fields. It asks again in a
+      moment.
+    </p>
+  }
+</section>

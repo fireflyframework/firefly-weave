@@ -29,6 +29,7 @@ import {
   type PlanActivation,
   type TriggerPlanInput,
 } from "../src/app/editor/activation/trigger-plan";
+import { withStop } from "../src/app/editor/activation/trigger-plan";
 import type { TriggerIntent } from "../src/app/editor/state/canvas-sidecar";
 
 const INPUT = {
@@ -471,5 +472,204 @@ describe("other trigger choices and long lists", () => {
         text: "Too many triggers to check here. Use the CLI.",
       },
     ]);
+  });
+});
+
+describe("the workflow's platform event trigger", () => {
+  const EVENT: TriggerIntent = { id: "t-8", kind: "event" };
+  const ATTENTION = {
+    events: ["transaction.in_doubt" as const],
+    from: ["move-between-systems"],
+  };
+  const trigger = (
+    id: string,
+    name: string,
+    activationId: string,
+    extra: Partial<TriggerResource<"event">["view"]> = {},
+  ): TriggerResource<"event"> => {
+    const view = {
+      id,
+      name,
+      activation_id: activationId,
+      events: ["transaction.in_doubt" as const],
+      source_workflows: ["move-between-systems"],
+      may_reconcile: false,
+      workflow_name: "orders",
+      principal_id: "p-1",
+      revision: 2,
+      disabled: false,
+      created_at: "2026-11-20T09:00:00Z",
+      ...extra,
+    };
+    return {
+      kind: "event",
+      id,
+      name,
+      activationId,
+      revision: view.revision,
+      disabled: view.disabled,
+      view,
+    };
+  };
+  const events = (...items: TriggerResource<"event">[]) => ({
+    event: list(items),
+  });
+
+  it("is created in its place among the trigger choices", () => {
+    const rows = plan([EVENT, HOOK], events(), { declaration: ATTENTION });
+    expect(rows.map((row) => [row.kind, row.intentId, row.text])).toEqual([
+      [
+        "create",
+        "t-8",
+        "Create platform event trigger orders for Needs attention · from move-between-systems",
+      ],
+      ["create", "t-1", "Create webhook orders-in"],
+    ]);
+    expect(rows[0]).toMatchObject({
+      resourceKind: "event",
+      event: { kind: "create", name: "orders" },
+    });
+  });
+
+  it("moves the trigger stored for this environment, and leaves another behind after the rest", () => {
+    const rows = plan(
+      [{ ...EVENT, resources: { local: "e-2", prod: "e-1" } }, HOOK],
+      events(
+        trigger("e-1", "orders", "a-old", {
+          events: ["transaction.completed"],
+        }),
+        trigger("e-2", "orders-2", "a-1"),
+      ),
+      { declaration: ATTENTION },
+    );
+    expect(rows.map((row) => [row.kind, row.event?.kind, row.text])).toEqual([
+      [
+        "retarget",
+        "retarget",
+        "Move platform event trigger orders-2 from 1.1.0 to 1.2.0. Runs start as you after the move, including events waiting to start.",
+      ],
+      ["create", undefined, "Create webhook orders-in"],
+      [
+        "left-behind",
+        "left-behind",
+        "Platform event trigger orders keeps running on 1.0.0",
+      ],
+    ]);
+    expect(rows.map((row) => [row.from, row.to, row.stop])).toEqual([
+      ["1.1.0", "1.2.0", undefined],
+      [undefined, undefined, undefined],
+      ["1.0.0", undefined, false],
+    ]);
+  });
+
+  it("replaces it when the version reacts to other events", () => {
+    const rows = plan(
+      [{ ...EVENT, resources: { local: "e-1" } }],
+      events(trigger("e-1", "orders", "a-1")),
+      {
+        declaration: {
+          events: ["transaction.compensated", "transaction.in_doubt"],
+          from: null,
+        },
+      },
+    );
+    expect(rows).toMatchObject([
+      {
+        kind: "replace",
+        intentId: "t-8",
+        from: "1.1.0",
+        to: "1.2.0",
+        event: { name: "orders-2", binding: { id: "e-1" } },
+      },
+    ]);
+  });
+
+  it("shows a stop owed in this environment as a duplicate, on, last", () => {
+    const owed = trigger("e-1", "orders", "a-old", {
+      events: ["transaction.completed"],
+    });
+    const rows = plan(
+      [
+        {
+          ...EVENT,
+          resources: { local: "e-2" },
+          pendingStops: {
+            local: [{ triggerId: "e-1", revision: 2, activationId: "a-old" }],
+          },
+        },
+      ],
+      events(owed, trigger("e-2", "orders-2", "a-1")),
+      { declaration: ATTENTION },
+    );
+    expect(rows.map((row) => [row.kind, row.stop])).toEqual([
+      ["retarget", undefined],
+      ["duplicate", true],
+    ]);
+    // Owed in another environment, it is a trigger left behind here.
+    const elsewhere = plan(
+      [
+        {
+          ...EVENT,
+          resources: { local: "e-2" },
+          pendingStops: {
+            prod: [{ triggerId: "e-1", revision: 2, activationId: "a-old" }],
+          },
+        },
+      ],
+      events(owed, trigger("e-2", "orders-2", "a-1")),
+      { declaration: ATTENTION },
+    );
+    expect(elsewhere.map((row) => row.kind)).toEqual([
+      "retarget",
+      "left-behind",
+    ]);
+  });
+
+  it("follows the version being activated, not the draft's trigger choices", () => {
+    // Removed from the draft since it was published: still declared, so still set up.
+    expect(
+      plan([HOOK], events(), { declaration: ATTENTION }).map((row) => [
+        row.kind,
+        row.intentId,
+        row.resourceKind,
+      ]),
+    ).toEqual([
+      ["create", "t-1", "webhook"],
+      ["create", undefined, "event"],
+    ]);
+    // Added to the draft since: this version creates none, and leaves what runs.
+    expect(
+      plan([EVENT, HOOK], events(trigger("e-1", "orders", "a-1")), {
+        declaration: null,
+      }).map((row) => [row.kind, row.stop]),
+    ).toEqual([
+      ["create", undefined],
+      ["left-behind", false],
+    ]);
+  });
+
+  it("plans nothing for it while its list is too long or wasn't read", () => {
+    const declaration = ATTENTION;
+    expect(
+      plan(
+        [EVENT],
+        { event: list([trigger("e-1", "orders", "a-1")], true) },
+        { declaration },
+      ).map((row) => row.kind),
+    ).toEqual(["truncated"]);
+    expect(plan([EVENT], {}, { declaration })).toEqual([]);
+  });
+
+  it("keeps the person's Stop it in the row that is applied", () => {
+    const [left] = plan([], events(trigger("e-1", "orders", "a-1")));
+    expect(left).toMatchObject({ stop: false, event: { stop: false } });
+    expect(withStop(left, true)).toMatchObject({
+      stop: true,
+      event: { stop: true },
+    });
+    const [hook] = plan([], {
+      webhook: list([webhook("w-9", "orders-old", "a-1")]),
+    });
+    expect(withStop(hook, true)).toEqual({ ...hook, stop: true });
   });
 });

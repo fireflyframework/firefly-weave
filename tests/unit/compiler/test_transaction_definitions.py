@@ -257,7 +257,7 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
         },
     ]
     trigger = next(entry for entry in manifest.workflow_fields if entry.name == "eventTrigger")
-    assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "pending")
+    assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "ready")
 
 
 def test_a_platform_event_trigger_compiles():

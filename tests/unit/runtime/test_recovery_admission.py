@@ -50,6 +50,10 @@ class _Session:
     async def execute(self, statement, params=None):
         return None
 
+    @asynccontextmanager
+    async def begin_nested(self):
+        yield
+
     async def scalar(self, statement, params=None):
         return str(self.tenant)
 
@@ -81,7 +85,7 @@ class _Harness:
             def __init__(self, tx, outbox):
                 pass
 
-            async def expired_ready(self, limit):
+            async def expired_ready(self, limit, *, skip=()):
                 return harness.expired[:limit]
 
             async def now(self):
@@ -139,7 +143,7 @@ class _Harness:
             await transition_async(state, event, None)  # type: ignore[arg-type]
             return RecoveryReport(timed_out=1)
 
-        async def recovery_candidates(tx, limit):
+        async def recovery_candidates(tx, limit, *, skip=()):
             return []
 
         runtime = SimpleNamespace(

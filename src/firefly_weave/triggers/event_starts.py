@@ -26,6 +26,7 @@ its cause. Nothing a start does suspends a run or opens an incident.
 
 import json
 from datetime import datetime
+from functools import partial
 from typing import Any, Final
 
 from pydantic import ValidationError
@@ -44,6 +45,7 @@ from firefly_weave.persistence.uow import Transaction, isolated, refused_for_now
 from firefly_weave.runtime.calls import PERMANENT_CODES, TRANSIENT_CODES, queue_age
 from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.run_failures import RunFailures
 from firefly_weave.runtime.service import RuntimeService
 
 # A refusal that passes: the start stays requested and a later scan tries it again.
@@ -78,6 +80,7 @@ def start_expired(requested_at: datetime, now: datetime) -> bool:
 class EventStartService:
     def __init__(self, runtime: RuntimeService) -> None:
         self.runtime = runtime
+        self.failures = RunFailures()
 
     async def dispatch(self, tx: Transaction, limit: int) -> tuple[int, int]:
         """Start, reject or skip at most one requested start; returns (started, rejected or skipped).
@@ -88,8 +91,9 @@ class EventStartService:
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
         candidates = await repository.rows(
             f"SELECT id FROM event_trigger_starts WHERE {SCOPE} AND status='requested' "
-            "ORDER BY requested_at,id LIMIT :limit",
+            "AND id<>ALL(cast(:skip AS uuid[])) ORDER BY requested_at,id LIMIT :limit",
             limit=limit,
+            skip=self.failures.waiting(tx, "event_start"),
         )
         for candidate in candidates:
             rows = await repository.rows(
@@ -98,7 +102,9 @@ class EventStartService:
             )
             if not rows or rows[0]["status"] != "requested":
                 continue
-            outcome = await self._dispatch(repository, rows[0])
+            start = partial(self._dispatch, repository, rows[0])
+            name = f"start {candidate['id']} of trigger {rows[0]['trigger_id']}"
+            outcome = await self.failures.guard(tx, "event_start", candidate["id"], start, name=name)
             if outcome is not None:
                 return outcome
         return 0, 0

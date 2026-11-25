@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // suggestion becomes an "Apply suggested edit" button that hands the host the
 // edited step or workflow; the host applies it as one undoable change.
 import { Component, computed, input, output } from "@angular/core";
+import { eventPlace, eventProblem } from "../editor/triggers/event-diagnostics";
 import { Icon } from "../icon";
 import { describeDiagnostic, type DiagnosticView } from "./diagnostic-copy";
 import {
@@ -192,10 +193,15 @@ export function suggestedChange(
   return value ? { stepId: where.stepId, value } : null;
 }
 
-/** Diagnostic rows: errors and warnings as rows, notes summarized after them. */
+/**
+ * Diagnostic rows: errors and warnings as rows, notes summarized after them.
+ * With step details, a problem of the Platform event trigger reads as the
+ * trigger says it and opens the trigger.
+ */
 export function diagnosticRows(
   diagnostics: readonly DiagnosticInput[],
   definition: unknown,
+  stepDetails = false,
 ): { problems: Row[]; notes: Row[] } {
   const problems: Row[] = [],
     notes: Row[] = [];
@@ -215,10 +221,18 @@ export function diagnosticRows(
     const view = describeDiagnostic(diagnostic, (key) =>
       fieldName([key], kind),
     );
+    const event = stepDetails ? eventProblem(diagnostic, definition) : null;
     const row: Row = {
-      view,
-      location,
-      where: location ? placeOf(location, kind) : "",
+      view: event?.text
+        ? { ...view, text: event.text, hint: event.hint }
+        : view,
+      location:
+        location && event ? { ...location, event: event.part } : location,
+      where: event
+        ? eventPlace(event.part)
+        : location
+          ? placeOf(location, kind)
+          : "",
       change: suggestedChange(diagnostic.suggestedEdit, definition),
     };
     (view.severity === "info" ? notes : problems).push(row);
@@ -326,9 +340,13 @@ export class DiagnosticsList {
   /** The workflow definition the diagnostic pointers refer to. */
   definition = input<unknown>(null);
   readonly = input(false);
+  /** Whether step details can open what a problem is of. */
+  stepDetails = input(false);
   locate = output<DiagnosticLocation>();
   apply = output<SuggestedChange>();
-  rows = computed(() => diagnosticRows(this.diagnostics(), this.definition()));
+  rows = computed(() =>
+    diagnosticRows(this.diagnostics(), this.definition(), this.stepDetails()),
+  );
   severity(value: keyof typeof severityLabels) {
     return severityLabels[value];
   }

@@ -22,7 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 import { readFile } from "node:fs/promises";
 import { expect, test, type Download, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { platform, routeWebhooks, versionId } from "./activation-po";
+import {
+  activationsOf,
+  platform,
+  routeWebhooks,
+  versionId,
+} from "./activation-po";
 import { command } from "./support";
 import { StepDetailsPage, withNewEditor } from "./step-details-po";
 
@@ -97,6 +102,16 @@ async function storedChoice(
   };
   return saved.triggers?.find((intent) => intent["id"] === WEBHOOK) ?? null;
 }
+
+/** A token's color, as the browser computes it. */
+const inkOf = (page: Page, token: string) =>
+  page.evaluate((name) => {
+    const probe = document.body.appendChild(document.createElement("span"));
+    probe.style.color = `var(${name})`;
+    const { color } = getComputedStyle(probe);
+    probe.remove();
+    return color;
+  }, token);
 
 test("a new webhook is created for the activation, kept for the environment, and moved by the next one", async ({
   page,
@@ -200,6 +215,224 @@ test("a trigger that can't be created says why with Retry, and the activation st
   expect(await storedChoice(page)).toMatchObject({
     resources: { development: "w-new" },
   });
+});
+
+test("Retry keeps focus on its row while a webhook can't be created, the first of two rows to fix", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  const held = { asked: 0, release: () => undefined as void };
+  await page.route("**/environments/development/triggers", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    if (++held.asked > 2)
+      await new Promise<void>((resolve) => (held.release = resolve));
+    return r.fulfill({
+      status: 500,
+      json: { code: "WV-INTERNAL", message: "Broken" },
+    });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      canvas.triggers[0]!,
+      {
+        id: "trigger-2c3d4e5f",
+        kind: "webhook",
+        name: "orders-out",
+        secretRef: "orders-signing",
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const retry = dialog.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toHaveCount(2);
+  await retry.nth(1).focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => held.asked).toBe(3);
+  await expect(retry.nth(1)).toBeDisabled();
+  held.release();
+  await expect(retry.nth(1)).toBeEnabled();
+  await expect(retry.nth(1)).toBeFocused();
+});
+
+test("what happened to each trigger has an icon beside its words, and what wasn't set up yet has none", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  const webhook = (id: string, name: string, activation: string) => ({
+    id,
+    name,
+    kind: "run",
+    activation_id: activation,
+    secret_ref: "orders-signing",
+    payload_schema: { type: "object" },
+    max_body_bytes: 1048576,
+    tolerance_seconds: 300,
+    principal_id: "p-1",
+    disabled: false,
+    revision: 3,
+  });
+  const moving = webhook("w-1", "orders-in", "activation");
+  const left = webhook("w-2", "orders-old", "activation");
+  const idle = webhook("w-3", "orders-older", "activation");
+  // The list, a move, a stop, and a create: one name is refused once.
+  await page.route(/\/environments\/development\/triggers(?:[/?].*)?$/, (r) => {
+    const { pathname } = new URL(r.request().url());
+    if (r.request().method() === "GET")
+      return r.fulfill({
+        json: { items: [moving, left, idle], next_cursor: null },
+      });
+    if (pathname.endsWith("/w-1/retarget"))
+      return r.fulfill({ json: { ...moving, revision: 4 } });
+    if (pathname.endsWith("/w-2/disable"))
+      return r.fulfill({ json: { ...left, disabled: true, revision: 4 } });
+    const { name } = r.request().postDataJSON() as { name: string };
+    return name === "orders-out"
+      ? r.fulfill({ status: 201, json: webhook("w-4", name, "activation") })
+      : r.fulfill({
+          status: 500,
+          json: { code: "WV-INTERNAL", message: "Broken" },
+        });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      {
+        ...canvas.triggers[0],
+        resources: { development: "w-1" },
+      },
+      {
+        id: "trigger-2c3d4e5f",
+        kind: "webhook",
+        name: "orders-out",
+        secretRef: "orders-signing",
+      },
+      {
+        id: "trigger-3d4e5f6a",
+        kind: "webhook",
+        name: "orders-back",
+        secretRef: "orders-signing",
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  const rows = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(5);
+  await expect(rows.locator("weave-icon")).toHaveCount(0);
+  await rows
+    .filter({ hasText: "orders-old keeps running" })
+    .getByRole("checkbox", { name: "Stop it" })
+    .check();
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const row = (text: RegExp) => rows.filter({ hasText: text });
+  for (const [text, icon, ink] of [
+    [/^\s*Moved webhook orders-in/, "ok", "--success-ink"],
+    [/^\s*Created webhook orders-out/, "ok", "--success-ink"],
+    [/^\s*Couldn't create webhook orders-back/, "failCircle", "--danger-ink"],
+    [/^\s*Stopped webhook orders-old/, "ok", "--success-ink"],
+  ] as const) {
+    const drawn = row(text).locator("weave-icon");
+    await expect(drawn).toHaveAttribute("data-icon", icon);
+    // The icon is in the row's own ink, left of its words.
+    await expect(drawn).toHaveCSS("color", await inkOf(page, ink));
+    const [at, words] = [
+      (await drawn.boundingBox())!,
+      (await row(text).locator("[id^='trigger-row-']").boundingBox())!,
+    ];
+    expect([at.width, at.height]).toEqual([16, 16]);
+    expect(words.x - (at.x + at.width)).toBe(12);
+  }
+  await expect(
+    row(/orders-older keeps running/).locator("weave-icon"),
+  ).toHaveCount(0);
+});
+
+test("on a phone, Retry is under the words of any kind of trigger, as wide as they are", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await platform(page);
+  await routeWebhooks(page, true);
+  await open(page);
+  const dialog = await activateDialog(page);
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const row = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  const retry = row.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toBeVisible();
+  await expect(retry).toHaveAccessibleDescription(
+    /^Couldn't create webhook orders-in: /,
+  );
+  const [words, button] = [
+    (await row.locator("[id^='trigger-row-']").boundingBox())!,
+    (await retry.boundingBox())!,
+  ];
+  expect(button.y).toBeGreaterThanOrEqual(words.y + words.height);
+  expect(button.x).toBe(words.x);
+  expect(button.width).toBe(words.width);
+  expect(button.height).toBeGreaterThanOrEqual(44);
+});
+
+test("each kind of trigger that can't be checked has an icon and says what activating does to it", async ({
+  page,
+}) => {
+  await platform(page);
+  await page.route(/\/environments\/development\/triggers\?/, (r) =>
+    r.fulfill({
+      status: 503,
+      json: { code: "WV-UNAVAILABLE", message: "Try again later." },
+    }),
+  );
+  await page.route(/\/environments\/development\/schedules\?/, (r) =>
+    r.fulfill({
+      status: 403,
+      json: { code: "WV-FORBIDDEN", message: "Access denied" },
+    }),
+  );
+  await open(page);
+  const dialog = await activateDialog(page);
+  const rows = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  const [unread, forbidden] = [
+    rows.filter({ hasText: "webhooks" }),
+    rows.filter({ hasText: "schedules" }),
+  ];
+  await expect(unread).toHaveText(
+    /^\s*Couldn't check the webhooks: Try again later\.\s*If you activate now, Studio leaves them as they are\. To check them first, close this and activate again\.\s*$/,
+  );
+  await expect(forbidden).toHaveText(
+    /^\s*You can't check the schedules here, so Studio leaves them as they are\.\s*$/,
+  );
+  for (const row of [unread, forbidden]) {
+    const icon = row.locator("weave-icon[data-icon='failCircle']");
+    await expect(icon).toHaveCSS("color", await inkOf(page, "--danger-ink"));
+    const [at, lead] = [
+      (await icon.boundingBox())!,
+      (await row.locator(".row-lead").boundingBox())!,
+    ];
+    expect([at.width, at.height]).toEqual([16, 16]);
+    expect(lead.x - (at.x + at.width)).toBe(12);
+  }
+  // What it means is under what happened, in the muted ink.
+  const detail = unread.locator(".row-detail");
+  await expect(detail).toHaveCSS("color", await inkOf(page, "--muted"));
+  expect((await detail.boundingBox())!.x).toBe(
+    (await unread.locator(".row-lead").boundingBox())!.x,
+  );
 });
 
 test("a new Kafka trigger asks for its Kafka connection, of any version, and is created on it", async ({
@@ -346,11 +579,15 @@ test("an activation answer without an ID sets up no triggers, and says so", asyn
 }) => {
   await platform(page);
   const recorded = await routeWebhooks(page);
-  await page.route("**/environments/development/activations", (r) =>
-    r.request().method() === "POST"
-      ? r.fulfill({ status: 201, json: { name: "pets", revision: 1 } })
-      : r.fallback(),
-  );
+  await page.route("**/environments/development/activations", (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    const { status, json } = activationsOf(page).create(
+      r.request(),
+      "pets",
+      "activation",
+    );
+    return r.fulfill({ status, json: { ...json, id: undefined } });
+  });
   await open(page);
   const dialog = await activateDialog(page);
   await dialog
@@ -461,10 +698,7 @@ test("while the activation runs, Open schedule and the Connections link are off"
   await page.route("**/environments/development/activations", async (r) => {
     if (r.request().method() !== "POST") return r.fallback();
     await held;
-    await r.fulfill({
-      status: 201,
-      json: { id: "activation", name: "pets", revision: 1 },
-    });
+    await r.fallback();
   });
   await open(page, {
     ...canvas,
