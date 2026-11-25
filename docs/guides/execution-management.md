@@ -353,6 +353,13 @@ schedules, triggers, or retry relationships. The purge is atomic, so a
 blocked purge removes nothing. Leave such runs archived; this version does not
 cascade deletion into those separately managed resources.
 
+A transaction that an earlier version left unsettled also blocks it, until the
+run's history shows how that transaction ended. The purge reads the history for
+up to 5 seconds before it starts. When that's not enough, it writes the endings
+it found to the transaction records and answers HTTP 409, and the next purge
+goes on from there. Without room in the project's storage quota, those records
+keep only how each transaction ended.
+
 **What it cannot undo:** purging Weave's records does not recall an email, undo
 work in other systems, erase exported files, remove backups, or delete data held
 by a connected product. Plan retention for those systems separately.
@@ -366,7 +373,9 @@ by a connected product. Plan retention for those systems separately.
 | `WV-RUN-LIFECYCLE-STATE` (HTTP 409) | The run is already archived, or already restored | Nothing to do; refresh the list |
 | `WV-RUN-NOT-ARCHIVED` (HTTP 409) | You tried to purge a run that is not archived | Archive it first |
 | `WV-RUN-PURGE-CONFIRM` (HTTP 422) | `confirm_run_id` does not match the run | Type the exact run ID |
-| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease, a trigger start still waiting to run with one of the run's platform events, or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired; a waiting trigger start runs or expires within a day, so try the purge again later |
+| `WV-RUN-PURGE-BLOCKED` (HTTP 409) | A live lease, a running or undelivered workflow call, a trigger start still waiting to run with one of the run's platform events, or a retained email, trigger, schedule, or retry reference | Keep the run archived until those dependencies are retired; a waiting trigger start runs or expires within a day, so try the purge again later |
+| `WV-RUN-PURGE-BLOCKED` (HTTP 409) that names a transaction whose outcome its history doesn't show, or a history too large to read | An earlier version left the record of a transaction unsettled, and the run's history can't say how it ended, or an event is larger than a purge reads (64 MB) | Keep the run archived |
+| `WV-RUN-PURGE-BLOCKED` (HTTP 409) that says Weave had no time left to read how every transaction ended | The run has many such records, or large events | Purge it again: it goes on from what the last purge read |
 | `WV-RUN-PURGED` (HTTP 410) | You replayed a request for a run that was purged | Start a new run with a new idempotency key if you need one |
 | HTTP 403, or the run has no **Archive** section or no **Delete run data** button | Your roles do not include `run.archive` or `run.purge` in this workspace | Ask an administrator; see [People and access](people-and-access.md) |
 | A search returns several runs | Business keys are not unique | Filter by status or correlation key, then choose one run ID |
