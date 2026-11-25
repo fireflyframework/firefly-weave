@@ -121,6 +121,7 @@ SPDX-License-Identifier: Apache-2.0
     @for (row of now.rows; track row.id) {
       <li
         class="es-row"
+        [class.has-run]="!!row.runId"
         [attr.data-tone]="row.tone"
         [attr.data-start]="row.id"
         tabindex="-1"
@@ -131,25 +132,21 @@ SPDX-License-Identifier: Apache-2.0
           [name]="icons[row.tone]"
           [size]="16"
         />
-        <div class="es-text">
-          <strong>{{ row.title }}</strong>
-          <span>{{ row.detail }}</span>
-        </div>
+        <strong>{{ row.title }}</strong>
+        <span class="es-detail">{{ row.detail }}</span>
         <time [attr.datetime]="iso(row.at)" [title]="exact(row.at)">{{
           ago(row.at)
         }}</time>
-        <div class="es-action">
-          @if (row.runId; as run) {
-            <button
-              type="button"
-              class="sm"
-              [attr.aria-label]="'Open run ' + shortId(run)"
-              (click)="openRun.emit(run)"
-            >
-              <weave-icon name="external" [size]="16" /><span>Open run</span>
-            </button>
-          }
-        </div>
+        @if (row.runId; as run) {
+          <button
+            type="button"
+            class="sm es-action"
+            [attr.aria-label]="'Open run ' + shortId(run)"
+            (click)="openRun.emit(run)"
+          >
+            <weave-icon name="external" [size]="16" /><span>Open run</span>
+          </button>
+        }
       </li>
     }
   </ul>

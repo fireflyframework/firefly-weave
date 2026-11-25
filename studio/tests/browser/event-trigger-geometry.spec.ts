@@ -460,6 +460,87 @@ for (const size of SIZES)
       await expectNoPageScroll(page);
     });
 
+    test("Starts: the time ends the lead's line, and the sentence takes the room under both", async ({
+      page,
+    }) => {
+      const opened = await openConnected(page, {
+        seeds: [CURRENT],
+        stored: "t-2",
+      });
+      const start = (id: string, fields: Record<string, unknown>) => ({
+        ...requested(id),
+        source_run_id: "3fa2c1d0-6b5e-4d7c-9a8f-2e1d0c9b8a7f",
+        ...fields,
+      });
+      opened.platform.starts.set("t-2", [
+        start("s-1", {
+          status: "started",
+          run_id: "9b1c4e2a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          requested_at: new Date().toISOString(),
+        }),
+        start("s-2", { event_type: "transaction.compensated" }),
+        start("s-3", { status: "skipped", code: "WV-TRIGGER-EVENT-DEPTH" }),
+        start("s-4", {
+          status: "rejected",
+          code: "WV-TRIGGER-START",
+          cause: "WV-FORBIDDEN",
+          requested_at: new Date().toISOString(),
+        }),
+        ...startedRuns(2),
+      ]);
+      const { dialog, panel } = await showStarts(page);
+      const rows = panel.locator(".es-row");
+      await expect(rows).toHaveCount(6);
+      const list = await box(panel.locator(".es-list"));
+      const ends = { run: new Set<number>(), none: new Set<number>() };
+      for (const row of await rows.all()) {
+        const whole = await box(row);
+        const [lead, time, said] = [
+          await box(row.locator("strong")),
+          await box(row.locator("time")),
+          await box(row.locator(".es-detail")),
+        ];
+        const open = row.getByRole("button", { name: /^Open run/ });
+        const run = (await open.count()) > 0;
+        // The waiting icon turns: its box does, its size doesn't.
+        await expect(row.locator(".es-icon")).toHaveCSS("width", "16px");
+        await expect(row.locator(".es-icon")).toHaveCSS("height", "16px");
+        near(said.x, lead.x, "the sentence starts under the lead");
+        // To the row's padding, or to the action's column and the gap before it.
+        const last = whole.right - 8 - (run ? (narrow ? 44 : 104) + 12 : 0);
+        near(said.right, last, "the sentence's end");
+        if (narrow)
+          expect(time.y, "the time, under the sentence").toBeGreaterThanOrEqual(
+            said.bottom - 0.5,
+          );
+        else {
+          near(time.right, last, "the time's end");
+          ends[run ? "run" : "none"].add(time.right);
+          expect(Math.abs(time.middle - lead.middle)).toBeLessThanOrEqual(2);
+          expect(time.x).toBeGreaterThanOrEqual(lead.right);
+          expect(said.y, "the sentence, under both").toBeGreaterThanOrEqual(
+            Math.max(lead.bottom, time.bottom) - 2,
+          );
+          if (!run)
+            expect(said.width, "the sentence").toBeGreaterThanOrEqual(300);
+          // Two lines at most, where four ran beside an empty column.
+          expect(said.height).toBeLessThanOrEqual(40);
+        }
+        if (run) {
+          const button = await box(open);
+          near(button.right, whole.right - 8, "Open run's end");
+          near(button.height, narrow ? 44 : 32, "Open run");
+          if (narrow) near(button.width, 44, "Open run's width");
+        }
+        inside(whole, list, "row");
+      }
+      if (!narrow)
+        expect([ends.run.size, ends.none.size], "times line up").toEqual([
+          1, 1,
+        ]);
+      expect(await clippedText(dialog)).toEqual([]);
+    });
+
     test("the activation dialog's rows and the question before a stop", async ({
       page,
     }) => {

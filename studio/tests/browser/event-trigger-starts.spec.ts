@@ -596,16 +596,22 @@ for (const [name, size] of [
     } else {
       expect(run.height).toBe(32);
       expect(stop.height).toBe(32);
-      // The times line up, whatever each row's action is.
-      const times = await rows(panel)
-        .locator("time")
-        .evaluateAll((items) =>
-          items.slice(0, 6).map((item) => {
-            const shape = item.getBoundingClientRect();
-            return Math.round(shape.right);
-          }),
-        );
-      expect(new Set(times).size).toBe(1);
+      // The times of rows with Open run line up, and so do the others'.
+      const times = await rows(panel).evaluateAll((items) =>
+        items.slice(0, 6).map((item) => ({
+          run: item.querySelector("button") !== null,
+          right: Math.round(
+            item.querySelector("time")!.getBoundingClientRect().right,
+          ),
+        })),
+      );
+      expect(times.filter((time) => time.run)).toHaveLength(3);
+      for (const run of [true, false])
+        expect(
+          new Set(
+            times.filter((time) => time.run === run).map((time) => time.right),
+          ).size,
+        ).toBe(1);
     }
     expect(
       await page.evaluate(
