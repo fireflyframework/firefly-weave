@@ -154,6 +154,10 @@ async def test_a_person_can_say_the_block_completed_only_when_the_run_is_ending(
     assert (refused.value.status, refused.value.code) == (422, "WV-RUNTIME-OUTPUT")
     # It says why the record can never fit, and which decision does when not everything was undone.
     assert "block can never complete" in refused.value.message and "Force end" in refused.value.message
+    # A record that names no step gets the same answer: nobody is asked to name them for an ending that can't be.
+    with pytest.raises(CatalogError) as unnamed:
+        await say(platform, incident, reconciler, "completed", "done", blockOutput="moved", participants=[])
+    assert (unnamed.value.code, unnamed.value.message) == (refused.value.code, refused.value.message)
     # Nothing is recorded: the same incident, at the same revision, still takes the decisions that fit.
     [unchanged] = await platform.query("SELECT * FROM incidents WHERE run_id=:run AND status='active'", run=run.id)
     assert unchanged == incident and await platform.state(run.id) == before
