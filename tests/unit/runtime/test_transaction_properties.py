@@ -160,6 +160,7 @@ class Checked(Run):
         event = self.events[-1]
         again = transition(stored(before), event, self.flow)
         assert transition_digest(again) == transition_digest(result)
+        self.failures_beside_wait_for_the_decision()
         if self.state.status not in ENDED:
             self.doubts_and_names(before)
             self.incidents_are_somebodys()
@@ -180,6 +181,14 @@ class Checked(Run):
                 assert item.incident in doubts
             else:
                 assert item.incident == (was if was in doubts else min(doubts))
+
+    def failures_beside_wait_for_the_decision(self) -> None:
+        """What failed beside the step that can't be undone waits for that step's result, and for nothing else."""
+        for key, item in self.state.transactions.items():
+            if item.failed_beside:
+                assert item.status in {"deciding", "in_doubt"} and item.decided_at_sequence is None, (key, item.status)
+                assert item.pending_abort is not None
+                assert not {stuck.node_id for stuck in item.failed_beside} & set(self.state.active)
 
     def incidents_are_somebodys(self) -> None:
         state = self.state
@@ -334,6 +343,33 @@ def test_every_incident_of_a_transaction_can_be_resolved(data):
             replayed = transition(state, event, run.flow)
             assert replayed.model_dump_json() == recorded.model_dump_json()
             state = replayed.state
+
+
+@pytest.mark.parametrize(
+    ("outcome", "decision"),
+    [
+        ("none", None),
+        ("unknown", "accept_reconciled_failure"),
+        ("unknown", "accept_reconciled_result"),
+        ("unknown", "terminate"),
+        ("done", None),
+    ],
+)
+def test_what_failed_beside_the_decision_waits_for_it_and_no_longer(outcome, decision):
+    flow, _ = doubtful(2, False, True, 0, False)
+    run = Checked(flow)
+    run.start(2)
+    advance(run, "submit")
+    run.fail_for_good("beside", "none")
+    assert [stuck.node_id for stuck in run.txn().failed_beside] == ["beside"]
+    if outcome == "done":
+        run.finish("submit")
+    else:
+        run.fail_for_good("submit", outcome)
+    if decision is not None:
+        assert [stuck.node_id for stuck in run.txn().failed_beside] == ["beside"]
+        run.decide("submit:1", decision)
+    assert run.txn().failed_beside == []
 
 
 def advance(run: Checked, until: str) -> None:
