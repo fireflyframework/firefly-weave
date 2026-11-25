@@ -64,9 +64,9 @@ export type TransactionFix =
   | { kind: "clearUndo"; label: "Clear How it's undone"; name: string }
   | { kind: "waitForCall"; label: "Wait for its result"; name: string };
 
-/** What applying a suggested edit to a workflow that changed says too. */
+/** What applying a suggested edit to a workflow that changed says too, without "try", a word of the engine's. */
 export const CHANGED_SINCE =
-  "The workflow changed after this suggestion was made. Wait for the next check, then try again.";
+  "The workflow changed after this suggestion was made. Wait for the next check, then choose the fix again.";
 /** Whether a check's findings are about the workflow as it is now. */
 export const aboutNow = (host: {
   readonly model: { readonly definition: Workflow };

@@ -373,9 +373,9 @@ function editor(name: Name) {
   };
   return { model, host, opened, workflows, toasts, undos };
 }
-/** What applying a suggested edit to a workflow that changed says too. */
+/** What a fix says of a workflow that changed since its check. */
 const CHANGED_SINCE =
-  "The workflow changed after this suggestion was made. Wait for the next check, then try again.";
+  "The workflow changed after this suggestion was made. Wait for the next check, then choose the fix again.";
 const ids = (steps: unknown): string[] =>
   (steps as Step[]).map((step) => step.id);
 const runs = async (name: Name, code: string) => {
