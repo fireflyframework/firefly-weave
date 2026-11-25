@@ -27,6 +27,7 @@ from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Part
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.run_views import RunTransactionCause, TransactionParticipantView
 from firefly_weave.contracts.transactions import (
+    IN_DOUBT_CODES,
     PHASE_SEGMENTS,
     Effect,
     UndoPhase,
@@ -37,7 +38,7 @@ from firefly_weave.contracts.transactions import (
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
-from firefly_weave.runtime.kernel import PreparedWorkflow
+from firefly_weave.runtime.kernel import PreparedWorkflow, unsettled
 from firefly_weave.runtime.models import Deadline, IncidentState, RunState, TransactionCause, TransactionRecord
 from firefly_weave.runtime.transactions import TRANSACTION_RULES, incident_transaction, split_deadline
 
@@ -97,6 +98,13 @@ def resolution_problem(state: RunState, incident_key: str, resolution: str) -> b
     if state.status != "suspended" or incident is None:
         return True
     return resolution not in RESOLUTIONS.get(incident.code, frozenset())
+
+
+def past_doubt(state: RunState) -> bool:
+    """Whether a cancel would pass a transaction in doubt, which a platform refuses: a person decides that one first.
+    What an earlier decision left holds no run whose transactions all ended."""
+    doubted = any(item.code in IN_DOUBT_CODES for item in state.incidents.values())
+    return unsettled(state) and (doubted or any(item.status == "in_doubt" for item in state.transactions.values()))
 
 
 def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:

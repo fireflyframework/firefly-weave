@@ -84,6 +84,7 @@ from firefly_weave.operations.debug.transactions import (
     decided_started,
     due_deadline,
     frame_effect,
+    past_doubt,
     phase_target,
     phase_targets,
     resolution_problem,
@@ -1492,11 +1493,13 @@ class Simulator:
 
     def cancel(self, skip_undo: bool = False) -> DebugView:
         """Cancel the simulated run, as a person's cancel does: its open transactions are undone first, or force
-        ended with ``skip_undo``. The cancel is queued first; ``next`` or ``continue`` applies it."""
+        ended with ``skip_undo``; refused while one is in doubt. The cancel is queued first; ``next`` or ``continue``
+        applies it."""
 
         def queue() -> None:
             d = self.data
-            if d.diagnostics or (d.cursor.result.state if d.cursor else d.state).status in TERMINAL:
+            state = d.cursor.result.state if d.cursor else d.state
+            if d.diagnostics or state.status in TERMINAL or past_doubt(state):
                 raise DebugError("WV-DEBUG-STATE")
             data: JsonObject = {"reason": "Cancelled in the simulation"}
             if skip_undo:

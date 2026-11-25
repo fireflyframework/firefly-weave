@@ -384,6 +384,19 @@ def test_cancelling_without_undoing_force_ends_the_transaction():
     assert (record(view)["status"], view.status) == ("force_ended", "cancelled")
 
 
+@pytest.mark.parametrize("skip_undo", [False, True])
+def test_cancelling_a_run_in_doubt_is_refused_until_a_person_decides_it(skip_undo):
+    simulator = in_doubt(compiled([move()]), UNDO_STUCK)
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.cancel(skip_undo=skip_undo)
+    assert raised.value.code == "WV-DEBUG-STATE"
+    assert simulator.serialize() == before
+    simulator.resolve("add#undo:10", "retry_safe")
+    simulator.cancel(skip_undo=skip_undo)
+    assert simulator.continue_until_breakpoint().status == "cancelled"
+
+
 def test_cancelling_a_run_that_ended_is_refused():
     simulator = session(compiled([move()]))
     assert simulator.continue_until_breakpoint().status == "succeeded"
