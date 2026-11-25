@@ -1148,8 +1148,9 @@ section in the same transaction that reloads those grants.
   person), `undoing` (transactions being undone), and
   `oldest_undoing_seconds`, how long the oldest transaction still undoing has
   been open since it opened. That age is left out while nothing is undoing.
-  Transactions of test runs are left out. Servers without transactions leave
-  the section out.
+  Transactions of test runs are left out, and so are the records that an
+  earlier version left unsettled in ended runs. Servers without transactions
+  leave the section out.
 
 Loop states follow these rules. A loop is `disabled` when its setting turns it
 off (API-only replicas disable every scheduler loop) and `down` while its task

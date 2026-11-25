@@ -330,7 +330,9 @@ each one needs.
   for a person, and `transactions.undo_age_seconds` reads how long the oldest
   transaction still being undone has been open since it opened; it has no data
   while nothing is being undone. Both count the whole environment, with no
-  workflow to choose, and leave out test runs.
+  workflow to choose. They leave out test runs, and the records that an
+  earlier version left unsettled in ended runs
+  ([Records of transactions in loops](upgrades.md#records-of-transactions-in-loops)).
   [See and resolve transactions in Operations](../guides/transactions.md#see-and-resolve-transactions-in-operations)
   says what to do about them.
 - **For and resolving.** A rule fires once its condition has held for its For
