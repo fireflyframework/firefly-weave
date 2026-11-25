@@ -18,21 +18,30 @@
 
 import pytest
 from transaction_support import (
+    INPUT,
+    UNSET,
     Run,
     add,
+    after_pivot_pair,
     attempt_failed,
     calls,
     compiled,
+    completed_once,
     controls,
     deadlines,
+    finished,
     hold,
     lookup,
     notify,
+    one_stuck,
+    parallel,
+    record,
     resolve,
     submit,
     submit_by_call,
     tasks,
     transaction,
+    two_stuck,
 )
 
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
@@ -411,3 +420,337 @@ def test_a_reservation_marked_undone_is_recorded_as_released():
     record = {"as": "compensated", "participants": [{"instance_key": "hold", "outcome": "undone"}]}
     resolve(run, "hold#cancel:10", "accept_reconciled_result", record)
     assert (run.txn().status, run.statuses()["hold"]) == ("reconciled", "cancelled")
+
+
+CONFIRMS = ("hold", "hold2")
+
+
+@pytest.mark.parametrize("results", ["between the retries", "in the order of the retries", "in the other order"])
+@pytest.mark.parametrize(("first", "second"), [CONFIRMS, CONFIRMS[::-1]])
+def test_retrying_one_of_two_stuck_confirms_leaves_the_other_open(first, second, results):
+    run = two_stuck(run_rules=2)
+    retried = resolve(run, f"{first}#confirm:2", "retry_safe")
+    assert tasks(retried) == [] and run.state.active == [f"{first}#confirm"]
+    assert (run.txn().status, run.txn().incident) == ("in_doubt", f"{second}#confirm:2")
+    assert (run.state.status, list(run.state.incidents)) == ("suspended", [f"{second}#confirm:2"])
+    if results == "between the retries":
+        run.done(f"{first}#confirm", {}, generation=3)
+        assert (run.txn().status, run.statuses()[first], run.txn().resume) == (
+            "in_doubt",
+            "confirmed",
+            ["@branch:move:0"],
+        )
+    resolve(run, f"{second}#confirm:2", "retry_safe")
+    assert (run.txn().status, run.txn().incident, run.state.incidents) == ("committing", None, {})
+    left = [second] if results == "between the retries" else [first, second]
+    for key in reversed(left) if results == "in the other order" else left:
+        assert run.txn().status == "committing"
+        run.done(f"{key}#confirm", {}, generation=3)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+    assert completed_once(run, "@join:move") and completed_once(run, "after")
+
+
+def test_a_retried_confirm_that_fails_again_stays_beside_the_other():
+    run = two_stuck(run_rules=2)
+    resolve(run, "hold#confirm:2", "retry_safe")
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=3)
+    assert (run.txn().status, run.txn().incident) == ("in_doubt", "hold2#confirm:2")
+    assert sorted(run.state.incidents) == ["hold#confirm:3", "hold2#confirm:2"]
+    for key in sorted(run.state.incidents):
+        resolve(run, key, "retry_safe")
+        run.done(key.partition(":")[0], {}, generation=4)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+
+
+@pytest.mark.parametrize("key", ["hold#confirm:2", "hold2#confirm:2"])
+def test_marking_either_incident_reconciled_closes_both(key):
+    run = two_stuck(run_rules=2)
+    ended = resolve(run, key, "accept_reconciled_result", finished(*CONFIRMS))
+    assert tasks(ended) == [] and (run.txn().status, run.txn().incident) == ("reconciled", None)
+    assert [run.statuses()[step] for step in CONFIRMS] == ["confirmed", "confirmed"]
+    assert (run.state.status, run.state.incidents, run.state.incident) == ("succeeded", {}, None)
+    assert completed_once(run, "after")
+
+
+@pytest.mark.parametrize("key", ["hold#confirm:2", "hold2#confirm:2"])
+def test_force_end_of_either_incident_ends_the_run(key):
+    run = two_stuck(run_rules=2)
+    ended = resolve(run, key, "terminate")
+    assert tasks(ended) == [] and controls(ended, "terminate")
+    assert (run.txn().status, run.txn().incident) == ("force_ended", None)
+    assert (run.state.status, run.state.incidents) == ("cancelled", {})
+
+
+def test_a_reconcile_closes_the_incidents_of_its_own_steps_only():
+    block = transaction([hold(), hold("hold2"), submit()])
+    run = Run(compiled([parallel(block, lookup()), lookup("after")]))
+    run.start(2)
+    for key, output in (("hold", {"holdId": "h-1"}), ("hold2", {"holdId": "h-2"}), ("submit", {"orderId": "o-1"})):
+        run.done(key, output)
+    attempt_failed(run, "lookup")
+    attempt_failed(run, "hold2#confirm")
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished(*CONFIRMS))
+    assert (run.txn().status, run.state.status, list(run.state.incidents)) == ("reconciled", "suspended", ["lookup:1"])
+    assert run.state.incident == "WV-TASK-FAILED" and run.state.active == ["lookup"]
+    run.send("recovery_scheduled", node_id="lookup", generation=1, next_attempt_at=run.now.isoformat())
+    run.done("lookup", {"count": 1}, generation=2)
+    assert (run.state.status, run.state.active) == ("waiting", ["after"])
+
+
+def beside_another(block) -> Run:
+    """The transaction beside another one in flight, which has to be undone before the run ends."""
+    other = transaction([hold("hold3"), lookup("lookup3")], identifier="other")
+    return Run(compiled([parallel(block, other, identifier="fork")]))
+
+
+def settle_timeout(run_rules: int) -> Run:
+    run = beside_another(transaction([hold(), parallel(add("add"), add("add2")), submit()]))
+    run.start(run_rules)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", effect="unknown")
+    attempt_failed(run, "add2")
+    run.fire("move#settle")
+    assert run.state.incidents["move:0"].code == "WV-TXN-SETTLE-TIMEOUT"
+    return run
+
+
+def stuck_beside_a_read_the_rollback_stopped(*steps) -> Run:
+    """A run of the first rules: its hold expired while a read waited for recovery, and then the rollback got stuck."""
+    run = beside_another(transaction([*steps, lookup(), submit()]))
+    run.start()
+    for step in steps:
+        run.done(step["id"], {"holdId": "h-1"} if step["id"] == "hold" else {"id": "a-1"})
+    attempt_failed(run, "lookup")
+    [phase] = tasks(run.fire("move#hold"))
+    run.failed(phase.node_id, "REJECTED", effect="none", generation=10)
+    return run
+
+
+@pytest.mark.parametrize(
+    ("make", "code", "undone"),
+    [
+        (lambda: settle_timeout(2), "WV-TXN-SETTLE-TIMEOUT", ["hold", "add", "add2"]),
+        (lambda: settle_timeout(1), "WV-TXN-SETTLE-TIMEOUT", ["hold", "add", "add2"]),
+        (lambda: stuck_beside_a_read_the_rollback_stopped(hold()), "WV-TXN-CANCEL-STUCK", ["hold"]),
+        (lambda: stuck_beside_a_read_the_rollback_stopped(hold(), add()), "WV-TXN-UNDO-STUCK", ["hold", "add"]),
+    ],
+)
+def test_a_reconcile_as_undone_closes_an_interim_failure_of_its_steps(make, code, undone):
+    run = make()
+    [key] = [key for key, item in run.state.incidents.items() if item.code == code]
+    assert len(run.state.incidents) == 2
+    resolve(run, key, "accept_reconciled_result", record("compensated", dict.fromkeys(undone, "undone")), rules=2)
+    # The block ended as undone, so the run goes back through its other transaction, behind no barrier.
+    assert (run.txn().status, run.state.incidents, run.state.status) == ("reconciled", {}, "waiting")
+    run.failed("hold3", "REFUSED", effect="none")
+    assert (run.txn("other").status, run.state.status, run.state.output) == ("cancelled", "failed", ROLLED_BACK)
+
+
+def test_a_reconcile_closes_the_incident_of_a_refused_output_of_its_step():
+    pause = {"id": "pause", "kind": "wait", "durationSeconds": 3600}
+    run = Run(compiled([transaction([hold(), parallel(submit(), lookup())]), pause]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.send("incident_opened", node_id="lookup", generation=1, code="WV-SCHEMA-SECRET_VALUE")
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished("hold"))
+    assert (run.txn().status, run.state.incidents) == ("reconciled", {})
+    assert (run.state.status, run.state.active) == ("waiting", ["pause"])
+
+
+def test_a_stuck_confirm_is_retried_before_the_stuck_step_beside_it():
+    run = after_pivot_pair(run_rules=2)
+    resolve(run, "hold#confirm:2", "retry_safe")
+    assert (run.txn().status, run.txn().incident) == ("in_doubt", "lookup:3")
+    run.done("hold#confirm", {}, generation=3)
+    assert run.txn().status == "in_doubt" and run.txn().resume == ["@branch:both:0"]
+    resolve(run, "lookup:3", "retry_safe")
+    # Committing again with nothing to confirm: what waited in the body goes on.
+    assert (run.txn().status, run.txn().resume, run.state.active) == ("committing", [], ["lookup"])
+    run.done("lookup", {"count": 1}, generation=4)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+    assert completed_once(run, "@branch:both:0")
+
+
+def test_a_stuck_step_is_retried_before_the_stuck_confirm_beside_it_and_its_result_waits():
+    run = after_pivot_pair(run_rules=2)
+    resolve(run, "lookup:3", "retry_safe")
+    assert (run.txn().status, run.txn().incident) == ("in_doubt", "hold#confirm:2")
+    run.done("lookup", {"count": 1}, generation=4)
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["lookup"]
+    resolve(run, "hold#confirm:2", "retry_safe")
+    assert (run.txn().status, run.state.deferred_results, run.state.incidents) == ("committing", [], {})
+    run.done("hold#confirm", {}, generation=3)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+
+
+def test_either_incident_of_a_stuck_confirm_beside_a_stuck_step_decides_the_transaction():
+    for key in ("hold#confirm:2", "lookup:3"):
+        run = after_pivot_pair(run_rules=2)
+        resolve(run, key, "accept_reconciled_result", finished("hold"))
+        assert (run.txn().status, run.state.status, run.state.incidents) == ("reconciled", "succeeded", {})
+
+
+def in_a_loop(run_rules: int = 2) -> Run:
+    """Three iterations, each with a transaction past its point of no return: two confirms of the second one can't
+    finish, and one of the third."""
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/items"},
+        "maxItems": 5,
+        "concurrency": 5,
+        "body": {"steps": [transaction([hold(), hold("hold2"), submit()])], "output": {"literal": None}},
+    }
+    run = Run(compiled([each]), {**INPUT, "items": [1, 2, 3]})
+    run.start(run_rules)
+    for index in range(3):
+        run.done(f"hold[{index}]", {"holdId": "h-1"})
+        run.done(f"hold2[{index}]", {"holdId": "h-2"})
+        run.done(f"submit[{index}]", {"orderId": "o-1"})
+    for key in ("hold[1]#confirm", "hold2[1]#confirm", "hold[2]#confirm"):
+        run.failed(key, "HOLD_EXPIRED", effect="none", generation=2)
+    return run
+
+
+def test_only_the_transaction_of_the_incident_moves():
+    run = in_a_loop()
+    before = run.txn("move[2]").model_copy(deep=True)
+    other = run.txn("move[0]").model_copy(deep=True)
+    resolve(run, "hold2[1]#confirm:2", "accept_reconciled_result", finished("hold[1]", "hold2[1]"))
+    assert run.txn("move[1]").status == "reconciled" and list(run.state.incidents) == ["hold[2]#confirm:2"]
+    assert (run.txn("move[2]"), run.txn("move[0]")) == (before, other)
+    assert run.state.active == ["hold[0]#confirm", "hold2[0]#confirm", "hold2[2]#confirm"]
+    resolve(run, "hold[2]#confirm:2", "retry_safe")
+    # The barrier lifted: the reconciled iteration was released, and the other two finish on their own.
+    assert sorted(run.state.transactions) == ["move[0]", "move[2]"] and run.state.incidents == {}
+    for key in ("hold[0]#confirm", "hold2[0]#confirm", "hold2[2]#confirm"):
+        run.done(key, {})
+    run.done("hold[2]#confirm", {}, generation=3)
+    assert run.state.status == "succeeded"
+
+
+def test_a_force_end_of_one_iteration_leaves_the_other_in_doubt():
+    run = in_a_loop()
+    resolve(run, "hold[1]#confirm:2", "terminate")
+    assert run.txn("move[1]").status == "force_ended" and run.txn("move[2]").status == "in_doubt"
+    assert list(run.state.incidents) == ["hold[2]#confirm:2"]
+    assert run.state.ending is not None and run.state.ending.status == "cancelled"
+
+
+@pytest.mark.parametrize("said", ["other", "move[0]", "hold", "", UNSET, None, 1])
+def test_the_event_must_name_the_transaction_of_its_incident(said):
+    run = two_stuck(run_rules=2)
+    before = run.state.model_copy(deep=True)
+    for key in ("hold#confirm:2", "hold2#confirm:2"):
+        for kind in ("retry_safe", "terminate"):
+            refused = resolve(run, key, kind, transaction=said)
+            assert refused.commands == []
+            assert run.state == before.model_copy(update={"accepted_sequence": run.state.accepted_sequence})
+
+
+def test_a_held_run_has_no_transaction_to_name():
+    def held() -> Run:
+        run = Run(compiled([transaction([hold(), submit()])]))
+        run.start(2)
+        run.send("incident_opened", node_id="@transactions", code="WV-TXN-RUN-OVERSIZED")
+        return run
+
+    run = held()
+    resolve(run, "@transactions:0", "terminate", transaction="move")
+    assert list(run.state.incidents) == ["@transactions:0"] and run.txn().status == "open"
+    resolve(run, "@transactions:0", "terminate")
+    assert (run.txn().status, run.state.status) == ("force_ended", "cancelled")
+
+
+def retried_first() -> Run:
+    """A run of the first rules: the first of two stuck confirms was retried and finished, and the second is left."""
+    run = two_stuck()
+    resolve(run, "hold#confirm:2", "retry_safe")
+    run.done("hold#confirm", {}, generation=3)
+    return run
+
+
+def reconciled_first() -> Run:
+    """A run of the first rules: a person ended the transaction, and its second incident is left."""
+    run = two_stuck()
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished(*CONFIRMS))
+    return run
+
+
+def interim_left() -> Run:
+    """A run of the first rules: a person ended the transaction, and a failure recovery had not decided is left."""
+    run = one_stuck()
+    attempt_failed(run, "hold2#confirm")
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished("hold"))
+    assert list(run.state.incidents) == ["hold2#confirm:1"] and run.state.status == "suspended"
+    return run
+
+
+@pytest.mark.parametrize("make", [two_stuck, retried_first])
+@pytest.mark.parametrize(
+    ("kind", "transaction_ends", "run_ends"),
+    [
+        ("accept_reconciled_result", "reconciled", "succeeded"),
+        ("terminate", "force_ended", "cancelled"),
+    ],
+)
+def test_a_decision_on_a_second_incident_moves_a_run_of_the_first_rules_on(make, kind, transaction_ends, run_ends):
+    run = make()
+    output = finished(*CONFIRMS) if kind == "accept_reconciled_result" else UNSET
+    resolve(run, "hold2#confirm:2", kind, output, rules=2)
+    assert (run.txn().status, run.state.status, run.state.incidents) == (transaction_ends, run_ends, {})
+
+
+def test_a_retry_of_a_second_incident_moves_a_run_of_the_first_rules_on():
+    run = retried_first()
+    resolve(run, "hold2#confirm:2", "retry_safe", rules=2)
+    assert (run.txn().status, run.state.active, run.state.incidents) == ("committing", ["hold2#confirm"], {})
+    run.done("hold2#confirm", {}, generation=3)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded") and completed_once(run, "after")
+
+
+@pytest.mark.parametrize(("make", "key"), [(reconciled_first, "hold2#confirm:2"), (interim_left, "hold2#confirm:1")])
+def test_a_retry_of_what_an_earlier_decision_left_runs_nothing_again_and_the_run_goes_on(make, key):
+    run = make()
+    before = run.txn().model_copy(deep=True)
+    gone = resolve(run, key, "retry_safe", rules=2)
+    assert tasks(gone) == [] and controls(gone, "transaction") == [] and run.txn() == before
+    assert (run.state.status, run.state.incidents) == ("succeeded", {}) and completed_once(run, "after")
+
+
+@pytest.mark.parametrize("kind", ["accept_reconciled_result", "accept_reconciled_failure"])
+@pytest.mark.parametrize(("make", "key"), [(reconciled_first, "hold2#confirm:2"), (interim_left, "hold2#confirm:1")])
+def test_what_an_earlier_decision_left_takes_no_statement_about_another_system(make, key, kind):
+    run = make()
+    before = run.state.model_copy(deep=True)
+    output = finished("hold2") if kind == "accept_reconciled_result" else UNSET
+    refused = resolve(run, key, kind, output, rules=2)
+    assert refused.commands == []
+    assert run.state == before.model_copy(update={"accepted_sequence": run.state.accepted_sequence})
+
+
+def test_ending_the_run_from_what_an_earlier_decision_left_keeps_the_decision():
+    run = reconciled_first()
+    resolve(run, "hold2#confirm:2", "terminate", rules=2)
+    assert (run.txn().status, run.state.status, run.state.incidents) == ("reconciled", "cancelled", {})
+
+
+def test_ending_the_run_from_what_an_earlier_decision_left_undoes_its_other_transactions_first():
+    first = transaction([hold(), hold("hold2"), submit()])
+    second = transaction([hold("hold3"), lookup()], identifier="other")
+    run = Run(compiled([parallel(first, second)]))
+    run.start()
+    for key, output in (("hold", {"holdId": "h-1"}), ("hold2", {"holdId": "h-2"}), ("submit", {"orderId": "o-1"})):
+        run.done(key, output)
+    run.done("hold3", {"holdId": "h-3"})
+    for key in ("hold#confirm", "hold2#confirm"):
+        run.failed(key, "HOLD_EXPIRED", effect="none", generation=2)
+    resolve(run, "hold#confirm:2", "accept_reconciled_result", finished(*CONFIRMS))
+    assert list(run.state.incidents) == ["hold2#confirm:2"] and run.txn("other").status == "open"
+    [release] = tasks(resolve(run, "hold2#confirm:2", "terminate", rules=2))
+    assert release.node_id == "hold3#cancel" and run.txn("other").status == "compensating"
+    run.done("hold3#cancel", {})
+    assert (run.txn("other").status, run.txn().status, run.state.status) == ("cancelled", "reconciled", "cancelled")

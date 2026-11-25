@@ -318,7 +318,13 @@ def resolve(
         data["transaction_rules"] = 2
         if incident.code in IN_DOUBT_CODES and owner is not None:
             data["transaction"] = owner
-    return run.send("incident_resolved", **{**data, **extra})
+    return run.send("incident_resolved", **{k: v for k, v in {**data, **extra}.items() if v is not UNSET})
+
+
+def record(ending: str, outcomes: dict[str, str]) -> dict[str, Any]:
+    """A person's record of how a transaction ended, and what happened to each step they name."""
+    steps = [{"instance_key": key, "outcome": outcome} for key, outcome in outcomes.items()]
+    return {"as": ending, "participants": steps, **({"blockOutput": "moved"} if ending == "completed" else {})}
 
 
 def attempt_failed(run: Run, key: str) -> None:
@@ -329,8 +335,12 @@ def attempt_failed(run: Run, key: str) -> None:
 
 def finished(*confirmed: str) -> dict[str, Any]:
     """A person's record of a transaction that completed, with the reservations they confirmed by hand."""
-    steps = [{"instance_key": key, "outcome": "confirmed"} for key in confirmed]
-    return {"as": "completed", "participants": steps, "blockOutput": "moved"}
+    return record("completed", dict.fromkeys(confirmed, "confirmed"))
+
+
+def completed_once(run: Run, key: str) -> bool:
+    """Whether the step ended exactly once over the whole run."""
+    return [change.node_id for result in run.transitions for change in result.steps].count(key) == 1
 
 
 def one_stuck(run_rules: int = 1) -> Run:

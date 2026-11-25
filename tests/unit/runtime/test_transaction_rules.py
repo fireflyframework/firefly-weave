@@ -235,17 +235,27 @@ ORDER = pytest.mark.xfail(strict=True, reason="the first rules take the transact
 
 
 @pytest.mark.parametrize(
-    ("kind", "data"),
+    ("rules", "kind", "data"),
     [
-        ("task_completed", {"node_id": "hold", "generation": 1, "output": {"holdId": "h-1"}}),
-        pytest.param("cancelled", {"reason": "stop"}, marks=ORDER),
-        pytest.param("cancelled", {"reason": "stop", "skip_undo": True}, marks=ORDER),
+        (1, "task_completed", {"node_id": "hold", "generation": 1, "output": {"holdId": "h-1"}}),
+        (2, "task_completed", {"node_id": "hold", "generation": 1, "output": {"holdId": "h-1"}}),
+        pytest.param(1, "cancelled", {"reason": "stop"}, marks=ORDER),
+        (2, "cancelled", {"reason": "stop"}),
+        pytest.param(1, "cancelled", {"reason": "stop", "skip_undo": True}, marks=ORDER),
+        (2, "cancelled", {"reason": "stop", "skip_undo": True}),
+        pytest.param(1, "incident_resolved", {"kind": "terminate"}, marks=ORDER),
+        (2, "incident_resolved", {"kind": "terminate"}),
     ],
 )
-def test_a_stored_state_gives_the_same_transition_as_the_state_in_memory(kind, data):
-    run = two_transactions()
+def test_a_stored_state_gives_the_same_transition_as_the_state_in_memory(rules, kind, data):
+    run = two_transactions(rules)
+    if kind == "incident_resolved":
+        run.send("incident_opened", node_id="@transactions", code="WV-TXN-RUN-OVERSIZED")
+        data = {**data, "incident_key": "@transactions:0", "node_id": "@transactions", "generation": 0}
     event = RuntimeEvent(id=uuid4(), type=kind, timestamp=run.now, sequence=run.state.accepted_sequence + 1, data=data)
-    assert transition(stored(run.state), event, run.flow) == transition(run.state, event, run.flow)
+    expected = transition(run.state, event, run.flow)
+    assert expected.state.transactions != run.state.transactions
+    assert transition(stored(run.state), event, run.flow) == expected
 
 
 def test_a_stored_state_without_rules_keeps_its_bytes():

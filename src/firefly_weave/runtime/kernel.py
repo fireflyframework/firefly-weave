@@ -16,7 +16,7 @@
 
 """Deterministic graph transitions with lexical branches and run-wide incident barriers."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -65,6 +65,7 @@ from firefly_weave.contracts.transactions import (
     HOLD_MARGIN_SECONDS,
     IN_DOUBT_CODES,
     TRANSACTION_MESSAGES,
+    TransactionState,
     UndoPhase,
     phase_key,
     split_phase,
@@ -163,6 +164,9 @@ from firefly_weave.runtime.transactions import (
     deadline_key,
     fold,
     in_transaction,
+    incident_transaction,
+    leftover,
+    open_doubts,
     participant_index,
     settlement_event,
     shapes,
@@ -835,6 +839,27 @@ def _advance_owned(
     def record(key: str) -> TransactionRecord:
         return current_state.transactions[key]
 
+    def rules_2() -> bool:
+        """Whether the run's transactions follow the second rules: never before an event of the run says so."""
+        return current_state.transaction_rules == TRANSACTION_RULES
+
+    def transaction_keys() -> list[str]:
+        """The run's transactions, in the order commands are issued for them. The first rules take them as the state
+        has them, and a state read back from the database has them in another order."""
+        return sorted(current_state.transactions) if rules_2() else list(current_state.transactions)
+
+    def close_incidents(keys: Iterable[str]) -> None:
+        nonlocal current_state
+        for name in keys:
+            del current_state.incidents[name]
+        current_state = current_state.model_copy(
+            update={
+                "incident": current_state.incidents[min(current_state.incidents)].code
+                if current_state.incidents
+                else None
+            }
+        )
+
     def moves_rules(data: JsonObject) -> bool:
         """Whether an event moves its run to the second rules of transactions. Anything else an event says of rules is
         refused, and so are rules for a workflow without a transaction."""
@@ -1478,8 +1503,8 @@ def _advance_owned(
             ending = RunEnding.model_validate({"status": status, "code": code, "output": output})
             current_state = current_state.model_copy(update={"ending": ending})
         why = {"cancelled": "WV-TXN-RUN-CANCELLED", "timed_out": "WV-TXN-RUN-TIMED-OUT"}.get(status, code)
-        for key, transaction in list(current_state.transactions.items()):
-            if transaction.status in {"open", "deciding"}:
+        for key in transaction_keys():
+            if record(key).status in {"open", "deciding"}:
                 abort(key, TransactionCause(code=why or "WV-TXN-RUN-CANCELLED", instance_key=key))
         # Work no unsettled transaction needs stops now.
         for name in list(current_state.active):
@@ -1522,6 +1547,15 @@ def _advance_owned(
             e for e in current_state.deferred_results if holder_of(str(e.data.get("node_id"))) != key
         ]
         update(key, resume=[])
+        if rules_2():
+            # A person decided the whole transaction, so nothing is left to decide about any step of it.
+            close_incidents(
+                [
+                    name
+                    for name, item in current_state.incidents.items()
+                    if txns is not None and incident_transaction(txns, item.node_id, item.code) == key
+                ]
+            )
 
     def block_ends(key: str, output: JsonValue | None, failure: JsonObject | None) -> None:
         """End a transaction's block a person decided: with an output the steps after it read, or as undone."""
@@ -1563,24 +1597,46 @@ def _advance_owned(
 
     def resolve_transaction(incident_key: str, prior: IncidentState, kind: object, data: JsonObject) -> None:
         """Apply a person's resolution of a transaction in doubt; nothing else moves it."""
+        key: str | None
+        if rules_2():
+            assert txns is not None
+            # Each of its incidents moves the transaction it belongs to, and the event names that transaction.
+            key = incident_transaction(txns, prior.node_id, prior.code)
+            if data.get("transaction") != key:
+                raise KernelError("WV-RUNTIME-EVENT")
+        else:
+            key = next((k for k, t in current_state.transactions.items() if t.incident == incident_key), None)
         if incident_key == HELD_INCIDENT:
             # A run too large to undo its transactions: only a force end closes the hold, ending all of them.
             if kind != "terminate":
                 raise KernelError("WV-RUNTIME-EVENT")
-            for held in [k for k, t in current_state.transactions.items() if t.status in UNSETTLED]:
+            for held in [k for k in transaction_keys() if record(k).status in UNSETTLED]:
                 force_end(held)
             end_run("cancelled")
             return
-        key = next((k for k, t in current_state.transactions.items() if t.incident == incident_key), None)
-        if key is None:
+        if key is None or key not in current_state.transactions:
             raise KernelError("WV-RUNTIME-STATE")
+        if rules_2() and txns is not None and leftover(txns, current_state, prior):
+            # A person already ended its transaction: closing it decides nothing, and it may still end the run.
+            if kind == "terminate":
+                end_run("cancelled")
+            elif kind != "retry_safe":
+                raise KernelError("WV-RUNTIME-EVENT")
+            return
         transaction = record(key)
         name = prior.node_id
         if kind == "retry_safe":
             if prior.code == "WV-TXN-PIVOT-UNKNOWN":
                 raise KernelError("WV-RUNTIME-EVENT")
+            # While another of its incidents is open, the transaction stays in doubt and keeps naming one of them.
+            rest = open_doubts(txns, current_state, key) if rules_2() and txns is not None else []
+            named = transaction.incident if transaction.incident in rest else min(rest, default=None)
+
+            def retried(status: TransactionState) -> dict[str, object]:
+                return {"status": "in_doubt" if rest else status, "incident": named}
+
             if prior.code == "WV-TXN-SETTLE-TIMEOUT":
-                update(key, status="compensating", incident=None, generation=transaction.generation + 1)
+                update(key, **retried("compensating"), generation=transaction.generation + 1)
                 if any(item.status == "dispatched" for item in record(key).participants):
                     arm_settle(key)
                 else:
@@ -1592,11 +1648,11 @@ def _advance_owned(
                 index = cast(int, participant_index(transaction.participants, phase[0]))
                 progress = {"confirm": "confirming", "cancel": "cancelling", "compensate": "undoing"}[phase[1]]
                 participant(key, index, status=progress)
-                update(key, status="committing" if phase[1] == "confirm" else "compensating", incident=None)
+                update(key, **retried("committing" if phase[1] == "confirm" else "compensating"))
                 current_state.active.append(name)
                 return
             # A step after the point of no return runs again; it is safe to retry.
-            update(key, status="committing", incident=None)
+            update(key, **retried("committing"))
             after = participant_index(transaction.participants, name)
             if after is not None:
                 participant(key, after, status="dispatched", outcome=None)
@@ -1604,6 +1660,9 @@ def _advance_owned(
                 current_state.active.append(name)
             else:
                 proceed([name])
+            if rules_2():
+                # Its confirms may have finished while it was in doubt: what waited for them goes on.
+                commit_progress(key)
             return
         if kind == "accept_reconciled_failure":
             # It didn't happen: the step that can't be undone applied nothing, so the transaction goes back.
@@ -2284,7 +2343,7 @@ def _advance_owned(
             if event.type == "cancelled":
                 if event.data.get("skip_undo") is True:
                     # A reconciler stops the run without undoing anything: its open transactions end where they are.
-                    for open_key in [k for k, t in current_state.transactions.items() if t.status in UNSETTLED]:
+                    for open_key in [k for k in transaction_keys() if record(k).status in UNSETTLED]:
                         force_end(open_key)
                 end_run("cancelled")
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
@@ -2339,6 +2398,15 @@ def _advance_owned(
                     ):
                         lift()
                     return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
+                if (
+                    prior is not None
+                    and kind not in {"retry_safe", "terminate"}
+                    and rules_2()
+                    and txns is not None
+                    and leftover(txns, current_state, prior)
+                ):
+                    # The run no longer waits for this step: there is no result or failure to accept for it.
+                    return refused_resolution()
                 if kind == "terminate":
                     if not unsettled(current_state):
                         terminate("cancelled")
