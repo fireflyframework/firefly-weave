@@ -61,6 +61,8 @@ MOCK_KEY_PATTERN = (
 type MockKey = Annotated[str, Field(max_length=1024, pattern=MOCK_KEY_PATTERN)]
 # The most transactions, and the most confirms, releases and undos, one answer reports.
 MAX_TRANSACTION_ENTRIES = 1000
+# The longest code of a failure, simulated or answered.
+ERROR_CODE_LENGTH = 128
 # An in-doubt incident: the instance key it is at, and its generation ("add#undo:10").
 INCIDENT_KEY_PATTERN = rf"^(?:{INSTANCE_KEY_PATTERN}):(?:0|[1-9][0-9]{{0,15}})$"
 type TraceStatus = Literal["running", "waiting", "completed", "failed"]
@@ -122,7 +124,7 @@ class ScriptedFailure(_HostBody):
     whether a step inside a transaction may have applied anything; omitted, it follows from the code and the outcome.
     """
 
-    code: str = Field(min_length=1, max_length=128, pattern=ERROR_CODE_PATTERN)
+    code: str = Field(min_length=1, max_length=ERROR_CODE_LENGTH, pattern=ERROR_CODE_PATTERN)
     outcome: StepOutcome = "failed"
     attempts: int = Field(default=1, ge=0, le=MAX_SIMULATED_ATTEMPTS)
     effect: Effect | None = None
@@ -227,9 +229,9 @@ class Blocked(_HostBody):
 
 class TransactionCause(_HostBody):
     """Why a transaction left its normal path: a code, the step instance and what it may have applied. A fail step's
-    code in its author's own spelling is left out."""
+    code in its author's own spelling, or a longer one, is left out."""
 
-    code: str | None = Field(default=None, max_length=128, pattern=ERROR_CODE_PATTERN)
+    code: str | None = Field(default=None, max_length=ERROR_CODE_LENGTH, pattern=ERROR_CODE_PATTERN)
     instanceKey: InstanceKeyText
     effect: Effect
 

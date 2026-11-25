@@ -1358,17 +1358,21 @@ def _unsettled_phases(
             yield _phase_entry(key, after, "waiting", data)
 
 
+def _spelled_as_code(code: str) -> bool:
+    """Whether an answer may hold a code: a fail step's is any name its author gave it, however long."""
+    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
+    from firefly_weave.studio.local_contracts import ERROR_CODE_LENGTH
+
+    return len(code) <= ERROR_CODE_LENGTH and re.fullmatch(ERROR_CODE_PATTERN[1:-1], code) is not None
+
+
 def _transaction_entry(record: TransactionDebugView) -> JsonObject:
     """One transaction in the answer's words: keys, states, codes and counts, never its business key."""
-    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
-
     entry: JsonObject = {"instanceKey": record.instance_key, "nodeId": record.node_id, "state": record.state}
     for name, cause in (("cause", record.cause), ("pendingAbort", record.pending_abort)):
-        if cause is None:
-            continue
-        # A fail step's code is any name its author gave it; only codes spelled as codes are passed on.
-        code = {"code": cause.code} if re.fullmatch(ERROR_CODE_PATTERN[1:-1], cause.code) is not None else {}
-        entry[name] = {**code, "instanceKey": cause.instance_key, "effect": cause.effect}
+        if cause is not None:
+            code = {"code": cause.code} if _spelled_as_code(cause.code) else {}
+            entry[name] = {**code, "instanceKey": cause.instance_key, "effect": cause.effect}
     if record.incident_key is not None:
         entry["incidentKey"] = record.incident_key
     if record.reconciled_as is not None:
@@ -1566,10 +1570,9 @@ def _transaction_failures(
 def _named_error(key: str, kind: str, code: str, *, sent: bool) -> Any:
     """The error of a failure a transaction names by its code only; None for a code not spelled as one."""
     from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES
-    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
     from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 
-    if re.fullmatch(ERROR_CODE_PATTERN[1:-1], code) is None:
+    if not _spelled_as_code(code):
         return None
     # As the runtime counts them: an action or a call that was never sent made no attempt.
     tried = kind not in {"action", "callWorkflow"}

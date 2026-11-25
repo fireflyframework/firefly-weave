@@ -223,6 +223,14 @@ def _session_id(request: Request) -> UUID | None:
         return None
 
 
+def _unanswerable() -> Exception:
+    """What the host answers about a simulated run it can't put in an answer: never the values that didn't fit, which
+    a validation error repeats."""
+    from firefly_weave.studio.simulation import SimulationRefused
+
+    return SimulationRefused(422, "WV-STUDIO-SIMULATION", "Studio couldn't answer about this simulated run")
+
+
 def _session_gone() -> Response:
     return problem(404, "WV-STUDIO-DEBUG-NOT-FOUND", "This run log isn't open anymore")
 
@@ -697,6 +705,8 @@ class StudioController:
                 return refused
             except CatalogConflict as conflict:
                 return conflict
+            except ValidationError:
+                return _unanswerable()
             return answer.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
         def respond(value: Any) -> Response:
@@ -743,6 +753,8 @@ class StudioController:
                 return work()
             except SimulationRefused as refused:
                 return refused
+            except ValidationError:
+                return _unanswerable()
 
         def respond(value: Any) -> Response:
             if isinstance(value, SimulationRefused):

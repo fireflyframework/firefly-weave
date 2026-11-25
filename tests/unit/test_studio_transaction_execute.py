@@ -33,7 +33,7 @@ from transaction_support import add, hold, reverse_by_call, submit, transaction 
 
 from firefly_weave.contracts.transactions import IN_DOUBT_CODES  # noqa: E402
 from firefly_weave.operations.debug.transactions import SESSION_RUN_ID  # noqa: E402
-from firefly_weave.studio import local_contracts, simulation  # noqa: E402
+from firefly_weave.studio import debug_sessions, local_contracts, simulation  # noqa: E402
 from firefly_weave.studio.host import make_studio_app  # noqa: E402
 from firefly_weave.studio.local_contracts import ExecuteRequest, ScriptedFailure  # noqa: E402
 from firefly_weave.studio.service import StudioOptions  # noqa: E402
@@ -657,22 +657,27 @@ def test_only_a_workflow_with_transactions_answers_with_them():
     assert not {"transactions", "phases"} & set(run_move(source(note)))
 
 
-def test_the_host_route_answers_a_called_undo_in_the_request(tmp_path):
-    reversed_ = {"id": "done", "kind": "transform", "value": {"literal": {"undone": True}}}
-    request = undo_by_call_request(reversed_, output={"ref": "/steps/done/output"})
+def over_the_route(tmp_path: Path, body: str, path: str = "execute") -> Any:
+    """The host's HTTP answer to a request, from a paired browser."""
     (tmp_path / "index.html").write_text("<!doctype html><title>Weave Studio</title>")
     origin, code = "http://127.0.0.1:8766", "terminal-only-pairing-code"
     studio = make_studio_app(StudioOptions(origin=origin, assets=tmp_path, pairing_code=code))
-    with TestClient(studio, base_url=origin) as browser:
+    with TestClient(studio, base_url=origin, raise_server_exceptions=False) as browser:
         session = browser.post("/studio/session", json={"code": code}, headers={"Origin": origin}).json()
-        answer = browser.post(
-            "/studio/local/debug/execute",
-            content=request.model_dump_json(exclude_unset=True),
+        return browser.post(
+            f"/studio/local/debug/{path}",
+            content=body,
             headers={"Origin": origin, "X-Weave-CSRF": session["csrfToken"]},
         )
-        assert answer.status_code == 200, answer.text
-        assert [record["state"] for record in answer.json()["transactions"]] == ["compensated"]
-        assert [phase["instanceKey"] for phase in answer.json()["phases"]] == ["add#undo", "hold#cancel"]
+
+
+def test_the_host_route_answers_a_called_undo_in_the_request(tmp_path):
+    reversed_ = {"id": "done", "kind": "transform", "value": {"literal": {"undone": True}}}
+    request = undo_by_call_request(reversed_, output={"ref": "/steps/done/output"})
+    answer = over_the_route(tmp_path, request.model_dump_json(exclude_unset=True))
+    assert answer.status_code == 200, answer.text
+    assert [record["state"] for record in answer.json()["transactions"]] == ["compensated"]
+    assert [phase["instanceKey"] for phase in answer.json()["phases"]] == ["add#undo", "hold#cancel"]
 
 
 def test_the_records_the_host_keeps_of_transactions_hold_no_values():
@@ -1194,3 +1199,62 @@ def test_a_confirm_that_couldnt_be_sent_never_puts_a_transaction_in_doubt_at_the
     for name in ("add", "submit"):
         answer = run_move(workflow, definitions=definitions, target=to(name))
         assert (answer["status"], states(answer)["move"][0]) == ("completed", "open")
+
+
+# --- codes, causes and stale keys -------------------------------------------------------------------------------
+
+
+def coded(length: int) -> str:
+    return "A" * length
+
+
+@pytest.mark.parametrize("length", [100, 101, 128])
+def test_every_code_a_simulation_accepts_is_answered_as_a_cause(length):
+    refused = {"node:submit": {"code": coded(length), "effect": "none"}}
+    answer = run_move(move(), errors=refused)
+    assert answer["transactions"][0]["cause"]["code"] == coded(length)
+    stopped = run_move(move(hold(), add(), {**STOP, "code": coded(length)}))
+    assert stopped["transactions"][0]["cause"]["code"] == coded(length)
+
+
+def test_a_code_too_long_for_the_answer_is_left_out_of_a_cause_alone():
+    answer = run_move(move(hold(), add(), {**STOP, "code": coded(129)}))
+    assert (answer["status"], answer["transactions"][0]["state"]) == ("failed", "compensated")
+    assert answer["transactions"][0]["cause"] == {"instanceKey": "stop", "effect": "none"}
+    assert failures(answer) == {"stop": None}
+
+
+def test_a_session_shows_a_transaction_undone_for_any_code_a_simulation_accepts(tmp_path):
+    # The debug view itself: a fail step's code has no limit, and a scripted failure's is 128.
+    body = move_request(move(hold(), add(), {**STOP, "code": coded(200)}))
+    document = json.loads(body.source)
+    _, simulator, _ = simulator_for(body, None, document, whole=document, sliced=False)
+    assert simulator is not None
+    [record] = simulator.continue_until_breakpoint().transactions
+    assert (record.state, record.cause.code) == ("compensated", coded(200))
+
+
+@pytest.mark.parametrize("path", ["execute", "sessions"])
+def test_an_answer_the_host_cant_build_says_so_without_any_value_of_the_request(tmp_path, monkeypatch, path):
+    def refused(*_: Any, **__: Any) -> None:
+        ScriptedFailure.model_validate({"code": "s3cr3t in lower case"})
+
+    monkeypatch.setattr(simulation, "execute", refused)
+    monkeypatch.setattr(debug_sessions, "simulator_for", refused)
+    body = move_request(move()).model_dump(mode="json", by_alias=True, exclude_unset=True)
+    if path == "sessions":
+        del body["target"]
+    answer = over_the_route(tmp_path, json.dumps(body), path)
+    assert answer.status_code == 422
+    assert answer.json() == {
+        "status": 422,
+        "code": "WV-STUDIO-SIMULATION",
+        "message": "Studio couldn't answer about this simulated run",
+    }
+
+
+def test_a_failure_code_over_the_route_is_answered_as_a_cause(tmp_path):
+    body = move_request(move(), errors={"node:submit": {"code": coded(101), "effect": "none"}})
+    answer = over_the_route(tmp_path, body.model_dump_json(by_alias=True, exclude_unset=True))
+    assert answer.status_code == 200
+    assert answer.json()["transactions"][0]["cause"]["code"] == coded(101)

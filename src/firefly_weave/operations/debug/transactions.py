@@ -25,7 +25,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Participation
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
-from firefly_weave.contracts.run_views import RunTransactionCause, TransactionParticipantView
+from firefly_weave.contracts.run_views import TransactionParticipantView
 from firefly_weave.contracts.transactions import (
     PHASE_SEGMENTS,
     Effect,
@@ -35,7 +35,7 @@ from firefly_weave.contracts.transactions import (
     split_phase,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
-from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
+from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugCause, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
 from firefly_weave.runtime.models import Deadline, RunState, TransactionCause
@@ -88,10 +88,10 @@ def resolution_problem(state: RunState, incident_key: str, resolution: str) -> b
     return resolution not in RESOLUTIONS.get(incident.code, frozenset())
 
 
-def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:
+def _cause(cause: TransactionCause | None) -> TransactionDebugCause | None:
     if cause is None:
         return None
-    return RunTransactionCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
+    return TransactionDebugCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
 
 
 def transaction_views(state: RunState) -> list[TransactionDebugView]:
