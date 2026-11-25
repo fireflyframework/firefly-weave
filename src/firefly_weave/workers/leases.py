@@ -19,6 +19,7 @@
 import asyncio
 import json
 import secrets
+from collections.abc import Sequence
 from functools import partial
 from typing import Any, cast
 from uuid import UUID
@@ -667,7 +668,7 @@ class TaskService:
         async with self.workers.definitions.transaction(scope, tx) as enlisted:
             return await self._operation(actor, scope, context).invocation(enlisted, proof)
 
-    async def recovery_candidates(self, tx: Transaction, limit: int) -> list[UUID]:
+    async def recovery_candidates(self, tx: Transaction, limit: int, *, skip: Sequence[UUID] = ()) -> list[UUID]:
         """Trusted polling port; does not claim or reexecute attempts."""
         if not 1 <= limit <= 100:
             raise ValueError("Bounded recovery page required")
@@ -678,13 +679,14 @@ class TaskService:
             "((status='active' AND expires_at<=clock_timestamp()) OR status='failed') "
             "AND EXISTS (SELECT 1 FROM task_intents t WHERE t.id=task_leases.task_id "
             "AND t.tenant_id=:tenant AND t.project_id=:project AND t.environment_id=:environment "
-            "AND t.status<>'handled') "
+            "AND t.status<>'handled' AND t.run_id<>ALL(cast(:skip AS uuid[]))) "
             "AND task_id NOT IN (SELECT t.id FROM task_intents t JOIN runtime_capacity_blocks b ON "
             "b.run_id=t.run_id WHERE b.active) "
             f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id="
             "(SELECT t.run_id FROM task_intents t WHERE t.id=task_leases.task_id)) "
             "ORDER BY expires_at,task_id LIMIT :limit",
             limit=limit,
+            skip=list(skip),
             **runnable_parameters(),
         )
         return [row["task_id"] for row in rows]

@@ -42,6 +42,22 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Runs, incidents, and workers
 
+- Undoing a transaction with **Continue** whose block can never complete,
+  because every way through it reaches a Fail step, now fails the run with
+  `WV-TXN-ROLLED-BACK`, as without the setting. Continue has nothing to go on
+  to, even when a step is written after the block; Continue with error output
+  does go on. After the upgrade, a run that is already being undone ends the same
+  way when its undo is done, at recovery's next scan or the worker's next report,
+  and no recorded history changes. Marking such a transaction as reconciled with
+  `completed` answers HTTP 422 `WV-RUNTIME-OUTPUT` instead of HTTP 500 while the
+  run would go on after the block, and says to use Force end unless everything
+  was undone; `compensated` and Force end work as before.
+- Recovery works on each run, call, and event-triggered start on its own. When
+  the work of one raises an unexpected error or its write is refused, recovery
+  records nothing for it, logs its ID and environment with the error's type,
+  code, and line, counts it in the new `weave.recovery_failures` metric, and
+  tries it again after 5 seconds, doubling up to 5 minutes. The loop's health
+  doesn't show these failures, so alert on the metric.
 - Two decisions sent at once on one incident no longer answer HTTP 429
   `WV-OPERATION-CAPACITY` when the first takes more than 250 ms: the later one
   waits up to 2 seconds for it, then answers HTTP 409 `WV-INCIDENT-REVISION`. A
