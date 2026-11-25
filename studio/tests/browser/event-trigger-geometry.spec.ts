@@ -311,8 +311,8 @@ for (const size of SIZES)
           .getByRole("tab"),
       );
       expect(tabs).toHaveLength(3);
+      // As every step's tabs are.
       for (const tab of tabs)
-        // As every step's tabs are.
         expect(tab.height, "tab").toBeGreaterThanOrEqual(touch ? 44 : 36);
       const dot = await startsTab(dialog).evaluate((tab) => {
         const mark = tab.querySelector<HTMLElement>(".sd-dot")!;
