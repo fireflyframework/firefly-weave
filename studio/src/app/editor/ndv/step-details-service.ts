@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // Simulate goes on. The shell, the canvas and the Add a step panel open
 // step details here.
 import { Injectable, signal } from "@angular/core";
+import type { Phase } from "../transactions/phase-keys";
 import type { Path } from "./registry";
 
 export type StepDetailsTab = "parameters" | "settings";
@@ -39,7 +40,9 @@ export type FocusTarget =
    */
   | { kind: "path"; path: Path; open?: "choices" | "document" }
   /** The field of one of the step's issues, by its key (an entry not applied yet). */
-  | { kind: "issue"; key: string };
+  | { kind: "issue"; key: string }
+  /** The editor of the test output of one of the step's undo steps, in Output. */
+  | { kind: "testOutput"; phase: Phase };
 export interface StepDetailsRequest {
   /** A step ID, "$trigger" or "$end". */
   target: string;

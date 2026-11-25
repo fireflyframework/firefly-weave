@@ -130,6 +130,30 @@ def handle(path, raw, method="POST", match=None):
         return dump(inventory(body.source, source_format=body.format, relaxations=body.relaxations))
     if path == "/studio/local/debug/execute":
         return execute_reply(raw)
+    if path == "/studio/local/testdata/check":
+        from firefly_weave.compiler.catalog import CatalogSnapshot
+        from firefly_weave.compiler.parser import ParseFailure, parse_source
+        from firefly_weave.compiler.test_data import check_test_data
+        from firefly_weave.contracts.definitions import load_definition
+        from firefly_weave.studio.local_contracts import CheckTestDataEntry, CheckTestDataRequest, CheckTestDataResult
+        body = CheckTestDataRequest.model_validate_json(raw)
+        try:
+            document = parse_source(body.source, format=body.format).value
+        except ParseFailure:
+            document = None
+        loaded = {}
+        for value in body.definitions:
+            try:
+                model = load_definition(value)
+            except ValueError:
+                continue
+            loaded.setdefault(f"{model.kind}:{model.metadata.name}@{model.metadata.version}", model)
+        catalog = CatalogSnapshot.from_definitions(loaded.values())
+        entries = [
+            CheckTestDataEntry(path=at, ok=code is None, code=code)
+            for at, code in check_test_data(document if isinstance(document, dict) else {}, body.testData, catalog)
+        ]
+        return CheckTestDataResult(entries=entries).model_dump(mode="json", by_alias=True, exclude_none=True)
     if path == "/studio/local/decision/evaluate":
         from firefly_weave.studio.local_contracts import DecisionEvaluateRequest
         from firefly_weave.studio.table_check import TableRefused, check_table
@@ -323,6 +347,20 @@ export async function hostValidate(page: Page) {
   await page.route("**/studio/local/validate", async (route) => {
     const reply = await ask(
       "/studio/local/validate",
+      route.request().postData() ?? "{}",
+    );
+    await route
+      .fulfill({ status: reply.status, json: reply.body })
+      .catch(() => undefined);
+  });
+}
+
+/** Answers the Studio host's own check of test data with the real Python code. */
+export async function hostChecksTestData(page: Page) {
+  await ask("/test/ready", "{}");
+  await page.route("**/studio/local/testdata/check", async (route) => {
+    const reply = await ask(
+      "/studio/local/testdata/check",
       route.request().postData() ?? "{}",
     );
     await route

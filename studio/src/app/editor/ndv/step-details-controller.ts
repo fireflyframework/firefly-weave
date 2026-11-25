@@ -47,9 +47,17 @@ import {
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
 import { actionSideEffect } from "./kinds/forms/action-forms";
+import { specOf } from "./kinds/shared";
 import { settledPolicy } from "./kinds/forms/transaction-forms";
 import type { LanguageManifest } from "../language-manifest";
 import { enclosingTransaction } from "../transactions/group";
+import { phaseKey, splitPhase, type Phase } from "../transactions/phase-keys";
+import { phaseOperation, transactionHolding } from "../transactions/phases";
+import {
+  PHASE_NOUNS,
+  transactionFailure,
+  type TransactionFailure,
+} from "../transactions/simulate-undo";
 import {
   UNDO_STEPS,
   settledHold,
@@ -109,6 +117,7 @@ import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
   failureOf,
+  pinOf,
   withFailure,
   withInput,
   withPin,
@@ -222,6 +231,8 @@ import {
  * never the instance key.
  */
 export function pinSubject(key: string): string {
+  const undo = undoSubject(key);
+  if (undo) return undo;
   const item = pinItem(key);
   return item ? `${instanceStep(key)} for item ${item}` : instanceStep(key);
 }
@@ -230,8 +241,18 @@ function answerSubject(key: string): string {
   const item = pinItem(key);
   return item ? `${instanceStep(key)}, item ${item}` : instanceStep(key);
 }
+/** An undo step as toasts name it: "add's undo", or "hold's release for item 3" inside a loop; null for a step. */
+function undoSubject(key: string): string | null {
+  const named = splitPhase(key);
+  if (!named) return null;
+  const item = pinItem(named.key);
+  const step = `${instanceStep(named.key)}'s ${PHASE_NOUNS[named.phase]}`;
+  return item ? `${step} for item ${item}` : step;
+}
 /** Whose simulated failure a toast names: "send", or "item 3 of send" for one item. */
 function failureSubject(key: string): string {
+  const undo = undoSubject(key);
+  if (undo) return undo;
   const item = pinItem(key);
   return item ? `item ${item} of ${instanceStep(key)}` : instanceStep(key);
 }
@@ -299,6 +320,8 @@ export interface ExecuteNotice {
   reason: BlockedReason | null;
   /** "Edit test input" is the way out. */
   input?: boolean;
+  /** The undo step whose test output is asked for, by its key. */
+  undo?: string;
   /** A way out of its own: Open in Operate, Execute previous steps, Fix. */
   action?: { label: string; run: () => void };
 }
@@ -1036,6 +1059,55 @@ export class StepDetailsController {
         outcome.previous,
       );
     return { ok: true };
+  }
+
+  /** What Simulate a failure needs of a step inside a transaction; null for one outside. */
+  transactionFailure(stepId: string): TransactionFailure | null {
+    const { model } = this.host;
+    this.testData.version();
+    return transactionFailure(model.definition, stepId, {
+      contract: (uses, kind) => this.undoContract(uses, kind),
+      errors: this.testData.data().errors ?? {},
+    });
+  }
+  /** Whether a transaction holds a step: a failure there is undone, whatever its On error. */
+  inTransaction(stepId: string): boolean {
+    return !!transactionHolding(this.host.model.definition, stepId);
+  }
+  /**
+   * The test output of one of a step's undo steps, for the item picked: its
+   * own, else every item's. Read against what runs the undo step: fields its
+   * schema marks secret are left out.
+   */
+  phasePin(stepId: string, phase: Phase): { key: string; output: Json } | null {
+    this.testData.version();
+    const found = pinOf(
+      this.testData.data(),
+      phaseKey(this.pinKey(stepId), phase),
+    );
+    if (this.viewingRuns() || this.stale() || !found) return null;
+    return {
+      key: found.key,
+      output: safeSample(
+        this.phaseOutput(stepId, phase) ?? {},
+        found.entry.output,
+      ) as Json,
+    };
+  }
+  /** The fields an undo step of a step returns; null when Studio can't read them. */
+  phaseOutput(stepId: string, phase: Phase): Record<string, unknown> | null {
+    const step = this.step(stepId);
+    const operation = step && phaseOperation(step, phase);
+    const contract =
+      operation && this.undoContract(operation.uses, operation.kind);
+    // A workflow's contract holds its schemas itself; an action's document, in its spec.
+    const holder = !contract
+      ? null
+      : operation.kind === "callWorkflow"
+        ? contract
+        : specOf(contract);
+    const schema = isJsonObject(holder) ? holder["outputSchema"] : null;
+    return isJsonObject(schema) ? schema : null;
   }
 
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */

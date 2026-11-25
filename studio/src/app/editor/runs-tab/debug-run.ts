@@ -40,6 +40,7 @@ import { entriesOf } from "../state/test-data-ops";
 import type { TestDataService } from "../state/test-data-service";
 import { runPrints } from "../state/test-data-tools";
 import type { ToastAction } from "../../toast";
+import { splitPhase } from "../transactions/phase-keys";
 import {
   leftOutText,
   mergeQuestion,
@@ -296,13 +297,16 @@ function failedStepOf(
 /**
  * The instance the simulation stopped at: blocked, or failed. A failure its
  * step's On error handled is a failed entry too, and the run went on past it.
+ * Null at an undo step, whose test output the run log asks for.
  */
 export function stopOf(
   outcome: Extract<ExecuteOutcome, { kind: "done" }>,
 ): string | null {
   const response = outcome.response;
   if (response.blocked)
-    return response.blocked.instanceKey || response.blocked.nodeId;
+    return splitPhase(response.blocked.instanceKey)
+      ? null
+      : response.blocked.instanceKey || response.blocked.nodeId;
   const failed = response.trace.find(
     (entry) => entry.status === "failed" && !entry.handled,
   );

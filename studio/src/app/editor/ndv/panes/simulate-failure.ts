@@ -21,6 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // contracts/studio_documents.py).
 import type { Step } from "../../../model";
 import { instanceStep } from "../../state/instance-keys";
+import type { StepErrorView } from "../../state/execution";
+import { phaseKey, type Phase } from "../../transactions/phase-keys";
 import { specOf } from "../kinds/shared";
 import type { Json } from "../registry";
 import {
@@ -31,7 +33,7 @@ import {
 
 /** Kinds that can fail on their own, whatever their On error says. */
 const ALWAYS = new Set(["action", "llm", "agent"]);
-/** Kinds that fail only on a value they read: a failure that stops the run shows nothing new. */
+/** Kinds that fail only on a value they read: a failure that stops the run shows nothing new, unless a transaction undoes it. */
 const HANDLED_ONLY = new Set(["transform", "decisionTable"]);
 const ANSWERED: Record<string, string> = {
   signal:
@@ -44,11 +46,13 @@ const ANSWERED: Record<string, string> = {
  * Whether Simulate a failure applies to `step`: undefined leaves the menu
  * item out (the step can't fail on its own), null offers it, and a text
  * disables it with that reason. `inCall` is a step inside a called
- * workflow's frame.
+ * workflow's frame; `inTransaction` one inside a transaction, which handles
+ * its failure whatever its On error.
  */
 export function simulateBlock(
   step: Step,
   inCall: boolean,
+  inTransaction = false,
 ): string | null | undefined {
   // A call's kind isn't one the designer lists yet: compare it as text.
   const kind: string = step.kind;
@@ -64,7 +68,7 @@ export function simulateBlock(
   if (Object.hasOwn(ANSWERED, kind)) return ANSWERED[kind];
   const handled =
     step["onError"] === "continue" || step["onError"] === "errorOutput";
-  if (HANDLED_ONLY.has(kind) && !handled)
+  if (HANDLED_ONLY.has(kind) && !handled && !inTransaction)
     return "This step's failure would stop the run. Choose Continue or Continue with error output first.";
   return null;
 }
@@ -79,10 +83,39 @@ export function simulatedOutcome(step: Step): "not_started" | null {
   return HANDLED_ONLY.has(step.kind) ? "not_started" : null;
 }
 
-/** The test data key of a failure: the item's own, or its step's for every item. */
-export function failureKey(instance: string, every: boolean): string {
-  return every ? instanceStep(instance) : instance;
+/** The test data key of a failure, of the step or one of its undo steps: the item's own, or its step's for every item. */
+export function failureKey(
+  instance: string,
+  every: boolean,
+  phase: Phase | null = null,
+): string {
+  const key = every ? instanceStep(instance) : instance;
+  return phase ? phaseKey(key, phase) : key;
 }
+
+/** The codes an action's document says change nothing. */
+const definiteFailures = (contract: Json | null): string[] => {
+  const listed = specOf(contract)["definiteFailures"];
+  return Array.isArray(listed)
+    ? listed.filter((code): code is string => typeof code === "string")
+    : [];
+};
+
+/**
+ * Whether a simulated failure may have changed anything, when nobody says:
+ * the platform's rule (scripted_effect in operations/debug/transactions.py),
+ * except that nobody knows with an unknown outcome, whatever the code. A
+ * called workflow declares no codes.
+ */
+export const effectDefault = (
+  code: string,
+  outcome: StepErrorView["outcome"],
+  contract: Json | null,
+): "none" | "unknown" =>
+  outcome === "not_started" ||
+  (outcome === "failed" && definiteFailures(contract).includes(code))
+    ? "none"
+    : "unknown";
 
 const CODE = /^[A-Z][A-Z0-9_.-]*$/;
 /** What to change in a typed code, or null when the platform accepts it. */
@@ -111,13 +144,10 @@ const messageOf = (code: string) =>
  * groups are left out; the first code is the field's starting value.
  */
 export function codeSuggestions(
-  step: Step,
+  step: Pick<Step, "kind">,
   contract: Json | null,
 ): { label: string; items: CodeSuggestion[] }[] {
-  const listed = specOf(contract)["definiteFailures"];
-  const own = Array.isArray(listed)
-    ? listed.filter((code): code is string => typeof code === "string")
-    : [];
+  const own = definiteFailures(contract);
   const platform = platformFailures(step.kind).filter(
     (item) => !own.includes(item.code),
   );

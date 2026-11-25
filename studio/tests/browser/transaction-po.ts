@@ -24,7 +24,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { repository } from "../python-path";
-import { hostValidate, platformCompile } from "./local-authoring";
+import {
+  hostChecksTestData,
+  hostValidate,
+  localAuthoring,
+  platformCompile,
+  type LocalCalls,
+} from "./local-authoring";
 import {
   openStepFixture,
   StepDetailsPage,
@@ -219,6 +225,120 @@ export const step = (
 ${Object.entries(fields)
   .map(([name, value]) => `  ${name}: ${value}\n`)
   .join("")}`;
+
+const operation = (uses: string, input: string) =>
+  `{kind: action, uses: ${uses}, with: ${input}}`;
+/** hold, reserved; add, reversible; submit, which can't be undone; notify after it. */
+export const HOLD_STEP = (confirm = "source-system.confirm-hold@1.0.0") =>
+  step("hold", "source-system.hold-quantity@1.0.0", {
+    confirm: operation(
+      confirm,
+      confirm.includes("hold-quantity")
+        ? "{object: {quantity: {ref: /input/quantity}, reference: {ref: /input/moveId}}}"
+        : "{object: {holdId: {ref: /steps/hold/output/holdId}}}",
+    ),
+    cancel: operation(
+      "source-system.release-hold@1.0.0",
+      "{object: {reference: {ref: /input/moveId}, holdOperation: {ref: /participant/operationKey}}}",
+    ),
+  });
+export const ADD_STEP = step("add", "target-system.add-quantity@1.0.0", {
+  compensate: operation(
+    "target-system.remove-quantity@1.0.0",
+    "{object: {reference: {ref: /input/moveId}, addOperation: {ref: /participant/operationKey}}}",
+  ),
+});
+export const SUBMIT_STEP = `- id: submit
+  kind: action
+  uses: orders.submit-order@1.0.0
+  with: {object: {reference: {ref: /input/moveId}}}
+  irreversible: true
+`;
+export const NOTIFY_STEP = `- id: notify
+  kind: action
+  uses: notify.send-message@1.0.0
+  with: {object: {text: {ref: /input/moveId}}}
+`;
+const MANUAL = {
+  source: "manual",
+  pinnedAt: "2026-11-25T10:00:00Z",
+  configHash: "fnv1a64:0000000000000001",
+  contractHash: "fnv1a64:0000000000000002",
+  upstreamHash: "fnv1a64:0000000000000003",
+};
+/** Pinned output, as a test data file keeps it. */
+export const pinned = (outputs: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.entries(outputs).map(([key, output]) => [
+      key,
+      { output, ...MANUAL },
+    ]),
+  );
+/** What the steps of move return. */
+export const MOVED = {
+  hold: { holdId: "h-1" },
+  add: { id: "a-1" },
+  submit: { orderId: "o-1" },
+  notify: {},
+};
+/**
+ * Opens the workflow with its test data file on that platform, ready to
+ * execute: the Studio host that checks the test data and simulates is the
+ * repository's own Python. Returns what Execute sent.
+ */
+export async function openMoveToExecute(
+  page: Page,
+  source: string,
+  testData: { pins?: object; errors?: object; input?: unknown } = {},
+): Promise<{ details: StepDetailsPage; calls: LocalCalls[] }> {
+  await withNewEditor(page);
+  await connectedCatalog(page);
+  const calls = await localAuthoring(page);
+  await hostChecksTestData(page);
+  const { input = { moveId: "M-1", quantity: 2 }, ...entries } = testData;
+  await page.getByLabel("Choose a workflow file").setInputFiles([
+    yamlFile("move-between-systems.yaml", source),
+    {
+      name: "move-between-systems.yaml.testdata.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          kind: "weave.studio/testData",
+          updatedAt: "2026-11-25T10:00:00Z",
+          input: { value: input, source: "manual" },
+          pins: pinned(MOVED),
+          ...entries,
+        }),
+      ),
+    },
+  ]);
+  await page.getByRole("button", { name: "Load", exact: true }).click();
+  await expect(
+    page.locator(".toast", { hasText: "Loaded the test data" }),
+  ).toBeVisible();
+  const canvas = page.getByLabel("Workflow canvas", { exact: true });
+  const show = page.getByRole("button", { name: "Show canvas", exact: true });
+  await expect(canvas.or(show).first()).toBeVisible();
+  if (await show.isVisible()) await show.click();
+  return { details: new StepDetailsPage(page), calls };
+}
+/** Execute workflow, from the editor's bar. */
+export const executeWorkflow = (page: Page) =>
+  page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" })
+    .click();
+/** What the latest execution sent to the Studio host. */
+export async function executed(calls: LocalCalls[], count = 1) {
+  await expect
+    .poll(() => calls.filter(({ path }) => path.endsWith("/execute")).length)
+    .toBeGreaterThanOrEqual(count);
+  return calls.filter(({ path }) => path.endsWith("/execute")).at(-1)!.body as {
+    errors?: Record<string, unknown>;
+    mocks: Record<string, unknown>;
+  };
+}
 
 export interface MoveOptions {
   method?: string;

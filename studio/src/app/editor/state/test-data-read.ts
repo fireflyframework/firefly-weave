@@ -253,12 +253,16 @@ function aiTurns(value: unknown) {
 /** A simulated failure: a code the step could return, never a message (contracts ErrorEntry). */
 const ERROR_CODE = /^[A-Z][A-Z0-9_.-]*$/;
 const OUTCOMES = new Set(["not_started", "failed", "unknown"]);
+const EFFECTS = new Set(["none", "unknown"]);
+/** A step's, one of its confirm, cancel and undo, or a repeated activation's (contracts ERROR_KEY_PATTERN). */
+const ERROR_KEY = /^[^#]*(?:#(?:confirm|cancel|undo|[0-9].*))?$/;
+const errorKey = (name: string) => isInstanceKey(name) && ERROR_KEY.test(name);
 const ERROR_SOURCES = new Set(["manual", "run"]);
 function failure(value: unknown) {
   const item = fields(
     value,
     ["code"],
-    ["outcome", "attempts", "source", ...RUN],
+    ["outcome", "attempts", "effect", "source", ...RUN],
   );
   check(text(item["code"], ERROR_CODE, 128));
   if (present(item, "outcome")) check(OUTCOMES.has(item["outcome"] as string));
@@ -270,6 +274,11 @@ function failure(value: unknown) {
         attempts >= 0 &&
         attempts <= 1000,
     );
+  }
+  if (present(item, "effect")) {
+    check(EFFECTS.has(item["effect"] as string));
+    // Nobody knows what changed: it can't also say nothing did.
+    check(item["effect"] !== "none" || item["outcome"] !== "unknown");
   }
   sourceOf(item, ERROR_SOURCES, false);
   provenance(item);
@@ -337,7 +346,7 @@ export function readTestData(value: unknown): TestDataReading {
     if (present(top, "signals")) keyed(top["signals"], 1000, signal);
     if (present(top, "humans")) keyed(top["humans"], 1000, human);
     if (present(top, "aiTurns")) keyed(top["aiTurns"], 1000, aiTurns);
-    if (present(top, "errors")) keyed(top["errors"], 1000, failure);
+    if (present(top, "errors")) keyed(top["errors"], 1000, failure, errorKey);
     if (present(top, "workflows"))
       keyed(
         top["workflows"],

@@ -621,14 +621,16 @@ SPDX-License-Identifier: Apache-2.0
 }
 @if (pathSimulating(); as open) {
   <weave-simulate-failure-dialog
-    [step]="open.owner"
-    [suggestions]="open.suggestions"
-    [item]="open.item"
-    [loop]="open.loop"
-    [changesData]="open.changesData"
-    [fixedOutcome]="open.outcome"
+    [opening]="open"
     (chosen)="pathFailureChosen($event)"
     (closed)="closePathSimulate()"
+  />
+}
+@if (phaseAsked(); as asked) {
+  <weave-phase-output-dialog
+    [block]="asked"
+    [icon]="iconOf(asked.stepId)"
+    (closed)="phaseAnswered($event)"
   />
 }
 @if (question(); as asked) {

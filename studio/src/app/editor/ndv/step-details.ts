@@ -75,14 +75,26 @@ import {
   type ExecuteIssue,
   type ExecuteQuestion,
 } from "./execute-dialogs";
-import { executeGate, untakenPath } from "../state/execute-gate";
-import { ExecutePathDialog } from "./execute-path-dialog";
 import {
-  SimulateFailureDialog,
+  executeGate,
+  phaseBlock,
+  untakenPath,
+  type PhaseBlock,
+} from "../state/execute-gate";
+import {
+  askOnce,
+  PhaseOutputDialog,
+} from "../transactions/phase-output-dialog";
+import { ExecutePathDialog } from "./execute-path-dialog";
+import { SimulateFailureDialog } from "./panes/simulate-failure-dialog";
+import { simulateBlock } from "./panes/simulate-failure";
+import {
+  failureWritten,
+  PICK_CHANGED,
+  simulateOpening,
   type FailureChoice,
-} from "./panes/simulate-failure-dialog";
-import { failureKey, simulateBlock } from "./panes/simulate-failure";
-import { simulateOpening } from "./panes/output-pane";
+  type SimulateOpening,
+} from "./panes/simulate-opening";
 import { failureOf } from "../state/test-data-ops";
 import { connectionsPort } from "../connections/connections-port";
 import type {
@@ -151,9 +163,10 @@ import {
   TRIGGER_LABELS,
 } from "../canvas/trigger-tiles";
 import { isTriggerTarget } from "../triggers/trigger-target";
-import type {
-  ExecuteNotice,
-  StepDetailsController,
+import {
+  pinSubject,
+  type ExecuteNotice,
+  type StepDetailsController,
 } from "./step-details-controller";
 import { kinds } from "../../model";
 import type { StepDetailsHost } from "./step-details-host";
@@ -236,7 +249,7 @@ export function noticeOf(
           : {
               target,
               message: mock
-                ? `The pinned output of ${mock} holds a value marked secret. Unpin it.`
+                ? `The pinned output of ${pinSubject(mock)} holds a value marked secret. Unpin it.`
                 : "The test data holds a value marked secret. Remove it.",
               reason: null,
             };
@@ -310,6 +323,7 @@ const visible = (element: HTMLElement): boolean =>
     CloseGuard,
     ExecuteDialog,
     ExecutePathDialog,
+    PhaseOutputDialog,
     SimulateFailureDialog,
     SettingsTab,
     IssuesIndicator,
@@ -800,7 +814,7 @@ export class StepDetails {
     const three = this.table() ? 1280 : 1100;
     return width >= three ? "three" : width >= 768 ? "two" : "sheet";
   }
-  private iconOf(id: string): string {
+  iconOf(id: string): string {
     if (id === "$trigger") return "manualTrigger";
     const choice = this.controller().triggerChoice(id);
     if (choice) return TRIGGER_ICONS[choice.kind];
@@ -1644,7 +1658,12 @@ export class StepDetails {
             workflow.spec.steps,
             id,
             (owner) => !!failureOf(data, controller.pinKey(owner)),
-            (owner) => simulateBlock(owner, false) === null,
+            (owner) =>
+              simulateBlock(
+                owner,
+                false,
+                controller.inTransaction(owner.id),
+              ) === null,
           );
     if (untaken) {
       this.pathAsked.set({
@@ -1668,9 +1687,7 @@ export class StepDetails {
     stepIcon: string;
   } | null>(null);
   /** Simulate a failure of the step whose error path holds this one, while its dialog is open. */
-  readonly pathSimulating = signal<
-    (NonNullable<ReturnType<typeof simulateOpening>> & { owner: string }) | null
-  >(null);
+  readonly pathSimulating = signal<SimulateOpening | null>(null);
   /** The question closed: Simulate a failure opens its dialog for that step; Cancel goes back to Execute step. */
   pathAnswered(simulate: boolean) {
     const asked = this.pathAsked();
@@ -1679,8 +1696,7 @@ export class StepDetails {
       simulate && asked
         ? simulateOpening(this.controller(), asked.owner)
         : null;
-    if (asked && opening)
-      this.pathSimulating.set({ ...opening, owner: asked.owner });
+    if (opening) this.pathSimulating.set(opening);
     else setTimeout(() => this.focusExecute());
   }
   /** Writes the failure chosen for the step whose path holds this one, for the item picked when it opened. */
@@ -1689,29 +1705,36 @@ export class StepDetails {
     if (!open) return;
     const controller = this.controller();
     const id = this.target();
-    if (controller.pinKey(open.owner) !== open.key) {
-      this.say(
-        "The picked item changed while the dialog was open, so nothing was simulated.",
-      );
-      return;
-    }
-    const written = await controller.setFailure(
-      failureKey(open.key, choice.every),
-      {
-        code: choice.code,
-        ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
-      },
-    );
+    const failure = failureWritten(open, choice, controller.pinKey(open.step));
+    if (!failure) return this.say(PICK_CHANGED);
+    const { key, entry } = failure;
+    const written = await controller.setFailure(key, entry);
     if (this.lifetime.destroyed) return;
     this.say(
       written.ok
-        ? `Simulated a failure of ${open.owner}: Execute step now reaches ${id}.`
+        ? `Simulated a failure of ${open.step}: Execute step now reaches ${id}.`
         : written.message,
     );
   }
   closePathSimulate() {
     this.pathSimulating.set(null);
     setTimeout(() => this.focusExecute());
+  }
+  /** "Set test output to execute", while it is asked of an undo step. */
+  readonly phaseAsked = signal<PhaseBlock | null>(null);
+  /** The question closed: Set test output opens the undo step's editor; Cancel goes back to Execute step. */
+  phaseAnswered(set: boolean) {
+    const asked = this.phaseAsked();
+    this.phaseAsked.set(null);
+    if (set && asked) this.setPhaseOutput(asked);
+    else setTimeout(() => this.focusExecute());
+  }
+  /** Opens the editor of an undo step's test output, on its step. */
+  private setPhaseOutput({ stepId, phase }: PhaseBlock) {
+    const focus: FocusTarget = { kind: "testOutput", phase };
+    if (stepId === this.target()) this.applyFocus(focus);
+    else
+      this.guard(() => void this.host().openStepDetails?.(stepId, { focus }));
   }
   /** The errors in the steps an execution runs: the host's check, and this step's own. */
   private blockingIssues(runs: readonly string[]): ExecuteIssue[] {
@@ -1745,11 +1768,29 @@ export class StepDetails {
     const host = this.host();
     const controller = this.controller();
     const id = this.target();
+    const workflow = host.model.definition;
     controller.executeNotice.set(null);
     const outcome = await host.executeIn!(target);
     if (this.lifetime.destroyed) return;
-    const notice = noticeOf(outcome, id);
+    const undo =
+      outcome.kind === "done"
+        ? phaseBlock(workflow, outcome.response.blocked)
+        : null;
+    const notice = undo
+      ? {
+          target: id,
+          message: undo.message,
+          reason: null,
+          undo: undo.key,
+          action: {
+            label: "Set test output",
+            run: () => this.setPhaseOutput(undo),
+          },
+        }
+      : noticeOf(outcome, id);
     controller.executeNotice.set(notice);
+    if (undo && outcome.kind === "done" && askOnce(outcome.response))
+      this.phaseAsked.set(undo);
     if (outcome.kind === "done") {
       const blocked = outcome.response.blocked;
       this.say(
@@ -2338,7 +2379,12 @@ export class StepDetails {
         );
       }
     }
-    const region = focus.kind === "region" ? focus.region : "parameters";
+    const region =
+      focus.kind === "region"
+        ? focus.region
+        : focus.kind === "testOutput"
+          ? "output"
+          : "parameters";
     if (this.layout() === "sheet") {
       const pane = region === "header" ? "parameters" : region;
       if (this.pane() !== pane) {
@@ -2359,6 +2405,9 @@ export class StepDetails {
       });
       return;
     }
+    // The editor takes focus once it is there.
+    if (focus.kind === "testOutput")
+      return this.outputPane()?.setOutput(focus.phase);
     const root = this.dialog().nativeElement;
     const control = (scope: Element | null | undefined): HTMLElement | null => {
       if (!scope) return null;

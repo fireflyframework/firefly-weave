@@ -49,18 +49,25 @@ import { PinnedBanner } from "./pinned-banner";
 import { FailureBanner } from "./failure-banner";
 import { ErrorBanner } from "./error-banner";
 import { relativeTime } from "../../../format";
+import { SimulateFailureDialog } from "./simulate-failure-dialog";
+import { simulateBlock, simulatedOutcome } from "./simulate-failure";
 import {
-  SimulateFailureDialog,
+  failureWritten,
+  PICK_CHANGED,
+  simulateOpening,
   type FailureChoice,
-} from "./simulate-failure-dialog";
-import {
-  codeSuggestions,
-  failureKey,
-  simulateBlock,
-  simulatedOutcome,
-} from "./simulate-failure";
+  type SimulateOpening,
+} from "./simulate-opening";
 import { RowMenu, type RowMenuItem } from "../../../row-menu";
-import { actionSideEffect } from "../kinds/forms/action-forms";
+import {
+  everyItem,
+  phaseKey,
+  splitPhase,
+  type Phase,
+} from "../../transactions/phase-keys";
+import { phaseOperation, PHASES } from "../../transactions/phases";
+import { sampleFromSchema } from "./sample";
+import { failsPill, PHASE_NOUNS } from "../../transactions/simulate-undo";
 import { failureOf } from "../../state/test-data-ops";
 import { errorResultSource } from "../../step-blocks";
 import { untakenPath } from "../../state/execute-gate";
@@ -81,10 +88,7 @@ import {
 } from "./views";
 import type { FormSession } from "../params/form-session";
 import { usageLine } from "../kinds/ai-task-model";
-import {
-  CANT_SAMPLE,
-  type StepDetailsController,
-} from "../step-details-controller";
+import { CANT_SAMPLE, pinSubject } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import {
   asRunViewsApi,
@@ -156,52 +160,6 @@ import { downloadFile } from "../../../forms/core/file-transfer";
 import { fileValue } from "./file-value";
 import { describeError } from "../../../errors";
 
-/**
- * What Simulate a failure opens with for a step: the key it writes (the
- * item picked inside a loop's body), that item ("3") and the innermost loop
- * for its words, whether the step changes data, and the codes it suggests;
- * null when the step is gone. Execute step's "Simulate a failure of submit
- * first" opens it for another step than the one shown.
- */
-export function simulateOpening(
-  controller: StepDetailsController,
-  stepId: string,
-): {
-  key: string;
-  item: string | null;
-  loop: string;
-  changesData: boolean;
-  /** The outcome its failure takes without asking; null when the dialog asks. */
-  outcome: "not_started" | null;
-  suggestions: ReturnType<typeof codeSuggestions>;
-} | null {
-  const step = controller.step(stepId);
-  if (!step) return null;
-  const uses = step["uses"];
-  const contract =
-    typeof uses === "string"
-      ? (controller.kindContext().actionContract(uses) ?? null)
-      : null;
-  const key = controller.pinKey(stepId);
-  return {
-    key,
-    item:
-      key === stepId
-        ? null
-        : [...key.matchAll(/\[(\d+)\]/g)]
-            .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
-            .join(" › "),
-    loop:
-      loopRows(controller.iterations, stepId, (id) => controller.step(id)).find(
-        (row) => row.role === "Loop",
-      )?.loopId ?? "",
-    changesData:
-      actionSideEffect(step, controller.kindContext()) === "non_idempotent",
-    outcome: simulatedOutcome(step),
-    suggestions: codeSuggestions(step, contract),
-  };
-}
-
 @Component({
   selector: "weave-output-pane",
   standalone: true,
@@ -224,6 +182,7 @@ export function simulateOpening(
   template: `@let none = noOutput();
     @let pin = pinned();
     @let failing = failure();
+    @let undoFails = undoFailures();
     @let went = handledRun();
     @let canPin = pinnable();
     @let kept = !pin && answerKept();
@@ -315,6 +274,14 @@ export function simulateOpening(
           <span class="pill" data-tone="warning">{{
             failing.leftOut ? "Failure left out" : "Fails when executed"
           }}</span>
+        } @else if (undoFails.length) {
+          <span class="pill" data-tone="warning"
+            ><weave-icon name="warning" [size]="16" />{{
+              undoFails[0].leftOut
+                ? "Failure left out"
+                : failsPill(undoFails[0].phase)
+            }}</span
+          >
         } @else if (pin) {
           <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
         } @else if (real) {
@@ -404,13 +371,7 @@ export function simulateOpening(
     </div>
     @if (simulating(); as open) {
       <weave-simulate-failure-dialog
-        [step]="session().target"
-        [suggestions]="open.suggestions"
-        [item]="open.item"
-        [loop]="open.loop"
-        [changesData]="open.changesData"
-        [fixedOutcome]="open.outcome"
-        [initial]="open.initial"
+        [opening]="open"
         (chosen)="simulate($event)"
         (closed)="closeSimulate()"
       />
@@ -455,6 +416,7 @@ export function simulateOpening(
             <weave-output-editor
               #editor
               [session]="session()"
+              [key]="editKey()"
               [initial]="editText()"
               (saved)="saved()"
               (cancelled)="closeEditor()"
@@ -498,6 +460,20 @@ export function simulateOpening(
               (keep)="keepPinned()"
               (everyItem)="pinForEveryItem()"
               (execute)="execute()"
+            />
+          }
+          <!-- Each undo step that fails, beside what the step itself returns. -->
+          @for (undo of undoFails; track undo.key) {
+            <weave-failure-banner
+              [failure]="undo.entry"
+              [step]="session().target"
+              [phase]="undo.phase"
+              [scope]="undo.scope"
+              [leftOut]="undo.leftOut"
+              [overPin]="undo.overPin"
+              [sessionOnly]="session().controller.testData.failuresInSession()"
+              (remove)="removeFailure(undo.key)"
+              (edit)="openSimulate(undo.phase)"
             />
           }
           @if (problem()) {
@@ -1550,7 +1526,9 @@ export class OutputPane {
     // The step changed since (its On error back to Stop the run, a call
     // that no longer waits): the failure stays, and Execute doesn't send it.
     const step = controller.step(target);
-    const block = step ? simulateBlock(step, false) : undefined;
+    const block = step
+      ? simulateBlock(step, false, controller.inTransaction(target))
+      : undefined;
     const leftOut =
       block === null
         ? null
@@ -1561,6 +1539,55 @@ export class OutputPane {
     const entry = fixed ? { ...found.entry, outcome: fixed } : found.entry;
     return { ...found, entry, scope, leftOut };
   }
+  /**
+   * The failures simulated for this step's undo steps, for the item picked:
+   * its own first, else every item's. One the step no longer has is left out.
+   */
+  undoFailures(): {
+    phase: Phase;
+    key: string;
+    entry: ErrorEntry;
+    scope: "step" | "item" | "every";
+    leftOut: string | null;
+    /** Its test output is there too, kept while the failure is. */
+    overPin: boolean;
+  }[] {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return [];
+    const data = controller.testData;
+    data.version();
+    if (!Object.keys(data.data().errors ?? {}).some(splitPhase)) return [];
+    const key = controller.pinKey(target);
+    return PHASES.flatMap((phase) => {
+      const own = phaseKey(key, phase);
+      const found = failureOf(data.data(), own);
+      return found
+        ? [
+            {
+              ...found,
+              phase,
+              scope:
+                key === target ? "step" : found.key === own ? "item" : "every",
+              leftOut: this.hasPhase(phase)
+                ? null
+                : `Execute leaves this failure out. ${target} has no ${PHASE_NOUNS[phase]} anymore.`,
+              overPin: !!controller.phasePin(target, phase),
+            } as const,
+          ]
+        : [];
+    });
+  }
+  /** The step is in a transaction that runs this undo step of it. */
+  private hasPhase(phase: Phase): boolean {
+    const { controller, target } = this.session();
+    const step = controller.step(target);
+    return (
+      !!step &&
+      controller.inTransaction(target) &&
+      !!phaseOperation(step, phase)
+    );
+  }
+  readonly failsPill = failsPill;
   /**
    * Inside an error path whose step won't fail with this test data: that
    * step ("submit"), whose failure to simulate first; null otherwise.
@@ -1575,77 +1602,68 @@ export class OutputPane {
         host.model.definition.spec.steps ?? [],
         target,
         (owner) => !!failureOf(data.data(), controller.pinKey(owner)),
-        (owner) => simulateBlock(owner, false) === null,
+        (owner) =>
+          simulateBlock(owner, false, controller.inTransaction(owner.id)) ===
+          null,
       )?.owner ?? null
     );
   }
-  /** The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies. */
+  /**
+   * The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies,
+   * and the test output of the step's undo steps that have one.
+   */
   moreActions(): RowMenuItem[] | null {
     const { controller, target } = this.session();
     const step = controller.step(target);
     if (!step || controller.viewingRuns() || target.startsWith("$"))
       return null;
     // Step details open this workflow's own steps, never a called one's.
-    const reason = simulateBlock(step, false);
-    if (reason === undefined) return null;
-    return [
-      {
-        label: "Simulate a failure…",
-        detail: reason ?? undefined,
-        disabled: reason !== null,
-        run: () => this.openSimulate(),
-      },
-    ];
+    const reason = simulateBlock(step, false, controller.inTransaction(target));
+    const items: RowMenuItem[] =
+      reason === undefined
+        ? []
+        : [
+            {
+              label: "Simulate a failure…",
+              detail: reason ?? undefined,
+              disabled: reason !== null,
+              run: () => this.openSimulate(),
+            },
+          ];
+    for (const phase of PHASES) {
+      const pin = controller.phasePin(target, phase);
+      if (!pin) continue;
+      const noun = PHASE_NOUNS[phase];
+      if (this.hasPhase(phase))
+        items.push({
+          label: `Test output of its ${noun}`,
+          run: () => this.setOutput(phase),
+        });
+      items.push({
+        label: `Remove test output of its ${noun}`,
+        run: () => void controller.unpin(pin.key),
+      });
+    }
+    return items.length ? items : null;
   }
   /** Open while the dialog is: what it was opened for, kept as it was then. */
-  readonly simulating = signal<{
-    key: string;
-    item: string | null;
-    loop: string;
-    changesData: boolean;
-    outcome: "not_started" | null;
-    suggestions: ReturnType<typeof codeSuggestions>;
-    initial: FailureChoice | null;
-    /** The failure being edited, to replace when Which items changes. */
-    editing: string | null;
-  } | null>(null);
-  openSimulate() {
+  readonly simulating = signal<SimulateOpening | null>(null);
+  /** Simulate a failure… starts on the step's own; Edit on the failure its banner is about. */
+  openSimulate(phase: Phase | null = null) {
     const { controller, target } = this.session();
-    const opening = simulateOpening(controller, target);
-    if (!opening) return;
-    const current = this.failure();
-    this.simulating.set({
-      ...opening,
-      initial: current && {
-        code: current.entry.code,
-        outcome: current.entry.outcome ?? "failed",
-        every: current.scope === "every",
-      },
-      editing: current?.key ?? null,
-    });
+    this.simulating.set(simulateOpening(controller, target, phase));
   }
   async simulate(choice: FailureChoice) {
     const open = this.simulating();
     if (!open) return;
     const { controller, target } = this.session();
     // The answer is for the item picked when the dialog opened.
-    if (controller.pinKey(target) !== open.key) {
-      this.problem.set(
-        "The picked item changed while the dialog was open, so nothing was simulated.",
-      );
-      return;
-    }
-    const key = failureKey(open.key, choice.every);
-    // "failed" is the platform's default: it isn't written. An edit that
-    // changes Which items replaces the failure it opened on, in one change.
-    const written = await controller.setFailure(
-      key,
-      {
-        code: choice.code,
-        ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
-      },
-      open.editing,
-    );
+    const failure = failureWritten(open, choice, controller.pinKey(target));
+    if (!failure) return this.problem.set(PICK_CHANGED);
+    // An edit that changes Which items replaces the failure it opened on, in
+    // one change.
+    const { key, entry, replacing } = failure;
+    const written = await controller.setFailure(key, entry, replacing);
     this.problem.set(written.ok ? "" : written.message);
   }
   closeSimulate() {
@@ -1721,18 +1739,48 @@ export class OutputPane {
       this.focusPin();
     }
   }
-  /** Set test output and Edit output: the JSON editor, with the pinned value or {}. */
-  setOutput() {
-    if (this.editing()) return this.editor()?.focus();
-    const pinned = this.event();
+  /**
+   * Set test output and Edit output: the JSON editor, with the pinned value
+   * or {}. Of an undo step: with its test output, or a sample of the fields
+   * what runs it returns.
+   */
+  setOutput(phase: Phase | null = null) {
+    const { controller, target } = this.session();
+    const pin = phase && controller.phasePin(target, phase);
+    const key =
+      phase &&
+      (pin?.key ?? everyItem(phaseKey(controller.pinKey(target), phase)));
+    if (this.editing()) {
+      // Another output's unsaved edit stays until it is saved or canceled.
+      if (key === this.editKey() || this.editDirty())
+        return this.editor()?.focus();
+      this.editing.set(false);
+      return void setTimeout(() => this.setOutput(phase));
+    }
+    const value = phase
+      ? (pin?.output ?? this.phaseSample(phase))
+      : this.event();
+    this.editKey.set(key);
     this.editText.set(
-      pinned === undefined ? "{}" : JSON.stringify(pinned, null, 2),
+      value === undefined ? "{}" : JSON.stringify(value, null, 2),
     );
     this.problem.set("");
     this.editing.set(true);
   }
+  /** A sample of what an undo step returns; nothing when its fields aren't known or can't be made up. */
+  private phaseSample(phase: Phase): Json | undefined {
+    const { controller, target } = this.session();
+    const schema = controller.phaseOutput(target, phase);
+    try {
+      return schema ? (sampleFromSchema(schema) as Json) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   readonly editing = signal(false);
   readonly editText = signal("{}");
+  /** The undo step's key whose output is edited; null for the step's own. */
+  readonly editKey = signal<string | null>(null);
   /**
    * The open editor, queried by name: naming its class here would load it,
    * and CodeMirror with it, with step details instead of on first use.
@@ -1756,8 +1804,14 @@ export class OutputPane {
   }
   saved() {
     const session = this.session();
+    const key = this.editKey();
     this.editing.set(false);
-    session.announce(`Pinned the output of ${session.target}.`);
+    // What the last Execute asked for is there now.
+    if (key && session.controller.executeNotice()?.undo === key)
+      session.controller.executeNotice.set(null);
+    session.announce(
+      `Pinned the output of ${pinSubject(key ?? session.target)}.`,
+    );
     this.focusEdit();
   }
   closeEditor() {

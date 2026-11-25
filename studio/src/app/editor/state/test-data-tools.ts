@@ -32,19 +32,27 @@ import {
   studioDefinitions as definitionsOf,
   type StudioDefinitionsHost,
 } from "./host-definitions";
-import { calleeDefinitions, type CalleesHost } from "../calls/callee-drafts";
+import {
+  calleeDefinitions,
+  undoDefinitions,
+  type CalleesHost,
+} from "../calls/callee-drafts";
 import type { Workflow } from "../../model";
 export { checkInputsOf } from "./test-data-inputs";
 export { studioCallees } from "../calls/callee-drafts";
 
 /**
  * Studio's definitions for its host: the drafts and copies the workflow
- * uses, then the workflows it calls, so a call's output has fields.
+ * uses, then the workflows it calls and the actions that undo its steps, so
+ * a call's output and an undo step's have fields.
  */
 export async function studioDefinitions(
   host: StudioDefinitionsHost & CalleesHost,
 ) {
-  return [...(await definitionsOf(host)), ...(await calleeDefinitions(host))];
+  const own = await definitionsOf(host);
+  // Reading the workflows it calls reads the project's actions too.
+  const called = await calleeDefinitions(host);
+  return [...own, ...called, ...undoDefinitions(host, own)];
 }
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";

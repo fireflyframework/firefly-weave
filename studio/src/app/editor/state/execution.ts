@@ -80,6 +80,8 @@ export interface ScriptedFailure {
   code: string;
   outcome?: "not_started" | "failed" | "unknown";
   attempts?: number;
+  /** A step the transaction undoes, or can't: whether it may have changed anything. */
+  effect?: "none" | "unknown";
 }
 /** `POST /studio/local/debug/execute`. */
 export interface ExecuteRequest extends SimulationRequest {

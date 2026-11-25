@@ -27,7 +27,7 @@ import { isRecord } from "../shared";
 import { BUSINESS_KEY_SCHEMA, durationParam } from "./shared";
 
 /** The platform's defaults (contracts/transactions.py), in the order it writes them. */
-const POLICY = {
+export const POLICY = {
   holdSeconds: 900,
   undoRetry: { maxAttempts: 10, initialDelaySeconds: 2, maxDelaySeconds: 300 },
   undoTimeoutSeconds: 86_400,

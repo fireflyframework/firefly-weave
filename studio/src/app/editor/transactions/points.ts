@@ -213,6 +213,20 @@ export function pointsOfNoReturn(transaction: Step): Set<string> {
   return found;
 }
 
+/** Whether a step of a transaction runs only past a step that can't be undone. */
+export function afterPointOfNoReturn(transaction: Step, id: string): boolean {
+  let before = false;
+  let after = false;
+  inside(transaction, {
+    visit: ({ step, reach }) => {
+      if (step?.id !== id) return;
+      before ||= reach.open;
+      after ||= reach.passed;
+    },
+  });
+  return after && !before;
+}
+
 /** The platform's rule (TXN_ORDER), as a place a step may not be moved to says it. */
 export const AFTER_POINT =
   "Steps that can be undone must come before the step that can't be undone.";

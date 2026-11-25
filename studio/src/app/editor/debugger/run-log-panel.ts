@@ -19,8 +19,10 @@ SPDX-License-Identifier: Apache-2.0
 // Each entry opens its step details (Enter; I and O on its Input or Output)
 // and says when it is out of date. When the run waits for a signal or a
 // person the test data doesn't answer, the log asks, keeps the answer as a
-// test answer and executes again. With breakpoints (F9) it steps through a
-// session on the Studio host: Next, Continue, Stop.
+// test answer and executes again. When it stops at an undo step of a
+// transaction that needs test output, it asks for that first. With
+// breakpoints (F9) it steps through a session on the Studio host: Next,
+// Continue, Stop.
 import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
@@ -28,20 +30,36 @@ import {
   computed,
   afterNextRender,
   DestroyRef,
+  effect,
   ElementRef,
   inject,
   Injector,
   input,
   signal,
+  untracked,
   type Signal,
   type WritableSignal,
 } from "@angular/core";
 import { Icon } from "../../icon";
 import type { Step, Workflow } from "../../model";
 import type { DebugCommandBody } from "../../designer/simulation/simulation-plan";
-import type { Json } from "../ndv/registry";
+import { ndvRegistry, type Json } from "../ndv/registry";
+import {
+  StepDetailsService,
+  type StepDetailsRequest,
+} from "../ndv/step-details-service";
 import { allSteps, childLists } from "../ndv/step-walk";
-import { errorPathsAround } from "../state/execute-gate";
+import {
+  errorPathsAround,
+  phaseBlock,
+  type PhaseBlock,
+} from "../state/execute-gate";
+import { splitPhase } from "../transactions/phase-keys";
+import {
+  askOnce,
+  PhaseOutputDialog,
+} from "../transactions/phase-output-dialog";
+import { PHASE_NOUNS } from "../transactions/simulate-undo";
 import { LOOP_LIMIT, loopProgress } from "../canvas/run-state";
 import { failureCodeText } from "../canvas/tile-facts";
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
@@ -93,6 +111,11 @@ export interface RunLogHost {
   summaryOf(stepId: string): string | null;
   staleEntries(): ReadonlySet<string>;
   openEntry(id: string, pane?: "input" | "output"): void;
+  /** Step details on a step, on the part asked for. */
+  openStepDetails?(
+    target: string,
+    request?: Partial<StepDetailsRequest>,
+  ): Promise<boolean>;
   sessionCommand(command: DebugCommandBody): Promise<void>;
   stopSession(): Promise<void>;
   /** The open workflow's test data, once it is read. */
@@ -647,8 +670,11 @@ export function runStatus(
   if (blocked?.reason === "signal")
     return `Waiting for ${blocked.message.replace(/^Send signal /, "")}`;
   if (blocked?.reason === "human") return `Waiting for ${blocked.nodeId}`;
+  const undo = splitPhase(blocked?.instanceKey ?? "");
   if (blocked?.reason === "missing_mock")
-    return `${blocked.nodeId} needs test data`;
+    return undo
+      ? `${blocked.nodeId}'s ${PHASE_NOUNS[undo.phase]} needs test output`
+      : `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
     // Where it stopped, past any failure a step's On error handled; a
@@ -679,7 +705,7 @@ export function runStatus(
   selector: "weave-run-log",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, NgTemplateOutlet],
+  imports: [Icon, NgTemplateOutlet, PhaseOutputDialog],
   styleUrl: "./run-log-panel.css",
   host: { class: "run-log", role: "region", "aria-label": "Run log" },
   template: `@let list = entries();
@@ -1113,7 +1139,14 @@ export function runStatus(
           </li>
         }
       </ul>
-    </ng-template>`,
+    </ng-template>
+    @if (phaseAsked(); as asked) {
+      <weave-phase-output-dialog
+        [block]="asked"
+        [icon]="iconOf(asked.stepId)"
+        (closed)="phaseAnswered($event)"
+      />
+    }`,
 })
 export class RunLogPanel {
   readonly host = input.required<RunLogHost>();
@@ -1141,6 +1174,36 @@ export class RunLogPanel {
       madeRoom.showInspector = true;
       madeRoom.refreshView();
     });
+    // Step details ask for themselves what they executed stopped at.
+    effect(() => {
+      const host = this.host();
+      const last = host.execution?.last();
+      const shown = !!this.details.request() || !!host.runSession();
+      untracked(() => {
+        const block =
+          last && !shown
+            ? phaseBlock(host.model.definition, last.blocked)
+            : null;
+        if (!block || askOnce(last!)) this.phaseAsked.set(block);
+      });
+    });
+  }
+  private readonly details = inject(StepDetailsService);
+  /** "Set test output to execute", while it is asked of an undo step. */
+  readonly phaseAsked = signal<PhaseBlock | null>(null);
+  /** Set test output opens the undo step's editor, on its step; Cancel goes back. */
+  phaseAnswered(set: boolean) {
+    const asked = this.phaseAsked();
+    this.phaseAsked.set(null);
+    if (!set || !asked) return;
+    const { stepId, phase } = asked;
+    void this.host().openStepDetails?.(stepId, {
+      focus: { kind: "testOutput", phase },
+    });
+  }
+  iconOf(stepId: string): string {
+    const step = this.steps().find(({ id }) => id === stepId);
+    return ndvRegistry.kind(step?.kind ?? "")?.icon ?? "action";
   }
   /** A row for one item of a loop (`send[2]`) opens its step on that item. */
   openItem(key: string): void {

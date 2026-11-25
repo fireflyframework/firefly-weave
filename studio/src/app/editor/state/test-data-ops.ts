@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // recorded from a run apart. Every function returns a new document (or the
 // same one when nothing changed) and stamps `updatedAt`.
 import type { Json } from "../ndv/registry";
+import { everyItem } from "../transactions/phase-keys";
 import { instanceStep, renameInstance } from "./instance-keys";
 import {
   TEST_DATA_MAX_BYTES,
@@ -82,13 +83,13 @@ export function withoutInput(
   return stamped(next, now);
 }
 
-/** The pin for one iteration: its own key first, then its step's. */
+/** The pin for one iteration (or one item's undo step): its own key first, then every item's. */
 export function pinOf(
   data: StudioTestData,
   key: string,
 ): { key: string; entry: PinEntry } | null {
   const pins = data.pins ?? {};
-  for (const candidate of [key, instanceStep(key)])
+  for (const candidate of [key, everyItem(key)])
     if (Object.hasOwn(pins, candidate))
       return { key: candidate, entry: pins[candidate] };
   return null;
@@ -127,16 +128,17 @@ export function withScript(
   );
 }
 /**
- * The simulated failure for one item: its own key first, then its step's.
- * The most specific key wins, as the simulator reads them: an item's own pin
- * comes before its step's failure for every item.
+ * The simulated failure for one item, of its step or of one of its undo
+ * steps: its own key first, then every item's. The most specific key wins, as
+ * the simulator reads them: an item's own pin comes before its step's failure
+ * for every item.
  */
 export function failureOf(
   data: StudioTestData,
   key: string,
 ): { key: string; entry: ErrorEntry } | null {
   const errors = data.errors ?? {};
-  for (const candidate of [key, instanceStep(key)]) {
+  for (const candidate of [key, everyItem(key)]) {
     if (Object.hasOwn(errors, candidate))
       return { key: candidate, entry: errors[candidate] };
     if (Object.hasOwn(data.pins ?? {}, candidate)) return null;
