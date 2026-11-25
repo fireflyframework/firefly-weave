@@ -423,7 +423,10 @@ test("activation keeps its dialog open while it runs and shows failures inline",
   await expect(dialog).toBeFocused();
   await dialog.getByLabel(/^crm/).focus();
   await page.keyboard.press("Escape");
-  await dialog.getByRole("button", { name: "Close dialog" }).click();
+  const close = dialog.getByRole("button", { name: "Close dialog" });
+  await expect(close).toBeDisabled();
+  // It only looks off, so a person can still press it.
+  await close.click({ force: true });
   await expect(dialog).toBeVisible();
   await expect.poll(() => calls).toBe(1);
   release();
