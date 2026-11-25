@@ -39,6 +39,7 @@ import {
 import { Icon } from "../../icon";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
+import { scrollingParent, visibleBox } from "../ndv/scroll-area";
 import { sourceSuggestions, type SourceGroup } from "./event-sources";
 import {
   DEFAULT_DECLARATION,
@@ -94,18 +95,9 @@ const EVENT_FIELDS: Readonly<Record<string, string>> = {
   event_id: "The event's ID",
   version: "The version of these fields",
 };
-/** Between the field and the sheet below it. */
+/** The field's focus ring, and what is left between it and the sheet below. */
+const RING = 3;
 const GAP = 8;
-/** The nearest ancestor that scrolls. */
-function scrollerOf(element: HTMLElement): HTMLElement | null {
-  for (let at = element.parentElement; at; at = at.parentElement)
-    if (
-      at.scrollHeight > at.clientHeight &&
-      /auto|scroll/.test(getComputedStyle(at).overflowY)
-    )
-      return at;
-  return null;
-}
 let sequence = 0;
 /**
  * The names Only these workflows held before Any workflow was chosen, by
@@ -239,14 +231,12 @@ export class EventTriggerDetails {
     if (!name) return;
     const { events } = this.declaration();
     const names = this.names();
-    if (names.includes(name)) {
-      this.problem.set(`${name} is already here.`);
-      return;
-    }
     const from = [...names, name];
-    const problem = eventProblems({ events: ["transaction.in_doubt"], from });
-    this.problem.set(problem.from ?? "");
-    if (problem.from) return;
+    const problem = names.includes(name)
+      ? `${name} is already here.`
+      : eventProblems({ events: ["transaction.in_doubt"], from }).from;
+    this.problem.set(problem ?? "");
+    if (problem) return this.revealField();
     if (!this.write({ events, from }, `from:add:${name}`)) return;
     this.session().announce(`Added ${name}.`);
     this.clear();
@@ -303,25 +293,49 @@ export class EventTriggerDetails {
     this.text.set(value);
     this.problem.set("");
     this.active.set(-1);
+    this.show();
+  }
+  private show() {
     this.open.set(true);
     this.revealField();
   }
-  /** Below 768 px the suggestions are a sheet: what it would cover of the field scrolls up above it. */
-  private revealField() {
-    if (window.innerWidth >= 768) return;
+  /**
+   * Scrolls Add a workflow into view with its ring: below the sticky bars,
+   * and above the sheet of suggestions, which takes no more than the room
+   * left under it, or with what is wrong while there is no sheet.
+   */
+  revealField() {
     const host = this.element.nativeElement;
     // The list is placed as it is drawn: measured a frame later.
     afterNextRender(
       () =>
         requestAnimationFrame(() => {
           const field = host.querySelector<HTMLElement>(".et-field");
-          const list = host.querySelector<HTMLElement>(".et-list");
-          if (!field || !list?.matches(":popover-open")) return;
-          const covered =
-            field.getBoundingClientRect().bottom +
-            GAP -
-            list.getBoundingClientRect().top;
-          if (covered > 0) scrollerOf(field)?.scrollBy({ top: covered });
+          const scroller = field && scrollingParent(field);
+          if (!field || !scroller) return;
+          const view = visibleBox(scroller);
+          const { top, bottom, height } = field.getBoundingClientRect();
+          const sheet = host.querySelector<HTMLElement>(
+            '.et-list[data-side="sheet"]:popover-open',
+          );
+          let end = view.bottom;
+          let last = bottom + RING;
+          if (sheet) {
+            const least = view.top + RING + height + RING + GAP;
+            sheet.style.setProperty(
+              "--et-room",
+              `${window.innerHeight - least}px`,
+            );
+            end = Math.min(end, sheet.getBoundingClientRect().top - GAP);
+          } else {
+            const problem = host.querySelector(".et-from > .et-problem");
+            if (problem)
+              last = Math.max(last, problem.getBoundingClientRect().bottom);
+          }
+          // Its top first, when there isn't room for both.
+          const by = Math.min(last - end, top - RING - view.top);
+          if (last > end || top - RING < view.top)
+            scroller.scrollBy({ top: by });
         }),
       { injector: this.injector },
     );
@@ -340,10 +354,10 @@ export class EventTriggerDetails {
       case "ArrowDown":
       case "ArrowUp": {
         event.preventDefault();
-        if (!options.length) return this.open.set(true);
+        if (!options.length) return this.show();
         const down = event.key === "ArrowDown";
         const at = this.showing() ? this.active() : -1;
-        this.open.set(true);
+        this.show();
         this.active.set(
           at < 0
             ? down

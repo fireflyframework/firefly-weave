@@ -306,9 +306,10 @@ button.et-remove:hover {
   overflow: auto;
   color: var(--text);
 }
-/* The sheet leaves the field it belongs to in view, above it. */
+/* The sheet leaves the field it belongs to in view, above it: --et-room is
+   what the pane's bars and the field leave. */
 .et-list[data-side="sheet"] {
-  max-height: 45dvh !important;
+  max-height: min(45dvh, var(--et-room, 45dvh)) !important;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .et-group,

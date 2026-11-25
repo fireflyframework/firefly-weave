@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // Test event, the activation dialog's rows and questions, Starts, and the two
 // questions about the input and the removal. A fine pointer from 768 px gets
 // the desktop sizes; a coarse pointer or a narrower window gets 44 px targets.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { stringify } from "yaml";
 import { requested, startedRuns } from "../event-platform";
 import { AddStepPanel, languageFeatures } from "./add-step-po";
@@ -82,6 +82,41 @@ const inside = (part: Box, whole: Box, what: string) => {
   expect(part.x, `${what} left`).toBeGreaterThanOrEqual(whole.x - 0.5);
   expect(part.right, `${what} right`).toBeLessThanOrEqual(whole.right + 0.5);
 };
+/** The focus ring around Add a workflow: 2 px, 1 px out. */
+const RING = 3;
+/** Where the pane shows its content: below the sticky bars, to its bottom edge. */
+const paneRoom = (dialog: Locator) =>
+  dialog.locator(".et-field").evaluate((field) => {
+    let pane = field.parentElement!;
+    while (!/auto|scroll/.test(getComputedStyle(pane).overflowY))
+      pane = pane.parentElement!;
+    const { top } = pane.getBoundingClientRect();
+    const head = field
+      .closest(".sd-pane")!
+      .querySelector(".sd-head")!
+      .getBoundingClientRect();
+    return {
+      top: Math.max(top, head.bottom),
+      bottom: top + pane.clientHeight,
+    };
+  });
+/** Add a workflow and its ring, whole: below the sticky bars and above `end`. */
+async function expectWholeField(page: Page, dialog: Locator, end: number) {
+  const field = await box(dialog.locator(".et-field"));
+  const { top } = await paneRoom(dialog);
+  expect(field.y - RING, "the ring's top").toBeGreaterThanOrEqual(top - 0.5);
+  expect(field.bottom + RING, "the ring's bottom").toBeLessThanOrEqual(
+    end + 0.5,
+  );
+  // What is typed is what is drawn there.
+  expect(
+    await page.evaluate(
+      ([x, y]) =>
+        document.elementFromPoint(x!, y!)?.closest(".et-field") !== null,
+      [field.x + field.width / 2, field.y + field.height / 2],
+    ),
+  ).toBe(true);
+}
 const ONLY = {
   eventTrigger: {
     events: ["transaction.in_doubt"],
@@ -100,6 +135,50 @@ const OLD = {
   activation: "a-older",
   revision: 3,
 };
+
+// A 1280×720 window at 200% zoom: a sheet, under two sticky bars.
+test("at 200% zoom the sheet leaves the field it belongs to in view, and scrolls", async ({
+  page,
+}) => {
+  test.skip(!hasPython, "needs the repository's Python");
+  await page.setViewportSize({ width: 640, height: 360 });
+  const details = await openNotifyTeam(page, {
+    spec: ONLY,
+    drafts: ["move-archive"],
+  });
+  const dialog = await openEventTrigger(page, details);
+  await pane(details, "Parameters");
+  const field = dialog.getByRole("combobox", { name: "Add a workflow" });
+  for (const open of [
+    () => field.fill("mo"),
+    async () => {
+      // Closed and scrolled away, then opened with the arrow.
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".et-list")).toBeHidden();
+      await page.keyboard.press("ArrowDown");
+    },
+  ]) {
+    await open();
+    const sheet = page.locator(".et-list");
+    await expect(sheet).toBeVisible();
+    await expect(sheet).toHaveAttribute("data-side", "sheet");
+    await expect
+      .poll(async () => (await box(sheet)).y)
+      .toBeGreaterThan((await box(dialog.locator(".et-field"))).bottom);
+    const shape = await box(sheet);
+    near(shape.bottom, 360, "the sheet's bottom");
+    // Room for one suggestion at least; the rest scrolls into view.
+    expect(shape.height).toBeGreaterThanOrEqual(48);
+    await expectWholeField(page, dialog, shape.y);
+    expect(
+      await sheet.evaluate((list) => list.scrollHeight > list.clientHeight),
+    ).toBe(true);
+    await page.keyboard.press("ArrowUp");
+    await expect(
+      sheet.getByRole("option", { name: "move-archive" }),
+    ).toBeInViewport({ ratio: 0.9 });
+  }
+});
 
 for (const size of SIZES)
   test.describe(`Reacting to a platform event at ${size.tag}`, () => {
@@ -232,7 +311,46 @@ for (const size of SIZES)
         );
       expect(shape.x).toBeGreaterThanOrEqual(-0.5);
       expect(shape.right).toBeLessThanOrEqual(width + 0.5);
+      await expectWholeField(
+        page,
+        dialog,
+        touch ? shape.y : (await paneRoom(dialog)).bottom,
+      );
       await expectNoPageScroll(page);
+    });
+
+    test("Add a workflow shows whole with its error when Only these workflows is chosen", async ({
+      page,
+    }) => {
+      const details = await openNotifyTeam(page);
+      const dialog = await openEventTrigger(page, details);
+      await pane(details, "Parameters");
+      await dialog.getByRole("radio", { name: "Only these workflows" }).check();
+      const field = dialog.getByRole("combobox", { name: "Add a workflow" });
+      await expect(field).toBeFocused();
+      const end = (await paneRoom(dialog)).bottom;
+      const shows = async (problem: string) => {
+        const line = dialog.locator(".et-problem").filter({ hasText: problem });
+        await expect
+          .poll(async () => (await box(line)).bottom)
+          .toBeLessThanOrEqual(end + 0.5);
+        await expectWholeField(page, dialog, end);
+      };
+      await shows("Add at least one workflow");
+      // A name that isn't one, with two lines of what is wrong on a phone.
+      await dialog.locator(".et-field").evaluate((item) => {
+        const at = item.getBoundingClientRect();
+        for (let up = item.parentElement; up; up = up.parentElement)
+          if (/auto|scroll/.test(getComputedStyle(up).overflowY)) {
+            up.scrollBy({
+              top: at.bottom - up.getBoundingClientRect().bottom + 3,
+            });
+            break;
+          }
+      });
+      await field.fill("not one");
+      await field.press("Enter");
+      await shows("“not one” isn't a workflow name.");
     });
 
     test("an input that refuses the event comes first, with Reset the input", async ({

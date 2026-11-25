@@ -102,7 +102,7 @@ SPDX-License-Identifier: Apache-2.0
   </div>
 </fieldset>
 
-<section class="et-section" [attr.aria-labelledby]="id + '-from'">
+<section class="et-section et-from" [attr.aria-labelledby]="id + '-from'">
   <h3 class="et-heading" [id]="id + '-from'">From which workflows</h3>
   <div
     class="et-cards"
@@ -205,6 +205,7 @@ SPDX-License-Identifier: Apache-2.0
               "
               (input)="typed($any($event.target).value)"
               (keydown)="keydown($event)"
+              (focus)="revealField()"
               (blur)="close()"
             />
           </span>
