@@ -25,7 +25,7 @@ in flight. Participants' phases run at ``hold#confirm``, ``hold#cancel`` and ``a
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from firefly_weave.compiler.ir import (
     ActionNode,
@@ -36,8 +36,11 @@ from firefly_weave.compiler.ir import (
     WorkflowIR,
 )
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
-from firefly_weave.contracts.transactions import Effect, split_phase
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, Effect, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
+
+if TYPE_CHECKING:
+    from firefly_weave.runtime.models import IncidentState, RunState
 
 # The segments of a transaction's own deadlines.
 # A transaction's own deadlines: its reservations' hold, the settle bound of a rollback, and the bound of a called
@@ -48,6 +51,10 @@ DEADLINE_SEGMENTS: Final = frozenset({"hold", "settle", "decide"})
 HELD_NODE: Final = "@transactions"
 HELD_INCIDENT: Final = f"{HELD_NODE}:0"
 HELD_CODE: Final = "WV-TXN-RUN-OVERSIZED"
+SETTLE_CODE: Final = "WV-TXN-SETTLE-TIMEOUT"
+# The rules a run's transactions follow once an event says so: each of several incidents of one transaction can be
+# resolved, and what a decision leaves nothing to decide about closes with it. A run stored without them keeps its own.
+TRANSACTION_RULES: Final = 2
 # Transaction states in which a run's transaction still holds work, so the run cannot end yet.
 UNSETTLED: Final = frozenset({"open", "deciding", "committing", "compensating", "in_doubt"})
 # Codes the kernel turns into a failure of a step inside a transaction instead of an incident: evaluation and
@@ -267,6 +274,40 @@ def in_transaction(shapes_of: TransactionShapes | None, key: str) -> bool:
     if split_phase(key) is not None or split_deadline(key) is not None:
         return True
     return node_of(key) in shapes_of.owners
+
+
+def incident_transaction(shapes_of: TransactionShapes, node_id: str, code: str) -> str | None:
+    """The instance key of the transaction an incident at ``node_id`` belongs to: the one whose body holds its step or
+    phase, or the one whose settle time passed. ``None`` for an incident of no transaction."""
+    try:
+        if code == SETTLE_CODE:
+            return node_id if split_instance(node_id).node_id in shapes_of.depths else None
+        phase = split_phase(node_id)
+        return shapes_of.owner_key(phase[0] if phase is not None else node_id)
+    except InvalidInstanceKey:
+        return None
+
+
+def open_doubts(shapes_of: TransactionShapes, state: "RunState", key: str) -> list[str]:
+    """The keys of the open in-doubt incidents of the transaction instance ``key``, in key order."""
+    return sorted(
+        name
+        for name, item in state.incidents.items()
+        if item.code in IN_DOUBT_CODES and incident_transaction(shapes_of, item.node_id, item.code) == key
+    )
+
+
+def leftover(shapes_of: TransactionShapes, state: "RunState", incident: "IncidentState") -> bool:
+    """Whether an open incident of a transaction leaves nothing to decide: a person already ended its transaction in
+    doubt, or the run no longer waits for its step. An event the kernel refused was never applied, so its incident
+    always leaves something."""
+    key = incident_transaction(shapes_of, incident.node_id, incident.code)
+    if key is None:
+        return False
+    if incident.code in IN_DOUBT_CODES:
+        transaction = state.transactions.get(key)
+        return transaction is not None and transaction.status in {"reconciled", "force_ended"}
+    return not incident.code.startswith("WV-RUNTIME-") and incident.node_id not in state.active
 
 
 def participant_index(participants: Sequence[object], key: str) -> int | None:

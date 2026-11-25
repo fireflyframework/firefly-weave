@@ -164,6 +164,40 @@ IN_DOUBT_CODES: Final = frozenset(
 )
 
 
+# The statuses of a step whose end a person must state: Weave doesn't know it, or it contradicts the stated ending.
+_UNKNOWN_END: Final = frozenset(
+    {
+        "dispatched",
+        "unknown",
+        "confirming",
+        "confirm_stuck",
+        "cancelling",
+        "cancel_stuck",
+        "undoing",
+        "undo_stuck",
+    }
+)
+
+
+def must_say(
+    ending: Literal["completed", "compensated"], mode: UndoMode, status: ParticipantStatus, doubted: bool
+) -> bool:
+    """Whether marking a transaction as reconciled with ``ending`` must name a step that stands at ``status``.
+
+    ``doubted`` is true for a step that holds an open in-doubt incident of the transaction. A step that failed for
+    good applied nothing, so it is named only when it is why the transaction is in doubt.
+    """
+    if status in _UNKNOWN_END:
+        return True
+    if ending == "compensated":
+        return status in {"done", "confirmed"}
+    return (
+        status in {"cancelled", "undone"}
+        or (status == "done" and mode == "reserve")
+        or (status == "failed" and doubted)
+    )
+
+
 def phase_key(instance_key: str, phase: UndoPhase) -> str:
     """The instance key ``phase`` of the step instance ``instance_key`` runs at: ``hold[3]`` → ``hold[3]#cancel``."""
     parsed = split_instance(instance_key)
