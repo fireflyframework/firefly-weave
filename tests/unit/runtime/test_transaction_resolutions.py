@@ -942,3 +942,50 @@ def test_recorded_reconciliations_still_apply():
     run = settle_timeout(1)
     resolve(run, "move:0", "accept_reconciled_result", record("compensated", {}))
     assert run.txn().status == "reconciled"
+
+
+def called_step_unknown(ended: str | None):
+    """The time of the called step that can't be undone is up, so nobody knows whether it happened; its run may have
+    ``ended`` since, and that result waits behind the doubt."""
+    run = Run(compiled([transaction([hold(), submit_by_call(), notify()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.fire("move#decide", started=True)
+    assert run.state.incidents["submit:0"].code == "WV-TXN-PIVOT-UNKNOWN"
+    if ended is not None:
+        output = {} if ended == "succeeded" else {"code": "WV-RUNTIME-TIMEOUT", "message": "The call timed out."}
+        run.called("submit", ended, output, effect="unknown")
+        assert [event.data["node_id"] for event in run.state.deferred_results] == ["submit"]
+    return run
+
+
+@pytest.mark.parametrize("ended", ["succeeded", "failed", None])
+def test_it_happened_after_the_time_of_a_call_is_up_applies_its_result_once(ended):
+    run = called_step_unknown(ended)
+    happened = resolve(run, "submit:0", "accept_reconciled_result", {})
+    # The run no longer waits for the call, so whatever its run returned is settled with it.
+    assert controls(happened, "settle") == ["submit"]
+    assert (run.txn().status, run.txn().resume) == ("committing", ["notify"])
+    assert (run.state.active, run.state.incidents, run.state.deferred_results) == (["hold#confirm"], {}, [])
+    assert run.statuses()["submit"] == "done"
+    assert [task.node_id for task in tasks(run.done("hold#confirm", {}))] == ["notify"]
+    run.done("notify", {})
+    assert (run.state.status, run.txn().status) == ("succeeded", "completed")
+
+
+@pytest.mark.parametrize("ended", ["succeeded", "failed", None])
+def test_it_didnt_happen_after_the_time_of_a_call_is_up_goes_back(ended):
+    run = called_step_unknown(ended)
+    resolve(run, "submit:0", "accept_reconciled_failure")
+    assert (run.state.active, run.state.incidents, run.state.deferred_results) == (["hold#cancel"], {}, [])
+    run.done("hold#cancel", {})
+    assert (run.state.status, run.txn().status) == ("failed", "cancelled")
+
+
+def test_it_happened_of_a_step_that_failed_settles_nothing_of_it():
+    run = Run(compiled([transaction([hold(), submit(), notify()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+    happened = resolve(run, "submit:3", "accept_reconciled_result", {"orderId": "o-1"})
+    assert controls(happened, "settle") == [] and run.state.active == ["hold#confirm"]

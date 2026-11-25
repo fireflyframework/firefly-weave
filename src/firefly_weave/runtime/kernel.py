@@ -1767,6 +1767,12 @@ def _advance_owned(
             if txns is not None and txns.reads[node.id].own_output:
                 scope = {**scope, "output": value}
             complete(node, name, value)
+            if rules_2() and name in current_state.active:
+                # The time of a called step was up while the run still waited for it: it waits no longer, and what the
+                # call returned meanwhile decides nothing.
+                current_state.active.remove(name)
+                current_state.waits.pop(name, None)
+                result.commands.append(ControlCommand(kind="settle", node_id=name))
             participant(key, index, status="done", outcome="done", scope=scope)
             update(key, incident=None, cause=None)
             commit(key)

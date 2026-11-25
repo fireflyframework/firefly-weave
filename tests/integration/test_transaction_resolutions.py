@@ -808,3 +808,70 @@ async def test_a_fail_step_beside_the_decision_is_never_run_again_with_success(p
     assert (refused.value.status, refused.value.code) == (409, "WV-RUNTIME-RESOLUTION")
     await resolve(platform, again, "terminate", actor=reconciler)
     assert (await platform.state(run.id))["status"] == "cancelled"
+
+
+async def called_step_unknown(platform):
+    """The time of the called step that can't be undone is up while its run still runs, so nobody knows whether it
+    happened; then that run is canceled."""
+    order = await platform.publish(workflow("slow-order", [LOOKUP], callable_=True, timeout=300))
+    call = {
+        "id": "order",
+        "kind": "callWorkflow",
+        "uses": "slow-order@1.0.0",
+        "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+        "irreversible": True,
+    }
+    activation = await platform.publish(
+        workflow("move", [transaction(hold(), call, NOTIFY)]), **{"slow-order": order.id}
+    )
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    await platform.scan()
+    await platform.execute(
+        "WITH due AS (UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second' "
+        "WHERE run_id=:run AND node_id='move#decide' RETURNING run_id,deadline) UPDATE runs SET state="
+        "jsonb_set(state,'{transactions,move,decide_by}',to_jsonb(due.deadline)) FROM due WHERE runs.id=due.run_id",
+        run=run.id,
+    )
+    await platform.scan()
+    incident = await active(platform, run.id)
+    assert (incident["incident_key"], incident["code"]) == ("order:0", "WV-TXN-PIVOT-UNKNOWN")
+    [row] = await platform.query("SELECT child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx, row["child_run_id"], "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    return run, incident
+
+
+@pytest.mark.parametrize("delivered", [True, False])
+async def test_it_happened_although_the_called_step_ended_badly_after_its_time_was_up(platform, reconciler, delivered):
+    run, incident = await called_step_unknown(platform)
+    if delivered:
+        await platform.scan()
+        deferred = (await platform.state(run.id))["deferred_results"]
+        assert [event["data"]["node_id"] for event in deferred] == ["order"]
+    resolved = await resolve(
+        platform, incident, "accept_reconciled_result", actor=reconciler, output="done", evidence_reference="T-17"
+    )
+    assert (resolved.status, resolved.transaction.state) == ("resolved", "committing")
+    # What the call returned changes nothing, whether it waited behind the doubt or the decision delivered it first.
+    await platform.scan()
+    assert await by_key(platform, run.id) == {}
+    [call] = await platform.query("SELECT status,delivered FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    assert call == {"status": "cancelled", "delivered": True}
+    await platform.complete(await platform.lease("hold#confirm"))
+    await platform.complete(await platform.lease("notify"))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+    assert (await platform.keys(run.id)).count("notify") == 1
+    assert (await platform.record(run.id))["state"] == "completed"
+
+
+async def test_it_didnt_happen_although_the_called_step_ended_after_its_time_was_up(platform, reconciler):
+    run, incident = await called_step_unknown(platform)
+    await platform.scan()
+    await resolve(platform, incident, "accept_reconciled_failure", actor=reconciler, evidence_reference="T-17")
+    assert await by_key(platform, run.id) == {}
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "failed"
+    assert (await platform.record(run.id))["state"] == "cancelled"
