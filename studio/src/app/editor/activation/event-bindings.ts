@@ -620,7 +620,7 @@ const stopRefused = (error: unknown, where: string) =>
 const changedText = (name: string) =>
   `${name} changed since you opened this. Review it.`;
 const madeText = (name: string) =>
-  `${name} was created since you opened this. Review it.`;
+  `Trigger ${name} was created since you opened this. Review it.`;
 const waitingText = (name: string, count: number | null) =>
   count === null
     ? `Studio can't check whether ${name} has events waiting to start.`

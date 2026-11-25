@@ -670,7 +670,7 @@ describe("a row after activating", () => {
     platform.seed(STORED);
     expect(await shown(platform, create)).toEqual({
       ...PLAIN,
-      lead: "notify-team was created since you opened this. Review it.",
+      lead: "Trigger notify-team was created since you opened this. Review it.",
       detail:
         "Studio created nothing. Close this and activate again to see what it is now.",
       tone: "warning",
@@ -692,7 +692,7 @@ describe("a row after activating", () => {
       sources: undefined,
     });
     expect(await shown(platform, replace)).toMatchObject({
-      lead: "notify-team-2 was created since you opened this. Review it.",
+      lead: "Trigger notify-team-2 was created since you opened this. Review it.",
       detail:
         "Studio created nothing. Close this and activate again to see what it is now.",
     });

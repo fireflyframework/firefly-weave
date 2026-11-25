@@ -328,7 +328,7 @@ describe("a create whose answer may have been lost", () => {
     expect(result.id).toBeUndefined();
     expect(result).toMatchObject({
       status: "changed",
-      text: "ops-alerts was created since you opened this. Review it.",
+      text: "Trigger ops-alerts was created since you opened this. Review it.",
     });
     expect(platform.writes()).toEqual([]);
   });
@@ -380,7 +380,7 @@ describe("someone who sets the trigger up at the same time", () => {
   };
   const changed = {
     status: "changed",
-    text: "notify-team was created since you opened this. Review it.",
+    text: "Trigger notify-team was created since you opened this. Review it.",
   };
 
   it("creates nothing beside a trigger that already reacts as declared", async () => {
@@ -426,7 +426,7 @@ describe("someone who sets the trigger up at the same time", () => {
       platform.seed({ ...THEIRS, name: "notify-team-2", ...other });
       expect(await apply(platform, row)).toEqual({
         status: "changed",
-        text: "notify-team-2 was created since you opened this. Review it.",
+        text: "Trigger notify-team-2 was created since you opened this. Review it.",
       });
       expect(platform.writes()).toEqual([]);
     },

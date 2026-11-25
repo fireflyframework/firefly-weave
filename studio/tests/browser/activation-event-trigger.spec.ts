@@ -427,7 +427,7 @@ test("someone who activates at the same time leaves one trigger, and the dialog 
   });
   await activate(dialog);
   await expect(eventRows(dialog)).toHaveText([
-    /^\s*notify-team was created since you opened this\. Review it\.\s*Studio created nothing\. Close this and activate again to see what it is now\.\s*$/,
+    /^\s*Trigger notify-team was created since you opened this\. Review it\.\s*Studio created nothing\. Close this and activate again to see what it is now\.\s*$/,
   ]);
   await expect(dialog.locator("#activation-summary")).toContainText(
     "1 trigger needs attention.",
