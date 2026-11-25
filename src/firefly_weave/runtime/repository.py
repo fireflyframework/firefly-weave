@@ -623,13 +623,14 @@ class RuntimeRepository:
         result = await self.tx.session.execute(text(sql), {**self.params, **values})
         return [dict(row) for row in result.mappings()]
 
-    async def scanner_runs(self, limit: int) -> list[dict[str, Any]]:
+    async def scanner_runs(self, limit: int, *, skip: Sequence[UUID] = ()) -> list[dict[str, Any]]:
         if not 1 <= limit <= 100:
             raise ValueError("Bounded scanner page required")
         from firefly_weave.runtime.admission import runnable, runnable_parameters
 
         return await self.rows(
             f"SELECT id FROM runs WHERE {SCOPE} AND state->>'status' IN ('queued','waiting','suspended') "
+            "AND id<>ALL(cast(:skip AS uuid[])) "
             # CASE reads the artifact only for a due run: the planner cannot evaluate THEN first.
             "AND CASE WHEN (EXISTS (SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
             "AND d.deadline<=clock_timestamp()) OR (state->>'status'='waiting' AND EXISTS "
@@ -664,14 +665,16 @@ class RuntimeRepository:
             f"THEN {runnable('runs')} ELSE false END "
             "ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED",
             limit=limit,
+            skip=list(skip),
             **runnable_parameters(),
         )
 
-    async def expired_ready(self, limit: int) -> list[UUID]:
+    async def expired_ready(self, limit: int, *, skip: Sequence[UUID] = ()) -> list[UUID]:
         from firefly_weave.runtime.admission import runnable, runnable_parameters
 
         rows = await self.rows(
             f"SELECT id FROM task_intents WHERE {SCOPE} AND status='ready' "
+            "AND run_id<>ALL(cast(:skip AS uuid[])) "
             "AND run_id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) "
             # Settlement work also expires while its run is held by another incident.
@@ -680,6 +683,7 @@ class RuntimeRepository:
             "AND cast(payload->>'deadline' AS timestamptz)<=clock_timestamp() "
             f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit",
             limit=limit,
+            skip=list(skip),
             **runnable_parameters(),
         )
         return [row["id"] for row in rows]

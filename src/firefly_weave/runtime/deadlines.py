@@ -24,6 +24,7 @@ from pyfly.container import service
 from firefly_weave.contracts.runtime import RecoveryReport
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import RuntimeRepository
+from firefly_weave.runtime.run_failures import RunFailures
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.waits import settle
 
@@ -35,6 +36,7 @@ SCAN_WINDOW = 10
 class DeadlineService:
     def __init__(self, runtime: RuntimeService) -> None:
         self.runtime = runtime
+        self.failures = RunFailures()
 
     async def tick(self, tx: Transaction, limit: int) -> int:
         report = await self.scan(tx, limit)
@@ -52,10 +54,13 @@ class DeadlineService:
             repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
             counts = {"timed_out": 0, "elapsed": 0}
             handled = 0
-            for candidate in await repository.scanner_runs(min(100, max(limit, SCAN_WINDOW))):
+            skip = self.failures.waiting(tx, "deadline")
+            for candidate in await repository.scanner_runs(min(100, max(limit, SCAN_WINDOW)), skip=skip):
                 if handled >= limit:
                     break
-                if await isolated(tx, partial(self._settle, repository, candidate["id"], counts, terminal_only)):
+                identifier = candidate["id"]
+                settle_run = partial(self._settle, repository, identifier, counts, terminal_only)
+                if await self.failures.guard(tx, "deadline", identifier, partial(isolated, tx, settle_run)):
                     handled += 1
             return RecoveryReport(**counts)
 

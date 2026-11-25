@@ -703,6 +703,7 @@ class IncidentService:
             block_output,
             called_workflow,
             check_reconciliation,
+            completes,
             unsaid_steps,
             validate,
         )
@@ -821,12 +822,22 @@ class IncidentService:
             return owner, tasks[0] if tasks else None, None, None
         record = state.transactions[cast(str, owner)]
         doubted = doubted_steps(facts, state, cast(str, owner)) if facts is not None else frozenset()
+        block = nodes[node_of(cast(str, owner))]
+        said = request.output.get("as") if isinstance(request.output, dict) else None
+        if said == "completed" and state.ending is None and not completes(ir, block):
+            # Before the steps it leaves out: nobody is asked to name them for an ending that is then refused.
+            raise CatalogError(
+                422,
+                "WV-RUNTIME-OUTPUT",
+                "The block can never complete, because every way through it reaches a Fail step: "
+                "use Force end, or compensated if everything was undone",
+            )
         if unsaid := unsaid_steps(record, request.output, doubted):
             raise CatalogError(422, "WV-TXN-RECONCILE-INCOMPLETE", unsaid_message(unsaid))
         try:
             ending, _, output = check_reconciliation(record, request.output, complete=True, doubted=doubted)
             if ending == "completed":
-                block_output(ir, nodes[node_of(cast(str, owner))], output)
+                block_output(ir, block, output, goes_on=state.ending is None)
         except (KernelError, ValueError) as error:
             raise CatalogError(
                 422, "WV-RUNTIME-OUTPUT", "The reconciliation record doesn't fit the transaction"

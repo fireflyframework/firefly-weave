@@ -593,8 +593,8 @@ async def test_recovery_rechecks_handled_status_after_candidate_selection(
         await tx.execute(text("UPDATE task_leases SET expires_at=clock_timestamp()-interval '1 second'"))
     original = TaskService.recovery_candidates
 
-    async def settle_after_selection(self, tx, limit):
-        candidates = await original(self, tx, limit)
+    async def settle_after_selection(self, tx, limit, *, skip=()):
+        candidates = await original(self, tx, limit, skip=skip)
         assert candidates == [lease.proof.task_id]
         await tx.session.execute(
             text("UPDATE task_intents SET status='handled' WHERE id=:id"), {"id": lease.proof.task_id}

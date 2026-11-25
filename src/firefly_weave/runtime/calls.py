@@ -51,6 +51,7 @@ from firefly_weave.persistence.uow import Transaction, isolated, refused_for_now
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, refusal, screened
 from firefly_weave.runtime.models import CallIntent, RuntimeEvent, Transition
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.run_failures import RunFailures
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.api import CompiledArtifact
@@ -359,6 +360,7 @@ class CallService:
 
     def __init__(self, runtime: "RuntimeService") -> None:
         self.runtime = runtime
+        self.failures = RunFailures()
 
     async def dispatch(self, tx: Transaction, limit: int) -> tuple[int, int]:
         """Start or reject at most one requested call, in its own transaction; returns (started, rejected).
@@ -370,8 +372,9 @@ class CallService:
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
         candidates = await repository.rows(
             f"SELECT id,caller_run_id FROM run_calls WHERE {SCOPE} AND status='requested' "
-            "ORDER BY requested_at,id LIMIT :limit",
+            "AND id<>ALL(cast(:skip AS uuid[])) ORDER BY requested_at,id LIMIT :limit",
             limit=limit,
+            skip=self.failures.waiting(tx, "dispatch"),
         )
         for candidate in candidates:
             caller = await self._locked_caller(repository, candidate["caller_run_id"])
@@ -382,7 +385,9 @@ class CallService:
             )
             if not rows or rows[0]["status"] != "requested":
                 continue
-            outcome = await self._dispatch(repository, rows[0], caller)
+            start = partial(self._dispatch, repository, rows[0], caller)
+            name = f"call {candidate['id']} of run {candidate['caller_run_id']}"
+            outcome = await self.failures.guard(tx, "dispatch", candidate["id"], start, name=name)
             if outcome is not None:
                 return outcome
         return 0, 0
@@ -626,11 +631,13 @@ class CallService:
         # for a person: it is left out here, so it never holds back the cancels behind it.
         candidates = await repository.rows(
             f"SELECT id,child_run_id,caller_run_id,settlement FROM run_calls WHERE {SCOPE} AND cancel_requested "
+            "AND id<>ALL(cast(:skip AS uuid[])) "
             "AND status='started' AND EXISTS (SELECT 1 FROM runs r WHERE r.id=run_calls.child_run_id "
             "AND r.state->'ending' IS NULL AND NOT EXISTS (SELECT 1 FROM jsonb_each(CASE WHEN "
             "jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) t "
             "WHERE t.value->>'status'='in_doubt')) ORDER BY requested_at,id LIMIT :limit",
             limit=limit,
+            skip=self.failures.waiting(tx, "cancel"),
         )
         for candidate in candidates:
             # Against the lock order (a child before its caller's call row), so a busy child is skipped.
@@ -646,12 +653,11 @@ class CallService:
                 continue
             reason = TRANSACTION_UNDONE if candidate["settlement"] else CALLER_ENDED
             # A child whose stop is refused for now is left for a later scan; the next one is tried.
-            if await isolated(
-                tx,
-                partial(
-                    self.runtime.cancel_child, tx, candidate["child_run_id"], candidate["caller_run_id"], reason=reason
-                ),
-            ):
+            cancel = partial(
+                self.runtime.cancel_child, tx, candidate["child_run_id"], candidate["caller_run_id"], reason=reason
+            )
+            name = f"run {candidate['child_run_id']} called by run {candidate['caller_run_id']}"
+            if await self.failures.guard(tx, "cancel", candidate["id"], partial(isolated, tx, cancel), name=name):
                 return 1
         return 0
 
