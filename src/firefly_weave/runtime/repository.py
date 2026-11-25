@@ -669,7 +669,8 @@ class RuntimeRepository:
         return [row["id"] for row in rows]
 
     async def project_incidents(self, view: RunView | TerminalControl, *, at: datetime | None = None) -> None:
-        """Projection only: never changes or repairs authoritative accepted state."""
+        """Projection only: never changes or repairs authoritative accepted state. The row of an incident the state
+        holds is active: one may open again under the key of an incident that ended, and then its row does too."""
         at = at if at is not None else await self.now()
         active = {key: value.model_dump() for key, value in view.state.incidents.items()}
         if view.state.status == "suspended" and not active and view.state.incident:
@@ -677,20 +678,28 @@ class RuntimeRepository:
         for key, value in active.items():
             identity = author_instance(value["node_id"]) if value["node_id"] is not None else None
             await self.execute(
-                "WITH changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
+                f"WITH ended AS (SELECT id FROM incidents WHERE {SCOPE} AND run_id=:run AND incident_key=:key "
+                "AND status<>'active'), "
+                "changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
                 "node_id,generation,origin_code,code,status,revision) VALUES("
                 "md5(cast(cast(:run AS uuid) AS text) || ':' || :key)::uuid,:tenant,:project,:environment,:run,:key,"
                 ":node,:generation,coalesce(:origin,:code),:code,'active',1) "
                 "ON CONFLICT(run_id,incident_key) DO UPDATE "
+                # A row that opens again forgets how it ended: the decision stays in its receipt, event and audit row.
+                "SET status='active',actor_id=NULL,resolved_at=NULL,resolution=NULL,code=excluded.code,"
                 # A transaction in doubt keeps the failure that put it there.
-                "SET code=excluded.code,origin_code=CASE WHEN :origin IS NULL THEN incidents.origin_code "
+                "origin_code=CASE WHEN :origin IS NULL AND incidents.status='active' THEN incidents.origin_code "
                 "ELSE excluded.origin_code END,revision=incidents.revision+1 "
-                "WHERE incidents.status='active' AND incidents.code<>excluded.code RETURNING id) "
+                "WHERE incidents.status<>'active' OR incidents.code<>excluded.code RETURNING id) "
                 "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
                 "opened_at,updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,"
                 "c.id,:fact_node,:instance,:at,:at,f.workflow_name,f.workflow_version,f.test FROM changed c "
                 f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
-                "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at",
+                "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at,"
+                # Nothing was open in between, so the age of a row that opens again starts again.
+                "opened_at=CASE WHEN EXISTS(SELECT 1 FROM ended) THEN excluded.opened_at "
+                "ELSE incident_facts.opened_at END,opened_at_estimated=incident_facts.opened_at_estimated "
+                "AND NOT EXISTS(SELECT 1 FROM ended)",
                 fact_node=identity.node_id if identity else None,
                 instance=identity.instance_key if identity else "",
                 at=at,

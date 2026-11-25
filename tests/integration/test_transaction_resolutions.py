@@ -41,7 +41,9 @@ NOTIFY = {
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 @pytest.fixture
@@ -362,3 +364,163 @@ async def test_retry_a_called_undo_starts_a_new_child_generation(platform):
     await platform.scan()
     await platform.complete(await platform.lease("hold#cancel"))
     assert (await platform.record(run.id))["state"] == "compensated"
+
+
+LOOKUP = {
+    "id": "lookup",
+    "kind": "action",
+    "uses": "reports.lookup@1.0.0",
+    "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+}
+
+
+def beside(*steps: dict[str, Any]) -> dict[str, Any]:
+    """Steps that run at once, each in its own branch."""
+    branches = {f"b{index}": {"steps": [step], "output": {"literal": None}} for index, step in enumerate(steps)}
+    return {"id": "both", "kind": "parallel", "concurrency": len(steps), "branches": branches}
+
+
+async def confirm_stuck(platform):
+    run = await platform.start(await platform.publish(workflow("move", [transaction(hold(), submit())])))
+    for key in ("hold", "submit"):
+        await platform.complete(await platform.lease(key))
+    await platform.fail(await platform.lease("hold#confirm"), "REJECTED", outcome="failed")
+    await platform.scan()
+    return run, await active(platform, run.id)
+
+
+async def retried_and_never_claimed(platform, run, incident) -> dict[str, Any]:
+    """A person tries the confirm again and no worker claims it before its time passes: the incident opens again."""
+    await resolve(platform, incident, "retry_safe")
+    await platform.execute(
+        "UPDATE task_intents SET payload=jsonb_set(payload,'{deadline}',"
+        "to_jsonb(cast((clock_timestamp()-interval '1 second') AS text))) "
+        "WHERE run_id=:run AND node_id='hold#confirm'",
+        run=run.id,
+    )
+    await platform.scan()
+    return await active(platform, run.id)
+
+
+async def age(platform, incident) -> tuple[datetime, bool]:
+    [row] = await platform.query(
+        "SELECT opened_at,opened_at_estimated FROM incident_facts WHERE incident_id=:id", id=incident["id"]
+    )
+    return row["opened_at"], row["opened_at_estimated"]
+
+
+async def opened_long_ago(platform, incident) -> datetime:
+    await platform.execute(
+        "UPDATE incident_facts SET opened_at=opened_at-interval '1 day',opened_at_estimated=true WHERE incident_id=:id",
+        id=incident["id"],
+    )
+    return (await age(platform, incident))[0]
+
+
+async def test_a_step_that_failed_beside_the_decision_can_be_retried(platform):
+    steps = [transaction(hold(), beside(submit(), LOOKUP))]
+    run = await platform.start(await platform.publish(workflow("move", steps)))
+    await platform.complete(await platform.lease("hold"))
+    deciding = await platform.lease("submit")
+    # The read's failure was reported and handled, so its first incident opened and closed while the order decided.
+    await platform.fail(await platform.lease("lookup"), "REJECTED", outcome="failed")
+    await platform.scan()
+    assert await platform.query("SELECT 1 FROM incidents WHERE run_id=:run AND status='active'", run=run.id) == []
+    await platform.complete(deciding)
+    incident = await active(platform, run.id)
+    assert (incident["incident_key"], incident["code"]) == ("lookup:1", "WV-TXN-AFTER-PIVOT-STUCK")
+    assert incident["origin_code"] == "REJECTED"
+    await resolve(platform, incident, "retry_safe")
+    await platform.complete(await platform.lease("hold#confirm"))
+    await platform.complete(await platform.lease("lookup"))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+    assert (await platform.record(run.id))["state"] == "completed"
+
+
+async def test_a_failure_deferred_behind_another_doubt_can_be_retried(platform):
+    steps = [transaction(hold(), submit(), beside(NOTIFY, {**NOTIFY, "id": "notify2"}))]
+    run = await platform.start(await platform.publish(workflow("move", steps)))
+    for key in ("hold", "submit", "hold#confirm"):
+        await platform.complete(await platform.lease(key))
+    first, second = await platform.lease("notify"), platform.leased.pop("notify2")
+    for lease in (first, second):
+        await platform.fail(lease, "REJECTED", outcome="failed")
+    await platform.scan()
+    incident = await active(platform, run.id)
+    await resolve(platform, incident, "retry_safe")
+    # The other failure waited behind the first, and now it is what holds the run.
+    other = await active(platform, run.id)
+    assert {incident["incident_key"], other["incident_key"]} == {"notify:1", "notify2:1"}
+    await resolve(platform, other, "retry_safe")
+    await platform.complete(await platform.lease("notify"))
+    await platform.complete(platform.leased.pop("notify2"))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+
+
+async def test_a_retried_confirm_nobody_claims_can_be_retried_again(platform):
+    run, incident = await confirm_stuck(platform)
+    again = await retried_and_never_claimed(platform, run, incident)
+    assert (again["id"], again["code"]) == (incident["id"], "WV-TXN-CONFIRM-STUCK")
+    assert again["revision"] > incident["revision"]
+    assert (again["actor_id"], again["resolved_at"], again["resolution"]) == (None, None, None)
+    assert again["origin_code"] == "WV-TASK-DEADLINE"
+    # A dialog that still shows the first time is refused.
+    with pytest.raises(CatalogError) as refused:
+        await resolve(platform, incident, "retry_safe")
+    assert (refused.value.status, refused.value.code) == (409, "WV-INCIDENT-REVISION")
+    await resolve(platform, again, "retry_safe")
+    await platform.complete(await platform.lease("hold#confirm"))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+    # Both decisions are still on record.
+    for table, column in (("incident_resolution_receipts", "incident_id"), ("access_audit", "target")):
+        rows = await platform.query(
+            f"SELECT 1 FROM {table} WHERE {column}::text=:id"
+            + (" AND action='incident.resolve'" if table == "access_audit" else ""),
+            id=str(incident["id"]),
+        )
+        assert len(rows) == 2, table
+
+
+async def test_a_row_that_opens_again_starts_its_age_again(platform):
+    run, incident = await confirm_stuck(platform)
+    before = await opened_long_ago(platform, incident)
+    again = await retried_and_never_claimed(platform, run, incident)
+    [opened] = await platform.query(
+        "SELECT created_at FROM run_events WHERE run_id=:run AND type='step_failed' ORDER BY sequence DESC LIMIT 1",
+        run=run.id,
+    )
+    assert await age(platform, again) == (opened["created_at"], False)
+    assert (await age(platform, again))[0] > before
+
+
+async def test_a_failure_that_puts_a_transaction_in_doubt_keeps_the_age_of_its_row(platform):
+    run = await platform.start(await platform.publish(workflow("move", [transaction(hold(), submit())])))
+    for key in ("hold", "submit"):
+        await platform.complete(await platform.lease(key))
+    await platform.fail(await platform.lease("hold#confirm"), "REJECTED", outcome="failed")
+    failed = await active(platform, run.id)
+    before = await opened_long_ago(platform, failed)
+    await platform.scan()
+    stuck = await active(platform, run.id)
+    assert (stuck["id"], failed["code"], stuck["code"]) == (failed["id"], "WV-TASK-FAILED", "WV-TXN-CONFIRM-STUCK")
+    assert await age(platform, stuck) == (before, True)
+
+
+async def test_pausing_a_run_opens_the_row_of_an_incident_nobody_could_resolve(platform):
+    from firefly_weave.contracts.human_tasks import ManualControlRequest
+
+    run, incident = await confirm_stuck(platform)
+    # An earlier version left the state with an incident no row showed.
+    await platform.execute("UPDATE incidents SET status='closed' WHERE id=:id", id=incident["id"])
+    await platform.runtime.manual_control(
+        platform.actor,
+        platform.scope,
+        run.id,
+        ManualControlRequest(reason="look", expected_revision=0),
+        str(uuid4()),
+        paused=True,
+        context=AuditContext(),
+    )
+    again = await active(platform, run.id)
+    assert (again["id"], again["code"]) == (incident["id"], "WV-TXN-CONFIRM-STUCK")
+    await resolve(platform, again, "retry_safe")

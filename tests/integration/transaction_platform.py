@@ -281,6 +281,14 @@ class Platform(SimpleNamespace):
         )
         return rows[0]
 
+    async def shows_every_incident(self) -> None:
+        """A run's incident rows are active exactly while its state holds them, so a person can decide each of them."""
+        for row in await self.query(
+            "SELECT r.id,ARRAY(SELECT jsonb_object_keys(coalesce(r.state->'incidents','{}'))) AS held,ARRAY("
+            "SELECT i.incident_key FROM incidents i WHERE i.run_id=r.id AND i.status='active') AS shown FROM runs r"
+        ):
+            assert sorted(row["shown"]) == sorted(row["held"]), row["id"]
+
     async def expire(self, lease) -> None:
         """The worker went silent: its lease expired."""
         await self.execute(

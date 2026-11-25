@@ -27,7 +27,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 async def test_a_transaction_commits_and_confirms_its_reservation_with_one_key_per_phase(platform):

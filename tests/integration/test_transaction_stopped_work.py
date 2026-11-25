@@ -45,7 +45,9 @@ LOOKUP = {
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 @pytest.fixture
