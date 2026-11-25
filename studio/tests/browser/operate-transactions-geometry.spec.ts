@@ -939,3 +939,41 @@ test.describe("at 1440x900", () => {
     );
   });
 });
+
+test.describe("at 360x640 touch", () => {
+  test.use({
+    viewport: { width: 360, height: 640 },
+    hasTouch: true,
+    timezoneId: "UTC",
+  });
+
+  test("the way to the first of several in doubt starts each of its lines at the button's edge", async ({
+    page,
+  }) => {
+    const platform = await transactionsPlatform(page, {
+      capabilities: reconciler,
+    });
+    const views = platform.transactions[runs.loop];
+    const doubt = views.find((view) => view.state === "in_doubt")!;
+    platform.transactions[runs.loop] = [
+      ...views,
+      { ...doubt, instance_key: "move[6]", iteration: [6] },
+    ];
+    await openRunDetail(page, runs.loop);
+    const steps = page.locator(".incident-steps");
+    const { x: edge } = await box(
+      steps.getByRole("button", { name: "Open first incident" }),
+    );
+    const lines = await steps
+      .getByRole("button", { name: "Go to the first transaction in doubt" })
+      .evaluate((link) => {
+        const words = document.createRange();
+        words.selectNodeContents(link);
+        return [...words.getClientRects()]
+          .filter(({ width }) => width > 1)
+          .map(({ left }) => left);
+      });
+    expect(lines.length).toBeGreaterThan(1);
+    for (const left of lines) expect(left).toBeCloseTo(edge, 0);
+  });
+});

@@ -117,6 +117,9 @@ h3 {
   min-height: var(--control-md);
   margin-top: var(--space-3);
 }
+.incident-steps .text-link {
+  text-align: start;
+}
 @media (max-width: 767px), (pointer: coarse) {
   .incident-steps,
   .incident-steps .text-link {
