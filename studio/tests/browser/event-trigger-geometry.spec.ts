@@ -408,6 +408,75 @@ for (const size of SIZES)
       await expectNoPageScroll(page);
     });
 
+    test("a later step's fields: the value gives way first, then the type, then the name", async ({
+      page,
+    }) => {
+      const details = await openNotifyTeam(page, {
+        spec: {
+          steps: [
+            {
+              id: "send",
+              kind: "transform",
+              value: {
+                object: { key: { ref: "/input/transaction/business_key" } },
+              },
+            },
+          ],
+        },
+      });
+      await openEventTrigger(page, details);
+      await pane(details, "Test event");
+      await details.dialog
+        .getByRole("button", { name: "Generate sample" })
+        .click();
+      await expect(
+        details.dialog.getByRole("group", { name: "The test event" }),
+      ).toBeVisible();
+      await details.close();
+      await details.openWithKeyboard("send");
+      await pane(details, "Input");
+      const rows = details.dialog
+        .locator("weave-input-pane .data-row")
+        .filter({ has: page.locator(":scope > .data-sample") });
+      await expect(rows.filter({ hasText: "event_id" })).toBeVisible();
+      await expect.poll(() => rows.count()).toBeGreaterThan(10);
+      const read = await rows.evaluateAll((items) =>
+        items
+          .filter((item) => item.getClientRects().length)
+          .map((item) => {
+            // A fraction of a pixel short already draws an ellipsis.
+            const part = (name: string) => {
+              const found = item.querySelector(`.data-${name}`);
+              if (!found) return { cut: false, width: 0 };
+              const text = document.createRange();
+              text.selectNodeContents(found);
+              const { width } = found.getBoundingClientRect();
+              return {
+                cut: text.getBoundingClientRect().width > width + 0.001,
+                width,
+              };
+            };
+            return {
+              name: item.querySelector(".data-key")!.textContent!.trim(),
+              key: part("key"),
+              kind: part("kind"),
+              sample: part("sample"),
+            };
+          }),
+      );
+      expect(
+        read.filter((row) => row.name.length <= 12 && row.key.cut),
+        "names up to 12 characters show whole",
+      ).toEqual([]);
+      // A type is cut only once the value has gone, a name only once both have.
+      expect(
+        read.filter((row) => row.kind.cut && row.sample.width > 8),
+      ).toEqual([]);
+      expect(read.filter((row) => row.key.cut && row.kind.width > 8)).toEqual(
+        [],
+      );
+    });
+
     test("the tabs, and the dot of a stop still owed", async ({ page }) => {
       const opened = await openConnected(page, {
         declaration: WIDER,

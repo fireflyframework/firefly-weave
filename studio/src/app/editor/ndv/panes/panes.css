@@ -377,7 +377,10 @@ weave-input-pane .pane-count {
 .data-mapped {
   color: var(--success-ink);
 }
-/* A row with a value stays on one line: the value gives way first, then the name. */
+/* A row with a value stays on one line: the value gives way first, then the
+   type, then the name. Each gives up all its width before the next one does:
+   with factors closer together the next one loses a fraction of a pixel, and
+   its last letters to an ellipsis. */
 .data-row:has(> .data-sample) {
   flex-wrap: nowrap;
 }
@@ -385,13 +388,14 @@ weave-input-pane .pane-count {
   min-width: 0;
 }
 .data-row:has(> .data-sample) > .data-kind {
+  flex-shrink: 1e5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 /* A field's value from the test data, right-aligned and cut on one line. */
 .data-sample {
-  flex: 0 1 auto;
+  flex: 0 1e10 auto;
   margin-inline-start: auto;
   min-width: 0;
   max-width: 50%;
