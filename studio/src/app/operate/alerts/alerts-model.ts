@@ -47,6 +47,10 @@ export interface SignalWords {
   sampled: boolean;
   /** The one series a rule may narrow it to, if any. */
   selector: SelectorKey | null;
+  /** It counts every workflow together, which people may expect to choose. */
+  wholeEnvironment?: boolean;
+  /** What having no data means for it; left out where the general words do. */
+  noData?: string;
 }
 const gauge = (
   name: string,
@@ -133,15 +137,23 @@ export const SIGNAL_WORDS: Record<AlertSignal, SignalWords> = {
     "Platform components degraded",
     "Platform components that are degraded or down, apart from the alert checker.",
   ),
-  "transactions.in_doubt": gauge(
-    "Transactions in doubt",
-    "Transactions waiting for a person to resolve them.",
-  ),
-  "transactions.undo_age_seconds": gauge(
-    "Oldest transaction undoing",
-    "How long the oldest transaction still undoing has been open.",
-    "seconds",
-  ),
+  "transactions.in_doubt": {
+    ...gauge(
+      "Transactions in doubt",
+      "Transactions waiting for a person to resolve them.",
+    ),
+    wholeEnvironment: true,
+  },
+  "transactions.undo_age_seconds": {
+    ...gauge(
+      "Oldest transaction undoing",
+      "How long the oldest transaction still undoing has been open.",
+      "seconds",
+    ),
+    wholeEnvironment: true,
+    noData:
+      "With nothing undoing, the signal has no data and the rule stays as it is.",
+  },
 };
 const isKnown = (signal: string): signal is AlertSignal =>
   (alertSignals as readonly string[]).includes(signal);
@@ -430,6 +442,7 @@ export function previewWords(
       value: "—",
       status,
       detail:
+        signalWords(rule.signal)?.noData ??
         "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
     };
   }

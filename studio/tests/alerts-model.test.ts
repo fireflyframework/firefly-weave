@@ -25,7 +25,9 @@ import {
   readAlert,
   readRule,
   type Alert,
+  type AlertPreview,
   type AlertRule,
+  type AlertRuleDraft,
 } from "../src/app/operate/alerts/alerts-api";
 import {
   SIGNAL_WORDS,
@@ -40,6 +42,7 @@ import {
   fromPercent,
   nameParts,
   notificationText,
+  previewWords,
   recipientProblem,
   resolvedText,
   ruleDraft,
@@ -272,6 +275,37 @@ describe("firing and resolved alerts", () => {
       "Failed: a member hasn't set an alert address",
     );
     expect(words("failed", "something_new")).toBe("Failed");
+  });
+});
+
+describe("a preview", () => {
+  const draft = (signal: string): AlertRuleDraft => ({
+    ...rules[0],
+    signal,
+    threshold: 60,
+  });
+  const noData: AlertPreview = {
+    value: null,
+    unit: "seconds",
+    condition_met: false,
+    samples: null,
+    evaluated_at: fixture.NOW,
+    no_data_reason: "no_data",
+  };
+
+  it("says what having no data means for a transaction undoing, and in general for any other signal", () => {
+    expect(
+      previewWords(noData, draft("transactions.undo_age_seconds")),
+    ).toEqual({
+      value: "—",
+      status: "No data: there is nothing to read for this signal yet.",
+      detail:
+        "With nothing undoing, the signal has no data and the rule stays as it is.",
+    });
+    for (const signal of ["queue.oldest_ready_seconds", "runs.newer_ratio"])
+      expect(previewWords(noData, draft(signal)).detail, signal).toBe(
+        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+      );
   });
 });
 

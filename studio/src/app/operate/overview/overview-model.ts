@@ -113,6 +113,12 @@ export interface IncidentsSection {
   active: number;
   opened_24h: number;
 }
+export interface TransactionsSection {
+  in_doubt: number;
+  undoing: number;
+  /** Counted from when it opened; left out when nothing is undoing. */
+  oldest_undoing_seconds?: number;
+}
 export interface AttentionItem {
   kind: AttentionKind;
   /** A record ID, or "compatibility" for the platform's verdict. */
@@ -132,6 +138,8 @@ export interface OperationsSummary {
   attention: AttentionItem[] | UnavailableSection;
   /** Servers with run statistics only; test runs left out, failed counts timed-out runs. */
   runs_24h?: RunsDaySection | UnavailableSection;
+  /** Servers with transactions only; read with run.read, test runs left out. */
+  transactions?: TransactionsSection | ForbiddenSection | UnavailableSection;
 }
 export interface RunsDaySection {
   started: number;
@@ -467,6 +475,15 @@ export function slotMeter(
     over,
     text: `${countText(ready)} ready, ${slots}`,
   };
+}
+
+/** The runs with a transaction in doubt: the runs list's Needs attention. */
+export const inDoubtRuns = `${viewPath("runs")}?transaction_state=in_doubt`;
+/** "oldest 12 min": how long the one undoing longest has been open; "" when nothing is. */
+export function oldestUndoing({
+  oldest_undoing_seconds: oldest,
+}: TransactionsSection): string {
+  return oldest === undefined ? "" : `oldest ${seconds(oldest)}`;
 }
 
 /** Where an attention item's record opens; null when it has no record. */

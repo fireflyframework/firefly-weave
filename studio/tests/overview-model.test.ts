@@ -29,11 +29,13 @@ import {
   healthComponents,
   healthStates,
   healthTiles,
+  inDoubtRuns,
   isQuiet,
   keepsStatistics,
   loadFigures,
   loadSeriesQuery,
   loadSparklines,
+  oldestUndoing,
   readSummary,
   sectionOf,
   slotMeter,
@@ -41,6 +43,11 @@ import {
   uptimeSeconds,
   type OperationsSummary,
 } from "../src/app/operate/overview/overview-model";
+import { viewFromPath } from "../src/app/operate/operate-routes";
+import {
+  needsAttention,
+  runsFiltersFromQuery,
+} from "../src/app/operate/runs/runs-model";
 import { statusLabel, statusTone } from "../src/app/status-labels";
 import { pythonAvailable } from "./run-views-oracle";
 
@@ -141,6 +148,7 @@ const full: OperationsSummary = {
     awaiting_approval: 1,
   },
   incidents: { active: 1, opened_24h: 3 },
+  transactions: { in_doubt: 4, undoing: 1, oldest_undoing_seconds: 720 },
   attention: [
     {
       kind: "job",
@@ -178,7 +186,17 @@ const partial: OperationsSummary = {
   load: { state: "unavailable" },
   targets: { state: "forbidden" },
   incidents: { state: "forbidden" },
+  transactions: { state: "forbidden" },
   attention: { state: "unavailable" },
+};
+/** Nothing undoing, and a transactions section that timed out, as the platform sends each. */
+const settled: OperationsSummary = {
+  ...full,
+  transactions: { in_doubt: 0, undoing: 0 },
+};
+const unread: OperationsSummary = {
+  ...full,
+  transactions: { state: "unavailable" },
 };
 
 const root = resolve(import.meta.dirname, "../..");
@@ -506,6 +524,28 @@ describe("Overview model", () => {
     ]);
   });
 
+  it("says how long the transaction undoing longest has been open, when it is known", () => {
+    const oldest = (oldest_undoing_seconds?: number) =>
+      oldestUndoing({
+        in_doubt: 0,
+        undoing: 1,
+        ...(oldest_undoing_seconds === undefined
+          ? {}
+          : { oldest_undoing_seconds }),
+      });
+    expect(oldest(720)).toBe("oldest 12 min");
+    expect(oldest(0)).toBe("oldest 0 s");
+    expect(oldest(8_040)).toBe("oldest 2 h 14 min");
+    expect(oldest()).toBe("");
+  });
+
+  it("links to the runs with a transaction in doubt, as the runs list's Needs attention", () => {
+    expect(inDoubtRuns).toBe("/operate/runs?transaction_state=in_doubt");
+    const { pathname, search } = new URL(inDoubtRuns, "http://studio");
+    expect(viewFromPath(pathname)).toEqual({ view: "runs", id: "" });
+    expect(needsAttention(runsFiltersFromQuery(search))).toBe(true);
+  });
+
   it("calls an environment quiet only when every figure it may read is zero", () => {
     expect(isQuiet(full)).toBe(false);
     const zero: OperationsSummary = {
@@ -536,7 +576,7 @@ describe("Overview model", () => {
   it.skipIf(!pythonAvailable)(
     "mirrors the platform's summary answer exactly",
     () => {
-      const vocabularies = validateWithPython([full, partial]);
+      const vocabularies = validateWithPython([full, partial, settled, unread]);
       expect(vocabularies).toEqual({
         states: [...healthStates],
         components: [...healthComponents],

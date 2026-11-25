@@ -101,9 +101,9 @@ const selectorLabels = {
             <select
               id="rule-signal"
               [attr.aria-describedby]="
-                p.signal
-                  ? 'rule-signal-problem rule-signal-hint'
-                  : 'rule-signal-hint'
+                (p.signal ? 'rule-signal-problem ' : '') +
+                'rule-signal-hint' +
+                (words()?.wholeEnvironment ? ' rule-whole' : '')
               "
               [attr.aria-invalid]="p.signal ? 'true' : null"
               (change)="setSignal(value($event))"
@@ -178,6 +178,13 @@ const selectorLabels = {
                   <weave-icon name="failCircle" [size]="16" />{{ p.selector }}
                 </p>
               }
+            </div>
+          } @else if (words()?.wholeEnvironment) {
+            <div class="field">
+              <span class="field-label">Workflow</span>
+              <p class="hint" id="rule-whole">
+                Every workflow: this signal counts the whole environment.
+              </p>
             </div>
           }
         </div>
