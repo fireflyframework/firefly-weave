@@ -2477,8 +2477,8 @@ def _advance_owned(
                 lift_if_clear()
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "incident_opened" and event.data.get("node_id") == HELD_NODE:
-                # A run too large to undo its transactions holds them, open, behind an in-doubt incident that only a
-                # force cancel closes. It is recorded without the kernel (the run is past its limits); replay agrees.
+                # A run too large to undo its transactions holds them, open, behind an in-doubt incident that only its
+                # Force end closes. It is recorded without the kernel (the run is past its limits); replay agrees.
                 if (
                     event.data.get("code") != HELD_CODE
                     or not unsettled(current_state)

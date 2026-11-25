@@ -53,8 +53,8 @@ class RecordedResolution(ContractModel):
     evidence_reference: str | None = Field(default=None, min_length=1, max_length=2000)
     # The workflow run whose resolve step applied this resolution; only the platform sets it.
     workflow_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
-    # It closed an incident an earlier decision left nothing to decide about, and dispatched nothing; only the
-    # platform sets it.
+    # It closed an incident an earlier decision left nothing to decide about. A Retry of one dispatches nothing;
+    # terminate ends the run, which can still undo other transactions. Only the platform sets it.
     leftover: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("reason", "evidence_reference")

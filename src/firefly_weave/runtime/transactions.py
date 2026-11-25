@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 # step that can't be undone while the transaction decides.
 type DeadlineKind = Literal["hold", "settle", "decide"]
 DEADLINE_SEGMENTS: Final = frozenset({"hold", "settle", "decide"})
-# A run too large to undo its transactions holds them behind one in-doubt incident at this key until a force cancel.
+# A run too large to undo its transactions holds them behind one in-doubt incident at this key until its Force end.
 HELD_NODE: Final = "@transactions"
 HELD_INCIDENT: Final = f"{HELD_NODE}:0"
 HELD_CODE: Final = "WV-TXN-RUN-OVERSIZED"

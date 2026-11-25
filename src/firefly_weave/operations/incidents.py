@@ -473,7 +473,7 @@ class IncidentService:
                 if request.kind != "terminate" or incident["code"] not in IN_DOUBT_CODES:
                     raise
                 # A run too large for the kernel is force ended in SQL: its transactions end where they are, and the
-                # run stops as a force cancel stops it.
+                # run stops as a cancel without undoing stops it.
                 if failures is not None and marked is not None:
                     failures[:] = marked
                 result = await self._force_end_in_sql(repository, row, event, actor)
