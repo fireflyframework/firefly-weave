@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 /* A transaction's record. Its own width picks the layout: one row per step by
-   default, four columns from 560 px, five from 720 px. */
+   default, on rules, and from 560 px a box with four columns, from 720 px with
+   five. */
 :host {
   display: block;
   min-width: 0;
@@ -36,8 +37,6 @@ weave-icon[data-tone="danger"] {
 .txn-record {
   container: txn-record / inline-size;
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
 }
 /* One row per step: its name left and how it's undone at the right edge, then
    Forward and Undo or confirm side by side, then the key. */
@@ -51,14 +50,16 @@ weave-icon[data-tone="danger"] {
   align-items: start;
   gap: var(--space-1) var(--space-4);
   min-width: 0;
-  padding: var(--space-3);
+  padding: var(--space-3) 0;
   font: var(--type-small);
   color: var(--text);
 }
 .txn-step + .txn-step {
   border-top: 1px solid var(--line);
 }
+/* A stuck step's tint keeps its words off its edge. */
 .txn-step.stuck {
+  padding-inline: var(--space-2);
   background: var(--danger-bg);
 }
 .txn-head {
@@ -119,9 +120,10 @@ weave-icon[data-tone="danger"] {
   font: var(--type-caption);
   color: var(--muted);
 }
-/* "Undo failed · 3 tries" on one line. */
-:is(.c-forward, .c-undo) .step-note::before {
-  content: "· ";
+/* "Undo failed · 3 tries": the dot stays with the word, so no line starts with it. */
+.step-word:has(+ .step-note)::after {
+  content: "·";
+  color: var(--muted);
 }
 .mono {
   font: var(--type-mono);
@@ -153,7 +155,9 @@ weave-icon[data-tone="danger"] {
   grid-column: 1 / -1;
 }
 @container txn-record (min-width: 560px) {
-  .txn-step {
+  /* The steps draw the box: a record can't ask its own width. */
+  .txn-step,
+  .txn-step.stuck {
     grid-template-columns:
       minmax(96px, 1fr) 118px minmax(140px, 1.4fr)
       minmax(150px, 1.3fr);
@@ -161,6 +165,16 @@ weave-icon[data-tone="danger"] {
       "step how forward key"
       "step how undo key";
     gap: var(--space-1) var(--space-2);
+    padding: var(--space-3);
+    border-inline: 1px solid var(--line);
+  }
+  .txn-step:first-child {
+    border-top: 1px solid var(--line);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  }
+  .txn-step:last-child {
+    border-bottom: 1px solid var(--line);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   }
   .txn-head {
     display: grid;
@@ -186,7 +200,7 @@ weave-icon[data-tone="danger"] {
   :is(.c-forward, .c-undo) .step-note {
     flex-basis: 100%;
   }
-  :is(.c-forward, .c-undo) .step-note::before {
+  .step-word:has(+ .step-note)::after {
     content: none;
   }
 }
@@ -211,7 +225,8 @@ weave-icon[data-tone="danger"] {
   }
 }
 @container txn-record (min-width: 720px) {
-  .txn-step {
+  .txn-step,
+  .txn-step.stuck {
     grid-template-columns:
       minmax(110px, 1fr) 128px minmax(96px, 0.9fr) minmax(150px, 1.2fr)
       minmax(170px, 1.4fr);
@@ -230,18 +245,9 @@ weave-icon[data-tone="danger"] {
 }
 
 /* One row per step whatever the width: a container of another name, which no
-   column layout asks, and rules instead of a box. A stuck step's tint keeps
-   its words off its edge. */
+   column layout asks. */
 .txn-record.step-rows {
   container: step-rows / inline-size;
-  border: 0;
-  border-radius: 0;
-}
-.step-rows .txn-step {
-  padding: var(--space-3) 0;
-}
-.step-rows .txn-step.stuck {
-  padding-inline: var(--space-2);
 }
 /* Too narrow for both: Undo or confirm goes under Forward. */
 @container txn-record (width < 300px) {

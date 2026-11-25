@@ -176,10 +176,27 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* Who resolved it starts at the left as every other fact, and when follows. */
+.txn-resolution .text-link {
+  text-align: start;
+}
+.txn-resolution time {
+  white-space: nowrap;
+}
 
 @container run-transactions (max-width: 559px) {
   .txn-block {
     padding: var(--space-3);
+  }
+}
+/* On a phone each fact stands over its value, so who resolved it and when share
+   a line. */
+@container run-transactions (max-width: 359px) {
+  .txn-resolution {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .txn-resolution dd + dt {
+    margin-top: var(--space-1);
   }
 }
 @media (pointer: coarse), (max-width: 767px) {

@@ -285,6 +285,24 @@ for (const size of sizes)
           ".c-step strong, .c-how, .step-word, .step-note, .c-key code, .txn-meta span, .txn-cause span, .txn-resolution dd, .status-pill",
         ),
       ).toEqual([]);
+      // "Can't be undone" is one line at every width.
+      expect(
+        await transactionsOf(page)
+          .locator(".txn-step:not(.txn-head) .c-how")
+          .evaluateAll((cells) =>
+            cells.map((cell) => {
+              const range = document.createRange();
+              range.selectNodeContents(cell.lastChild!);
+              return range.getClientRects().length;
+            }),
+          ),
+      ).toEqual(Array(13).fill(1));
+      // Who resolved it, and when, on one line from the left.
+      const by = block(page, "move[5]").locator(".txn-resolution dd").nth(1);
+      const link = await box(by.getByRole("button"));
+      const time = await box(by.locator("time"));
+      expect(link.x).toBeCloseTo((await box(by)).x, 0);
+      expect(time.y + time.height / 2).toBeCloseTo(link.y + link.height / 2, 0);
       // The whole run ID is in each key, which wraps inside its cell.
       const key = block(page, "move[3]").locator(".txn-step.stuck .c-key code");
       await expect(key).toHaveText(`${runs.loop}:hold[3]#cancel`);
@@ -523,7 +541,7 @@ for (const size of sizes)
         await expectInView(
           page,
           high(page).getByRole("heading", { level: 2 }),
-          high(page).getByText("Transactions in doubt. Other systems"),
+          high(page).getByText("Transactions that need a person."),
           first,
         );
       // Its whole row opens an incident.
@@ -691,8 +709,38 @@ test.describe("on a record's own width", () => {
       [320, 2],
     ] as const) {
       await widen(width);
-      for (const row of await rows.all())
+      for (const row of await rows.all()) {
         expect(await columnsOf(row), `${width} px`).toBe(columns);
+        // In columns a box holds the steps; one row per step has rules only,
+        // and a stuck step's tint its own 8 px.
+        const stuck = /\bstuck\b/.test((await row.getAttribute("class")) ?? "");
+        await expect(row).toHaveCSS(
+          "border-left-width",
+          columns > 2 ? "1px" : "0px",
+        );
+        await expect(row).toHaveCSS(
+          "padding-left",
+          columns > 2 ? "12px" : stuck ? "8px" : "0px",
+        );
+      }
+      // The dot between a word and its tries stays with the word, so no line
+      // starts with it; in columns the tries stand under the word.
+      expect(
+        await section
+          .locator(".step-note")
+          .evaluateAll((notes) =>
+            notes
+              .filter((note) => /tries$/.test(note.textContent!.trim()))
+              .map((note) => [
+                getComputedStyle(note.previousElementSibling!, "::after")
+                  .content,
+                getComputedStyle(note, "::before").content,
+              ]),
+          ),
+        `${width} px`,
+      ).toEqual(
+        Array(3).fill(columns > 2 ? ["none", "none"] : ['"·"', "none"]),
+      );
       for (const part of [...(await rows.all()), record])
         expect(
           await part.evaluate((node) => node.scrollWidth - node.clientWidth),
@@ -757,9 +805,7 @@ test.describe("at 1440x900", () => {
     await asked.getByLabel("Reason").fill("Both systems agree");
     await asked.getByLabel("Evidence reference").fill("OPS-2304");
     await asked.getByRole("button", { name, exact: true }).click();
-    const refusal = asked.getByText(
-      "The reconciliation record doesn't fit the transaction",
-    );
+    const refusal = asked.getByText("The platform refused this record.");
     await expect(refusal).toBeVisible();
     await expectInView(
       page,
