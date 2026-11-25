@@ -254,10 +254,15 @@ class RecoveryService:
                 )
                 or task["run_id"] != row["id"]
                 or attempt["task_id"] != task["id"]
-                or (row["state"]["status"] not in TERMINAL and task["node_id"] not in row["state"]["active"])
                 or task["payload"]["node_id"] != task["node_id"]
             ):
                 raise AccessDenied()
+            if row["state"]["status"] not in TERMINAL and task["node_id"] not in row["state"]["active"]:
+                # The run no longer waits for this step (a person ended its transaction, or its branch was stopped):
+                # the attempt is retired with nothing to report, so recovery goes on with other work.
+                await self.tasks.retire_attempt(tx, identifier, attempt["generation"])
+                await repository.task_status(identifier, "cancelled")
+                continue
             view = view_of(row)
             # Another run-wide incident must never be cleared by task recovery.
             node_incident = view.state.incidents.get(f"{task['node_id']}:{attempt['generation']}")

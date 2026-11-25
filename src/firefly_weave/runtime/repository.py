@@ -376,7 +376,8 @@ class RuntimeRepository:
 
                         # A review nobody answered by its own deadline closes as expired, with its audit row.
                         await expire_task(self, view.id, command.node_id)
-                    await settle_work(self, view.id, command.node_id, event.timestamp)
+                    awaited = command.node_id in result.state.active
+                    await settle_work(self, view.id, command.node_id, event.timestamp, awaited=awaited)
             await project_transactions(self, view, result, event)
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":

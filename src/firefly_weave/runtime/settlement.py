@@ -141,11 +141,12 @@ def only_settlement(result: Transition) -> bool:
     return True
 
 
-async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime) -> None:
-    """A transaction going back stops the work of ``key``.
+async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime, *, awaited: bool) -> None:
+    """A transaction going back, or one a person ended, stops the work of ``key``.
 
-    A participant's own task becomes settlement work: a worker may finish it while the run is paused, and an unclaimed
-    one is revoked and later reported as skipped. A step the transaction no longer needs is cancelled and its lease
+    A participant's own task whose result the run still waits for (``awaited``) becomes settlement work: a worker may
+    finish it while the run is paused, and an unclaimed one is revoked and later reported as skipped. A step the
+    transaction no longer needs, and a participant's task the run no longer waits for, is cancelled and its lease
     revoked. A participant's call that has not started is cancelled with nothing applied; a started one asks its
     child run to stop and keeps its result for the transaction. Human tasks close and deadlines are consumed.
     """
@@ -155,7 +156,7 @@ async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at:
         f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node FOR UPDATE", run=run_id, node=key
     )
     for task in tasks:
-        if "transaction" in task["payload"]:
+        if awaited and "transaction" in task["payload"]:
             status = "revoked" if task["status"] == "ready" else task["status"]
             await repository.execute(
                 task_fact_update(f"UPDATE task_intents SET settlement=true,status=:status WHERE {SCOPE} AND id=:id"),
@@ -165,6 +166,9 @@ async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at:
             )
         elif task["status"] in _WORKER_TASK_STATUSES:
             await revoke_attempts(repository.tx, run_id, [task], control_failure=True)
+            await repository.task_status(task["id"], "cancelled", at=at)
+        elif task["status"] == "revoked":
+            # No worker had claimed it, and its run no longer waits for the report.
             await repository.task_status(task["id"], "cancelled", at=at)
     calls = await repository.rows(
         f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
