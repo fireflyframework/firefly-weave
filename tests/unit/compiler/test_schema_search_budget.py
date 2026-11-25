@@ -263,23 +263,28 @@ def test_a_runaway_search_spends_little_cpu_time_and_never_waits_for_the_interpr
         other.join()
 
 
-@pytest.mark.parametrize(("length", "lets_go"), [(32_768, False), (32_769, True)])
-def test_a_search_keeps_the_interpreter_up_to_its_size_bound(length, lets_go):
+def test_a_search_keeps_the_interpreter_up_to_its_size_bound_and_not_past_it():
     go, ran = threading.Event(), threading.Event()
     other = threading.Thread(target=lambda: go.wait() and ran.set())
     interval, pattern = sys.getswitchinterval(), "(a|aa)+$"
+
+    def runaway(length: int) -> None:
+        with pytest.raises(schemas._Failure, match="RESOURCE_LIMIT"):
+            schemas._Budget(SchemaLimits()).search(pattern, "a" * (length - 1) + "!")
+
     # From here on only a search that lets go of the interpreter lets the other thread run.
     sys.setswitchinterval(60)
     try:
         other.start()
         go.set()
+        for _ in range(20):
+            runaway(32_768)
+        assert not ran.is_set()
         # A busy machine may not give the other thread a processor during the first search.
-        for _ in range(500 if lets_go else 20):
-            with pytest.raises(schemas._Failure, match="RESOURCE_LIMIT"):
-                schemas._Budget(SchemaLimits()).search(pattern, "a" * (length - 1) + "!")
-            if ran.is_set():
-                break
-        assert ran.is_set() == lets_go
+        for _ in range(500):
+            if not ran.is_set():
+                runaway(32_769)
+        assert ran.is_set()
     finally:
         sys.setswitchinterval(interval)
         other.join()
