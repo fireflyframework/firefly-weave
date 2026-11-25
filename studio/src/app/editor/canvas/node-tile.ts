@@ -66,6 +66,8 @@ export interface TileView {
   step: boolean;
   kind: string;
   shape: TileShape;
+  /** A label that keeps its whole column at every zoom (a platform event's). */
+  wideLabel?: true;
   /** The same object while the layout stays the same. */
   position: Point;
   width: number;
@@ -254,7 +256,8 @@ export class NodeTile {
     return labelScale(this.zoom());
   }
   labelWidth() {
-    return labelWidth(this.zoom(), this.view().shape);
+    const { shape, wideLabel } = this.view();
+    return labelWidth(this.zoom(), shape, wideLabel);
   }
   focusWidth() {
     return Math.ceil(2 / this.zoom());

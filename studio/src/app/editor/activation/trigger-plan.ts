@@ -27,11 +27,16 @@ SPDX-License-Identifier: Apache-2.0
 import { missingData } from "../../forms/core/form-model";
 import { jsonEqual, type Json, type JsonObject } from "../../forms/core/json";
 import type { TriggerIntent } from "../state/canvas-sidecar";
+import type { EventDeclaration } from "../triggers/event-trigger";
 import { describeCalendar } from "../triggers/schedule";
+import { eventBindingPlan, type EventRow } from "./event-bindings";
+import { pendingStopsOf, storedId } from "./stored-resources";
 import {
   RESOURCE_KINDS,
+  TOO_MANY_TRIGGERS,
   type ResourceKind,
   type ResourceList,
+  type SetUpKind,
   type TriggerResource,
 } from "./trigger-resources-api";
 
@@ -52,6 +57,8 @@ export interface TriggerPlanInput {
   workflow: string;
   /** The version being activated. */
   version: { version: string; inputSchema: JsonObject };
+  /** The platform events the version declares; null or left out when it reacts to none. */
+  declaration?: EventDeclaration | null;
   environmentId: string;
   /** The email connection chosen in the dialog, when there is one. */
   emailConnection?: { revisionId: string; name: string; mailbox?: string };
@@ -60,6 +67,10 @@ export interface TriggerPlanInput {
 export type TriggerRowKind =
   | "create"
   | "retarget"
+  /** A platform event trigger whose events or source workflows changed. */
+  | "replace"
+  /** A second platform event trigger for the same events. */
+  | "duplicate"
   | "schedule-move"
   | "blocked"
   | "schedule-input"
@@ -79,14 +90,13 @@ export interface TriggerRow {
   from?: string;
   /** The version it moves to. */
   to?: string;
-  /** Left behind only: whether to stop it after the activation; off until the person ticks it. */
+  /** Whether to stop it after the activation: off until the person ticks it, on for a duplicate. */
   stop?: boolean;
+  /** A platform event trigger's row: what activating does to it, and how. */
+  event?: EventRow;
 }
 
-export const TOO_MANY_TRIGGERS =
-  "Too many triggers to check here. Use the CLI.";
-
-const NOUNS: Record<ResourceKind, string> = {
+const NOUNS: Record<SetUpKind, string> = {
   webhook: "webhook",
   schedule: "schedule",
   broker: "Kafka trigger",
@@ -105,14 +115,6 @@ const describable = (intent: TriggerIntent) =>
     (key) => text(intent, key) !== undefined,
   );
 
-/** The resource ID a trigger choice stored for this environment after creating it. */
-function storedId(intent: TriggerIntent, environmentId: string) {
-  const resources = intent["resources"];
-  if (typeof resources !== "object" || resources === null) return undefined;
-  const id = (resources as Record<string, unknown>)[environmentId];
-  return typeof id === "string" ? id : undefined;
-}
-
 const scheduleName = (cron: string | undefined) =>
   cron ? `'${describeCalendar(cron)}'` : "without a calendar yet";
 
@@ -125,6 +127,48 @@ export function title(resource: TriggerResource, cron?: string) {
 
 const capitalized = (words: string) =>
   words.charAt(0).toUpperCase() + words.slice(1);
+
+/** The row with Stop it as the person left it. */
+export const withStop = (row: TriggerRow, stop: boolean): TriggerRow => ({
+  ...row,
+  stop,
+  ...(row.event && "stop" in row.event
+    ? { event: { ...row.event, stop } }
+    : {}),
+});
+
+/** The platform event trigger's rows: the declared one first when the version declares one. */
+function eventRows(
+  input: TriggerPlanInput,
+  resources: ResourceList,
+): { declared: TriggerRow[]; others: TriggerRow[] } {
+  const intent = input.intents.find((item) => item.kind === "event");
+  const declaration = input.declaration ?? null;
+  const rows = eventBindingPlan({
+    declaration,
+    workflow: input.workflow,
+    version: input.version.version,
+    storedId: intent && storedId(intent, input.environmentId),
+    pendingStops: intent ? pendingStopsOf(intent, input.environmentId) : [],
+    bindings: resources.items.map(
+      (item) => (item as TriggerResource<"event">).view,
+    ),
+    activations: input.activations,
+  }).map(
+    (event): TriggerRow => ({
+      kind: event.kind,
+      ...(intent ? { intentId: intent.id } : {}),
+      resourceKind: "event",
+      ...("from" in event ? { from: event.from } : {}),
+      ...("to" in event ? { to: event.to } : {}),
+      ...("stop" in event ? { stop: event.stop } : {}),
+      event,
+      text: event.text,
+    }),
+  );
+  const first = declaration === null ? 0 : 1;
+  return { declared: rows.slice(0, first), others: rows.slice(first) };
+}
 
 /** One row per trigger choice, then the resources left behind, then the CLI hint when a list was too long. */
 export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
@@ -143,7 +187,13 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
   const claimed = new Set<string>();
   const rows: TriggerRow[] = [];
 
-  const match = (intent: TriggerIntent, kind: ResourceKind) => {
+  const read = input.resources.event;
+  const events =
+    read && !read.truncated
+      ? eventRows(input, read)
+      : { declared: [], others: [] };
+
+  const match = (intent: TriggerIntent, kind: SetUpKind) => {
     const candidates = live(kind).filter((item) => !claimed.has(item.id));
     const stored = storedId(intent, input.environmentId);
     const byStored = candidates.find((item) => item.id === stored);
@@ -176,6 +226,10 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
 
   for (const intent of input.intents) {
     if (intent.kind === "manual") continue;
+    if (intent.kind === "event") {
+      rows.push(...events.declared.splice(0));
+      continue;
+    }
     if (intent.kind === "called") {
       rows.push({
         kind: "called",
@@ -184,7 +238,7 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
       });
       continue;
     }
-    const kind: ResourceKind = intent.kind;
+    const kind: SetUpKind = intent.kind;
     if (truncated.has(kind)) continue;
     const resource = match(intent, kind);
     if (resource) claimed.add(resource.id);
@@ -269,8 +323,10 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
     });
   }
 
+  // Declared by the version, with no trigger choice in the draft any more.
+  rows.push(...events.declared);
   for (const kind of RESOURCE_KINDS) {
-    if (truncated.has(kind)) continue;
+    if (truncated.has(kind) || kind === "event") continue;
     for (const resource of live(kind)) {
       if (claimed.has(resource.id)) continue;
       const from = fromOf(resource);
@@ -284,6 +340,7 @@ export function triggerPlan(input: TriggerPlanInput): TriggerRow[] {
       });
     }
   }
+  rows.push(...events.others);
   if (truncated.size) rows.push({ kind: "truncated", text: TOO_MANY_TRIGGERS });
   return rows;
 }

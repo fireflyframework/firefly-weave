@@ -1,0 +1,264 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The header, the stop still owed, then the list: one bordered list whose
+   rows end their first line with the time, over the sentence. Only a row
+   with Open run gives a column to it. */
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.es-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+}
+.es-where {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.es-where strong {
+  font: var(--type-label);
+}
+.es-where span {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.es-updated {
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+}
+/* As step details' other icon buttons: 32 px, 44 px on touch. */
+.es-head .es-refresh {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.es-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--warning-bd);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+  font: var(--type-small);
+  color: var(--text);
+}
+.es-callout > weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning-ink);
+}
+.es-callout[data-tone="danger"] {
+  border-color: var(--danger-bd);
+  background: var(--danger-bg);
+}
+.es-callout[data-tone="danger"] > weave-icon {
+  color: var(--danger-ink);
+}
+.es-callout[data-tone="success"] {
+  border-color: var(--success-bd);
+  background: var(--success-bg);
+}
+.es-callout[data-tone="success"] > weave-icon {
+  color: var(--success-ink);
+}
+.es-callout-text {
+  display: grid;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.es-callout:not([data-tone="success"]) :is(strong, span) {
+  display: block;
+}
+.es-callout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.es-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.es-empty[role="status"] {
+  display: block;
+  font: var(--type-label);
+  color: var(--text);
+}
+.es-empty strong {
+  font: var(--type-label);
+  color: var(--text);
+}
+.es-empty button {
+  margin-top: var(--space-1);
+}
+.es-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  list-style: none;
+}
+.es-row {
+  display: grid;
+  grid-template:
+    "icon lead time" auto
+    "icon detail detail" auto / 16px minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+.es-row.has-run {
+  grid-template:
+    "icon lead time action" auto
+    "icon detail detail action" auto / 16px minmax(0, 1fr) auto 104px;
+}
+.es-row + .es-row {
+  border-top: 1px solid var(--line);
+}
+/* On the lead's line, however long the sentence is. */
+.es-icon {
+  grid-area: icon;
+  align-self: start;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.es-row[data-tone="ok"] .es-icon {
+  color: var(--success-ink);
+}
+.es-row[data-tone="waiting"] .es-icon {
+  color: var(--info-ink);
+}
+.es-row[data-tone="failed"] :is(.es-icon, strong) {
+  color: var(--danger-ink);
+}
+.es-row strong {
+  grid-area: lead;
+  font: var(--type-label);
+  overflow-wrap: anywhere;
+}
+.es-detail {
+  grid-area: detail;
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.es-row time {
+  grid-area: time;
+  align-self: center;
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+}
+.es-action {
+  display: inline-flex;
+  grid-area: action;
+  align-items: center;
+  align-self: center;
+  justify-self: end;
+  gap: 6px;
+}
+:is(.es-callout, .es-empty) button,
+.es-action {
+  min-height: 32px;
+}
+.es-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.es-hint {
+  font: var(--type-small);
+  color: var(--muted);
+}
+@keyframes es-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.es-spin {
+  animation: es-spin 1.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .es-spin {
+    animation: none;
+  }
+}
+/* On a phone the time goes under the sentence and Open run is an icon. */
+@media (max-width: 767px) {
+  .es-updated {
+    display: none;
+  }
+  .es-row {
+    grid-template:
+      "icon lead" auto
+      "icon detail" auto
+      "icon time" auto / 16px minmax(0, 1fr);
+    min-height: 64px;
+  }
+  .es-row.has-run {
+    grid-template:
+      "icon lead action" auto
+      "icon detail action" auto
+      "icon time action" auto / 16px minmax(0, 1fr) 44px;
+  }
+  .es-action {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+  .es-action span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .es-callout-actions button {
+    flex: 1;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :is(.es-callout, .es-empty, .es-foot) button,
+  .es-action {
+    min-height: var(--control-touch);
+  }
+}

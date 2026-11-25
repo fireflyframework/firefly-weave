@@ -55,6 +55,18 @@ import type {
   TriggerIntent,
 } from "./editor/state/canvas-sidecar";
 
+/** Why the last activation failed, in plain language with a support code. */
+export interface ActivationFailure {
+  message: string;
+  code: string;
+  /** It says to close the dialog and activate again: the same request would be refused. */
+  reopen?: true;
+}
+/** What to activate with, and the revision of the activation it replaces. */
+export interface ActivationAsk {
+  bindings: ActivationBindings;
+  replaces: number | undefined;
+}
 export interface ActivationBindings {
   connection_revision_ids: Record<string, string>;
   /** Published connector version ID → release ID, one per connector the workflow calls. */
@@ -121,6 +133,7 @@ function onceEach(api: StudioApi): StudioApi {
   template: `<weave-modal
     [heading]="(activated() ? 'Activated ' : 'Activate ') + workflowName()"
     [wide]="true"
+    [stays]="stays()"
     describedBy="activation-summary"
     (dismiss)="dismiss()"
   >
@@ -227,8 +240,8 @@ function onceEach(api: StudioApi): StudioApi {
                         <button
                           type="button"
                           class="text-link"
-                          [disabled]="running()"
-                          (click)="openConnections.emit()"
+                          [disabled]="stays()"
+                          (click)="goToConnections()"
                         >
                           {{ way.link }}
                         </button>
@@ -269,10 +282,11 @@ function onceEach(api: StudioApi): StudioApi {
       @if (failure(); as failed) {
         <div
           class="notice error-notice activation-problem"
+          id="activation-problem"
           role="alert"
           tabindex="-1"
         >
-          <p>{{ failed.message }}</p>
+          <p>{{ failed.code === "WV-ETAG" ? stale() : failed.message }}</p>
           @if (failed.code) {
             <small class="support-code">Support code: {{ failed.code }}</small>
           }
@@ -296,11 +310,16 @@ function onceEach(api: StudioApi): StudioApi {
       <div class="dialog-footer">
         @if (activated()) {
           <!-- The activation is done: the triggers' rows say what happened. -->
+          @if (steps()?.doneKeeps(); as keeps) {
+            <p class="activation-keeps">{{ keeps }}</p>
+          }
           <button
             type="button"
             class="primary"
+            data-done
             [disabled]="settingUp()"
-            (click)="cancel.emit()"
+            [attr.aria-disabled]="steps()?.acting() || null"
+            (click)="dismiss()"
           >
             Done
           </button>
@@ -308,6 +327,7 @@ function onceEach(api: StudioApi): StudioApi {
           <button
             type="button"
             class="tertiary"
+            data-cancel
             [disabled]="running()"
             (click)="dismiss()"
           >
@@ -324,8 +344,13 @@ function onceEach(api: StudioApi): StudioApi {
               !!steps()?.blocked() ||
               !!missingConnection()
             "
+            [attr.aria-disabled]="reopen() || null"
             [attr.aria-describedby]="
-              missingConnection() ? 'activation-missing' : null
+              reopen()
+                ? 'activation-problem'
+                : missingConnection()
+                  ? 'activation-missing'
+                  : null
             "
           >
             Activate version
@@ -334,6 +359,20 @@ function onceEach(api: StudioApi): StudioApi {
       </div>
     </form>
   </weave-modal>`,
+  styles: `
+    .activation-keeps {
+      align-self: center;
+      margin: 0 auto 0 0;
+      color: var(--muted);
+      font: var(--type-small);
+    }
+    @media (max-width: 767px) {
+      .activation-keeps {
+        margin: 0;
+        text-align: center;
+      }
+    }
+  `,
 })
 export class ActivationDialog implements OnInit {
   api = input.required<StudioApi>();
@@ -353,7 +392,12 @@ export class ActivationDialog implements OnInit {
   /** The activation request is running; the dialog cannot be closed meanwhile. */
   running = input(false);
   /** Why the last activation failed, in plain language with a support code. */
-  failure = input<{ message: string; code: string } | null>(null);
+  failure = input<ActivationFailure | null>(null);
+  /** The same request would be refused again: the person closes the dialog first. */
+  readonly reopen = computed(() => {
+    const failed = this.failure();
+    return !!failed && (failed.reopen === true || failed.code === "WV-ETAG");
+  });
   /** The editor's workflow and canvas: its called workflows and trigger choices. */
   definition = input<Workflow | null>(null);
   canvas = input<CanvasSidecar | null>(null);
@@ -362,7 +406,7 @@ export class ActivationDialog implements OnInit {
   diagnostics = input<readonly Diagnostic[]>([]);
   /** The editor, whose connections port knows this computer's dev bindings. */
   connectionsHost = input<PortHost | null>(null);
-  confirm = output<ActivationBindings>();
+  confirm = output<ActivationAsk>();
   /** The activation's ID once it succeeded: the dialog then sets its triggers up. */
   activated = input("");
   /**
@@ -376,6 +420,13 @@ export class ActivationDialog implements OnInit {
     first: boolean;
   }>();
   readonly settingUp = signal(false);
+  /**
+   * While the activation, its triggers or a row's answer runs, nothing closes
+   * the dialog or opens behind it: what was made and what is owed would be lost.
+   */
+  readonly stays = computed(
+    () => this.running() || this.settingUp() || !!this.steps()?.acting(),
+  );
   /** After the activation: "1 trigger needs attention.", or "" when every trigger went through. */
   readonly attentionText = signal("");
   private setUpFor = "";
@@ -463,20 +514,19 @@ export class ActivationDialog implements OnInit {
         void this.setUp(id);
       });
     });
-    // While the activation runs, the steps' ways out (Open schedule) are off too.
+    // While the dialog has to stay, the steps' ways out (Open schedule) are off too.
     effect(() => {
       const steps = this.steps();
-      const running = this.running();
-      untracked(() => steps?.busy.set(running));
+      const stays = this.stays();
+      untracked(() => steps?.busy.set(stays));
     });
-    // A failure takes focus, so it is announced and Tab stays in the dialog.
+    // A failure takes focus, so it is announced and Tab stays in the dialog;
+    // one the same request would meet again leaves focus on the way out.
     effect(() => {
       if (!this.failure()) return;
+      const to = this.reopen() ? "[data-cancel]" : ".activation-problem";
       afterNextRender(
-        () =>
-          this.host.nativeElement
-            .querySelector<HTMLElement>(".activation-problem")
-            ?.focus(),
+        () => this.host.nativeElement.querySelector<HTMLElement>(to)?.focus(),
         { injector: this.injector },
       );
     });
@@ -524,14 +574,36 @@ export class ActivationDialog implements OnInit {
       attention: steps.attention(),
       first: true,
     });
-    steps.retried = () => {
+    this.focusNext();
+    steps.retried = (row) => {
       this.attentionText.set(steps.attention() ?? "");
       this.triggers.emit({
         intents: steps.storedIntents(),
         attention: steps.attention(),
         first: false,
       });
+      this.focusNext(row);
     };
+  }
+  /**
+   * Focus goes to the safe answer or the button the row acted on still has;
+   * otherwise to the first row that asks something, otherwise to Done. It
+   * stays where the person moved it while that row's button ran.
+   */
+  private focusNext(row?: number) {
+    const root = this.host.nativeElement;
+    const own = `[data-row="${row}"]`;
+    const at = document.activeElement;
+    if (row !== undefined && at && at !== document.body && !at.closest(own))
+      return;
+    afterNextRender(
+      () =>
+        [`${own} [data-ask]`, `${own} button`, "[data-ask]", "[data-done]"]
+          .map((to) => root.querySelector<HTMLElement>(to))
+          .find((to) => to !== null)
+          ?.focus(),
+      { injector: this.injector },
+    );
   }
   /** Loads the checks and the called workflows and triggers steps from their own chunk. */
   async loadSteps() {
@@ -550,11 +622,17 @@ export class ActivationDialog implements OnInit {
       ref.setInput(
         "environment",
         this.environmentId()
-          ? { id: this.environmentId(), name: this.environmentLabel() }
+          ? {
+              id: this.environmentId(),
+              name: this.environmentLabel(),
+              short: this.connectionsHost()?.environmentName,
+            }
           : null,
       );
       ref.setInput("diagnostics", this.diagnostics());
-      ref.instance.openTrigger = (id) => this.openTrigger.emit(id);
+      ref.instance.openTrigger = (id) => {
+        if (!this.stays()) this.openTrigger.emit(id);
+      };
       this.steps.set(ref.instance);
     } catch {
       // Without them the platform still refuses what it can't activate.
@@ -581,6 +659,18 @@ export class ActivationDialog implements OnInit {
       this.pinsLoading.set(false);
     }
   }
+  /** Why the platform refused to replace an activation Studio didn't name. */
+  stale(): string {
+    const refused = `${this.workflowName()} wasn't activated:`;
+    const steps = this.steps();
+    if (steps?.replaces() !== undefined)
+      return `${refused} another activation was made here since you opened this. Close this and activate again to replace it.`;
+    return `${refused} the workflow is active here already, and Studio couldn't read that activation. ${
+      steps?.replacesForbidden()
+        ? "Ask for permission to read the catalog here, then activate again."
+        : "Close this and activate again."
+    }`;
+  }
   text(event: Event) {
     return (event.target as HTMLInputElement).value;
   }
@@ -589,7 +679,10 @@ export class ActivationDialog implements OnInit {
     return connector.replace("@", " ");
   }
   dismiss() {
-    if (!this.running()) this.cancel.emit();
+    if (!this.stays()) this.cancel.emit();
+  }
+  goToConnections() {
+    if (!this.stays()) this.openConnections.emit();
   }
   /** The slots the connection rows were built for. */
   private loadedSlots = "";
@@ -664,7 +757,13 @@ export class ActivationDialog implements OnInit {
   }
   submit(event: Event) {
     event.preventDefault();
-    if (this.busy() || this.pinsLoading() || this.picker()?.loading()) return;
+    if (
+      this.reopen() ||
+      this.busy() ||
+      this.pinsLoading() ||
+      this.picker()?.loading()
+    )
+      return;
     const form = event.target as HTMLFormElement;
     if (!form.reportValidity()) return;
     const connections: Record<string, string> = {};
@@ -692,9 +791,14 @@ export class ActivationDialog implements OnInit {
     const steps = this.steps();
     const calls = steps?.pins() ?? {};
     this.confirm.emit({
-      connection_revision_ids: connections,
-      ...pins,
-      ...(Object.keys(calls).length ? { workflow_activation_ids: calls } : {}),
+      bindings: {
+        connection_revision_ids: connections,
+        ...pins,
+        ...(Object.keys(calls).length
+          ? { workflow_activation_ids: calls }
+          : {}),
+      },
+      replaces: steps?.replaces() ?? undefined,
     });
   }
 }

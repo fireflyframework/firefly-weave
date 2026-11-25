@@ -110,7 +110,10 @@ export function toolbarObstacles(
   const boxes: Box[] = [];
   for (const tile of layout.tiles) {
     if (tile.id === except) continue;
-    const width = Math.max(tile.width, labelWidth(zoom, tile.shape));
+    const width = Math.max(
+      tile.width,
+      labelWidth(zoom, tile.shape, tile.wideLabel),
+    );
     // The card, its corner badge and its name block, as one box.
     boxes.push({
       x: tile.x + tile.width / 2 - width / 2,

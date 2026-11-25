@@ -89,7 +89,7 @@ for (const size of [
           };
         }),
       );
-    expect(rows.length).toBe(8);
+    expect(rows.length).toBe(9);
     // As in the design: entries 2 px apart, and 8 px before the next group.
     const gaps = await panel.root.evaluate((element) => {
       const tops = (selector: string) =>

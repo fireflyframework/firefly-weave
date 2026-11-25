@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // rename moves a pin back.
 import { expect, test, type Download, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { stringify } from "yaml";
 import { setTestInput } from "./formula-po";
 import { fitCanvas, StepDetailsPage } from "./step-details-po";
 import { command, connected, defaultCatalog } from "./support";
@@ -305,6 +306,93 @@ test("the toolbar's Undo of a delete brings the pin back too, and Redo takes it 
   await expect(
     page.locator('[data-step="notify"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", "pinned");
+});
+
+/** A platform event with real-looking IDs, as a platform sends it. */
+const REAL_ID = "5f0c2b7e-1111-4222-8333-944455556666";
+const realEvent = {
+  version: "weave/platform-event-v1",
+  event_id: REAL_ID,
+  type: "transaction.in_doubt",
+  emitted_at: "2026-11-18T16:05:11Z",
+  transaction: {
+    workflow: { name: "sync-records", version: "2.0.1" },
+    run_id: REAL_ID,
+    instance_key: "move",
+    business_key: "REF-4410",
+    state: "in_doubt",
+    steps: { done: [], undone: [], pending: [] },
+    incident_id: REAL_ID,
+    test: false,
+  },
+};
+const reacting = (inputSchema: unknown) =>
+  stringify({
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "notify-team", version: "1.0.0" },
+    spec: {
+      inputSchema,
+      outputSchema: {},
+      steps: [{ id: "send", kind: "transform", value: { ref: "/input" } }],
+      output: { literal: null },
+    },
+  });
+const fileOf = (input: Record<string, unknown>) =>
+  JSON.stringify({
+    schemaVersion: 1,
+    kind: "weave.studio/testData",
+    updatedAt: AT,
+    input,
+  });
+
+test("a test data file's real platform event is kept with sample IDs, and nothing sends the real ones", async ({
+  page,
+}) => {
+  const sent: string[] = [];
+  page.on("request", (request) => sent.push(request.postData() ?? ""));
+  await openFiles(page, {
+    "notify-team.yaml": reacting({ type: "object" }),
+    "notify-team.testdata.json": fileOf({
+      value: { event: realEvent },
+      source: "simulated",
+    }),
+  });
+  const { "notify-team.testdata.json": kept } = await saved(page, 3);
+  expect(kept).toContain("REF-4410");
+  expect(kept).not.toContain(REAL_ID);
+  expect(sent.join("\n")).toContain("REF-4410");
+  expect(sent.join("\n")).not.toContain(REAL_ID);
+});
+
+test("a test data file whose event has a field the platform event hasn't isn't loaded, and says why", async ({
+  page,
+}) => {
+  await withNewEditor(page);
+  await connected(page, { tenantId: TENANT, projectId: PROJECT });
+  await withLanguageFeatures(page);
+  await page.getByLabel("Choose a workflow file").setInputFiles([
+    asFile("notify-team.yaml", reacting({ $ref: "weave.platform-event-v1" })),
+    asFile(
+      "notify-team.testdata.json",
+      fileOf({
+        value: { ...realEvent, root_event_id: REAL_ID },
+        source: "manual",
+      }),
+    ),
+  ]);
+  await page
+    .getByRole("dialog", {
+      name: "Load the test data saved with this workflow?",
+    })
+    .getByRole("button", { name: "Load" })
+    .click();
+  await expect(
+    page.locator(".toast").filter({
+      hasText:
+        "The test data wasn't loaded: root_event_id isn't one of the platform event's fields.",
+    }),
+  ).toHaveCount(1);
 });
 
 test("a test data file with pinned output for a step the workflow doesn't have loads the rest, and says so", async ({

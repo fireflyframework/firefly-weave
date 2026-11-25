@@ -198,6 +198,7 @@ details and **Assignment binding** in the inspector.
 | Step | Parameters | Add option | Also on Settings |
 | --- | --- | --- | --- |
 | Manual form trigger | **Input fields** | | |
+| Platform event trigger | **Which events**, **From which workflows**, **Input** | | |
 | Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them. **Change in a new version** starts the action's next version on this computer, where they change (the request of an HTTP action changes with **Edit action as YAML** in the step's **More** menu); **Publish action** publishes it, and the workflow publishes only after it. A worker's action reads "Set by the worker that runs this action." Then **On error** and **Result on error**. |
 | Call an API | **Connection**, **Method**, **URL**, and **Body** for POST, PUT and PATCH | **Query parameters**, **Headers**, **Response sample**, **Accepted status codes**, **Description** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
 | Send email | **Connection**, **To**, **Subject**, **Message** | **Cc**, **Bcc**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout**, **On error**, **Result on error** |
@@ -253,6 +254,24 @@ a run; **Paste sample JSON** finds fields from an example. The **Test event**
 pane fills that form with a sample (**Generate sample**), and **Output** shows
 the sample as the data the first step reads while you test. The sample stays
 while the workflow is open.
+
+### Platform event trigger
+
+Starts the workflow for events of transactions in other workflows (see
+[React to a transaction](studio.md#react-to-a-transaction)).
+
+| Field | What you set |
+| --- | --- |
+| **Which events** | At least one of: a transaction needs attention, was undone, was canceled, completed, was reconciled, was force ended |
+| **From which workflows** | **Any workflow in this project**, including ones published later but not this one, or **Only these workflows**, 1 to 100 names; every version of a named workflow counts |
+| **Input** | Read-only: the fields each run starts with. When the workflow's input doesn't accept the platform event, **Reset the input** makes it the event again |
+
+The definition holds the events in `spec.eventTrigger.events`, the names in
+`spec.eventTrigger.from` (left out for any workflow), and
+`{$ref: weave.platform-event-v1}` as `spec.inputSchema`. **Test event** builds a
+sample of an event the trigger reacts to. **Starts**, between **Parameters** and
+**Settings**, lists what the trigger started in the connected environment; a
+platform without platform event triggers has no **Starts** tab.
 
 ### Decision table
 

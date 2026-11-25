@@ -1471,7 +1471,7 @@ describe("manual sample form lifetime", () => {
     form.schema = signal(owner.schema) as never;
     form.schemaRoot = signal(owner.root) as never;
     form.initialData = signal(owner.initial) as never;
-    form.dataChange.subscribe((data) => pane.changed(data, owner));
+    form.dataChange.subscribe((data) => pane.changed(data, owner, form));
     return { ...f, injector, pane, owner, form };
   }
   it.each([false, true])(
@@ -1502,9 +1502,9 @@ describe("manual sample form lifetime", () => {
   );
   it("keeps schema and initial data identities through its own edits", async () => {
     const f = fixture();
-    await f.pane.changed({ name: "A" }, f.owner);
+    await f.pane.changed({ name: "A" }, f.owner, f.form);
     expect(f.pane.forms()[0]).toBe(f.owner);
-    await f.pane.changed({ name: "Alice" }, f.owner);
+    await f.pane.changed({ name: "Alice" }, f.owner, f.form);
     expect(f.pane.forms()[0].initial).toBe(f.owner.initial);
     expect(f.controller.testEvent()).toEqual({ name: "Alice" });
     f.injector.destroy();

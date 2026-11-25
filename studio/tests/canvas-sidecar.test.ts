@@ -26,7 +26,6 @@ import {
   MAX_TRIGGERS,
   NOTE_SIZES,
   addNote,
-  addTrigger,
   canvasBytes,
   canvasFile,
   canvasFromStored,
@@ -43,6 +42,7 @@ import {
   stepNoteLine,
   stepNotesOf,
   syncCalled,
+  syncEvent,
   triggerInputs,
   triggerIntents,
   updateNote,
@@ -54,6 +54,7 @@ import {
   type StickyNote,
   type TriggerIntent,
 } from "../src/app/editor/state/canvas-sidecar";
+import { addTrigger } from "../src/app/editor/add-step/add-trigger";
 import { freshWorkflow } from "../src/app/model";
 
 const http: ActionRecipe = {
@@ -422,13 +423,19 @@ describe("the setters refuse or clamp what a canvas file wouldn't hold", () => {
         { id: triggerId(1), kind: "called" },
         { id: triggerId(2), kind: "called" },
       ]),
-    ).toThrow("Keep one manual trigger and one called trigger at most.");
+    ).toThrow("Keep one manual, one called and one event trigger at most.");
+    expect(() =>
+      withTriggerIntents(emptyCanvas(), [
+        { id: triggerId(1), kind: "event" },
+        { id: triggerId(2), kind: "event" },
+      ]),
+    ).toThrow("Keep one manual, one called and one event trigger at most.");
     expect(() =>
       withTriggerIntents(emptyCanvas(), [
         { id: triggerId(2), kind: "carrier-pigeon" as never },
       ]),
     ).toThrow(
-      "Use manual, webhook, schedule, broker, email, provider or called for a trigger.",
+      "Use manual, webhook, schedule, broker, email, provider, called or event for a trigger.",
     );
     const many = withTriggerIntents(
       emptyCanvas(),
@@ -762,8 +769,8 @@ describe("trigger choices in the sidecar", () => {
     expect(callable.dropped).toBe(false);
   });
 
-  it("reads one input form and one Called by a workflow at most", () => {
-    for (const kind of ["manual", "called"])
+  it("reads one input form, one Called by a workflow and one Platform event at most", () => {
+    for (const kind of ["manual", "called", "event"])
       expect(
         parseCanvas({
           schemaVersion: 2,
@@ -777,6 +784,129 @@ describe("trigger choices in the sidecar", () => {
         ok: false,
         problems: [`/triggers/1/kind: use one ${kind} trigger at most.`],
       });
+  });
+
+  it("declares a platform event trigger and sets the input it starts with", () => {
+    const added = addTrigger(
+      emptyCanvas(),
+      freshWorkflow(),
+      "event",
+      false,
+      ids("0000000a"),
+    );
+    expect(added.canvas.triggers).toEqual([
+      { id: "trigger-0000000a", kind: "event" },
+    ]);
+    expect(added.workflow?.spec).toMatchObject({
+      eventTrigger: { events: ["transaction.in_doubt"] },
+      inputSchema: { $ref: "weave.platform-event-v1" },
+    });
+    expect(() =>
+      addTrigger(added.canvas, added.workflow!, "event", false),
+    ).toThrow("This workflow already starts from platform events.");
+  });
+
+  it("keeps an input the platform event doesn't fit unless told to replace it", () => {
+    const workflow = freshWorkflow();
+    const form = {
+      type: "object",
+      properties: { reference: { type: "string" } },
+    };
+    workflow.spec["inputSchema"] = form;
+    const kept = addTrigger(emptyCanvas(), workflow, "event", false);
+    expect(kept.workflow?.spec["inputSchema"]).toEqual(form);
+    expect(kept.workflow?.spec["eventTrigger"]).toBeDefined();
+    const replaced = addTrigger(
+      emptyCanvas(),
+      workflow,
+      "event",
+      false,
+      undefined,
+      true,
+    );
+    expect(replaced.workflow?.spec["inputSchema"]).toEqual({
+      $ref: "weave.platform-event-v1",
+    });
+    expect(workflow.spec["inputSchema"]).toEqual(form);
+  });
+
+  it("keeps the events and workflows a definition already declares", () => {
+    const workflow = freshWorkflow();
+    const declared = {
+      events: ["transaction.completed"],
+      from: ["sync-records"],
+    };
+    workflow.spec["eventTrigger"] = declared;
+    const added = addTrigger(emptyCanvas(), workflow, "event", false);
+    expect(added.workflow?.spec["eventTrigger"]).toEqual(declared);
+  });
+
+  it("removes the declaration with its trigger and keeps the input", () => {
+    const added = addTrigger(emptyCanvas(), freshWorkflow(), "event", false);
+    const removed = removeTrigger(added.canvas, added.workflow!, added.id);
+    expect(removed.canvas).toEqual(emptyCanvas());
+    expect(removed.workflow && "eventTrigger" in removed.workflow.spec).toBe(
+      false,
+    );
+    expect(removed.workflow?.spec["inputSchema"]).toEqual({
+      $ref: "weave.platform-event-v1",
+    });
+  });
+
+  it("reads a platform event trigger with what Studio stored about it, and writes it back", () => {
+    const canvas = {
+      schemaVersion: 2,
+      kind: CANVAS_KIND,
+      triggers: [
+        {
+          id: "trigger-0000000e",
+          kind: "event",
+          resources: { "env-1": "et-1" },
+          pendingStops: {
+            "env-1": [{ triggerId: "et-0", revision: 2, activationId: "a-0" }],
+          },
+        },
+      ],
+    };
+    const reacting = freshWorkflow();
+    reacting.spec["eventTrigger"] = { events: ["transaction.in_doubt"] };
+    const stored = canvasFromStored(canvas, reacting, new Set());
+    expect(stored.problems).toEqual([]);
+    expect(stored.canvas).toEqual(canvas);
+  });
+
+  it("opens a workflow that declares a platform event trigger with its tile", () => {
+    const reacting = freshWorkflow();
+    reacting.spec["eventTrigger"] = { events: ["transaction.in_doubt"] };
+    const opened = canvasFromStored(null, reacting, new Set(["send"]));
+    expect(opened.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+      "event",
+    ]);
+    expect(opened.dropped).toBe(false);
+    const without = canvasFromStored(
+      opened.canvas,
+      freshWorkflow(),
+      new Set(["send"]),
+    );
+    expect(without.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+    ]);
+  });
+
+  it("mirrors spec.eventTrigger in both directions, beside Called by a workflow", () => {
+    const reacting = workflowWith(true);
+    reacting.spec["eventTrigger"] = { events: ["transaction.in_doubt"] };
+    const called = syncCalled(emptyCanvas(), reacting, false, ids("0000000a"));
+    const both = syncEvent(called, reacting, false, ids("0000000b"));
+    expect(both.triggers).toEqual([
+      { id: "trigger-0000000a", kind: "called" },
+      { id: "trigger-0000000b", kind: "event" },
+    ]);
+    expect(syncEvent(both, reacting, false)).toBe(both);
+    expect(syncEvent(both, workflowWith(true), false).triggers).toEqual([
+      { id: "trigger-0000000a", kind: "called" },
+    ]);
   });
 
   it("mirrors spec.callable in both directions", () => {

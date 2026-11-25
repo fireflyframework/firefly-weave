@@ -30,6 +30,7 @@ import {
   getAt,
   isJsonObject,
   parsePointer,
+  type JsonObject,
 } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
@@ -73,6 +74,20 @@ import {
   triggerForm as triggerSettingsForm,
   triggerProblems,
 } from "../triggers/trigger-forms";
+import {
+  keptInput,
+  replacedIn,
+  safeInput,
+  withSampleIds,
+  type ReplacedId,
+} from "../triggers/event-sample";
+import { eventTileFacts, type CheckedInput } from "../triggers/event-trigger";
+import {
+  eventFields,
+  isPlatformEventInput,
+  namedSchemas,
+  PLATFORM_EVENT_NAME,
+} from "../triggers/platform-event";
 import { isTriggerChoice, triggerChoiceOf } from "../triggers/trigger-target";
 import {
   CANVAS_MAX_BYTES,
@@ -314,6 +329,27 @@ function choiceDiagnostics(choice: TriggerIntent): StepDiagnostic[] {
       at: [field],
     }));
 }
+/** What a platform event trigger declares that the platform would refuse, and the last check's words on its input. */
+function eventDiagnostics(
+  workflow: Workflow,
+  checked: CheckedInput | null,
+): StepDiagnostic[] {
+  const facts = eventTileFacts(workflow, checked);
+  const at = (path: string[], message: string, severity: string) => ({
+    code: "WV-STUDIO-TRIGGER",
+    severity,
+    message,
+    path: `/${path.join("/")}`,
+    at: path,
+  });
+  return [
+    ...facts.errors.map((text) => at(["spec", "inputSchema"], text, "error")),
+    ...facts.setup.map((text) => at(["spec", "eventTrigger"], text, "error")),
+    ...facts.warnings.map((text) =>
+      at(["spec", "inputSchema"], text, "warning"),
+    ),
+  ];
+}
 export interface CommitOutcome {
   ok: boolean;
   /** Labels of fields the change hid and cleared. */
@@ -438,10 +474,15 @@ export class StepDetailsController {
     const service = this.testData;
     service.version();
     if (this.stale()) return undefined;
-    return safeSample(
+    return safeInput(
       this.host.model.definition.spec["inputSchema"],
       service.data().input?.value,
     );
+  }
+  /** Where the test event came from: built, entered, a run or a test call; null without one. */
+  testEventSource(): DataSource | null {
+    if (this.testEvent() === undefined) return null;
+    return this.testData.data().input?.source ?? "manual";
   }
   /** Deferred pane work belongs to the workflow and connection that created it. */
   testEventOwner(): () => boolean {
@@ -482,17 +523,32 @@ export class StepDetailsController {
     if (this.stale()) return "This workflow's test data is still opening.";
     const service = this.testData;
     const now = new Date().toISOString();
+    const schema = this.host.model.definition.spec["inputSchema"];
     // A secret field never reaches the check, nor anything it keeps.
-    const safe = safeSample(
-      this.host.model.definition.spec["inputSchema"],
-      value,
-    );
+    const kept =
+      source === "manual"
+        ? keptInput(schema, value, () => this.eventFields(), service.sampleIds)
+        : { value: safeInput(schema, value) };
+    if ("problem" in kept) return kept.problem;
     const data = service.data();
     const outcome =
-      safe === undefined
+      kept.value === undefined
         ? await service.change(withoutInput(data, now), [])
-        : await service.change(withInput(data, safe, source, now), ["/input"]);
+        : await service.change(withInput(data, kept.value, source, now), [
+            "/input",
+          ]);
     return outcome.ok ? null : outcome.message;
+  }
+  /** The IDs in the test event Studio put in place of real ones, as it was entered or received. */
+  replacedIds(): readonly ReplacedId[] {
+    return this.viewingRuns()
+      ? []
+      : replacedIn(this.testEvent(), this.testData.sampleIds);
+  }
+  /** What a person entered with its real IDs replaced; null when it has none. */
+  withoutRealIds(value: Json): Json | null {
+    const sampled = withSampleIds(value, this.testData.sampleIds);
+    return sampled.replaced.length ? sampled.value : null;
   }
   /** Every step's fingerprints now: the shell's (memoized), or computed here. */
   prints(): ReadonlyMap<string, StepFingerprints> {
@@ -2395,8 +2451,33 @@ export class StepDetailsController {
     model.canvas = next;
   }
 
+  /** What the last check found, and the definition it read; null before the first. */
+  checkedInput(): CheckedInput | null {
+    const { diagnostics, diagnosticsDefinition } = this.host;
+    return (
+      diagnostics && {
+        definition: diagnosticsDefinition,
+        diagnostics: diagnostics.diagnostics,
+      }
+    );
+  }
+  /** The platform event's fields as the Studio host serves them; null until they're read. */
+  eventFields(): JsonObject | null {
+    return eventFields(this.host.api);
+  }
+  /** Those fields while the workflow's input is the event; null for another input. */
+  eventView(): JsonObject | null {
+    const { definition } = this.host.model;
+    return isPlatformEventInput(definition.spec["inputSchema"])
+      ? this.eventFields()
+      : null;
+  }
   scopeOptions(): ScopeOptions {
     return {
+      ...(isPlatformEventInput(this.host.model.definition.spec["inputSchema"])
+        ? { inputLabel: PLATFORM_EVENT_NAME }
+        : {}),
+      namedSchema: namedSchemas(this.eventView()),
       actionOutput: (uses) =>
         (
           (this.actionContract(uses) as Record<string, unknown> | null)?.[
@@ -2435,6 +2516,8 @@ export class StepDetailsController {
    */
   diagnostics(target: string): StepDiagnostic[] {
     const choice = this.triggerChoice(target);
+    if (choice?.kind === "event")
+      return eventDiagnostics(this.host.model.definition, this.checkedInput());
     if (choice) return choiceDiagnostics(choice);
     const result = this.host.diagnostics;
     if (!result) return [];

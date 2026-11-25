@@ -337,3 +337,18 @@ export class StudioApi {
     return this.request<T>(path, method, body, headers);
   }
 }
+
+/**
+ * The environment Studio works in and who is signed in, right now; null
+ * without an environment. The account is the person's, whatever a newer
+ * sign-in check says they may do; one that couldn't be read is another.
+ */
+export function placeOf(
+  api: Pick<StudioApi, "environment" | "expectedPrincipal">,
+): string | null {
+  try {
+    return JSON.stringify([api.environment, api.expectedPrincipal?.() ?? null]);
+  } catch {
+    return null;
+  }
+}
