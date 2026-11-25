@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // business key, how long it holds reservations, its undo retries and when
 // Weave gives up, then On error in a transaction's words. The platform is
 // mocked.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { parse } from "yaml";
 import {
   openStepFixture,
@@ -194,6 +194,32 @@ test.describe("a transaction in step details at 1440x900", () => {
       await expect(details.field(id).getByRole("alert")).toHaveCount(0);
       expect((await move(page, details))["policy"]).toMatchObject(saved);
     });
+
+  test("a box left before it is drawn again shows what it saved", async ({
+    page,
+  }) => {
+    const details = await open(page);
+    await details.tab("Settings").click();
+    // Typed and left within one task, as on a busy machine.
+    const typeAndLeave = (box: Locator, text: string) =>
+      box.evaluate((input: HTMLInputElement, value) => {
+        input.focus();
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.blur();
+      }, text);
+    const tries = details.field("undoRetry.maxAttempts").getByRole("textbox");
+    await typeAndLeave(tries, "10");
+    await expect(tries).toHaveValue("");
+    const hold = details.field("holdSeconds").getByRole("textbox");
+    await typeAndLeave(hold, "20");
+    await expect(hold).toHaveValue("20");
+    await typeAndLeave(hold, "20.0");
+    await expect(hold).toHaveValue("20");
+    // What can't apply stays, to be put right.
+    await typeAndLeave(tries, "ten");
+    await expect(tries).toHaveValue("ten");
+  });
 
   test("a typed default shows as the default once the box is left", async ({
     page,

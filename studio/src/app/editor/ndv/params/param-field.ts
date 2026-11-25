@@ -740,20 +740,20 @@ export class ParamField {
     // the value it saved. An unfinished entry stays, with its message.
     const typed = this.typed();
     this.typing = null;
-    if (typed?.text !== "") return;
-    // Clearing a box over its default saves nothing new, so nothing redraws
-    // it: put the saved value back in the box that was left.
-    const box = event?.target;
+    if (!typed || !event) return;
+    const box = event.target;
     if (
-      box instanceof HTMLInputElement &&
-      box.value === "" &&
-      box.closest(".param-control") &&
-      ["number", "duration"].includes(this.spec().type)
+      !(box instanceof HTMLInputElement) ||
+      !box.closest(".param-control") ||
+      !["number", "duration"].includes(this.spec().type)
     )
-      box.value =
-        this.spec().type === "duration"
-          ? this.durationParts().amount
-          : String(this.fixedValue() ?? "");
+      return;
+    // What it saved can read as the box did when it was last drawn (a cleared
+    // or a typed default, or a box left at once), and nothing redraws it then.
+    box.value =
+      this.spec().type === "duration"
+        ? this.durationParts().amount
+        : String(this.fixedValue() ?? "");
   }
   text(event: Event) {
     const value = (event.target as HTMLInputElement).value;
