@@ -16,6 +16,7 @@
 
 """The rules a run's transactions follow: what runs stored before the second rules keep doing, and how a run moves."""
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -38,9 +39,12 @@ from transaction_support import (
     two_stuck,
 )
 
+from firefly_weave.operations.exports import safe_event
 from firefly_weave.runtime.kernel import transition
-from firefly_weave.runtime.models import RuntimeEvent
+from firefly_weave.runtime.models import RunState, RuntimeEvent
 
+# What an event may say that isn't the rules the kernel knows.
+UNKNOWN_RULES = [True, 1, 3, "2", 2.0, None]
 KINDS = ("retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate")
 
 
@@ -242,3 +246,92 @@ def test_a_stored_state_gives_the_same_transition_as_the_state_in_memory(kind, d
     run = two_transactions()
     event = RuntimeEvent(id=uuid4(), type=kind, timestamp=run.now, sequence=run.state.accepted_sequence + 1, data=data)
     assert transition(stored(run.state), event, run.flow) == transition(run.state, event, run.flow)
+
+
+def test_a_stored_state_without_rules_keeps_its_bytes():
+    run = two_stuck()
+    kept = run.state.model_dump_json()
+    assert "transaction_rules" not in kept
+    read = RunState.model_validate_json(kept)
+    assert (read.transaction_rules, read.model_dump_json()) == (1, kept)
+    moved = RunState.model_validate_json(json.dumps({**json.loads(kept), "transaction_rules": 2}))
+    assert moved.transaction_rules == 2 and json.loads(moved.model_dump_json())["transaction_rules"] == 2
+
+
+def test_a_run_starts_under_the_second_rules_only_when_its_event_says_so():
+    for rules in (1, 2):
+        run = Run(compiled([transaction([hold(), submit()])]))
+        run.start(rules)
+        assert (run.state.transaction_rules, run.state.status) == (rules, "waiting")
+        run.done("hold", {"holdId": "h-1"})
+        assert run.state.transaction_rules == rules
+
+
+@pytest.mark.parametrize("rules", UNKNOWN_RULES)
+def test_a_start_with_rules_the_kernel_does_not_know_is_refused(rules):
+    run = Run(compiled([transaction([hold(), submit()])]))
+    held = run.send("started", origin="manual", run_id=str(uuid4()), transaction_rules=rules)
+    assert [item.code for item in run.state.incidents.values()] == ["WV-RUNTIME-EVENT"] and held.commands == []
+    assert (run.state.transaction_rules, run.state.run_id, run.state.transactions) == (1, None, {})
+
+
+def test_a_start_of_a_workflow_without_a_transaction_takes_no_rules():
+    run = Run(compiled([lookup()]))
+    run.start(2)
+    assert [item.code for item in run.state.incidents.values()] == ["WV-RUNTIME-EVENT"]
+    assert run.state.transaction_rules == 1 and "transaction_rules" not in run.state.model_dump_json()
+
+
+def test_a_resolution_moves_a_run_to_the_second_rules_for_good():
+    run = two_stuck()
+    resolve(run, "hold#confirm:2", "retry_safe", rules=2)
+    assert run.state.transaction_rules == 2 and "hold#confirm" in run.state.active
+    # An event without rules never takes it back.
+    run.done("hold#confirm", {}, generation=3)
+    assert run.state.transaction_rules == 2
+
+
+def test_the_resolution_of_an_incident_outside_a_transaction_moves_its_run_too():
+    run = Run(compiled([parallel(transaction([hold(), submit()]), lookup())]))
+    run.start()
+    run.send("incident_opened", node_id="lookup", generation=1, code="WV-TASK-RETRIES-EXHAUSTED")
+    resolve(run, "lookup:1", "retry_safe", rules=2)
+    assert (run.state.transaction_rules, run.state.status, run.state.incidents) == (2, "waiting", {})
+
+
+def test_a_refused_resolution_changes_no_rules():
+    run = two_stuck()
+    before = run.state.model_copy(deep=True)
+    refused = resolve(run, "hold#confirm:2", "accept_reconciled_result", {"as": "completed"}, rules=2)
+    assert unchanged(run, before) and refused.commands == [] and run.state.transaction_rules == 1
+
+
+@pytest.mark.parametrize("rules", UNKNOWN_RULES)
+def test_a_resolution_with_rules_the_kernel_does_not_know_changes_nothing(rules):
+    run = two_stuck()
+    before = run.state.model_copy(deep=True)
+    refused = resolve(run, "hold#confirm:2", "retry_safe", transaction_rules=rules)
+    assert unchanged(run, before) and refused.commands == []
+
+
+@pytest.mark.parametrize("rules", [*UNKNOWN_RULES, 2])
+def test_a_resolution_outside_a_transaction_with_rules_it_cant_take_changes_nothing(rules):
+    # The rules the kernel knows fit no workflow without a transaction; the others fit none at all.
+    flow = [lookup()] if type(rules) is int and rules == 2 else [parallel(transaction([hold()]), lookup())]
+    run = Run(compiled(flow))
+    run.start()
+    run.send("incident_opened", node_id="lookup", generation=1, code="WV-TASK-RETRIES-EXHAUSTED")
+    before = run.state.model_copy(deep=True)
+    refused = resolve(run, "lookup:1", "retry_safe", transaction_rules=rules)
+    assert unchanged(run, before) and refused.commands == []
+
+
+def test_an_exported_event_keeps_its_rules():
+    run = two_stuck(run_rules=2)
+    resolve(run, "hold#confirm:2", "retry_safe")
+    started, resolved = run.events[0], run.events[-1]
+    assert (started.data["transaction_rules"], resolved.data["transaction_rules"]) == (2, 2)
+    assert resolved.data["transaction"] == "move"
+    assert safe_event(started, run.flow).data == started.data
+    withheld = {"reason", "evidence_reference"}
+    assert safe_event(resolved, run.flow).data == {k: v for k, v in resolved.data.items() if k not in withheld}

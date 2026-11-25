@@ -28,7 +28,8 @@ import yaml
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.runtime.kernel import transition
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES
+from firefly_weave.runtime.kernel import transition, workflow
 from firefly_weave.runtime.models import (
     CallIntent,
     ControlCommand,
@@ -39,6 +40,7 @@ from firefly_weave.runtime.models import (
     TransactionRecord,
     Transition,
 )
+from firefly_weave.runtime.transactions import incident_transaction, shapes
 
 UNSET = object()
 START = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)
@@ -292,8 +294,10 @@ class Run:
         return {item.key: item.status for item in self.txn(key).participants}
 
 
-def resolve(run: Run, incident_key: str, kind: str, output: Any = UNSET) -> Transition:
-    """A person resolves an incident of the run."""
+def resolve(
+    run: Run, incident_key: str, kind: str, output: Any = UNSET, *, rules: int | None = None, **extra: Any
+) -> Transition:
+    """A person resolves an incident of the run; the server writes ``rules`` (by default, the run's own)."""
     incident = run.state.incidents[incident_key]
     data: dict[str, Any] = {
         "incident_key": incident_key,
@@ -307,7 +311,14 @@ def resolve(run: Run, incident_key: str, kind: str, output: Any = UNSET) -> Tran
     }
     if output is not UNSET:
         data["output"] = output
-    return run.send("incident_resolved", **data)
+    if (rules or run.state.transaction_rules) == 2:
+        facts = shapes(workflow(run.flow))
+        assert facts is not None
+        owner = incident_transaction(facts, incident.node_id, incident.code)
+        data["transaction_rules"] = 2
+        if incident.code in IN_DOUBT_CODES and owner is not None:
+            data["transaction"] = owner
+    return run.send("incident_resolved", **{**data, **extra})
 
 
 def attempt_failed(run: Run, key: str) -> None:

@@ -156,6 +156,7 @@ from firefly_weave.runtime.transactions import (
     IN_PROGRESS,
     STEP_FAILURE_CODES,
     STUCK,
+    TRANSACTION_RULES,
     UNDOABLE,
     UNSETTLED,
     TransactionShapes,
@@ -833,6 +834,16 @@ def _advance_owned(
 
     def record(key: str) -> TransactionRecord:
         return current_state.transactions[key]
+
+    def moves_rules(data: JsonObject) -> bool:
+        """Whether an event moves its run to the second rules of transactions. Anything else an event says of rules is
+        refused, and so are rules for a workflow without a transaction."""
+        if "transaction_rules" not in data:
+            return False
+        said = data["transaction_rules"]
+        if txns is None or type(said) is not int or said != TRANSACTION_RULES:
+            raise KernelError("WV-RUNTIME-EVENT")
+        return True
 
     def update(key: str, **changes: object) -> TransactionRecord:
         changed = current_state.transactions[key]
@@ -1665,6 +1676,11 @@ def _advance_owned(
             return
         raise KernelError("WV-RUNTIME-EVENT")
 
+    def refused_resolution() -> KernelCursor:
+        """A resolution that doesn't fit changes nothing: the incident stays open."""
+        unchanged = state.model_copy(deep=True)
+        return checkpoint(Transition(state=unchanged.model_copy(update={"accepted_sequence": event.sequence})))
+
     def lift() -> None:
         """A barrier lifted: run the steps it stopped, then the results it deferred."""
         nonlocal current_state
@@ -2297,6 +2313,12 @@ def _advance_owned(
                 prior = current_state.incidents.get(str(key))
                 if state.status != "suspended" or (prior is None and key != "@legacy"):
                     raise KernelError("WV-RUNTIME-STATE")
+                try:
+                    moves = moves_rules(event.data)
+                except KernelError:
+                    return refused_resolution()
+                if moves:
+                    current_state = current_state.model_copy(update={"transaction_rules": TRANSACTION_RULES})
                 if prior is not None and prior.code in IN_DOUBT_CODES:
                     # A transaction in doubt moves only through the resolutions made for it.
                     current_state.incidents.pop(str(key))
@@ -2311,10 +2333,7 @@ def _advance_owned(
                     try:
                         resolve_transaction(str(key), prior, kind, event.data)
                     except KernelError:
-                        # A resolution that doesn't fit the transaction changes nothing: the incident stays open.
-                        unchanged = state.model_copy(deep=True)
-                        unchanged = unchanged.model_copy(update={"accepted_sequence": event.sequence})
-                        return checkpoint(Transition(state=unchanged))
+                        return refused_resolution()
                     if current_state.status not in RUN_TERMINAL and not (
                         current_state.incidents or current_state.manual_paused
                     ):
@@ -2520,6 +2539,8 @@ def _advance_owned(
                     except ValueError as error:
                         raise KernelError("WV-RUNTIME-EVENT") from error
                     current_state = current_state.model_copy(update={"run_id": run_id})
+                if moves_rules(event.data):
+                    current_state = current_state.model_copy(update={"transaction_rules": TRANSACTION_RULES})
                 queue.append(ir.graph.entry)
                 ends: datetime | None = (
                     checked_deadline(event.timestamp, ir.timeout_seconds) if ir.timeout_seconds else None

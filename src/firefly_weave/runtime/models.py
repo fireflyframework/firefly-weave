@@ -270,6 +270,8 @@ class RunState(ContractModel):
     # The run's ID, recorded at start for workflows whose undo steps name operation keys.
     run_id: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
     transactions: dict[str, TransactionRecord] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # The rules the run's transactions follow: a run stored before the second rules has no field and keeps the first.
+    transaction_rules: Literal[1, 2] = Field(default=1, exclude_if=lambda v: v == 1)
     # Steps a barrier stopped in the middle of an event; they continue when it lifts.
     parked: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
     ending: RunEnding | None = Field(default=None, exclude_if=lambda v: v is None)
