@@ -340,6 +340,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Development and testing
 
+- A unit or contract test that hangs ends the local gate and CI after 10 minutes,
+  named as `FAILED`, with the files, lines, and functions where its threads wait,
+  instead of holding the stage for an hour without a name. The stage also fails
+  when a pytest worker stops early or no test passes.
 - Studio's tests no longer fail on a busy machine: page clocks advance with
   `runFor` instead of `fastForward` in the approvals, connect wizard and
   incidents specs, canvas tidy is bounded by the work it does instead of
@@ -431,6 +435,11 @@ SPDX-License-Identifier: Apache-2.0
   (GHSA-7xgj-8392-5q4r, GHSA-vqqp-x5qm-5qp4) and logfire to 5.2.0, the first
   release that accepts OpenTelemetry 1.45.
 - Security: the desktop app updates tokio to 1.53.3 (RUSTSEC-2026-0386).
+- Security: the desktop app updates url to 2.5.9 (RUSTSEC-2026-0592). On Windows
+  and Linux, a nested `blob:` link could crash the app or be accepted as one of
+  its own pages; the app now refuses it.
+- Security: the desktop app updates cookie to 0.18.3 (RUSTSEC-2026-0594). The app
+  doesn't use private cookies and wasn't affected.
 
 ## 0.1.0a19
 
