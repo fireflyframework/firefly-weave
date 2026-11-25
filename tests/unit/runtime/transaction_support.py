@@ -340,7 +340,8 @@ def finished(*confirmed: str) -> dict[str, Any]:
 
 def completed_once(run: Run, key: str) -> bool:
     """Whether the step ended exactly once over the whole run."""
-    return [change.node_id for result in run.transitions for change in result.steps].count(key) == 1
+    ended = [step for result in run.transitions for step in result.steps if step.status == "completed"]
+    return [step.node_id for step in ended].count(key) == 1
 
 
 def one_stuck(run_rules: int = 1) -> Run:

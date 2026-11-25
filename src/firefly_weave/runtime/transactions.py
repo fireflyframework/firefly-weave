@@ -297,17 +297,22 @@ def open_doubts(shapes_of: TransactionShapes, state: "RunState", key: str) -> li
     )
 
 
+def closes_with_step(code: str) -> bool:
+    """Whether an incident closes once the run no longer waits for its step. One in doubt closes only with a decision,
+    and an event the kernel refused was never applied, so its incident always leaves something to decide."""
+    return code not in IN_DOUBT_CODES and not code.startswith("WV-RUNTIME-")
+
+
 def leftover(shapes_of: TransactionShapes, state: "RunState", incident: "IncidentState") -> bool:
     """Whether an open incident of a transaction leaves nothing to decide: a person already ended its transaction in
-    doubt, or the run no longer waits for its step. An event the kernel refused was never applied, so its incident
-    always leaves something."""
+    doubt, or the run no longer waits for its step."""
     key = incident_transaction(shapes_of, incident.node_id, incident.code)
     if key is None:
         return False
     if incident.code in IN_DOUBT_CODES:
         transaction = state.transactions.get(key)
         return transaction is not None and transaction.status in {"reconciled", "force_ended"}
-    return not incident.code.startswith("WV-RUNTIME-") and incident.node_id not in state.active
+    return closes_with_step(incident.code) and incident.node_id not in state.active
 
 
 def participant_index(participants: Sequence[object], key: str) -> int | None:

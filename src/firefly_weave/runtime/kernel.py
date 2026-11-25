@@ -161,6 +161,7 @@ from firefly_weave.runtime.transactions import (
     UNDOABLE,
     UNSETTLED,
     TransactionShapes,
+    closes_with_step,
     deadline_key,
     fold,
     in_transaction,
@@ -860,6 +861,19 @@ def _advance_owned(
             }
         )
 
+    def stopped(names: Iterable[str]) -> None:
+        """The run no longer waits for these steps: nothing is left to decide about a failure of theirs."""
+        if not rules_2():
+            return
+        gone = set(names)
+        close_incidents(
+            [
+                key
+                for key, item in current_state.incidents.items()
+                if item.node_id in gone and closes_with_step(item.code)
+            ]
+        )
+
     def moves_rules(data: JsonObject) -> bool:
         """Whether an event moves its run to the second rules of transactions. Anything else an event says of rules is
         refused, and so are rules for a workflow without a transaction."""
@@ -982,11 +996,16 @@ def _advance_owned(
             if loop.status == "running" and within_body(transaction, suffix, node_of(name), loop_suffix(name)):
                 current_state.loops[name] = loop.model_copy(update={"status": "terminated"})
         flying = {item.key for item in record(key).participants if item.status == "dispatched"}
-        for name in list(current_state.active):
-            if name not in flying and within_body(transaction, suffix, node_of(name), loop_suffix(name)):
-                current_state.active.remove(name)
-                current_state.waits.pop(name, None)
-                result.commands.append(ControlCommand(kind="settle", node_id=name))
+        gone = [
+            name
+            for name in current_state.active
+            if name not in flying and within_body(transaction, suffix, node_of(name), loop_suffix(name))
+        ]
+        for name in gone:
+            current_state.active.remove(name)
+            current_state.waits.pop(name, None)
+            result.commands.append(ControlCommand(kind="settle", node_id=name))
+        stopped(gone)
         queue[:] = [name for name in queue if not within_body(transaction, suffix, node_of(name), loop_suffix(name))]
 
     def abort(key: str, why: TransactionCause) -> None:
@@ -1507,6 +1526,7 @@ def _advance_owned(
             if record(key).status in {"open", "deciding"}:
                 abort(key, TransactionCause(code=why or "WV-TXN-RUN-CANCELLED", instance_key=key))
         # Work no unsettled transaction needs stops now.
+        gone: list[str] = []
         for name in list(current_state.active):
             holder = None if split_phase(name) is not None else owner_of(name)
             if split_phase(name) is not None or (holder is not None and record(holder).status in UNSETTLED):
@@ -1514,6 +1534,8 @@ def _advance_owned(
             current_state.active.remove(name)
             current_state.waits.pop(name, None)
             result.commands.append(ControlCommand(kind="settle", node_id=name))
+            gone.append(name)
+        stopped(gone)
         # An agent whose work stopped has ended: its state goes with it.
         for name in [name for name in current_state.agents if name not in current_state.active]:
             del current_state.agents[name]
@@ -1749,7 +1771,26 @@ def _advance_owned(
         for completion in deferred:
             if current_state.status in RUN_TERMINAL:
                 break
+            if rules_2():
+                if completion.data.get("node_id") not in current_state.active:
+                    # Its step was stopped meanwhile: the result decides nothing.
+                    continue
+                if barrier() and not settlement_event(txns, current_state, completion):
+                    # A result before it put the barrier back: this one waits for the next lift.
+                    current_state.deferred_results.append(completion)
+                    continue
             accept(completion)
+
+    def lift_if_clear() -> None:
+        """Under the second rules, what stopped a run's steps may have closed the last incident that held it."""
+        nonlocal current_state
+        if not rules_2() or current_state.status != "suspended" or current_state.incident is not None:
+            return
+        if current_state.manual_paused:
+            # Only the pause holds it now, and its resume lifts that.
+            current_state = current_state.model_copy(update={"status": "waiting"})
+        else:
+            lift()
 
     def start_agent(node: AgentNode, key: str) -> None:
         """Activate an AI agent: evaluate its texts once, load its run memory, arm its deadline, then send turn 1 or,
@@ -2346,6 +2387,7 @@ def _advance_owned(
                     for open_key in [k for k in transaction_keys() if record(k).status in UNSETTLED]:
                         force_end(open_key)
                 end_run("cancelled")
+                lift_if_clear()
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "incident_opened" and event.data.get("node_id") == HELD_NODE:
                 # A run too large to undo its transactions holds them, open, behind an in-doubt incident that only a
@@ -2501,6 +2543,7 @@ def _advance_owned(
                 if unsettled(current_state):
                     # The run's transactions settle first; the run then ends timed out.
                     end_run("timed_out")
+                    lift_if_clear()
                     return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
                 terminate("timed_out")
                 # Retain historical sequential timeout transition shape.
@@ -2637,6 +2680,7 @@ def _advance_owned(
                     current_state.deferred_results.append(event.model_copy(deep=True))
                     return checkpoint(Transition(state=current_state))
                 accept(event)
+                lift_if_clear()
             return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
         while queue:
             current = queue.pop(0)

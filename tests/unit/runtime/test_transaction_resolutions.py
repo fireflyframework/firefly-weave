@@ -462,6 +462,21 @@ def test_a_retried_confirm_that_fails_again_stays_beside_the_other():
     assert (run.txn().status, run.state.status) == ("completed", "succeeded")
 
 
+def test_a_transaction_in_doubt_names_the_same_incident_until_that_one_is_decided():
+    run = Run(compiled([transaction([hold(), hold("hold2"), hold("hold3"), submit()])]))
+    run.start(2)
+    for key in ("hold", "hold2", "hold3"):
+        run.done(key, {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    for key in ("hold2", "hold", "hold3"):
+        run.failed(f"{key}#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    named = []
+    for key in ("hold3#confirm:2", "hold2#confirm:2", "hold#confirm:2"):
+        resolve(run, key, "retry_safe")
+        named.append(run.txn().incident)
+    assert named == ["hold2#confirm:2", "hold#confirm:2", None]
+
+
 @pytest.mark.parametrize("key", ["hold#confirm:2", "hold2#confirm:2"])
 def test_marking_either_incident_reconciled_closes_both(key):
     run = two_stuck(run_rules=2)
