@@ -37,7 +37,14 @@ import { Icon } from "../icon";
 import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
 import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
-import { openIncident } from "../operate/transactions/open-incident";
+import {
+  noticeSteps,
+  openIncident,
+  showInIncidents,
+  stoppedForTransaction,
+  type ListedTransactions,
+  type NoticeSteps,
+} from "../operate/transactions/open-incident";
 import { RunCancelDialog } from "../operate/transactions/run-cancel-dialog";
 import { RunTransactions } from "../operate/transactions/run-transactions-section";
 import { StartRunDialog } from "../run/start-run-dialog";
@@ -143,6 +150,32 @@ const isRecord = (value: unknown): value is Json =>
           @if (incident.text) {
             <p class="incident-text">{{ incident.text }}</p>
           }
+          @if (stoppedForTransaction(incident.code)) {
+            <!-- Empty until the transactions are read: the notice keeps its height. -->
+            <div class="incident-steps">
+              @if (next(); as next) {
+                @if (next.open; as open) {
+                  <button type="button" (click)="actions.openIncident(open.id)">
+                    <weave-icon name="incidents" [size]="16" />{{ open.label }}
+                  </button>
+                }
+                @if (next.code; as code) {
+                  <button type="button" (click)="showInIncidents(code)">
+                    <weave-icon name="incidents" [size]="16" />Show in Incidents
+                  </button>
+                }
+                @if (next.goTo; as label) {
+                  <button
+                    type="button"
+                    class="text-link"
+                    (click)="transactions.focusInDoubt()"
+                  >
+                    {{ label }}
+                  </button>
+                }
+              }
+            </div>
+          }
         </div>
       </div>
     }
@@ -232,7 +265,7 @@ const isRecord = (value: unknown): value is Json =>
           id="cancel-blocked-reason"
           >{{ wait.text }}</span
         >
-        @if (wait.incidentId; as incident) {
+        @if (!next()?.open && wait.incidentId; as incident) {
           <button
             type="button"
             class="text-link"
@@ -380,10 +413,15 @@ const isRecord = (value: unknown): value is Json =>
       </section>
     }
     <weave-run-transactions
+      #transactions
       [host]="h"
       [runId]="id"
       [live]="live()"
-      (loaded)="actions.know($event.runId, $event.views, $event.complete)"
+      (loaded)="
+        listed = $event;
+        actions.know($event.runId, $event.views, $event.complete)
+      "
+      (unread)="listed = { runId: $event, views: [], complete: false }"
     />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />
@@ -528,6 +566,17 @@ export class RunDetail implements DoCheck, OnDestroy {
     () => this.cdr.markForCheck(),
     (incident) => void openIncident(this.host(), this.router, incident),
   );
+  /** What the Transactions section lists, for the run it lists; null until it read it. */
+  listed: (ListedTransactions & { runId: string }) | null = null;
+  readonly stoppedForTransaction = stoppedForTransaction;
+  /** Where the stopped run's notice leads; null when nowhere, or not yet. */
+  next(): NoticeSteps | null {
+    const listed = this.listed?.runId === this.run()["id"] ? this.listed : null;
+    return noticeSteps(this.incident()?.code ?? "", listed);
+  }
+  showInIncidents(code: string) {
+    void showInIncidents(this.host(), this.router, code);
+  }
 
   ngDoCheck() {
     // A Retry run dialog belongs to the run it was opened for.

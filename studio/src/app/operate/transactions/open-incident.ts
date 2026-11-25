@@ -15,25 +15,100 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The way from a run's transaction to its incident in the inbox.
+// The way from a run and its transactions to their incidents in the inbox, and
+// where the notice of a run stopped for a transaction leads.
 import type { Router } from "@angular/router";
 import type { App } from "../../app";
+import {
+  defaultIncidentFilters,
+  incidentFiltersToQuery,
+} from "../incidents/incidents-model";
 import { viewPath } from "../operate-routes";
+import type { RunTransactionView } from "./transaction-contracts";
 
 /**
- * Opens the inbox on an incident. The shell moves to the page first: an
+ * Opens the inbox on an address query. The shell moves to the page first: an
  * address alone changes no page. A person who is elsewhere by then stays
- * there. The address names the incident, never its business key.
+ * there.
  */
-export async function openIncident(
+async function openInbox(
+  host: Pick<App, "view" | "navigate">,
+  router: Pick<Router, "navigateByUrl">,
+  query: string,
+): Promise<void> {
+  await host.navigate("incidents");
+  if (host.view !== "incidents") return;
+  await router.navigateByUrl(viewPath("incidents") + query, {
+    replaceUrl: true,
+  });
+}
+/** Opens the inbox on an incident. The address names it, never its business key. */
+export function openIncident(
   host: Pick<App, "view" | "navigate">,
   router: Pick<Router, "navigateByUrl">,
   id: string,
 ): Promise<void> {
-  await host.navigate("incidents");
-  if (host.view !== "incidents") return;
-  await router.navigateByUrl(
-    `${viewPath("incidents")}?incident=${encodeURIComponent(id)}`,
-    { replaceUrl: true },
+  return openInbox(
+    host,
+    router,
+    incidentFiltersToQuery(defaultIncidentFilters, id),
   );
+}
+/** Opens the inbox on the active incidents of a code. */
+export function showInIncidents(
+  host: Pick<App, "view" | "navigate">,
+  router: Pick<Router, "navigateByUrl">,
+  code: string,
+): Promise<void> {
+  return openInbox(
+    host,
+    router,
+    incidentFiltersToQuery({ ...defaultIncidentFilters, code }),
+  );
+}
+
+/** A run's transactions as its section lists them; none when they couldn't be read. */
+export interface ListedTransactions {
+  views: readonly RunTransactionView[];
+  /** No page is left to read. */
+  complete: boolean;
+}
+/** Where a stopped run's notice leads. */
+export interface NoticeSteps {
+  /** The incident of the transaction in doubt. */
+  open: { id: string; label: "Open incident" | "Open first incident" } | null;
+  /** The inbox filtered by this code, when no transaction listed names an incident. */
+  code: string | null;
+  /** The transaction in doubt, when it is listed. */
+  goTo: "Go to the transaction" | "Go to the first transaction in doubt" | null;
+}
+/** Whether a transaction stopped the run its notice names this code for. */
+export const stoppedForTransaction = (code: string) =>
+  code.startsWith("WV-TXN-");
+/**
+ * Where the notice of a run stopped with `code` leads: null for a run no
+ * transaction stopped, and until its transactions are read. It never lacks a
+ * step after that: transactions list 50 at a time, oldest first, so the one in
+ * doubt may not be listed yet, and while more follow the first listed may not
+ * be the first.
+ */
+export function noticeSteps(
+  code: string,
+  listed: ListedTransactions | null,
+): NoticeSteps | null {
+  if (!listed || !stoppedForTransaction(code)) return null;
+  const doubts = listed.views.filter((view) => view.state === "in_doubt");
+  const several = listed.complete && doubts.length > 1;
+  const id = doubts.find((view) => view.incident_id)?.incident_id;
+  return {
+    open: id
+      ? { id, label: several ? "Open first incident" : "Open incident" }
+      : null,
+    code: id ? null : code,
+    goTo: !doubts.length
+      ? null
+      : several
+        ? "Go to the first transaction in doubt"
+        : "Go to the transaction",
+  };
 }

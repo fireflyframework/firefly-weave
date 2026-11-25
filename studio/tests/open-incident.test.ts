@@ -15,10 +15,16 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Opening the inbox on an incident from a run: the shell's page first, then
-// the address that names the incident, unless the person is elsewhere by then.
+// Opening the inbox from a run, on an incident or on a code: the shell's page
+// first, then the address, unless the person is elsewhere by then. And where a
+// stopped run's notice leads, by its code and the transactions listed.
 import { describe, expect, it } from "vitest";
-import { openIncident } from "../src/app/operate/transactions/open-incident";
+import {
+  noticeSteps,
+  openIncident,
+  showInIncidents,
+} from "../src/app/operate/transactions/open-incident";
+import type { RunTransactionView } from "../src/app/operate/transactions/transaction-contracts";
 
 const incident = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
 /** A shell whose page changes to `lands` once it is asked for the inbox. */
@@ -46,6 +52,12 @@ function shell(lands: string) {
         router as unknown as Parameters<typeof openIncident>[1],
         incident,
       ),
+    show: (code: string) =>
+      showInIncidents(
+        host as unknown as Parameters<typeof showInIncidents>[0],
+        router as unknown as Parameters<typeof showInIncidents>[1],
+        code,
+      ),
   };
 }
 
@@ -63,5 +75,95 @@ describe("opening the inbox on an incident", () => {
     const { open, steps } = shell("workers");
     await open();
     expect(steps).toEqual(["page incidents"]);
+  });
+
+  it("shows the incidents of a code, in the address of the inbox's own filter", async () => {
+    const there = shell("incidents");
+    await there.show("WV-TXN-RUN-OVERSIZED");
+    expect(there.steps).toEqual([
+      "page incidents",
+      "replace /operate/incidents?code=WV-TXN-RUN-OVERSIZED",
+    ]);
+    const elsewhere = shell("workers");
+    await elsewhere.show("WV-TXN-RUN-OVERSIZED");
+    expect(elsewhere.steps).toEqual(["page incidents"]);
+  });
+});
+
+describe("where a stopped run's notice leads", () => {
+  const view = (
+    key: string,
+    state: RunTransactionView["state"],
+    incident_id?: string,
+  ): RunTransactionView => ({
+    instance_key: key,
+    node_id: "move",
+    iteration: [],
+    state,
+    opened_at: "2026-11-22T10:31:00Z",
+    participants: [],
+    ...(incident_id ? { incident_id } : {}),
+  });
+  const settled = view("move[1]", "completed");
+  const doubt = view("move[2]", "in_doubt", incident);
+  const other = view(
+    "move[3]",
+    "in_doubt",
+    "b1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  );
+  const steps = (
+    views: RunTransactionView[],
+    complete = true,
+    code = "WV-TXN-UNDO-STUCK",
+  ) => noticeSteps(code, { views, complete });
+
+  it("to the incident and the transaction in doubt", () => {
+    expect(steps([settled, doubt])).toEqual({
+      open: { id: incident, label: "Open incident" },
+      code: null,
+      goTo: "Go to the transaction",
+    });
+  });
+
+  it("to the first of several, and only once every one is listed", () => {
+    expect(steps([settled, doubt, other])).toEqual({
+      open: { id: incident, label: "Open first incident" },
+      code: null,
+      goTo: "Go to the first transaction in doubt",
+    });
+    expect(steps([settled, doubt, other], false)).toEqual({
+      open: { id: incident, label: "Open incident" },
+      code: null,
+      goTo: "Go to the transaction",
+    });
+  });
+
+  it.each([
+    ["a run held whole, whose transactions name none", [settled], true],
+    ["a transaction in doubt that lies past the pages read", [settled], false],
+    ["transactions that couldn't be read, or be shown", [], false],
+  ] as const)(
+    "to the incidents of its own code, for %s",
+    (_case, views, all) => {
+      expect(steps([...views], all, "WV-TXN-RUN-OVERSIZED")).toEqual({
+        open: null,
+        code: "WV-TXN-RUN-OVERSIZED",
+        goTo: null,
+      });
+    },
+  );
+
+  it("to the incidents of its code and to the transaction, when that one names no incident", () => {
+    expect(steps([settled, view("move[2]", "in_doubt")])).toEqual({
+      open: null,
+      code: "WV-TXN-UNDO-STUCK",
+      goTo: "Go to the transaction",
+    });
+  });
+
+  it("nowhere until the transactions are read, or when no transaction stopped the run", () => {
+    expect(noticeSteps("WV-TXN-UNDO-STUCK", null)).toBeNull();
+    expect(steps([doubt], true, "WV-TASK-AMBIGUOUS")).toBeNull();
+    expect(steps([doubt], true, "")).toBeNull();
   });
 });
