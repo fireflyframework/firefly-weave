@@ -333,7 +333,7 @@ for (const size of SIZES)
         const line = dialog.locator(".et-problem").filter({ hasText: problem });
         await expect
           .poll(async () => (await box(line)).bottom)
-          .toBeLessThanOrEqual(end + 0.5);
+          .toBeLessThanOrEqual(end - 7.5);
         await expectWholeField(page, dialog, end);
       };
       await shows("Add at least one workflow");

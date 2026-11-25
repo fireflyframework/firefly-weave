@@ -95,7 +95,7 @@ const EVENT_FIELDS: Readonly<Record<string, string>> = {
   event_id: "The event's ID",
   version: "The version of these fields",
 };
-/** The field's focus ring, and what is left between it and the sheet below. */
+/** The field's focus ring, and the room left under it, or under its error. */
 const RING = 3;
 const GAP = 8;
 let sequence = 0;
@@ -318,7 +318,7 @@ export class EventTriggerDetails {
           const sheet = host.querySelector<HTMLElement>(
             '.et-list[data-side="sheet"]:popover-open',
           );
-          let end = view.bottom;
+          let end = view.bottom - GAP;
           let last = bottom + RING;
           if (sheet) {
             const least = view.top + RING + height + RING + GAP;
