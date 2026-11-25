@@ -98,6 +98,8 @@ import type { PartnerRead } from "./transaction-panel";
 
 /** The longest opening range the platform accepts: 400 days. */
 const MAX_RANGE_MS = 400 * 86_400_000;
+/** What explains why the incident the address names couldn't be opened. */
+const UNOPENED = ".incident-unopened";
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
 const noEvents: RecentEvents = {
@@ -344,6 +346,7 @@ interface Band {
       @if (detailProblem; as failed) {
         @if (failed.status === 403) {
           <weave-operate-state
+            class="incident-unopened"
             kind="access"
             heading="You don't have access to this incident"
             capability="incident.read"
@@ -354,6 +357,7 @@ interface Band {
           </weave-operate-state>
         } @else if (failed.status === 404) {
           <weave-operate-state
+            class="incident-unopened"
             kind="empty"
             heading="This incident can't be found"
             text="It may belong to another environment, or its run's data was deleted."
@@ -364,6 +368,7 @@ interface Band {
           </weave-operate-state>
         } @else {
           <weave-operate-state
+            class="incident-unopened"
             kind="error"
             [message]="failed.message"
             [code]="failed.code"
@@ -1186,12 +1191,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (generation !== this.generation || this.opening !== id) return;
       this.opening = "";
       if (isUnavailableIncident(incident)) {
-        this.detailProblem = {
+        this.explainUnopened({
           message:
             "Studio can't show this incident: its run can't be shown here.",
           code: "",
           status: 0,
-        };
+        });
         return;
       }
       this.forgetPartner();
@@ -1199,17 +1204,28 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.resolving = false;
       this.failure = null;
       // The Try again it was asked from goes.
-      if (document.activeElement?.closest("weave-operate-state"))
+      if (document.activeElement?.closest(UNOPENED))
         afterNextRender(() => this.focusTitle(), { injector: this.injector });
       this.detailProblem = null;
       void this.loadEvents(incident);
     } catch (error) {
       if (generation !== this.generation || this.opening !== id) return;
       this.opening = "";
-      this.detailProblem = describeError(error);
+      this.explainUnopened(describeError(error));
     } finally {
       if (this.alive) this.cdr.markForCheck();
     }
+  }
+  /** Why the incident couldn't be opened; another kind of failure draws another Try again. */
+  private explainUnopened(problem: PlainError) {
+    if (document.activeElement?.closest(UNOPENED)) {
+      const page = this.element.nativeElement;
+      const again = `${UNOPENED} button`;
+      afterNextRender(() => page.querySelector<HTMLElement>(again)?.focus(), {
+        injector: this.injector,
+      });
+    }
+    this.detailProblem = problem;
   }
   openRun(id: string) {
     void this.host.viewRun({ id });

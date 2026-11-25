@@ -1568,6 +1568,55 @@ test.describe("platform filters, direct links and opening times", () => {
       await expect(title).toBeFocused();
     });
 
+  test("Try again keeps the focus as an incident fails in another way, and leaves it where the person moved it", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read"]);
+    const reads: Route[] = [];
+    await page.route(`${environment}/incidents/${hidden}`, (route) => {
+      reads.push(route);
+    });
+    const missing = {
+      status: 404,
+      json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+    };
+    const refused = {
+      status: 403,
+      json: { code: "WV-FORBIDDEN", message: "Not allowed" },
+    };
+    const unavailable = {
+      status: 503,
+      json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+    };
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    const again = page.getByRole("button", { name: "Try again" });
+    const ways = [
+      [missing, page.getByText("This incident can't be found")],
+      [unavailable, page.getByText("Support code: WV-UNAVAILABLE")],
+      [refused, page.getByText("You don't have access to this incident")],
+      [
+        { json: { id: hidden, unavailable: true } },
+        page.getByText("Studio can't show this incident"),
+      ],
+      [missing, page.getByText("This incident can't be found")],
+    ] as const;
+    for (const [index, [answer, words]] of ways.entries()) {
+      await expect.poll(() => reads.length).toBe(index + 1);
+      await reads[index].fulfill(answer);
+      await expect(words).toBeVisible();
+      if (index) await expect(again).toBeFocused();
+      else await again.focus();
+      if (index < ways.length - 1) await page.keyboard.press("Enter");
+    }
+    await page.keyboard.press("Enter");
+    await expect.poll(() => reads.length).toBe(ways.length + 1);
+    const workflow = page.getByLabel("Workflow", { exact: true });
+    await workflow.focus();
+    await reads[ways.length].fulfill(unavailable);
+    await expect(ways[1][1]).toBeVisible();
+    await expect(workflow).toBeFocused();
+  });
+
   test("an incident that couldn't be opened is forgotten once the address no longer names it", async ({
     page,
   }) => {
