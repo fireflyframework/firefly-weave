@@ -31,6 +31,8 @@ import { canonicalJson } from "../../../forms/core/json";
 import { resolveSchema } from "../../../forms/core/resolve";
 import type { FormSession } from "../params/form-session";
 import { enteredNote } from "../../triggers/event-sample";
+import { declaredSample } from "../../triggers/event-trigger";
+import { isPlatformEventInput, sampleId } from "../../triggers/platform-event";
 import type { Json } from "../registry";
 import { sampleFromSchema } from "./sample";
 
@@ -147,7 +149,13 @@ export class TestEventPane {
     const form = this.forms()[0];
     if (!this.owns(form)) return;
     try {
-      const sample = sampleFromSchema(this.schema());
+      // The platform event's schema has only its name here: no sample of it.
+      const sample = isPlatformEventInput(this.schema())
+        ? declaredSample(form.session.host.model.definition, {
+            now: new Date(),
+            id: sampleId,
+          })
+        : sampleFromSchema(this.schema());
       if (!this.owns(form)) return;
       // The form on show is replaced: its own late writes (defaults) don't count.
       this.form = null;

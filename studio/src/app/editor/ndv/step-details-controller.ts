@@ -477,12 +477,10 @@ export class StepDetailsController {
     if (this.stale()) return undefined;
     return this.safeInput(service.data().input?.value);
   }
-  /** Whether the test event was built from a schema or pasted; null without one. */
-  testEventSource(): "schema" | "manual" | null {
+  /** Where the test event came from: built, entered, a run or a test call; null without one. */
+  testEventSource(): DataSource | null {
     if (this.testEvent() === undefined) return null;
-    return this.testData.data().input?.source === "schema"
-      ? "schema"
-      : "manual";
+    return this.testData.data().input?.source ?? "manual";
   }
   /** A test input without its secret fields; the platform event has none. */
   private safeInput(value: Json | undefined): Json | undefined {

@@ -25,7 +25,9 @@ import {
   jsonEqual,
   type JsonObject,
 } from "../../forms/core/json";
+import { countLabel } from "../ndv/panes/views";
 import type { Json } from "../ndv/registry";
+import type { DataSource } from "../state/test-data";
 import {
   EVENT_CHOICE_ORDER,
   EVENT_CHOICES,
@@ -40,6 +42,14 @@ export const SAMPLE_FIELD_PROBLEM =
 /** Who reads a pasted event, and so what it must not hold. */
 export const SHARED_NOTE =
   "Test data is shared with everyone who can test this workflow. Use a made-up business key.";
+/** Where a test event came from, in a word or two. */
+export const EVENT_ORIGINS: Readonly<Record<DataSource, string>> = {
+  schema: "Sample",
+  simulated: "Sample",
+  manual: "Pasted",
+  run: "From a run",
+  "test-call": "From a test call",
+};
 export type ReplacedId = "event" | "run" | "incident";
 
 const VERSION = "weave/platform-event-v1";
@@ -324,6 +334,15 @@ export function replacedNote(replaced: readonly ReplacedId[]): string {
     return `Studio replaced the ${replaced[0]} ID with a sample ID.`;
   const last = replaced[replaced.length - 1];
   return `Studio replaced the ${replaced.slice(0, -1).join(", ")} and ${last} IDs with sample IDs.`;
+}
+
+/** "Sample · 5 fields", "Pasted · 5 fields", "From a run · 5 fields"; "" without a test event. */
+export function eventCount(
+  source: DataSource | null,
+  value: Json | undefined,
+): string {
+  if (!source || !isJsonObject(value)) return "";
+  return `${EVENT_ORIGINS[source]} · ${countLabel(Object.keys(value).length)}`;
 }
 
 /** What Studio replaced in an event entered as test data, and who reads it; "" when it replaced nothing. */

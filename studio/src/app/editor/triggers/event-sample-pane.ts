@@ -35,6 +35,7 @@ import { Icon } from "../../icon";
 import type { FormSession } from "../ndv/params/form-session";
 import type { Json } from "../ndv/registry";
 import {
+  EVENT_ORIGINS,
   eventSummary,
   pastedEvent,
   replacedNote,
@@ -150,9 +151,7 @@ const TICK_MS = 1_000;
             (click)="generate()"
           >
             <weave-icon name="refresh" [size]="16" />{{
-              sample() === undefined || pasted()
-                ? "Generate sample"
-                : "Generate again"
+              built() ? "Generate again" : "Generate sample"
             }}
           </button>
           <button
@@ -181,7 +180,7 @@ const TICK_MS = 1_000;
             </div>
           } @else {
             <p class="es-ready">
-              <weave-icon name="check" [size]="16" />Sample ready. Execute
+              <weave-icon name="check" [size]="16" />{{ ready() }} Execute
               workflow starts from it.
             </p>
           }
@@ -397,6 +396,16 @@ export class EventSample {
   }
   pasted(): boolean {
     return this.session().controller.testEventSource() === "manual";
+  }
+  built(): boolean {
+    return this.session().controller.testEventSource() === "schema";
+  }
+  /** What the test event is, when nobody pasted it: built here, or a run's own event. */
+  ready(): string {
+    const source = this.session().controller.testEventSource();
+    return source === "run" || source === "test-call"
+      ? `${EVENT_ORIGINS[source]}.`
+      : "Sample ready.";
   }
   /** Why no event can be tested with here: the input takes none, or no check has said; null when it can. */
   blocked(): string | null {

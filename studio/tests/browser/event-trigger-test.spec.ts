@@ -319,6 +319,30 @@ test.describe("a real platform event entered in another Test event pane", () => 
       expect(sent.filter((body) => body.includes(id))).toEqual([]);
   });
 
+  test("but the manual form's own sample is an event the trigger reacts to", async ({
+    page,
+  }) => {
+    const details = await openNotifyTeam(page);
+    await page
+      .locator('.tile-node[data-tile^="$trigger"]')
+      .filter({ hasText: "Manual" })
+      .locator(".tile-body")
+      .dblclick();
+    const pane = page.getByRole("region", { name: "Input data" });
+    await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(pane.locator("textarea.json-field")).toHaveValue(
+      /"type": "transaction\.in_doubt"/,
+    );
+    await expect(pane.getByRole("alert")).toHaveCount(0);
+    await details.close();
+    const dialog = await openEventTrigger(page, details);
+    await expect(
+      dialog
+        .getByRole("group", { name: "The test event" })
+        .getByRole("definition"),
+    ).toHaveText(["Needs attention", "move-between-systems 1.0.0", "REF-1029"]);
+  });
+
   test("a Kafka message trigger's", async ({ page }) => {
     const details = await openNotifyTeam(page);
     const sent: string[] = [];

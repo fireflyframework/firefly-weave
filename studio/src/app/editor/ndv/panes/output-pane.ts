@@ -80,6 +80,7 @@ import {
   withSamples,
   type DataView,
 } from "./views";
+import { eventCount } from "../../triggers/event-sample";
 import { isPlatformEventInput } from "../../triggers/platform-event";
 import { referenceScope, WORKFLOW } from "../../../forms/core/scope";
 import type { FormSession } from "../params/form-session";
@@ -1090,12 +1091,12 @@ export class OutputPane {
   draftEvent(): boolean {
     return this.eventTrigger() && !this.session().controller.viewingRuns();
   }
-  /** "Sample · 5 fields" or "Pasted · 5 fields"; "" without a test event. */
+  /** Where the test event came from and how many fields it has. */
   eventCount(): string {
-    const source = this.session().controller.testEventSource();
-    const value = this.event();
-    if (!source || !value || typeof value !== "object") return "";
-    return `${source === "manual" ? "Pasted" : "Sample"} · ${countLabel(Object.keys(value).length)}`;
+    return eventCount(
+      this.session().controller.testEventSource(),
+      this.event(),
+    );
   }
   /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
   /**

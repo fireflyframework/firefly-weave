@@ -52,6 +52,8 @@ import type { Json } from "../src/app/editor/ndv/registry";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
+import { eventCount } from "../src/app/editor/triggers/event-sample";
+import { EventSample } from "../src/app/editor/triggers/event-sample-pane";
 import { TriggerEventPane } from "../src/app/editor/triggers/test-event-pane";
 import { TaskForm } from "../src/app/task-form";
 
@@ -136,6 +138,10 @@ function setup(inputSchema: unknown = { $ref: "weave.platform-event-v1" }) {
 const kept = (controller: StepDetailsController) =>
   controller.testEvent() as unknown as Event;
 
+/** What the trigger's Output says over the test event's fields. */
+const said = (controller: StepDetailsController) =>
+  eventCount(controller.testEventSource(), controller.testEvent());
+
 /** The manual form: its JSON box holds the whole event. */
 function manualPane(f: ReturnType<typeof setup>) {
   const pane = runInInjectionContext(f.injector, () => new TestEventPane());
@@ -215,6 +221,69 @@ describe.each([
     expect(opened.pane.problem()).toBe(
       "root_event_id isn't one of the platform event's fields.",
     );
+  });
+});
+
+describe("Generate sample in the manual form", () => {
+  it("builds an event the trigger reacts to, the first in the choices", async () => {
+    const f = setup();
+    const { pane } = manualPane(f);
+    f.model.updateWorkflow({
+      ...f.model.definition,
+      spec: {
+        ...f.model.definition.spec,
+        eventTrigger: {
+          events: ["transaction.completed", "transaction.compensated"],
+          from: ["sync-records"],
+        },
+      },
+    });
+    await pane.generate();
+    expect(pane.problem()).toBe("");
+    expect(kept(f.controller)).toMatchObject({
+      type: "transaction.compensated",
+      transaction: { workflow: { name: "sync-records" }, state: "compensated" },
+    });
+    expect(kept(f.controller).event_id).toMatch(SAMPLE_ID);
+    expect(f.controller.testEventSource()).toBe("schema");
+    // The form shows it.
+    expect(pane.forms()[0]!.initial).toEqual({ value: kept(f.controller) });
+    expect(f.announced).toEqual(["Generated a sample test event."]);
+  });
+});
+
+describe("where the test event came from", () => {
+  const from = async (entry: Record<string, unknown>) => {
+    const f = setup();
+    await f.controller.testData.change(
+      {
+        ...f.controller.testData.data(),
+        input: { value: realEvent() as Json, ...entry } as never,
+      },
+      [],
+    );
+    return f.controller;
+  };
+  const RUN = { runId: REAL.run, runEnvironmentId: REAL.incident };
+
+  it("is the run, for Debug in editor: the event isn't a pasted one", async () => {
+    const controller = await from({ source: "run", ...RUN });
+    expect(said(controller)).toBe("From a run · 5 fields");
+    const pane = Object.assign(Object.create(EventSample.prototype), {
+      session: () => ({ controller }),
+    }) as EventSample;
+    expect(pane.pasted()).toBe(false);
+    expect(pane.ready()).toBe("From a run.");
+  });
+
+  it("is the test call that received it", async () => {
+    const controller = await from({ source: "test-call", ...RUN });
+    expect(said(controller)).toBe("From a test call · 5 fields");
+  });
+
+  it("is the person who pasted it, or the sample Studio built", async () => {
+    expect(said(await from({ source: "manual" }))).toBe("Pasted · 5 fields");
+    expect(said(await from({ source: "schema" }))).toBe("Sample · 5 fields");
   });
 });
 
